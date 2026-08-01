@@ -417,6 +417,45 @@ def test_public_benchmark_samples_reads_each_provider(monkeypatch) -> None:
     assert ("openai", 2) in calls
 
 
+def test_public_benchmark_samples_uses_single_balanced_store_read(monkeypatch) -> None:
+    row = _sample(
+        provider="openai",
+        model="openai/gpt-5.4-nano",
+        ttft=120,
+        created_at="2026-06-05T19:10:00Z",
+    )
+    calls: list[dict[str, object]] = []
+
+    def balanced(**kwargs: object) -> list[ProviderBenchmarkSample]:
+        calls.append(kwargs)
+        return [row]
+
+    monkeypatch.setattr(
+        "trusted_router.benchmark_samples.providers_for_display",
+        lambda: (SimpleNamespace(slug="openai"), SimpleNamespace(slug="anthropic")),
+    )
+    monkeypatch.setattr(
+        "trusted_router.benchmark_samples.STORE",
+        SimpleNamespace(provider_balanced_benchmark_samples=balanced),
+    )
+
+    rows = public_benchmark_samples(
+        limit=5000,
+        per_provider_limit=25,
+        recent_minutes=180,
+        now=dt.datetime(2026, 6, 5, 20, 0, tzinfo=dt.UTC),
+    )
+
+    assert rows == [row]
+    assert calls == [
+        {
+            "cutoff": "2026-06-05T17:00:00Z",
+            "per_provider_limit": 25,
+            "limit": 5000,
+        }
+    ]
+
+
 def test_public_benchmark_samples_filters_to_recent_window(monkeypatch) -> None:
     recent = _sample(
         provider="openai",

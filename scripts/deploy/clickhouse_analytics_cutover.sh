@@ -134,5 +134,6 @@ fi
 
 TR_ANALYTICS_READ_MODE=clickhouse \
 TR_ANALYTICS_DUAL_READ_STARTED_AT="$started_at" \
+TR_ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   "${SCRIPT_DIR}/rollout.sh"
 log "ClickHouse is primary; Bigtable remains a shadow and fallback for seven more days"

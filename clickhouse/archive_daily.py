@@ -38,7 +38,7 @@ UINT64_MODULUS = 1 << 64
 log = logging.getLogger("trusted_router.analytics_archive")
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_COLUMNS = (
+_BENCHMARK_COLUMNS = (
     "id",
     "created_at",
     "provider",
@@ -64,6 +64,121 @@ _COLUMNS = (
 )
 
 
+@dataclasses.dataclass(frozen=True)
+class DatasetSpec:
+    columns: tuple[str, ...]
+    time_column: str
+    shard_column: str
+
+
+DATASETS: dict[str, DatasetSpec] = {
+    "provider_benchmark_samples": DatasetSpec(
+        columns=_BENCHMARK_COLUMNS,
+        time_column="created_at",
+        shard_column="id",
+    ),
+    "activity_generations": DatasetSpec(
+        columns=(
+            "generation_id",
+            "request_id",
+            "tenant_id",
+            "key_id",
+            "model",
+            "provider",
+            "provider_name",
+            "app",
+            "tokens_prompt",
+            "tokens_completion",
+            "cached_input_tokens",
+            "reasoning_tokens",
+            "total_cost_microdollars",
+            "usage_type",
+            "speed_tokens_per_second",
+            "finish_reason",
+            "status",
+            "streamed",
+            "usage_estimated",
+            "elapsed_milliseconds",
+            "first_token_milliseconds",
+            "ttfb_milliseconds",
+            "region",
+            "user",
+            "session_id",
+            "http_referer",
+            "app_categories",
+            "tags",
+            "created_at",
+        ),
+        time_column="created_at",
+        shard_column="generation_id",
+    ),
+    "synthetic_probe_samples": DatasetSpec(
+        columns=(
+            "id",
+            "probe_type",
+            "target",
+            "target_url",
+            "monitor_region",
+            "status",
+            "target_region",
+            "latency_milliseconds",
+            "ttfb_milliseconds",
+            "dns_milliseconds",
+            "tcp_connect_milliseconds",
+            "tls_handshake_milliseconds",
+            "gateway_processing_milliseconds",
+            "connection_reused",
+            "protocol",
+            "http_status",
+            "error_type",
+            "provider",
+            "model",
+            "selected_provider",
+            "selected_model",
+            "generation_id",
+            "attestation_digest",
+            "source_commit",
+            "cost_microdollars",
+            "output_match",
+            "created_at",
+        ),
+        time_column="created_at",
+        shard_column="id",
+    ),
+    "synthetic_status_rollups": DatasetSpec(
+        columns=(
+            "id",
+            "period",
+            "period_start",
+            "component",
+            "target",
+            "probe_type",
+            "monitor_region",
+            "target_region",
+            "sample_count",
+            "up_count",
+            "down_count",
+            "degraded_count",
+            "routing_degraded_count",
+            "trust_degraded_count",
+            "unknown_count",
+            "latency_histogram",
+            "ttfb_histogram",
+            "dns_histogram",
+            "tcp_connect_histogram",
+            "tls_handshake_histogram",
+            "gateway_processing_histogram",
+            "error_counts",
+            "last_checked_at",
+            "cost_microdollars",
+            "updated_at",
+        ),
+        time_column="period_start",
+        shard_column="id",
+    ),
+}
+
+
 def _identifier(value: str, *, label: str) -> str:
     if _IDENTIFIER.fullmatch(value) is None:
         raise ValueError(f"{label} must be a ClickHouse identifier")
@@ -84,8 +199,8 @@ def _day_bounds(day: dt.date) -> tuple[str, str]:
     )
 
 
-def _row_hash_expression() -> str:
-    return "cityHash64(toJSONString(tuple(" + ", ".join(_COLUMNS) + ")))"
+def _row_hash_expression(columns: Sequence[str]) -> str:
+    return "cityHash64(toJSONString(tuple(" + ", ".join(columns) + ")))"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -183,6 +298,14 @@ class ClickHouseDailyExporter:
         self._password = password
         self._database = _identifier(database, label="database")
         self._table = _identifier(table, label="table")
+        try:
+            self._spec = DATASETS[self._table]
+        except KeyError:
+            raise ValueError(f"unsupported archive dataset: {self._table}") from None
+
+    @property
+    def dataset(self) -> str:
+        return self._table
 
     @property
     def qualified_table(self) -> str:
@@ -216,16 +339,21 @@ class ClickHouseDailyExporter:
         query = _fingerprint_query(
             self.qualified_table,
             where=(
-                f"created_at >= toDateTime64({_sql_string(start)}, 3, 'UTC') "
-                f"AND created_at < toDateTime64({_sql_string(end)}, 3, 'UTC')"
+                f"{self._spec.time_column} >= "
+                f"toDateTime64({_sql_string(start)}, 3, 'UTC') "
+                f"AND {self._spec.time_column} < "
+                f"toDateTime64({_sql_string(end)}, 3, 'UTC')"
             ),
             final=True,
+            columns=self._spec.columns,
+            time_column=self._spec.time_column,
         )
         return _parse_fingerprint(self._client(query))
 
     def earliest_day(self) -> dt.date | None:
         payload = self._client(
-            f"SELECT if(count() = 0, '', toString(toDate(min(created_at)))) "
+            "SELECT if(count() = 0, '', "
+            f"toString(toDate(min({self._spec.time_column})))) "
             f"FROM {self.qualified_table} FINAL"
         )
         value = payload.decode("utf-8").strip().splitlines()[-1]
@@ -244,13 +372,17 @@ class ClickHouseDailyExporter:
         for part in range(part_count):
             path = destination / f"part-{part:05d}-of-{part_count:05d}.parquet"
             where = (
-                f"created_at >= toDateTime64({_sql_string(start)}, 3, 'UTC') "
-                f"AND created_at < toDateTime64({_sql_string(end)}, 3, 'UTC') "
-                f"AND cityHash64(id) % {part_count} = {part}"
+                f"{self._spec.time_column} >= "
+                f"toDateTime64({_sql_string(start)}, 3, 'UTC') "
+                f"AND {self._spec.time_column} < "
+                f"toDateTime64({_sql_string(end)}, 3, 'UTC') "
+                f"AND cityHash64({self._spec.shard_column}) % {part_count} = {part}"
             )
             query = (  # noqa: S608 - identifiers are validated; values are generated.
-                f"SELECT {', '.join(_COLUMNS)} FROM {self.qualified_table} FINAL "
-                f"WHERE {where} ORDER BY created_at, id FORMAT Parquet"
+                f"SELECT {', '.join(self._spec.columns)} "
+                f"FROM {self.qualified_table} FINAL WHERE {where} "
+                f"ORDER BY {self._spec.time_column}, {self._spec.shard_column} "
+                "FORMAT Parquet"
             )
             with path.open("wb") as stream:
                 self._client(query, stdout=stream)
@@ -262,6 +394,8 @@ class ClickHouseDailyExporter:
             f"file({_sql_string(str(path))}, Parquet)",
             where=None,
             final=False,
+            columns=self._spec.columns,
+            time_column=self._spec.time_column,
         )
         fingerprint = _parse_fingerprint(_run_clickhouse_local(query))
         return ExportedPart(
@@ -348,16 +482,23 @@ def _nullable_string(value: Any) -> str | None:
     return str(value)
 
 
-def _fingerprint_query(table_expression: str, *, where: str | None, final: bool) -> str:
+def _fingerprint_query(
+    table_expression: str,
+    *,
+    where: str | None,
+    final: bool,
+    columns: Sequence[str] = _BENCHMARK_COLUMNS,
+    time_column: str = "created_at",
+) -> str:
     suffix = " FINAL" if final else ""
     where_clause = f" WHERE {where}" if where else ""
-    row_hash = _row_hash_expression()
+    row_hash = _row_hash_expression(columns)
     return (  # noqa: S608 - table expressions are validated or locally generated.
         "SELECT count() AS rows, "
         f"sum({row_hash}) AS hash_sum, "
         f"groupBitXor({row_hash}) AS hash_xor, "
-        "if(count() = 0, NULL, toString(min(created_at))) AS min_created_at, "
-        "if(count() = 0, NULL, toString(max(created_at))) AS max_created_at "
+        f"if(count() = 0, NULL, toString(min({time_column}))) AS min_created_at, "
+        f"if(count() = 0, NULL, toString(max({time_column}))) AS max_created_at "
         f"FROM {table_expression}{suffix}{where_clause} FORMAT JSONEachRow"
     )
 
@@ -415,11 +556,14 @@ def archive_day(
     *,
     rows_per_part: int = ROWS_PER_PART,
     now: dt.datetime | None = None,
+    dataset: str = TABLE,
 ) -> ArchiveResult:
     if rows_per_part < 1:
         raise ValueError("rows_per_part must be positive")
+    if dataset not in DATASETS:
+        raise ValueError(f"unsupported archive dataset: {dataset}")
     source = exporter.source_fingerprint(day)
-    date_prefix = f"raw/provider_benchmark_samples/day={day.isoformat()}"
+    date_prefix = f"raw/{dataset}/day={day.isoformat()}"
     pointer_key = f"{date_prefix}/_latest.json"
     latest = store.read_json(pointer_key)
     if latest is not None:
@@ -478,7 +622,7 @@ def archive_day(
 
     manifest: dict[str, Any] = {
         "schema_version": ARCHIVE_SCHEMA_VERSION,
-        "dataset": TABLE,
+        "dataset": dataset,
         "day": day.isoformat(),
         "revision": revision,
         "exported_at": exported_at.isoformat().replace("+00:00", "Z"),
@@ -533,7 +677,7 @@ def main() -> int:
     parser.add_argument("--project", default=os.environ.get("GCP_PROJECT_ID", PROJECT))
     parser.add_argument("--bucket", default=os.environ.get("ARCHIVE_BUCKET", ARCHIVE_BUCKET))
     parser.add_argument("--database", default=DATABASE)
-    parser.add_argument("--table", default=TABLE)
+    parser.add_argument("--table", action="append", choices=tuple(DATASETS))
     parser.add_argument("--date", type=dt.date.fromisoformat)
     parser.add_argument("--lookback-days", type=int, default=7)
     parser.add_argument("--backfill", action="store_true")
@@ -544,33 +688,40 @@ def main() -> int:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    exporter = ClickHouseDailyExporter(
-        password=os.environ["CH_PASSWORD"],
-        database=args.database,
-        table=args.table,
-    )
     store = GCSArchiveStore(project=args.project, bucket=args.bucket)
-    backfill_start = exporter.earliest_day() if args.backfill and args.date is None else None
-    for day in _days_to_archive(
-        date=args.date,
-        lookback_days=args.lookback_days,
-        backfill_start=backfill_start,
-    ):
-        result = archive_day(
-            exporter,
-            store,
-            day,
-            rows_per_part=args.rows_per_part,
+    tables = tuple(dict.fromkeys(args.table or tuple(DATASETS)))
+    for table in tables:
+        exporter = ClickHouseDailyExporter(
+            password=os.environ["CH_PASSWORD"],
+            database=args.database,
+            table=table,
         )
-        log.info(
-            "analytics_archive.completed day=%s rows=%d revision=%s skipped=%s manifest=gs://%s/%s",
-            result.day,
-            result.rows,
-            result.revision,
-            result.skipped,
-            args.bucket,
-            result.manifest_key,
+        backfill_start = (
+            exporter.earliest_day() if args.backfill and args.date is None else None
         )
+        for day in _days_to_archive(
+            date=args.date,
+            lookback_days=args.lookback_days,
+            backfill_start=backfill_start,
+        ):
+            result = archive_day(
+                exporter,
+                store,
+                day,
+                rows_per_part=args.rows_per_part,
+                dataset=table,
+            )
+            log.info(
+                "analytics_archive.completed dataset=%s day=%s rows=%d "
+                "revision=%s skipped=%s manifest=gs://%s/%s",
+                table,
+                result.day,
+                result.rows,
+                result.revision,
+                result.skipped,
+                args.bucket,
+                result.manifest_key,
+            )
     return 0
 
 

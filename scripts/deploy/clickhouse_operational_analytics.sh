@@ -71,6 +71,7 @@ GCP_PROJECT_ID="$PROJECT_ID" \
 SPANNER_INSTANCE_ID="$SPANNER_INSTANCE_ID" \
 SPANNER_DATABASE_ID="$SPANNER_DATABASE_ID" \
   "${SCRIPT_DIR}/migrate_operational_analytics_outbox.sh"
+"${SCRIPT_DIR}/migrate_generation_records.sh" --apply
 
 log "creating replicated operational tables"
 schema="$(cat "$SCHEMA")"
@@ -108,6 +109,18 @@ node_ssh 0 --command="sudo sh -c '
     /etc/systemd/system/tr-clickhouse-operational-parity.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-operational-parity.timer \
     /etc/systemd/system/tr-clickhouse-operational-parity.timer
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-public-snapshots.service \
+    /etc/systemd/system/tr-clickhouse-public-snapshots.service
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-public-snapshots.timer \
+    /etc/systemd/system/tr-clickhouse-public-snapshots.timer
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-archive-restore.service \
+    /etc/systemd/system/tr-clickhouse-archive-restore.service
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-archive-restore.timer \
+    /etc/systemd/system/tr-clickhouse-archive-restore.timer
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-spanner-delivery.service \
+    /etc/systemd/system/tr-clickhouse-spanner-delivery.service
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-spanner-delivery.timer \
+    /etc/systemd/system/tr-clickhouse-spanner-delivery.timer
   systemctl daemon-reload
   systemctl stop tr-clickhouse-operational-ingest.service 2>/dev/null || true
 '"
@@ -123,6 +136,18 @@ node_ssh 0 --command="sudo sh -c '
     /opt/tr-clickhouse/venv/bin/python -m clickhouse.backfill_operational_analytics --apply
 '"
 
+log "backfilling and verifying the bounded generation lookup window"
+node_ssh 0 --command="sudo sh -c '
+  set -eu
+  set -a
+  . /etc/tr-clickhouse-ingest.env
+  set +a
+  cd /opt/tr-clickhouse
+  PYTHONPATH=/opt/tr-clickhouse/src \
+    /opt/tr-clickhouse/venv/bin/python -m clickhouse.backfill_generation_records \
+      --apply --verify
+'"
+
 log "building initial synthetic status rollups"
 node_ssh 0 --command="sudo sh -c '
   set -eu
@@ -134,14 +159,16 @@ node_ssh 0 --command="sudo sh -c '
     /opt/tr-clickhouse/venv/bin/python -m clickhouse.rollup_synthetic
 '"
 
-node_ssh 0 --command="sudo systemctl enable tr-clickhouse-operational-ingest.service tr-clickhouse-synthetic-rollup.timer tr-clickhouse-operational-parity.timer"
+node_ssh 0 --command="sudo systemctl enable tr-clickhouse-operational-ingest.service tr-clickhouse-synthetic-rollup.timer tr-clickhouse-operational-parity.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer"
 
 log "verifying exact replica identity after synchronization"
-for table in activity_generations synthetic_probe_samples synthetic_status_rollups; do
+for table in activity_generations synthetic_probe_samples synthetic_status_rollups public_analytics_snapshots; do
   expected=""
   id_column="id"
   if [ "$table" = "activity_generations" ]; then
     id_column="generation_id"
+  elif [ "$table" = "public_analytics_snapshots" ]; then
+    id_column="name"
   fi
   for index in 0 1 2; do
     node_query "$index" "SYSTEM SYNC REPLICA ${table}"
@@ -174,6 +201,7 @@ for index in 0 1 2; do
 done
 
 node_ssh 0 --command="sudo systemctl start tr-clickhouse-operational-ingest.service"
+node_ssh 0 --command="sudo systemctl start tr-clickhouse-public-snapshots.timer tr-clickhouse-public-snapshots.service tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer tr-clickhouse-spanner-delivery.service"
 
 log "operational analytics infrastructure is ready; Bigtable is still authoritative"
 log "deploy the operational outbox producer, then run clickhouse_operational_analytics_finalize.sh --apply"

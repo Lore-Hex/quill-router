@@ -1168,8 +1168,9 @@ def _settle_gateway_authorization(
     )
     if is_typed:
         assert _typed_store is not None
-        # Typed finalize includes the Bigtable activity-index and benchmark
-        # write inside the wrapper's index_after_commit.
+        # Typed finalize atomically commits billing, the bounded generation
+        # record, and the ClickHouse delivery intent. Benchmark delivery and
+        # the temporary Bigtable migration mirror happen after that commit.
         result_method = getattr(
             _typed_store,
             "typed_finalize_gateway_authorization_result",

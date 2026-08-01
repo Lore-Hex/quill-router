@@ -30,6 +30,7 @@ def test_live_deploy_installs_archive_and_rollup_timers() -> None:
 
     assert "002_provider_analytics_rollups.sql" in script
     assert "tr-clickhouse-archive.timer" in script
+    assert "tr-clickhouse-archive-restore.timer" in script
     assert "tr-clickhouse-rollup-hourly.timer" in script
     assert "tr-clickhouse-rollup-daily.timer" in script
 

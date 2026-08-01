@@ -123,3 +123,19 @@ ORDER BY (
     target_region, id
 )
 TTL period_start + INTERVAL 24 MONTH;
+
+CREATE TABLE IF NOT EXISTS public_analytics_snapshots
+(
+    name           LowCardinality(String),
+    generated_at   DateTime64(3, 'UTC'),
+    payload        String CODEC(ZSTD(3)),
+    ingest_version DateTime64(6, 'UTC')
+)
+ENGINE = ReplicatedReplacingMergeTree(
+    '/trustedrouter/tables/{shard}/public-analytics-snapshots-v1',
+    '{replica}',
+    ingest_version
+)
+PARTITION BY toYYYYMM(generated_at)
+ORDER BY name
+TTL toDateTime(generated_at) + INTERVAL 7 DAY;

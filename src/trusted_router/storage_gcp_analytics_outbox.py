@@ -54,24 +54,26 @@ class SpannerAnalyticsOutbox:
         at-least-once and ClickHouse's ReplacingMergeTree collapses replays by
         the sample's stable ``id`` when queries use ``FINAL``.
         """
-        shard = analytics_outbox_shard(sample.id, shard_count=self._shard_count)
-        payload = json_body(sample)
-
         def txn(transaction: Any) -> None:
-            transaction.execute_update(
-                "INSERT INTO tr_analytics_outbox "
-                "(shard, commit_ts, event_id, payload) "
-                "VALUES (@shard, PENDING_COMMIT_TIMESTAMP(), @event_id, @payload)",
-                params={
-                    "shard": shard,
-                    "event_id": sample.id,
-                    "payload": payload,
-                },
-                param_types={
-                    "shard": self._pt.INT64,
-                    "event_id": self._pt.STRING,
-                    "payload": self._pt.STRING,
-                },
-            )
+            self.enqueue_tx(transaction, sample)
 
         self._database.run_in_transaction(txn)
+
+    def enqueue_tx(self, transaction: Any, sample: ProviderBenchmarkSample) -> None:
+        """Enqueue a benchmark in an existing Spanner transaction."""
+        shard = analytics_outbox_shard(sample.id, shard_count=self._shard_count)
+        transaction.execute_update(
+            "INSERT INTO tr_analytics_outbox "
+            "(shard, commit_ts, event_id, payload) "
+            "VALUES (@shard, PENDING_COMMIT_TIMESTAMP(), @event_id, @payload)",
+            params={
+                "shard": shard,
+                "event_id": sample.id,
+                "payload": json_body(sample),
+            },
+            param_types={
+                "shard": self._pt.INT64,
+                "event_id": self._pt.STRING,
+                "payload": self._pt.STRING,
+            },
+        )

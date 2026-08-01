@@ -65,6 +65,10 @@ ssh_node --command="sudo sh -c '
     /etc/systemd/system/tr-clickhouse-archive.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-archive.timer \
     /etc/systemd/system/tr-clickhouse-archive.timer
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-archive-restore.service \
+    /etc/systemd/system/tr-clickhouse-archive-restore.service
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-archive-restore.timer \
+    /etc/systemd/system/tr-clickhouse-archive-restore.timer
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-rollup-hourly.service \
     /etc/systemd/system/tr-clickhouse-rollup-hourly.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-rollup-hourly.timer \
@@ -85,11 +89,13 @@ ssh_node --command="sudo sh -c '
   systemctl restart tr-clickhouse-ingest.service
   systemctl enable --now tr-clickhouse-reconcile.timer
   systemctl enable --now tr-clickhouse-archive.timer
+  systemctl enable --now tr-clickhouse-archive-restore.timer
   systemctl enable --now tr-clickhouse-rollup-hourly.timer
   systemctl enable --now tr-clickhouse-rollup-daily.timer
   systemctl is-active tr-clickhouse-ingest.service
   systemctl is-active tr-clickhouse-reconcile.timer
   systemctl is-active tr-clickhouse-archive.timer
+  systemctl is-active tr-clickhouse-archive-restore.timer
   systemctl is-active tr-clickhouse-rollup-hourly.timer
   systemctl is-active tr-clickhouse-rollup-daily.timer
 '"

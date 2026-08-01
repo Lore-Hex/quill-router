@@ -7,7 +7,7 @@ ROOT = Path(__file__).parents[1]
 
 def test_operational_schema_is_replicated_bounded_and_content_free() -> None:
     schema = (ROOT / "clickhouse/004_operational_analytics_replicated.sql").read_text()
-    assert schema.count("ENGINE = ReplicatedReplacingMergeTree") == 3
+    assert schema.count("ENGINE = ReplicatedReplacingMergeTree") == 4
     assert "INTERVAL 400 DAY" in schema
     assert "INTERVAL 14 DAY" in schema
     assert "INTERVAL 24 MONTH" in schema
@@ -62,6 +62,7 @@ def test_control_reader_is_private_read_only_and_cannot_read_secrets() -> None:
     assert "GRANT SELECT ON tr.activity_generations" in script
     assert "GRANT SELECT ON tr.synthetic_probe_samples" in script
     assert "GRANT SELECT ON tr.synthetic_status_rollups" in script
+    assert "GRANT SELECT ON tr.public_analytics_snapshots" in script
     assert "GRANT SELECT ON tr.tr_entities" not in script
     assert "GRANT ALL" not in script
 
@@ -72,6 +73,7 @@ def test_rollout_preserves_dual_read_mode_and_uses_distinct_reader_secret() -> N
     assert "TR_ANALYTICS_READ_MODE" in rollout
     assert "LIVE_ANALYTICS_READ_MODE" in rollout
     assert "TR_ANALYTICS_DUAL_READ_STARTED_AT" in rollout
+    assert "TR_ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT" in rollout
     assert "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true" in rollout
     assert "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER=tr_control_read" in rollout
     assert "trustedrouter-clickhouse-control-read-password" in rollout
@@ -93,6 +95,51 @@ def test_operational_parity_worker_has_a_bounded_runtime() -> None:
         ROOT / "clickhouse/tr-clickhouse-operational-parity.service"
     ).read_text()
     assert "TimeoutStartSec=5m" in service
+
+
+def test_generation_record_migration_has_ttl_and_delivery_audit_index() -> None:
+    script = (ROOT / "scripts/deploy/migrate_generation_records.sh").read_text()
+    assert "ROW DELETION POLICY" in script
+    assert "INTERVAL 30 DAY" in script
+    assert "tr_generation_by_terminal_at" in script
+    assert "STORING (payload)" in script
+
+
+def test_spanner_delivery_verifier_is_installed_and_bounded() -> None:
+    deploy = (ROOT / "scripts/deploy/clickhouse_operational_analytics.sh").read_text()
+    service = (ROOT / "clickhouse/tr-clickhouse-spanner-delivery.service").read_text()
+    assert "tr-clickhouse-spanner-delivery.timer" in deploy
+    assert "TimeoutStartSec=5m" in service
+    assert "verify_spanner_delivery" in service
+
+
+def test_final_bigtable_retirement_is_two_soak_gated_and_non_destructive() -> None:
+    script = (ROOT / "scripts/deploy/retire_bigtable_runtime.sh").read_text()
+    assert "604800" in script
+    assert "TR_ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT" in script
+    assert "operational-parity.jsonl" in script
+    assert "spanner-delivery.jsonl" in script
+    assert "archive-restore.json" in script
+    assert "archive-backfill-complete.json" in script
+    assert "tr_analytics_outbox" in script
+    assert "tr_operational_analytics_outbox" in script
+    assert "tr_settle_outbox" in script
+    assert "TR_STORAGE_BACKEND=spanner-clickhouse" in script
+    assert "TR_ANALYTICS_READ_MODE=clickhouse-only" in script
+    assert "TR_BIGTABLE_MIRROR_WRITES_ENABLED=false" in script
+    assert "verify_deployment.sh" in script
+    assert "delete-instance" not in script
+    assert "delete-table" not in script
+
+
+def test_retirement_preparation_backfills_and_restore_verifies_every_dataset() -> None:
+    script = (ROOT / "scripts/deploy/prepare_bigtable_retirement.sh").read_text()
+    assert "clickhouse_operational_analytics.sh" in script
+    assert "clickhouse.archive_daily --backfill" in script
+    assert "clickhouse.verify_archive_restore" in script
+    assert "clickhouse.verify_spanner_delivery" not in script
+    assert "tr-clickhouse-spanner-delivery.service" in script
+    assert "would not change production read mode" in script
 
 
 def test_capacity_probe_is_disposable_and_uses_a_conservative_gate() -> None:

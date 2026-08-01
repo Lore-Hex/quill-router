@@ -98,8 +98,35 @@ class SpannerOperationalAnalyticsOutbox:
             payload=activity_payload(generation),
         )
 
+    def enqueue_activity_tx(self, transaction: Any, generation: Generation) -> None:
+        """Enqueue activity in an existing Spanner transaction.
+
+        Gateway settlement uses this method so the charge, bounded generation
+        record, and ClickHouse delivery intent commit atomically.  The outbox
+        row remains the durable hand-off; ClickHouse itself is never in the
+        inference transaction.
+        """
+        self._enqueue_tx(
+            transaction,
+            event_kind=ACTIVITY_EVENT_KIND,
+            event_id=generation.id,
+            payload=activity_payload(generation),
+        )
+
     def enqueue_synthetic(self, sample: SyntheticProbeSample) -> None:
         self._enqueue(
+            event_kind=SYNTHETIC_EVENT_KIND,
+            event_id=sample.id,
+            payload=synthetic_payload(sample),
+        )
+
+    def enqueue_synthetic_tx(
+        self,
+        transaction: Any,
+        sample: SyntheticProbeSample,
+    ) -> None:
+        self._enqueue_tx(
+            transaction,
             event_kind=SYNTHETIC_EVENT_KIND,
             event_id=sample.id,
             payload=synthetic_payload(sample),
@@ -112,29 +139,43 @@ class SpannerOperationalAnalyticsOutbox:
         event_id: str,
         payload: dict[str, Any],
     ) -> None:
+        def txn(transaction: Any) -> None:
+            self._enqueue_tx(
+                transaction,
+                event_kind=event_kind,
+                event_id=event_id,
+                payload=payload,
+            )
+
+        self._database.run_in_transaction(txn)
+
+    def _enqueue_tx(
+        self,
+        transaction: Any,
+        *,
+        event_kind: str,
+        event_id: str,
+        payload: dict[str, Any],
+    ) -> None:
         shard = operational_analytics_shard(
             f"{event_kind}:{event_id}",
             shard_count=self._shard_count,
         )
-
-        def txn(transaction: Any) -> None:
-            transaction.execute_update(
-                "INSERT INTO tr_operational_analytics_outbox "
-                "(shard, commit_ts, event_kind, event_id, payload) "
-                "VALUES (@shard, PENDING_COMMIT_TIMESTAMP(), @event_kind, "
-                "@event_id, @payload)",
-                params={
-                    "shard": shard,
-                    "event_kind": event_kind,
-                    "event_id": event_id,
-                    "payload": json_body(payload),
-                },
-                param_types={
-                    "shard": self._pt.INT64,
-                    "event_kind": self._pt.STRING,
-                    "event_id": self._pt.STRING,
-                    "payload": self._pt.STRING,
-                },
-            )
-
-        self._database.run_in_transaction(txn)
+        transaction.execute_update(
+            "INSERT INTO tr_operational_analytics_outbox "
+            "(shard, commit_ts, event_kind, event_id, payload) "
+            "VALUES (@shard, PENDING_COMMIT_TIMESTAMP(), @event_kind, "
+            "@event_id, @payload)",
+            params={
+                "shard": shard,
+                "event_kind": event_kind,
+                "event_id": event_id,
+                "payload": json_body(payload),
+            },
+            param_types={
+                "shard": self._pt.INT64,
+                "event_kind": self._pt.STRING,
+                "event_id": self._pt.STRING,
+                "payload": self._pt.STRING,
+            },
+        )

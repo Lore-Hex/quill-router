@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     spanner_database_id: str | None = None
     bigtable_instance_id: str | None = None
     bigtable_generation_table: str = "trustedrouter-generations"
+    # Migration controls. ``spanner-clickhouse`` never constructs a Bigtable
+    # client. The mirror flag lets ``spanner-bigtable`` stop new writes before
+    # the final backend switch while retaining legacy reads during soak.
+    bigtable_mirror_writes_enabled: bool = True
+    generation_records_enabled: bool = False
     # Legacy in-process ClickHouse mirror. Empty URL keeps it disabled.
     clickhouse_url: str = ""
     clickhouse_user: str = ""
@@ -70,10 +75,11 @@ class Settings(BaseSettings):
     operational_analytics_clickhouse_password: str = ""
     operational_analytics_clickhouse_database: str = "tr"
     # dual returns Bigtable and compares ClickHouse; clickhouse reverses those
-    # roles for the second soak before Bigtable reads are disabled.
+    # roles for the second soak; clickhouse-only never calls Bigtable.
     analytics_read_mode: str = "bigtable"
     analytics_dual_read_grace_seconds: int = 30
     analytics_dual_read_started_at: str = ""
+    analytics_clickhouse_primary_started_at: str = ""
     # Stage 1 live analytics outbox. This is intentionally off by default and
     # must remain off until the shadow ingester and reconciler are observed.
     analytics_outbox_enabled: bool = False
@@ -356,9 +362,15 @@ class Settings(BaseSettings):
             raise ValueError(
                 "TR_REQUEST_RECORD_WRITE_MODE must be 'legacy' or 'typed'"
             )
-        if self.analytics_read_mode not in {"bigtable", "dual", "clickhouse"}:
+        if self.analytics_read_mode not in {
+            "bigtable",
+            "dual",
+            "clickhouse",
+            "clickhouse-only",
+        }:
             raise ValueError(
-                "TR_ANALYTICS_READ_MODE must be bigtable, dual, or clickhouse"
+                "TR_ANALYTICS_READ_MODE must be bigtable, dual, clickhouse, "
+                "or clickhouse-only"
             )
         if self.analytics_dual_read_grace_seconds < 0:
             raise ValueError("TR_ANALYTICS_DUAL_READ_GRACE_SECONDS cannot be negative")
@@ -470,14 +482,31 @@ class Settings(BaseSettings):
         if self.bootstrap_management_key:
             missing.append("unset TR_BOOTSTRAP_MANAGEMENT_KEY")
         if self.storage_backend == "memory":
-            missing.append("TR_STORAGE_BACKEND=spanner-bigtable")
-        if self.storage_backend == "spanner-bigtable":
+            missing.append("TR_STORAGE_BACKEND=spanner-bigtable or spanner-clickhouse")
+        if self.storage_backend in {"spanner-bigtable", "spanner-clickhouse"}:
             if not self.spanner_instance_id:
                 missing.append("TR_SPANNER_INSTANCE_ID")
             if not self.spanner_database_id:
                 missing.append("TR_SPANNER_DATABASE_ID")
+        if self.storage_backend == "spanner-bigtable":
             if not self.bigtable_instance_id:
                 missing.append("TR_BIGTABLE_INSTANCE_ID")
+        if self.storage_backend == "spanner-clickhouse":
+            if self.analytics_read_mode != "clickhouse-only":
+                missing.append(
+                    "TR_ANALYTICS_READ_MODE=clickhouse-only with "
+                    "TR_STORAGE_BACKEND=spanner-clickhouse"
+                )
+            if not self.generation_records_enabled:
+                missing.append("TR_GENERATION_RECORDS_ENABLED=true")
+            if not self.operational_analytics_outbox_enabled:
+                missing.append("TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true")
+            if not self.analytics_outbox_enabled:
+                missing.append("TR_ANALYTICS_OUTBOX_ENABLED=true")
+            if self.bigtable_mirror_writes_enabled:
+                missing.append("TR_BIGTABLE_MIRROR_WRITES_ENABLED=false")
+            if self.request_record_write_mode != "typed":
+                missing.append("TR_REQUEST_RECORD_WRITE_MODE=typed")
         if self.analytics_read_mode != "bigtable":
             if not self.operational_analytics_clickhouse_url:
                 missing.append("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL")

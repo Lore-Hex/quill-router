@@ -140,6 +140,9 @@ class FakeSpannerDatabase:
         # catch accidental fallback writes after the typed cutover.
         self.gateway_authorizations: dict[str, dict] = {}
         self.gateway_authorization_versions: dict[str, int] = {}
+        # Metadata-only typed generation records and durable ClickHouse handoff.
+        self.generation_records: dict[str, dict] = {}
+        self.operational_analytics_outbox: list[dict] = []
         # tr_settle_outbox: PK (authorization_id, intent_kind) -> {column: value}.
         self.settle_outbox: dict[tuple, dict] = {}
         self.settle_outbox_versions: dict[tuple, int] = {}
@@ -266,6 +269,11 @@ class FakeSpannerDatabase:
                     _, authorization_id, record = op
                     self.gateway_authorizations[authorization_id] = record
                     self.gateway_authorization_versions[authorization_id] = new_version
+                elif op[0] in ("insert_generation", "upsert_generation"):
+                    _, generation_id, record = op
+                    self.generation_records[generation_id] = record
+                elif op[0] == "insert_operational_analytics_outbox":
+                    self.operational_analytics_outbox.append(dict(op[1]))
                 elif op[0] == "insert_entity_dml":  # DML INSERT into tr_entities
                     _, kind, entity_id, body = op
                     self.rows[(kind, entity_id)] = _Row(body=body, version=new_version)
@@ -736,6 +744,21 @@ class _FakeTransaction:
             record["settled"] = False
             record["terminal_at"] = None
             self.pending_writes.append(("insert_gateway_authorization", authorization_id, record))
+            return 1
+        if sql.startswith("INSERT INTO tr_generation"):
+            generation_id = str(p["generation_id"])
+            if generation_id in self.db.generation_records:
+                raise FakeAlreadyExists(generation_id)
+            self.pending_writes.append(("insert_generation", generation_id, dict(p)))
+            return 1
+        if sql.startswith("INSERT OR UPDATE INTO tr_generation"):
+            generation_id = str(p["generation_id"])
+            self.pending_writes.append(("upsert_generation", generation_id, dict(p)))
+            return 1
+        if sql.startswith("INSERT INTO tr_operational_analytics_outbox"):
+            self.pending_writes.append(
+                ("insert_operational_analytics_outbox", dict(p))
+            )
             return 1
         if sql.startswith("UPDATE tr_gateway_authorization SET settled=true, payload=@payload"):
             authorization_id = p["authorization_id"]
@@ -1237,6 +1260,9 @@ def _execute_sql(
     params: dict[str, Any],
 ) -> list[list[str]]:
     kind = params.get("kind", "")
+    if sql.startswith("SELECT payload FROM tr_generation"):
+        generation = db.generation_records.get(str(params["generation_id"]))
+        return [[str(generation["payload"])]] if generation is not None else []
     # Guarded legacy terminal_at backfill. These narrow handlers intentionally
     # assert every real predicate they model (MF6); a production SQL regression
     # must fail tests instead of being repaired by the fake's Python filtering.
@@ -1783,6 +1809,9 @@ def make_fake_store(
     *,
     ready_barrier: threading.Barrier | None = None,
     request_record_write_mode: str = "legacy",
+    operational_analytics_outbox_enabled: bool = False,
+    generation_records_enabled: bool = False,
+    bigtable_writes_enabled: bool = True,
 ) -> tuple[Any, FakeSpannerDatabase, FakeBigtableTable]:
     from trusted_router.storage_gcp import SpannerBigtableStore
     from trusted_router.storage_gcp_attribution import SpannerAcquisitionAttribution
@@ -1794,6 +1823,9 @@ def make_fake_store(
     from trusted_router.storage_gcp_io import SpannerIO
     from trusted_router.storage_gcp_keys import SpannerApiKeys
     from trusted_router.storage_gcp_oauth_codes import SpannerOAuthCodes
+    from trusted_router.storage_gcp_operational_analytics_outbox import (
+        SpannerOperationalAnalyticsOutbox,
+    )
     from trusted_router.storage_gcp_rate_limits import SpannerRateLimits
     from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
     from trusted_router.storage_gcp_verification_tokens import SpannerVerificationTokens
@@ -1808,6 +1840,8 @@ def make_fake_store(
     store._database = db
     store._bt_table = bt
     store.request_record_write_mode = request_record_write_mode
+    store._generation_records_enabled = generation_records_enabled
+    store._bigtable_writes_enabled = bigtable_writes_enabled
     from trusted_router.storage_gcp_credit_shards import CreditShardCountCache
 
     store._credit_shard_counts = CreditShardCountCache()
@@ -1825,13 +1859,22 @@ def make_fake_store(
     )
     store.api_keys = SpannerApiKeys(io)
     store.acquisition_store = SpannerAcquisitionAttribution(io)
+    store._operational_analytics_outbox = (
+        SpannerOperationalAnalyticsOutbox(db, _ParamTypes)
+        if operational_analytics_outbox_enabled
+        else None
+    )
     store.generation_store = SpannerGenerations(
         io,
         bt_table=bt,
+        param_types=_ParamTypes,
+        generation_records_enabled=generation_records_enabled,
+        bigtable_writes_enabled=bigtable_writes_enabled,
         activity_family=store.activity_family,
         benchmark_family=store.benchmark_family,
         legacy_family=store.legacy_generation_family,
         add_usage_to_key=store.api_keys.add_usage,
+        operational_analytics_outbox=store._operational_analytics_outbox,
     )
     store.byok_store = SpannerByok(io)
     store.broadcast_store = SpannerBroadcastDestinations(io)

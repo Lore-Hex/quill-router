@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh TrustedRouter public analytics snapshots every minute
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=5s
+Persistent=true
+Unit=tr-clickhouse-public-snapshots.service
+
+[Install]
+WantedBy=timers.target

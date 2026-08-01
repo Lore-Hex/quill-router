@@ -58,6 +58,14 @@ def public_benchmark_samples(
         ]
 
     per_provider = per_provider_limit or max(25, -(-limit // len(provider_slugs)))
+    balanced_reader = getattr(STORE, "provider_balanced_benchmark_samples", None)
+    if callable(balanced_reader):
+        rows = balanced_reader(
+            cutoff=cutoff,
+            per_provider_limit=per_provider,
+            limit=limit,
+        )
+        return [sample for sample in rows if not _is_video_sample(sample)][:limit]
     by_id: dict[str, ProviderBenchmarkSample] = {}
     for provider in provider_slugs:
         for sample in STORE.provider_benchmark_samples(
