@@ -42,9 +42,8 @@ gc compute ssh tr-clickhouse-1 \
       /opt/tr-clickhouse/venv/bin/python -m clickhouse.verify_archive_restore
     systemctl start tr-clickhouse-public-snapshots.service
     systemctl start tr-clickhouse-spanner-delivery.service
-    checked_at=\$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    printf '"'"'{\"checked_at\":\"%s\",\"ok\":true,\"datasets\":[\"provider_benchmark_samples\",\"activity_generations\",\"synthetic_probe_samples\",\"synthetic_status_rollups\"]}\n'"'"' \
-      \"\$checked_at\" > /var/lib/tr-clickhouse-ingest/archive-backfill-complete.json
+    PYTHONPATH=/opt/tr-clickhouse/src \
+      /opt/tr-clickhouse/venv/bin/python -m clickhouse.verify_archive_backfill
     chown tr-clickhouse-ingest:tr-clickhouse-ingest \
       /var/lib/tr-clickhouse-ingest/archive-backfill-complete.json
   '"

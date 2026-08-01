@@ -89,10 +89,29 @@ def test_spanner_delivery_matches_content_free_generation_rows() -> None:
         "mismatched": 0,
         "missing_ids": [],
         "mismatched_ids": [],
+        "mismatch_fields": {},
         "ok": True,
     }
     assert source.calls == [(start, end, 100)]
     assert clickhouse.requested_ids == [generation.id]
+
+
+def test_spanner_delivery_normalizes_integral_float_json_values() -> None:
+    generation = _generation()
+    generation.speed_tokens_per_second = 1000.0
+    actual = activity_payload(generation)
+    actual["speed_tokens_per_second"] = 1000
+
+    result = verify_delivery(
+        FakeSource([generation]),
+        FakeClickHouse({generation.id: actual}),
+        start=dt.datetime(2026, 7, 31, tzinfo=dt.UTC),
+        end=dt.datetime(2026, 8, 1, tzinfo=dt.UTC),
+        limit=100,
+    )
+
+    assert result["ok"] is True
+    assert result["mismatch_fields"] == {}
 
 
 def test_spanner_delivery_reports_missing_and_mismatched_rows() -> None:
@@ -114,6 +133,7 @@ def test_spanner_delivery_reports_missing_and_mismatched_rows() -> None:
     assert result["mismatched"] == 1
     assert result["missing_ids"] == [missing.id]
     assert result["mismatched_ids"] == [mismatched.id]
+    assert result["mismatch_fields"] == {"total_cost_microdollars": 1}
 
 
 def test_spanner_delivery_allows_an_empty_quiet_window() -> None:

@@ -14,8 +14,10 @@ from clickhouse.archive_daily import (
     SourceFingerprint,
     _combine_parts,
     _days_to_archive,
+    _row_hash_expression,
     archive_day,
 )
+from clickhouse.verify_archive_backfill import verify_archive_backfill
 from clickhouse.verify_archive_restore import verify_archived_day
 
 
@@ -225,6 +227,19 @@ def test_every_bounded_analytics_dataset_has_an_archive_schema() -> None:
         assert spec.time_column in spec.columns
         assert spec.shard_column in spec.columns
         assert "ingest_version" not in spec.columns
+    assert "updated_at" not in DATASETS["synthetic_status_rollups"].columns
+
+
+def test_rollup_archive_fingerprint_sorts_unordered_map_columns() -> None:
+    expression = _row_hash_expression(DATASETS["synthetic_status_rollups"].columns)
+
+    assert "mapSort(latency_histogram)" in expression
+    assert "mapSort(error_counts)" in expression
+    assert "mapSort(id)" not in expression
+    assert (
+        "toUnixTimestamp64Milli(toDateTime64(period_start, 3, 'UTC'))"
+        in expression
+    )
 
 
 def test_operational_dataset_archive_round_trips_through_restore_verifier() -> None:
@@ -287,4 +302,78 @@ def test_restore_drill_rejects_pointer_manifest_identity_mismatch() -> None:
             dataset="synthetic_status_rollups",
             day=day,
             verifier=exporter.verify_part,
+        )
+
+
+class _BackfillExporter:
+    def __init__(self, first: dt.date, fingerprints: dict[dt.date, SourceFingerprint]) -> None:
+        self.first = first
+        self.fingerprints = fingerprints
+
+    def earliest_day(self) -> dt.date:
+        return self.first
+
+    def source_fingerprint(self, day: dt.date) -> SourceFingerprint:
+        return self.fingerprints[day]
+
+
+def _restore_result(path: Path, *, now: dt.datetime) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "checked_at": now.isoformat().replace("+00:00", "Z"),
+                "ok": True,
+                "datasets": [{"dataset": dataset} for dataset in DATASETS],
+            }
+        )
+    )
+
+
+def test_archive_backfill_marker_requires_current_pointer_and_manifest(
+    tmp_path: Path,
+) -> None:
+    now = dt.datetime(2026, 7, 3, tzinfo=dt.UTC)
+    day = dt.date(2026, 7, 2)
+    fingerprint = _fingerprint()
+    store = MemoryStore()
+    exporters: dict[str, _BackfillExporter] = {}
+    for dataset in DATASETS:
+        exporter = FakeExporter(fingerprint)
+        archive_day(exporter, store, day, dataset=dataset)
+        exporters[dataset] = _BackfillExporter(day, {day: fingerprint})
+    restore = tmp_path / "restore.json"
+    _restore_result(restore, now=now)
+
+    result = verify_archive_backfill(
+        exporters,
+        store,
+        now=now,
+        restore_result=restore,
+    )
+
+    assert result["ok"] is True
+    assert set(result["coverage"]) == set(DATASETS)
+    assert all(item["days"] == 1 for item in result["coverage"].values())
+
+
+def test_archive_backfill_marker_rejects_stale_pointer(tmp_path: Path) -> None:
+    now = dt.datetime(2026, 7, 3, tzinfo=dt.UTC)
+    day = dt.date(2026, 7, 2)
+    original = _fingerprint()
+    changed = _fingerprint(rows=8, hash_sum=99, hash_xor=31)
+    store = MemoryStore()
+    exporters: dict[str, _BackfillExporter] = {}
+    for dataset in DATASETS:
+        archive_day(FakeExporter(original), store, day, dataset=dataset)
+        fingerprints = {day: changed if dataset == "activity_generations" else original}
+        exporters[dataset] = _BackfillExporter(day, fingerprints)
+    restore = tmp_path / "restore.json"
+    _restore_result(restore, now=now)
+
+    with pytest.raises(RuntimeError, match="pointer is stale"):
+        verify_archive_backfill(
+            exporters,
+            store,
+            now=now,
+            restore_result=restore,
         )

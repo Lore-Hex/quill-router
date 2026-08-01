@@ -137,6 +137,8 @@ def test_retirement_preparation_backfills_and_restore_verifies_every_dataset() -
     assert "clickhouse_operational_analytics.sh" in script
     assert "clickhouse.archive_daily --backfill" in script
     assert "clickhouse.verify_archive_restore" in script
+    assert "clickhouse.verify_archive_backfill" in script
+    assert "printf" not in script
     assert "clickhouse.verify_spanner_delivery" not in script
     assert "tr-clickhouse-spanner-delivery.service" in script
     assert "would not change production read mode" in script

@@ -1,16 +1,35 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from clickhouse.backfill_generation_records import _iter_recent
 from tests.fakes.spanner import make_fake_store
 from trusted_router.storage import CreditAccount, create_store
 from trusted_router.storage_gcp_authorize import AuthorizeOutcome
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
 from trusted_router.storage_models import Generation
+
+
+class _CapturingBigtableTable:
+    def __init__(self) -> None:
+        self.filter: Any = None
+
+    def read_rows(self, **kwargs: Any) -> list[Any]:
+        self.filter = kwargs["filter_"]
+        return []
+
+
+def test_generation_backfill_uses_sdk_timestamp_range_object() -> None:
+    table = _CapturingBigtableTable()
+    cutoff = dt.datetime(2026, 7, 1, tzinfo=dt.UTC)
+
+    assert list(_iter_recent(table, cutoff=cutoff)) == []
+    assert table.filter.filters[0].range_.start == cutoff
 
 
 def _seed_credit(store: Any, workspace_id: str, total: int = 5_000_000) -> None:
