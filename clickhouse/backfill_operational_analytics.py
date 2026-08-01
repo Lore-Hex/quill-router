@@ -116,10 +116,15 @@ def _created_at(value: str) -> dt.datetime:
     return parsed.astimezone(dt.UTC)
 
 
-def iter_activity_events(table: Any) -> Iterator[CanonicalOperationalEvent]:
+def iter_activity_events(
+    table: Any,
+    *,
+    limit: int | None = None,
+) -> Iterator[CanonicalOperationalEvent]:
     rows = table.read_rows(
         start_key=b"ws_recent#",
         end_key=b"ws_recent#~",
+        limit=limit,
         filter_=CellsColumnLimitFilter(1),
     )
     for row in rows:
@@ -137,10 +142,15 @@ def iter_activity_events(table: Any) -> Iterator[CanonicalOperationalEvent]:
         )
 
 
-def iter_synthetic_events(table: Any) -> Iterator[CanonicalOperationalEvent]:
+def iter_synthetic_events(
+    table: Any,
+    *,
+    limit: int | None = None,
+) -> Iterator[CanonicalOperationalEvent]:
     rows = table.read_rows(
         start_key=b"synthetic_recent#",
         end_key=b"synthetic_recent#~",
+        limit=limit,
         filter_=CellsColumnLimitFilter(1),
     )
     for row in rows:
@@ -218,9 +228,15 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--batch", type=int, default=5000)
+    parser.add_argument("--recent-limit", type=int)
+    parser.add_argument("--skip-activity", action="store_true")
+    parser.add_argument("--skip-synthetic", action="store_true")
+    parser.add_argument("--skip-rollups", action="store_true")
     args = parser.parse_args()
     if args.batch < 1:
         raise SystemExit("--batch must be positive")
+    if args.recent_limit is not None and args.recent_limit < 1:
+        raise SystemExit("--recent-limit must be positive")
 
     table = (
         bigtable.Client(project=PROJECT, admin=False)
@@ -239,21 +255,28 @@ def main() -> int:
     )
     counts = {"activity": 0, "synthetic": 0, "rollup": 0}
 
-    for kind, events in (
-        ("activity", iter_activity_events(table)),
-        ("synthetic", iter_synthetic_events(table)),
-    ):
+    sources = []
+    if not args.skip_activity:
+        sources.append(
+            ("activity", iter_activity_events(table, limit=args.recent_limit))
+        )
+    if not args.skip_synthetic:
+        sources.append(
+            ("synthetic", iter_synthetic_events(table, limit=args.recent_limit))
+        )
+    for kind, events in sources:
         for batch in _batches(events, args.batch):
             counts[kind] += len(batch)
             if writer is not None:
                 writer.insert(batch)
             print(f"{kind}: {counts[kind]} rows", file=sys.stderr, flush=True)
 
-    for rollup_batch in _batches(iter_rollups(table), args.batch):
-        counts["rollup"] += len(rollup_batch)
-        if clickhouse is not None:
-            insert_rollups(clickhouse, rollup_batch)
-        print(f"rollup: {counts['rollup']} rows", file=sys.stderr, flush=True)
+    if not args.skip_rollups:
+        for rollup_batch in _batches(iter_rollups(table), args.batch):
+            counts["rollup"] += len(rollup_batch)
+            if clickhouse is not None:
+                insert_rollups(clickhouse, rollup_batch)
+            print(f"rollup: {counts['rollup']} rows", file=sys.stderr, flush=True)
 
     result: dict[str, Any] = {"mode": "apply" if args.apply else "dry-run", **counts}
     if clickhouse is not None:

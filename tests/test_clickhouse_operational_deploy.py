@@ -39,6 +39,20 @@ def test_operational_deploy_backfills_before_starting_live_ingest() -> None:
     assert backfill < start
     assert "SYSTEM SYNC REPLICA" in script
     assert "clickhouse_replicate_rollups.sh" in script
+    assert "clickhouse_operational_analytics_finalize.sh --apply" in script
+    assert "systemctl start tr-clickhouse-operational-parity.service" not in script
+
+
+def test_operational_finalize_requires_live_outbox_before_closing_gap() -> None:
+    script = (
+        ROOT / "scripts/deploy/clickhouse_operational_analytics_finalize.sh"
+    ).read_text()
+    assert "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED" in script
+    assert "--skip-synthetic --skip-rollups" in script
+    assert "--recent-limit 20000 --skip-activity --skip-rollups" in script
+    replay = script.index("replaying activity after the outbox producer is live")
+    parity = script.index("systemctl start tr-clickhouse-operational-parity.service")
+    assert replay < parity
 
 
 def test_control_reader_is_private_read_only_and_cannot_read_secrets() -> None:

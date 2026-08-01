@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import struct
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -63,7 +64,17 @@ def _parse(cls: type[T], payload: dict[str, Any] | None) -> T | None:
 
 def _iso(value: Any) -> str:
     text = str(value).replace(" ", "T")
-    return text if text.endswith("Z") else text + "Z"
+    try:
+        parsed = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return text if text.endswith("Z") else text + "Z"
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.UTC)
+    return (
+        parsed.astimezone(dt.UTC)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def _canonical(payload: dict[str, Any], *, surface: str) -> str:
@@ -83,6 +94,11 @@ def _canonical(payload: dict[str, Any], *, surface: str) -> str:
                 payload[field] = bool(payload[field])
     if surface == "rollup" and payload.get("target_region") is None:
         payload["target_region"] = ""
+    if surface == "benchmark" and payload.get("speed_tokens_per_second") is not None:
+        payload["speed_tokens_per_second"] = struct.unpack(
+            "!f",
+            struct.pack("!f", float(payload["speed_tokens_per_second"])),
+        )[0]
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
     ).hexdigest()
@@ -123,7 +139,44 @@ def _clickhouse_rows(
     return rows
 
 
-def _source_rows(table: Any, *, surface: str, limit: int) -> dict[str, dict[str, Any]]:
+def _stable_source_row(
+    payload: dict[str, Any],
+    *,
+    surface: str,
+    cutoff: dt.datetime,
+) -> bool:
+    field = "period_start" if surface == "rollup" else "created_at"
+    value = payload.get(field)
+    if not value:
+        return False
+    try:
+        parsed = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.UTC)
+    parsed = parsed.astimezone(dt.UTC)
+    if surface != "rollup":
+        return parsed <= cutoff
+    period = str(payload.get("period") or "")
+    if period == "hour":
+        period_end = parsed + dt.timedelta(hours=1)
+    elif period == "day":
+        period_end = parsed + dt.timedelta(days=1)
+    elif period == "month":
+        period_end = (parsed.replace(day=28) + dt.timedelta(days=4)).replace(day=1)
+    else:
+        return False
+    return period_end <= cutoff
+
+
+def _source_rows(
+    table: Any,
+    *,
+    surface: str,
+    limit: int,
+    grace_seconds: int = 0,
+) -> dict[str, dict[str, Any]]:
     config = {
         "benchmark": (b"benchmark_recent#", ("benchmark", "m")),
         "activity": (b"ws_recent#", ("activity", "m")),
@@ -134,10 +187,11 @@ def _source_rows(table: Any, *, surface: str, limit: int) -> dict[str, dict[str,
     rows = table.read_rows(
         start_key=prefix,
         end_key=prefix + b"~",
-        limit=limit,
+        limit=max(limit * 2, limit + 1000),
         filter_=CellsColumnLimitFilter(1),
     )
     result: dict[str, dict[str, Any]] = {}
+    cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=max(0, grace_seconds))
     for row in rows:
         raw = _body(row, families)
         if surface == "benchmark":
@@ -145,7 +199,11 @@ def _source_rows(table: Any, *, surface: str, limit: int) -> dict[str, dict[str,
             if benchmark_sample is None:
                 continue
             normalized = normalise_benchmark(dataclasses.asdict(benchmark_sample))
-            if normalized is not None:
+            if normalized is not None and _stable_source_row(
+                normalized,
+                surface=surface,
+                cutoff=cutoff,
+            ):
                 result[benchmark_sample.id] = normalized
         elif surface == "activity":
             generation = _parse(Generation, raw)
@@ -161,15 +219,22 @@ def _source_rows(table: Any, *, surface: str, limit: int) -> dict[str, dict[str,
                 )
             )
             event.row.pop("ingest_version", None)
-            result[generation.id] = event.row
+            if _stable_source_row(event.row, surface=surface, cutoff=cutoff):
+                result[generation.id] = event.row
         elif surface == "synthetic":
             synthetic_sample = _parse(SyntheticProbeSample, raw)
             if synthetic_sample is not None:
-                result[synthetic_sample.id] = synthetic_payload(synthetic_sample)
+                payload = synthetic_payload(synthetic_sample)
+                if _stable_source_row(payload, surface=surface, cutoff=cutoff):
+                    result[synthetic_sample.id] = payload
         else:
             rollup = _parse(SyntheticRollup, raw)
             if rollup is not None:
-                result[rollup.id] = dataclasses.asdict(rollup)
+                payload = dataclasses.asdict(rollup)
+                if _stable_source_row(payload, surface=surface, cutoff=cutoff):
+                    result[rollup.id] = payload
+        if len(result) >= limit:
+            break
     return result
 
 
@@ -179,6 +244,7 @@ def compare_surface(
     *,
     surface: str,
     limit: int,
+    grace_seconds: int = 0,
 ) -> dict[str, Any]:
     destinations = {
         "benchmark": ("provider_benchmark_samples", "id"),
@@ -186,7 +252,12 @@ def compare_surface(
         "synthetic": ("synthetic_probe_samples", "id"),
         "rollup": ("synthetic_status_rollups", "id"),
     }
-    source = _source_rows(table, surface=surface, limit=limit)
+    source = _source_rows(
+        table,
+        surface=surface,
+        limit=limit,
+        grace_seconds=grace_seconds,
+    )
     ch_table, id_column = destinations[surface]
     destination = _clickhouse_rows(
         clickhouse,
@@ -238,6 +309,7 @@ def _write_history(path: Path, result: dict[str, Any]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=5000)
+    parser.add_argument("--grace-seconds", type=int, default=120)
     parser.add_argument(
         "--history-file",
         default="/var/lib/tr-clickhouse-ingest/operational-parity.jsonl",
@@ -245,6 +317,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.limit < 1:
         raise SystemExit("--limit must be positive")
+    if args.grace_seconds < 0:
+        raise SystemExit("--grace-seconds cannot be negative")
     password = os.environ.get("CH_PASSWORD", "")
     if not password:
         raise SystemExit("CH_PASSWORD is required")
@@ -260,6 +334,7 @@ def main() -> int:
             table,
             surface=surface,
             limit=args.limit,
+            grace_seconds=args.grace_seconds,
         )
         for surface in ("benchmark", "activity", "synthetic", "rollup")
     }

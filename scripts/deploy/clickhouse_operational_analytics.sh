@@ -173,7 +173,7 @@ for index in 0 1 2; do
     "${SCRIPT_DIR}/clickhouse_control_reader.sh"
 done
 
-node_ssh 0 --command="sudo systemctl start tr-clickhouse-operational-ingest.service tr-clickhouse-synthetic-rollup.timer tr-clickhouse-operational-parity.timer"
-node_ssh 0 --command="sudo systemctl start tr-clickhouse-operational-parity.service"
+node_ssh 0 --command="sudo systemctl start tr-clickhouse-operational-ingest.service"
 
-log "operational analytics expand phase is healthy; Bigtable is still authoritative"
+log "operational analytics infrastructure is ready; Bigtable is still authoritative"
+log "deploy the operational outbox producer, then run clickhouse_operational_analytics_finalize.sh --apply"
