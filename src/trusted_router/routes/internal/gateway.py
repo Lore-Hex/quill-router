@@ -133,6 +133,11 @@ _SETTLE_REPAIR_FIELDS = frozenset(
         "app_categories",
         "route_type",
         "additional_cost_microdollars",
+        "video_input_mode",
+        "video_duration_seconds",
+        "video_resolution",
+        "video_aspect_ratio",
+        "video_generate_audio",
     }
 )
 

@@ -116,6 +116,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/benchmarks",
     "/rankings",
     "/leaderboard",
+    "/leaderboard/video",
     "/status",
     "/security",
     "/eu",
@@ -897,8 +898,9 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         template="public/video.html",
         title="Video Generation API",
         description=(
-            "Generate Seedance, LTX, Gemini Omni, and MiniMax Hailuo 3 video "
-            "through the attested TrustedRouter API with exact quoted billing."
+            "Generate Seedance, Veo, Sora, Runway, Kling, Wan, Vidu, PixVerse, "
+            "LTX, Gemini Omni, and Hailuo 3 video through the attested "
+            "TrustedRouter API with exact quoted billing."
         ),
     ),
     "docs/agent-setup": PublicPage(
@@ -1963,6 +1965,51 @@ def public_leaderboard_html(settings: Settings, snapshot: dict[str, object]) -> 
     )
 
 
+def public_video_leaderboard_html(settings: Settings, snapshot: dict[str, object]) -> str:
+    return (
+        _env()
+        .get_template("public/video_leaderboard.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/leaderboard/video",
+            title="AI Video Model Speed & Cost Leaderboard | TrustedRouter",
+            heading="Video generation performance",
+            description=(
+                "Measured completion time, reliability, and cost for asynchronous "
+                "video models served directly through the attested TrustedRouter gateway."
+            ),
+            page_kind="video-leaderboard",
+            snapshot=snapshot,
+            json_ld_blob=_json_ld_graph(
+                _breadcrumb_node(
+                    settings,
+                    (
+                        ("Home", "/"),
+                        ("Leaderboard", "/leaderboard"),
+                        ("Video", "/leaderboard/video"),
+                    ),
+                ),
+                _dataset_node(
+                    name="TrustedRouter AI video model leaderboard",
+                    description=(
+                        "Metadata-only measurements for video completion time, "
+                        "success rate, and cost per generated second."
+                    ),
+                    url=f"https://{settings.trusted_domain}/leaderboard/video",
+                    keywords=(
+                        "AI video generation",
+                        "video model latency",
+                        "video generation pricing",
+                    ),
+                ),
+            ),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
+    )
+
+
 def public_rankings_html(settings: Settings) -> str:
     test_mode = settings.environment == "test"
     return (
@@ -2607,7 +2654,7 @@ def llms_txt(settings: Settings) -> str:
         "## Catalog",
         f"- Public model pages: {model_count}",
         f"- Provider pages: {provider_count}",
-        "- Prepaid pricing is provider cost + 5%, with a $0.01 per million token floor and no subscription.",
+        "- Text and embedding prepaid pricing is provider cost + 5%, with a $0.01 per million token floor. Video generation is the direct provider quote + 20%. There is no subscription.",
         (
             "- Model pages include providers, pricing, performance, uptime, AI IQ links, "
             "API quickstarts, and benchmark links."
