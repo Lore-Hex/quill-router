@@ -22,6 +22,8 @@ from clickhouse.ingest_operational_outbox import (
     OperationalOutboxRow,
     normalise_operational_event,
 )
+from clickhouse.rollup_synthetic import build_raw_rollups, complete_window_rollups
+from trusted_router.storage_gcp_codec import reverse_time_key
 from trusted_router.storage_gcp_operational_analytics_outbox import (
     activity_payload,
     synthetic_payload,
@@ -30,7 +32,6 @@ from trusted_router.storage_models import (
     Generation,
     ProviderBenchmarkSample,
     SyntheticProbeSample,
-    SyntheticRollup,
 )
 
 PROJECT = "quill-cloud-proxy"
@@ -177,11 +178,16 @@ def _source_rows(
     limit: int,
     grace_seconds: int = 0,
 ) -> dict[str, dict[str, Any]]:
+    if surface == "rollup":
+        return _source_rollups_from_raw(
+            table,
+            limit=limit,
+            grace_seconds=max(grace_seconds, 600),
+        )
     config = {
         "benchmark": (b"benchmark_recent#", ("benchmark", "m")),
         "activity": (b"ws_recent#", ("activity", "m")),
         "synthetic": (b"synthetic_recent#", ("synthetic", "m")),
-        "rollup": (b"synthetic_rollup#", ("rollup", "m")),
     }
     prefix, families = config[surface]
     rows = table.read_rows(
@@ -227,15 +233,47 @@ def _source_rows(
                 payload = synthetic_payload(synthetic_sample)
                 if _stable_source_row(payload, surface=surface, cutoff=cutoff):
                     result[synthetic_sample.id] = payload
-        else:
-            rollup = _parse(SyntheticRollup, raw)
-            if rollup is not None:
-                payload = dataclasses.asdict(rollup)
-                if _stable_source_row(payload, surface=surface, cutoff=cutoff):
-                    result[rollup.id] = payload
         if len(result) >= limit:
             break
     return result
+
+
+def _source_rollups_from_raw(
+    table: Any,
+    *,
+    limit: int,
+    grace_seconds: int,
+) -> dict[str, dict[str, Any]]:
+    now = dt.datetime.now(dt.UTC)
+    raw_start = now - dt.timedelta(days=14)
+    cutoff = now - dt.timedelta(seconds=max(0, grace_seconds))
+    start_key = f"synthetic_recent#{reverse_time_key(cutoff.isoformat())}#".encode()
+    end_key = f"synthetic_recent#{reverse_time_key(raw_start.isoformat())}#~".encode()
+    rows = table.read_rows(
+        start_key=start_key,
+        end_key=end_key,
+        filter_=CellsColumnLimitFilter(1),
+    )
+    samples: list[SyntheticProbeSample] = []
+    for row in rows:
+        sample = _parse(SyntheticProbeSample, _body(row, ("synthetic", "m")))
+        if sample is not None:
+            samples.append(sample)
+    rollups = complete_window_rollups(
+        build_raw_rollups(samples, periods={"hour", "day"}),
+        raw_start=raw_start,
+    )
+    stable = [
+        rollup
+        for rollup in rollups
+        if _stable_source_row(
+            dataclasses.asdict(rollup),
+            surface="rollup",
+            cutoff=cutoff,
+        )
+    ]
+    stable.sort(key=lambda item: (item.period_start, item.id), reverse=True)
+    return {rollup.id: dataclasses.asdict(rollup) for rollup in stable[:limit]}
 
 
 def compare_surface(

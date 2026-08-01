@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
+import json
+from types import SimpleNamespace
 
-from clickhouse.verify_operational_parity import _canonical, _stable_source_row
+from clickhouse.verify_operational_parity import (
+    _canonical,
+    _source_rollups_from_raw,
+    _stable_source_row,
+)
+from trusted_router.storage_models import SyntheticProbeSample
 
 
 def test_activity_parity_uses_clickhouse_millisecond_precision() -> None:
@@ -88,3 +96,44 @@ def test_parity_excludes_incomplete_rollup_periods() -> None:
         surface="rollup",
         cutoff=cutoff,
     )
+
+
+def test_rollup_parity_rebuilds_from_bounded_raw_bigtable_samples() -> None:
+    created_at = (dt.datetime.now(dt.UTC) - dt.timedelta(days=1)).replace(
+        minute=15,
+        second=0,
+        microsecond=0,
+    )
+    sample = SyntheticProbeSample(
+        id="syn_raw_one",
+        probe_type="tls_health",
+        target="canonical",
+        target_url="https://api.trustedrouter.com/health",
+        monitor_region="us-central1",
+        status="up",
+        target_region="us-central1",
+        latency_milliseconds=20,
+        ttfb_milliseconds=19,
+        created_at=created_at.isoformat().replace("+00:00", "Z"),
+    )
+    cell = SimpleNamespace(
+        value=json.dumps(dataclasses.asdict(sample)).encode("utf-8")
+    )
+    row = SimpleNamespace(cells={"synthetic": {b"body": [cell]}})
+
+    class Table:
+        start_key: bytes = b""
+        end_key: bytes = b""
+
+        def read_rows(self, *, start_key: bytes, end_key: bytes, filter_: object) -> list[object]:
+            self.start_key = start_key
+            self.end_key = end_key
+            return [row]
+
+    table = Table()
+    rollups = _source_rollups_from_raw(table, limit=10, grace_seconds=600)
+    assert rollups
+    assert table.start_key.startswith(b"synthetic_recent#")
+    assert table.end_key.startswith(b"synthetic_recent#")
+    assert table.start_key < table.end_key
+    assert all(payload["sample_count"] == 1 for payload in rollups.values())
