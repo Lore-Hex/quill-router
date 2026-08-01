@@ -22,6 +22,7 @@ from trusted_router.synthetic.route_health import (
     evaluate_route_health,
     report_image_generation_failures,
     report_route_health,
+    report_video_generation_failures,
 )
 from trusted_router.types import ErrorType
 
@@ -49,6 +50,7 @@ def register(router: APIRouter) -> None:
         # shared event loop; still awaited so `recorded` stays truthful.
         await run_in_threadpool(_record_probe_samples, samples)
         await run_in_threadpool(report_image_generation_failures, samples)
+        await run_in_threadpool(report_video_generation_failures, samples)
         return {"data": {"recorded": len(samples)}}
 
     @router.post("/internal/synthetic/benchmark")

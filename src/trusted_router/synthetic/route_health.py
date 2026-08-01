@@ -182,6 +182,36 @@ def report_image_generation_failures(samples: list[SyntheticProbeSample]) -> Non
             sentry_sdk.capture_message(message, level="error")
 
 
+def report_video_generation_failures(samples: list[SyntheticProbeSample]) -> None:
+    """Emit at most one grouped alert for each failed daily video canary."""
+    failures = [
+        sample
+        for sample in samples
+        if sample.probe_type == "video_generation" and sample.status != "up"
+    ]
+    if not failures:
+        return
+    try:
+        import sentry_sdk
+    except ImportError:
+        return
+
+    for sample in failures:
+        provider = sample.selected_provider or sample.provider or "unknown"
+        model = sample.selected_model or sample.model or "unknown"
+        error_type = sample.error_type or "unknown"
+        message = (
+            f"video-generation-canary: {provider}/{model} failed "
+            f"({error_type}, HTTP {sample.http_status or 'none'})"
+        )
+        with sentry_sdk.push_scope() as scope:
+            scope.fingerprint = ["video-generation-canary", provider, model]
+            scope.set_tag("route_provider", provider)
+            scope.set_tag("route_model", model)
+            scope.set_tag("probe_error_type", error_type)
+            sentry_sdk.capture_message(message, level="error")
+
+
 def _parse_created_at(value: str) -> dt.datetime | None:
     try:
         parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))

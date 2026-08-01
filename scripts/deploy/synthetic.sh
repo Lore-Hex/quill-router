@@ -275,3 +275,45 @@ upsert_scheduler \
   "$image_job_name" \
   "$image_region" \
   "17 */6 * * *"
+
+# Video generation is the most expensive synthetic. Run exactly one minimal
+# 1-second, 480p, no-audio direct xAI job per day. At the launch quote this is
+# $0.06/day including TrustedRouter's 20% fee ($1.80 per 30-day month).
+# max-retries=0 plus a date-scoped idempotency key prevents duplicate billing.
+video_region="us-central1"
+video_ingest_base="https://${SERVICE}-${PROJECT_NUMBER}.${video_region}.run.app"
+video_job_name="trusted-router-video-generation-${video_region}"
+video_scheduler_name="${video_job_name}-daily"
+video_env_vars=(
+  "${BASE_ENV_VARS[@]}"
+  "TR_SYNTHETIC_MONITOR_REGION=${video_region}"
+  "TR_SYNTHETIC_INGEST_URL=${video_ingest_base}/v1/internal/synthetic/samples"
+  "TR_SYNTHETIC_VIDEO_MODEL=x-ai/grok-imagine-video"
+  "TR_SYNTHETIC_VIDEO_PROVIDER=grok"
+  "TR_SYNTHETIC_VIDEO_DURATION_SECONDS=1"
+  "TR_SYNTHETIC_VIDEO_RESOLUTION=480p"
+  "TR_SYNTHETIC_VIDEO_TIMEOUT_SECONDS=300"
+  "TR_SYNTHETIC_VIDEO_POLL_INTERVAL_SECONDS=5"
+)
+video_set_env_vars="$(IFS='|'; echo "^|^${video_env_vars[*]}")"
+
+log "deploying isolated daily video-generation Cloud Run job ${video_job_name}"
+gc run jobs deploy "$video_job_name" \
+  --region "$video_region" \
+  --image "$IMAGE" \
+  --command="/app/.venv/bin/python" \
+  --args="-m,trusted_router.synthetic.video_generation" \
+  --service-account "$RUN_SERVICE_ACCOUNT" \
+  --set-env-vars "$video_set_env_vars" \
+  --update-secrets "$UPDATE_SECRETS" \
+  --max-retries 0 \
+  --task-timeout 600s \
+  --cpu 1 \
+  --memory 512Mi \
+  --quiet >/dev/null
+
+upsert_scheduler \
+  "$video_scheduler_name" \
+  "$video_job_name" \
+  "$video_region" \
+  "41 9 * * *"

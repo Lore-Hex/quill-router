@@ -33,6 +33,10 @@ from trusted_router.types import UsageType
 DEFAULT_SYNTHETIC_BILLING_CONCURRENCY = 2
 IMAGE_GENERATION_MODEL = "google/gemini-3.1-flash-image-preview"
 IMAGE_GENERATION_PROVIDER = "google-ai-studio"
+VIDEO_GENERATION_MODEL = "x-ai/grok-imagine-video"
+VIDEO_GENERATION_PROVIDER = "grok"
+VIDEO_GENERATION_DURATION_SECONDS = 1
+VIDEO_GENERATION_RESOLUTION = "480p"
 _IMAGE_CANARY_PROMPT = (
     "Generate and return an actual square image now, not a textual description. "
     "Show one solid red circle centered on a white background."
@@ -41,6 +45,8 @@ _MAX_IMAGE_DATA_URL_CHARACTERS = 32 * 1024 * 1024
 _MIN_VALID_IMAGE_BYTES = 1024
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _PNG_END = b"\x00\x00\x00\x00IEND\xaeB`\x82"
+_MIN_VALID_VIDEO_BYTES = 1024
+_MAX_SYNTHETIC_VIDEO_BYTES = 256 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -788,6 +794,223 @@ async def image_generation_probe(
             model=model,
             output_match=False,
         )
+
+
+async def video_generation_probe(
+    client: httpx.AsyncClient,
+    target: SyntheticTarget,
+    *,
+    monitor_region: str,
+    api_key: str,
+    idempotency_key: str,
+    model: str = VIDEO_GENERATION_MODEL,
+    provider: str = VIDEO_GENERATION_PROVIDER,
+    duration_seconds: int = VIDEO_GENERATION_DURATION_SECONDS,
+    resolution: str = VIDEO_GENERATION_RESOLUTION,
+    poll_interval_seconds: float = 5.0,
+    total_timeout_seconds: float = 300.0,
+) -> SyntheticProbeSample:
+    """Generate, validate, and discard one minimal video without retaining content."""
+    url = _api_url(target.api_base_url, "/videos")
+    headers = {
+        **_auth_headers(api_key),
+        "idempotency-key": idempotency_key,
+    }
+    body = {
+        "model": model,
+        "prompt": "A white dot moves once across a plain black background.",
+        "duration": duration_seconds,
+        "resolution": resolution,
+        "aspect_ratio": "16:9",
+        "generate_audio": False,
+        "provider": {"only": [provider], "allow_fallbacks": False},
+    }
+    started = time.perf_counter()
+    try:
+        async with asyncio.timeout(total_timeout_seconds):
+            response = await client.post(url, json=body, headers=headers)
+            payload = _json_object(response)
+            if response.status_code not in {200, 202}:
+                return _video_sample(
+                    target,
+                    monitor_region=monitor_region,
+                    target_url=url,
+                    started=started,
+                    status="down",
+                    http_status=response.status_code,
+                    error_type="video_generation_http_error",
+                    provider=provider,
+                    model=model,
+                )
+            job_id = payload.get("id")
+            if not isinstance(job_id, str) or not job_id.startswith("job-"):
+                return _video_sample(
+                    target,
+                    monitor_region=monitor_region,
+                    target_url=url,
+                    started=started,
+                    status="down",
+                    http_status=response.status_code,
+                    error_type="invalid_video_job",
+                    provider=provider,
+                    model=model,
+                )
+
+            status_payload = payload
+            polling_url = payload.get("polling_url")
+            if not isinstance(polling_url, str) or not polling_url:
+                polling_url = f"/v1/videos/{job_id}"
+            polling_url = _root_url(target.api_base_url, polling_url)
+            while status_payload.get("status") not in {"completed", "failed"}:
+                if poll_interval_seconds:
+                    await asyncio.sleep(poll_interval_seconds)
+                status_response = await client.get(polling_url, headers=_auth_headers(api_key))
+                status_payload = _json_object(status_response)
+                if status_response.status_code != 200:
+                    return _video_sample(
+                        target,
+                        monitor_region=monitor_region,
+                        target_url=url,
+                        started=started,
+                        status="down",
+                        http_status=status_response.status_code,
+                        error_type="video_poll_http_error",
+                        provider=provider,
+                        model=model,
+                    )
+
+            generation_id, cost_microdollars = _video_usage(status_payload)
+            if status_payload.get("status") != "completed":
+                return _video_sample(
+                    target,
+                    monitor_region=monitor_region,
+                    target_url=url,
+                    started=started,
+                    status="down",
+                    http_status=200,
+                    error_type="video_generation_failed",
+                    provider=provider,
+                    model=model,
+                    generation_id=generation_id,
+                    cost_microdollars=cost_microdollars,
+                )
+
+            content_url = _first_video_content_url(status_payload)
+            if content_url is None:
+                # A duplicate scheduler delivery reuses the daily idempotency
+                # key. If the first invocation already downloaded and cleaned
+                # the completed job, there is intentionally no content URL.
+                valid_video = generation_id is not None
+            else:
+                valid_video = await _validate_video_content(
+                    client,
+                    _root_url(target.api_base_url, content_url),
+                    api_key=api_key,
+                )
+            return _video_sample(
+                target,
+                monitor_region=monitor_region,
+                target_url=url,
+                started=started,
+                status="up" if valid_video else "down",
+                http_status=200,
+                error_type=None if valid_video else "invalid_video_payload",
+                provider=provider,
+                model=model,
+                generation_id=generation_id,
+                cost_microdollars=cost_microdollars,
+                output_match=valid_video,
+            )
+    except (TimeoutError, httpx.HTTPError, ValueError) as exc:
+        return _video_sample(
+            target,
+            monitor_region=monitor_region,
+            target_url=url,
+            started=started,
+            status="down",
+            error_type=exc.__class__.__name__,
+            provider=provider,
+            model=model,
+        )
+
+
+def _video_usage(payload: dict[str, Any]) -> tuple[str | None, int]:
+    generation_id = payload.get("generation_id")
+    if not isinstance(generation_id, str) or not generation_id:
+        generation_id = None
+    usage = payload.get("usage")
+    raw_cost = usage.get("cost_microdollars") if isinstance(usage, dict) else None
+    cost = raw_cost if isinstance(raw_cost, int) and not isinstance(raw_cost, bool) else 0
+    return generation_id, max(cost, 0)
+
+
+def _first_video_content_url(payload: dict[str, Any]) -> str | None:
+    urls = payload.get("unsigned_urls")
+    if not isinstance(urls, list):
+        return None
+    return next((value for value in urls if isinstance(value, str) and value), None)
+
+
+async def _validate_video_content(
+    client: httpx.AsyncClient,
+    content_url: str,
+    *,
+    api_key: str,
+) -> bool:
+    total = 0
+    prefix = bytearray()
+    async with client.stream("GET", content_url, headers=_auth_headers(api_key)) as response:
+        if response.status_code != 200:
+            await response.aread()
+            return False
+        content_type = response.headers.get("content-type", "").casefold()
+        async for chunk in response.aiter_bytes():
+            total += len(chunk)
+            if len(prefix) < 12:
+                prefix.extend(chunk[: 12 - len(prefix)])
+            if total > _MAX_SYNTHETIC_VIDEO_BYTES:
+                return False
+    return (
+        content_type.startswith("video/")
+        and total >= _MIN_VALID_VIDEO_BYTES
+        and len(prefix) >= 8
+        and bytes(prefix[4:8]) == b"ftyp"
+    )
+
+
+def _video_sample(
+    target: SyntheticTarget,
+    *,
+    monitor_region: str,
+    target_url: str,
+    started: float,
+    status: str,
+    provider: str,
+    model: str,
+    http_status: int | None = None,
+    error_type: str | None = None,
+    generation_id: str | None = None,
+    cost_microdollars: int = 0,
+    output_match: bool | None = None,
+) -> SyntheticProbeSample:
+    return _sample(
+        "video_generation",
+        target,
+        monitor_region,
+        target_url,
+        status=status,
+        latency_milliseconds=_elapsed_ms(started),
+        ttfb_milliseconds=None,
+        http_status=http_status,
+        error_type=error_type,
+        provider=provider,
+        model=model,
+        selected_provider=provider,
+        selected_model=model,
+        generation_id=generation_id,
+        cost_microdollars=cost_microdollars,
+        output_match=output_match,
+    )
 
 
 def _json_object(response: httpx.Response) -> dict[str, Any]:
