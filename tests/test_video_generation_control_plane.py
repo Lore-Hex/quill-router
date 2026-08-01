@@ -46,6 +46,8 @@ DIRECT_VIDEO_PROVIDERS = {
     "alibaba/wan-2.7": "alibaba",
     "x-ai/grok-imagine-video": "grok",
     "runway/gen-4.5": "runway",
+    "openai/sora-2": "openai",
+    "openai/sora-2-pro": "openai",
     "kling/v3-pro": "kling",
     "kling/o3-pro": "kling",
 }
@@ -95,13 +97,16 @@ def test_launch_video_catalog_is_explicit_and_credits_only() -> None:
     assert MODELS["minimax/hailuo-3"].name == "MiniMax Hailuo 3 (H3)"
 
 
-def test_sora_video_stays_on_standard_fallback_without_separate_video_key() -> None:
+def test_sora_video_authorizes_direct_openai_before_standard_fallback() -> None:
     for model_id in ("openai/sora-2", "openai/sora-2-pro"):
-        assert endpoint_for_id(f"{model_id}@openai/prepaid") is None
-        endpoint = endpoint_for_id(f"{model_id}@venice/prepaid")
-        assert endpoint is not None
-        assert endpoint_privacy_tier(endpoint) == PRIVACY_TIER_STANDARD
-        assert endpoint_stores_content(endpoint) is True
+        direct = endpoint_for_id(f"{model_id}@openai/prepaid")
+        fallback = endpoint_for_id(f"{model_id}@venice/prepaid")
+        assert direct is not None
+        assert fallback is not None
+        assert endpoint_privacy_tier(direct) == PRIVACY_TIER_STANDARD
+        assert endpoint_stores_content(direct) is True
+        assert endpoint_privacy_tier(fallback) == PRIVACY_TIER_STANDARD
+        assert endpoint_stores_content(fallback) is True
 
 
 def test_video_router_rejects_text_models_and_honors_provider_filters() -> None:

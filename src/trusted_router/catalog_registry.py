@@ -895,7 +895,7 @@ _VIDEO_MODELS: dict[str, Model] = {
     "openai/sora-2": Model(
         id="openai/sora-2",
         name="OpenAI Sora 2",
-        provider="venice",
+        provider="openai",
         context_length=2_500,
         supports_chat=False,
         supports_video=True,
@@ -907,7 +907,7 @@ _VIDEO_MODELS: dict[str, Model] = {
     "openai/sora-2-pro": Model(
         id="openai/sora-2-pro",
         name="OpenAI Sora 2 Pro",
-        provider="venice",
+        provider="openai",
         context_length=2_500,
         supports_chat=False,
         supports_video=True,
@@ -1034,6 +1034,8 @@ _DIRECT_VIDEO_UPSTREAM_IDS = {
     "alibaba/wan-2.7": ("alibaba", "wan2.7-t2v"),
     "x-ai/grok-imagine-video": ("grok", "grok-imagine-video"),
     "runway/gen-4.5": ("runway", "gen4.5"),
+    "openai/sora-2": ("openai", "sora-2"),
+    "openai/sora-2-pro": ("openai", "sora-2-pro"),
     "kling/v3-pro": ("kling", "kling-3.0"),
     "kling/o3-pro": ("kling", "kling-3.0-omni"),
 }
