@@ -1,24 +1,27 @@
 #!/usr/bin/env bash
-# Give ephemeral tr_entities kinds a real expiry (issue #334, Problem 2).
+# Give rate_limit tr_entities rows a real expiry (issue #334, Problem 2).
 #
-# Mechanism: a STORED generated column extracts the numeric unix-seconds
-# `expires_at` that rate_limit bodies already carry (their window reset epoch),
-# and a ROW DELETION POLICY deletes rows one day after that expiry. This is the
-# documented Spanner pattern for TTL on a derived timestamp.
+# Mechanism: a STORED generated column extracts the unix-seconds window reset
+# epoch that rate_limit bodies carry in `expires_at`, and a ROW DELETION POLICY
+# deletes rows one day after that expiry. Generated-column TTL is the
+# documented Spanner pattern for a derived expiration.
 #
-# Why this is safe for every other kind: the policy column is NULL unless the
-# body carries a NUMERIC expires_at. Only rate_limit writes one (an INT64
-# reset epoch); api_key / auth_session / wallet_challenge carry ISO-8601
-# STRINGS, which SAFE_CAST nulls out, and Spanner's TTL never deletes a row
-# whose policy timestamp is NULL (the same NULL-exemption semantics the
-# tr_reservation retention backfill relied on). Audited in prod 2026-08-01:
-# 386,574/386,574 rate_limit rows numeric; zero numeric rows in any other kind.
+# The column is DOUBLY scoped, and both guards are load-bearing:
+#   1. `kind = 'rate_limit'` — no other kind can EVER opt in, castable value or
+#      not. Opting in a future kind requires changing this DDL on purpose.
+#   2. JSON_QUERY, not JSON_VALUE — JSON_VALUE strips quotes, so a customer
+#      string like "20270101" (a valid ISO-basic date some writers accept)
+#      would cast to unix-seconds 1970 and make the row TTL-eligible.
+#      JSON_QUERY preserves quotes, so only a bare JSON NUMBER casts; any
+#      quoted string yields NULL, and Spanner TTL never deletes a
+#      NULL-timestamp row. Verified against prod's SQL engine 2026-08-01.
+#   SAFE.TIMESTAMP_SECONDS additionally turns a pathological out-of-range
+#   epoch into NULL (row simply never expires) instead of failing writes.
 #
-# TRAP for future kinds: writing a NUMERIC `expires_at` into an entity body
-# OPTS THAT ROW INTO DELETION one day after the epoch it names. That is the
-# intended contract — do it on purpose or use a different field name.
-#
-# Idempotent: INFORMATION_SCHEMA-guarded, safe to re-run.
+# Idempotent: INFORMATION_SCHEMA-guarded (scoped ROW_DELETION_POLICY_EXPRESSION
+# check, same pattern as migrate_request_retention.sh), safe to re-run. A
+# conflicting pre-existing policy on tr_entities aborts loudly rather than
+# stacking (Spanner allows one policy per table).
 #
 # Operational sequencing: apply only when no Cloud Run deploy is rolling and
 # prefer a low-traffic window (receipt: 2026-07-04 Aborted burst). The STORED
@@ -38,25 +41,25 @@ PROJECT_ARG=()
 
 log() { printf '%s %s\n' "[migrate_entity_ttl]" "$*"; }
 
-column_exists() {
-  local n
-  n=$(gcloud spanner databases execute-sql "$DATABASE" \
-        --instance="$INSTANCE" "${PROJECT_ARG[@]}" \
-        --sql="SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE table_name='tr_entities' AND column_name='ephemeral_expires_at'" \
-        --format='value(rows[0])' 2>/dev/null || echo 0)
-  [ "${n:-0}" != "0" ]
+sql_value() {
+  gcloud spanner databases execute-sql "$DATABASE" \
+    --instance="$INSTANCE" "${PROJECT_ARG[@]}" \
+    --sql="$1" --format='value(rows[0])' 2>/dev/null || echo ""
 }
 
-policy_exists() {
-  local ddl
-  ddl=$(gcloud spanner databases ddl describe "$DATABASE" \
-          --instance="$INSTANCE" "${PROJECT_ARG[@]}" 2>/dev/null || true)
-  printf '%s' "$ddl" | grep -q "OLDER_THAN(ephemeral_expires_at"
+column_exists() {
+  local n
+  n=$(sql_value "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE table_name='tr_entities' AND column_name='ephemeral_expires_at'")
+  [ "${n:-0}" != "0" ] && [ -n "${n}" ]
+}
+
+policy_expression() {
+  sql_value "SELECT COALESCE(ROW_DELETION_POLICY_EXPRESSION, '') FROM INFORMATION_SCHEMA.TABLES WHERE table_name='tr_entities'"
 }
 
 apply_ddl() {
   local ddl="$1"
-  log "applying: ${ddl%%(*}..."
+  log "applying: ${ddl:0:60}..."
   gcloud spanner databases ddl update "$DATABASE" \
     --instance="$INSTANCE" "${PROJECT_ARG[@]}" --ddl="$ddl"
 }
@@ -64,14 +67,24 @@ apply_ddl() {
 if column_exists; then
   log "ephemeral_expires_at exists, skip"
 else
-  apply_ddl "ALTER TABLE tr_entities ADD COLUMN ephemeral_expires_at TIMESTAMP AS (TIMESTAMP_SECONDS(SAFE_CAST(JSON_VALUE(body, '\$.expires_at') AS INT64))) STORED"
+  apply_ddl "ALTER TABLE tr_entities ADD COLUMN ephemeral_expires_at TIMESTAMP AS (CASE WHEN kind = 'rate_limit' THEN SAFE.TIMESTAMP_SECONDS(SAFE_CAST(JSON_QUERY(body, '\$.expires_at') AS INT64)) END) STORED"
 fi
 
-if policy_exists; then
+policy="$(policy_expression)"
+if printf '%s' "$policy" | grep -q "ephemeral_expires_at"; then
   log "row deletion policy exists, skip"
+elif [ -n "$policy" ]; then
+  log "ERROR: tr_entities already has a DIFFERENT row deletion policy: $policy"
+  log "Spanner allows one policy per table; refusing to replace it implicitly."
+  exit 1
 else
   apply_ddl "ALTER TABLE tr_entities ADD ROW DELETION POLICY (OLDER_THAN(ephemeral_expires_at, INTERVAL 1 DAY))"
 fi
+
+log "verify: non-NULL policy timestamps by kind (must be rate_limit ONLY)"
+gcloud spanner databases execute-sql "$DATABASE" \
+  --instance="$INSTANCE" "${PROJECT_ARG[@]}" \
+  --sql="SELECT kind, COUNT(*) AS opted_in FROM tr_entities WHERE ephemeral_expires_at IS NOT NULL GROUP BY kind"
 
 log "verify: expired-but-undeleted rate_limit rows (drops to ~0 within 72h)"
 gcloud spanner databases execute-sql "$DATABASE" \
