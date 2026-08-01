@@ -119,3 +119,23 @@ def remember_upstream_id(
     """
 
     upstream_map.setdefault(canonical_id, native_id)
+
+
+def price_aliases_for_versioned_families(
+    model_ids: set[str] | frozenset[str],
+    family_prices: dict[str, str],
+) -> dict[str, str]:
+    """Map provider-confirmed version IDs to an approved family price row.
+
+    ``family_prices`` maps a canonical model-id prefix to the provider's
+    unversioned pricing ID. The caller supplies model IDs observed from an
+    authenticated provider catalog (or the provider's own required IDs), so
+    this helper never creates speculative routes.
+    """
+
+    return {
+        model_id: source_model
+        for model_id in model_ids
+        for prefix, source_model in family_prices.items()
+        if model_id != source_model and model_id.startswith(prefix)
+    }

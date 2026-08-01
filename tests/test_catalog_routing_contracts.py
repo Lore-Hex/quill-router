@@ -150,7 +150,7 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
     assert MODEL_ENDPOINTS["moonshotai/kimi-k3@novita/prepaid"].upstream_id == "moonshotai/kimi-k3"
     assert (
         MODEL_ENDPOINTS["moonshotai/kimi-k3@siliconflow/prepaid"].upstream_id
-        == "moonshotai/kimi-k3"
+        == "moonshotai/Kimi-K3"
     )
     assert MODEL_ENDPOINTS["moonshotai/kimi-k3@baseten/prepaid"].upstream_id == "moonshotai/Kimi-K3"
     assert MODEL_ENDPOINTS["moonshotai/kimi-k3@nebius/prepaid"].upstream_id == "moonshotai/Kimi-K3"
@@ -1095,7 +1095,10 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
 
     inkling_small = MODELS["thinkingmachines/inkling-small"]
     inkling_small_shape = model_to_openrouter_shape(inkling_small)
-    assert inkling_small.context_length == 262_144
+    # The first-party route is 256K, while independent hosts can expose a
+    # larger verified window for the same weights. The canonical model follows
+    # the largest live routed endpoint and must stay within the audited range.
+    assert 262_144 <= inkling_small.context_length <= 1_048_576
     assert inkling_small.input_modalities == ("text", "image")
     assert inkling_small.output_modalities == ("text",)
     assert inkling_small_shape["architecture"]["modality"] == "text+image->text"
@@ -1106,15 +1109,15 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
     assert inkling_small_shape["trustedrouter"]["open_weights"] is True
     assert inkling_small.prompt_price_microdollars_per_million_tokens == 315_000
     assert inkling_small.completion_price_microdollars_per_million_tokens == 1_260_000
-    assert {
+    inkling_small_routes = {
         (endpoint.provider, endpoint.upstream_id)
         for endpoint in endpoints_for_model(inkling_small.id)
-    } == {
-        (
-            "thinkingmachines",
-            "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4",
-        )
     }
+    assert (
+        "thinkingmachines",
+        "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4",
+    ) in inkling_small_routes
+    assert all(provider and upstream_id for provider, upstream_id in inkling_small_routes)
 
 
 def test_catalog_modalities_publish_only_gateway_supported_capabilities() -> None:

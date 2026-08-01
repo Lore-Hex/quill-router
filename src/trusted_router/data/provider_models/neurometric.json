@@ -102,8 +102,74 @@
       "routable": true,
       "input_token_price_per_m": 162000,
       "output_token_price_per_m": 1890000
+    },
+    {
+      "display_name": "gemma-4-12B-it",
+      "title": "google/gemma-4-12b-it",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-4-12b-it",
+      "upstream_id": "google/gemma-4-12b-it",
+      "context_length": 32768,
+      "max_output_tokens": 16384,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "input_token_price_per_m": 10000,
+      "output_token_price_per_m": 120000
+    },
+    {
+      "display_name": "gemma-4-E2B-it",
+      "title": "google/gemma-4-e2b-it",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-4-e2b-it",
+      "upstream_id": "google/gemma-4-e2b-it",
+      "context_length": 4096,
+      "max_output_tokens": 2048,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "input_token_price_per_m": 20000,
+      "output_token_price_per_m": 120000
     }
   ],
-  "generated_at": "2026-07-31T12:58:56Z",
-  "model_count": 3
+  "generated_at": "2026-08-01T03:28:38Z",
+  "model_count": 5
 }
