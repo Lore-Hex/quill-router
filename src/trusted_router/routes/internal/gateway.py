@@ -92,7 +92,11 @@ from trusted_router.storage import (
     typed_billing_store,
 )
 from trusted_router.storage_custom_models import is_custom_model_id, normalize_custom_model_id
-from trusted_router.storage_models import SettleOutboxRow, TypedFinalizeResult
+from trusted_router.storage_models import (
+    SettleOutboxRow,
+    TypedFinalizeResult,
+    generation_id_for_authorization,
+)
 from trusted_router.types import ErrorType, UsageType
 
 logger = logging.getLogger(__name__)
@@ -970,13 +974,21 @@ def _settle_gateway_authorization(
     if authorization.settled:
         # No timing line for replays: they are ~one point-read and would dominate
         # the latency dataset with noise.
-        return {
-            "data": {
-                "authorization_id": authorization.id,
-                "settled": False,
-                "already_settled": True,
-            }
+        data: dict[str, Any] = {
+            "authorization_id": authorization.id,
+            "settled": False,
+            "already_settled": True,
         }
+        # A provider completion may be observed by two regional video pollers.
+        # The first settle commits billing and the generation; the replay must
+        # return that same stable ID so whichever poller updates the video job
+        # first does not lose the activity link. Do not synthesize an ID after a
+        # refund: only return it when the corresponding generation exists.
+        if success:
+            replay_generation_id = generation_id_for_authorization(authorization.id)
+            if STORE.get_generation(replay_generation_id) is not None:
+                data["generation_id"] = replay_generation_id
+        return {"data": data}
 
     if body.tags is not None:
         try:

@@ -426,6 +426,7 @@ def test_internal_gateway_authorize_and_settle_records_metadata(
     )
     assert repeat.status_code == 200
     assert repeat.json()["data"]["already_settled"] is True
+    assert repeat.json()["data"]["generation_id"] == generation_id
 
 
 def test_web_search_additional_cost_is_reserved_and_settled_exactly_once(

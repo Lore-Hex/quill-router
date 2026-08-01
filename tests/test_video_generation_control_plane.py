@@ -295,11 +295,18 @@ def test_video_job_state_is_content_free_idempotent_and_key_scoped(
             "status": "completed",
             "lease_owner": "worker-1",
             "provider_status": "COMPLETED",
-            "generation_id": "gen-video-1",
         },
     )
     assert completed.status_code == 200, completed.text
-    completed_data = completed.json()["data"]
+    assert completed.json()["data"]["generation_id"] is None
+
+    repaired = client.post(
+        f"/v1/internal/gateway/video/jobs/{stored.id}/update",
+        json={"status": "completed", "generation_id": "gen-video-1"},
+    )
+    assert repaired.status_code == 200, repaired.text
+    completed_data = repaired.json()["data"]
+    assert completed_data["generation_id"] == "gen-video-1"
     assert completed_data["content_expires_at"]
     assert completed_data["next_poll_at"] == completed_data["content_expires_at"]
 

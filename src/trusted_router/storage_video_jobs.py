@@ -110,6 +110,19 @@ class InMemoryVideoJobs:
             if lease_owner is not None and job.lease_owner not in {None, lease_owner}:
                 return job
             if job.status in {"completed", "failed"}:
+                # Two regional pollers can observe provider completion at the
+                # same time. A settlement replay may finish the job before the
+                # winning poller attaches its generation ID. Permit that one
+                # monotonic repair without reopening or otherwise mutating the
+                # terminal job.
+                if (
+                    job.status == "completed"
+                    and status == "completed"
+                    and generation_id
+                    and not job.generation_id
+                ):
+                    job.generation_id = generation_id
+                    job.updated_at = iso_now()
                 return job
             job.status = status
             job.provider_status = provider_status

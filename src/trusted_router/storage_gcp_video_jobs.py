@@ -161,6 +161,18 @@ class SpannerVideoJobs:
             if lease_owner is not None and job.lease_owner not in {None, lease_owner}:
                 return job
             if job.status in {"completed", "failed"}:
+                # Terminal state is immutable except for repairing a missing
+                # generation link after concurrent regional settlement. This
+                # is monotonic and leaves polling/cleanup indexes unchanged.
+                if (
+                    job.status == "completed"
+                    and status == "completed"
+                    and generation_id
+                    and not job.generation_id
+                ):
+                    job.generation_id = generation_id
+                    job.updated_at = iso_now()
+                    self._io.write_entity_tx(transaction, "video_job", job.id, job)
                 return job
             old_due = _due_id(job)
             job.status = status

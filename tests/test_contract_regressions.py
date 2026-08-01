@@ -116,6 +116,7 @@ def test_gateway_settle_repeat_cannot_charge_or_log_twice(
     )
     assert repeat.status_code == 200, repeat.text
     assert repeat.json()["data"]["already_settled"] is True
+    assert repeat.json()["data"]["generation_id"] == first.json()["data"]["generation_id"]
     assert STORE.credit_money[workspace_id].total_usage_microdollars == usage_after_first
     assert len(STORE.generation_store.generations) == generation_count_after_first
     assert all(gen.request_id != "gw-double-charge-attempt" for gen in STORE.generation_store.generations.values())
@@ -149,6 +150,7 @@ def test_gateway_refund_repeat_cannot_restore_credit_twice(
     assert first.status_code == 200, first.text
     assert repeat.status_code == 200, repeat.text
     assert repeat.json()["data"]["already_settled"] is True
+    assert "generation_id" not in repeat.json()["data"]
     assert _available_microdollars(workspace_id) == starting_available
     assert STORE.credit_money[workspace_id].reserved_microdollars == 0
 

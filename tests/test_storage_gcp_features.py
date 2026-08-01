@@ -96,11 +96,20 @@ def test_gcp_video_jobs_are_idempotent_leased_and_cleaned_without_content() -> N
         status="completed",
         lease_owner="gcp-worker",
         provider_status="COMPLETED",
-        generation_id="gen-video",
     )
     assert completed is not None
+    assert completed.generation_id is None
     assert completed.content_expires_at
     assert completed.next_poll_at == completed.content_expires_at
+
+    repaired = store.update_video_job(
+        job.id,
+        status="completed",
+        generation_id="gen-video",
+    )
+    assert repaired is not None
+    assert repaired.generation_id == "gen-video"
+    assert store.get_video_job(job.id).generation_id == "gen-video"
     serialized = db.rows[("video_job", job.id)].body
     assert "prompt" not in serialized
     assert "download_url" not in serialized
