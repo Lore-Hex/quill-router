@@ -634,6 +634,19 @@ if gc compute backend-services describe "$LB_BACKEND_SERVICE" --global >/dev/nul
         --quiet >/dev/null || log "WARN: stale NEG detach failed for ${attached_region}"
     fi
   done
+  log "enabling origin-controlled Cloud CDN on ${LB_BACKEND_SERVICE}"
+  gc compute backend-services update "$LB_BACKEND_SERVICE" \
+    --global \
+    --enable-cdn \
+    --cache-mode=USE_ORIGIN_HEADERS \
+    --cache-key-include-host \
+    --cache-key-include-protocol \
+    --cache-key-include-query-string \
+    --cache-key-query-string-blacklist= \
+    --compression-mode=AUTOMATIC \
+    --serve-while-stale=600 \
+    --no-negative-caching \
+    --quiet >/dev/null
 else
   log "WARN: ${LB_BACKEND_SERVICE} not found; skipping NEG wiring"
 fi

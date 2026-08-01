@@ -1062,7 +1062,9 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             ttl_seconds=STATUS_RESPONSE_CACHE_SECONDS,
             stale_seconds=STATUS_RESPONSE_STALE_SECONDS,
             background_tasks=background_tasks,
-            build=lambda: _json_body({"data": _status_snapshot(settings)}),
+            build=lambda: _json_body(
+                {"data": _compact_status_json(_status_snapshot(settings))}
+            ),
         )
 
     @app.get("/status/history")
@@ -1655,6 +1657,25 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
     payload = status_snapshot(_status_samples(hours=1), rollups=_status_rollups("snapshot"))
     if settings.environment != "test":
         _STATUS_CACHE = (now, payload)
+    return payload
+
+
+def _compact_status_json(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Remove tooltip-only duplication from the machine-readable status feed."""
+    payload = dict(snapshot)
+    compact_components: list[dict[str, Any]] = []
+    for component in snapshot.get("components", []):
+        compact_component = dict(component)
+        compact_component["history"] = [
+            {
+                key: value
+                for key, value in bucket.items()
+                if key != "latency_breakdown"
+            }
+            for bucket in component.get("history", [])
+        ]
+        compact_components.append(compact_component)
+    payload["components"] = compact_components
     return payload
 
 
