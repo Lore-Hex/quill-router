@@ -750,6 +750,36 @@ def validate(
     return errors
 
 
+def apply_required_model_price_aliases(
+    prices: dict[str, ModelPrice],
+    required_models: frozenset[str],
+    aliases: dict[str, str],
+) -> tuple[dict[str, ModelPrice], list[str]]:
+    """Copy an approved family price onto required provider aliases.
+
+    Some providers publish one unversioned pricing row while their model API
+    exposes dated, separately addressable snapshots. Provider modules own the
+    alias map so parser output cannot invent pricing relationships. Only model
+    IDs required by this provider refresh are expanded; unrelated aliases do not
+    silently become routable merely because a broad family prefix matched.
+    """
+
+    expanded = dict(prices)
+    applied: list[str] = []
+    for target_model in sorted(required_models):
+        if target_model in expanded:
+            continue
+        source_model = aliases.get(target_model)
+        if source_model is None or source_model == target_model:
+            continue
+        source_price = expanded.get(source_model)
+        if source_price is None:
+            continue
+        expanded[target_model] = ModelPrice(tiers=list(source_price.tiers))
+        applied.append(f"{target_model} <- {source_model}")
+    return expanded, applied
+
+
 # ----------------------------------------------------------------------
 # AST whitelist gate — runs BEFORE any execution of LLM-generated code.
 # ----------------------------------------------------------------------
@@ -1166,6 +1196,7 @@ def fetch_provider(
     url: str,
     expected_models: list[str],
     required_models: list[str] | tuple[str, ...] | frozenset[str] = (),
+    required_model_price_aliases: dict[str, str] | None = None,
     extra_headers: dict[str, str] | None = None,
     accepted_status_codes: frozenset[int] = frozenset(),
 ) -> ProviderPricingResult:
@@ -1225,7 +1256,13 @@ def fetch_provider(
         log.warning("pricing.parse schema_errors slug=%s errors=%s", slug, schema_errors)
         prices = None
     errors = schema_errors[:] if schema_errors else []
+    applied_price_aliases: list[str] = []
     if prices is not None:
+        prices, applied_price_aliases = apply_required_model_price_aliases(
+            prices,
+            strict_models,
+            required_model_price_aliases or {},
+        )
         errors = validate(
             prices,
             expected_models,
@@ -1237,6 +1274,11 @@ def fetch_provider(
             prices=prices or {},
             source="deterministic",
             fetched_url=url,
+            notes=(
+                ["applied approved price aliases: " + ", ".join(applied_price_aliases)]
+                if applied_price_aliases
+                else []
+            ),
         )
 
     log.warning("pricing.deterministic_failed slug=%s errors=%s", slug, errors)
@@ -1268,6 +1310,11 @@ def fetch_provider(
     if sandbox_errors:
         raise RuntimeError(f"{slug}: self-heal sandbox failed: {sandbox_errors}")
     assert sandbox_prices is not None  # for type checker
+    sandbox_prices, sandbox_price_aliases = apply_required_model_price_aliases(
+        sandbox_prices,
+        strict_models,
+        required_model_price_aliases or {},
+    )
     final_errors = validate(
         sandbox_prices,
         expected_models,
@@ -1292,5 +1339,12 @@ def fetch_provider(
         source="self_healed",
         heal_diff=diff,
         fetched_url=url,
-        notes=[f"self-healed parser (validation errors: {len(errors)} → 0)"],
+        notes=[
+            f"self-healed parser (validation errors: {len(errors)} → 0)",
+            *(
+                ["applied approved price aliases: " + ", ".join(sandbox_price_aliases)]
+                if sandbox_price_aliases
+                else []
+            ),
+        ],
     )

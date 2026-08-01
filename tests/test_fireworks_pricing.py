@@ -47,6 +47,49 @@ def test_fireworks_fetch_intersects_prices_with_operator_catalog(
     assert any("kimi-k2.7-code" in note for note in result.notes)
 
 
+def test_fireworks_dated_flash_uses_live_native_id_and_family_price(
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    dated_model = "deepseek/deepseek-v4-flash-0731"
+    native_id = "accounts/fireworks/models/deepseek-v4-flash-0731"
+    captured: dict[str, object] = {}
+    priced_ids = {*fireworks.EXPECTED_MODELS, dated_model}
+    monkeypatch.setenv("FIREWORKS_API_KEY", "test-key")
+    monkeypatch.setattr(fireworks, "UPSTREAM_ID_MAP", dict(fireworks.UPSTREAM_ID_MAP))
+
+    def fake_fetch_provider(**kwargs: object) -> ProviderPricingResult:
+        captured.update(kwargs)
+        return ProviderPricingResult(
+            slug="fireworks",
+            prices={model_id: _price() for model_id in priced_ids},
+            source="deterministic",
+        )
+
+    monkeypatch.setattr(fireworks, "fetch_provider", fake_fetch_provider)
+    live_rows = [
+        {"id": fireworks.UPSTREAM_ID_MAP[model_id]}
+        for model_id in fireworks.EXPECTED_MODELS
+        if model_id not in fireworks.VERIFIED_PRICED_LAUNCH_MODELS
+    ]
+    live_rows.append({"id": native_id})
+    monkeypatch.setattr(
+        fireworks,
+        "fetch_json",
+        lambda *_args, **_kwargs: {"data": live_rows},
+    )
+
+    result = fireworks.fetch()
+
+    aliases = captured["required_model_price_aliases"]
+    assert isinstance(aliases, dict)
+    assert aliases[dated_model] == "deepseek/deepseek-v4-flash"
+    required_models = captured["required_models"]
+    assert isinstance(required_models, frozenset)
+    assert dated_model in required_models
+    assert fireworks.UPSTREAM_ID_MAP[dated_model] == native_id
+    assert dated_model in result.prices
+
+
 def test_fireworks_parser_reads_kimi_k3_standard_pricing() -> None:
     parsed = fireworks_parser.parse(
         "| [Kimi K3](https://app.fireworks.ai/models/fireworks/kimi-k3) "

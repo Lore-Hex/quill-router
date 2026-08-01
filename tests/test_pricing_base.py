@@ -10,6 +10,7 @@ from scripts.pricing.base import (
     MAX_PRICE_MICRO_PER_M,
     ModelPrice,
     _coerce_to_model_prices,
+    apply_required_model_price_aliases,
     ast_whitelist_check,
     guard_manifest_prune,
     normalize_parser_input,
@@ -75,6 +76,30 @@ def test_validate_fails_when_newly_discovered_required_model_is_missing() -> Non
     )
 
     assert errors == ["newly discovered models missing from parser output: ['provider/new-model']"]
+
+
+def test_required_price_aliases_expand_only_required_approved_ids() -> None:
+    source = ModelPrice(
+        130_000,
+        280_000,
+        prompt_cached_micro_per_m=28_000,
+    )
+    prices, applied = apply_required_model_price_aliases(
+        {"deepseek/deepseek-v4-flash": source},
+        frozenset({"deepseek/deepseek-v4-flash-0731"}),
+        {
+            "deepseek/deepseek-v4-flash-0731": "deepseek/deepseek-v4-flash",
+            "deepseek/deepseek-v4-flash-0801": "deepseek/deepseek-v4-flash",
+        },
+    )
+
+    dated = prices["deepseek/deepseek-v4-flash-0731"]
+    assert dated == source
+    assert dated is not source
+    assert "deepseek/deepseek-v4-flash-0801" not in prices
+    assert applied == [
+        "deepseek/deepseek-v4-flash-0731 <- deepseek/deepseek-v4-flash"
+    ]
 
 
 def test_validate_fails_on_out_of_range_prompt_price() -> None:
