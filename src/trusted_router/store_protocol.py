@@ -373,7 +373,10 @@ class Store(Protocol):
         job_id: str,
         *,
         provider_job_id: str,
+        provider: str,
+        endpoint_id: str,
         provider_model: str,
+        quoted_microdollars: int,
         poll_after_seconds: int,
     ) -> VideoJob | None: ...
     def claim_video_jobs(

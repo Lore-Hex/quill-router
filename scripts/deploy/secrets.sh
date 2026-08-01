@@ -96,6 +96,9 @@ PY
 
 ensure_secret_from_env_file "ANTHROPIC_API_KEY" "trustedrouter-anthropic-api-key" "CLAUDE_API_KEY"
 ensure_secret_from_env_file "OPENAI_API_KEY" "trustedrouter-openai-api-key" "CHATGPT_API_KEY"
+# Sora cannot run under TrustedRouter's ZDR-enabled OpenAI organization. Keep
+# video credentials separate so enabling Sora can never weaken text privacy.
+ensure_secret_from_env_file "OPENAI_VIDEO_API_KEY" "trustedrouter-openai-video-api-key"
 # Prefer the explicitly named AI Studio key. GEMINI_API_KEY remains a
 # compatibility fallback for older environments and key files.
 ensure_secret_from_env_file "GOOGLE_AI_STUDIO_KEY" "trustedrouter-gemini-api-key" "GEMINI_API_KEY"
@@ -146,6 +149,9 @@ ensure_secret_from_env_file "WAFER_API_KEY" "trustedrouter-wafer-api-key"
 ensure_secret_from_env_file "CRUSOE_API_KEY" "trustedrouter-crusoe-api-key"
 ensure_secret_from_env_file "MAKORA_API_KEY" "trustedrouter-makora-api-key" "MAKORA_OPTIMIZE_TOKEN"
 ensure_secret_from_env_file "ALIBABA_API_KEY" "trustedrouter-alibaba-api-key" "DASHSCOPE_API_KEY" "ALIYUN_API_KEY"
+ensure_secret_from_env_file "LTX_API_KEY" "trustedrouter-ltx-api-key"
+ensure_secret_from_env_file "RUNWAY_API_KEY" "trustedrouter-runway-api-key"
+ensure_secret_from_env_file "KLING_API_KEY" "trustedrouter-kling-api-key"
 ensure_secret_from_env_file "CHUTES_API_KEY" "trustedrouter-chutes-api-key"
 ensure_secret_from_env_file "DIGITAL_OCEAN_API_KEY" "trustedrouter-digitalocean-api-key"
 ensure_secret_from_env_file "CLOUDFLARE_WORKERS_AI_API_TOKEN" "trustedrouter-cloudflare-workers-ai-api-token"

@@ -315,10 +315,11 @@ def effective_endpoint(
 
 def endpoints_for_model(model_id: str) -> list[ModelEndpoint]:
     endpoints: list[ModelEndpoint] = []
+    model = MODELS.get(model_id)
     for endpoint in MODEL_ENDPOINTS.values():
         if endpoint.model_id != model_id:
             continue
-        if provider_model_retired(
+        if (model is None or not model.supports_video) and provider_model_retired(
             endpoint.provider,
             endpoint.model_id,
             endpoint.upstream_id,

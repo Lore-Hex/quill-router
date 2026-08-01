@@ -54,9 +54,9 @@ def _prepare(
         raise api_error(
             400, "Video provider does not match the authorized endpoint", ErrorType.BAD_REQUEST
         )
-    if body.quoted_microdollars != authorization.additional_cost_reservation_microdollars:
+    if body.quoted_microdollars > authorization.additional_cost_reservation_microdollars:
         raise api_error(
-            400, "Video quote does not match the authorized reservation", ErrorType.BAD_REQUEST
+            400, "Video quote exceeds the authorized reservation", ErrorType.BAD_REQUEST
         )
     job = VideoJob(
         id=body.job_id,
@@ -112,11 +112,41 @@ def register(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> dict[str, Any]:
         require_internal_gateway(request, settings)
+        existing = await run_in_threadpool(STORE.get_video_job, job_id)
+        if existing is None:
+            raise api_error(404, "Video job not found", ErrorType.NOT_FOUND)
+        authorization = await run_in_threadpool(
+            STORE.get_gateway_authorization, existing.authorization_id
+        )
+        if authorization is None:
+            raise api_error(404, "Authorization not found", ErrorType.NOT_FOUND)
+        allowed_endpoint_ids = set(authorization.candidate_endpoint_ids)
+        if authorization.endpoint_id:
+            allowed_endpoint_ids.add(authorization.endpoint_id)
+        provider = body.provider or existing.provider
+        endpoint_id = body.endpoint_id or existing.endpoint_id
+        provider_model = body.provider_model or existing.provider_model
+        quoted_microdollars = body.quoted_microdollars or existing.quoted_microdollars
+        endpoint = endpoint_for_id(endpoint_id)
+        if (
+            endpoint_id not in allowed_endpoint_ids
+            or endpoint is None
+            or endpoint.model_id != existing.model
+            or endpoint.provider != provider
+        ):
+            raise api_error(400, "Queued video route was not authorized", ErrorType.BAD_REQUEST)
+        if quoted_microdollars > authorization.additional_cost_reservation_microdollars:
+            raise api_error(
+                400, "Video quote exceeds the authorized reservation", ErrorType.BAD_REQUEST
+            )
         job = await run_in_threadpool(
             STORE.mark_video_job_queued,
             job_id,
             provider_job_id=body.provider_job_id,
-            provider_model=body.provider_model,
+            provider=provider,
+            endpoint_id=endpoint_id,
+            provider_model=provider_model,
+            quoted_microdollars=quoted_microdollars,
             poll_after_seconds=body.poll_after_seconds,
         )
         if job is None:

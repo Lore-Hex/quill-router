@@ -823,8 +823,8 @@ _VIDEO_MODELS: dict[str, Model] = {
     "lightricks/ltx-2.3": Model(
         id="lightricks/ltx-2.3",
         name="Lightricks LTX 2.3",
-        provider="venice",
-        context_length=2_500,
+        provider="ltx",
+        context_length=5_000,
         supports_chat=False,
         supports_video=True,
         input_modalities=("text", "image"),
@@ -835,8 +835,8 @@ _VIDEO_MODELS: dict[str, Model] = {
     "lightricks/ltx-2.3-fast": Model(
         id="lightricks/ltx-2.3-fast",
         name="Lightricks LTX 2.3 Fast",
-        provider="venice",
-        context_length=2_500,
+        provider="ltx",
+        context_length=5_000,
         supports_chat=False,
         supports_video=True,
         input_modalities=("text", "image"),
@@ -859,8 +859,8 @@ _VIDEO_MODELS: dict[str, Model] = {
     "minimax/hailuo-3": Model(
         id="minimax/hailuo-3",
         name="MiniMax Hailuo 3 (H3)",
-        provider="venice",
-        context_length=2_500,
+        provider="minimax",
+        context_length=7_000,
         supports_chat=False,
         supports_video=True,
         input_modalities=("text", "image", "audio"),
@@ -871,7 +871,7 @@ _VIDEO_MODELS: dict[str, Model] = {
     "google/veo-3.1": Model(
         id="google/veo-3.1",
         name="Google Veo 3.1",
-        provider="venice",
+        provider="google-ai-studio",
         context_length=2_500,
         supports_chat=False,
         supports_video=True,
@@ -883,7 +883,7 @@ _VIDEO_MODELS: dict[str, Model] = {
     "google/veo-3.1-fast": Model(
         id="google/veo-3.1-fast",
         name="Google Veo 3.1 Fast",
-        provider="venice",
+        provider="google-ai-studio",
         context_length=2_500,
         supports_chat=False,
         supports_video=True,
@@ -919,7 +919,7 @@ _VIDEO_MODELS: dict[str, Model] = {
     "runway/gen-4.5": Model(
         id="runway/gen-4.5",
         name="Runway Gen-4.5",
-        provider="venice",
+        provider="runway",
         context_length=1_000,
         supports_chat=False,
         supports_video=True,
@@ -930,9 +930,9 @@ _VIDEO_MODELS: dict[str, Model] = {
     ),
     "kling/v3-pro": Model(
         id="kling/v3-pro",
-        name="Kling V3 Pro",
-        provider="venice",
-        context_length=2_500,
+        name="Kling Video 3.0 Pro",
+        provider="kling",
+        context_length=3_072,
         supports_chat=False,
         supports_video=True,
         input_modalities=("text", "image"),
@@ -942,9 +942,9 @@ _VIDEO_MODELS: dict[str, Model] = {
     ),
     "kling/o3-pro": Model(
         id="kling/o3-pro",
-        name="Kling O3 Pro",
-        provider="venice",
-        context_length=2_500,
+        name="Kling Video 3.0 Omni Pro",
+        provider="kling",
+        context_length=3_072,
         supports_chat=False,
         supports_video=True,
         input_modalities=("text", "image"),
@@ -955,8 +955,20 @@ _VIDEO_MODELS: dict[str, Model] = {
     "alibaba/wan-2.7": Model(
         id="alibaba/wan-2.7",
         name="Alibaba Wan 2.7",
-        provider="venice",
-        context_length=2_500,
+        provider="alibaba",
+        context_length=5_000,
+        supports_chat=False,
+        supports_video=True,
+        input_modalities=("text", "image"),
+        output_modalities=("video",),
+        prepaid_available=True,
+        byok_available=False,
+    ),
+    "x-ai/grok-imagine-video": Model(
+        id="x-ai/grok-imagine-video",
+        name="xAI Grok Imagine Video",
+        provider="grok",
+        context_length=10_000,
         supports_chat=False,
         supports_video=True,
         input_modalities=("text", "image"),
@@ -1013,6 +1025,27 @@ _VIDEO_UPSTREAM_IDS = {
     "shengshu/vidu-q3": "vidu-q3-text-to-video",
     "pixverse/c1": "pixverse-c1-text-to-video",
 }
+_DIRECT_VIDEO_UPSTREAM_IDS = {
+    "lightricks/ltx-2.3": ("ltx", "ltx-2-3-pro"),
+    "lightricks/ltx-2.3-fast": ("ltx", "ltx-2-3-fast"),
+    "minimax/hailuo-3": ("minimax", "MiniMax-H3"),
+    "google/veo-3.1": ("google-ai-studio", "veo-3.1-generate-preview"),
+    "google/veo-3.1-fast": ("google-ai-studio", "veo-3.1-fast-generate-preview"),
+    "alibaba/wan-2.7": ("alibaba", "wan2.7-t2v"),
+    "x-ai/grok-imagine-video": ("grok", "grok-imagine-video"),
+    "runway/gen-4.5": ("runway", "gen4.5"),
+    "kling/v3-pro": ("kling", "kling-3.0"),
+    "kling/o3-pro": ("kling", "kling-3.0-omni"),
+}
+for _model_id, (_provider_slug, _upstream_id) in _DIRECT_VIDEO_UPSTREAM_IDS.items():
+    _endpoint_id = f"{_model_id}@{_provider_slug}/prepaid"
+    MODEL_ENDPOINTS[_endpoint_id] = ModelEndpoint(
+        id=_endpoint_id,
+        model_id=_model_id,
+        provider=_provider_slug,
+        usage_type="Credits",
+        upstream_id=_upstream_id,
+    )
 for _model_id, _upstream_id in _VIDEO_UPSTREAM_IDS.items():
     _endpoint_id = f"{_model_id}@venice/prepaid"
     MODEL_ENDPOINTS[_endpoint_id] = ModelEndpoint(
@@ -1077,4 +1110,7 @@ for _model_id, _upstream_id in _VIDEO_UPSTREAM_IDS.items():
 #              DEFAULT routing for Gemma was 502ing — drop gemini's Gemma routes.
 
 
-MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(MODEL_ENDPOINTS)
+MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(
+    MODEL_ENDPOINTS,
+    explicit_model_ids=frozenset(_VIDEO_MODELS),
+)

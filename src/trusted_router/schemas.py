@@ -259,7 +259,12 @@ class GatewayVideoJobPrepareRequest(_Strict):
 
 class GatewayVideoJobQueuedRequest(_Strict):
     provider_job_id: str = Field(min_length=1, max_length=512)
-    provider_model: str = Field(min_length=1, max_length=256)
+    # Optional during the rolling gateway upgrade. Older gateways queued the
+    # route prepared on the job; newer gateways send the actual fallback route.
+    provider: str | None = Field(default=None, min_length=1, max_length=64)
+    endpoint_id: str | None = Field(default=None, min_length=1, max_length=512)
+    provider_model: str | None = Field(default=None, min_length=1, max_length=256)
+    quoted_microdollars: int | None = Field(default=None, ge=1, le=100_000_000)
     poll_after_seconds: int = Field(default=5, ge=1, le=300)
 
 

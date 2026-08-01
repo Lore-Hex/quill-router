@@ -63,7 +63,10 @@ def test_gcp_video_jobs_are_idempotent_leased_and_cleaned_without_content() -> N
     queued = store.mark_video_job_queued(
         job.id,
         provider_job_id="provider-video-1",
+        provider="venice",
+        endpoint_id="minimax/hailuo-3@venice/prepaid",
         provider_model="minimax-h3-text-to-video",
+        quoted_microdollars=850_500,
         poll_after_seconds=0,
     )
     assert queued is not None

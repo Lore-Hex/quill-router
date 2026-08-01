@@ -121,6 +121,22 @@ _VENICE_PRIVATE_POLICY = (
 
 
 _MODEL_PROVIDER_PRIVACY_OVERRIDES: dict[tuple[str, str], ModelProviderPrivacyOverride] = {
+    **{
+        (model_id, "openai"): ModelProviderPrivacyOverride(
+            privacy_tier=PRIVACY_TIER_STANDARD,
+            provider_zero_data_retention=False,
+            provider_confidential_compute=False,
+            provider_e2ee=False,
+            provider_policy=(
+                "OpenAI's video generation route is tracked separately from the "
+                "managed text account's ZDR posture. TrustedRouter deletes the "
+                "generated provider asset after relaying it, but does not claim "
+                "provider-side zero retention for Sora video jobs."
+            ),
+            provider_policy_url="https://developers.openai.com/api/docs/guides/video-generation",
+        )
+        for model_id in ("openai/sora-2", "openai/sora-2-pro")
+    },
     (
         "anthropic/claude-fable-5",
         "*",
@@ -887,6 +903,46 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://www.alibabacloud.com/help/en/model-studio/model-pricing",
     ),
+    "ltx": Provider(
+        slug="ltx",
+        name="Lightricks LTX",
+        supports_chat=False,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No provider-ZDR, confidential-compute, or E2EE claim is tracked for "
+            "the LTX video API. TrustedRouter relays and does not durably store "
+            "prompt or generated video content."
+        ),
+        provider_policy_url="https://ltx.io/terms-of-use",
+    ),
+    "runway": Provider(
+        slug="runway",
+        name="Runway",
+        supports_chat=False,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No provider-ZDR, confidential-compute, or E2EE claim is tracked for "
+            "the Runway video API. TrustedRouter relays and does not durably store "
+            "prompt or generated video content."
+        ),
+        provider_policy_url="https://runwayml.com/privacy-policy",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "kling": Provider(
+        slug="kling",
+        name="Kling AI",
+        supports_chat=False,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No provider-ZDR, confidential-compute, or E2EE claim is tracked for "
+            "the Kling video API. TrustedRouter relays and does not durably store "
+            "prompt or generated video content."
+        ),
+        provider_policy_url="https://kling.ai/privacy-policy",
+    ),
     # Cohere — first-party embeddings (embed-v4.0, embed-*-v3.0) plus
     # Command chat models. Embeddings are Cohere's flagship retrieval
     # product; chat is registered but TR currently only catalogs Cohere
@@ -994,6 +1050,11 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         # key is entitled to inference and its provider-native catalog is
         # refreshed from the workspace-scoped /models endpoint.
         "alibaba",
+        # Direct asynchronous video APIs. These are handled by provider-native
+        # adapters inside the attested gateway, not by the chat adapter.
+        "ltx",
+        "runway",
+        "kling",
         # Cohere — embeddings only for now (native /v2/embed in the enclave).
         "cohere",
         # Voyage — embeddings only (OpenAI-shaped /v1/embeddings in the enclave).

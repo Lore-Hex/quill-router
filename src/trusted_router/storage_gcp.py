@@ -1138,13 +1138,19 @@ class SpannerBigtableStore:
         job_id: str,
         *,
         provider_job_id: str,
+        provider: str,
+        endpoint_id: str,
         provider_model: str,
+        quoted_microdollars: int,
         poll_after_seconds: int,
     ) -> VideoJob | None:
         return self.video_job_store.mark_queued(
             job_id,
             provider_job_id=provider_job_id,
+            provider=provider,
+            endpoint_id=endpoint_id,
             provider_model=provider_model,
+            quoted_microdollars=quoted_microdollars,
             poll_after_seconds=poll_after_seconds,
         )
 

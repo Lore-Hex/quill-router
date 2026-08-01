@@ -43,7 +43,10 @@ class InMemoryVideoJobs:
         job_id: str,
         *,
         provider_job_id: str,
+        provider: str,
+        endpoint_id: str,
         provider_model: str,
+        quoted_microdollars: int,
         poll_after_seconds: int,
     ) -> VideoJob | None:
         with self._lock:
@@ -52,8 +55,18 @@ class InMemoryVideoJobs:
                 return None
             if job.provider_job_id and job.provider_job_id != provider_job_id:
                 raise ValueError("video job was already queued with a different provider id")
+            if job.provider_job_id and (
+                job.provider != provider
+                or job.endpoint_id != endpoint_id
+                or job.provider_model != provider_model
+                or job.quoted_microdollars != quoted_microdollars
+            ):
+                raise ValueError("video job was already queued with different route metadata")
             job.provider_job_id = provider_job_id
+            job.provider = provider
+            job.endpoint_id = endpoint_id
             job.provider_model = provider_model
+            job.quoted_microdollars = quoted_microdollars
             if job.status == "submitting":
                 job.status = "pending"
             job.next_poll_at = _iso_after_seconds(poll_after_seconds)

@@ -4,7 +4,14 @@ from dataclasses import asdict
 
 from fastapi.testclient import TestClient
 
-from trusted_router.catalog import MODELS, endpoint_for_id, endpoints_for_model
+from trusted_router.catalog import (
+    MODELS,
+    PRIVACY_TIER_STANDARD,
+    endpoint_for_id,
+    endpoint_privacy_tier,
+    endpoint_stores_content,
+    endpoints_for_model,
+)
 from trusted_router.config import Settings
 from trusted_router.routing import video_route_endpoint_candidates
 from trusted_router.security import lookup_hash_api_key
@@ -27,6 +34,20 @@ VIDEO_MODELS = {
     "lightricks/ltx-2.3",
     "lightricks/ltx-2.3-fast",
     "minimax/hailuo-3",
+    "x-ai/grok-imagine-video",
+}
+
+DIRECT_VIDEO_PROVIDERS = {
+    "lightricks/ltx-2.3": "ltx",
+    "lightricks/ltx-2.3-fast": "ltx",
+    "minimax/hailuo-3": "minimax",
+    "google/veo-3.1": "google-ai-studio",
+    "google/veo-3.1-fast": "google-ai-studio",
+    "alibaba/wan-2.7": "alibaba",
+    "x-ai/grok-imagine-video": "grok",
+    "runway/gen-4.5": "runway",
+    "kling/v3-pro": "kling",
+    "kling/o3-pro": "kling",
 }
 
 
@@ -64,13 +85,23 @@ def test_launch_video_catalog_is_explicit_and_credits_only() -> None:
         assert model.prepaid_available is True
         assert model.byok_available is False
         endpoints = endpoints_for_model(model_id)
-        assert len(endpoints) == 1
-        endpoint = endpoints[0]
-        assert endpoint.provider == "venice"
-        assert endpoint.usage_type == "Credits"
-        assert endpoint.upstream_id
+        expected = [DIRECT_VIDEO_PROVIDERS.get(model_id, "venice")]
+        if model_id in DIRECT_VIDEO_PROVIDERS and model_id != "x-ai/grok-imagine-video":
+            expected.append("venice")
+        assert [endpoint.provider for endpoint in endpoints] == expected
+        assert all(endpoint.usage_type == "Credits" for endpoint in endpoints)
+        assert all(endpoint.upstream_id for endpoint in endpoints)
 
     assert MODELS["minimax/hailuo-3"].name == "MiniMax Hailuo 3 (H3)"
+
+
+def test_sora_video_stays_on_standard_fallback_without_separate_video_key() -> None:
+    for model_id in ("openai/sora-2", "openai/sora-2-pro"):
+        assert endpoint_for_id(f"{model_id}@openai/prepaid") is None
+        endpoint = endpoint_for_id(f"{model_id}@venice/prepaid")
+        assert endpoint is not None
+        assert endpoint_privacy_tier(endpoint) == PRIVACY_TIER_STANDARD
+        assert endpoint_stores_content(endpoint) is True
 
 
 def test_video_router_rejects_text_models_and_honors_provider_filters() -> None:
@@ -96,7 +127,7 @@ def test_video_authorize_and_settle_bill_exact_fixed_microdollars(
     assert authorization is not None
     assert authorization.estimated_microdollars == quote
     assert authorization.additional_cost_reservation_microdollars == quote
-    assert auth["provider"] == "venice"
+    assert auth["provider"] == "minimax"
     assert auth["usage_type"] == "Credits"
 
     response = client.post(
@@ -206,9 +237,9 @@ def test_video_job_state_is_content_free_idempotent_and_key_scoped(
         "job_id": "job-0123456789abcdef",
         "authorization_id": auth["authorization_id"],
         "model": "minimax/hailuo-3",
-        "provider": "venice",
+        "provider": auth["provider"],
         "endpoint_id": endpoint.id,
-        "provider_model": "minimax-h3-text-to-video",
+        "provider_model": "MiniMax-H3",
         "quoted_microdollars": 850_500,
         "input_mode": "reference",
         "duration_seconds": 5,
@@ -234,11 +265,13 @@ def test_video_job_state_is_content_free_idempotent_and_key_scoped(
         "/v1/internal/gateway/video/jobs/job-0123456789abcdef/queued",
         json={
             "provider_job_id": "provider-job-1",
-            "provider_model": "minimax-h3-text-to-video",
             "poll_after_seconds": 1,
         },
     )
     assert queued.status_code == 200, queued.text
+    assert queued.json()["data"]["provider"] == auth["provider"]
+    assert queued.json()["data"]["endpoint_id"] == endpoint.id
+    assert queued.json()["data"]["quoted_microdollars"] == 850_500
     stored = STORE.get_video_job("job-0123456789abcdef")
     assert stored is not None
     assert stored.input_mode == "reference"
@@ -298,9 +331,9 @@ def test_failed_video_job_records_one_public_safe_benchmark_sample(
             "job_id": "job-failure-safe",
             "authorization_id": auth["authorization_id"],
             "model": "minimax/hailuo-3",
-            "provider": "venice",
+            "provider": auth["provider"],
             "endpoint_id": auth["endpoint_id"],
-            "provider_model": "minimax-h3-text-to-video",
+            "provider_model": "MiniMax-H3",
             "quoted_microdollars": 850_500,
             "input_mode": "text",
             "duration_seconds": 5,
@@ -347,10 +380,73 @@ def test_video_job_prepare_rejects_mismatched_quote(
             "job_id": "job-quote-mismatch",
             "authorization_id": auth["authorization_id"],
             "model": "minimax/hailuo-3",
-            "provider": "venice",
+            "provider": auth["provider"],
             "endpoint_id": auth["endpoint_id"],
             "provider_model": "gemini-omni-flash-text-to-video",
             "quoted_microdollars": 550_001,
         },
     )
     assert response.status_code == 400
+
+
+def test_video_job_can_persist_an_authorized_fallback_route_and_exact_charge(
+    client: TestClient,
+    inference_key: str,
+) -> None:
+    auth = _authorize_video(
+        client,
+        inference_key,
+        quote=900_000,
+        idempotency_key="video-authorized-fallback",
+    )
+    assert auth["provider"] == "minimax"
+    venice = next(
+        candidate
+        for candidate in auth["route_candidates"]
+        if candidate["provider"] == "venice"
+    )
+    prepare = client.post(
+        "/v1/internal/gateway/video/jobs/prepare",
+        json={
+            "job_id": "job-authorized-fallback",
+            "authorization_id": auth["authorization_id"],
+            "model": "minimax/hailuo-3",
+            "provider": "minimax",
+            "endpoint_id": auth["endpoint_id"],
+            "provider_model": "MiniMax-H3",
+            "quoted_microdollars": 840_000,
+            "duration_seconds": 5,
+            "resolution": "2K",
+        },
+    )
+    assert prepare.status_code == 200, prepare.text
+
+    queued = client.post(
+        "/v1/internal/gateway/video/jobs/job-authorized-fallback/queued",
+        json={
+            "provider_job_id": "venice-fallback-job",
+            "provider": "venice",
+            "endpoint_id": venice["endpoint_id"],
+            "provider_model": "minimax-h3-text-to-video",
+            "quoted_microdollars": 850_500,
+            "poll_after_seconds": 5,
+        },
+    )
+    assert queued.status_code == 200, queued.text
+    job = queued.json()["data"]
+    assert job["provider"] == "venice"
+    assert job["endpoint_id"] == venice["endpoint_id"]
+    assert job["quoted_microdollars"] == 850_500
+
+    unauthorized = client.post(
+        "/v1/internal/gateway/video/jobs/job-authorized-fallback/queued",
+        json={
+            "provider_job_id": "other-job",
+            "provider": "grok",
+            "endpoint_id": "x-ai/grok-imagine-video@grok/prepaid",
+            "provider_model": "grok-imagine-video",
+            "quoted_microdollars": 300_000,
+            "poll_after_seconds": 5,
+        },
+    )
+    assert unauthorized.status_code == 400

@@ -1435,7 +1435,10 @@ class PostgresStore:
         job_id: str,
         *,
         provider_job_id: str,
+        provider: str,
+        endpoint_id: str,
         provider_model: str,
+        quoted_microdollars: int,
         poll_after_seconds: int,
     ) -> VideoJob | None:
         self._not_implemented("mark_video_job_queued")

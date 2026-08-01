@@ -981,6 +981,8 @@ _ANTHROPIC_FIRST_PARTY_PROVIDERS: frozenset[str] = frozenset(
 
 def _filter_unserved_provider_endpoints(
     endpoints: dict[str, ModelEndpoint],
+    *,
+    explicit_model_ids: frozenset[str] = frozenset(),
 ) -> dict[str, ModelEndpoint]:
     """Drop a provider's prepaid (Credits) endpoints for models it doesn't
     serve on our account. Only Credits routes use OUR provider key, so only
@@ -1002,6 +1004,12 @@ def _filter_unserved_provider_endpoints(
         allow[provider_slug] = _authoritative_provider_model_ids(provider_slug)
 
     def _keep(endpoint: ModelEndpoint) -> bool:
+        # Async media routes are registered only after their provider-native
+        # queue contracts are implemented and tested. Chat /models manifests
+        # do not list video models, so applying the chat allowlist here would
+        # incorrectly remove those explicit routes.
+        if endpoint.model_id in explicit_model_ids:
+            return True
         if _is_provider_deprecated_model(
             endpoint.provider, endpoint.model_id, endpoint.upstream_id
         ):
