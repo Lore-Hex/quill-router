@@ -53,6 +53,9 @@ from trusted_router.storage_gcp_codec import (
     generation_workspace_id as _generation_workspace_id,
 )
 from trusted_router.storage_gcp_io import SpannerIO
+from trusted_router.storage_gcp_operational_analytics_outbox import (
+    SpannerOperationalAnalyticsOutbox,
+)
 from trusted_router.storage_models import (
     Generation,
     ProviderBenchmarkSample,
@@ -81,6 +84,7 @@ class SpannerGenerations:
         legacy_family: str | None = None,
         add_usage_to_key: _AddUsageCallback,
         analytics_outbox: SpannerAnalyticsOutbox | None = None,
+        operational_analytics_outbox: SpannerOperationalAnalyticsOutbox | None = None,
     ) -> None:
         self._io = io
         self._bt_table = bt_table
@@ -101,6 +105,7 @@ class SpannerGenerations:
         )
         self._add_usage_to_key = add_usage_to_key
         self._analytics_outbox = analytics_outbox
+        self._operational_analytics_outbox = operational_analytics_outbox
 
     def add(self, generation: Generation) -> None:
         # Two separate transactions instead of one fused one. Per-key
@@ -152,9 +157,27 @@ class SpannerGenerations:
             activity_indexed = False
         else:
             activity_indexed = True
+        activity_queued = True
+        if self._operational_analytics_outbox is not None:
+            try:
+                self._operational_analytics_outbox.enqueue_activity(generation)
+            except Exception as exc:
+                log.exception(
+                    "spanner.operational_analytics_activity_enqueue_failed",
+                    extra={
+                        "request_id": generation.request_id,
+                        "generation_id": generation.id,
+                        "model": generation.model,
+                        "provider": generation.provider,
+                        "error_class": type(exc).__name__,
+                        "error_message": str(exc)[:500],
+                        "repairable_via": "settle_outbox",
+                    },
+                )
+                activity_queued = False
         if generation.app != "TrustedRouter Synthetic":
             self.record_benchmark(ProviderBenchmarkSample.from_generation(generation))
-        return activity_indexed
+        return activity_indexed and activity_queued
 
     def get(self, generation_id: str) -> Generation | None:
         generation = _bt_generation_by_id(

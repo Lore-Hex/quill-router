@@ -1465,6 +1465,29 @@ def create_store(settings: Any) -> Store:
             bigtable_app_profile_id=getattr(settings, "bigtable_app_profile_id", ""),
             request_record_write_mode=getattr(settings, "request_record_write_mode", "legacy"),
             analytics_outbox_enabled=getattr(settings, "analytics_outbox_enabled", False),
+            operational_analytics_outbox_enabled=getattr(
+                settings,
+                "operational_analytics_outbox_enabled",
+                False,
+            ),
+            operational_analytics_clickhouse_url=getattr(
+                settings, "operational_analytics_clickhouse_url", ""
+            ),
+            operational_analytics_clickhouse_user=getattr(
+                settings,
+                "operational_analytics_clickhouse_user",
+                "tr_control_read",
+            ),
+            operational_analytics_clickhouse_password=getattr(
+                settings, "operational_analytics_clickhouse_password", ""
+            ),
+            operational_analytics_clickhouse_database=getattr(
+                settings, "operational_analytics_clickhouse_database", "tr"
+            ),
+            analytics_read_mode=getattr(settings, "analytics_read_mode", "bigtable"),
+            analytics_dual_read_grace_seconds=getattr(
+                settings, "analytics_dual_read_grace_seconds", 30
+            ),
         )
     raise ValueError(f"unsupported storage backend: {backend}")
 
