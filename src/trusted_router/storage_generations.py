@@ -28,9 +28,7 @@ from trusted_router.storage_models import (
 
 
 class _AddUsageCallback(Protocol):
-    def __call__(
-        self, key_hash: str, cost_microdollars: int, *, is_byok: bool
-    ) -> None: ...
+    def __call__(self, key_hash: str, cost_microdollars: int, *, is_byok: bool) -> None: ...
 
 
 class InMemoryGenerations:
@@ -62,6 +60,9 @@ class InMemoryGenerations:
 
     def record_benchmark(self, sample: ProviderBenchmarkSample) -> None:
         with self._lock:
+            self.provider_benchmarks = [
+                existing for existing in self.provider_benchmarks if existing.id != sample.id
+            ]
             self.provider_benchmarks.append(sample)
 
     def benchmark_samples(

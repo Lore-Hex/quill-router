@@ -18,6 +18,27 @@ def iso_now() -> str:
     return utcnow().isoformat().replace("+00:00", "Z")
 
 
+def _elapsed_iso_milliseconds(start: str, end: str) -> int | None:
+    try:
+        started = dt.datetime.fromisoformat(start.replace("Z", "+00:00"))
+        ended = dt.datetime.fromisoformat(end.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return max(0, int((ended - started).total_seconds() * 1000))
+
+
+def _video_failure_type(value: str | None) -> str:
+    """Map gateway failure markers to a finite, public-safe taxonomy."""
+    marker = (value or "").strip().lower()
+    return {
+        "provider_error": "provider_error",
+        "provider_failed": "provider_failed",
+        "rate_limit_exceeded": "rate_limit",
+        "submission_interrupted": "submission_interrupted",
+        "timeout": "timeout",
+    }.get(marker, "provider_error")
+
+
 def _is_byok(usage_type: str | UsageType) -> bool:
     """True iff `usage_type` represents BYOK billing.
 
@@ -258,6 +279,12 @@ class VideoJob:
     endpoint_id: str
     provider_model: str
     quoted_microdollars: int
+    input_mode: str = "text"
+    duration_seconds: int = 0
+    resolution: str = ""
+    aspect_ratio: str = ""
+    generate_audio: bool = False
+    region: str = ""
     status: str = "submitting"
     provider_job_id: str | None = None
     provider_status: str | None = None
@@ -437,6 +464,12 @@ class Generation:
     # Internal provider COGS for fixed-price orchestration leaves. This is
     # intentionally omitted from public generation/activity response shapes.
     operator_cost_microdollars: int | None = None
+    route_type: str | None = None
+    video_input_mode: str | None = None
+    video_duration_seconds: int | None = None
+    video_resolution: str | None = None
+    video_aspect_ratio: str | None = None
+    video_generate_audio: bool | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.usage_type, UsageType):
@@ -606,6 +639,26 @@ class Generation:
             app_categories=[str(item) for item in body.get("app_categories") or []],
             tags=dict(authorization.tags),
             operator_cost_microdollars=operator_cost_microdollars,
+            route_type=(str(body["route_type"]) if body.get("route_type") else None),
+            video_input_mode=(
+                str(body["video_input_mode"]) if body.get("video_input_mode") else None
+            ),
+            video_duration_seconds=(
+                int(body["video_duration_seconds"])
+                if body.get("video_duration_seconds") is not None
+                else None
+            ),
+            video_resolution=(
+                str(body["video_resolution"]) if body.get("video_resolution") else None
+            ),
+            video_aspect_ratio=(
+                str(body["video_aspect_ratio"]) if body.get("video_aspect_ratio") else None
+            ),
+            video_generate_audio=(
+                bool(body["video_generate_audio"])
+                if body.get("video_generate_audio") is not None
+                else None
+            ),
             created_at=authorization.created_at,
         )
 
@@ -713,6 +766,12 @@ class ProviderBenchmarkSample:
     # "TrustedRouter Gateway" default is treated as anonymous "Direct" traffic;
     # "TrustedRouter Synthetic" (the monitor) is excluded from the apps ranking.
     app: str = ""
+    route_type: str | None = None
+    video_input_mode: str | None = None
+    video_duration_seconds: int | None = None
+    video_resolution: str | None = None
+    video_aspect_ratio: str | None = None
+    video_generate_audio: bool | None = None
     created_at: str = field(default_factory=iso_now)
 
     def __post_init__(self) -> None:
@@ -739,7 +798,45 @@ class ProviderBenchmarkSample:
             finish_reason=generation.finish_reason,
             region=generation.region,
             app=generation.app,
+            route_type=generation.route_type,
+            video_input_mode=generation.video_input_mode,
+            video_duration_seconds=generation.video_duration_seconds,
+            video_resolution=generation.video_resolution,
+            video_aspect_ratio=generation.video_aspect_ratio,
+            video_generate_audio=generation.video_generate_audio,
             created_at=generation.created_at,
+        )
+
+    @classmethod
+    def from_video_job_failure(
+        cls,
+        job: VideoJob,
+        *,
+        provider_name: str,
+    ) -> ProviderBenchmarkSample:
+        return cls(
+            id=f"bench-{uuid.uuid5(uuid.NAMESPACE_URL, f'video:{job.id}:failed').hex}",
+            model=job.model,
+            provider=job.provider,
+            provider_name=provider_name,
+            status="error",
+            usage_type=UsageType.CREDITS,
+            streamed=False,
+            total_cost_microdollars=0,
+            elapsed_milliseconds=_elapsed_iso_milliseconds(
+                job.created_at, job.updated_at or iso_now()
+            ),
+            finish_reason="failed",
+            error_type=_video_failure_type(job.last_error),
+            region=job.region or None,
+            source="organic",
+            route_type="videos",
+            video_input_mode=job.input_mode,
+            video_duration_seconds=job.duration_seconds or None,
+            video_resolution=job.resolution or None,
+            video_aspect_ratio=job.aspect_ratio or None,
+            video_generate_audio=job.generate_audio,
+            created_at=job.updated_at or iso_now(),
         )
 
     @classmethod

@@ -142,6 +142,7 @@ def test_public_pricing_matches_five_percent_billing_policy(client: TestClient) 
     pricing = client.get("/pricing")
     assert pricing.status_code == 200
     assert "provider cost + 5%" in pricing.text
+    assert "direct provider quote + 20%" in pricing.text
     assert "Cheaper. Smarter. More reliable. More secure." in pricing.text
     assert "5.5% pay as you go fee on credit purchases" in pricing.text
     assert 'href="https://openrouter.ai/pricing"' in pricing.text
@@ -156,7 +157,8 @@ def test_public_pricing_matches_five_percent_billing_policy(client: TestClient) 
 
     llms = client.get("/llms.txt")
     assert llms.status_code == 200
-    assert "Prepaid pricing is provider cost + 5%" in llms.text
+    assert "Text and embedding prepaid pricing is provider cost + 5%" in llms.text
+    assert "Video generation is the direct provider quote + 20%" in llms.text
 
 
 def test_agent_discovery_surfaces_model_advisor_skill(client: TestClient) -> None:

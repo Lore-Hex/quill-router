@@ -147,7 +147,7 @@ class SpannerVideoJobs:
                 return None
             if lease_owner is not None and job.lease_owner not in {None, lease_owner}:
                 return job
-            if job.status in {"completed", "failed"} and status != job.status:
+            if job.status in {"completed", "failed"}:
                 return job
             old_due = _due_id(job)
             job.status = status

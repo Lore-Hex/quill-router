@@ -31,6 +31,7 @@ from trusted_router.benchmark_samples import (
     PUBLIC_BENCHMARK_RECENT_MINUTES,
     PUBLIC_BENCHMARK_SAMPLE_LIMIT,
     public_benchmark_samples,
+    public_video_benchmark_samples,
 )
 from trusted_router.catalog import (
     META_MODEL_IDS,
@@ -77,6 +78,7 @@ from trusted_router.dashboard import (
     public_subprocessors_html,
     public_support_html,
     public_terms_html,
+    public_video_leaderboard_html,
     robots_txt,
     sitemap_comparisons_xml,
     sitemap_core_xml,
@@ -97,6 +99,7 @@ from trusted_router.storage_custom_models import normalize_custom_model_id
 from trusted_router.storage_models import utcnow
 from trusted_router.synthetic.leaderboard import aggregate_leaderboard
 from trusted_router.synthetic.status import history_payload, status_snapshot
+from trusted_router.synthetic.video_leaderboard import aggregate_video_leaderboard
 from trusted_router.trust import gcp_release, trust_html
 from trusted_router.views import render_template
 
@@ -130,6 +133,8 @@ LEADERBOARD_RECENT_WINDOW_MINUTES = PUBLIC_BENCHMARK_RECENT_MINUTES
 LEADERBOARD_SNAPSHOT_CACHE_SECONDS = 300
 LEADERBOARD_RESPONSE_CACHE_SECONDS = 60
 LEADERBOARD_RESPONSE_STALE_SECONDS = 0
+VIDEO_LEADERBOARD_SAMPLE_LIMIT = 5_000
+VIDEO_LEADERBOARD_RECENT_WINDOW_MINUTES = 30 * 24 * 60
 CHOOSE_PAGE_CACHE_SECONDS = 300
 CHOOSE_PAGE_STALE_SECONDS = 86_400
 CHOOSE_CATALOG_CACHE_SECONDS = 300
@@ -137,13 +142,12 @@ CHOOSE_CATALOG_STALE_SECONDS = 86_400
 INDEXNOW_KEY = "360a02e48445d297f9612a4c3fef878b"
 _STATUS_CACHE: tuple[float, dict[str, Any]] | None = None
 _LEADERBOARD_CACHE: tuple[float, dict[str, Any]] | None = None
+_VIDEO_LEADERBOARD_CACHE: tuple[float, dict[str, Any]] | None = None
 _APPS_CACHE: tuple[float, dict[str, Any]] | None = None
 _STATUS_RESPONSE_CACHE: OrderedDict[str, _CachedPublicBody] = OrderedDict()
 _STATUS_RESPONSE_REFRESHING: set[str] = set()
 _STATUS_RESPONSE_CACHE_LOCK = threading.RLock()
-_STATUS_RESPONSE_REFRESH_SLOTS = threading.BoundedSemaphore(
-    PUBLIC_RESPONSE_REFRESH_MAX_THREADS
-)
+_STATUS_RESPONSE_REFRESH_SLOTS = threading.BoundedSemaphore(PUBLIC_RESPONSE_REFRESH_MAX_THREADS)
 
 
 @dataclass(frozen=True)
@@ -220,11 +224,7 @@ def _inquiry_rate_ok(client_ip: str, *, now: float | None = None) -> bool:
 def _bound_inquiry_clients(cutoff: float) -> None:
     if len(_INQUIRY_HITS) <= _INQUIRY_MAX_CLIENTS:
         return
-    stale = [
-        key
-        for key, hits in _INQUIRY_HITS.items()
-        if not any(hit > cutoff for hit in hits)
-    ]
+    stale = [key for key, hits in _INQUIRY_HITS.items() if not any(hit > cutoff for hit in hits)]
     for key in stale:
         _INQUIRY_HITS.pop(key, None)
     while len(_INQUIRY_HITS) > _INQUIRY_MAX_CLIENTS:
@@ -267,20 +267,30 @@ async def _handle_trustedos_inquiry(settings: Settings, request: Request) -> JSO
         # report success to the sender.
         log.error(
             "trustedos_inquiry.no_recipient name=%r email=%r company_len=%d message_len=%d",
-            name, email, len(company or ""), len(message or ""),
+            name,
+            email,
+            len(company or ""),
+            len(message or ""),
         )
         # Full lead goes to first-party stderr logs only. This logger is outside
         # the trusted_router namespace and propagate=False keeps it off the
         # root-attached third-party Axiom handler.
         _leads_log.error(
             "trustedos_inquiry.lead recipient=%r name=%r email=%r company=%r message=%r",
-            recipient, name, email, company, message,
+            recipient,
+            name,
+            email,
+            company,
+            message,
         )
         return ok
 
     log.info(
         "trustedos_inquiry.received name=%r email=%r company_len=%d message_len=%d",
-        name, email, len(company or ""), len(message or ""),
+        name,
+        email,
+        len(company or ""),
+        len(message or ""),
     )
 
     text_body = (
@@ -300,7 +310,10 @@ async def _handle_trustedos_inquiry(settings: Settings, request: Request) -> JSO
         sent = False
         log.exception(
             "trustedos_inquiry.send_failed name=%r email=%r company_len=%d message_len=%d",
-            name, email, len(company or ""), len(message or ""),
+            name,
+            email,
+            len(company or ""),
+            len(message or ""),
         )
     if not sent:
         # send() returns False when SES is unconfigured or the recipient is
@@ -308,14 +321,22 @@ async def _handle_trustedos_inquiry(settings: Settings, request: Request) -> JSO
         # delivery issue without logging submitted free text.
         log.error(
             "trustedos_inquiry.delivery_failed recipient=%r name=%r email=%r company_len=%d message_len=%d",
-            recipient, name, email, len(company or ""), len(message or ""),
+            recipient,
+            name,
+            email,
+            len(company or ""),
+            len(message or ""),
         )
         # Full lead goes to first-party stderr logs only. This logger is outside
         # the trusted_router namespace and propagate=False keeps it off the
         # root-attached third-party Axiom handler.
         _leads_log.error(
             "trustedos_inquiry.lead recipient=%r name=%r email=%r company=%r message=%r",
-            recipient, name, email, company, message,
+            recipient,
+            name,
+            email,
+            company,
+            message,
         )
     return ok
 
@@ -360,10 +381,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             f"https://{settings.trusted_domain}/api/reference",
             quote=True,
         )
-        body = bytes(response.body).decode().replace(
-            "</head>",
-            f'<link rel="canonical" href="{canonical}">\n</head>',
-            1,
+        body = (
+            bytes(response.body)
+            .decode()
+            .replace(
+                "</head>",
+                f'<link rel="canonical" href="{canonical}">\n</head>',
+                1,
+            )
         )
         return HTMLResponse(body)
 
@@ -674,9 +699,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return JSONResponse(
             PROVIDER_CATALOG_SCHEMA,
             media_type="application/schema+json",
-            headers={
-                "cache-control": "public, max-age=3600, stale-while-revalidate=86400"
-            },
+            headers={"cache-control": "public, max-age=3600, stale-while-revalidate=86400"},
         )
 
     @app.get(
@@ -687,9 +710,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return JSONResponse(
             PROVIDER_CATALOG_V2_SCHEMA,
             media_type="application/schema+json",
-            headers={
-                "cache-control": "public, max-age=3600, stale-while-revalidate=86400"
-            },
+            headers={"cache-control": "public, max-age=3600, stale-while-revalidate=86400"},
         )
 
     @app.api_route(
@@ -946,6 +967,35 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             ).encode(),
         )
 
+    @public_html_route("/leaderboard/video")
+    async def video_leaderboard_page(
+        request: Request, background_tasks: BackgroundTasks
+    ) -> Response:
+        _ = request
+        return _cached_public_response(
+            settings,
+            key="leaderboard:video:page",
+            media_type="text/html",
+            ttl_seconds=LEADERBOARD_RESPONSE_CACHE_SECONDS,
+            stale_seconds=LEADERBOARD_RESPONSE_STALE_SECONDS,
+            background_tasks=background_tasks,
+            build=lambda: public_video_leaderboard_html(
+                settings, _video_leaderboard_snapshot(settings)
+            ).encode(),
+        )
+
+    @app.get("/leaderboard/video.json")
+    async def video_leaderboard_json(background_tasks: BackgroundTasks) -> Response:
+        return _cached_public_response(
+            settings,
+            key="leaderboard:video:json",
+            media_type="application/json",
+            ttl_seconds=LEADERBOARD_RESPONSE_CACHE_SECONDS,
+            stale_seconds=LEADERBOARD_RESPONSE_STALE_SECONDS,
+            background_tasks=background_tasks,
+            build=lambda: _json_body({"data": _video_leaderboard_snapshot(settings)}),
+        )
+
     @app.get("/status.json")
     async def status_json(background_tasks: BackgroundTasks) -> Response:
         return _cached_public_response(
@@ -1113,9 +1163,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         cleaned = model_id.strip()
         maybe_base_model_id, separator, maybe_section = cleaned.rpartition("/")
         legacy_model_id = (
-            maybe_base_model_id
-            if separator and maybe_section in MODEL_SEO_SECTIONS
-            else cleaned
+            maybe_base_model_id if separator and maybe_section in MODEL_SEO_SECTIONS else cleaned
         )
         legacy_target = LEGACY_MODEL_PAGE_REDIRECTS.get(legacy_model_id)
         if legacy_target:
@@ -1423,6 +1471,29 @@ def _leaderboard_snapshot(settings: Settings) -> dict[str, Any]:
     payload["window_label"] = f"rolling benchmark set of up to {LEADERBOARD_SAMPLE_LIMIT:,} samples"
     if settings.environment != "test":
         _LEADERBOARD_CACHE = (now, payload)
+    return payload
+
+
+def _video_leaderboard_snapshot(settings: Settings) -> dict[str, Any]:
+    global _VIDEO_LEADERBOARD_CACHE
+    now = time.monotonic()
+    if settings.environment != "test" and _VIDEO_LEADERBOARD_CACHE is not None:
+        cached_at, payload = _VIDEO_LEADERBOARD_CACHE
+        if now - cached_at < LEADERBOARD_SNAPSHOT_CACHE_SECONDS:
+            return payload
+    samples = public_video_benchmark_samples(
+        limit=VIDEO_LEADERBOARD_SAMPLE_LIMIT,
+        recent_minutes=VIDEO_LEADERBOARD_RECENT_WINDOW_MINUTES,
+    )
+    payload = aggregate_video_leaderboard(samples)
+    payload["generated_at"] = utcnow().isoformat().replace("+00:00", "Z")
+    payload["sample_window_count"] = len(samples)
+    payload["sample_limit"] = VIDEO_LEADERBOARD_SAMPLE_LIMIT
+    payload["window_label"] = (
+        f"rolling video benchmark set of up to {VIDEO_LEADERBOARD_SAMPLE_LIMIT:,} jobs"
+    )
+    if settings.environment != "test":
+        _VIDEO_LEADERBOARD_CACHE = (now, payload)
     return payload
 
 

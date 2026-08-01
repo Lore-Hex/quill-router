@@ -7,7 +7,7 @@ from fastapi import APIRouter, Request
 from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import SettingsDep
-from trusted_router.catalog import MODELS, endpoint_for_id
+from trusted_router.catalog import MODELS, PROVIDERS, endpoint_for_id
 from trusted_router.errors import api_error
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.schemas import (
@@ -18,7 +18,7 @@ from trusted_router.schemas import (
     GatewayVideoJobUpdateRequest,
 )
 from trusted_router.storage import STORE
-from trusted_router.storage_models import VideoJob
+from trusted_router.storage_models import ProviderBenchmarkSample, VideoJob
 from trusted_router.types import ErrorType
 
 
@@ -68,6 +68,12 @@ def _prepare(
         endpoint_id=body.endpoint_id,
         provider_model=body.provider_model,
         quoted_microdollars=body.quoted_microdollars,
+        input_mode=body.input_mode,
+        duration_seconds=body.duration_seconds,
+        resolution=body.resolution,
+        aspect_ratio=body.aspect_ratio,
+        generate_audio=body.generate_audio,
+        region=body.region,
     )
     stored, created = STORE.prepare_video_job(job)
     return {"data": {**_job_payload(stored), "created": created}}
@@ -161,6 +167,15 @@ def register(router: APIRouter) -> None:
         )
         if job is None:
             raise api_error(404, "Video job not found", ErrorType.NOT_FOUND)
+        if job.status == "failed":
+            provider = PROVIDERS.get(job.provider)
+            await run_in_threadpool(
+                STORE.record_provider_benchmark,
+                ProviderBenchmarkSample.from_video_job_failure(
+                    job,
+                    provider_name=provider.name if provider is not None else job.provider,
+                ),
+            )
         return {"data": _job_payload(job)}
 
     @router.post("/internal/gateway/video/jobs/{job_id}/cleaned")

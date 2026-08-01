@@ -249,6 +249,12 @@ class GatewayVideoJobPrepareRequest(_Strict):
     endpoint_id: str = Field(min_length=1, max_length=512)
     provider_model: str = Field(min_length=1, max_length=256)
     quoted_microdollars: int = Field(ge=1, le=100_000_000)
+    input_mode: str = Field(default="text", pattern="^(text|image|reference|video)$")
+    duration_seconds: int = Field(default=0, ge=0, le=60)
+    resolution: str = Field(default="", max_length=32)
+    aspect_ratio: str = Field(default="", max_length=32)
+    generate_audio: bool = False
+    region: str = Field(default="", max_length=64)
 
 
 class GatewayVideoJobQueuedRequest(_Strict):
@@ -343,6 +349,11 @@ class GatewaySettleRequest(_Lenient):
     app_categories: list[str] | None = None
     route_type: str | None = None
     additional_cost_microdollars: int = Field(default=0, ge=0, le=100_000_000)
+    video_input_mode: str | None = Field(default=None, pattern="^(text|image|reference|video)$")
+    video_duration_seconds: int | None = Field(default=None, ge=0, le=60)
+    video_resolution: str | None = Field(default=None, max_length=32)
+    video_aspect_ratio: str | None = Field(default=None, max_length=32)
+    video_generate_audio: bool | None = None
 
     @property
     def input_count(self) -> int:

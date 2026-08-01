@@ -13,7 +13,17 @@ from trusted_router.storage import STORE
 VIDEO_MODELS = {
     "bytedance/seedance-2.0",
     "bytedance/seedance-2.0-fast",
+    "google/veo-3.1",
+    "google/veo-3.1-fast",
     "google/gemini-omni-flash",
+    "openai/sora-2",
+    "openai/sora-2-pro",
+    "runway/gen-4.5",
+    "kling/v3-pro",
+    "kling/o3-pro",
+    "alibaba/wan-2.7",
+    "shengshu/vidu-q3",
+    "pixverse/c1",
     "lightricks/ltx-2.3",
     "lightricks/ltx-2.3-fast",
     "minimax/hailuo-3",
@@ -101,6 +111,11 @@ def test_video_authorize_and_settle_bill_exact_fixed_microdollars(
             "selected_model": "minimax/hailuo-3",
             "selected_endpoint": auth["endpoint_id"],
             "additional_cost_microdollars": quote,
+            "video_input_mode": "image",
+            "video_duration_seconds": 5,
+            "video_resolution": "2K",
+            "video_aspect_ratio": "source",
+            "video_generate_audio": True,
         },
     )
     assert response.status_code == 200, response.text
@@ -109,6 +124,16 @@ def test_video_authorize_and_settle_bill_exact_fixed_microdollars(
     assert len(generations) == 1
     assert generations[0].total_cost_microdollars == quote
     assert generations[0].model == "minimax/hailuo-3"
+    assert generations[0].route_type == "videos"
+    assert generations[0].video_input_mode == "image"
+    assert generations[0].video_duration_seconds == 5
+    assert generations[0].video_resolution == "2K"
+    assert generations[0].video_aspect_ratio == "source"
+    assert generations[0].video_generate_audio is True
+    benchmark = STORE.provider_benchmark_samples(date=None, limit=10)[0]
+    assert benchmark.route_type == "videos"
+    assert benchmark.video_duration_seconds == 5
+    assert benchmark.video_resolution == "2K"
 
 
 def test_video_settlement_cannot_exceed_content_free_quote(
@@ -185,6 +210,12 @@ def test_video_job_state_is_content_free_idempotent_and_key_scoped(
         "endpoint_id": endpoint.id,
         "provider_model": "minimax-h3-text-to-video",
         "quoted_microdollars": 850_500,
+        "input_mode": "reference",
+        "duration_seconds": 5,
+        "resolution": "2K",
+        "aspect_ratio": "16:9",
+        "generate_audio": True,
+        "region": "us-central1",
     }
     first = client.post("/v1/internal/gateway/video/jobs/prepare", json=prepare_body)
     second = client.post("/v1/internal/gateway/video/jobs/prepare", json=prepare_body)
@@ -210,6 +241,12 @@ def test_video_job_state_is_content_free_idempotent_and_key_scoped(
     assert queued.status_code == 200, queued.text
     stored = STORE.get_video_job("job-0123456789abcdef")
     assert stored is not None
+    assert stored.input_mode == "reference"
+    assert stored.duration_seconds == 5
+    assert stored.resolution == "2K"
+    assert stored.aspect_ratio == "16:9"
+    assert stored.generate_audio is True
+    assert stored.region == "us-central1"
     stored.next_poll_at = "2000-01-01T00:00:00Z"
 
     claimed = client.post(
@@ -248,6 +285,55 @@ def test_video_job_state_is_content_free_idempotent_and_key_scoped(
         json={"api_key_lookup_hash": lookup_hash_api_key(bob_key.json()["key"])},
     )
     assert lookup.status_code == 404
+
+
+def test_failed_video_job_records_one_public_safe_benchmark_sample(
+    client: TestClient,
+    inference_key: str,
+) -> None:
+    auth = _authorize_video(client, inference_key, idempotency_key="video-failure")
+    prepared = client.post(
+        "/v1/internal/gateway/video/jobs/prepare",
+        json={
+            "job_id": "job-failure-safe",
+            "authorization_id": auth["authorization_id"],
+            "model": "minimax/hailuo-3",
+            "provider": "venice",
+            "endpoint_id": auth["endpoint_id"],
+            "provider_model": "minimax-h3-text-to-video",
+            "quoted_microdollars": 850_500,
+            "input_mode": "text",
+            "duration_seconds": 5,
+            "resolution": "2K",
+            "aspect_ratio": "16:9",
+            "generate_audio": True,
+            "region": "europe-west4",
+        },
+    )
+    assert prepared.status_code == 200, prepared.text
+
+    update = {
+        "status": "failed",
+        "provider_status": "FAILED",
+        "error": "Bearer private-key and private prompt",
+    }
+    first = client.post("/v1/internal/gateway/video/jobs/job-failure-safe/update", json=update)
+    replay = client.post("/v1/internal/gateway/video/jobs/job-failure-safe/update", json=update)
+    assert first.status_code == 200, first.text
+    assert replay.status_code == 200, replay.text
+
+    rows = [
+        sample
+        for sample in STORE.provider_benchmark_samples(date=None, limit=20)
+        if sample.model == "minimax/hailuo-3"
+    ]
+    assert len(rows) == 1
+    assert rows[0].status == "error"
+    assert rows[0].error_type == "provider_error"
+    assert rows[0].region == "europe-west4"
+    assert rows[0].video_duration_seconds == 5
+    assert "private-key" not in repr(rows[0])
+    assert "private prompt" not in repr(rows[0])
 
 
 def test_video_job_prepare_rejects_mismatched_quote(
