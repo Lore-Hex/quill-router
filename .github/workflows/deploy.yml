@@ -230,6 +230,20 @@ jobs:
           TR_BIGTABLE_INSTANCE_ID: trusted-router-logs
           TR_BIGTABLE_GENERATION_TABLE: trustedrouter-generations
         run: scripts/deploy/migrate_request_retention.sh --apply
+      - name: Apply bounded generation-record schema
+        run: scripts/deploy/migrate_generation_records.sh --apply
+      - name: Apply provider analytics outbox schema
+        env:
+          GCP_PROJECT_ID: quill-cloud-proxy
+          SPANNER_INSTANCE_ID: trusted-router-nam6
+          SPANNER_DATABASE_ID: trusted-router
+        run: scripts/deploy/migrate_analytics_outbox.sh
+      - name: Apply operational analytics outbox schema
+        env:
+          GCP_PROJECT_ID: quill-cloud-proxy
+          SPANNER_INSTANCE_ID: trusted-router-nam6
+          SPANNER_DATABASE_ID: trusted-router
+        run: scripts/deploy/migrate_operational_analytics_outbox.sh
 
   deploy:
     needs: [gate-on-ci, build-image, migrate-schema]

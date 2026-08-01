@@ -9,6 +9,31 @@ from scripts.check_price_coverage import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_top_level_deploy_passes_spanner_config_to_unshared_migration() -> None:
+    deploy = (ROOT / "scripts/deploy-gcp.sh").read_text()
+
+    assert 'source "${SCRIPT_DIR}/deploy/_lib.sh"' in deploy
+    assert 'GCP_PROJECT_ID="$PROJECT_ID" \\\n' in deploy
+    assert 'SPANNER_INSTANCE_ID="$SPANNER_INSTANCE_ID" \\\n' in deploy
+    assert 'SPANNER_DATABASE_ID="$SPANNER_DATABASE_ID" \\\n' in deploy
+    assert 'bash "${SCRIPT_DIR}/deploy/migrate_typed_counters.sh"' in deploy
+
+
+def test_guarded_deploy_applies_clickhouse_delivery_schemas_before_rollout() -> None:
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text()
+
+    generation = "scripts/deploy/migrate_generation_records.sh --apply"
+    provider_outbox = "scripts/deploy/migrate_analytics_outbox.sh"
+    operational_outbox = "scripts/deploy/migrate_operational_analytics_outbox.sh"
+    rollout = "run: bash scripts/deploy/rollout.sh"
+    assert generation in workflow
+    assert provider_outbox in workflow
+    assert operational_outbox in workflow
+    assert workflow.index(generation) < workflow.index(rollout)
+    assert workflow.index(provider_outbox) < workflow.index(rollout)
+    assert workflow.index(operational_outbox) < workflow.index(rollout)
+
+
 def test_deploy_pins_ten_cent_signup_credit_policy() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
 

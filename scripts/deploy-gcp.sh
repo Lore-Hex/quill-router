@@ -17,9 +17,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/deploy/_lib.sh
+source "${SCRIPT_DIR}/deploy/_lib.sh"
 
 bash "${SCRIPT_DIR}/deploy/infra.sh"
-bash "${SCRIPT_DIR}/deploy/migrate_typed_counters.sh"
+GCP_PROJECT_ID="$PROJECT_ID" \
+SPANNER_INSTANCE_ID="$SPANNER_INSTANCE_ID" \
+SPANNER_DATABASE_ID="$SPANNER_DATABASE_ID" \
+  bash "${SCRIPT_DIR}/deploy/migrate_typed_counters.sh"
 bash "${SCRIPT_DIR}/deploy/migrate_request_retention.sh" --apply
 bash "${SCRIPT_DIR}/deploy/migrate_generation_records.sh" --apply
 bash "${SCRIPT_DIR}/deploy/migrate_analytics_outbox.sh"
