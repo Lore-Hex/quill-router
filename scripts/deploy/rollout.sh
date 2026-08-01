@@ -80,6 +80,9 @@ add_secret_env_if_exists "TR_ATHENA_WORKER_PROMPT" "trustedrouter-athena-worker-
 add_secret_env_if_exists \
   "TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD" \
   "trustedrouter-clickhouse-provider-read-password"
+add_secret_env_if_exists \
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD" \
+  "trustedrouter-clickhouse-control-read-password"
 UPDATE_SECRETS="$(IFS=,; echo "${SECRET_ENVS[*]}")"
 
 REQUEST_RECORD_WRITE_MODE="${TR_REQUEST_RECORD_WRITE_MODE:-}"
@@ -104,6 +107,49 @@ case "$REQUEST_RECORD_WRITE_MODE" in
     exit 1
     ;;
 esac
+
+LIVE_ANALYTICS_READ_MODE="$(
+  gc run services describe "$SERVICE" \
+    --region="$TR_PRIMARY_REGION" \
+    --format=json 2>/dev/null \
+    | jq -r '
+        [
+          .spec.template.spec.containers[0].env[]?
+          | select(.name == "TR_ANALYTICS_READ_MODE")
+          | .value
+        ][0] // "bigtable"
+      ' || true
+)"
+ANALYTICS_READ_MODE="${TR_ANALYTICS_READ_MODE:-$LIVE_ANALYTICS_READ_MODE}"
+case "$ANALYTICS_READ_MODE" in
+  bigtable|dual|clickhouse) ;;
+  *)
+    log "refusing rollout: TR_ANALYTICS_READ_MODE must be bigtable, dual, or clickhouse"
+    exit 1
+    ;;
+esac
+
+ANALYTICS_DUAL_READ_STARTED_AT="${TR_ANALYTICS_DUAL_READ_STARTED_AT:-}"
+if [ -z "$ANALYTICS_DUAL_READ_STARTED_AT" ]; then
+  ANALYTICS_DUAL_READ_STARTED_AT="$(
+    gc run services describe "$SERVICE" \
+      --region="$TR_PRIMARY_REGION" \
+      --format=json 2>/dev/null \
+      | jq -r '
+          [
+            .spec.template.spec.containers[0].env[]?
+            | select(.name == "TR_ANALYTICS_DUAL_READ_STARTED_AT")
+            | .value
+          ][0] // empty
+        ' || true
+  )"
+fi
+if [ "$ANALYTICS_READ_MODE" = "dual" ] && {
+  [ "$LIVE_ANALYTICS_READ_MODE" != "dual" ] ||
+  [ -z "$ANALYTICS_DUAL_READ_STARTED_AT" ];
+}; then
+  ANALYTICS_DUAL_READ_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+fi
 
 # Prefer the private three-replica ClickHouse load balancer once provisioned.
 # The direct node-1 address remains only as a migration fallback for projects
@@ -176,6 +222,7 @@ ENV_VARS=(
   # three-replica load balancer below; inference and billing never depend on
   # ClickHouse. Remove this line to stop enqueueing new analytics rows.
   "TR_ANALYTICS_OUTBOX_ENABLED=true"
+  "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true"
   # Private provider operations portal. Direct VPC egress below reaches this
   # RFC1918 address; ClickHouse has no public IP and the credential is a
   # SELECT-only account scoped to the benchmark table.
@@ -183,6 +230,12 @@ ENV_VARS=(
   "TR_PROVIDER_ANALYTICS_CLICKHOUSE_USER=tr_provider_read"
   "TR_PROVIDER_ANALYTICS_CLICKHOUSE_DATABASE=tr"
   "TR_PROVIDER_ANALYTICS_CLICKHOUSE_TABLE=provider_benchmark_samples"
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=${PROVIDER_ANALYTICS_CLICKHOUSE_URL}"
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER=tr_control_read"
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE=tr"
+  "TR_ANALYTICS_READ_MODE=${ANALYTICS_READ_MODE}"
+  "TR_ANALYTICS_DUAL_READ_GRACE_SECONDS=30"
+  "TR_ANALYTICS_DUAL_READ_STARTED_AT=${ANALYTICS_DUAL_READ_STARTED_AT}"
   # The first expand deployment defaults to legacy. After an explicit typed
   # cutover, preserve the primary region's live mode on later deploys unless an
   # operator overrides it. This prevents routine rollouts from reopening the

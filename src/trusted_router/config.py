@@ -65,9 +65,21 @@ class Settings(BaseSettings):
     provider_analytics_clickhouse_password: str = ""
     provider_analytics_clickhouse_database: str = "tr"
     provider_analytics_clickhouse_table: str = "provider_benchmark_samples"
+    operational_analytics_clickhouse_url: str = ""
+    operational_analytics_clickhouse_user: str = "tr_control_read"
+    operational_analytics_clickhouse_password: str = ""
+    operational_analytics_clickhouse_database: str = "tr"
+    # dual returns Bigtable and compares ClickHouse; clickhouse reverses those
+    # roles for the second soak before Bigtable reads are disabled.
+    analytics_read_mode: str = "bigtable"
+    analytics_dual_read_grace_seconds: int = 30
+    analytics_dual_read_started_at: str = ""
     # Stage 1 live analytics outbox. This is intentionally off by default and
     # must remain off until the shadow ingester and reconciler are observed.
     analytics_outbox_enabled: bool = False
+    # Durable tenant-activity and synthetic-status stream. Kept independent
+    # from provider analytics so its privacy and cutover can be controlled.
+    operational_analytics_outbox_enabled: bool = False
 
     # Starter credit granted exactly once with a new email/OAuth account's
     # first workspace. Wallet-only and secondary workspaces receive no grant.
@@ -344,6 +356,12 @@ class Settings(BaseSettings):
             raise ValueError(
                 "TR_REQUEST_RECORD_WRITE_MODE must be 'legacy' or 'typed'"
             )
+        if self.analytics_read_mode not in {"bigtable", "dual", "clickhouse"}:
+            raise ValueError(
+                "TR_ANALYTICS_READ_MODE must be bigtable, dual, or clickhouse"
+            )
+        if self.analytics_dual_read_grace_seconds < 0:
+            raise ValueError("TR_ANALYTICS_DUAL_READ_GRACE_SECONDS cannot be negative")
         if not 5 <= self.regional_quota_lease_ttl_seconds <= 300:
             raise ValueError(
                 "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS must be between 5 and 300"
@@ -460,6 +478,11 @@ class Settings(BaseSettings):
                 missing.append("TR_SPANNER_DATABASE_ID")
             if not self.bigtable_instance_id:
                 missing.append("TR_BIGTABLE_INSTANCE_ID")
+        if self.analytics_read_mode != "bigtable":
+            if not self.operational_analytics_clickhouse_url:
+                missing.append("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL")
+            if not self.operational_analytics_clickhouse_password:
+                missing.append("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD")
         if self.request_record_write_mode == "typed" and not self.settle_outbox_enabled:
             missing.append(
                 "TR_SETTLE_OUTBOX_ENABLED=true when "

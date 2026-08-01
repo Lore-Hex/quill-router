@@ -12,6 +12,10 @@ from collections.abc import Callable
 from typing import Any, TypeVar
 
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
+from trusted_router.operational_analytics import (
+    OperationalAnalyticsClient,
+    stable_rows_fingerprint,
+)
 from trusted_router.storage import (
     AcquisitionAttribution,
     ApiKey,
@@ -43,6 +47,14 @@ from trusted_router.storage import (
     iso_now,
     normalize_provider_access_role,
     normalize_provider_access_slug,
+)
+from trusted_router.storage_activity import (
+    ActivityResult,
+    filter_generations,
+    generation_events,
+    generation_metrics,
+    summarize_activity_result,
+    usage_bucket_key,
 )
 from trusted_router.storage_gcp_analytics_outbox import SpannerAnalyticsOutbox
 from trusted_router.storage_gcp_attribution import SpannerAcquisitionAttribution
@@ -82,6 +94,10 @@ from trusted_router.storage_gcp_generations import SpannerGenerations
 from trusted_router.storage_gcp_io import SpannerIO, run_in_transaction_with_retry
 from trusted_router.storage_gcp_keys import SpannerApiKeys
 from trusted_router.storage_gcp_oauth_codes import SpannerOAuthCodes
+from trusted_router.storage_gcp_operational_analytics_outbox import (
+    SpannerOperationalAnalyticsOutbox,
+    analytics_surrogate,
+)
 from trusted_router.storage_gcp_rate_limits import SpannerRateLimits
 from trusted_router.storage_gcp_request_records import read_gateway_authorization
 from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
@@ -102,6 +118,23 @@ from trusted_router.types import UsageType
 
 T = TypeVar("T")
 log = logging.getLogger(__name__)
+
+
+def _empty_usage_bucket(bucket: str) -> dict[str, Any]:
+    return {
+        "bucket": bucket,
+        "requests": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "reasoning_tokens": 0,
+        "cost_micro": 0,
+        "byok_micro": 0,
+    }
+
+
+def _add_usage_metrics(bucket: dict[str, Any], metrics: dict[str, int]) -> None:
+    for key, value in metrics.items():
+        bucket[key] += value
 
 
 class SpannerBigtableStore:
@@ -139,12 +172,39 @@ class SpannerBigtableStore:
         bigtable_app_profile_id: str = "",
         request_record_write_mode: str = "legacy",
         analytics_outbox_enabled: bool = False,
+        operational_analytics_outbox_enabled: bool = False,
+        operational_analytics_clickhouse_url: str = "",
+        operational_analytics_clickhouse_user: str = "tr_control_read",
+        operational_analytics_clickhouse_password: str = "",
+        operational_analytics_clickhouse_database: str = "tr",
+        analytics_read_mode: str = "bigtable",
+        analytics_dual_read_grace_seconds: int = 30,
     ) -> None:
         if not spanner_instance_id or not spanner_database_id or not bigtable_instance_id:
             raise ValueError("Spanner and Bigtable IDs are required")
         if request_record_write_mode not in {"legacy", "typed"}:
             raise ValueError("request_record_write_mode must be 'legacy' or 'typed'")
+        if analytics_read_mode not in {"bigtable", "dual", "clickhouse"}:
+            raise ValueError("analytics_read_mode must be bigtable, dual, or clickhouse")
         self.request_record_write_mode = request_record_write_mode
+        self._analytics_read_mode = analytics_read_mode
+        self._analytics_dual_read_grace_seconds = max(
+            0,
+            int(analytics_dual_read_grace_seconds),
+        )
+        self._operational_analytics = (
+            OperationalAnalyticsClient(
+                base_url=operational_analytics_clickhouse_url,
+                user=operational_analytics_clickhouse_user,
+                password=operational_analytics_clickhouse_password,
+                database=operational_analytics_clickhouse_database,
+            )
+            if operational_analytics_clickhouse_url
+            and operational_analytics_clickhouse_password
+            else None
+        )
+        self._analytics_parity_log_lock = threading.Lock()
+        self._analytics_last_parity_log: dict[str, float] = {}
         try:
             from google.cloud import bigtable, spanner
             from google.cloud.spanner_v1 import FixedSizePool, param_types
@@ -239,6 +299,11 @@ class SpannerBigtableStore:
         )
         self.api_keys = SpannerApiKeys(io)
         self.acquisition_store = SpannerAcquisitionAttribution(io)
+        self._operational_analytics_outbox = (
+            SpannerOperationalAnalyticsOutbox(self._database, self._param_types)
+            if operational_analytics_outbox_enabled
+            else None
+        )
         self.generation_store = SpannerGenerations(
             io,
             bt_table=self._bt_table,
@@ -251,6 +316,7 @@ class SpannerBigtableStore:
                 if analytics_outbox_enabled
                 else None
             ),
+            operational_analytics_outbox=self._operational_analytics_outbox,
         )
         self.byok_store = SpannerByok(io)
         self.custom_model_store = SpannerCustomModels(io)
@@ -1853,8 +1919,20 @@ class SpannerBigtableStore:
         model: str | None = None,
         limit: int = 1000,
     ) -> list[ProviderBenchmarkSample]:
-        return self.generation_store.benchmark_samples(
-            date=date, provider=provider, model=model, limit=limit
+        return self._analytics_read(
+            "provider_benchmark_samples",
+            bigtable=lambda: self.generation_store.benchmark_samples(
+                date=date,
+                provider=provider,
+                model=model,
+                limit=limit,
+            ),
+            clickhouse=lambda: self._require_operational_analytics().benchmark_samples(
+                date=date,
+                provider=provider,
+                model=model,
+                limit=limit,
+            ),
         )
 
     def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:
@@ -1865,6 +1943,21 @@ class SpannerBigtableStore:
             rollup_family=self.synthetic_rollup_family,
             legacy_family=self.legacy_generation_family,
         )
+        if self._operational_analytics_outbox is not None:
+            try:
+                self._operational_analytics_outbox.enqueue_synthetic(sample)
+            except Exception as exc:
+                log.exception(
+                    "spanner.operational_analytics_synthetic_enqueue_failed",
+                    extra={
+                        "sample_id": sample.id,
+                        "probe_type": sample.probe_type,
+                        "target": sample.target,
+                        "error_class": type(exc).__name__,
+                        "error_message": str(exc)[:500],
+                        "loss_tolerated": True,
+                    },
+                )
 
     def synthetic_probe_samples(
         self,
@@ -1875,14 +1968,24 @@ class SpannerBigtableStore:
         monitor_region: str | None = None,
         limit: int = 1000,
     ) -> list[SyntheticProbeSample]:
-        return _bt_synthetic_probe_samples(
-            self._bt_table,
-            (self.synthetic_family, self.legacy_generation_family),
-            date=date,
-            target=target,
-            probe_type=probe_type,
-            monitor_region=monitor_region,
-            limit=limit,
+        return self._analytics_read(
+            "synthetic_probe_samples",
+            bigtable=lambda: _bt_synthetic_probe_samples(
+                self._bt_table,
+                (self.synthetic_family, self.legacy_generation_family),
+                date=date,
+                target=target,
+                probe_type=probe_type,
+                monitor_region=monitor_region,
+                limit=limit,
+            ),
+            clickhouse=lambda: self._require_operational_analytics().synthetic_samples(
+                date=date,
+                target=target,
+                probe_type=probe_type,
+                monitor_region=monitor_region,
+                limit=limit,
+            ),
         )
 
     def synthetic_rollups(
@@ -1894,14 +1997,24 @@ class SpannerBigtableStore:
         include_histograms: bool = True,
         limit: int = 1000,
     ) -> list[SyntheticRollup]:
-        return _bt_synthetic_rollups(
-            self._bt_table,
-            (self.synthetic_rollup_family, self.legacy_generation_family),
-            period=period,
-            since=since,
-            until=until,
-            include_histograms=include_histograms,
-            limit=limit,
+        return self._analytics_read(
+            "synthetic_rollups",
+            bigtable=lambda: _bt_synthetic_rollups(
+                self._bt_table,
+                (self.synthetic_rollup_family, self.legacy_generation_family),
+                period=period,
+                since=since,
+                until=until,
+                include_histograms=include_histograms,
+                limit=limit,
+            ),
+            clickhouse=lambda: self._require_operational_analytics().synthetic_rollups(
+                period=period,
+                since=since,
+                until=until,
+                include_histograms=include_histograms,
+                limit=limit,
+            ),
         )
 
     def activity(
@@ -1914,14 +2027,14 @@ class SpannerBigtableStore:
         tag_value: str | None = None,
         group_by_tag: str | None = None,
     ) -> list[dict[str, Any]]:
-        return self.generation_store.activity(
+        return self.activity_result(
             workspace_id,
             api_key_hash=api_key_hash,
             date=date,
             tag_key=tag_key,
             tag_value=tag_value,
             group_by_tag=group_by_tag,
-        )
+        ).data
 
     def activity_events(
         self,
@@ -1933,14 +2046,14 @@ class SpannerBigtableStore:
         tag_key: str | None = None,
         tag_value: str | None = None,
     ) -> list[dict[str, Any]]:
-        return self.generation_store.activity_events(
+        return self.activity_events_result(
             workspace_id,
             api_key_hash=api_key_hash,
             date=date,
             limit=limit,
             tag_key=tag_key,
             tag_value=tag_value,
-        )
+        ).data
 
     def activity_result(
         self,
@@ -1952,13 +2065,24 @@ class SpannerBigtableStore:
         tag_value: str | None = None,
         group_by_tag: str | None = None,
     ) -> Any:
-        return self.generation_store.activity_result(
-            workspace_id,
-            api_key_hash=api_key_hash,
-            date=date,
-            tag_key=tag_key,
-            tag_value=tag_value,
-            group_by_tag=group_by_tag,
+        return self._analytics_read(
+            "activity_result",
+            bigtable=lambda: self.generation_store.activity_result(
+                workspace_id,
+                api_key_hash=api_key_hash,
+                date=date,
+                tag_key=tag_key,
+                tag_value=tag_value,
+                group_by_tag=group_by_tag,
+            ),
+            clickhouse=lambda: self._clickhouse_activity_result(
+                workspace_id,
+                api_key_hash=api_key_hash,
+                date=date,
+                tag_key=tag_key,
+                tag_value=tag_value,
+                group_by_tag=group_by_tag,
+            ),
         )
 
     def activity_events_result(
@@ -1971,13 +2095,24 @@ class SpannerBigtableStore:
         tag_key: str | None = None,
         tag_value: str | None = None,
     ) -> Any:
-        return self.generation_store.activity_events_result(
-            workspace_id,
-            api_key_hash=api_key_hash,
-            date=date,
-            limit=limit,
-            tag_key=tag_key,
-            tag_value=tag_value,
+        return self._analytics_read(
+            "activity_events_result",
+            bigtable=lambda: self.generation_store.activity_events_result(
+                workspace_id,
+                api_key_hash=api_key_hash,
+                date=date,
+                limit=limit,
+                tag_key=tag_key,
+                tag_value=tag_value,
+            ),
+            clickhouse=lambda: self._clickhouse_activity_events_result(
+                workspace_id,
+                api_key_hash=api_key_hash,
+                date=date,
+                limit=limit,
+                tag_key=tag_key,
+                tag_value=tag_value,
+            ),
         )
 
     def usage_series(
@@ -2001,15 +2136,269 @@ class SpannerBigtableStore:
             start_day = since.date().isoformat()
             end_day = now.date().isoformat()
             min_created_at = since.strftime("%Y-%m-%dT%H:%M:%S")
-        return self.generation_store.usage_series(
-            workspace_id,
-            start_day=start_day,
-            end_day=end_day,
-            granularity=granularity,
-            api_key_hash=api_key_hash,
-            by_model=by_model,
-            min_created_at=min_created_at,
+        return self._analytics_read(
+            "usage_series",
+            bigtable=lambda: self.generation_store.usage_series(
+                workspace_id,
+                start_day=start_day,
+                end_day=end_day,
+                granularity=granularity,
+                api_key_hash=api_key_hash,
+                by_model=by_model,
+                min_created_at=min_created_at,
+            ),
+            clickhouse=lambda: self._clickhouse_usage_series(
+                workspace_id,
+                start_day=start_day,
+                end_day=end_day,
+                granularity=granularity,
+                api_key_hash=api_key_hash,
+                by_model=by_model,
+                min_created_at=min_created_at,
+            ),
         )
+
+    def _require_operational_analytics(self) -> OperationalAnalyticsClient:
+        if self._operational_analytics is None:
+            raise RuntimeError("operational ClickHouse reader is not configured")
+        return self._operational_analytics
+
+    def _analytics_read(
+        self,
+        label: str,
+        *,
+        bigtable: Callable[[], T],
+        clickhouse: Callable[[], T],
+    ) -> T:
+        if self._analytics_read_mode == "bigtable":
+            return bigtable()
+        if self._analytics_read_mode == "dual":
+            primary = bigtable()
+            try:
+                shadow = clickhouse()
+            except Exception as exc:
+                self._log_analytics_read_error(label, "clickhouse", exc)
+                return primary
+            self._compare_analytics_reads(label, primary, shadow)
+            return primary
+        try:
+            primary = clickhouse()
+        except Exception as exc:
+            self._log_analytics_read_error(label, "clickhouse", exc)
+            return bigtable()
+        try:
+            shadow = bigtable()
+        except Exception as exc:
+            self._log_analytics_read_error(label, "bigtable", exc)
+            return primary
+        self._compare_analytics_reads(label, shadow, primary)
+        return primary
+
+    def _log_analytics_read_error(
+        self,
+        label: str,
+        backend: str,
+        exc: Exception,
+    ) -> None:
+        if not self._should_log_analytics_event(f"error:{label}:{backend}"):
+            return
+        log.error(
+            "analytics_read_error surface=%s backend=%s error_class=%s error=%s",
+            label,
+            backend,
+            type(exc).__name__,
+            str(exc)[:300],
+        )
+
+    def _compare_analytics_reads(self, label: str, expected: Any, actual: Any) -> None:
+        expected_signature = self._analytics_signature(expected)
+        actual_signature = self._analytics_signature(actual)
+        if expected_signature == actual_signature:
+            return
+        if not self._should_log_analytics_event(f"mismatch:{label}"):
+            return
+        log.warning(
+            "analytics_dual_read_mismatch surface=%s expected_count=%s "
+            "actual_count=%s expected_fingerprint=%s actual_fingerprint=%s",
+            label,
+            expected_signature[0],
+            actual_signature[0],
+            expected_signature[1],
+            actual_signature[1],
+        )
+
+    def _analytics_signature(self, value: Any) -> tuple[int, str]:
+        if isinstance(value, ActivityResult):
+            return stable_rows_fingerprint(value.data, grace_seconds=0)
+        if isinstance(value, list):
+            return stable_rows_fingerprint(
+                value,
+                grace_seconds=self._analytics_dual_read_grace_seconds,
+            )
+        if isinstance(value, dict):
+            return stable_rows_fingerprint([value], grace_seconds=0)
+        return stable_rows_fingerprint([{"value": str(value)}], grace_seconds=0)
+
+    def _should_log_analytics_event(self, key: str) -> bool:
+        now = time.monotonic()
+        with self._analytics_parity_log_lock:
+            previous = self._analytics_last_parity_log.get(key, 0.0)
+            if now - previous < 300.0:
+                return False
+            self._analytics_last_parity_log[key] = now
+        return True
+
+    def _clickhouse_activity_rows(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None,
+        date: str | None,
+        limit: int,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+    ) -> list[Generation]:
+        tenant_id = analytics_surrogate("workspace", workspace_id)
+        key_id = (
+            analytics_surrogate("api-key", api_key_hash)
+            if api_key_hash is not None
+            else None
+        )
+        rows = self._require_operational_analytics().activity_generations(
+            tenant_id=tenant_id,
+            key_id=key_id,
+            tag_key=tag_key,
+            tag_value=tag_value,
+            date=date,
+            limit=limit,
+        )
+        return filter_generations(
+            rows,
+            workspace_id=tenant_id,
+            date=date,
+        )
+
+    def _clickhouse_activity_result(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None,
+        date: str | None,
+        tag_key: str | None,
+        tag_value: str | None,
+        group_by_tag: str | None,
+    ) -> ActivityResult:
+        scan_limit = 5000
+        rows = self._clickhouse_activity_rows(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            limit=scan_limit + 1,
+            tag_key=tag_key,
+            tag_value=tag_value,
+        )
+        truncated = len(rows) > scan_limit
+        rows = rows[:scan_limit]
+        scanned = len(rows)
+        rows = filter_generations(
+            rows,
+            workspace_id=analytics_surrogate("workspace", workspace_id),
+        )
+        result = summarize_activity_result(
+            rows,
+            group_by_tag=group_by_tag,
+            truncated=truncated,
+            scan_limit=scan_limit,
+        )
+        return dataclasses.replace(result, scanned=scanned)
+
+    def _clickhouse_activity_events_result(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None,
+        date: str | None,
+        limit: int,
+        tag_key: str | None,
+        tag_value: str | None,
+    ) -> ActivityResult:
+        normalized_limit = max(1, min(limit, 1000))
+        rows = self._clickhouse_activity_rows(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            limit=normalized_limit + 1,
+            tag_key=tag_key,
+            tag_value=tag_value,
+        )
+        truncated = len(rows) > normalized_limit
+        rows = rows[:normalized_limit]
+        scanned = len(rows)
+        rows = filter_generations(
+            rows,
+            workspace_id=analytics_surrogate("workspace", workspace_id),
+        )
+        return ActivityResult(
+            data=generation_events(rows, limit=normalized_limit),
+            truncated=truncated,
+            scanned=scanned,
+            scan_limit=normalized_limit,
+        )
+
+    def _clickhouse_usage_series(
+        self,
+        workspace_id: str,
+        *,
+        start_day: str,
+        end_day: str,
+        granularity: str,
+        api_key_hash: str | None,
+        by_model: bool,
+        min_created_at: str | None,
+    ) -> dict[str, Any]:
+        tenant_id = analytics_surrogate("workspace", workspace_id)
+        key_id = (
+            analytics_surrogate("api-key", api_key_hash)
+            if api_key_hash is not None
+            else None
+        )
+        end_exclusive = (
+            dt.date.fromisoformat(end_day) + dt.timedelta(days=1)
+        ).isoformat()
+        rows = self._require_operational_analytics().activity_generations(
+            tenant_id=tenant_id,
+            key_id=key_id,
+            start_at=min_created_at or start_day,
+            end_at=end_exclusive,
+            limit=200_001,
+        )
+        truncated = len(rows) > 200_000
+        rows = rows[:200_000]
+        buckets: dict[str, dict[str, Any]] = {}
+        by_model_buckets: dict[str, dict[str, dict[str, Any]]] = {}
+        for generation in rows:
+            bucket_id = usage_bucket_key(generation.created_at, granularity)
+            bucket = buckets.setdefault(bucket_id, _empty_usage_bucket(bucket_id))
+            _add_usage_metrics(bucket, generation_metrics(generation))
+            if by_model:
+                model_bucket = by_model_buckets.setdefault(
+                    generation.model,
+                    {},
+                ).setdefault(bucket_id, _empty_usage_bucket(bucket_id))
+                _add_usage_metrics(model_bucket, generation_metrics(generation))
+        result: dict[str, Any] = {
+            "granularity": granularity,
+            "start_day": start_day,
+            "end_day": end_day,
+            "truncated": truncated,
+            "buckets": [buckets[key] for key in sorted(buckets)],
+        }
+        if by_model:
+            result["by_model"] = {
+                model: [model_buckets[key] for key in sorted(model_buckets)]
+                for model, model_buckets in sorted(by_model_buckets.items())
+            }
+        return result
 
     def reconcile_generation_activity(
         self,

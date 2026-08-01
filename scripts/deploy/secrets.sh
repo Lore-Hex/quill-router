@@ -161,6 +161,14 @@ ensure_secret_from_env_file "NEUROMETRIC_API_KEY" "trustedrouter-neurometric-api
 ensure_secret_from_env_file \
   "TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD" \
   "trustedrouter-clickhouse-provider-read-password"
+if ! gc secrets describe trustedrouter-clickhouse-control-read-password >/dev/null 2>&1; then
+  ensure_secret_value trustedrouter-clickhouse-control-read-password "$(python3 - <<'PY'
+import secrets
+print(secrets.token_urlsafe(48))
+PY
+)"
+  log "generated secret trustedrouter-clickhouse-control-read-password"
+fi
 
 SYNTH_PROMPTS_FILE="${TR_SYNTH_PROMPTS_FILE:-${HOME}/.trustedrouter_synth_prompts_v1.md}"
 SYNTH_CODE_PROMPTS_FILE="${TR_SYNTH_CODE_PROMPTS_FILE:-/Users/jperla/claude/fusion-code-prompts-v1.md}"
@@ -227,6 +235,7 @@ grant_tr_deploy_secret_access "trustedrouter-morph-api-key"
 grant_tr_deploy_secret_access "trustedrouter-atlas-cloud-api-key"
 grant_tr_deploy_secret_access "trustedrouter-streamlake-api-key"
 grant_tr_deploy_secret_access "trustedrouter-neurometric-api-key"
+grant_tr_deploy_secret_access "trustedrouter-clickhouse-control-read-password"
 
 # Axiom logging — ship structured logs to a dedicated dataset for
 # slice-and-dice analysis (request_id correlation, rate-limit hits,
