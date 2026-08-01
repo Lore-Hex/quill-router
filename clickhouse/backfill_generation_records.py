@@ -13,6 +13,7 @@ from google.cloud import bigtable, spanner
 from google.cloud.bigtable.row_filters import (
     CellsColumnLimitFilter,
     RowFilterChain,
+    TimestampRange,
     TimestampRangeFilter,
 )
 from google.cloud.spanner_v1 import KeySet
@@ -72,7 +73,7 @@ def _generation(row: Any) -> Generation | None:
 def _iter_recent(table: Any, *, cutoff: dt.datetime) -> Iterator[Generation]:
     filter_ = RowFilterChain(
         filters=[
-            TimestampRangeFilter(start=cutoff),
+            TimestampRangeFilter(TimestampRange(start=cutoff)),
             CellsColumnLimitFilter(1),
         ]
     )

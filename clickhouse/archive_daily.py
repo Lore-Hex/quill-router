@@ -34,6 +34,18 @@ ARCHIVE_BUCKET = "quill-cloud-proxy-tr-clickhouse-archive"
 ARCHIVE_SCHEMA_VERSION = 1
 ROWS_PER_PART = 5_000_000
 UINT64_MODULUS = 1 << 64
+_UNORDERED_MAP_COLUMNS = frozenset(
+    {
+        "latency_histogram",
+        "ttfb_histogram",
+        "dns_histogram",
+        "tcp_connect_histogram",
+        "tls_handshake_histogram",
+        "gateway_processing_histogram",
+        "error_counts",
+    }
+)
+_DATETIME_MILLI_COLUMNS = frozenset({"period_start"})
 
 log = logging.getLogger("trusted_router.analytics_archive")
 
@@ -171,7 +183,6 @@ DATASETS: dict[str, DatasetSpec] = {
             "error_counts",
             "last_checked_at",
             "cost_microdollars",
-            "updated_at",
         ),
         time_column="period_start",
         shard_column="id",
@@ -200,7 +211,18 @@ def _day_bounds(day: dt.date) -> tuple[str, str]:
 
 
 def _row_hash_expression(columns: Sequence[str]) -> str:
-    return "cityHash64(toJSONString(tuple(" + ", ".join(columns) + ")))"
+    def canonical_column(column: str) -> str:
+        if column in _UNORDERED_MAP_COLUMNS:
+            return f"mapSort({column})"
+        if column in _DATETIME_MILLI_COLUMNS:
+            return (
+                "toUnixTimestamp64Milli("
+                f"toDateTime64({column}, 3, 'UTC'))"
+            )
+        return column
+
+    canonical = (canonical_column(column) for column in columns)
+    return "cityHash64(toJSONString(tuple(" + ", ".join(canonical) + ")))"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -408,9 +430,9 @@ class ClickHouseDailyExporter:
 
 class GCSArchiveStore:
     def __init__(self, *, project: str, bucket: str) -> None:
-        from google.cloud import storage
+        import google.cloud.storage as gcs_storage
 
-        self._bucket = storage.Client(project=project).bucket(bucket)
+        self._bucket = gcs_storage.Client(project=project).bucket(bucket)
 
     def read_json(self, key: str) -> dict[str, Any] | None:
         blob = self._bucket.blob(key)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import dataclasses
 import datetime as dt
 import json
@@ -90,12 +91,26 @@ def verify_delivery(
         ids=list(expected),
     )
     missing = sorted(set(expected) - set(actual))
-    mismatched = sorted(
-        generation_id
-        for generation_id in set(expected) & set(actual)
-        if canonical_fingerprint(expected[generation_id], surface="activity")
-        != canonical_fingerprint(actual[generation_id], surface="activity")
-    )
+    mismatched: list[str] = []
+    mismatch_fields: collections.Counter[str] = collections.Counter()
+    for generation_id in sorted(set(expected) & set(actual)):
+        expected_row = expected[generation_id]
+        actual_row = actual[generation_id]
+        if canonical_fingerprint(
+            expected_row,
+            surface="activity",
+        ) == canonical_fingerprint(actual_row, surface="activity"):
+            continue
+        mismatched.append(generation_id)
+        for field in set(expected_row) | set(actual_row):
+            if canonical_fingerprint(
+                {field: expected_row.get(field)},
+                surface="activity",
+            ) != canonical_fingerprint(
+                {field: actual_row.get(field)},
+                surface="activity",
+            ):
+                mismatch_fields[field] += 1
     return {
         "sampled": len(expected),
         "found": len(actual),
@@ -103,6 +118,7 @@ def verify_delivery(
         "mismatched": len(mismatched),
         "missing_ids": missing[:20],
         "mismatched_ids": mismatched[:20],
+        "mismatch_fields": dict(sorted(mismatch_fields.items())),
         "ok": not missing and not mismatched,
     }
 

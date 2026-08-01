@@ -37,6 +37,10 @@ def canonical_fingerprint(payload: dict[str, Any], *, surface: str) -> str:
         for field in ("streamed", "usage_estimated"):
             if canonical.get(field) is not None:
                 canonical[field] = bool(canonical[field])
+        if canonical.get("speed_tokens_per_second") is not None:
+            canonical["speed_tokens_per_second"] = float(
+                canonical["speed_tokens_per_second"]
+            )
     if surface == "rollup" and canonical.get("target_region") is None:
         canonical["target_region"] = ""
     if surface == "benchmark" and canonical.get("speed_tokens_per_second") is not None:
