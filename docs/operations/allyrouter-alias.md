@@ -12,12 +12,19 @@ registrar or DNS incident. Search-engine canonical tags still identify
 | `allyrouter.com` | TrustedRouter control-plane load balancer | Google external HTTPS load balancer |
 | `www.allyrouter.com` | Control-plane load balancer, then 308 to apex | Google external HTTPS load balancer |
 | `status.allyrouter.com` | Status surface on the control plane | Google external HTTPS load balancer |
-| `trust.allyrouter.com` | Trust surface on the control plane | Google external HTTPS load balancer |
-| `api.allyrouter.com` | Attested API regional TCP load balancers | Inside GCP Confidential Space |
+| `trust.allyrouter.com` | Trust surface on the control plane; release metadata is read from the canonical published record | Google external HTTPS load balancer |
+| `api.allyrouter.com` | DNS-only CNAME to `api.quillrouter.com` and the attested regional instance pool | Inside GCP Confidential Space |
 
 The API alias must never be proxied through a CDN or terminated on the control
 plane. Its ACME private key is generated and retained inside each attested
 gateway workload.
+
+The alias trust surface validates and caches the canonical gateway release for
+at most 60 seconds. A failed refresh uses the last validated record only for a
+bounded five-minute window, returns HTTP 503, and labels it stale. With no valid
+record it returns HTTP 503 and does not publish an embedded historical digest.
+The production deployment smoke compares the alias release commit, image, and
+digest with the canonical trust publication.
 
 ## Route 53 delegation
 
