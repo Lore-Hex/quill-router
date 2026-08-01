@@ -189,7 +189,8 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert "trustedrouter/auto" in dashboard.text  # routing model
     assert "$25 USDC" not in dashboard.text
     assert "Stripe Crypto" not in dashboard.text
-    assert "https://quill.lorehex.co" in dashboard.text
+    assert "Quill Feather" not in dashboard.text
+    assert "https://quill.lorehex.co" not in dashboard.text
     assert 'href="/status"' in dashboard.text
     assert "https://github.com/Lore-Hex/trusted-router-py" in dashboard.text
     assert 'href="/providers"' in dashboard.text
