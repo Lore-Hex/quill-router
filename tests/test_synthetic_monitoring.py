@@ -201,6 +201,21 @@ def test_status_json_is_public_metadata_only(client: TestClient) -> None:
             model=MONITOR_MODEL_ID,
             output_match=True,
         ),
+        _sample(
+            id="syn_gateway_canonical",
+            probe_type="gateway_cold_path",
+            status="up",
+            gateway_processing_milliseconds=0,
+            latency_milliseconds=20,
+        ),
+        _sample(
+            id="syn_gateway_direct",
+            target="us-central1",
+            probe_type="gateway_cold_path",
+            status="up",
+            gateway_processing_milliseconds=0,
+            latency_milliseconds=10,
+        ),
     ]
     resp = client.post(
         "/v1/internal/synthetic/samples",
@@ -220,6 +235,9 @@ def test_status_json_is_public_metadata_only(client: TestClient) -> None:
     assert "All Systems Operational" in page.text
     assert "Components" in page.text
     assert "In region gateway overhead p50" in page.text
+    assert "Global endpoint" in page.text
+    assert "US Central direct" in page.text
+    assert "&lt;1 ms" in page.text
     assert "Error-Budget Burn" not in page.text
     assert "last 48 hour uptime history" in page.text
     text = status.text
@@ -234,6 +252,11 @@ def test_status_json_is_public_metadata_only(client: TestClient) -> None:
     assert provider_sample["output_match"] is True
     assert payload["components"][0]["name"] == "Canonical API"
     assert len(payload["components"][0]["history"]) == 48
+    assert all(
+        "latency_breakdown" not in bucket
+        for component in payload["components"]
+        for bucket in component["history"]
+    )
     assert payload["monitor_freshness"]["is_stale"] is False
 
 
@@ -298,6 +321,41 @@ def test_status_snapshot_reports_cold_and_reused_latency_anatomy_without_affecti
     assert anatomy["gateway_cold_path"]["p50_tls_handshake_milliseconds"] == 26
     assert anatomy["gateway_reused_path"]["p50_latency_milliseconds"] == 15
     assert snapshot["windows"]["5m"]["sample_count"] == 1
+
+
+def test_gateway_latency_anatomy_distinguishes_global_and_direct_targets() -> None:
+    now = utcnow()
+    created_at = (now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z")
+    samples = [
+        _sample(
+            id="global",
+            target="canonical",
+            target_region="us-central1",
+            monitor_region="us-central1",
+            probe_type="gateway_reused_path",
+            status="up",
+            latency_milliseconds=20,
+            created_at=created_at,
+        ),
+        _sample(
+            id="direct",
+            target="us-central1",
+            target_region="us-central1",
+            monitor_region="us-central1",
+            probe_type="gateway_reused_path",
+            status="up",
+            latency_milliseconds=10,
+            created_at=created_at,
+        ),
+    ]
+
+    rows = status_snapshot(samples, now=now)["headline_metrics"]["latency_anatomy"]
+    labels = {row["target"]: row["route_label"] for row in rows}
+
+    assert labels == {
+        "canonical": "Global endpoint · us-central1 -> us-central1",
+        "us-central1": "US Central direct · us-central1 -> us-central1",
+    }
 
 
 def test_public_status_response_cache_reuses_rendered_body() -> None:
@@ -1239,6 +1297,49 @@ def test_image_generation_component_uses_fresh_rollup_when_raw_window_is_empty()
         row for row in stale_snapshot["components"] if row["id"] == "image_generation"
     )
     assert stale_component["status"] == "unknown"
+
+
+def test_recent_events_use_rollups_for_failures_outside_live_sample_window() -> None:
+    now = utcnow()
+    failed = _sample(
+        id="syn_image_historical_failure",
+        target="canonical",
+        probe_type="image_generation",
+        status="down",
+        created_at=(now - dt.timedelta(hours=6)).isoformat().replace("+00:00", "Z"),
+        error_type="invalid_image_payload",
+    )
+
+    snapshot = status_snapshot([], rollups=_rollups_for_samples([failed]), now=now)
+
+    assert len(snapshot["recent_events"]) == 1
+    event = snapshot["recent_events"][0]
+    assert event["component"] == "Image Generation"
+    assert event["error_type"] == "invalid_image_payload"
+    assert event["aggregate"] is True
+    assert event["failure_count"] == 1
+    assert event["sample_count"] == 1
+
+
+def test_recent_events_do_not_duplicate_live_failure_and_its_rollup() -> None:
+    now = utcnow()
+    failed = _sample(
+        id="syn_live_failure",
+        target="canonical",
+        probe_type="image_generation",
+        status="down",
+        created_at=(now - dt.timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+        error_type="invalid_image_payload",
+    )
+
+    snapshot = status_snapshot(
+        [failed],
+        rollups=_rollups_for_samples([failed]),
+        now=now,
+    )
+
+    assert [event["id"] for event in snapshot["recent_events"]] == [failed.id]
+    assert snapshot["recent_events"][0]["aggregate"] is False
 
 
 def test_status_component_current_uses_latest_sample_per_probe() -> None:

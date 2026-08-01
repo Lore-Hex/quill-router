@@ -71,17 +71,18 @@
     </div>
     <div class="leaderboard-table-wrap">
       <table class="activity-table status-table">
-        <thead><tr><th>Path</th><th>Region path</th><th>Total p50</th><th>DNS</th><th>TCP</th><th>TLS</th><th>Gateway</th><th>Samples</th></tr></thead>
+        <thead><tr><th>Connection</th><th>Endpoint</th><th>Region path</th><th>Total p50</th><th>DNS</th><th>TCP</th><th>TLS</th><th>Gateway</th><th>Samples</th></tr></thead>
         <tbody>
           {% for row in snapshot.headline_metrics.latency_anatomy %}
           <tr>
             <td>{% if row.probe_type == "gateway_reused_path" %}Reused connection{% else %}Fresh connection{% endif %}</td>
+            <td>{{ row.target_label }}</td>
             <td>{{ row.region_pair }}</td>
             <td>{% if row.p50_latency_milliseconds is not none %}{{ row.p50_latency_milliseconds }} ms{% else %}n/a{% endif %}</td>
             <td>{% if row.p50_dns_milliseconds is not none %}{{ row.p50_dns_milliseconds }} ms{% else %}paid once{% endif %}</td>
             <td>{% if row.p50_tcp_connect_milliseconds is not none %}{{ row.p50_tcp_connect_milliseconds }} ms{% else %}paid once{% endif %}</td>
             <td>{% if row.p50_tls_handshake_milliseconds is not none %}{{ row.p50_tls_handshake_milliseconds }} ms{% else %}paid once{% endif %}</td>
-            <td>{% if row.p50_gateway_processing_milliseconds is not none %}{{ row.p50_gateway_processing_milliseconds }} ms{% else %}n/a{% endif %}</td>
+            <td>{% if row.p50_gateway_processing_milliseconds == 0 %}&lt;1 ms{% elif row.p50_gateway_processing_milliseconds is not none %}{{ row.p50_gateway_processing_milliseconds }} ms{% else %}n/a{% endif %}</td>
             <td>{{ row.sample_count }}</td>
           </tr>
           {% endfor %}
@@ -173,8 +174,8 @@
         <div class="component-breakdown" aria-label="{{ component.name }} latency breakdown">
           {% for breakdown in component.latency_breakdown_5m %}
           <span>
-            {{ breakdown.probe_type }} · {{ breakdown.region_pair }}
-            <strong>{% if breakdown.p50_latency_milliseconds %}p50 {{ breakdown.p50_latency_milliseconds }} ms{% else %}p50 n/a{% endif %}</strong>
+            {{ breakdown.probe_type }} · {{ breakdown.route_label }}
+            <strong>{% if breakdown.p50_latency_milliseconds is not none %}p50 {{ breakdown.p50_latency_milliseconds }} ms{% else %}p50 n/a{% endif %}</strong>
           </span>
           {% endfor %}
         </div>
@@ -189,7 +190,7 @@
                 <span>Uptime <strong>{{ bucket.uptime_percent | uptime_pct(2) }}</strong></span>
                 <span>Samples <strong>{{ bucket.sample_count }}</strong></span>
                 {% for breakdown in bucket.latency_breakdown %}
-                  <span>{{ breakdown.probe_type }} · {{ breakdown.region_pair }} <strong>{% if breakdown.p50_latency_milliseconds %}p50 {{ breakdown.p50_latency_milliseconds }} ms{% else %}p50 n/a{% endif %}</strong></span>
+                  <span>{{ breakdown.probe_type }} · {{ breakdown.route_label }} <strong>{% if breakdown.p50_latency_milliseconds is not none %}p50 {{ breakdown.p50_latency_milliseconds }} ms{% else %}p50 n/a{% endif %}</strong></span>
                 {% endfor %}
                 {% if bucket.top_error %}<span class="err">Top error <strong>{{ bucket.top_error }}</strong></span>{% endif %}
               {% else %}
@@ -257,7 +258,7 @@
           <span class="component-status status-{{ event.status_class }}">{{ event.status_label }}</span>
           <div>
             <strong>{{ event.component }}</strong>
-            <p>{{ event.created_at }} · {{ event.probe_type }} · {{ event.monitor_region }}{% if event.error_type %} · {{ event.error_type }}{% endif %}</p>
+            <p>{{ event.created_at }} · {{ event.probe_type }} · {{ event.monitor_region }}{% if event.aggregate %} · hourly rollup · {{ event.failure_count }} failed / {{ event.sample_count }}{% endif %}{% if event.error_type %} · {{ event.error_type }}{% endif %}</p>
           </div>
         </div>
         {% endfor %}

@@ -153,6 +153,16 @@ def test_crawlers_do_not_receive_attribution_cookie(client: TestClient) -> None:
     assert ATTRIBUTION_COOKIE_NAME not in response.headers.get("set-cookie", "")
 
 
+def test_status_host_does_not_receive_attribution_cookie(client: TestClient) -> None:
+    response = client.get(
+        "/",
+        headers={"host": "status.trustedrouter.com"},
+    )
+
+    assert response.status_code == 200
+    assert ATTRIBUTION_COOKIE_NAME not in response.headers.get("set-cookie", "")
+
+
 @pytest.mark.parametrize(
     ("header", "value"),
     [

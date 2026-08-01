@@ -152,7 +152,13 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        attribution, attribution_changed = prepare_request_attribution(request, settings)
+        if is_status_hostname(settings, request_hostname(request)):
+            # Status is operational infrastructure, not an acquisition page.
+            # Keeping it cookie-free also lets Cloud CDN cache it safely.
+            request.state.acquisition_attribution = None
+            attribution, attribution_changed = None, False
+        else:
+            attribution, attribution_changed = prepare_request_attribution(request, settings)
         start = time.perf_counter()
         response = await call_next(request)
         if attribution is not None and attribution_changed:

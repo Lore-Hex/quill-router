@@ -119,7 +119,11 @@ def status_snapshot(
         "slo_history": slo_history,
         "burn_rate_alerts": _burn_rate_alerts(slo_classes),
         "components": components,
-        "recent_events": _recent_events(ordered, now=now),
+        "recent_events": _recent_events(
+            ordered,
+            rollups=precomputed_rollups,
+            now=now,
+        ),
         "history_scope": ROUTER_CORE_SLO_ID,
         "windows": {
             "5m": five_minute,
@@ -841,10 +845,16 @@ def _sample_group_breakdown(
         statuses = [sample.status for sample in probe_samples]
         row = {
             "target": target,
+            "target_label": _target_label(target),
             "probe_type": probe_type,
             "monitor_region": monitor_region,
             "target_region": target_region or None,
             "region_pair": _region_pair(monitor_region, target_region or None),
+            "route_label": _route_label(
+                target,
+                monitor_region,
+                target_region or None,
+            ),
             "status": _aggregate_status(statuses),
             "uptime_percent": _uptime_percent(statuses),
             "sample_count": len(probe_samples),
@@ -897,10 +907,16 @@ def _rollup_group_breakdown(
         status_counts = _int_dict(merged["status_counts"])
         row = {
             "target": target,
+            "target_label": _target_label(target),
             "probe_type": probe_type,
             "monitor_region": monitor_region,
             "target_region": target_region or None,
             "region_pair": _region_pair(monitor_region, target_region or None),
+            "route_label": _route_label(
+                target,
+                monitor_region,
+                target_region or None,
+            ),
             "status": _aggregate_status_counts(status_counts),
             "uptime_percent": _uptime_percent_counts(status_counts),
             "sample_count": int(merged["sample_count"]),
@@ -938,6 +954,20 @@ def _region_pair(monitor_region: str, target_region: str | None) -> str:
     if target_region:
         return f"{monitor_region} -> {target_region}"
     return monitor_region
+
+
+def _target_label(target: str) -> str:
+    return {
+        "canonical": "Global endpoint",
+        "us-central1": "US Central direct",
+        "us-east4": "US East direct",
+        "europe-west4": "EU direct",
+        "control-plane": "Control plane",
+    }.get(target, target.replace("-", " ").title())
+
+
+def _route_label(target: str, monitor_region: str, target_region: str | None) -> str:
+    return f"{_target_label(target)} · {_region_pair(monitor_region, target_region)}"
 
 
 def _latest_recent_component_samples(
@@ -1166,20 +1196,33 @@ def _history_status(uptime: float, *, has_trust_degraded: bool) -> str:
 
 
 def _recent_events(
-    samples: list[SyntheticProbeSample], *, now: dt.datetime
+    samples: list[SyntheticProbeSample],
+    *,
+    rollups: list[SyntheticRollup],
+    now: dt.datetime,
 ) -> list[dict[str, Any]]:
     cutoff = now - dt.timedelta(seconds=WINDOW_SECONDS["24h"])
-    events = []
+    events: list[dict[str, Any]] = []
+    raw_event_buckets: set[tuple[str, str, str, str]] = set()
     for sample in samples:
         if _parse_time(sample.created_at) < cutoff or sample.status == "up":
             continue
-        if not sample_component_ids(sample) and not sample_slo_class_ids(sample):
+        component_ids = sample_component_ids(sample)
+        if not component_ids and not sample_slo_class_ids(sample):
             continue
         component_names = [
             str(definition["name"])
             for definition in COMPONENT_DEFINITIONS
-            if str(definition["id"]) in sample_component_ids(sample)
+            if str(definition["id"]) in component_ids
         ]
+        raw_event_buckets.add(
+            (
+                sample.target,
+                sample.probe_type,
+                sample.monitor_region,
+                sample.created_at[:13],
+            )
+        )
         events.append(
             {
                 "id": sample.id,
@@ -1193,9 +1236,74 @@ def _recent_events(
                 "created_at": sample.created_at,
                 "latency_milliseconds": sample.latency_milliseconds,
                 "error_type": sample.error_type,
+                "aggregate": False,
             }
         )
+
+    component_order = {
+        str(definition["id"]): index
+        for index, definition in enumerate(COMPONENT_DEFINITIONS)
+    }
+    rollup_groups_seen: set[tuple[str, str, str, str]] = set()
+    recent_rollups = sorted(
+        (
+            rollup
+            for rollup in rollups
+            if rollup.period == "hour"
+            and rollup.last_checked_at is not None
+            and _parse_time(rollup.last_checked_at) >= cutoff
+        ),
+        key=lambda rollup: (
+            rollup.period_start,
+            -component_order.get(rollup.component, len(component_order)),
+        ),
+        reverse=True,
+    )
+    for rollup in recent_rollups:
+        counts = _rollup_status_counts(rollup)
+        failure_count = sum(
+            count for status, count in counts.items() if status != "up"
+        )
+        if failure_count <= 0:
+            continue
+        bucket_key = (
+            rollup.target,
+            rollup.probe_type,
+            rollup.monitor_region,
+            rollup.period_start[:13],
+        )
+        if bucket_key in raw_event_buckets or bucket_key in rollup_groups_seen:
+            continue
+        rollup_groups_seen.add(bucket_key)
+        status = _rollup_failure_status(counts)
+        merged = merge_rollups([rollup])
+        events.append(
+            {
+                "id": f"rollup:{rollup.id}",
+                "component": component_name(rollup.component),
+                "status": status,
+                "status_label": _status_label(status),
+                "status_class": _status_class(status),
+                "probe_type": rollup.probe_type,
+                "target": rollup.target,
+                "monitor_region": rollup.monitor_region,
+                "created_at": rollup.period_start,
+                "latency_milliseconds": merged["p50_latency_milliseconds"],
+                "error_type": merged["top_error"],
+                "aggregate": True,
+                "failure_count": failure_count,
+                "sample_count": rollup.sample_count,
+            }
+        )
+    events.sort(key=lambda event: str(event["created_at"]), reverse=True)
     return events[:8]
+
+
+def _rollup_failure_status(counts: dict[str, int]) -> str:
+    for status in ("trust_degraded", "down", "routing_degraded", "degraded", "unknown"):
+        if counts.get(status, 0) > 0:
+            return status
+    return "unknown"
 
 
 def _aggregate_component_statuses(statuses: list[str]) -> str:
