@@ -251,6 +251,7 @@ image_env_vars=(
   "TR_SYNTHETIC_IMAGE_MODEL=google/gemini-3.1-flash-image-preview"
   "TR_SYNTHETIC_IMAGE_PROVIDER=google-ai-studio"
   "TR_SYNTHETIC_IMAGE_TIMEOUT_SECONDS=120"
+  "TR_SYNTHETIC_IMAGE_CONFIRMATION_DELAY_SECONDS=2"
 )
 image_set_env_vars="$(IFS='|'; echo "^|^${image_env_vars[*]}")"
 
@@ -264,7 +265,7 @@ gc run jobs deploy "$image_job_name" \
   --set-env-vars "$image_set_env_vars" \
   --update-secrets "$UPDATE_SECRETS" \
   --max-retries 0 \
-  --task-timeout 180s \
+  --task-timeout 300s \
   --cpu 1 \
   --memory 512Mi \
   --quiet >/dev/null
