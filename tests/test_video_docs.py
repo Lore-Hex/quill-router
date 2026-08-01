@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 
@@ -23,3 +25,9 @@ def test_video_docs_are_public_discoverable_and_truthful(client: TestClient) -> 
     assert "/docs/video" in client.get("/docs/llms.txt").text
     assert "/docs/video" in client.get("/docs/llms-full.txt").text
     assert "<loc>https://trustedrouter.com/docs/video</loc>" in client.get("/sitemap-core.xml").text
+
+
+def test_standalone_video_guide_uses_video_pricing() -> None:
+    guide = Path("docs/video-generation.md").read_text()
+    assert "TrustedRouter's 20% video fee" in guide
+    assert "TrustedRouter's 5% fee" not in guide

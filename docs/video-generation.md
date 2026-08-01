@@ -82,7 +82,7 @@ base64 data URLs. Local, private-network, and cloud-metadata URLs are rejected.
 
 - The gateway asks the direct provider for a content-free quote before sending
   the prompt or references upstream.
-- The exact quote plus TrustedRouter's 5% fee is reserved and settled as integer
+- The exact quote plus TrustedRouter's 20% video fee is reserved and settled as integer
   microdollars. Floating point values never touch the credit ledger.
 - Retries with the same `Idempotency-Key` reuse the original authorization and
   job instead of generating and billing twice.
@@ -92,4 +92,3 @@ base64 data URLs. Local, private-network, and cloud-metadata URLs are rejected.
 - The launch provider temporarily stores generated media while the asynchronous
   job is pending and until download or the 24-hour cleanup deadline. These
   routes are not advertised as provider E2EE or provider ZDR.
-
