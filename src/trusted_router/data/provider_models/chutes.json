@@ -2,7 +2,7 @@
   "_about": "Provider-native Chutes TEE model catalog. Refreshed hourly from the authenticated Chutes OpenAI-compatible models API.",
   "provider": "chutes",
   "source": "https://llm.chutes.ai/v1/models",
-  "generated_at": "2026-08-01T03:28:38Z",
+  "generated_at": "2026-08-01T05:58:00Z",
   "price_scale": "microdollars_per_million",
   "model_count": 13,
   "models": [
@@ -93,7 +93,9 @@
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 1200000,
       "cached_input_token_price_per_m": 75000,
-      "missing_since": "2026-08-01"
+      "missing_since": "2026-08-01",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "unsloth/Mistral-Nemo-Instruct-2407",
@@ -147,7 +149,9 @@
       "input_token_price_per_m": 440000,
       "output_token_price_per_m": 2000000,
       "cached_input_token_price_per_m": 220000,
-      "missing_since": "2026-08-01"
+      "missing_since": "2026-08-01",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "moonshotai/Kimi-K2.6",
@@ -326,7 +330,9 @@
       "input_token_price_per_m": 950000,
       "output_token_price_per_m": 2550000,
       "cached_input_token_price_per_m": 475000,
-      "missing_since": "2026-08-01"
+      "missing_since": "2026-08-01",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "zai-org/GLM-5.1",
