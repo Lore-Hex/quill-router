@@ -565,6 +565,10 @@ jobs:
           check_url regions https://trustedrouter.com/v1/regions
           check_url status_json https://trustedrouter.com/status.json
           check_url status_host https://status.trustedrouter.com/status.json
+          check_url ally_homepage https://allyrouter.com/
+          check_url ally_health https://allyrouter.com/health
+          check_url ally_status https://status.allyrouter.com/status.json
+          check_url ally_trust https://trust.allyrouter.com/
 
           # A global request can repeatedly land on a healthy warm region and
           # miss a stale cold revision. Exercise the shared-storage reader in
@@ -584,11 +588,15 @@ jobs:
           regions = json.loads(Path("/tmp/regions.body").read_text())["data"]
           status = json.loads(Path("/tmp/status_json.body").read_text())["data"]
           status_host = json.loads(Path("/tmp/status_host.body").read_text())["data"]
+          ally_homepage = Path("/tmp/ally_homepage.body").read_text()
+          ally_trust = Path("/tmp/ally_trust.body").read_text()
 
           assert any(item["id"] == "us-central1" for item in regions), regions
           assert any(item["id"] == "europe-west4" for item in regions), regions
           assert "components" in status, status.keys()
           assert status_host.get("current", {}).get("overall_status") or status_host.get("overall_status"), status_host.keys()
+          assert "https://api.allyrouter.com/v1" in ally_homepage
+          assert "https://api.allyrouter.com/attestation" in ally_trust
           PY
 
           count=$(curl -fsS --max-time 15 https://trustedrouter.com/v1/models \

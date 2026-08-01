@@ -9,11 +9,12 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from fastapi import FastAPI, Form, HTTPException
+from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import ValidationError
 
 from trusted_router.auth import SettingsDep
+from trusted_router.domains import request_control_origin
 from trusted_router.routes.console._shared import ConsoleDep, money, render
 from trusted_router.schemas import CheckoutRequest
 from trusted_router.services.paypal_billing import (
@@ -82,7 +83,7 @@ def register(app: FastAPI) -> None:
             paypal_enabled=settings.paypal_enabled or settings.environment.lower() in {"local", "test"},
             payments=payments,
             saved_payment_method=saved_payment_method,
-            api_base_url=settings.api_base_url,
+            api_base_url=ctx.api_base_url,
         ))
 
     @app.get("/console/credits/checkout")
@@ -91,15 +92,17 @@ def register(app: FastAPI) -> None:
 
     @app.post("/console/credits/checkout")
     async def console_credit_checkout(
+        request: Request,
         ctx: ConsoleDep,
         settings: SettingsDep,
         amount: str = Form(...),
         payment_method: str = Form("auto"),
     ) -> Response:
+        origin = request_control_origin(request, settings)
         success_url = (
-            f"https://{settings.trusted_domain}/console/credits/paypal/capture"
+            f"{origin}/console/credits/paypal/capture"
             if payment_method == "paypal"
-            else f"https://{settings.trusted_domain}/console/credits?checkout=success"
+            else f"{origin}/console/credits?checkout=success"
         )
         try:
             # CheckoutRequest validates payment_method against the Literal
@@ -110,7 +113,7 @@ def register(app: FastAPI) -> None:
                 workspace_id=ctx.workspace.id,
                 payment_method=cast(Any, payment_method),
                 success_url=success_url,
-                cancel_url=f"https://{settings.trusted_domain}/console/credits?checkout=cancel",
+                cancel_url=f"{origin}/console/credits?checkout=cancel",
             )
         except ValidationError:
             return RedirectResponse(url="/console/credits?error=invalid_checkout", status_code=303)
@@ -159,17 +162,19 @@ def register(app: FastAPI) -> None:
 
     @app.post("/console/credits/payment-methods/add")
     async def console_add_payment_method(
+        request: Request,
         ctx: ConsoleDep,
         settings: SettingsDep,
     ) -> Response:
         credit = STORE.get_credit_account(ctx.workspace.id)
+        origin = request_control_origin(request, settings)
         try:
             data = create_payment_method_session(
                 workspace_id=ctx.workspace.id,
                 customer_email=ctx.user.email if ctx.user.email and "@" in ctx.user.email else None,
                 customer_id=credit.stripe_customer_id if credit else None,
-                success_url=f"https://{settings.trusted_domain}/console/credits?payment_method=success",
-                cancel_url=f"https://{settings.trusted_domain}/console/credits?payment_method=cancel",
+                success_url=f"{origin}/console/credits?payment_method=success",
+                cancel_url=f"{origin}/console/credits?payment_method=cancel",
                 settings=settings,
             )
         except HTTPException:
@@ -180,6 +185,7 @@ def register(app: FastAPI) -> None:
 
     @app.post("/console/credits/payment-methods/manage")
     async def console_manage_payment_methods(
+        request: Request,
         ctx: ConsoleDep,
         settings: SettingsDep,
     ) -> Response:
@@ -188,7 +194,7 @@ def register(app: FastAPI) -> None:
             return RedirectResponse(url="/console/credits?error=no_payment_method", status_code=303)
         data = create_billing_portal_session(
             customer_id=credit.stripe_customer_id,
-            return_url=f"https://{settings.trusted_domain}/console/credits",
+            return_url=f"{request_control_origin(request, settings)}/console/credits",
             settings=settings,
         )
         if data["mode"] == "mock":

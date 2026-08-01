@@ -270,6 +270,7 @@ ENV_VARS=(
   "TR_ENABLE_LIVE_PROVIDERS=false"
   "TR_API_BASE_URL=https://api.trustedrouter.com/v1"
   "TR_TRUSTED_DOMAIN=trustedrouter.com"
+  "TR_TRUSTED_DOMAIN_ALIASES=allyrouter.com"
   "TR_STORAGE_BACKEND=${STORAGE_BACKEND}"
   # Exactly $0.10 once per newly created email/OAuth account. Wallet-only
   # accounts stay at $0. Keep this explicit so stale env cannot change policy.

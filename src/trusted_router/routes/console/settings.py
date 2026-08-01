@@ -28,7 +28,7 @@ def register(app: FastAPI) -> None:
             page_title="Workspace settings",
             page_subtitle="Names, content storage, integrations.",
             workspace=ctx.workspace,
-            api_base_url=settings.api_base_url,
+            api_base_url=ctx.api_base_url,
             can_manage=STORE.user_can_manage(ctx.user.id, ctx.workspace.id),
             saved=bool(saved),
             error=error,

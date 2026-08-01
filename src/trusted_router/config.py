@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     service_name: str = "trusted-router"
     api_base_url: str = "https://api.trustedrouter.com/v1"
     trusted_domain: str = "trustedrouter.com"
+    # Additional first-party control-plane domains. They serve the same
+    # application without redirecting to the canonical domain, so they remain
+    # usable as independent operational aliases. SEO canonicals still point at
+    # ``trusted_domain``. The corresponding inference hostname is derived as
+    # ``api.<alias>/v1`` and still terminates inside the attested gateway.
+    trusted_domain_aliases: str = "allyrouter.com"
     legal_entity_name: str = "Lore Hex Corp"
     legal_entity_type: str = "Delaware C Corporation"
     legal_entity_address: str = "1111 Brickell Ave, Floor 10, Miami, FL 33131"

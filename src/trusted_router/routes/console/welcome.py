@@ -50,7 +50,7 @@ def register(app: FastAPI) -> None:
             # from accounts configured with the grant disabled.
             trial_credit=money(trial_microdollars),
             trial_credit_microdollars=trial_microdollars,
-            api_base_url=settings.api_base_url,
+            api_base_url=ctx.api_base_url,
         ))
         if clear_pending_reveal:
             # Delete cookie with the same path it was set with — otherwise

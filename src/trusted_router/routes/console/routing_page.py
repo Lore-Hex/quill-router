@@ -40,5 +40,5 @@ def register(app: FastAPI) -> None:
             auto_order=auto_order,
             regions=regions,
             configured_regions=configured_regions(settings),
-            api_base_url=settings.api_base_url,
+            api_base_url=ctx.api_base_url,
         ))

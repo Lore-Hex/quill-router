@@ -25,6 +25,7 @@ from fastapi.responses import RedirectResponse
 from trusted_router.acquisition import record_signup_attribution
 from trusted_router.auth import SettingsDep, set_session_cookie
 from trusted_router.config import Settings
+from trusted_router.domains import request_control_domain
 from trusted_router.errors import api_error
 from trusted_router.oauth_provider import (
     OAUTH_PROVIDERS,
@@ -222,6 +223,12 @@ def _client_secret(provider: OAuthProvider, settings: Settings) -> str | None:
 
 
 def _redirect_uri(provider: OAuthProvider, request: Request, settings: Settings) -> str:
+    request_domain = request_control_domain(request, settings)
+    if request_domain != settings.trusted_domain:
+        # Alias OAuth remains same-origin so the host-only CSRF/session cookies
+        # survive the callback. Each provider must explicitly allow this URI;
+        # an unlisted Host header cannot reach this branch.
+        return f"https://{request_domain}/{provider.slug}_oauth_callback"
     configured = getattr(settings, f"{provider.slug}_oauth_redirect_url", None)
     if configured:
         return configured
