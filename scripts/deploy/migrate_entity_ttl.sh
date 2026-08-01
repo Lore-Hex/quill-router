@@ -36,6 +36,9 @@ set -euo pipefail
 
 INSTANCE="${SPANNER_INSTANCE_ID:?set SPANNER_INSTANCE_ID}"
 DATABASE="${SPANNER_DATABASE_ID:?set SPANNER_DATABASE_ID}"
+# Bash-3.2-safe under set -u: expanding an EMPTY array with "${arr[@]}" aborts
+# as "unbound variable" on macOS bash. The ${arr[@]+...} idiom expands to
+# nothing when the array is empty and to the quoted elements otherwise.
 PROJECT_ARG=()
 [ -n "${GCP_PROJECT_ID:-}" ] && PROJECT_ARG=(--project "${GCP_PROJECT_ID}")
 
@@ -43,7 +46,7 @@ log() { printf '%s %s\n' "[migrate_entity_ttl]" "$*"; }
 
 sql_value() {
   gcloud spanner databases execute-sql "$DATABASE" \
-    --instance="$INSTANCE" "${PROJECT_ARG[@]}" \
+    --instance="$INSTANCE" ${PROJECT_ARG[@]+"${PROJECT_ARG[@]}"} \
     --sql="$1" --format='value(rows[0])' 2>/dev/null || echo ""
 }
 
@@ -65,7 +68,7 @@ apply_ddl() {
   local ddl="$1"
   log "applying: ${ddl:0:60}..."
   gcloud spanner databases ddl update "$DATABASE" \
-    --instance="$INSTANCE" "${PROJECT_ARG[@]}" --ddl="$ddl"
+    --instance="$INSTANCE" ${PROJECT_ARG[@]+"${PROJECT_ARG[@]}"} --ddl="$ddl"
 }
 
 if column_exists; then
@@ -75,8 +78,12 @@ if column_exists; then
   # hole. Require BOTH safety discriminators to be present in the actual
   # deployed expression; abort loudly otherwise so a human drops/rebuilds.
   expr="$(column_expression)"
-  if printf '%s' "$expr" | grep -q "kind = 'rate_limit'" \
-     && printf '%s' "$expr" | grep -q "JSON_QUERY"; then
+  # Match the discriminators robustly: Spanner may normalize whitespace/case
+  # when storing the expression, but the quoted literal 'rate_limit' and the
+  # JSON_QUERY function name survive any reformatting. A false ABORT here is
+  # safe-noisy; the by-kind verify query below backstops a false pass.
+  if printf '%s' "$expr" | grep -q "'rate_limit'" \
+     && printf '%s' "$expr" | grep -qi "json_query"; then
     log "ephemeral_expires_at exists with the kind-scoped JSON_QUERY expression, skip"
   else
     log "ERROR: ephemeral_expires_at exists with an UNEXPECTED expression:"
@@ -104,10 +111,10 @@ fi
 
 log "verify: non-NULL policy timestamps by kind (must be rate_limit ONLY)"
 gcloud spanner databases execute-sql "$DATABASE" \
-  --instance="$INSTANCE" "${PROJECT_ARG[@]}" \
+  --instance="$INSTANCE" ${PROJECT_ARG[@]+"${PROJECT_ARG[@]}"} \
   --sql="SELECT kind, COUNT(*) AS opted_in FROM tr_entities WHERE ephemeral_expires_at IS NOT NULL GROUP BY kind"
 
 log "verify: expired-but-undeleted rate_limit rows (drops to ~0 within 72h)"
 gcloud spanner databases execute-sql "$DATABASE" \
-  --instance="$INSTANCE" "${PROJECT_ARG[@]}" \
+  --instance="$INSTANCE" ${PROJECT_ARG[@]+"${PROJECT_ARG[@]}"} \
   --sql="SELECT COUNT(*) FROM tr_entities WHERE kind='rate_limit' AND ephemeral_expires_at < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 DAY)"
