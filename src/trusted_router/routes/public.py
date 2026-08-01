@@ -103,6 +103,12 @@ from trusted_router.provider_contract import (
     PROVIDER_CATALOG_V2_SCHEMA,
 )
 from trusted_router.services.email import EmailMessage, get_email_service
+from trusted_router.services.trust_release import (
+    ResolvedTrustRelease,
+    TrustReleaseResolver,
+    TrustReleaseUnavailable,
+    unavailable_trust_release,
+)
 from trusted_router.storage import STORE
 from trusted_router.storage_custom_models import normalize_custom_model_id
 from trusted_router.storage_models import utcnow
@@ -353,6 +359,24 @@ async def _handle_trustedos_inquiry(settings: Settings, request: Request) -> JSO
 
 def register_public_routes(app: FastAPI, settings: Settings) -> None:
     app.mount("/static", _CachedStaticFiles(directory=STATIC_DIR), name="static")
+    trust_release_resolver = TrustReleaseResolver(settings)
+
+    async def resolved_trust_release() -> ResolvedTrustRelease:
+        try:
+            return await trust_release_resolver.resolve()
+        except TrustReleaseUnavailable:
+            return unavailable_trust_release()
+
+    def trust_response_headers(status: str) -> dict[str, str]:
+        return {
+            "cache-control": (
+                "max-age=60, public" if status in {"live", "embedded"} else "no-store"
+            ),
+            "x-trustedrouter-release-status": status,
+        }
+
+    def trust_response_status(status: str) -> int:
+        return 200 if status in {"live", "embedded"} else 503
 
     def public_html_route(
         path: str, *, include_slash: bool = True
@@ -421,10 +445,17 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         domain = request_control_domain(request, settings)
         api_base_url = request_api_base_url(request, settings)
         if is_trust_hostname(settings, hostname):
-            return trust_html(
-                settings,
-                public_domain=domain,
-                api_base_url=api_base_url,
+            release = await resolved_trust_release()
+            return HTMLResponse(
+                trust_html(
+                    settings,
+                    public_domain=domain,
+                    api_base_url=api_base_url,
+                    release_metadata=release.metadata,
+                    release_metadata_status=release.status,
+                ),
+                status_code=trust_response_status(release.status),
+                headers=trust_response_headers(release.status),
             )
         if is_status_hostname(settings, hostname):
             return _cached_status_page_response(
@@ -437,11 +468,18 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return dashboard_html(settings, api_base_url=api_base_url)
 
     @public_html_route("/trust")
-    async def trust_page(request: Request) -> str:
-        return trust_html(
-            settings,
-            public_domain=request_control_domain(request, settings),
-            api_base_url=request_api_base_url(request, settings),
+    async def trust_page(request: Request) -> HTMLResponse:
+        release = await resolved_trust_release()
+        return HTMLResponse(
+            trust_html(
+                settings,
+                public_domain=request_control_domain(request, settings),
+                api_base_url=request_api_base_url(request, settings),
+                release_metadata=release.metadata,
+                release_metadata_status=release.status,
+            ),
+            status_code=trust_response_status(release.status),
+            headers=trust_response_headers(release.status),
         )
 
     @public_html_route("/compare/openrouter")
@@ -1222,20 +1260,33 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @app.get("/trust/gcp-release.json")
     async def trust_release() -> JSONResponse:
-        return JSONResponse(gcp_release(settings), headers={"cache-control": "max-age=60, public"})
+        release = await resolved_trust_release()
+        return JSONResponse(
+            gcp_release(
+                settings,
+                release_metadata=release.metadata,
+                release_metadata_status=release.status,
+            ),
+            status_code=trust_response_status(release.status),
+            headers=trust_response_headers(release.status),
+        )
 
     @app.get("/trust/image-digest-gcp.txt")
     async def trust_digest() -> PlainTextResponse:
+        release = await resolved_trust_release()
         return PlainTextResponse(
-            f"{settings.trust_gcp_image_digest or 'not-configured'}\n",
-            headers={"cache-control": "max-age=60, public"},
+            f"{release.metadata['image_digest']}\n",
+            status_code=trust_response_status(release.status),
+            headers=trust_response_headers(release.status),
         )
 
     @app.get("/trust/image-reference-gcp.txt")
     async def trust_image_reference() -> PlainTextResponse:
+        release = await resolved_trust_release()
         return PlainTextResponse(
-            f"{settings.trust_gcp_image_reference or 'not-configured'}\n",
-            headers={"cache-control": "max-age=60, public"},
+            f"{release.metadata['image_reference']}\n",
+            status_code=trust_response_status(release.status),
+            headers=trust_response_headers(release.status),
         )
 
 

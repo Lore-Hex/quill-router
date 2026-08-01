@@ -148,6 +148,10 @@ class Settings(BaseSettings):
     trust_gcp_source_commit: str | None = None
     trust_gcp_image_reference: str | None = None
     trust_gcp_image_digest: str | None = None
+    # Production control-plane trust aliases resolve the current gateway
+    # release from this canonical, independently published record. The
+    # deploy-time values above remain the offline/local fallback.
+    trust_gcp_release_url: str = ""
 
     rate_limit_enabled: bool = True
     rate_limit_window_seconds: int = 60
@@ -525,6 +529,12 @@ class Settings(BaseSettings):
             )
         if not self.byok_kms_key_name:
             missing.append("TR_BYOK_KMS_KEY_NAME")
+        if not self.trust_gcp_release_url:
+            self.trust_gcp_release_url = (
+                "https://trust.trustedrouter.com/trust/gcp-release.json"
+            )
+        elif not self.trust_gcp_release_url.startswith("https://"):
+            missing.append("TR_TRUST_GCP_RELEASE_URL=https://...")
         # OAuth providers are independently optional in production. We DO
         # enforce that no provider is half-configured: a client_id without
         # the matching client_secret would cause silent runtime failures.

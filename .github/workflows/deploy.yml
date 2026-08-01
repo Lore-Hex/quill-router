@@ -569,6 +569,9 @@ jobs:
           check_url ally_health https://allyrouter.com/health
           check_url ally_status https://status.allyrouter.com/status.json
           check_url ally_trust https://trust.allyrouter.com/
+          check_url ally_trust_release https://trust.allyrouter.com/trust/gcp-release.json
+          check_url canonical_trust_release \
+            "https://trust.trustedrouter.com/trust/gcp-release.json?nocache=${GITHUB_RUN_ID}"
 
           # A global request can repeatedly land on a healthy warm region and
           # miss a stale cold revision. Exercise the shared-storage reader in
@@ -590,6 +593,8 @@ jobs:
           status_host = json.loads(Path("/tmp/status_host.body").read_text())["data"]
           ally_homepage = Path("/tmp/ally_homepage.body").read_text()
           ally_trust = Path("/tmp/ally_trust.body").read_text()
+          ally_release = json.loads(Path("/tmp/ally_trust_release.body").read_text())
+          canonical_release = json.loads(Path("/tmp/canonical_trust_release.body").read_text())
 
           assert any(item["id"] == "us-central1" for item in regions), regions
           assert any(item["id"] == "europe-west4" for item in regions), regions
@@ -597,6 +602,13 @@ jobs:
           assert status_host.get("current", {}).get("overall_status") or status_host.get("overall_status"), status_host.keys()
           assert "https://api.allyrouter.com/v1" in ally_homepage
           assert "https://api.allyrouter.com/attestation" in ally_trust
+          assert ally_release["release_metadata_status"] == "live", ally_release
+          for field in ("source_commit", "image_reference", "image_digest"):
+              assert ally_release[field] == canonical_release[field], (
+                  field,
+                  ally_release[field],
+                  canonical_release[field],
+              )
           PY
 
           count=$(curl -fsS --max-time 15 https://trustedrouter.com/v1/models \

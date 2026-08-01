@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+from collections.abc import Mapping
 from typing import Any
 
 from trusted_router.config import Settings
@@ -18,7 +19,17 @@ PYTHON_SDK_REPO = "https://github.com/Lore-Hex/trusted-router-py"
 JAVASCRIPT_SDK_REPO = "https://github.com/Lore-Hex/trusted-router-js"
 
 
-def gcp_release(settings: Settings) -> dict[str, Any]:
+def gcp_release(
+    settings: Settings,
+    *,
+    release_metadata: Mapping[str, str] | None = None,
+    release_metadata_status: str = "embedded",
+) -> dict[str, Any]:
+    metadata = release_metadata or {
+        "source_commit": settings.trust_gcp_source_commit or "not-configured",
+        "image_reference": settings.trust_gcp_image_reference or "not-configured",
+        "image_digest": settings.trust_gcp_image_digest or "not-configured",
+    }
     api_hostnames = [f"api.{domain}" for domain in configured_control_domains(settings)]
     return {
         "platform": "gcp-confidential-space",
@@ -31,9 +42,10 @@ def gcp_release(settings: Settings) -> dict[str, Any]:
             "python_sdk": PYTHON_SDK_REPO,
             "javascript_sdk": JAVASCRIPT_SDK_REPO,
         },
-        "source_commit": settings.trust_gcp_source_commit or "not-configured",
-        "image_reference": settings.trust_gcp_image_reference or "not-configured",
-        "image_digest": settings.trust_gcp_image_digest or "not-configured",
+        "source_commit": metadata["source_commit"],
+        "image_reference": metadata["image_reference"],
+        "image_digest": metadata["image_digest"],
+        "release_metadata_status": release_metadata_status,
         "attestation_issuer": "https://confidentialcomputing.googleapis.com",
         "attestation_audience": "quill-cloud",
         "api_base_url": settings.api_base_url,
@@ -62,8 +74,14 @@ def trust_html(
     *,
     public_domain: str | None = None,
     api_base_url: str | None = None,
+    release_metadata: Mapping[str, str] | None = None,
+    release_metadata_status: str = "embedded",
 ) -> str:
-    release = gcp_release(settings)
+    release = gcp_release(
+        settings,
+        release_metadata=release_metadata,
+        release_metadata_status=release_metadata_status,
+    )
     digest = html.escape(str(release["image_digest"]))
     image = html.escape(str(release["image_reference"]))
     source = html.escape(str(release["source_commit"]))
@@ -78,7 +96,21 @@ def trust_html(
     quill_repo = html.escape(QUILL_REPO)
     python_sdk_repo = html.escape(PYTHON_SDK_REPO)
     javascript_sdk_repo = html.escape(JAVASCRIPT_SDK_REPO)
-    release_json = html.escape(gcp_release_json(settings))
+    if release_metadata_status == "stale":
+        release_warning = (
+            '<section class="panel warn"><h2>Release record temporarily stale</h2>'
+            '<p>This page is showing the last validated gateway release record and returns '
+            'HTTP 503. Verify the canonical trust record before sending sensitive data.</p></section>'
+        )
+    elif release_metadata_status == "unavailable":
+        release_warning = (
+            '<section class="panel warn"><h2>Live release record unavailable</h2>'
+            '<p>This page cannot currently verify the running gateway digest and returns '
+            'HTTP 503. Do not rely on an older embedded digest.</p></section>'
+        )
+    else:
+        release_warning = ""
+    release_json = html.escape(json.dumps(release, indent=2, sort_keys=True) + "\n")
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -136,6 +168,7 @@ def trust_html(
     </nav>
   </header>
   <main class="wrap">
+    {release_warning}
     <section class="hero">
       <div class="panel">
         <p class="status"><span class="dot"></span>Trust boundary</p>
