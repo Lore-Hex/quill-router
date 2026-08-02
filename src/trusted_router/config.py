@@ -318,6 +318,18 @@ class Settings(BaseSettings):
     # plane or its probes measure another cloud's health. A per-request
     # body override still wins over this setting.
     synthetic_control_plane_base_url: str | None = None
+    # --- Lazy API-key federation -------------------------------------------
+    # HOME side: the token peers present to /internal/federation/resolve-key.
+    # Its OWN secret, never internal_gateway_token: anything holding that one
+    # can already authorize and settle, i.e. move money. Empty disables
+    # federation serving entirely (403), so a plane cannot become a user
+    # directory by accident.
+    federation_peer_token: str = ""
+    # PEER side: the home plane this deployment resolves unknown keys from,
+    # and the token it presents. Both empty = no federation, unknown key is
+    # simply unknown.
+    federation_home_base_url: str = ""
+    federation_home_token: str = ""
     # The canonical target serves a self-signed cert minted inside the
     # TEE (AWS Nitro standalone deployments): probes skip CA verification
     # and the attestation probe instead verifies the document binds the

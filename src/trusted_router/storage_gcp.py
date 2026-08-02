@@ -952,6 +952,25 @@ class SpannerBigtableStore:
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None:
         return self.api_keys.get_by_hash(key_hash)
 
+    def upsert_federated_api_key(self, record: dict[str, Any]) -> ApiKey:
+        """Persist a key record resolved from the home plane.
+
+        Identity only: no salt/secret_hash (a peer never holds home-issued
+        key material) and NO credits — a federated key seeds at ZERO local
+        balance, because copying a balance mints money. Spending on this
+        plane requires an explicit transfer.
+        """
+        # Spanner is the HOME plane in this topology: it ISSUES keys, it does
+        # not learn them from a peer. Federation-in is gated by
+        # federation_home_base_url, which is empty on GCP, so this is
+        # unreachable there. Raising beats a plausible-looking write that
+        # silently creates a key with no secret material in the directory
+        # of record.
+        _ = record
+        raise NotImplementedError(
+            "GCP is the federation home plane; it does not import federated keys"
+        )
+
     def get_key_by_lookup_hash(self, lookup_hash: str) -> ApiKey | None:
         return self.api_keys.get_by_lookup_hash(lookup_hash)
 

@@ -44,6 +44,7 @@ from trusted_router.storage_models import (
     VideoJob,
     WalletChallenge,
     Workspace,
+    federated_api_key_from_record,
     iso_now,
     normalize_provider_access_role,
     normalize_provider_access_slug,
@@ -579,6 +580,18 @@ class InMemoryStore:
             "reserved": key.reserved_microdollars,
             "windows": self.api_keys.window_usage_snapshot(key_hash),
         }
+
+    def upsert_federated_api_key(self, record: dict[str, Any]) -> ApiKey:
+        """Persist a key record resolved from the home plane.
+
+        Identity only. The record carries NO salt/secret_hash (a peer never
+        holds home-issued key material) and NO credits — a federated key
+        seeds at ZERO local balance, because copying a balance mints money.
+        Spending on this plane requires an explicit transfer.
+        """
+        key = federated_api_key_from_record(record)
+        self.api_keys.keys[key.hash] = key
+        return key
 
     def get_key_by_lookup_hash(self, lookup_hash: str) -> ApiKey | None:
         return self.api_keys.get_by_lookup_hash(lookup_hash)

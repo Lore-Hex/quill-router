@@ -69,6 +69,7 @@ from trusted_router.storage_models import (
     Workspace,
     _is_byok,
     _is_expired,
+    federated_api_key_from_record,
     iso_now,
     normalize_provider_access_role,
     normalize_provider_access_slug,
@@ -1204,6 +1205,53 @@ class PostgresStore:
 
     def typed_key_usage(self, key_hash: str) -> dict[str, Any] | None:
         self._not_implemented("typed_key_usage")
+
+    def upsert_federated_api_key(self, record: dict[str, Any]) -> ApiKey:
+        """Persist a key record resolved from the home plane.
+
+        Identity only: no salt/secret_hash (a peer never holds home-issued
+        key material) and NO credits — a federated key seeds at ZERO local
+        balance, because copying a balance mints money. Spending on this
+        plane requires an explicit transfer.
+        """
+        key = federated_api_key_from_record(record)
+
+        def upsert(conn: Any) -> ApiKey:
+            self._write_entity_tx(conn, "api_key", key.hash, key)
+            self._write_entity_tx(
+                conn, "api_key_lookup", key.lookup_hash, {"key_hash": key.hash}
+            )
+            # A typed key-limit row is MANDATORY: the typed authorize path
+            # fail-closes with KEY_MISSING when a key has a JSON entity but
+            # no typed row, which would 402 every federated user. Limits come
+            # from the home record; usage and reserved start at zero.
+            conn.execute(
+                "INSERT INTO tr_key_limit"
+                " (workspace_id, key_hash, shard, limit_micro, usage, byok_usage,"
+                "  reserved, include_byok, day_limit_micro, week_limit_micro,"
+                "  month_limit_micro)"
+                " VALUES (%s, %s, 0, %s, 0, 0, 0, %s, %s, %s, %s)"
+                " ON CONFLICT (workspace_id, key_hash, shard) DO UPDATE SET"
+                "   limit_micro = EXCLUDED.limit_micro"
+                " , include_byok = EXCLUDED.include_byok"
+                " , day_limit_micro = EXCLUDED.day_limit_micro"
+                " , week_limit_micro = EXCLUDED.week_limit_micro"
+                " , month_limit_micro = EXCLUDED.month_limit_micro"
+                " , updated_at = CURRENT_TIMESTAMP",
+                (
+                    key.workspace_id,
+                    key.hash,
+                    key.limit_microdollars,
+                    key.include_byok_in_limit,
+                    key.limit_daily_microdollars,
+                    key.limit_weekly_microdollars,
+                    key.limit_monthly_microdollars,
+                ),
+                prepare=False,
+            )
+            return key
+
+        return self._run_transaction(upsert)
 
     def get_key_by_lookup_hash(self, lookup_hash: str) -> ApiKey | None:
         lookup = self._read_entity("api_key_lookup", lookup_hash, dict)
