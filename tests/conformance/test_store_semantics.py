@@ -659,3 +659,193 @@ def test_key_limit_window_columns_and_index_exist(store: Store, unique: str) -> 
         # The limit columns predate this change; assert them too so a
         # regression in either half is caught by one test.
         assert f"{window}_limit_micro" in columns, f"missing {window}_limit_micro"
+
+
+# --------------------------------------------------------------------------
+# Per-key spend caps (reserve/settle/refund_key_limit)
+#
+# Seeded through direct SQL because update_key is still _not_implemented on
+# PostgresStore; these skip on backends with no SQL pool. The semantic
+# reference is InMemoryApiKeys.reserve_limit — same rules, different engine.
+# --------------------------------------------------------------------------
+
+
+def _seed_key_limit(store: Store, key_hash: str, **columns: object) -> None:
+    pool = getattr(store, "_pool", None)
+    if pool is None:
+        pytest.skip("backend has no SQL schema to seed")
+    cols = {"workspace_id": "ws-keylimit", "key_hash": key_hash, "shard": 0, **columns}
+    names = ", ".join(cols)
+    marks = ", ".join(["%s"] * len(cols))
+    with pool.connection() as conn:
+        conn.execute("DELETE FROM tr_key_limit WHERE key_hash = %s", (key_hash,), prepare=False)
+        # noqa justified: column names come from this function's own
+        # keyword arguments, never from test data or user input; values are
+        # still bound as parameters.
+        conn.execute(
+            f"INSERT INTO tr_key_limit ({names}) VALUES ({marks})",  # noqa: S608
+            tuple(cols.values()),
+            prepare=False,
+        )
+
+
+def _key_limit_row(store: Store, key_hash: str) -> dict[str, object]:
+    with store._pool.connection() as conn:  # type: ignore[attr-defined]
+        row = conn.execute(
+            "SELECT reserved, day_usage, day_start FROM tr_key_limit"
+            " WHERE key_hash = %s AND shard = 0",
+            (key_hash,),
+            prepare=False,
+        ).fetchone()
+    return {"reserved": row[0], "day_usage": row[1], "day_start": row[2]}
+
+
+def test_reserve_key_limit_enforces_lifetime_cap(store: Store, unique: str) -> None:
+    kh = f"kl-cap-{unique}"
+    _seed_key_limit(store, kh, limit_micro=100, usage=0, byok_usage=0, reserved=0, include_byok=True)
+
+    store.reserve_key_limit(kh, 60, usage_type="Credits")
+    assert _key_limit_row(store, kh)["reserved"] == 60
+
+    # 60 held + 60 requested > 100: the predicate must reject, not oversubscribe.
+    with pytest.raises(ValueError):
+        store.reserve_key_limit(kh, 60, usage_type="Credits")
+    assert _key_limit_row(store, kh)["reserved"] == 60
+
+
+def test_reserve_key_limit_uncapped_is_noop(store: Store, unique: str) -> None:
+    kh = f"kl-uncapped-{unique}"
+    _seed_key_limit(store, kh, limit_micro=None, usage=0, byok_usage=0, reserved=0, include_byok=True)
+    store.reserve_key_limit(kh, 10_000_000, usage_type="Credits")
+    assert _key_limit_row(store, kh)["reserved"] == 0
+
+
+def test_reserve_key_limit_byok_excluded_is_noop(store: Store, unique: str) -> None:
+    """A BYOK request against a key that excludes BYOK must not consume the
+    key's cap — the customer is paying the provider directly."""
+    kh = f"kl-byok-{unique}"
+    _seed_key_limit(store, kh, limit_micro=100, usage=0, byok_usage=0, reserved=0, include_byok=False)
+    store.reserve_key_limit(kh, 5_000, usage_type="BYOK")
+    assert _key_limit_row(store, kh)["reserved"] == 0
+
+
+def test_reserve_key_limit_counts_byok_when_included(store: Store, unique: str) -> None:
+    kh = f"kl-byok-in-{unique}"
+    _seed_key_limit(store, kh, limit_micro=100, usage=0, byok_usage=90, reserved=0, include_byok=True)
+    # 90 BYOK already used against a 100 cap leaves 10.
+    with pytest.raises(ValueError):
+        store.reserve_key_limit(kh, 20, usage_type="Credits")
+    store.reserve_key_limit(kh, 10, usage_type="Credits")
+
+
+def test_reserve_key_limit_window_blocks_before_lifetime(store: Store, unique: str) -> None:
+    """Window caps are independent of the lifetime cap and raise a typed
+    error carrying the window, so the gateway can send Retry-After."""
+    from trusted_router.spend_windows import KeyWindowLimitExceeded, window_floors
+    from trusted_router.storage_models import utcnow
+
+    kh = f"kl-window-{unique}"
+    floors = window_floors(utcnow())
+    _seed_key_limit(
+        store, kh,
+        limit_micro=1_000_000, usage=0, byok_usage=0, reserved=0, include_byok=True,
+        day_limit_micro=100, day_usage=95, day_start=floors["daily"],
+    )
+    with pytest.raises(KeyWindowLimitExceeded) as excinfo:
+        store.reserve_key_limit(kh, 10, usage_type="Credits")
+    assert excinfo.value.window == "daily"
+    # Under the window cap still succeeds against the same row.
+    store.reserve_key_limit(kh, 5, usage_type="Credits")
+
+
+def test_stale_window_start_reads_as_zero(store: Store, unique: str) -> None:
+    """The lazy-window rule: a *_start older than the current floor means the
+    window has not started this period, so usage reads ZERO. Without this a
+    key that hit its daily cap once would be blocked forever — there is no
+    reset job, by design."""
+    from trusted_router.spend_windows import window_floors
+    from trusted_router.storage_models import utcnow
+
+    kh = f"kl-stale-{unique}"
+    floors = window_floors(utcnow())
+    _seed_key_limit(
+        store, kh,
+        limit_micro=1_000_000, usage=0, byok_usage=0, reserved=0, include_byok=True,
+        day_limit_micro=100, day_usage=999_999,
+        day_start=floors["daily"] - dt.timedelta(days=3),
+    )
+    store.reserve_key_limit(kh, 50, usage_type="Credits")
+
+
+def test_settle_key_limit_releases_hold_and_rolls_window(store: Store, unique: str) -> None:
+    kh = f"kl-settle-{unique}"
+    _seed_key_limit(store, kh, limit_micro=1_000, usage=0, byok_usage=0, reserved=0, include_byok=True)
+    store.reserve_key_limit(kh, 60, usage_type="Credits")
+    store.settle_key_limit(kh, 60, 20, usage_type="Credits")
+
+    row = _key_limit_row(store, kh)
+    assert row["reserved"] == 0, "hold must be released"
+    assert row["day_usage"] == 20, "window counter books the ACTUAL cost"
+    assert row["day_start"] is not None
+
+
+def test_settle_cannot_drive_reserved_negative(store: Store, unique: str) -> None:
+    """A duplicate settle must not hand the key free headroom."""
+    kh = f"kl-dup-settle-{unique}"
+    _seed_key_limit(store, kh, limit_micro=1_000, usage=0, byok_usage=0, reserved=0, include_byok=True)
+    store.reserve_key_limit(kh, 50, usage_type="Credits")
+    store.settle_key_limit(kh, 50, 10, usage_type="Credits")
+    store.settle_key_limit(kh, 50, 10, usage_type="Credits")
+    assert _key_limit_row(store, kh)["reserved"] == 0
+
+
+def test_refund_key_limit_releases_without_booking_usage(store: Store, unique: str) -> None:
+    kh = f"kl-refund-{unique}"
+    _seed_key_limit(store, kh, limit_micro=1_000, usage=0, byok_usage=0, reserved=0, include_byok=True)
+    store.reserve_key_limit(kh, 60, usage_type="Credits")
+    store.refund_key_limit(kh, 60, usage_type="Credits")
+
+    row = _key_limit_row(store, kh)
+    assert row["reserved"] == 0
+    assert (row["day_usage"] or 0) == 0, "a refunded request spent nothing"
+
+
+def test_key_limit_calls_on_missing_row_are_noops(store: Store, unique: str) -> None:
+    """No typed row means nothing to enforce — must not raise. The gateway's
+    own KEY_MISSING path handles the authorize-side decision."""
+    _seed_key_limit(store, f"kl-present-{unique}", limit_micro=100)
+    absent = f"kl-absent-{unique}"
+    store.reserve_key_limit(absent, 10, usage_type="Credits")
+    store.settle_key_limit(absent, 10, 5, usage_type="Credits")
+    store.refund_key_limit(absent, 10, usage_type="Credits")
+
+
+def test_concurrent_key_limit_reserves_cannot_oversubscribe(store: Store, unique: str) -> None:
+    """Two simultaneous full-cap holds: exactly one may win."""
+    kh = f"kl-race-{unique}"
+    _seed_key_limit(store, kh, limit_micro=100, usage=0, byok_usage=0, reserved=0, include_byok=True)
+    ready = threading.Barrier(3)
+    lock = threading.Lock()
+    wins: list[int] = []
+    losses: list[Exception] = []
+
+    def reserve_once() -> None:
+        ready.wait()
+        try:
+            store.reserve_key_limit(kh, 100, usage_type="Credits")
+        except Exception as exc:
+            with lock:
+                losses.append(exc)
+        else:
+            with lock:
+                wins.append(1)
+
+    threads = [threading.Thread(target=reserve_once) for _ in range(2)]
+    for t in threads:
+        t.start()
+    ready.wait()
+    for t in threads:
+        t.join()
+
+    assert len(wins) == 1, f"expected exactly one winner, got {len(wins)} (losses={losses})"
+    assert _key_limit_row(store, kh)["reserved"] == 100
