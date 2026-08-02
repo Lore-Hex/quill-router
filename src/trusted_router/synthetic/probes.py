@@ -391,7 +391,7 @@ async def gateway_latency_phase_probes(
             timeout_seconds=_remaining_probe_seconds(started, timeout_seconds),
         )
         first_total_ms = _elapsed_ms(started)
-        first_ok = first_status == 200 and first_body == b'{"status":"ok"}'
+        first_ok = _health_status_reachable(first_status, first_body)
         cold = _sample(
             "gateway_cold_path",
             target,
@@ -438,7 +438,7 @@ async def gateway_latency_phase_probes(
             )
         )
         second_total_ms = _elapsed_ms(reused_started)
-        second_ok = second_status == 200 and second_body == b'{"status":"ok"}'
+        second_ok = _health_status_reachable(second_status, second_body)
         return [
             cold,
             _sample(
@@ -2281,6 +2281,31 @@ def _health_ok(response: httpx.Response) -> bool:
         return response.json().get("status") == "ok"
     except ValueError:
         return False
+
+
+def _health_status_reachable(status: int, body: bytes) -> bool:
+    """Did /health prove the request path is alive?
+
+    These latency-phase probes measure DNS/TCP/TLS/first-byte — they are
+    diagnostic timing, not an authorization signal. A 401 "Invalid API
+    key" still proves every one of those phases completed, so it counts
+    as reachable, matching what tls_health_probe already does.
+
+    Not cosmetic: the AWS Nitro gateway protects every route except
+    /attestation and answers /health with 401, while the GCP gateway
+    answers 200. Without this, tls_health reported `up` and the two
+    latency probes reported `down` for the SAME 401 on the SAME URL —
+    a permanent false red on the EU status page.
+    """
+    if status == 200 and body == b'{"status":"ok"}':
+        return True
+    if status != 401:
+        return False
+    try:
+        error = json.loads(body).get("error", {})
+    except (ValueError, AttributeError):
+        return False
+    return "invalid api key" in str(error.get("message", "")).lower()
 
 
 def _invalid_api_key(response: httpx.Response) -> bool:
