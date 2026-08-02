@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import random
 from dataclasses import asdict
 from typing import Any
@@ -13,7 +14,7 @@ from trusted_router.errors import api_error
 from trusted_router.routes.helpers import json_body
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.storage import STORE, ProviderBenchmarkSample, SyntheticProbeSample
-from trusted_router.storage_models import scrub_provider_error_message
+from trusted_router.storage_models import FUTURE_SAMPLE_SKEW_SECONDS, scrub_provider_error_message
 from trusted_router.synthetic.cli import rotation_pass
 from trusted_router.synthetic.probes import (
     gateway_billing_probe,
@@ -201,7 +202,26 @@ def _sample_from_body(body: Any) -> SyntheticProbeSample:
         else None,
     }
     if body.get("created_at"):
-        kwargs["created_at"] = str(body["created_at"])
+        created_at = str(body["created_at"])
+        # Ingest is the boundary: a future-dated sample is poison, not
+        # data. One accepted year-7748 row permanently disabled the
+        # staleness detector (it defined "latest" forever); storage and
+        # status now also guard, but rejecting here keeps the poison out
+        # of the store entirely instead of merely filtered on read.
+        try:
+            created = dt.datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        except ValueError:
+            raise api_error(400, "created_at is not a valid timestamp", ErrorType.BAD_REQUEST) from None
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=dt.UTC)
+        skew = (created - dt.datetime.now(dt.UTC)).total_seconds()
+        if skew > FUTURE_SAMPLE_SKEW_SECONDS:
+            raise api_error(
+                400,
+                f"created_at is {int(skew)}s in the future (max {FUTURE_SAMPLE_SKEW_SECONDS}s)",
+                ErrorType.BAD_REQUEST,
+            )
+        kwargs["created_at"] = created_at
     for field in ("id", "probe_type", "target", "target_url", "monitor_region", "status"):
         if not kwargs[field]:
             raise api_error(400, f"{field} is required", ErrorType.BAD_REQUEST)

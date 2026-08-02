@@ -6,7 +6,13 @@ from collections import defaultdict
 from dataclasses import replace
 from typing import Any
 
-from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup, iso_now, utcnow
+from trusted_router.storage_models import (
+    FUTURE_SAMPLE_SKEW_SECONDS,
+    SyntheticProbeSample,
+    SyntheticRollup,
+    iso_now,
+    utcnow,
+)
 from trusted_router.synthetic.components import (
     COMPONENT_DEFINITIONS,
     SLO_DEFINITIONS,
@@ -141,20 +147,37 @@ def _monitor_freshness(
     *,
     now: dt.datetime,
 ) -> dict[str, Any]:
-    if not samples:
+    # Future-dated samples are NOT evidence of freshness. This is not a
+    # theoretical case: conformance fixtures dated in the year 7748 were
+    # once written to a live store, and the previous implementation —
+    # `max(age, 0)` over `max(samples, key=created_at)` — locked
+    # latest_sample_age_seconds to 0 and is_stale to False permanently.
+    # A staleness detector a single poison row can disable forever is
+    # worse than none: it reports "fresh" through a total monitor outage.
+    # Small negative ages are ordinary clock skew between the monitor and
+    # this host, so only samples beyond the skew budget are excluded.
+    dateable = [
+        sample
+        for sample in samples
+        if (now - _parse_time(sample.created_at)).total_seconds() >= -FUTURE_SAMPLE_SKEW_SECONDS
+    ]
+    future_dated = len(samples) - len(dateable)
+    if not dateable:
         return {
             "latest_sample_at": None,
             "latest_sample_age_seconds": None,
             "stale_after_seconds": CURRENT_SAMPLE_TTL_SECONDS,
             "is_stale": True,
+            "future_dated_samples": future_dated,
         }
-    latest = max(samples, key=lambda sample: _parse_time(sample.created_at))
-    age = max((now - _parse_time(latest.created_at)).total_seconds(), 0)
+    latest = max(dateable, key=lambda sample: _parse_time(sample.created_at))
+    age = (now - _parse_time(latest.created_at)).total_seconds()
     return {
         "latest_sample_at": latest.created_at,
-        "latest_sample_age_seconds": int(age),
+        "latest_sample_age_seconds": int(max(age, 0)),
         "stale_after_seconds": CURRENT_SAMPLE_TTL_SECONDS,
         "is_stale": age > CURRENT_SAMPLE_TTL_SECONDS,
+        "future_dated_samples": future_dated,
     }
 
 
@@ -241,6 +264,16 @@ def history_payload(
     return {"window": window, "scope": ROUTER_CORE_SLO_ID, "data": {}}
 
 
+def _sample_effective_status(sample: SyntheticProbeSample, *, now: dt.datetime) -> tuple[str, float]:
+    """(effective status, signed age). Too old OR too far in the future
+    both degrade to "unknown": a future-dated `up` sample must never pin
+    a component green — it is poison or clock breakage, not evidence."""
+    age = (now - _parse_time(sample.created_at)).total_seconds()
+    if age > CURRENT_SAMPLE_TTL_SECONDS or age < -FUTURE_SAMPLE_SKEW_SECONDS:
+        return "unknown", age
+    return sample.status, age
+
+
 def _current_status(
     samples: list[SyntheticProbeSample],
     *,
@@ -254,8 +287,8 @@ def _current_status(
     rows = []
     overall = "unknown"
     for sample in latest.values():
-        age = max((now - _parse_time(sample.created_at)).total_seconds(), 0)
-        status = "unknown" if age > CURRENT_SAMPLE_TTL_SECONDS else sample.status
+        status, signed_age = _sample_effective_status(sample, now=now)
+        age = max(signed_age, 0)
         overall = _worse_status(overall, status)
         row = sample.public_dict()
         row["age_seconds"] = int(age)
@@ -510,8 +543,7 @@ def _slo_current(
     by_region: dict[str, dict[str, Any]] = {}
     sample_count = 0
     for sample in latest.values():
-        age = max((now - _parse_time(sample.created_at)).total_seconds(), 0)
-        status = "unknown" if age > CURRENT_SAMPLE_TTL_SECONDS else sample.status
+        status, _signed_age = _sample_effective_status(sample, now=now)
         overall = _worse_status(overall, status)
         sample_count += 1
         for region in _sample_region_keys(sample):

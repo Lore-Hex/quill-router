@@ -6,7 +6,12 @@ import math
 from collections import Counter
 from typing import Any
 
-from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup, iso_now
+from trusted_router.storage_models import (
+    FUTURE_SAMPLE_SKEW_SECONDS,
+    SyntheticProbeSample,
+    SyntheticRollup,
+    iso_now,
+)
 from trusted_router.synthetic.components import sample_component_ids
 
 ROLLUP_PERIODS = {"hour", "day", "month"}
@@ -229,7 +234,15 @@ def raw_sample_is_within_retention(
     now: dt.datetime,
     days: int = RAW_SYNTHETIC_RETENTION_DAYS,
 ) -> bool:
-    return _parse_time(sample.created_at) >= now - dt.timedelta(days=days)
+    """Bounded on BOTH sides. The lower bound is retention. The upper
+    bound excludes future-dated poison: a sample dated past the skew
+    budget (e.g. a year-7748 conformance fixture written to a live
+    store) would otherwise sort first in every newest-first read forever
+    — retention alone never expires a row dated in the future."""
+    created = _parse_time(sample.created_at)
+    if created > now + dt.timedelta(seconds=FUTURE_SAMPLE_SKEW_SECONDS):
+        return False
+    return created >= now - dt.timedelta(days=days)
 
 
 def _increment_histogram(histogram: dict[str, int], value: int) -> None:

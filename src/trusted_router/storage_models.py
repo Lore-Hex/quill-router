@@ -883,6 +883,16 @@ def _provider_from_model_id(model_id: str) -> str:
     return model_id.split("/", 1)[0] if "/" in model_id else model_id
 
 
+# How far into the future a synthetic sample's created_at may sit before
+# ingest, storage reads, and the status layer treat it as poison rather
+# than evidence. 60s absorbs ordinary monitor/host clock skew. Shared here
+# (next to the model) because all three layers must agree: a bound
+# enforced in only one of them leaves the others trusting year-7748
+# fixture rows — which happened, and permanently disabled the staleness
+# detector on a live deployment.
+FUTURE_SAMPLE_SKEW_SECONDS = 60
+
+
 @dataclass
 class SyntheticProbeSample:
     """Privacy-safe synthetic monitor sample.
