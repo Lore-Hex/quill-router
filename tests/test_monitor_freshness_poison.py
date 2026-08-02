@@ -149,3 +149,87 @@ class TestIngestBoundary:
 
     def test_garbage_created_at_rejected_as_400(self, client: TestClient) -> None:
         assert self._post(client, "not-a-timestamp").status_code == 400
+
+
+class TestSilentProbeDisappearance:
+    """A probe that STOPS EMITTING must turn something red.
+
+    The negative control that validated this deployment broke
+    reachability, which emits `down` samples. A probe that simply stops
+    producing samples emits NOTHING — and nothing was being treated as
+    no-opinion ("unknown"), which _worse_status ignores. So the outage
+    shape most likely to go unnoticed was the one the page could not
+    show. Nothing is not evidence of health.
+    """
+
+    def _pair(self, fresh_age: int, stale_age: int) -> list[SyntheticProbeSample]:
+        return [
+            _sample(NOW - dt.timedelta(seconds=fresh_age), sample_id="fresh"),
+            SyntheticProbeSample(
+                id="stopped",
+                probe_type="attestation_nonce",
+                target="canonical",
+                target_url="https://api-aws.trustedrouter.com/attestation",
+                monitor_region="eu-west-3",
+                status="up",
+                created_at=(NOW - dt.timedelta(seconds=stale_age))
+                .isoformat()
+                .replace("+00:00", "Z"),
+            ),
+        ]
+
+    def test_stopped_probe_is_down_while_siblings_report(self) -> None:
+        samples = self._pair(fresh_age=30, stale_age=CURRENT_SAMPLE_TTL_SECONDS + 600)
+        current = _current_status(samples, now=NOW)
+        by_probe = {c["probe_type"]: c["effective_status"] for c in current["checks"]}
+        assert by_probe["attestation_nonce"] == "down"
+        assert by_probe["tls_health"] == "up"
+        assert current["overall_status"] == "down"
+
+    def test_whole_monitor_stale_stays_unknown_not_false_outage(self) -> None:
+        """Cold start / monitor down: every probe stale. monitor_freshness
+        already reports that; marking each probe `down` too would paint a
+        false outage on every deploy."""
+        samples = self._pair(
+            fresh_age=CURRENT_SAMPLE_TTL_SECONDS + 900,
+            stale_age=CURRENT_SAMPLE_TTL_SECONDS + 600,
+        )
+        current = _current_status(samples, now=NOW)
+        assert {c["effective_status"] for c in current["checks"]} == {"unknown"}
+        assert current["overall_status"] == "unknown"
+        assert _monitor_freshness(samples, now=NOW)["is_stale"] is True
+
+    def test_all_fresh_is_untouched(self) -> None:
+        samples = self._pair(fresh_age=20, stale_age=40)
+        current = _current_status(samples, now=NOW)
+        assert {c["effective_status"] for c in current["checks"]} == {"up"}
+        assert current["overall_status"] == "up"
+
+    def test_future_dated_still_unknown_never_down(self) -> None:
+        """Poison must not be reclassified as an outage — it is absence of
+        evidence, and it would page someone for a clock bug."""
+        poison = SyntheticProbeSample(
+            id="poison",
+            probe_type="attestation_nonce",  # distinct key so dedup keeps both
+            target="canonical",
+            target_url="https://api-aws.trustedrouter.com/attestation",
+            monitor_region="eu-west-3",
+            status="up",
+            created_at="7748-06-05T20:10:00Z",
+        )
+        samples = [_sample(NOW - dt.timedelta(seconds=30), sample_id="fresh"), poison]
+        current = _current_status(samples, now=NOW)
+        statuses = {c["probe_type"]: c["effective_status"] for c in current["checks"]}
+        assert statuses["attestation_nonce"] == "unknown"
+        assert statuses["tls_health"] == "up"
+
+    def test_monitor_reporting_helper(self) -> None:
+        from trusted_router.synthetic.status import _monitor_is_reporting
+
+        fresh = [_sample(NOW - dt.timedelta(seconds=10))]
+        stale = [_sample(NOW - dt.timedelta(seconds=CURRENT_SAMPLE_TTL_SECONDS + 60))]
+        poison = [_sample(dt.datetime(7748, 6, 5, tzinfo=dt.UTC))]
+        assert _monitor_is_reporting(fresh, now=NOW) is True
+        assert _monitor_is_reporting(stale, now=NOW) is False
+        # Poison must not count as "the monitor is alive".
+        assert _monitor_is_reporting(poison, now=NOW) is False

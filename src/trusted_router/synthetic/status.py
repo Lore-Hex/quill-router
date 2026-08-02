@@ -264,13 +264,55 @@ def history_payload(
     return {"window": window, "scope": ROUTER_CORE_SLO_ID, "data": {}}
 
 
-def _sample_effective_status(sample: SyntheticProbeSample, *, now: dt.datetime) -> tuple[str, float]:
-    """(effective status, signed age). Too old OR too far in the future
-    both degrade to "unknown": a future-dated `up` sample must never pin
-    a component green — it is poison or clock breakage, not evidence."""
+def _monitor_is_reporting(samples: list[SyntheticProbeSample], *, now: dt.datetime) -> bool:
+    """Is the monitor alive at all — i.e. did ANY probe report recently?
+
+    Distinguishes "the whole monitor stopped" (reported once, by
+    monitor_freshness) from "one probe stopped while the rest kept
+    reporting" (a real, probe-specific outage that must turn something
+    red). Without the distinction you must choose between missing the
+    second case and painting the page red on every cold start.
+    """
+    return any(
+        -FUTURE_SAMPLE_SKEW_SECONDS
+        <= (now - _parse_time(sample.created_at)).total_seconds()
+        <= CURRENT_SAMPLE_TTL_SECONDS
+        for sample in samples
+    )
+
+
+def _sample_effective_status(
+    sample: SyntheticProbeSample,
+    *,
+    now: dt.datetime,
+    monitor_reporting: bool = False,
+) -> tuple[str, float]:
+    """(effective status, signed age).
+
+    Too far in the FUTURE is always "unknown": a future-dated `up` sample
+    must never pin a component green — that is poison or clock breakage,
+    not evidence.
+
+    Too OLD depends on whether the monitor is otherwise alive:
+
+      * monitor_reporting=True  -> "down". This probe stopped emitting
+        while its siblings kept going. That is the silent-disappearance
+        outage: previously it dropped to "unknown", and _worse_status
+        treats unknown as no-opinion, so a probe that vanished entirely
+        left the SLO green. A reachability break emits `down` samples and
+        was caught; a probe that simply stops emitting produced NOTHING
+        to aggregate, and nothing is not evidence of health.
+
+      * monitor_reporting=False -> "unknown". Every probe is stale, so
+        the monitor itself is down or cold-starting. monitor_freshness
+        reports that as is_stale; marking each probe `down` too would
+        paint a false outage on every deploy.
+    """
     age = (now - _parse_time(sample.created_at)).total_seconds()
-    if age > CURRENT_SAMPLE_TTL_SECONDS or age < -FUTURE_SAMPLE_SKEW_SECONDS:
+    if age < -FUTURE_SAMPLE_SKEW_SECONDS:
         return "unknown", age
+    if age > CURRENT_SAMPLE_TTL_SECONDS:
+        return ("down" if monitor_reporting else "unknown"), age
     return sample.status, age
 
 
@@ -286,8 +328,11 @@ def _current_status(
             latest[key] = sample
     rows = []
     overall = "unknown"
+    monitor_reporting = _monitor_is_reporting(samples, now=now)
     for sample in latest.values():
-        status, signed_age = _sample_effective_status(sample, now=now)
+        status, signed_age = _sample_effective_status(
+            sample, now=now, monitor_reporting=monitor_reporting
+        )
         age = max(signed_age, 0)
         overall = _worse_status(overall, status)
         row = sample.public_dict()
@@ -542,8 +587,11 @@ def _slo_current(
     overall = "unknown"
     by_region: dict[str, dict[str, Any]] = {}
     sample_count = 0
+    monitor_reporting = _monitor_is_reporting(samples, now=now)
     for sample in latest.values():
-        status, _signed_age = _sample_effective_status(sample, now=now)
+        status, _signed_age = _sample_effective_status(
+            sample, now=now, monitor_reporting=monitor_reporting
+        )
         overall = _worse_status(overall, status)
         sample_count += 1
         for region in _sample_region_keys(sample):
