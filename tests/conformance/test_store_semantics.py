@@ -849,3 +849,116 @@ def test_concurrent_key_limit_reserves_cannot_oversubscribe(store: Store, unique
 
     assert len(wins) == 1, f"expected exactly one winner, got {len(wins)} (losses={losses})"
     assert _key_limit_row(store, kh)["reserved"] == 100
+
+
+# --------------------------------------------------------------------------
+# Gateway authorization lifecycle (create -> finalize), exactly once
+# --------------------------------------------------------------------------
+
+
+def _authorize(store: Store, workspace_id: str, key_hash: str, **kw: object) -> object:
+    params: dict[str, object] = dict(
+        workspace_id=workspace_id,
+        key_hash=key_hash,
+        model_id="anthropic/claude-opus-4.7",
+        provider="anthropic",
+        usage_type="Credits",
+        estimated_microdollars=100,
+        credit_reservation_id=None,
+    )
+    params.update(kw)
+    return store.create_gateway_authorization(**params)  # type: ignore[arg-type]
+
+
+def test_gateway_authorization_round_trips(store: Store, workspace_id: str, unique: str) -> None:
+    auth = _authorize(store, workspace_id, f"gw-{unique}")
+    fetched = store.get_gateway_authorization(auth.id)  # type: ignore[attr-defined]
+    assert fetched is not None
+    assert fetched.id == auth.id  # type: ignore[attr-defined]
+    assert fetched.settled is False
+
+
+def test_gateway_authorization_idempotency_key_dedupes(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    """Two identical requests must yield ONE authorization.
+
+    An authorization holds a credit reservation; creating two would
+    double-hold the customer's money for a single request.
+    """
+    kh = f"gw-idem-{unique}"
+    first = _authorize(store, workspace_id, kh, idempotency_key=f"idem-{unique}")
+    second = _authorize(store, workspace_id, kh, idempotency_key=f"idem-{unique}")
+    assert first.id == second.id  # type: ignore[attr-defined]
+
+    found = store.get_gateway_authorization_by_idempotency_key(
+        workspace_id, kh, f"idem-{unique}"
+    )
+    assert found is not None and found.id == first.id  # type: ignore[attr-defined]
+
+
+def test_gateway_idempotency_is_scoped_per_key(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    """The same idempotency key under a DIFFERENT api key is a different
+    request — otherwise one customer's authorization leaks to another."""
+    shared = f"idem-shared-{unique}"
+    a = _authorize(store, workspace_id, f"gw-a-{unique}", idempotency_key=shared)
+    b = _authorize(store, workspace_id, f"gw-b-{unique}", idempotency_key=shared)
+    assert a.id != b.id  # type: ignore[attr-defined]
+
+
+def test_unknown_idempotency_key_returns_none(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    assert store.get_gateway_authorization_by_idempotency_key(
+        workspace_id, f"gw-none-{unique}", f"never-{unique}"
+    ) is None
+
+
+def test_finalize_gateway_authorization_is_exactly_once(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    """True on the first finalize, False on every replay.
+
+    A settle retried after a timeout must not release the hold twice.
+    """
+    auth = _authorize(store, workspace_id, f"gw-fin-{unique}")
+    first = store.finalize_gateway_authorization(
+        auth.id, success=True, actual_microdollars=40, selected_usage_type="Credits"  # type: ignore[attr-defined]
+    )
+    second = store.finalize_gateway_authorization(
+        auth.id, success=True, actual_microdollars=40, selected_usage_type="Credits"  # type: ignore[attr-defined]
+    )
+    assert first is True
+    assert second is False, "replayed settle must be a no-op"
+
+    settled = store.get_gateway_authorization(auth.id)  # type: ignore[attr-defined]
+    assert settled is not None and settled.settled is True
+
+
+def test_finalize_unknown_authorization_is_false_not_error(
+    store: Store, unique: str
+) -> None:
+    assert store.finalize_gateway_authorization(
+        f"gwauth-missing-{unique}",
+        success=True,
+        actual_microdollars=10,
+        selected_usage_type="Credits",
+    ) is False
+
+
+def test_finalize_failure_books_no_usage(store: Store, workspace_id: str, unique: str) -> None:
+    """A failed request releases its holds but charges nothing."""
+    kh = f"gw-fail-{unique}"
+    _seed_key_limit(store, kh, limit_micro=1_000, usage=0, byok_usage=0, reserved=0, include_byok=True)
+    auth = _authorize(store, workspace_id, kh, estimated_microdollars=60)
+    store.reserve_key_limit(kh, 60, usage_type="Credits")
+
+    assert store.finalize_gateway_authorization(
+        auth.id, success=False, actual_microdollars=0, selected_usage_type="Credits"  # type: ignore[attr-defined]
+    ) is True
+
+    row = _key_limit_row(store, kh)
+    assert row["reserved"] == 0, "hold released even on failure"
+    assert (row["day_usage"] or 0) == 0, "a failed request spent nothing"
