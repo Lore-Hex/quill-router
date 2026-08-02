@@ -117,6 +117,10 @@ PROVIDER_SLUGS = [
     "atlas_cloud",
     "streamlake",
     "neurometric",
+    # 0G Private Computer publishes exact per-route prices and trust metadata
+    # in its public marketplace hydration data. The adapter admits only
+    # healthy TeeML/private chat routes and keeps them dark until a keyed PONG.
+    "zero_g",
     # First-party embedding providers. Their parsers feed committed provider
     # manifests that the runtime embedding catalog reads directly.
     "cohere",
@@ -131,6 +135,7 @@ _PRICING_RESULT_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
     "gemini": ("google-ai-studio", "google-vertex"),
     "cloudflare_workers_ai": ("cloudflare-workers-ai",),
     "atlas_cloud": ("atlas-cloud",),
+    "zero_g": ("zero-g",),
 }
 
 # These providers run a pricing-page parser (Kimi has a custom multi-page

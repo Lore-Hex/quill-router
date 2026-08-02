@@ -133,6 +133,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "telnyx",
         "together",
         "wafer",
+        "zero-g",
     }
 )
 
@@ -194,6 +195,7 @@ _AUTHOR_TO_PROVIDER_SLUG: dict[str, str] = {
     "xai": "grok",
     "xiaomi": "xiaomi",
     "phala": "phala",
+    "zero-g": "zero-g",
     # Keep Meta Llama's primary TR route on Cerebras even when the
     # OpenRouter endpoint snapshot temporarily exposes only a different
     # host. Cerebras is one of TR's direct prepaid/BYOK providers and
@@ -740,6 +742,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "atlas-cloud",
         "streamlake",
         "neurometric",
+        "zero-g",
         "kimi",
         "zai",
         "tinfoil",

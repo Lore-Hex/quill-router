@@ -165,6 +165,22 @@ jobs:
           echo "CLOUDFLARE_WORKERS_AI_ACCOUNT_ID=2698c706fd4793c818af14adad4e1a39" >> "$GITHUB_ENV"
           echo "TR_CLOUDFLARE_WORKERS_AI_ROUTABLE=1" >> "$GITHUB_ENV"
 
+      - name: Pull optional 0G Private Computer key
+        # Onboarding is deliberately dark before this secret exists. Once the
+        # operator provisions the key, the same hourly refresh must pass a
+        # private TeeML PONG before any 0G route becomes routable.
+        run: |
+          set -euo pipefail
+          secret=trustedrouter-zero-g-api-key
+          if gcloud secrets describe "${secret}" --project=quill-cloud-proxy >/dev/null 2>&1; then
+            KEY=$(gcloud secrets versions access latest \
+              --secret="${secret}" --project=quill-cloud-proxy)
+            echo "::add-mask::${KEY}"
+            echo "ZERO_G_API_KEY=${KEY}" >> "$GITHUB_ENV"
+          else
+            echo "0G key not provisioned; private routes remain dark."
+          fi
+
       - name: Snapshot existing pricing file
         run: cp src/trusted_router/data/openrouter_snapshot.json /tmp/before.json
 

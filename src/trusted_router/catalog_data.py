@@ -811,6 +811,24 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://www.neurometric.ai/privacy",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    "zero-g": Provider(
+        slug="zero-g",
+        name="0G Private Computer",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=None,
+        provider_confidential_compute=True,
+        provider_e2ee=True,
+        provider_policy=(
+            "TrustedRouter publishes only 0G routes marked private, TeeML, "
+            "TEE-attested, and healthy, and forces X-0G-Provider-Trust-Mode: "
+            "private on every request. Standard and TeeTLS routes are excluded: "
+            "TeeTLS attests the routing proxy but does not place model execution "
+            "inside confidential compute."
+        ),
+        provider_policy_url="https://pc.0g.ai/models",
+    ),
     # DeepInfra — large open-weight catalog (Llama, Gemma 4, Qwen,
     # DeepSeek, etc.). OpenAI-compatible at api.deepinfra.com/v1/openai.
     # Pricing in the /v1/openai/models response under
@@ -1044,6 +1062,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "atlas-cloud",
         "streamlake",
         "neurometric",
+        "zero-g",
         "nebius",
         "minimax",
         # Alibaba Cloud Model Studio — Frankfurt workspace. The production
