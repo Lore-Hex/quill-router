@@ -163,6 +163,30 @@ class TestTargetPlumbing:
         assert all(t.attested is False for t in configured_targets(settings))
         assert all(t.expected_pcr0 is None for t in configured_targets(settings))
 
+    def test_standalone_topology_is_one_canonical_target(self) -> None:
+        """Regional alias/Cloud-Run probing is GCP topology. On a
+        standalone deployment the templates fabricate hostnames that do
+        not exist (api-eu-west-3.quillrouter.com, a nonexistent *.run.app
+        URL) which would sit permanently down on the status page."""
+        settings = Settings(
+            environment="test",
+            sentry_dsn=None,
+            api_base_url="https://api-aws.trustedrouter.com/v1",
+            primary_region="eu-west-3",
+            regions="eu-west-3",
+            synthetic_regional_probes_enabled=False,
+            synthetic_control_plane_health_url="https://paris.example.com",
+        )
+        targets = configured_targets(settings)
+        assert [t.name for t in targets] == ["canonical"]
+        assert targets[0].control_plane_url == "https://paris.example.com"
+
+    def test_gcp_topology_unchanged_by_standalone_settings(self) -> None:
+        settings = Settings(environment="test", sentry_dsn=None)
+        names = [t.name for t in configured_targets(settings)]
+        assert names[0] == "canonical"
+        assert len(names) > 1  # regional targets still present by default
+
     def test_target_defaults_are_backward_compatible(self) -> None:
         target = SyntheticTarget("canonical", "https://api.trustedrouter.com/v1")
         assert target.attested is False

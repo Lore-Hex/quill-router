@@ -104,10 +104,19 @@ def configured_targets(settings: Settings) -> list[SyntheticTarget]:
             "canonical",
             settings.api_base_url,
             choose_region(settings),
+            control_plane_url=settings.synthetic_control_plane_health_url,
             attested=settings.synthetic_canonical_attested,
             expected_pcr0=settings.attestation_expected_pcr0,
         )
     ]
+    if not settings.synthetic_regional_probes_enabled:
+        # Standalone single-gateway deployment: the per-region alias and
+        # Cloud Run URL templates below are GCP topology and would
+        # fabricate targets that do not exist (verified live: with
+        # TR_REGIONS=eu-west-3 the loop appends
+        # api-eu-west-3.quillrouter.com + a nonexistent *.run.app URL,
+        # both permanently down). One gateway, one target.
+        return targets
     for region in region_payload(settings):
         name = str(region["id"])
         api_base_url = str(region["api_base_url"])
