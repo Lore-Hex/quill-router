@@ -1,6 +1,6 @@
 {
   "alibaba": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 76,
     "name": "Alibaba Cloud Model Studio",
     "privacy": "Policy documented",
@@ -9,7 +9,7 @@
     "slug": "alibaba"
   },
   "anthropic": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 12,
     "name": "Anthropic",
     "privacy": "Policy documented",
@@ -18,7 +18,7 @@
     "slug": "anthropic"
   },
   "atlas-cloud": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 70,
     "name": "Atlas Cloud",
     "privacy": "Policy documented",
@@ -27,7 +27,7 @@
     "slug": "atlas-cloud"
   },
   "baseten": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 12,
     "name": "Baseten",
     "privacy": "Policy documented",
@@ -36,7 +36,7 @@
     "slug": "baseten"
   },
   "cerebras": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 6,
     "name": "Cerebras",
     "privacy": "Zero retention",
@@ -45,7 +45,7 @@
     "slug": "cerebras"
   },
   "chutes": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 10,
     "name": "Chutes",
     "privacy": "Zero retention",
@@ -54,7 +54,7 @@
     "slug": "chutes"
   },
   "cloudflare-workers-ai": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 23,
     "name": "Cloudflare Workers AI",
     "privacy": "Policy documented",
@@ -63,7 +63,7 @@
     "slug": "cloudflare-workers-ai"
   },
   "cohere": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 3,
     "name": "Cohere",
     "privacy": "Zero retention",
@@ -72,7 +72,7 @@
     "slug": "cohere"
   },
   "crusoe": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 14,
     "name": "Crusoe",
     "privacy": "Policy documented",
@@ -81,7 +81,7 @@
     "slug": "crusoe"
   },
   "deepinfra": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 50,
     "name": "DeepInfra",
     "privacy": "Policy documented",
@@ -90,7 +90,7 @@
     "slug": "deepinfra"
   },
   "deepseek": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 4,
     "name": "DeepSeek",
     "privacy": "Policy documented",
@@ -99,7 +99,7 @@
     "slug": "deepseek"
   },
   "digitalocean": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 22,
     "name": "DigitalOcean Gradient AI",
     "privacy": "Policy documented",
@@ -108,7 +108,7 @@
     "slug": "digitalocean"
   },
   "engy": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 2,
     "name": "Engy",
     "privacy": "Zero retention",
@@ -117,7 +117,7 @@
     "slug": "engy"
   },
   "fireworks": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 11,
     "name": "Fireworks AI",
     "privacy": "Policy documented",
@@ -126,7 +126,7 @@
     "slug": "fireworks"
   },
   "friendli": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 7,
     "name": "FriendliAI",
     "privacy": "Policy documented",
@@ -135,7 +135,7 @@
     "slug": "friendli"
   },
   "gmi": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 53,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
@@ -144,7 +144,7 @@
     "slug": "gmi"
   },
   "google-ai-studio": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 11,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
@@ -153,7 +153,7 @@
     "slug": "google-ai-studio"
   },
   "google-vertex": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 9,
     "name": "Google Vertex AI",
     "privacy": "Zero retention",
@@ -162,7 +162,7 @@
     "slug": "google-vertex"
   },
   "grok": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 6,
     "name": "xAI Grok",
     "privacy": "Policy documented",
@@ -171,7 +171,7 @@
     "slug": "grok"
   },
   "inceptron": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 4,
     "name": "Inceptron",
     "privacy": "Zero retention",
@@ -180,7 +180,7 @@
     "slug": "inceptron"
   },
   "kimi": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 11,
     "name": "Kimi",
     "privacy": "Policy documented",
@@ -189,7 +189,7 @@
     "slug": "kimi"
   },
   "kling": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 2,
     "name": "Kling AI",
     "privacy": "Policy documented",
@@ -198,7 +198,7 @@
     "slug": "kling"
   },
   "lightning": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 17,
     "name": "Lightning AI",
     "privacy": "Policy documented",
@@ -207,7 +207,7 @@
     "slug": "lightning"
   },
   "ltx": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 2,
     "name": "Lightricks LTX",
     "privacy": "Policy documented",
@@ -216,7 +216,7 @@
     "slug": "ltx"
   },
   "makora": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 6,
     "name": "Makora",
     "privacy": "Policy documented",
@@ -225,7 +225,7 @@
     "slug": "makora"
   },
   "meta": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 0,
     "name": "Meta via OpenRouter",
     "privacy": "Policy documented",
@@ -234,7 +234,7 @@
     "slug": "meta"
   },
   "minimax": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 9,
     "name": "MiniMax",
     "privacy": "Policy documented",
@@ -243,7 +243,7 @@
     "slug": "minimax"
   },
   "mistral": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 8,
     "name": "Mistral",
     "privacy": "Policy documented",
@@ -252,7 +252,7 @@
     "slug": "mistral"
   },
   "morph": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 8,
     "name": "Morph",
     "privacy": "Policy documented",
@@ -261,7 +261,7 @@
     "slug": "morph"
   },
   "nebius": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 28,
     "name": "Nebius Token Factory",
     "privacy": "Zero retention",
@@ -270,7 +270,7 @@
     "slug": "nebius"
   },
   "neurometric": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 5,
     "name": "Neurometric AI",
     "privacy": "Policy documented",
@@ -279,7 +279,7 @@
     "slug": "neurometric"
   },
   "novita": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 108,
     "name": "Novita AI",
     "privacy": "Policy documented",
@@ -288,7 +288,7 @@
     "slug": "novita"
   },
   "openai": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 33,
     "name": "OpenAI",
     "privacy": "Zero retention",
@@ -297,7 +297,7 @@
     "slug": "openai"
   },
   "parasail": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 29,
     "name": "Parasail",
     "privacy": "Zero retention",
@@ -306,7 +306,7 @@
     "slug": "parasail"
   },
   "phala": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 2,
     "name": "Phala",
     "privacy": "Zero retention",
@@ -315,7 +315,7 @@
     "slug": "phala"
   },
   "runway": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 1,
     "name": "Runway",
     "privacy": "Policy documented",
@@ -324,7 +324,7 @@
     "slug": "runway"
   },
   "siliconflow": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 28,
     "name": "SiliconFlow",
     "privacy": "Policy documented",
@@ -333,7 +333,7 @@
     "slug": "siliconflow"
   },
   "streamlake": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 3,
     "name": "StreamLake",
     "privacy": "Policy documented",
@@ -342,7 +342,7 @@
     "slug": "streamlake"
   },
   "telnyx": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 12,
     "name": "Telnyx",
     "privacy": "Policy documented",
@@ -351,7 +351,7 @@
     "slug": "telnyx"
   },
   "thinkingmachines": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 2,
     "name": "Thinking Machines Lab",
     "privacy": "Policy documented",
@@ -360,7 +360,7 @@
     "slug": "thinkingmachines"
   },
   "tinfoil": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 5,
     "name": "Tinfoil",
     "privacy": "E2EE + confidential",
@@ -369,7 +369,7 @@
     "slug": "tinfoil"
   },
   "together": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 17,
     "name": "Together",
     "privacy": "Zero retention",
@@ -378,7 +378,7 @@
     "slug": "together"
   },
   "trustedrouter": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 0,
     "name": "TrustedRouter",
     "privacy": "E2EE + confidential",
@@ -387,7 +387,7 @@
     "slug": "trustedrouter"
   },
   "venice": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 28,
     "name": "Venice",
     "privacy": "Policy documented",
@@ -396,7 +396,7 @@
     "slug": "venice"
   },
   "voyage": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 1,
     "name": "Voyage AI",
     "privacy": "Zero retention",
@@ -405,7 +405,7 @@
     "slug": "voyage"
   },
   "wafer": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 5,
     "name": "Wafer",
     "privacy": "Policy documented",
@@ -414,7 +414,7 @@
     "slug": "wafer"
   },
   "xiaomi": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 3,
     "name": "Xiaomi MiMo",
     "privacy": "Policy documented",
@@ -423,7 +423,7 @@
     "slug": "xiaomi"
   },
   "zai": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 12,
     "name": "Z.AI",
     "privacy": "Policy documented",
@@ -432,7 +432,7 @@
     "slug": "zai"
   },
   "zero-g": {
-    "card_version": 1,
+    "card_version": 2,
     "model_count": 3,
     "name": "0G Private Computer",
     "privacy": "Confidential compute",
