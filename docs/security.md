@@ -74,11 +74,15 @@ configured Spanner/Bigtable storage backend.
 
 ## Rate Limiting
 
-Requests are rate limited before route handlers run. Local/test uses an
-in-memory counter. Production uses the configured store so counters are shared
-across Cloud Run instances. The default buckets are per-IP for unauthenticated
-requests, per-key for bearer-authenticated requests, and a separate higher
-limit for internal gateway calls.
+Requests are rate limited before route handlers run. Per-IP buckets for
+unauthenticated requests and per-key buckets for bearer-authenticated requests
+use the configured store in production, so those counters are shared across
+Cloud Run instances. Anonymous safe reads and internal gateway calls use a
+process-local counter instead (per instance): a shared Spanner counter on those
+paths serialized every request on one row's write lock (#399). An internal-path
+credential only earns the shared fleet bucket when it matches the configured
+internal token; unverified credentials count against the caller's IP, keeping
+bucket cardinality bounded against token guessing.
 
 This is an application backstop, not the whole abuse plan. Public signup should
 also use Cloud Armor, Stripe/payment risk controls, per-provider quota
