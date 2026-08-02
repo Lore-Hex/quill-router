@@ -623,3 +623,39 @@ def test_memory_backend_is_always_runnable() -> None:
 
 def _iso_utc(value: dt.datetime) -> str:
     return value.astimezone(dt.UTC).isoformat().replace("+00:00", "Z")
+
+
+# --------------------------------------------------------------------------
+# Schema shape the key-limit call family depends on
+# --------------------------------------------------------------------------
+
+
+def test_key_limit_window_columns_and_index_exist(store: Store, unique: str) -> None:
+    """tr_key_limit must carry the lazy rolling-window counters.
+
+    reserve/settle/refund_key_limit enforce day/week/month caps by reading
+    *_usage against a *_start floor. If the columns are missing the call
+    family cannot be implemented at all — and because CREATE TABLE IF NOT
+    EXISTS is a no-op on an existing table, a store created before they
+    were added would silently lack them forever without the ALTERs.
+
+    Skips on backends that do not expose an introspectable SQL schema
+    (the in-memory store has no DDL); the point is to pin Postgres/DSQL.
+    """
+    pool = getattr(store, "_pool", None)
+    if pool is None:
+        pytest.skip("backend has no SQL schema to introspect")
+
+    with pool.connection() as conn:
+        rows = conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'tr_key_limit'"
+        ).fetchall()
+    columns = {str(row[0]) for row in rows}
+
+    for window in ("day", "week", "month"):
+        assert f"{window}_usage" in columns, f"missing {window}_usage"
+        assert f"{window}_start" in columns, f"missing {window}_start"
+        # The limit columns predate this change; assert them too so a
+        # regression in either half is caught by one test.
+        assert f"{window}_limit_micro" in columns, f"missing {window}_limit_micro"
