@@ -22,6 +22,7 @@ from fastapi.responses import (
     RedirectResponse,
 )
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from starlette.responses import Response
 from starlette.types import Scope
 
@@ -218,6 +219,13 @@ _INQUIRY_HITS: OrderedDict[str, list[float]] = OrderedDict()
 _INQUIRY_WINDOW_SECONDS = 3600.0
 _INQUIRY_MAX_PER_WINDOW = 5
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_SUPPORT_CATEGORIES = {
+    "api": "API and routing",
+    "account": "Account access",
+    "billing": "Billing and credits",
+    "provider": "Provider or model",
+    "other": "Other",
+}
 
 
 def _inquiry_rate_ok(client_ip: str, *, now: float | None = None) -> bool:
@@ -355,6 +363,96 @@ async def _handle_trustedos_inquiry(settings: Settings, request: Request) -> JSO
             message,
         )
     return ok
+
+
+async def _handle_support_inquiry(settings: Settings, request: Request) -> JSONResponse:
+    """Send support mail without logging submitted free text or identity fields."""
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return JSONResponse({"ok": False, "error": "invalid_request"}, status_code=400)
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "error": "invalid_request"}, status_code=400)
+
+    # Silently accept honeypot submissions so automated senders do not learn
+    # which field caused the drop.
+    if str(payload.get("website", "")).strip():
+        return JSONResponse({"ok": True})
+
+    name = str(payload.get("name", "")).strip()[:200]
+    email = str(payload.get("email", "")).strip()[:320]
+    subject = " ".join(str(payload.get("subject", "")).splitlines()).strip()[:200]
+    message = str(payload.get("message", "")).strip()[:5000]
+    request_id = str(payload.get("request_id", "")).strip()[:200]
+    category = str(payload.get("category", "other")).strip().lower()
+    category_label = _SUPPORT_CATEGORIES.get(category)
+
+    if (
+        not name
+        or not subject
+        or not message
+        or not _EMAIL_RE.fullmatch(email)
+        or category_label is None
+    ):
+        return JSONResponse({"ok": False, "error": "missing_fields"}, status_code=422)
+
+    client_ip = request.client.host if request.client else "unknown"
+    if not _inquiry_rate_ok(f"support:{client_ip}"):
+        return JSONResponse({"ok": False, "error": "rate_limited"}, status_code=429)
+
+    text_body = (
+        "New TrustedRouter support request\n\n"
+        f"Category:   {category_label}\n"
+        f"Name:       {name}\n"
+        f"Email:      {email}\n"
+        f"Request ID: {request_id or '(not given)'}\n\n"
+        f"Subject: {subject}\n\n"
+        f"Message:\n{message}\n"
+    )
+    support_message = EmailMessage(
+        to=settings.support_email,
+        reply_to=email,
+        subject=f"TrustedRouter support: {category_label}: {subject}",
+        text_body=text_body,
+    )
+    try:
+        sent = await run_in_threadpool(
+            get_email_service(settings).send,
+            support_message,
+        )
+    except Exception:  # noqa: BLE001 - return a stable support fallback
+        sent = False
+        log.exception(
+            "support_inquiry.send_failed category=%s has_request_id=%s "
+            "subject_len=%d message_len=%d",
+            category,
+            bool(request_id),
+            len(subject),
+            len(message),
+        )
+    if not sent:
+        log.error(
+            "support_inquiry.delivery_failed category=%s has_request_id=%s "
+            "subject_len=%d message_len=%d",
+            category,
+            bool(request_id),
+            len(subject),
+            len(message),
+        )
+        return JSONResponse(
+            {"ok": False, "error": "delivery_unavailable"},
+            status_code=503,
+        )
+
+    log.info(
+        "support_inquiry.sent category=%s has_request_id=%s subject_len=%d "
+        "message_len=%d",
+        category,
+        bool(request_id),
+        len(subject),
+        len(message),
+    )
+    return JSONResponse({"ok": True})
 
 
 def register_public_routes(app: FastAPI, settings: Settings) -> None:
@@ -854,6 +952,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/support")
     async def support() -> str:
         return public_support_html(settings)
+
+    @app.post("/support/inquiry", include_in_schema=False)
+    async def support_inquiry(request: Request) -> JSONResponse:
+        return await _handle_support_inquiry(settings, request)
 
     @public_html_route("/legal/dpa")
     async def legal_dpa() -> str:

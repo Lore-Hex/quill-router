@@ -1738,6 +1738,7 @@ def public_support_html(settings: Settings) -> str:
             heading="TrustedRouter support",
             description="Get product, account, billing, plugin, and security support.",
             entity=legal_entity(settings),
+            support_email=settings.support_email,
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
             static_version=_static_version(settings),

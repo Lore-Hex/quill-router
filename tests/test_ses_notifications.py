@@ -254,6 +254,34 @@ def test_email_service_sends_expected_ses_payload(monkeypatch) -> None:
     assert call.get("ConfigurationSetName") == "trustedrouter-default"
 
 
+def test_email_service_sets_reply_to_for_support_mail(monkeypatch) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class FakeSESClient:
+        def send_email(self, **kwargs: Any) -> None:
+            calls.append(kwargs)
+
+    monkeypatch.setattr("boto3.client", lambda *_args, **_kwargs: FakeSESClient())
+    service = EmailService(
+        Settings(
+            environment="test",
+            aws_access_key_id="AKIA_TEST",
+            aws_secret_access_key="secret",  # noqa: S106 - test fixture secret.
+            ses_from_email="noreply@example.com",
+        )
+    )
+
+    assert service.send(
+        EmailMessage(
+            to="help@example.com",
+            reply_to="customer@example.com",
+            subject="Support request",
+            text_body="Please help.",
+        )
+    )
+    assert calls[0]["ReplyToAddresses"] == ["customer@example.com"]
+
+
 def test_sns_verify_rejects_non_amazonaws_cert_url() -> None:
     msg = _envelope(SigningCertURL="https://evil.example.com/cert.pem")
     with pytest.raises(SnsVerificationError):
