@@ -155,6 +155,31 @@ def test_api_reference_declares_one_query_independent_canonical(
     )
 
 
+@pytest.mark.parametrize(
+    ("host", "brand"),
+    (
+        ("uptimerouter.com", "UptimeRouter"),
+        ("allyrouter.com", "AllyRouter"),
+    ),
+)
+def test_paid_domain_homepages_render_their_own_brand(
+    client: TestClient,
+    host: str,
+    brand: str,
+) -> None:
+    response = client.get("/", headers={"host": host})
+
+    assert response.status_code == 200
+    assert f"<title>{brand} | Every model. Provable privacy.</title>" in response.text
+    assert f'<span class="brand-word">{brand}</span>' in response.text
+    assert f'property="og:site_name" content="{brand}"' in response.text
+    assert f'property="og:url" content="https://{host}/"' in response.text
+    assert '<link rel="canonical" href="https://trustedrouter.com/">' in response.text
+    assert "Powered by TrustedRouter" in response.text
+    assert f"Why developers choose {brand}." in response.text
+    assert f"What is {brand}?" in response.text
+
+
 def test_duplicate_api_reference_surfaces_redirect_to_canonical(
     client: TestClient,
 ) -> None:
