@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -26,7 +27,7 @@ class Settings(BaseSettings):
     # usable as independent operational aliases. SEO canonicals still point at
     # ``trusted_domain``. The corresponding inference hostname is derived as
     # ``api.<alias>/v1`` and still terminates inside the attested gateway.
-    trusted_domain_aliases: str = "allyrouter.com"
+    trusted_domain_aliases: str = "allyrouter.com,uptimerouter.com"
     legal_entity_name: str = "Lore Hex Corp"
     legal_entity_type: str = "Delaware C Corporation"
     legal_entity_address: str = "1111 Brickell Ave, Floor 10, Miami, FL 33131"
@@ -152,6 +153,10 @@ class Settings(BaseSettings):
     # release from this canonical, independently published record. The
     # deploy-time values above remain the offline/local fallback.
     trust_gcp_release_url: str = ""
+    # Independently hosted copies keep the backup-domain trust pages live when
+    # the canonical DNS zone is unavailable. Every fetched record is subjected
+    # to the same strict release validation before it enters the cache.
+    trust_gcp_release_fallback_urls: str = ""
 
     rate_limit_enabled: bool = True
     rate_limit_window_seconds: int = 60
@@ -193,9 +198,19 @@ class Settings(BaseSettings):
     google_client_id: str | None = None
     google_client_secret: str | None = None
     google_oauth_redirect_url: str | None = None
+    # Backup domains use independent provider credentials so login remains
+    # available even if the canonical domain or its OAuth app is unavailable.
+    # Each provider has its own Secret Manager value so credentials can rotate
+    # independently without exposing one provider while updating the other.
+    google_alias_credentials_json: str = "{}"
     github_client_id: str | None = None
     github_client_secret: str | None = None
     github_oauth_redirect_url: str | None = None
+    # GitHub OAuth Apps permit exactly one callback URL. Each independent
+    # first-party domain therefore has its own app credentials, supplied as a
+    # single Secret Manager JSON value:
+    # {"allyrouter.com":{"client_id":"...","client_secret":"..."}}
+    github_alias_credentials_json: str = "{}"
     # MetaMask uses public-key crypto (no shared secret). The SIWE message
     # carries this domain so wallet UIs show the right hostname.
     siwe_domain: str | None = None
@@ -535,6 +550,12 @@ class Settings(BaseSettings):
             )
         elif not self.trust_gcp_release_url.startswith("https://"):
             missing.append("TR_TRUST_GCP_RELEASE_URL=https://...")
+        invalid_release_fallbacks = [
+            url for url in self.trust_gcp_release_fallback_url_list
+            if not url.startswith("https://")
+        ]
+        if invalid_release_fallbacks:
+            missing.append("TR_TRUST_GCP_RELEASE_FALLBACK_URLS must contain HTTPS URLs")
         # OAuth providers are independently optional in production. We DO
         # enforce that no provider is half-configured: a client_id without
         # the matching client_secret would cause silent runtime failures.
@@ -542,6 +563,39 @@ class Settings(BaseSettings):
             missing.append("TR_GOOGLE_CLIENT_ID and TR_GOOGLE_CLIENT_SECRET must both be set or both unset")
         if bool(self.github_client_id) != bool(self.github_client_secret):
             missing.append("TR_GITHUB_CLIENT_ID and TR_GITHUB_CLIENT_SECRET must both be set or both unset")
+        configured_aliases = {
+            value.strip().lower().rstrip(".")
+            for value in self.trusted_domain_aliases.split(",")
+            if value.strip()
+        }
+        for provider, canonical_enabled, raw_credentials in (
+            ("GOOGLE", self.google_oauth_enabled, self.google_alias_credentials_json),
+            ("GITHUB", self.github_oauth_enabled, self.github_alias_credentials_json),
+        ):
+            setting_name = f"TR_{provider}_ALIAS_CREDENTIALS_JSON"
+            try:
+                alias_credentials = _parse_oauth_alias_credentials(
+                    raw_credentials,
+                    setting_name,
+                )
+            except ValueError as exc:
+                missing.append(str(exc))
+                alias_credentials = {}
+            unknown_oauth_aliases = sorted(set(alias_credentials) - configured_aliases)
+            if unknown_oauth_aliases:
+                missing.append(
+                    f"{setting_name} contains unconfigured domain(s): "
+                    + ", ".join(unknown_oauth_aliases)
+                )
+            if canonical_enabled:
+                missing_oauth_aliases = sorted(
+                    configured_aliases - set(alias_credentials)
+                )
+                if missing_oauth_aliases:
+                    missing.append(
+                        f"{setting_name} is missing configured domain(s): "
+                        + ", ".join(missing_oauth_aliases)
+                    )
         paypal_fields = [
             self.paypal_client_id,
             self.paypal_client_secret,
@@ -566,6 +620,30 @@ class Settings(BaseSettings):
         return bool(self.github_client_id and self.github_client_secret)
 
     @property
+    def trust_gcp_release_fallback_url_list(self) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(
+                value.strip()
+                for value in self.trust_gcp_release_fallback_urls.split(",")
+                if value.strip()
+            )
+        )
+
+    @property
+    def google_alias_credentials(self) -> dict[str, tuple[str, str]]:
+        return _parse_oauth_alias_credentials(
+            self.google_alias_credentials_json,
+            "TR_GOOGLE_ALIAS_CREDENTIALS_JSON",
+        )
+
+    @property
+    def github_alias_credentials(self) -> dict[str, tuple[str, str]]:
+        return _parse_oauth_alias_credentials(
+            self.github_alias_credentials_json,
+            "TR_GITHUB_ALIAS_CREDENTIALS_JSON",
+        )
+
+    @property
     def paypal_enabled(self) -> bool:
         return bool(self.paypal_client_id and self.paypal_client_secret)
 
@@ -582,6 +660,32 @@ class Settings(BaseSettings):
         return bool(self.aws_access_key_id and self.aws_secret_access_key and self.ses_from_email)
 
 
+def _parse_oauth_alias_credentials(
+    raw_json: str,
+    setting_name: str,
+) -> dict[str, tuple[str, str]]:
+    try:
+        payload = json.loads(raw_json or "{}")
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{setting_name} must be valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{setting_name} must be a JSON object")
+
+    credentials: dict[str, tuple[str, str]] = {}
+    for raw_domain, raw_config in payload.items():
+        domain = str(raw_domain).strip().lower().rstrip(".")
+        if not domain or not isinstance(raw_config, dict):
+            raise ValueError(f"{setting_name} has an invalid entry")
+        client_id = raw_config.get("client_id")
+        client_secret = raw_config.get("client_secret")
+        if not isinstance(client_id, str) or not client_id.strip():
+            raise ValueError(f"{setting_name} entry is missing client_id")
+        if not isinstance(client_secret, str) or not client_secret.strip():
+            raise ValueError(f"{setting_name} entry is missing client_secret")
+        credentials[domain] = (client_id.strip(), client_secret.strip())
+    return credentials
+
+
 # Names that flow from `~/.quill_cloud_keys.private` into Settings as a
 # fallback when the matching `TR_<UPPER>` env var isn't set. Provider API
 # keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.) stay in the LocalKeyFile
@@ -590,9 +694,11 @@ _LOCAL_KEY_FALLBACKS: tuple[str, ...] = (
     "google_client_id",
     "google_client_secret",
     "google_oauth_redirect_url",
+    "google_alias_credentials_json",
     "github_client_id",
     "github_client_secret",
     "github_oauth_redirect_url",
+    "github_alias_credentials_json",
     "siwe_domain",
     "aws_access_key_id",
     "aws_secret_access_key",

@@ -10,13 +10,16 @@ For each `OAuthProvider` in `OAUTH_PROVIDERS` we register two routes:
   page (new user) or the requested `next` / `/console/api-keys`.
 
 The callback path is `/{slug}_oauth_callback` (not `/auth/{slug}/callback`)
-because Google + GitHub require the redirect URL registered with them to
-match exactly, and ours are `https://trustedrouter.com/google_oauth_callback`
-and `https://TrustedRouter.com/github_oauth_callback`.
+because providers require an exact registered redirect URI. Every first-party
+domain uses its own provider client and same-origin callback, so a backup
+domain never depends on the canonical domain to complete login.
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import secrets
 
 from fastapi import APIRouter, FastAPI, Request, Response
@@ -25,7 +28,7 @@ from fastapi.responses import RedirectResponse
 from trusted_router.acquisition import record_signup_attribution
 from trusted_router.auth import SettingsDep, set_session_cookie
 from trusted_router.config import Settings
-from trusted_router.domains import request_control_domain
+from trusted_router.domains import configured_control_domains, request_hostname
 from trusted_router.errors import api_error
 from trusted_router.oauth_provider import (
     OAUTH_PROVIDERS,
@@ -39,6 +42,7 @@ from trusted_router.types import ErrorType
 OAUTH_STATE_COOKIE = "tr_oauth_state"
 OAUTH_NEXT_COOKIE = "tr_oauth_next"
 OAUTH_STATE_COOKIE_MAX_AGE = 600  # 10 minutes
+OAUTH_STATE_VERSION = "v1"
 
 # Short-lived one-shot cookie that carries the raw API key from the OAuth
 # signup callback to the /console/welcome reveal page. Without this the
@@ -91,14 +95,26 @@ async def _handle_login(
     settings: Settings,
     next_path: str | None,
 ) -> Response:
-    if not _enabled(provider, settings):
+    request_domain = _request_oauth_domain(request, settings)
+    if request_domain is None:
+        raise api_error(400, "Invalid OAuth host", ErrorType.BAD_REQUEST)
+    if not _enabled(provider, settings, request_domain):
         raise api_error(
             404, f"{provider.slug.title()} sign-in is not configured", ErrorType.NOT_FOUND,
         )
-    redirect_uri = _redirect_uri(provider, request, settings)
-    state = secrets.token_urlsafe(24)
+    redirect_uri = _provider_redirect_uri(
+        provider,
+        request,
+        settings,
+        request_domain,
+    )
+    state = _new_state(
+        provider,
+        request_domain,
+        settings,
+    )
     url = provider.authorize_redirect(
-        client_id=_client_id(provider, settings) or "",
+        client_id=_client_id(provider, settings, request_domain) or "",
         redirect_uri=redirect_uri,
         state=state,
     )
@@ -115,12 +131,20 @@ async def _handle_callback(
     code: str | None,
     state: str | None,
 ) -> Response:
-    if not _enabled(provider, settings):
+    if not code or not state:
+        raise api_error(400, "Missing OAuth code or state", ErrorType.BAD_REQUEST)
+    state_domain = _state_domain(provider, state, settings)
+    if state_domain is None:
+        raise api_error(400, "Invalid OAuth state", ErrorType.BAD_REQUEST)
+    if not _enabled(provider, settings, state_domain):
         raise api_error(
             404, f"{provider.slug.title()} sign-in is not configured", ErrorType.NOT_FOUND,
         )
-    if not code or not state:
-        raise api_error(400, "Missing OAuth code or state", ErrorType.BAD_REQUEST)
+
+    request_domain = _request_oauth_domain(request, settings)
+    if request_domain is None or request_domain != state_domain:
+        raise api_error(400, "Invalid OAuth callback host", ErrorType.BAD_REQUEST)
+
     cookie_state = request.cookies.get(OAUTH_STATE_COOKIE)
     if not cookie_state or cookie_state != state:
         raise api_error(400, "Invalid OAuth state", ErrorType.BAD_REQUEST)
@@ -128,9 +152,14 @@ async def _handle_callback(
     access_token = await exchange_code(
         provider=provider,
         code=code,
-        client_id=_client_id(provider, settings) or "",
-        client_secret=_client_secret(provider, settings) or "",
-        redirect_uri=_redirect_uri(provider, request, settings),
+        client_id=_client_id(provider, settings, state_domain) or "",
+        client_secret=_client_secret(provider, settings, state_domain) or "",
+        redirect_uri=_provider_redirect_uri(
+            provider,
+            request,
+            settings,
+            state_domain,
+        ),
     )
     info = await fetch_user(provider=provider, access_token=access_token)
     if not info.email_verified:
@@ -206,35 +235,152 @@ async def _handle_callback(
     return response
 
 
-def _enabled(provider: OAuthProvider, settings: Settings) -> bool:
-    if provider.slug == "google":
-        return settings.google_oauth_enabled
-    if provider.slug == "github":
-        return settings.github_oauth_enabled
-    return False
+def _enabled(provider: OAuthProvider, settings: Settings, domain: str) -> bool:
+    return bool(
+        _client_id(provider, settings, domain)
+        and _client_secret(provider, settings, domain)
+    )
 
 
-def _client_id(provider: OAuthProvider, settings: Settings) -> str | None:
+def _request_oauth_domain(request: Request, settings: Settings) -> str | None:
+    """Return an exact configured apex, never the generic Host fallback.
+
+    Public rendering intentionally falls back to the canonical domain when an
+    unknown Host arrives so untrusted values are never reflected. OAuth must be
+    stricter: treating an unknown or prefixed host as canonical would weaken
+    the same-origin binding carried in signed state.
+    """
+    hostname = request_hostname(request)
+    domains = configured_control_domains(settings)
+    if hostname in domains:
+        return hostname
+    local_hostname = request.headers.get("host", "").split(":", 1)[0].lower()
+    if settings.environment.lower() in {"local", "test"} and local_hostname in {
+        "127.0.0.1",
+        "localhost",
+        "testserver",
+    }:
+        return domains[0]
+    return None
+
+
+def _client_id(
+    provider: OAuthProvider,
+    settings: Settings,
+    domain: str,
+) -> str | None:
+    if domain != configured_control_domains(settings)[0]:
+        credentials = _alias_credentials(provider, settings).get(domain)
+        return credentials[0] if credentials else None
     return getattr(settings, f"{provider.slug}_client_id", None)
 
 
-def _client_secret(provider: OAuthProvider, settings: Settings) -> str | None:
+def _client_secret(
+    provider: OAuthProvider,
+    settings: Settings,
+    domain: str,
+) -> str | None:
+    if domain != configured_control_domains(settings)[0]:
+        credentials = _alias_credentials(provider, settings).get(domain)
+        return credentials[1] if credentials else None
     return getattr(settings, f"{provider.slug}_client_secret", None)
 
 
-def _redirect_uri(provider: OAuthProvider, request: Request, settings: Settings) -> str:
-    request_domain = request_control_domain(request, settings)
-    if request_domain != settings.trusted_domain:
-        # Alias OAuth remains same-origin so the host-only CSRF/session cookies
-        # survive the callback. Each provider must explicitly allow this URI;
-        # an unlisted Host header cannot reach this branch.
-        return f"https://{request_domain}/{provider.slug}_oauth_callback"
+def _alias_credentials(
+    provider: OAuthProvider,
+    settings: Settings,
+) -> dict[str, tuple[str, str]]:
+    credentials = getattr(settings, f"{provider.slug}_alias_credentials", None)
+    if isinstance(credentials, dict):
+        return credentials
+    return {}
+
+
+def _provider_redirect_uri(
+    provider: OAuthProvider,
+    request: Request,
+    settings: Settings,
+    domain: str,
+) -> str:
+    """Return the provider-registered callback URI for this domain.
+
+    Every production domain completes OAuth on its own origin and uses an
+    independent OAuth client. GitHub requires this because an OAuth App permits
+    one callback URL; using the same isolation for Google preserves login when
+    a canonical-domain OAuth client is disabled or misconfigured.
+    """
+    if domain != configured_control_domains(settings)[0]:
+        return f"https://{domain}/{provider.slug}_oauth_callback"
     configured = getattr(settings, f"{provider.slug}_oauth_redirect_url", None)
     if configured:
         return configured
     scheme = "https" if settings.environment.lower() == "production" else request.url.scheme
     host = request.headers.get("host", request.url.netloc)
     return f"{scheme}://{host}/{provider.slug}_oauth_callback"
+
+
+def _new_state(
+    provider: OAuthProvider,
+    domain: str,
+    settings: Settings,
+) -> str:
+    nonce = secrets.token_urlsafe(24)
+    encoded_domain = _b64encode(domain.encode("ascii"))
+    unsigned = f"{OAUTH_STATE_VERSION}.{encoded_domain}.{nonce}"
+    signature = _state_signature(provider, unsigned, settings, domain)
+    return f"{unsigned}.{signature}"
+
+
+def _state_domain(
+    provider: OAuthProvider,
+    state: str,
+    settings: Settings,
+) -> str | None:
+    parts = state.split(".")
+    if len(parts) != 4 or parts[0] != OAUTH_STATE_VERSION:
+        return None
+    try:
+        domain = _b64decode(parts[1]).decode("ascii")
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if domain not in configured_control_domains(settings):
+        return None
+    unsigned = ".".join(parts[:3])
+    try:
+        expected = _state_signature(provider, unsigned, settings, domain)
+    except RuntimeError:
+        return None
+    if not hmac.compare_digest(parts[3], expected):
+        return None
+    return domain
+
+
+def _state_signature(
+    provider: OAuthProvider,
+    unsigned_state: str,
+    settings: Settings,
+    domain: str,
+) -> str:
+    secret = _client_secret(provider, settings, domain)
+    if not secret:
+        # Callers already reject disabled providers. Keeping this fail-closed
+        # guard makes the helper safe if it is reused independently.
+        raise RuntimeError(f"{provider.slug} OAuth client secret is unavailable")
+    digest = hmac.new(
+        secret.encode("utf-8"),
+        f"{provider.slug}:{unsigned_state}".encode(),
+        hashlib.sha256,
+    ).digest()
+    return _b64encode(digest)
+
+
+def _b64encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def _b64decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.b64decode(value + padding, altchars=b"-_", validate=True)
 
 
 def _safe_next_path(value: str | None) -> str | None:

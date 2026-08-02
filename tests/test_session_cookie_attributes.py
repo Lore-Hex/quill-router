@@ -74,6 +74,7 @@ def production_settings() -> Settings:
         google_client_id="g-prod",
         google_client_secret="g-prod-secret",  # noqa: S106 - test fixture.
         google_oauth_redirect_url="https://trustedrouter.com/google_oauth_callback",
+        trusted_domain_aliases="",
         byok_kms_key_name=TEST_BYOK_KMS_KEY_NAME,
     )
 
@@ -91,7 +92,11 @@ def test_oauth_state_cookie_is_httponly_secure_lax_in_production(
     """The OAuth state cookie protects against CSRF — if it loses HttpOnly,
     JS can read it; if it loses Secure, downgrade attacks read it; if
     SameSite weakens, third-party iframes can replay it."""
-    resp = production_client.get("/auth/google/login", follow_redirects=False)
+    resp = production_client.get(
+        "/auth/google/login",
+        headers={"host": "trustedrouter.com"},
+        follow_redirects=False,
+    )
     assert resp.status_code == 302
     cookies = _parse_cookies(resp.headers.get("set-cookie", ""))
     state = cookies.get("tr_oauth_state")

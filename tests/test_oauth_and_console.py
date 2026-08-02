@@ -14,6 +14,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from eth_account import Account
@@ -59,6 +60,14 @@ def github_client(github_settings: Settings) -> Iterator[TestClient]:
     app = create_app(github_settings, init_observability=False)
     with TestClient(app) as client:
         yield client
+
+
+def _begin_oauth(client: TestClient, provider: str) -> str:
+    response = client.get(f"/auth/{provider}/login", follow_redirects=False)
+    assert response.status_code == 302
+    state = parse_qs(urlsplit(response.headers["location"]).query)["state"][0]
+    assert client.cookies.get("tr_oauth_state") == state
+    return state
 
 
 # ── Provider availability ───────────────────────────────────────────────────
@@ -143,7 +152,7 @@ async def test_google_oauth_helpers_use_expected_http_contract(httpx_mock) -> No
 
 
 def test_google_callback_rejects_state_mismatch(google_client: TestClient) -> None:
-    google_client.cookies.set("tr_oauth_state", "good-state")
+    _begin_oauth(google_client, "google")
     resp = google_client.get(
         "/google_oauth_callback?code=abc&state=evil-state",
         follow_redirects=False,
@@ -153,7 +162,7 @@ def test_google_callback_rejects_state_mismatch(google_client: TestClient) -> No
 
 @pytest.mark.asyncio
 async def test_google_callback_creates_session_for_new_user(google_client: TestClient) -> None:
-    google_client.cookies.set("tr_oauth_state", "matching-state")
+    state = _begin_oauth(google_client, "google")
 
     async def fake_exchange(**_: Any) -> str:
         return "access-token"  # noqa: S105
@@ -171,7 +180,7 @@ async def test_google_callback_creates_session_for_new_user(google_client: TestC
     with patch("trusted_router.routes.oauth.exchange_code", fake_exchange), \
          patch("trusted_router.routes.oauth.fetch_user", fake_fetch_user):
         resp = google_client.get(
-            "/google_oauth_callback?code=auth-code&state=matching-state",
+            f"/google_oauth_callback?code=auth-code&state={state}",
             follow_redirects=False,
         )
     assert resp.status_code == 302
@@ -205,7 +214,7 @@ async def test_google_callback_for_returning_user_sets_no_pending_reveal(
     pointing at a stale value. A returning user already has API keys; the
     welcome page's one-shot reveal is meaningless for them and the cookie
     would only widen the log-exposure surface."""
-    google_client.cookies.set("tr_oauth_state", "matching-state")
+    state = _begin_oauth(google_client, "google")
 
     # Seed an existing user so first_time=False
     seeded = STORE.signup(email="bob@example.com")
@@ -227,7 +236,7 @@ async def test_google_callback_for_returning_user_sets_no_pending_reveal(
     with patch("trusted_router.routes.oauth.exchange_code", fake_exchange), \
          patch("trusted_router.routes.oauth.fetch_user", fake_fetch_user):
         resp = google_client.get(
-            "/google_oauth_callback?code=c&state=matching-state",
+            f"/google_oauth_callback?code=c&state={state}",
             follow_redirects=False,
         )
     assert resp.status_code == 302
@@ -237,7 +246,7 @@ async def test_google_callback_for_returning_user_sets_no_pending_reveal(
 
 @pytest.mark.asyncio
 async def test_google_callback_rejects_unverified_email(google_client: TestClient) -> None:
-    google_client.cookies.set("tr_oauth_state", "matching-state")
+    state = _begin_oauth(google_client, "google")
 
     async def fake_exchange(**_: Any) -> str:
         return "tok"  # noqa: S105
@@ -255,7 +264,7 @@ async def test_google_callback_rejects_unverified_email(google_client: TestClien
     with patch("trusted_router.routes.oauth.exchange_code", fake_exchange), \
          patch("trusted_router.routes.oauth.fetch_user", fake_fetch_user):
         resp = google_client.get(
-            "/google_oauth_callback?code=x&state=matching-state",
+            f"/google_oauth_callback?code=x&state={state}",
             follow_redirects=False,
         )
     assert resp.status_code == 400
@@ -342,7 +351,7 @@ async def test_github_oauth_helper_marks_fallback_email_unverified(httpx_mock) -
 
 @pytest.mark.asyncio
 async def test_github_callback_creates_session(github_client: TestClient) -> None:
-    github_client.cookies.set("tr_oauth_state", "gh-state")
+    state = _begin_oauth(github_client, "github")
 
     async def fake_exchange(**_: Any) -> str:
         return "gh-tok"  # noqa: S105
@@ -360,7 +369,7 @@ async def test_github_callback_creates_session(github_client: TestClient) -> Non
     with patch("trusted_router.routes.oauth.exchange_code", fake_exchange), \
          patch("trusted_router.routes.oauth.fetch_user", fake_fetch_user):
         resp = github_client.get(
-            "/github_oauth_callback?code=c&state=gh-state",
+            f"/github_oauth_callback?code=c&state={state}",
             follow_redirects=False,
         )
     assert resp.status_code == 302
