@@ -318,6 +318,17 @@ class Settings(BaseSettings):
     # plane or its probes measure another cloud's health. A per-request
     # body override still wins over this setting.
     synthetic_control_plane_base_url: str | None = None
+    # The canonical target serves a self-signed cert minted inside the
+    # TEE (AWS Nitro standalone deployments): probes skip CA verification
+    # and the attestation probe instead verifies the document binds the
+    # cert served on its own connection. Leave False wherever the
+    # canonical gateway has a CA-issued cert (GCP).
+    synthetic_canonical_attested: bool = False
+    # Pin the enclave's PCR0 (EIF measurement). Set at deploy time from
+    # the same value tools/deploy-aws-nitro.sh pins, so the probe turns
+    # trust_degraded (pcr0_mismatch) if the serving enclave ever differs
+    # from the deployed measurement. None = binding-only.
+    attestation_expected_pcr0: str | None = None
     # Per-probe HTTP timeout for real provider-effective synthetic checks.
     # Keep this aligned with the gateway's first-byte budget. A successful
     # /responses probe in europe-west4 can legitimately take >10s on slow
