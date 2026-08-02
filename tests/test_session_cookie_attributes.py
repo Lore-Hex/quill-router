@@ -67,6 +67,9 @@ def production_settings() -> Settings:
         stripe_webhook_secret="whsec_test",  # noqa: S106 - test fixture.
         stripe_secret_key="sk_test",  # noqa: S106 - test fixture.
         sentry_dsn="https://example@example.ingest.sentry.io/1",
+        aws_access_key_id="test-access-key",
+        aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
+        ses_from_email="noreply@example.com",
         storage_backend="spanner-bigtable",
         spanner_instance_id="trusted-router",
         spanner_database_id="trusted-router",
@@ -127,6 +130,9 @@ def test_session_cookie_is_httponly_secure_lax_in_production() -> None:
         stripe_webhook_secret="w",  # noqa: S106 - test fixture.
         stripe_secret_key="s",  # noqa: S106 - test fixture.
         sentry_dsn="https://example@example.ingest.sentry.io/1",
+        aws_access_key_id="test-access-key",
+        aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
+        ses_from_email="noreply@example.com",
         storage_backend="spanner-bigtable",
         spanner_instance_id="i",
         spanner_database_id="d",
@@ -192,6 +198,9 @@ def test_set_session_cookie_also_sets_signed_in_hint_for_marketing_js() -> None:
         stripe_webhook_secret="w",  # noqa: S106 - test fixture.
         stripe_secret_key="s",  # noqa: S106 - test fixture.
         sentry_dsn="https://example@example.ingest.sentry.io/1",
+        aws_access_key_id="test-access-key",
+        aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
+        ses_from_email="noreply@example.com",
         storage_backend="spanner-bigtable",
         spanner_instance_id="i",
         spanner_database_id="d",

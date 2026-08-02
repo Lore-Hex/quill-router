@@ -103,6 +103,9 @@ def test_sentry_test_route_is_disabled_in_production_unless_explicitly_enabled()
         stripe_webhook_secret="whsec_test",  # noqa: S106 - test config.
         stripe_secret_key="sk_test_secret",  # noqa: S106 - test config.
         sentry_dsn="https://example@example.ingest.sentry.io/1",
+        aws_access_key_id="test-access-key",
+        aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
+        ses_from_email="noreply@example.com",
         storage_backend="spanner-bigtable",
         spanner_instance_id="trusted-router",
         spanner_database_id="trusted-router",
@@ -151,6 +154,9 @@ def test_production_rejects_spoofable_user_header_auth() -> None:
                 stripe_webhook_secret=webhook_secret,
                 stripe_secret_key=stripe_key,
                 sentry_dsn="https://example@example.ingest.sentry.io/1",
+                aws_access_key_id="test-access-key",
+                aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
+                ses_from_email="noreply@example.com",
                 storage_backend="spanner-bigtable",
                 spanner_instance_id="trusted-router",
                 spanner_database_id="trusted-router",

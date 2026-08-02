@@ -23,6 +23,11 @@ from trusted_router.typed_balance import live_credit_summary
 TEST_BYOK_KMS_KEY_NAME = (
     "projects/test/locations/us-central1/keyRings/trusted-router/cryptoKeys/byok-envelope"
 )
+TEST_SES_SETTINGS = {
+    "aws_access_key_id": "test-access-key",
+    "aws_secret_access_key": "test-secret-key",
+    "ses_from_email": "noreply@example.com",
+}
 
 
 def test_stubbed_endpoints_are_explicit(client: TestClient) -> None:
@@ -348,6 +353,7 @@ def test_production_dashboard_does_not_default_to_dev_user_header() -> None:
 
     html = dashboard_html(
         Settings(
+            **TEST_SES_SETTINGS,
             environment="production",
             internal_gateway_token="internal-prod-token",  # noqa: S106
             stripe_webhook_secret="whsec_test",  # noqa: S106
@@ -812,6 +818,35 @@ def test_production_config_fails_closed() -> None:
         )
 
 
+def test_production_config_requires_ses_delivery_credentials() -> None:
+    values = {
+        "environment": "production",
+        "internal_gateway_token": "tok" + "en",
+        "stripe_webhook_secret": "whsec_" + "test",
+        "stripe_secret_key": "sk_" + "test_secret",
+        "sentry_dsn": "https://example@example.ingest.sentry.io/1",
+        "storage_backend": "spanner-bigtable",
+        "spanner_instance_id": "trusted-router",
+        "spanner_database_id": "trusted-router",
+        "bigtable_instance_id": "trusted-router",
+        "byok_kms_key_name": TEST_BYOK_KMS_KEY_NAME,
+    }
+
+    with pytest.raises(ValidationError, match="TR_AWS_ACCESS_KEY_ID"):
+        Settings(**values)
+    with pytest.raises(ValidationError, match="TR_AWS_SECRET_ACCESS_KEY"):
+        Settings(**{**values, "aws_access_key_id": "access-key"})
+    with pytest.raises(ValidationError, match="TR_SES_FROM_EMAIL"):
+        Settings(
+            **{
+                **values,
+                "aws_access_key_id": "access-key",
+                "aws_secret_access_key": "secret-key",
+                "ses_from_email": None,
+            }
+        )
+
+
 def test_production_spanner_clickhouse_config_is_explicit_and_bigtable_free() -> None:
     values = {
         "environment": "production",
@@ -832,6 +867,7 @@ def test_production_spanner_clickhouse_config_is_explicit_and_bigtable_free() ->
         "settle_outbox_enabled": True,
         "operational_analytics_clickhouse_url": "http://10.0.0.1:8123",
         "operational_analytics_clickhouse_password": "pass" + "word",
+        **TEST_SES_SETTINGS,
     }
 
     settings = Settings(**values)
@@ -851,6 +887,7 @@ def test_production_control_plane_does_not_register_inference_routes() -> None:
     sentry_dsn = "https://example@example.ingest.sentry.io/1"
     prod_app = create_app(
         Settings(
+            **TEST_SES_SETTINGS,
             environment="production",
             internal_gateway_token=internal_token,
             stripe_webhook_secret=webhook_secret,
