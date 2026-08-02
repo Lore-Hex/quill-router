@@ -42,6 +42,31 @@ ATTESTATION_PCR0="${ATTESTATION_PCR0:?set ATTESTATION_PCR0 to the published encl
 # Secrets Manager ARNs (eu-west-3 — App Runner requires same-region secrets).
 INTERNAL_TOKEN_SECRET_ARN="${INTERNAL_TOKEN_SECRET_ARN:-$(aws secretsmanager describe-secret --region "$REGION" --secret-id quill/trustedrouter-internal-gateway-token --query ARN --output text)}"
 MONITOR_KEY_SECRET_ARN="${MONITOR_KEY_SECRET_ARN:-$(aws secretsmanager describe-secret --region "$REGION" --secret-id quill/trustedrouter-synthetic-monitor-api-key --query ARN --output text)}"
+CLICKHOUSE_SECRET_ARN="${CLICKHOUSE_SECRET_ARN:-$(aws secretsmanager describe-secret --region "$REGION" --secret-id quill/tr-eu-clickhouse-password --query ARN --output text)}"
+
+# This cloud's OWN ClickHouse (tools/aws_eu_clickhouse.sh), private in the
+# VPC. Deliberately NOT replicated from the GCP cluster: each cloud owns its
+# analytics, which is also what lets the EU-only claim survive an auditor.
+#
+# Tables are created unqualified, so they live in `default`, not the `tr`
+# database the config defaults to. Passing the wrong database yields an
+# empty-but-healthy analytics path -- queries succeed against nothing.
+CLICKHOUSE_URL="${CLICKHOUSE_URL:-http://172.31.10.143:8123}"
+CLICKHOUSE_USER="${CLICKHOUSE_USER:-default}"
+CLICKHOUSE_DATABASE="${CLICKHOUSE_DATABASE:-default}"
+
+# App Runner egress is ALL-OR-NOTHING. Switching to VPC routes every
+# outbound call through the connector's ENIs, which have no public IP -- so
+# an internet-gateway route gives them nothing and the service loses its
+# calls to the attested gateway and the home plane. The connector therefore
+# sits on PRIVATE subnets behind a per-AZ NAT (tools/aws-private-egress.sh
+# in quill-cloud-proxy). One NAT per AZ, because this now carries the whole
+# control plane's egress, not just analytics.
+VPC_CONNECTOR_ARN="${VPC_CONNECTOR_ARN:-$(aws apprunner list-vpc-connectors --region "$REGION" \
+  --query "VpcConnectors[?VpcConnectorName=='tr-eu-vpc-private' && Status=='ACTIVE'].VpcConnectorArn | [0]" \
+  --output text)}"
+[ -n "$VPC_CONNECTOR_ARN" ] && [ "$VPC_CONNECTOR_ARN" != "None" ] || {
+  echo "no ACTIVE tr-eu-vpc-private connector; run tools/aws-private-egress.sh first" >&2; exit 1; }
 
 log(){ printf '\n=== %s\n' "$*" >&2; }
 
@@ -89,11 +114,16 @@ CONFIG=$(cat <<JSON
         "TR_ATTESTATION_EXPECTED_PCR0": "${ATTESTATION_PCR0}",
         "TR_SYNTHETIC_REGIONAL_PROBES_ENABLED": "false",
         "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL": "https://aws.trustedrouter.com",
-        "TR_SYNTHETIC_CONTROL_PLANE_BASE_URL": "https://trustedrouter.com"
+        "TR_SYNTHETIC_CONTROL_PLANE_BASE_URL": "https://trustedrouter.com",
+
+        "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL": "${CLICKHOUSE_URL}",
+        "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER": "${CLICKHOUSE_USER}",
+        "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE": "${CLICKHOUSE_DATABASE}"
       },
       "RuntimeEnvironmentSecrets": {
         "TR_INTERNAL_GATEWAY_TOKEN": "${INTERNAL_TOKEN_SECRET_ARN}",
-        "TR_SYNTHETIC_MONITOR_API_KEY": "${MONITOR_KEY_SECRET_ARN}"
+        "TR_SYNTHETIC_MONITOR_API_KEY": "${MONITOR_KEY_SECRET_ARN}",
+        "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD": "${CLICKHOUSE_SECRET_ARN}"
       }
     }
   },
@@ -112,14 +142,25 @@ JSON
 # BOTH together when key federation makes the EU plane the authorize
 # target.
 
+NETWORK_CONFIG=$(cat <<JSON
+{
+  "EgressConfiguration": {
+    "EgressType": "VPC",
+    "VpcConnectorArn": "${VPC_CONNECTOR_ARN}"
+  }
+}
+JSON
+)
+
 if aws apprunner list-services --region "$REGION" --query "ServiceSummaryList[?ServiceName=='${SVC}'].ServiceArn" --output text | grep -q arn; then
   ARN=$(aws apprunner list-services --region "$REGION" --query "ServiceSummaryList[?ServiceName=='${SVC}'].ServiceArn" --output text)
   log "updating existing service $ARN"
-  aws apprunner update-service --region "$REGION" --service-arn "$ARN" --source-configuration "$CONFIG" >/dev/null
+  aws apprunner update-service --region "$REGION" --service-arn "$ARN" \
+    --source-configuration "$CONFIG" --network-configuration "$NETWORK_CONFIG" >/dev/null
 else
   log "creating service $SVC"
   ARN=$(aws apprunner create-service --region "$REGION" --service-name "$SVC" \
-    --source-configuration "$CONFIG" \
+    --source-configuration "$CONFIG" --network-configuration "$NETWORK_CONFIG" \
     --instance-configuration "Cpu=1024,Memory=2048,InstanceRoleArn=arn:aws:iam::${ACCOUNT}:role/tr-eu-app" \
     --health-check-configuration "Protocol=HTTP,Path=/health,Interval=10,Timeout=5,HealthyThreshold=2,UnhealthyThreshold=3" \
     --query 'Service.ServiceArn' --output text)
