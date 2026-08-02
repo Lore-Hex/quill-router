@@ -20,8 +20,9 @@ def _status_payload(
     *,
     monitor_age_minutes: int | None = None,
     check_age_minutes: int | None = None,
+    overall_status: str = "up",
 ) -> str:
-    data: dict[str, Any] = {"overall_status": "up"}
+    data: dict[str, Any] = {"overall_status": overall_status}
     if monitor_age_minutes is not None:
         data["monitor_freshness"] = {
             "latest_sample_at": _iso_at_age(monitor_age_minutes),
@@ -83,7 +84,7 @@ def test_verify_deployment_expect_monitor_accepts_fresh_monitor_freshness(
 ) -> None:
     result = _run_verifier(
         tmp_path,
-        _status_payload(monitor_age_minutes=5),
+        _status_payload(monitor_age_minutes=1),
         "--expect-monitor",
     )
 
@@ -96,7 +97,7 @@ def test_verify_deployment_expect_monitor_falls_back_to_current_checks(
 ) -> None:
     result = _run_verifier(
         tmp_path,
-        _status_payload(check_age_minutes=10),
+        _status_payload(check_age_minutes=2),
         "--expect-monitor",
     )
 
@@ -109,9 +110,66 @@ def test_verify_deployment_expect_monitor_rejects_stale_data(
 ) -> None:
     result = _run_verifier(
         tmp_path,
-        _status_payload(monitor_age_minutes=31),
+        _status_payload(monitor_age_minutes=6),
         "--expect-monitor",
     )
 
     assert result.returncode == 1
     assert "FAIL  synthetic monitor is stale or missing" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# overall_status must be READ, not merely present.
+#
+# The gate used `grep -q '"overall_status"'`, which matches just as happily
+# when the value is "down" — so a deploy could pass its own smoke test against
+# a red status page. For an attested gateway, trust_degraded is likewise a
+# failure: an enclave that cannot prove what it is running is the product
+# being broken.
+# ---------------------------------------------------------------------------
+
+
+def test_verify_deployment_fails_when_status_is_down(tmp_path: Path) -> None:
+    result = _run_verifier(
+        tmp_path,
+        _status_payload(monitor_age_minutes=1, overall_status="down"),
+        "--expect-monitor",
+    )
+    assert result.returncode != 0, result.stdout
+    assert "overall_status=down" in result.stdout
+
+
+def test_verify_deployment_fails_when_trust_degraded(tmp_path: Path) -> None:
+    result = _run_verifier(
+        tmp_path,
+        _status_payload(monitor_age_minutes=1, overall_status="trust_degraded"),
+        "--expect-monitor",
+    )
+    assert result.returncode != 0, result.stdout
+    assert "overall_status=trust_degraded" in result.stdout
+
+
+def test_verify_deployment_fails_when_status_unknown(tmp_path: Path) -> None:
+    """No signal is not a pass — that is the whole lesson of this deployment."""
+    result = _run_verifier(
+        tmp_path,
+        _status_payload(monitor_age_minutes=1, overall_status="unknown"),
+        "--expect-monitor",
+    )
+    assert result.returncode != 0, result.stdout
+
+
+def test_verify_deployment_accepts_degraded(tmp_path: Path) -> None:
+    """Plain degraded is normal churn during a rolling update; blocking on it
+    would make the gate unusable."""
+    result = _run_verifier(
+        tmp_path,
+        _status_payload(monitor_age_minutes=1, overall_status="degraded"),
+        "--expect-monitor",
+    )
+    assert result.returncode == 0, result.stdout
+
+
+def test_verify_deployment_fails_on_malformed_payload(tmp_path: Path) -> None:
+    result = _run_verifier(tmp_path, "not json at all", "--expect-monitor")
+    assert result.returncode != 0, result.stdout
