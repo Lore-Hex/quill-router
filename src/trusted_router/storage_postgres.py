@@ -167,6 +167,11 @@ def _aws_dsql_token_provider(hostname: str, region: str) -> Callable[[], str]:
     return generate_token
 
 
+_RESERVATION_KIND = "reservation"
+_RESERVATION_IDEMPOTENCY_KIND = "reservation_idempotency"
+_RESERVATION_FINALIZATION_KIND = "reservation_finalization"
+
+
 def _split_sql_statements(schema: str) -> list[str]:
     """Split a schema file into statements, ignoring semicolons in comments.
 
@@ -1528,17 +1533,125 @@ class PostgresStore:
         *,
         idempotency_key: str | None = None,
     ) -> Reservation:
-        self._not_implemented("reserve")
+        reservation = Reservation(
+            id=str(uuid.uuid4()),
+            workspace_id=workspace_id,
+            key_hash=key_hash,
+            amount_microdollars=int(amount_microdollars),
+            idempotency_key=idempotency_key,
+        )
+
+        def reserve_credit(conn: Any) -> Reservation:
+            if idempotency_key is not None:
+                won = self._insert_entity_once_tx(
+                    conn,
+                    _RESERVATION_IDEMPOTENCY_KIND,
+                    idempotency_key,
+                    reservation,
+                )
+                if not won:
+                    existing = self._read_entity_tx(
+                        conn,
+                        _RESERVATION_IDEMPOTENCY_KIND,
+                        idempotency_key,
+                        Reservation,
+                    )
+                    if existing is None:
+                        raise RuntimeError(
+                            "reservation idempotency row disappeared after conflict"
+                        )
+                    return existing
+
+            inserted = self._insert_entity_once_tx(
+                conn,
+                _RESERVATION_KIND,
+                reservation.id,
+                reservation,
+            )
+            if not inserted:
+                raise RuntimeError("reservation id collision")
+
+            cursor = conn.execute(
+                "UPDATE tr_credit_balance "
+                "SET reserved = reserved + %s, updated_at = CURRENT_TIMESTAMP "
+                "WHERE workspace_id = %s AND shard = 0 "
+                "AND total_credits - total_usage - reserved >= %s",
+                (
+                    reservation.amount_microdollars,
+                    workspace_id,
+                    reservation.amount_microdollars,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("insufficient credits")
+            return reservation
+
+        return self._run_transaction(reserve_credit)
 
     def settle(
         self,
         reservation_id: str,
         actual_microdollars: int,
     ) -> None:
-        self._not_implemented("settle")
+        self._finalize_reservation(
+            reservation_id,
+            actual_microdollars=int(actual_microdollars),
+            operation="settle",
+        )
 
     def refund(self, reservation_id: str) -> None:
-        self._not_implemented("refund")
+        self._finalize_reservation(
+            reservation_id,
+            actual_microdollars=0,
+            operation="refund",
+        )
+
+    def _finalize_reservation(
+        self,
+        reservation_id: str,
+        *,
+        actual_microdollars: int,
+        operation: str,
+    ) -> None:
+        def finalize(conn: Any) -> None:
+            reservation = self._read_entity_tx(
+                conn,
+                _RESERVATION_KIND,
+                reservation_id,
+                Reservation,
+            )
+            if reservation is None:
+                raise KeyError(reservation_id)
+
+            won = self._insert_entity_once_tx(
+                conn,
+                _RESERVATION_FINALIZATION_KIND,
+                reservation_id,
+                {
+                    "actual_microdollars": actual_microdollars,
+                    "operation": operation,
+                },
+            )
+            if not won:
+                return
+
+            cursor = conn.execute(
+                "UPDATE tr_credit_balance "
+                "SET reserved = reserved - %s, "
+                "total_usage = total_usage + %s, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE workspace_id = %s AND shard = 0 AND reserved >= %s",
+                (
+                    reservation.amount_microdollars,
+                    actual_microdollars,
+                    reservation.workspace_id,
+                    reservation.amount_microdollars,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("reservation release row-count != 1")
+
+        self._run_transaction(finalize)
 
     def update_auto_refill_settings(
         self,
