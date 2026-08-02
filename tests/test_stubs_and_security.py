@@ -17,7 +17,7 @@ from trusted_router.og import (
 )
 from trusted_router.secrets import LocalKeyFile
 from trusted_router.sentry_config import before_send
-from trusted_router.storage import STORE
+from trusted_router.storage import STORE, InMemoryStore
 from trusted_router.typed_balance import live_credit_summary
 
 TEST_BYOK_KMS_KEY_NAME = (
@@ -593,18 +593,16 @@ def test_unauthenticated_public_reads_do_not_write_rate_limit_rows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A crawler must not turn cacheable catalog reads into a Spanner hot row."""
-    from trusted_router import middleware
-
     calls: list[dict[str, object]] = []
-    original_hit_rate_limit = middleware.STORE.hit_rate_limit
+    original_hit_rate_limit = InMemoryStore.hit_rate_limit
 
-    def track_write(*_args, **kwargs):
+    def track_write(self, *_args, **kwargs):
         calls.append(kwargs)
-        return original_hit_rate_limit(*_args, **kwargs)
+        return original_hit_rate_limit(self, *_args, **kwargs)
 
     app = create_app(Settings(environment="test", rate_limit_enabled=True))
     client = TestClient(app)
-    monkeypatch.setattr(middleware.STORE, "hit_rate_limit", track_write)
+    monkeypatch.setattr(InMemoryStore, "hit_rate_limit", track_write)
     headers = {"x-forwarded-for": "199.203.99.122"}
 
     for path in (
@@ -647,15 +645,122 @@ def test_unauthenticated_public_reads_remain_locally_rate_limited(
     assert second.json()["error"]["type"] == "rate_limited"
 
 
+def test_internal_rate_limit_never_touches_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fleet-internal billing traffic must not write a shared counter row."""
+    internal_token = "internal-rate-limit-token"  # noqa: S105 - test fixture token.
+    app = create_app(
+        Settings(
+            environment="test",
+            internal_gateway_token=internal_token,
+            rate_limit_enabled=True,
+        )
+    )
+    client = TestClient(app)
+    user = STORE.ensure_user("internal-rate-limit@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    _raw, key = STORE.create_api_key(
+        workspace_id=workspace.id,
+        name="internal rate limit",
+        creator_user_id=user.id,
+    )
+    store_calls = 0
+
+    def reject_store_rate_limit(self, *_args, **_kwargs):
+        del self
+        nonlocal store_calls
+        store_calls += 1
+        raise AssertionError("internal rate limiting touched the backing store")
+
+    monkeypatch.setattr(InMemoryStore, "hit_rate_limit", reject_store_rate_limit)
+    response = client.post(
+        "/v1/internal/gateway/key",
+        headers={"x-trustedrouter-internal-token": internal_token},
+        json={"api_key_lookup_hash": key.lookup_hash},
+    )
+
+    assert response.status_code == 200, response.text
+    assert store_calls == 0
+
+
+def test_internal_rate_limit_is_enforced_in_memory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import storage_rate_limits
+
+    monkeypatch.setattr(
+        storage_rate_limits,
+        "utcnow",
+        lambda: dt.datetime(2026, 8, 1, 18, 20, 30, tzinfo=dt.UTC),
+    )
+    internal_token = "internal-local-limit-token"  # noqa: S105 - test fixture token.
+    settings = Settings(
+        environment="test",
+        internal_gateway_token=internal_token,
+        rate_limit_enabled=True,
+        rate_limit_internal_per_window=2,
+        rate_limit_window_seconds=60,
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+    user = STORE.ensure_user("internal-local-limit@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    _raw, key = STORE.create_api_key(
+        workspace_id=workspace.id,
+        name="internal local limit",
+        creator_user_id=user.id,
+    )
+    responses = [
+        client.post(
+            "/v1/internal/gateway/key",
+            headers={"x-trustedrouter-internal-token": internal_token},
+            json={"api_key_lookup_hash": key.lookup_hash},
+        )
+        for _ in range(settings.rate_limit_internal_per_window + 1)
+    ]
+
+    assert [response.status_code for response in responses[:-1]] == [200, 200]
+    limited = responses[-1]
+    assert limited.status_code == 429
+    assert limited.json()["error"]["type"] == "rate_limited"
+    assert limited.headers["retry-after"]
+    assert limited.headers["x-ratelimit-limit"] == "2"
+    assert limited.headers["x-ratelimit-remaining"] == "0"
+    assert limited.headers["x-ratelimit-reset"]
+
+
+def test_authenticated_key_rate_limit_still_uses_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    original = InMemoryStore.hit_rate_limit
+
+    def track_store_rate_limit(self, *_args, **kwargs):
+        calls.append(kwargs)
+        return original(self, *_args, **kwargs)
+
+    monkeypatch.setattr(InMemoryStore, "hit_rate_limit", track_store_rate_limit)
+    app = create_app(Settings(environment="test", rate_limit_enabled=True))
+    client = TestClient(app)
+
+    response = client.get(
+        "/v1/models",
+        headers={"authorization": "Bearer rate-limit-routing-key"},
+    )
+
+    assert response.status_code == 200
+    assert [call["namespace"] for call in calls] == ["key"]
+
+
 def test_rate_limit_fails_open_on_store_error(monkeypatch) -> None:
     """A Spanner abort/deadlock in the rate-limit counter must NEVER 500 a
     request. Rate limiting is a best-effort guard, so a contended/unavailable
     store fails OPEN (allow). Regression for the 2026-06-08 production
     "Aborted: Deadlock with higher priority transaction" that surfaced as an
     unhandled 500 on bot scanner traffic hammering one IP's counter row."""
-    from trusted_router import middleware
-
-    def boom(*_args, **_kwargs):
+    def boom(self, *_args, **_kwargs):
+        del self
         raise RuntimeError("Aborted: Deadlock with higher priority transaction.")
 
     app = create_app(
@@ -666,7 +771,7 @@ def test_rate_limit_fails_open_on_store_error(monkeypatch) -> None:
         )
     )
     client = TestClient(app)
-    monkeypatch.setattr(middleware.STORE, "hit_rate_limit", boom)
+    monkeypatch.setattr(InMemoryStore, "hit_rate_limit", boom)
     # Even an aggressive limit + a raising store: both requests pass through
     # (fail-open) — not 429, and crucially not 500.
     first = client.post("/v1/signup", json={})
@@ -824,3 +929,150 @@ def test_no_sentry_in_enclave_code() -> None:
             text = path.read_text(encoding="utf-8", errors="ignore").lower()
             assert "sentry" not in text
             assert "58539b11263132bcb70ea30f0b92e0f4" not in text
+
+
+def test_internal_rate_limit_guessed_tokens_share_the_ip_bucket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An attacker varying an INVALID internal token must not mint a fresh
+    bucket per guess (cardinality bound) nor escape the per-subject limit
+    (review finding on #400): unverified credentials collapse to the caller's
+    IP, the same bounded identity the anonymous namespace uses."""
+    import datetime as _dt
+
+    from trusted_router import storage_rate_limits
+
+    monkeypatch.setattr(
+        storage_rate_limits,
+        "utcnow",
+        lambda: _dt.datetime(2026, 8, 1, 18, 21, 30, tzinfo=_dt.UTC),
+    )
+    internal_token = "internal-real-token"  # noqa: S105 - test fixture token.
+    settings = Settings(
+        environment="test",
+        internal_gateway_token=internal_token,
+        rate_limit_enabled=True,
+        rate_limit_internal_per_window=3,
+        rate_limit_window_seconds=60,
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+
+    responses = [
+        client.post(
+            "/v1/internal/gateway/key",
+            headers={"x-trustedrouter-internal-token": f"guess-{n}"},
+            json={"api_key_lookup_hash": "irrelevant"},
+        )
+        for n in range(settings.rate_limit_internal_per_window + 1)
+    ]
+
+    # Unique wrong tokens still consume ONE shared (per-IP) bucket: the
+    # requests inside the limit are 401 (bad token), and the one past the
+    # limit is 429 -- the guesses could not escape the limiter by varying.
+    assert [r.status_code for r in responses[:-1]] == [401, 401, 401]
+    assert responses[-1].status_code == 429
+
+    # And the valid fleet token is NOT throttled by the attacker's bucket:
+    # it authenticates under its own subject (the token fingerprint).
+    user = STORE.ensure_user("internal-bucket-isolation@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    _raw, key = STORE.create_api_key(
+        workspace_id=workspace.id,
+        name="bucket isolation",
+        creator_user_id=user.id,
+    )
+    fleet = client.post(
+        "/v1/internal/gateway/key",
+        headers={"x-trustedrouter-internal-token": internal_token},
+        json={"api_key_lookup_hash": key.lookup_hash},
+    )
+    assert fleet.status_code == 200, fleet.text
+
+
+def test_internal_rate_limit_precedence_matches_route_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Middleware credential precedence must mirror require_internal_gateway
+    (bearer first, then header). A valid BEARER internal token plus a stale
+    x-trustedrouter-internal-token header authenticates at the route, so it
+    must land in the fleet bucket -- not the per-IP bucket an attacker can
+    exhaust (review finding on #400, round 2)."""
+    import datetime as _dt
+
+    from trusted_router import storage_rate_limits
+
+    monkeypatch.setattr(
+        storage_rate_limits,
+        "utcnow",
+        lambda: _dt.datetime(2026, 8, 1, 18, 22, 30, tzinfo=_dt.UTC),
+    )
+    internal_token = "internal-precedence-token"  # noqa: S105 - test fixture token.
+    settings = Settings(
+        environment="test",
+        internal_gateway_token=internal_token,
+        rate_limit_enabled=True,
+        rate_limit_internal_per_window=2,
+        rate_limit_window_seconds=60,
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+    user = STORE.ensure_user("internal-precedence@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    _raw, key = STORE.create_api_key(
+        workspace_id=workspace.id,
+        name="precedence",
+        creator_user_id=user.id,
+    )
+
+    # Exhaust the per-IP bucket with wrong-token guesses (401 inside the
+    # limit, then 429).
+    guesses = [
+        client.post(
+            "/v1/internal/gateway/key",
+            headers={"x-trustedrouter-internal-token": f"stale-{n}"},
+            json={"api_key_lookup_hash": key.lookup_hash},
+        )
+        for n in range(settings.rate_limit_internal_per_window + 1)
+    ]
+    assert [r.status_code for r in guesses] == [401, 401, 429]
+
+    # Valid bearer + stale header: route auth accepts the bearer, so the
+    # middleware must too -- fleet bucket, NOT the exhausted IP bucket.
+    mixed = client.post(
+        "/v1/internal/gateway/key",
+        headers={
+            "Authorization": f"Bearer {internal_token}",
+            "x-trustedrouter-internal-token": "stale-header",
+        },
+        json={"api_key_lookup_hash": key.lookup_hash},
+    )
+    assert mixed.status_code == 200, mixed.text
+
+
+def test_in_memory_rate_limit_bucket_cardinality_is_capped() -> None:
+    """Attacker-fabricated identities (rotated tokens, spoofed XFF) must not
+    grow the process map without bound (review finding on #400, round 3).
+    At the cap, new subjects fold into a shared per-namespace overflow bucket:
+    memory stays bounded and fabricated identities throttle collectively."""
+    import threading as _threading
+
+    from trusted_router.storage_rate_limits import InMemoryRateLimits
+
+    limits = InMemoryRateLimits(lock=_threading.RLock(), max_buckets=50)
+    for n in range(200):
+        hit = limits.hit(
+            namespace="internal",
+            subject=f"fabricated-{n}",
+            limit=3,
+            window_seconds=60,
+        )
+    assert len(limits.buckets) <= 51  # cap + at most the one overflow bucket
+    # Identities past the cap share the overflow bucket, so a rotation attack
+    # is throttled collectively instead of resetting per identity.
+    assert hit.allowed is False
+    # Distinct subjects below the cap keep their own buckets untouched.
+    early = limits.hit(
+        namespace="internal", subject="fabricated-1", limit=3, window_seconds=60
+    )
+    assert early.allowed is True
