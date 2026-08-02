@@ -22,7 +22,7 @@ from trusted_router.provider_og import ProviderOgFacts, all_provider_og_facts  #
 
 WIDTH = 1200
 HEIGHT = 630
-CARD_VERSION = 1
+CARD_VERSION = 2
 STATIC_DIR = REPO_ROOT / "src" / "trusted_router" / "static"
 LOGO_DIR = STATIC_DIR / "provider-logos"
 OUT_DIR = STATIC_DIR / "og" / "providers"
@@ -98,8 +98,8 @@ def render_card(facts: ProviderOgFacts, destination: Path) -> None:
     draw.rectangle((0, 0, WIDTH, 6), fill=BLUE)
     draw.rectangle((600, 0, WIDTH, 6), fill=GREEN)
 
-    draw.rounded_rectangle((62, 54, 112, 104), radius=8, fill="#1f75cf")
-    draw.text((75, 65), "TR", font=_font(20), fill=WHITE)
+    trustedrouter_logo = _contain_logo(LOGO_DIR / "trustedrouter.png", box=50)
+    image.paste(trustedrouter_logo, (62, 54), trustedrouter_logo)
     draw.text((128, 65), "TrustedRouter", font=_font(24), fill=WHITE)
     draw.text((128, 93), "PROVIDER ROUTE PROFILE", font=_font(13), fill=MUTED)
 

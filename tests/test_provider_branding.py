@@ -54,6 +54,19 @@ def test_every_provider_has_current_social_card() -> None:
             assert card.size == (1200, 630), slug
 
 
+def test_provider_social_cards_use_current_trustedrouter_mark() -> None:
+    card_path = STATIC_DIR / "og" / "providers" / "trustedrouter.png"
+    with Image.open(card_path) as card:
+        header_mark = card.convert("RGB").crop((62, 54, 112, 104))
+        color_counts = header_mark.getcolors(maxcolors=50 * 50)
+
+    assert color_counts is not None
+    colors = {color for _, color in color_counts}
+
+    assert (237, 232, 219) in colors  # cream routing branches
+    assert (169, 205, 185) in colors  # mint attested route
+
+
 def test_provider_social_card_generation_is_idempotent() -> None:
     generated, unchanged = generate()
 
