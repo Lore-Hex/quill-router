@@ -570,6 +570,11 @@ jobs:
           check_url ally_status https://status.allyrouter.com/status.json
           check_url ally_trust https://trust.allyrouter.com/
           check_url ally_trust_release https://trust.allyrouter.com/trust/gcp-release.json
+          check_url uptime_homepage https://uptimerouter.com/
+          check_url uptime_health https://uptimerouter.com/health
+          check_url uptime_status https://status.uptimerouter.com/status.json
+          check_url uptime_trust https://trust.uptimerouter.com/
+          check_url uptime_trust_release https://trust.uptimerouter.com/trust/gcp-release.json
           check_url canonical_trust_release \
             "https://trust.trustedrouter.com/trust/gcp-release.json?nocache=${GITHUB_RUN_ID}"
 
@@ -594,6 +599,9 @@ jobs:
           ally_homepage = Path("/tmp/ally_homepage.body").read_text()
           ally_trust = Path("/tmp/ally_trust.body").read_text()
           ally_release = json.loads(Path("/tmp/ally_trust_release.body").read_text())
+          uptime_homepage = Path("/tmp/uptime_homepage.body").read_text()
+          uptime_trust = Path("/tmp/uptime_trust.body").read_text()
+          uptime_release = json.loads(Path("/tmp/uptime_trust_release.body").read_text())
           canonical_release = json.loads(Path("/tmp/canonical_trust_release.body").read_text())
 
           assert any(item["id"] == "us-central1" for item in regions), regions
@@ -603,10 +611,18 @@ jobs:
           assert "https://api.allyrouter.com/v1" in ally_homepage
           assert "https://api.allyrouter.com/attestation" in ally_trust
           assert ally_release["release_metadata_status"] == "live", ally_release
+          assert "https://api.uptimerouter.com/v1" in uptime_homepage
+          assert "https://api.uptimerouter.com/attestation" in uptime_trust
+          assert uptime_release["release_metadata_status"] == "live", uptime_release
           for field in ("source_commit", "image_reference", "image_digest"):
               assert ally_release[field] == canonical_release[field], (
                   field,
                   ally_release[field],
+                  canonical_release[field],
+              )
+              assert uptime_release[field] == canonical_release[field], (
+                  field,
+                  uptime_release[field],
                   canonical_release[field],
               )
           PY

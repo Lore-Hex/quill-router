@@ -58,6 +58,39 @@ async def test_live_release_is_validated_and_cached(httpx_mock: HTTPXMock) -> No
 
 
 @pytest.mark.asyncio
+async def test_release_uses_independent_validated_fallback(
+    httpx_mock: HTTPXMock,
+) -> None:
+    httpx_mock.add_response(
+        url="https://trust.trustedrouter.com/release.json?tr_cache_bucket=10",
+        status_code=503,
+    )
+    httpx_mock.add_response(
+        url="https://trust.backup.example/release.json?tr_cache_bucket=10",
+        json=release_payload(),
+    )
+    resolver = TrustReleaseResolver(
+        Settings(
+            trust_gcp_release_url="https://trust.trustedrouter.com/release.json",
+            trust_gcp_release_fallback_urls=(
+                "https://trust.backup.example/release.json"
+            ),
+        ),
+        monotonic=lambda: 100.0,
+        wall_clock=lambda: 600.0,
+    )
+
+    release = await resolver.resolve()
+
+    assert release.status == "live"
+    assert release.metadata["image_digest"] == IMAGE_DIGEST
+    assert [str(request.url) for request in httpx_mock.get_requests()] == [
+        "https://trust.trustedrouter.com/release.json?tr_cache_bucket=10",
+        "https://trust.backup.example/release.json?tr_cache_bucket=10",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_live_release_uses_bounded_stale_cache_on_refresh_error(
     httpx_mock: HTTPXMock,
 ) -> None:
@@ -201,6 +234,7 @@ def test_alias_trust_routes_render_live_release(httpx_mock: HTTPXMock) -> None:
     assert release.json()["api_base_urls"] == [
         "https://api.trustedrouter.com/v1",
         "https://api.allyrouter.com/v1",
+        "https://api.uptimerouter.com/v1",
     ]
     assert len(httpx_mock.get_requests()) == 1
 

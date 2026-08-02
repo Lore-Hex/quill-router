@@ -67,8 +67,14 @@ add_secret_env_if_exists "ALIBABA_API_KEY" "trustedrouter-alibaba-api-key"
 add_secret_env_if_exists "TR_SYNTHETIC_MONITOR_API_KEY" "trustedrouter-synthetic-monitor-api-key"
 add_secret_env_if_exists "TR_GOOGLE_CLIENT_ID" "trustedrouter-google-client-id"
 add_secret_env_if_exists "TR_GOOGLE_CLIENT_SECRET" "trustedrouter-google-client-secret"
+add_secret_env_if_exists \
+  "TR_GOOGLE_ALIAS_CREDENTIALS_JSON" \
+  "trustedrouter-google-alias-credentials-json"
 add_secret_env_if_exists "TR_GITHUB_CLIENT_ID" "trustedrouter-github-client-id"
 add_secret_env_if_exists "TR_GITHUB_CLIENT_SECRET" "trustedrouter-github-client-secret"
+add_secret_env_if_exists \
+  "TR_GITHUB_ALIAS_CREDENTIALS_JSON" \
+  "trustedrouter-github-alias-credentials-json"
 # SES email credentials only; not used for AWS hosting or failover.
 add_secret_env_if_exists "TR_AWS_ACCESS_KEY_ID" "trustedrouter-aws-access-key-id"
 add_secret_env_if_exists "TR_AWS_SECRET_ACCESS_KEY" "trustedrouter-aws-secret-access-key"
@@ -270,7 +276,7 @@ ENV_VARS=(
   "TR_ENABLE_LIVE_PROVIDERS=false"
   "TR_API_BASE_URL=https://api.trustedrouter.com/v1"
   "TR_TRUSTED_DOMAIN=trustedrouter.com"
-  "TR_TRUSTED_DOMAIN_ALIASES=allyrouter.com"
+  "TR_TRUSTED_DOMAIN_ALIASES=allyrouter.com,uptimerouter.com"
   "TR_STORAGE_BACKEND=${STORAGE_BACKEND}"
   # Exactly $0.10 once per newly created email/OAuth account. Wallet-only
   # accounts stay at $0. Keep this explicit so stale env cannot change policy.
@@ -291,6 +297,7 @@ ENV_VARS=(
   "TR_TRUST_GCP_IMAGE_REFERENCE=${TRUST_IMAGE_REFERENCE}"
   "TR_TRUST_GCP_IMAGE_DIGEST=${TRUST_IMAGE_DIGEST}"
   "TR_TRUST_GCP_RELEASE_URL=${TRUST_FILE_URL}"
+  "TR_TRUST_GCP_RELEASE_FALLBACK_URLS=https://raw.githubusercontent.com/Lore-Hex/quill-cloud-proxy/main/trust-page/gcp-release.json"
   "TR_GOOGLE_OAUTH_REDIRECT_URL=https://trustedrouter.com/google_oauth_callback"
   "TR_GITHUB_OAUTH_REDIRECT_URL=https://trustedrouter.com/github_oauth_callback"
   "TR_SIWE_DOMAIN=trustedrouter.com"

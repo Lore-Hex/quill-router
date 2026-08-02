@@ -60,8 +60,16 @@ class TrustReleaseResolver:
         self._refresh_lock = asyncio.Lock()
 
     async def resolve(self) -> ResolvedTrustRelease:
-        release_url = self._settings.trust_gcp_release_url.strip()
-        if not release_url:
+        release_urls = tuple(
+            dict.fromkeys(
+                [
+                    self._settings.trust_gcp_release_url.strip(),
+                    *self._settings.trust_gcp_release_fallback_url_list,
+                ]
+            )
+        )
+        release_urls = tuple(url for url in release_urls if url)
+        if not release_urls:
             return ResolvedTrustRelease(
                 metadata=_embedded_metadata(self._settings),
                 status="embedded",
@@ -79,14 +87,20 @@ class TrustReleaseResolver:
                 return ResolvedTrustRelease(metadata=self._entry.metadata, status="live")
             if now < self._retry_after:
                 return self._stale_or_raise(now)
-            try:
-                metadata = await self._fetch(release_url)
-            except (httpx.HTTPError, TypeError, ValueError) as exc:
+            last_error: Exception | None = None
+            metadata: Mapping[str, str] | None = None
+            for release_url in release_urls:
+                try:
+                    metadata = await self._fetch(release_url)
+                    break
+                except (httpx.HTTPError, TypeError, ValueError) as exc:
+                    last_error = exc
+            if metadata is None:
                 self._retry_after = now + _RETRY_SECONDS
                 try:
                     return self._stale_or_raise(now)
                 except TrustReleaseUnavailable as unavailable:
-                    raise unavailable from exc
+                    raise unavailable from last_error
 
             self._retry_after = 0.0
             self._entry = _CacheEntry(

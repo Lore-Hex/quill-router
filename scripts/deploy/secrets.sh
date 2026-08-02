@@ -265,8 +265,14 @@ fi
 # rule treats half-configured providers as a hard error.
 ensure_secret_from_env_file "GOOGLE_CLIENT_ID" "trustedrouter-google-client-id"
 ensure_secret_from_env_file "GOOGLE_CLIENT_SECRET" "trustedrouter-google-client-secret"
+ensure_secret_from_env_file \
+  "GOOGLE_ALIAS_CREDENTIALS_JSON" \
+  "trustedrouter-google-alias-credentials-json"
 ensure_secret_from_env_file "GITHUB_CLIENT_ID" "trustedrouter-github-client-id"
 ensure_secret_from_env_file "GITHUB_CLIENT_SECRET" "trustedrouter-github-client-secret"
+ensure_secret_from_env_file \
+  "GITHUB_ALIAS_CREDENTIALS_JSON" \
+  "trustedrouter-github-alias-credentials-json"
 # SES email credentials only; not used for AWS hosting or failover.
 ensure_secret_from_env_file "AWS_ACCESS_KEY_ID" "trustedrouter-aws-access-key-id"
 ensure_secret_from_env_file "AWS_SECRET_ACCESS_KEY" "trustedrouter-aws-secret-access-key"
