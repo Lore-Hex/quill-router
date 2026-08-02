@@ -1321,10 +1321,20 @@ def dashboard_html(
     settings: Settings,
     *,
     api_base_url: str | None = None,
+    brand_name: str = "TrustedRouter",
+    site_url: str | None = None,
 ) -> str:
     domain = settings.trusted_domain
     resolved_api_base_url = api_base_url or settings.api_base_url
     environment = settings.environment.lower()
+    canonical_site_url = f"https://{domain}/"
+    site_url = site_url or canonical_site_url
+    alternate_brand = brand_name != "TrustedRouter"
+    page_title = (
+        f"{brand_name} | Every model. Provable privacy."
+        if alternate_brand
+        else OG_TITLE
+    )
     tr_config = {
         "environment": environment,
         "defaultDevUser": "" if environment == "production" else DEV_USER_FALLBACK,
@@ -1341,9 +1351,12 @@ def dashboard_html(
         .get_template("dashboard.html")
         .render(
             api_base_url=resolved_api_base_url,
-            site_url=f"https://{domain}/",
+            site_url=site_url,
+            canonical_site_url=canonical_site_url,
+            brand_name=brand_name,
+            alternate_brand=alternate_brand,
             og_image=f"https://{domain}/og.png",
-            og_title=OG_TITLE,
+            og_title=page_title,
             og_description=OG_DESCRIPTION,
             og_image_width=OG_IMAGE_WIDTH,
             og_image_height=OG_IMAGE_HEIGHT,

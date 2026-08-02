@@ -465,6 +465,20 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             )
         if hostname == "eu.trustedrouter.com":
             return public_page_html(settings, "eu", site_url="https://eu.trustedrouter.com/")
+        alternate_brand = {
+            "uptimerouter.com": "UptimeRouter",
+            "www.uptimerouter.com": "UptimeRouter",
+            "allyrouter.com": "AllyRouter",
+            "www.allyrouter.com": "AllyRouter",
+        }.get(hostname)
+        if alternate_brand:
+            canonical_host = hostname.removeprefix("www.")
+            return dashboard_html(
+                settings,
+                api_base_url=api_base_url,
+                brand_name=alternate_brand,
+                site_url=f"https://{canonical_host}/",
+            )
         return dashboard_html(settings, api_base_url=api_base_url)
 
     @public_html_route("/trust")

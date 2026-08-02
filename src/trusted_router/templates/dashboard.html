@@ -15,9 +15,9 @@
   <title>{{ og_title }}</title>
   <meta name="description" content="{{ og_description }}">
   {% include "_favicon.html" %}
-  <link rel="canonical" href="{{ site_url }}">
+  <link rel="canonical" href="{{ canonical_site_url }}">
   <meta property="og:type" content="website">
-  <meta property="og:site_name" content="TrustedRouter">
+  <meta property="og:site_name" content="{{ brand_name }}">
   <meta property="og:title" content="{{ og_title }}">
   <meta property="og:description" content="{{ og_description }}">
   <meta property="og:url" content="{{ site_url }}">
@@ -25,14 +25,14 @@
   <meta property="og:image:type" content="image/png">
   <meta property="og:image:width" content="{{ og_image_width }}">
   <meta property="og:image:height" content="{{ og_image_height }}">
-  <meta property="og:image:alt" content="TrustedRouter, end-to-end encrypted AI routing">
+  <meta property="og:image:alt" content="{{ brand_name }}, end-to-end encrypted AI routing">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="{{ og_title }}">
   <meta name="twitter:description" content="{{ og_description }}">
   <meta name="twitter:image" content="{{ og_image }}">
-  <meta name="twitter:image:alt" content="TrustedRouter, end-to-end encrypted AI routing">
-  <link rel="alternate" type="text/plain" href="/docs/llms.txt" title="TrustedRouter LLM docs">
-  <link rel="alternate" type="text/plain" href="/docs/llms-full.txt" title="TrustedRouter full LLM context">
+  <meta name="twitter:image:alt" content="{{ brand_name }}, end-to-end encrypted AI routing">
+  <link rel="alternate" type="text/plain" href="/docs/llms.txt" title="{{ brand_name }} LLM docs">
+  <link rel="alternate" type="text/plain" href="/docs/llms-full.txt" title="{{ brand_name }} full LLM context">
   <link rel="preload" href="/static/fonts/archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/static/fonts/spectral-300-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
@@ -46,7 +46,7 @@
   <main class="home">
     <section class="charter-home-hero">
       <div class="home-hero-copy">
-        <div class="kicker">Own your alpha</div>
+        <div class="kicker">{% if alternate_brand %}Powered by TrustedRouter{% else %}Own your alpha{% endif %}</div>
         <h1><span class="hero-line">Every model.</span><em class="hero-line">Provable privacy.</em></h1>
         <p class="lead">One OpenAI-compatible API for hundreds of open-weight and frontier models. Requests cross an attested gateway that does not log prompt or output content. Even our engineers cannot read your requests.</p>
         <div class="hero-actions">
@@ -83,7 +83,7 @@
       </aside>
     </section>
 
-    <section class="charter-stat-band" aria-label="TrustedRouter facts">
+    <section class="charter-stat-band" aria-label="{{ brand_name }} facts">
       <div class="charter-stat"><strong>{{ api_region_count }}</strong><span>Live regions</span></div>
       <div class="charter-stat"><strong>Hundreds</strong><span>Models through one API</span></div>
       <div class="charter-stat"><strong class="accent">Never</strong><span>Prompt logs</span></div>
@@ -93,9 +93,9 @@
     <section class="home-section">
       <div class="home-wrap">
         <div class="section-lead">
-          <div class="kicker">Why developers choose TrustedRouter.</div>
+          <div class="kicker">Why developers choose {{ brand_name }}.</div>
           <h2>The trust model is the product.</h2>
-          <p>TrustedRouter is an OpenRouter alternative for teams that need verifiable privacy, lower-cost model choices, provider fallback, and one API across hundreds of models.</p>
+          <p>{{ brand_name }} is an OpenRouter alternative for teams that need verifiable privacy, lower-cost model choices, provider fallback, and one API across hundreds of models.</p>
         </div>
         <div class="charter-pillars">
           <article class="charter-pillar">
@@ -189,10 +189,10 @@ response = client.chat.completions.create(
           <div class="kicker">Verify trust</div>
           <h2>Do not take our word for any of this.</h2>
           <p class="section-sub">The production prompt path is separate from the dashboard and billing control plane. Every trust claim reduces to evidence you can inspect.</p>
-          <div class="trust-path" aria-label="TrustedRouter prompt path">
+          <div class="trust-path" aria-label="{{ brand_name }} prompt path">
             <div class="trust-path-node"><strong>Your application</strong><span>OpenAI-compatible request</span></div>
             <div class="trust-path-arrow">Encrypted transport ↓</div>
-            <div class="trust-path-node"><strong>Attested TrustedRouter gateway</strong><span>Prompt path · no content logs</span></div>
+            <div class="trust-path-node"><strong>Attested {{ brand_name }} gateway</strong><span>Prompt path · no content logs</span></div>
             <div class="trust-path-arrow">Selected route ↓</div>
             <div class="trust-path-node"><strong>Model provider</strong><span>Provider policy published separately</span></div>
           </div>
@@ -227,7 +227,7 @@ response = client.chat.completions.create(
           </ul>
           <a class="btn" href="/status">View public status</a>
         </div>
-        <div class="region-map-card" aria-label="TrustedRouter regional footprint">
+        <div class="region-map-card" aria-label="{{ brand_name }} regional footprint">
           <div class="region-map-visual">
             <img src="/static/world-map.svg?v={{ static_version }}" alt="" loading="lazy">
             <svg viewBox="0 0 1000 500" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
@@ -281,11 +281,11 @@ response = client.chat.completions.create(
         <h2 class="section-center">What developers ask before routing.</h2>
         <div class="faq">
           {% for f in [
-            {"q":"What is TrustedRouter?","a":"A privacy-first AI gateway that routes requests across many providers through one OpenAI-compatible API without logging prompt or output content."},
+            {"q":"What is " ~ brand_name ~ "?","a":"A privacy-first AI gateway that routes requests across many providers through one OpenAI-compatible API without logging prompt or output content."},
             {"q":"Is this an OpenRouter alternative?","a":"Yes, with an attested prompt path, public source, explicit privacy aliases, and fail-closed behavior as core design constraints."},
             {"q":"Do you log prompts or outputs?","a":"No. Prompt and output content are intentionally excluded from the control plane and metadata systems. Optional content export requires explicit destination-level configuration."},
             {"q":"What does attested gateway mean?","a":"The gateway runs in a Trusted Execution Environment and publishes evidence that connects the running image to public source. You can verify that evidence on the trust page."},
-            {"q":"Can I bring my own provider keys?","a":"Yes. BYOK lets you retain provider commitments or enterprise rate limits while using the TrustedRouter routing and trust boundary."},
+            {"q":"Can I bring my own provider keys?","a":"Yes. BYOK lets you retain provider commitments or enterprise rate limits while using the " ~ brand_name ~ " routing and trust boundary."},
             {"q":"What happens if attestation fails?","a":"The gateway fails closed. It does not silently route prompts through an unverified fallback."},
             {"q":"How do I migrate?","a":"Keep the OpenAI SDK, change the base URL, and use the same chat or Responses calls. The migration guide includes tested examples."}
           ] %}
