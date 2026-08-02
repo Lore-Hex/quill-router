@@ -819,13 +819,15 @@ PROVIDERS: dict[str, Provider] = {
         stores_content=False,
         provider_zero_data_retention=None,
         provider_confidential_compute=True,
-        provider_e2ee=True,
+        provider_e2ee=False,
         provider_policy=(
-            "TrustedRouter publishes only 0G routes marked private, TeeML, "
-            "TEE-attested, and healthy, and forces X-0G-Provider-Trust-Mode: "
-            "private on every request. Standard and TeeTLS routes are excluded: "
-            "TeeTLS attests the routing proxy but does not place model execution "
-            "inside confidential compute."
+            "0G labels these routes private, TeeML, TEE-attested, and healthy. "
+            "TrustedRouter requests that mode with X-0G-Provider-Trust-Mode: "
+            "private and excludes standard and TeeTLS routes. The current live "
+            "0G router path does not expose the route quote, audited code "
+            "measurement, or response authentication needed for TrustedRouter "
+            "to verify and encrypt each request end to end, so 0G is not in the "
+            "trustedrouter/e2e pool."
         ),
         provider_policy_url="https://pc.0g.ai/models",
     ),

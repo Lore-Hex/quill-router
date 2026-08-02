@@ -20,7 +20,11 @@ from trusted_router.catalog_data import (
     PRIVACY_TIER_CONFIDENTIAL,
     Model,
 )
-from trusted_router.catalog_privacy import provider_privacy_tier
+from trusted_router.catalog_privacy import (
+    endpoint_e2ee,
+    endpoint_privacy_tier,
+    provider_privacy_tier,
+)
 from trusted_router.providers import OPENAI_COMPATIBLE_PROVIDERS, ProviderClient
 from trusted_router.services.inference_errors import default_provider_secret_ref
 
@@ -325,15 +329,16 @@ def test_zero_g_manifest_writer_preserves_dark_launch(
     )
 
 
-def test_zero_g_catalog_and_local_adapter_are_confidential_credits_only() -> None:
+def test_zero_g_catalog_and_local_adapter_request_private_tee_without_e2ee() -> None:
     provider = PROVIDERS["zero-g"]
     assert provider.supports_prepaid is True
     assert provider.supports_byok is False
     assert provider.provider_zero_data_retention is None
     assert provider.provider_confidential_compute is True
-    assert provider.provider_e2ee is True
-    assert provider_privacy_tier(provider) == PRIVACY_TIER_CONFIDENTIAL
+    assert provider.provider_e2ee is False
+    assert provider_privacy_tier(provider) != PRIVACY_TIER_CONFIDENTIAL
     assert "TeeTLS" in provider.provider_policy
+    assert "not in the trustedrouter/e2e pool" in provider.provider_policy
     assert "zero-g" in GATEWAY_PREPAID_PROVIDER_SLUGS
     assert OPENAI_COMPATIBLE_PROVIDERS["zero-g"] == (
         ("ZERO_G_API_KEY",),
@@ -379,6 +384,11 @@ def test_zero_g_catalog_and_local_adapter_are_confidential_credits_only() -> Non
         endpoint.usage_type == "Credits"
         and endpoint.upstream_id == routable_rows[model_id]["upstream_id"]
         for model_id, endpoint in zero_g_endpoints.items()
+    )
+    assert all(
+        endpoint_e2ee(endpoint) is False
+        and endpoint_privacy_tier(endpoint) != PRIVACY_TIER_CONFIDENTIAL
+        for endpoint in zero_g_endpoints.values()
     )
 
 
@@ -466,7 +476,7 @@ def test_zero_g_public_provider_page_is_published(
     assert provider["supports_prepaid"] is True
     assert provider["supports_byok"] is False
     assert provider["provider_confidential_compute"] is True
-    assert provider["provider_e2ee"] is True
+    assert provider["provider_e2ee"] is False
 
     sitemap = client.get("/sitemap-providers.xml")
     assert sitemap.status_code == 200
