@@ -16,6 +16,7 @@ from dataclasses import field as dataclass_field
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
+import cbor2
 import httpx
 
 from trusted_router.config import Settings
@@ -2293,7 +2294,33 @@ def _responses_text(response: httpx.Response) -> str:
 
 
 def _attestation_evidence(body: bytes, nonce_hex: str) -> dict[str, str | bool | None]:
-    text = body.decode("utf-8", errors="ignore").strip()
+    """Extract nonce binding + identity evidence from an attestation body.
+
+    Two live formats:
+      * GCP Confidential Space — a JWT (ASCII, two dots). Nonce binding is
+        in eat_nonce; identity is the container image_digest claim.
+      * AWS Nitro — a binary COSE_Sign1/CBOR document. Nonce binding is the
+        payload's `nonce` field; identity is PCR0 (the EIF measurement),
+        reported as the attestation_digest so the status page shows the
+        running enclave's measurement, comparable against the trust page.
+
+    JWT is tried first but only for bodies that survive a STRICT ascii
+    decode — a binary CBOR document can contain 0x2E ('.') bytes by chance,
+    so "two dots after a lossy decode" (the previous check) would misroute
+    it. A JWT can never fail ascii decoding, so the ordering is safe.
+
+    This is the once-a-minute LIVENESS + BINDING check. Full chain
+    verification to the AWS Nitro root / Google's JWKS (signatures, cert
+    chains, cert-fingerprint-in-user_data) is the deploy gate's job
+    (tools/verify-attestation.py in quill-cloud-proxy) — pulling X.509
+    chain-walking into the control plane's probe loop would add heavy
+    dependencies for a check whose job is "is the enclave up, answering
+    MY nonce, and running the measurement we expect to see".
+    """
+    try:
+        text = body.decode("ascii").strip()
+    except UnicodeDecodeError:
+        text = ""
     if text.count(".") >= 2:
         payload = _decode_jwt_payload(text)
         nonces = payload.get("eat_nonce") or payload.get("nonces") or payload.get("nonce") or []
@@ -2309,12 +2336,54 @@ def _attestation_evidence(body: bytes, nonce_hex: str) -> dict[str, str | bool |
             "attestation_digest": _claim(payload, "image_digest", "submods.container.image_digest"),
             "source_commit": _claim(payload, "source_commit", "submods.container.source_commit"),
         }
+    aws = _decode_aws_attestation_payload(body)
+    if aws is not None:
+        nonce = aws.get("nonce")
+        nonce_ok = isinstance(nonce, bytes) and nonce.hex() == nonce_hex.lower()
+        pcrs = aws.get("pcrs")
+        pcr0 = pcrs.get(0) if isinstance(pcrs, dict) else None
+        return {
+            "nonce_ok": nonce_ok,
+            "error_type": None if nonce_ok else "nonce_missing",
+            "attestation_digest": pcr0.hex() if isinstance(pcr0, bytes) else None,
+            "source_commit": None,
+        }
     return {
         "nonce_ok": False,
         "error_type": "unsupported_attestation_format",
         "attestation_digest": None,
         "source_commit": None,
     }
+
+
+def _decode_aws_attestation_payload(body: bytes) -> dict[Any, Any] | None:
+    """Decode an AWS Nitro attestation document to its payload map.
+
+    The NSM emits COSE_Sign1: a CBOR array [protected: bstr,
+    unprotected: map, payload: bstr, signature: bstr], sometimes wrapped
+    in CBOR tag 18. The payload bstr is itself a CBOR map (module_id,
+    digest, timestamp, pcrs, nonce, user_data, ...). Returns None for
+    anything that doesn't match that exact shape — the caller then
+    reports unsupported_attestation_format rather than guessing.
+    """
+    try:
+        decoded = cbor2.loads(body)
+    except Exception:
+        return None
+    if isinstance(decoded, cbor2.CBORTag):
+        decoded = decoded.value
+    # cbor2 decodes arrays nested inside tags as immutable tuples (tagged
+    # containers must be hashable), so accept both sequence shapes.
+    if not (isinstance(decoded, (list, tuple)) and len(decoded) == 4):
+        return None
+    payload_bytes = decoded[2]
+    if not isinstance(payload_bytes, bytes):
+        return None
+    try:
+        payload = cbor2.loads(payload_bytes)
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _decode_jwt_payload(token: str) -> dict[str, Any]:

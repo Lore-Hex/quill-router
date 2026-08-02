@@ -145,7 +145,7 @@ async def _probe_and_rotation_pass(
     if rotation_enabled and api_key:
         benchmark_tasks.append(
             asyncio.create_task(
-                _rotation_pass(
+                rotation_pass(
                     settings=settings,
                     monitor_region=monitor_region,
                     api_key=api_key,
@@ -181,7 +181,7 @@ async def _probe_and_rotation_pass(
     return probe_samples, benchmark_samples
 
 
-async def _rotation_pass(
+async def rotation_pass(
     *,
     settings: Settings,
     monitor_region: str,
@@ -190,8 +190,24 @@ async def _rotation_pass(
     count: int,
     rng: random.Random,
     billing_semaphore: asyncio.Semaphore | None = None,
+    models: frozenset[str] | None = None,
 ) -> list[ProviderBenchmarkSample]:
+    """One rotation pass: `count` random provider+model picks, probed live.
+
+    Public because /internal/synthetic/run also drives it — deployments
+    without a monitor-pool CLI (the standalone EU cloud, where cadence
+    comes from an EventBridge rule) get provider rotation through the
+    route. `models` narrows the candidate pool to specific model ids so a
+    caller can pin rotation to a family (e.g. the DSv4 models) without
+    losing the equal-airtime-per-provider pick.
+    """
     pool = rotation_candidates()
+    if models is not None:
+        pool = {
+            provider: [model for model in candidates if model in models]
+            for provider, candidates in pool.items()
+        }
+        pool = {provider: candidates for provider, candidates in pool.items() if candidates}
     target = SyntheticTarget("rotation", settings.api_base_url, monitor_region)
     limiter = billing_semaphore or asyncio.Semaphore(DEFAULT_SYNTHETIC_BILLING_CONCURRENCY)
     probes = []

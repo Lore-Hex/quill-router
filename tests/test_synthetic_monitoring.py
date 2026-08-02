@@ -2380,7 +2380,7 @@ async def test_rotation_pass_fans_out_model_samples(monkeypatch: pytest.MonkeyPa
     )
     monkeypatch.setattr(cli_module, "provider_rotation_probe", fake_rotation_probe)
 
-    samples = await cli_module._rotation_pass(
+    samples = await cli_module.rotation_pass(
         settings=Settings(environment="test", api_base_url="https://api.trustedrouter.com/v1"),
         monitor_region="us-central1",
         api_key="sk-tr-test",
@@ -2423,7 +2423,7 @@ async def test_probe_and_rotation_pass_runs_independent_blocks_concurrently(
         return ["rotation-a", "rotation-b"]
 
     monkeypatch.setattr(cli_module, "_one_probe_pass", fake_one_probe_pass)
-    monkeypatch.setattr(cli_module, "_rotation_pass", fake_rotation_pass)
+    monkeypatch.setattr(cli_module, "rotation_pass", fake_rotation_pass)
 
     samples, rotation_samples = await cli_module._probe_and_rotation_pass(
         settings=Settings(environment="test", api_base_url="https://api.trustedrouter.com/v1"),
@@ -2472,7 +2472,7 @@ async def test_probe_and_rotation_share_one_billing_concurrency_budget(
         return []
 
     monkeypatch.setattr(cli_module, "_one_probe_pass", fake_one_probe_pass)
-    monkeypatch.setattr(cli_module, "_rotation_pass", fake_rotation_pass)
+    monkeypatch.setattr(cli_module, "rotation_pass", fake_rotation_pass)
 
     await cli_module._probe_and_rotation_pass(
         settings=Settings(environment="test"),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from dataclasses import asdict
 from typing import Any
 
@@ -13,6 +14,7 @@ from trusted_router.routes.helpers import json_body
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.storage import STORE, ProviderBenchmarkSample, SyntheticProbeSample
 from trusted_router.storage_models import scrub_provider_error_message
+from trusted_router.synthetic.cli import rotation_pass
 from trusted_router.synthetic.probes import (
     gateway_billing_probe,
     gateway_fallback_probe,
@@ -80,6 +82,17 @@ def register(router: APIRouter) -> None:
         require_internal_gateway(request, settings)
         body = await json_body(request)
         monitor_region = _optional_str(body.get("monitor_region"))
+        # Which control plane the billing probes (authorize+settle) hit.
+        # Precedence: request body > settings > canonical GCP plane. The
+        # settings tier exists because the hardcoded fallback is a
+        # wrong-cloud trap for standalone deployments: the EU service
+        # probing https://trustedrouter.com would record the US plane's
+        # health under an EU monitor region.
+        control_plane_base_url = str(
+            body.get("control_plane_base_url")
+            or settings.synthetic_control_plane_base_url
+            or "https://trustedrouter.com"
+        )
         samples = await run_synthetic_once(settings, monitor_region=monitor_region)
         if settings.synthetic_monitor_api_key and settings.internal_gateway_token:
             timeout = httpx.Timeout(settings.synthetic_monitor_timeout_seconds)
@@ -87,9 +100,7 @@ def register(router: APIRouter) -> None:
                 samples.extend(
                     await gateway_billing_probe(
                         client,
-                        control_plane_base_url=str(
-                            body.get("control_plane_base_url") or "https://trustedrouter.com"
-                        ),
+                        control_plane_base_url=control_plane_base_url,
                         monitor_region=monitor_region
                         or settings.synthetic_monitor_region
                         or settings.primary_region,
@@ -101,9 +112,7 @@ def register(router: APIRouter) -> None:
                 samples.extend(
                     await gateway_fallback_probe(
                         client,
-                        control_plane_base_url=str(
-                            body.get("control_plane_base_url") or "https://trustedrouter.com"
-                        ),
+                        control_plane_base_url=control_plane_base_url,
                         monitor_region=monitor_region
                         or settings.synthetic_monitor_region
                         or settings.primary_region,
@@ -112,8 +121,36 @@ def register(router: APIRouter) -> None:
                         model=settings.synthetic_monitor_model,
                     )
                 )
+        benchmark_recorded = 0
+        rotation_count = _rotation_count(body)
+        if rotation_count and settings.synthetic_monitor_api_key:
+            # Provider/model rotation through the gateway — REAL inference,
+            # same pool mechanics as the GCP monitor CLI. Exposed via this
+            # route because standalone deployments (EU) have no monitor
+            # pool: their once-a-minute cadence is an EventBridge rule
+            # whose Input JSON sets rotation_count (and optionally
+            # rotation_models to pin a family, e.g. the DSv4 ids).
+            benchmark_samples = await rotation_pass(
+                settings=settings,
+                monitor_region=monitor_region
+                or settings.synthetic_monitor_region
+                or settings.primary_region,
+                api_key=settings.synthetic_monitor_api_key,
+                timeout=httpx.Timeout(settings.synthetic_monitor_timeout_seconds),
+                count=rotation_count,
+                rng=random.Random(),  # noqa: S311 - picks which model to probe, not cryptographic
+                models=_rotation_models(body),
+            )
+            await run_in_threadpool(_record_benchmark_samples, benchmark_samples)
+            benchmark_recorded = len(benchmark_samples)
         await run_in_threadpool(_record_probe_samples, samples)
-        return {"data": {"recorded": len(samples), "samples": [s.public_dict() for s in samples]}}
+        return {
+            "data": {
+                "recorded": len(samples),
+                "benchmark_recorded": benchmark_recorded,
+                "samples": [s.public_dict() for s in samples],
+            }
+        }
 
 
 def _record_probe_samples(samples: list[SyntheticProbeSample]) -> None:
@@ -228,3 +265,26 @@ def _optional_float(value: Any) -> float | None:
     if value is None or value == "":
         return None
     return float(value)
+
+
+# Ceiling on rotation probes per /run invocation. Each one is a real,
+# billed completion; with a 1-minute EventBridge cadence the worst case is
+# ROTATION_MAX_PER_RUN real requests per minute. A typo'd or hostile Input
+# JSON must not be able to turn the monitor into a spend firehose.
+ROTATION_MAX_PER_RUN = 8
+
+
+def _rotation_count(body: dict[str, Any]) -> int:
+    try:
+        count = int(body.get("rotation_count") or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(count, ROTATION_MAX_PER_RUN))
+
+
+def _rotation_models(body: dict[str, Any]) -> frozenset[str] | None:
+    raw = body.get("rotation_models")
+    if not isinstance(raw, list):
+        return None
+    models = frozenset(str(item) for item in raw if isinstance(item, str) and item)
+    return models or None

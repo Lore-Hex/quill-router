@@ -311,6 +311,13 @@ class Settings(BaseSettings):
     synthetic_monitor_region: str | None = None
     synthetic_monitor_api_key: str | None = None
     synthetic_monitor_model: str = "trustedrouter/monitor"
+    # Which control plane the /internal/synthetic/run billing probes
+    # (authorize+settle) exercise. None falls back to the canonical GCP
+    # plane, which is correct for GCP monitors but a WRONG-CLOUD trap for
+    # standalone deployments: the EU service must set this to its own
+    # plane or its probes measure another cloud's health. A per-request
+    # body override still wins over this setting.
+    synthetic_control_plane_base_url: str | None = None
     # Per-probe HTTP timeout for real provider-effective synthetic checks.
     # Keep this aligned with the gateway's first-byte budget. A successful
     # /responses probe in europe-west4 can legitimately take >10s on slow
