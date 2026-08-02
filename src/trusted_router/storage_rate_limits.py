@@ -1,4 +1,6 @@
-"""Token-bucket rate limit counter for local/test and anonymous safe reads.
+"""Token-bucket rate limit counter for local/test, anonymous safe reads, and
+internal gateway traffic (per-instance; see #399 for why the internal path
+must not share a Spanner counter row).
 
 Lives in its own module so storage.py doesn't carry the bucket-cleanup
 loop. Shared production counters are in storage_gcp_rate_limits."""

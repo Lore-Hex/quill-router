@@ -50,6 +50,7 @@ from trusted_router.domains import (
     request_hostname,
 )
 from trusted_router.errors import error_response
+from trusted_router.security import constant_time_equal
 from trusted_router.storage import STORE
 from trusted_router.storage_models import RateLimitHit
 from trusted_router.storage_rate_limits import InMemoryRateLimits
@@ -335,7 +336,20 @@ def _rate_limit_request(
         hit_rate_limit = public_read_rate_limits.hit
     elif path.startswith(("/internal/", "/v1/internal/")):
         namespace = "internal"
-        subject = _fingerprint(internal_token or bearer or ip)
+        # Subject cardinality must be BOUNDED against unauthenticated input:
+        # bucketing by the raw supplied credential would let an attacker mint
+        # one fresh in-memory bucket per guessed token (bypassing the
+        # per-subject limit and growing the process map without cap). Only a
+        # credential that matches the configured internal secret earns the
+        # shared fleet bucket; everything else counts against the caller's IP,
+        # the same bounded identity the anonymous namespace uses.
+        supplied = internal_token or bearer or ""
+        if settings.internal_gateway_token and constant_time_equal(
+            supplied, settings.internal_gateway_token
+        ):
+            subject = _fingerprint(supplied)
+        else:
+            subject = _fingerprint(ip)
         limit = settings.rate_limit_internal_per_window
         # Authenticated fleet-internal calls share one token. A globally
         # consistent Spanner counter serialized every billing call on one row's

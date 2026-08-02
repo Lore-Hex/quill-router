@@ -929,3 +929,62 @@ def test_no_sentry_in_enclave_code() -> None:
             text = path.read_text(encoding="utf-8", errors="ignore").lower()
             assert "sentry" not in text
             assert "58539b11263132bcb70ea30f0b92e0f4" not in text
+
+
+def test_internal_rate_limit_guessed_tokens_share_the_ip_bucket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An attacker varying an INVALID internal token must not mint a fresh
+    bucket per guess (cardinality bound) nor escape the per-subject limit
+    (review finding on #400): unverified credentials collapse to the caller's
+    IP, the same bounded identity the anonymous namespace uses."""
+    import datetime as _dt
+
+    from trusted_router import storage_rate_limits
+
+    monkeypatch.setattr(
+        storage_rate_limits,
+        "utcnow",
+        lambda: _dt.datetime(2026, 8, 1, 18, 21, 30, tzinfo=_dt.UTC),
+    )
+    internal_token = "internal-real-token"  # noqa: S105 - test fixture token.
+    settings = Settings(
+        environment="test",
+        internal_gateway_token=internal_token,
+        rate_limit_enabled=True,
+        rate_limit_internal_per_window=3,
+        rate_limit_window_seconds=60,
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+
+    responses = [
+        client.post(
+            "/v1/internal/gateway/key",
+            headers={"x-trustedrouter-internal-token": f"guess-{n}"},
+            json={"api_key_lookup_hash": "irrelevant"},
+        )
+        for n in range(settings.rate_limit_internal_per_window + 1)
+    ]
+
+    # Unique wrong tokens still consume ONE shared (per-IP) bucket: the
+    # requests inside the limit are 401 (bad token), and the one past the
+    # limit is 429 -- the guesses could not escape the limiter by varying.
+    assert [r.status_code for r in responses[:-1]] == [401, 401, 401]
+    assert responses[-1].status_code == 429
+
+    # And the valid fleet token is NOT throttled by the attacker's bucket:
+    # it authenticates under its own subject (the token fingerprint).
+    user = STORE.ensure_user("internal-bucket-isolation@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    _raw, key = STORE.create_api_key(
+        workspace_id=workspace.id,
+        name="bucket isolation",
+        creator_user_id=user.id,
+    )
+    fleet = client.post(
+        "/v1/internal/gateway/key",
+        headers={"x-trustedrouter-internal-token": internal_token},
+        json={"api_key_lookup_hash": key.lookup_hash},
+    )
+    assert fleet.status_code == 200, fleet.text
