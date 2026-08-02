@@ -13,6 +13,7 @@ from scripts.pricing.refresh import (
     _PRICING_RESULT_PROVIDER_ALIASES,
     PROVIDER_SLUGS,
 )
+from trusted_router import catalog_ingest
 from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
 from trusted_router.catalog_data import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
@@ -350,11 +351,77 @@ def test_zero_g_catalog_and_local_adapter_are_confidential_credits_only() -> Non
     }
     assert default_provider_secret_ref("zero-g") == "env://ZERO_G_API_KEY"
 
-    # The committed onboarding manifest is dark until a real account canary
-    # passes, so importing the production catalog must not create a route yet.
-    assert not any(
-        endpoint.provider == "zero-g" for endpoint in MODEL_ENDPOINTS.values()
+    manifest_path = (
+        Path(__file__).resolve().parents[1]
+        / "src/trusted_router/data/provider_models/zero-g.json"
     )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    routable_rows = {
+        row["id"]: row for row in manifest["models"] if row.get("routable") is True
+    }
+    zero_g_endpoints = {
+        endpoint.model_id: endpoint
+        for endpoint in MODEL_ENDPOINTS.values()
+        if endpoint.provider == "zero-g"
+    }
+
+    # Before the account canary passes the manifest is dark and imports no
+    # routes. Once activated, the catalog must import exactly the canary-backed
+    # private TeeML rows as prepaid-only endpoints.
+    assert zero_g_endpoints.keys() == routable_rows.keys()
+    assert all(
+        row["trust_mode"] == "private"
+        and row["verifiability"] == "TeeML"
+        and row["tee_attested"] is True
+        for row in routable_rows.values()
+    )
+    assert all(
+        endpoint.usage_type == "Credits"
+        and endpoint.upstream_id == routable_rows[model_id]["upstream_id"]
+        for model_id, endpoint in zero_g_endpoints.items()
+    )
+
+
+def test_zero_g_activated_manifest_imports_prepaid_route_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = {
+        "provider": "zero-g",
+        "price_scale": "microdollars_per_million",
+        "models": [
+            {
+                "id": "zero-g/test-private-model",
+                "upstream_id": "test-private-model",
+                "display_name": "Test Private Model",
+                "model_type": "chat",
+                "endpoints": ["chat/completions"],
+                "input_modalities": ["text"],
+                "output_modalities": ["text"],
+                "context_length": 131_072,
+                "routable": True,
+                "trust_mode": "private",
+                "verifiability": "TeeML",
+                "tee_attested": True,
+                "input_token_price_per_m": 80_000,
+                "output_token_price_per_m": 480_000,
+            }
+        ],
+    }
+    (tmp_path / "zero-g.json").write_text(
+        json.dumps(manifest) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+
+    models, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+
+    assert set(models) == {"zero-g/test-private-model"}
+    assert set(endpoints) == {"zero-g/test-private-model@zero-g/prepaid"}
+    endpoint = endpoints["zero-g/test-private-model@zero-g/prepaid"]
+    assert endpoint.provider == "zero-g"
+    assert endpoint.usage_type == "Credits"
+    assert endpoint.upstream_id == "test-private-model"
 
 
 def test_zero_g_hourly_refresh_and_optional_secret_wiring_are_complete() -> None:
@@ -383,7 +450,7 @@ def test_zero_g_hourly_refresh_and_optional_secret_wiring_are_complete() -> None
     assert "ZERO_G_API_KEY=${KEY}" in workflow
 
 
-def test_zero_g_public_provider_page_is_prepared_while_routes_are_dark(
+def test_zero_g_public_provider_page_is_published(
     client: Any,
 ) -> None:
     page = client.get("/providers/zero-g")
