@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import random
 from dataclasses import asdict
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import SettingsDep
+from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.routes.helpers import json_body
 from trusted_router.routes.internal._shared import require_internal_gateway
@@ -79,9 +81,30 @@ def register(router: APIRouter) -> None:
         return {"data": {"flagged": [asdict(flag) for flag in flags]}}
 
     @router.post("/internal/synthetic/run")
-    async def synthetic_run(request: Request, settings: SettingsDep) -> dict[str, Any]:
+    async def synthetic_run(
+        request: Request, settings: SettingsDep, response: Response
+    ) -> dict[str, Any]:
         require_internal_gateway(request, settings)
         body = await json_body(request)
+        # Fire-and-forget mode for schedulers with a short response
+        # deadline. EventBridge API destinations give up waiting after
+        # ~5s; a full probe pass takes 10-17s (longer with rotation), so
+        # EVERY tick was recorded as a FailedInvocation even though the
+        # app completed the run and returned 200. The scheduler retries,
+        # then EventBridge gives up on the connection entirely — and
+        # nothing on the service side reports any of it, because from the
+        # app's point of view every request succeeded.
+        #
+        # With detach=true we acknowledge immediately and run the pass on
+        # the event loop. `recorded` is then unknowable at response time,
+        # so we do not pretend: the body says scheduled, not recorded.
+        if _is_true(body.get("detach")):
+            asyncio.create_task(_run_and_record(settings, body))  # noqa: RUF006 - fire-and-forget by design
+            response.status_code = 202
+            return {"data": {"scheduled": True}}
+        return await _run_and_record(settings, body)
+
+    async def _run_and_record(settings: Settings, body: dict[str, Any]) -> dict[str, Any]:
         monitor_region = _optional_str(body.get("monitor_region"))
         # Which control plane the billing probes (authorize+settle) hit.
         # Precedence: request body > settings > canonical GCP plane. The
@@ -308,3 +331,9 @@ def _rotation_models(body: dict[str, Any]) -> frozenset[str] | None:
         return None
     models = frozenset(str(item) for item in raw if isinstance(item, str) and item)
     return models or None
+
+
+def _is_true(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
