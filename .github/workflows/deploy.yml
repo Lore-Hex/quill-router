@@ -560,6 +560,7 @@ jobs:
           }
 
           check_url homepage https://trustedrouter.com/
+          check_url support https://trustedrouter.com/support
           check_url health https://trustedrouter.com/health
           check_url ready https://trustedrouter.com/ready
           check_url regions https://trustedrouter.com/v1/regions
@@ -603,7 +604,10 @@ jobs:
           uptime_trust = Path("/tmp/uptime_trust.body").read_text()
           uptime_release = json.loads(Path("/tmp/uptime_trust_release.body").read_text())
           canonical_release = json.loads(Path("/tmp/canonical_trust_release.body").read_text())
+          support_page = Path("/tmp/support.body").read_text()
 
+          assert "help@trustedrouter.com" in support_page
+          assert 'id="support-inquiry"' in support_page
           assert any(item["id"] == "us-central1" for item in regions), regions
           assert any(item["id"] == "europe-west4" for item in regions), regions
           assert "components" in status, status.keys()

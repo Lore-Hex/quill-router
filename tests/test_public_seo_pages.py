@@ -556,7 +556,10 @@ def test_public_privacy_terms_and_support_pages_are_distinct(client: TestClient)
     support = client.get("/support")
     assert support.status_code == 200
     assert "TrustedRouter support" in support.text
-    assert "github.com/Lore-Hex/LLM-advisor/issues" in support.text
+    assert "help@trustedrouter.com" in support.text
+    assert 'id="support-inquiry"' in support.text
+    assert 'fetch("/support/inquiry"' in support.text
+    assert "github.com/Lore-Hex/quill-router/issues" in support.text
     assert "Never send an API key" in support.text
     assert "status.trustedrouter.com" in support.text
 

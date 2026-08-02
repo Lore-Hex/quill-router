@@ -28,6 +28,7 @@ class EmailMessage:
     subject: str
     text_body: str
     html_body: str | None = None
+    reply_to: str | None = None
 
 
 class EmailService:
@@ -91,6 +92,8 @@ class EmailService:
                 "Body": body,
             },
         }
+        if message.reply_to:
+            kwargs["ReplyToAddresses"] = [message.reply_to]
         # The configuration set wires bounce + complaint events to our SNS
         # topic so the suppression list above stays current. Skip on missing
         # config set so local dev with a half-set-up SES doesn't 400.

@@ -305,6 +305,7 @@ ENV_VARS=(
   "TR_AWS_REGION=us-east-1" # SES region only; hosted compute is GCP-only.
   "TR_SES_FROM_EMAIL=noreply@trustedrouter.com"
   "TR_SES_FROM_NAME=TrustedRouter"
+  "TR_SUPPORT_EMAIL=help@trustedrouter.com"
   # /trustedos partner-inquiry form leads. Plain env (an address, not a
   # secret); without it the handler falls back to TR_SES_FROM_EMAIL, which
   # is send-only and effectively a black hole.

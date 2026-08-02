@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     legal_signatory_name: str = "Joseph Perla"
     legal_signatory_title: str = "CEO"
     security_contact_email: str = "security@trustedrouter.com"
+    support_email: str = "help@trustedrouter.com"
 
     enable_live_providers: bool = False
     local_keys_file: Path = Path("~/.quill_cloud_keys.private").expanduser()
