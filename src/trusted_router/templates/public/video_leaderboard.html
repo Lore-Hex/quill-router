@@ -38,7 +38,8 @@
       <div>
         <h2>Direct providers</h2>
         <p>Actual provider paths, not model publishers. A model offered through multiple direct
-          providers receives one row per provider.</p>
+          providers receives one row per provider. Configured routes appear before their first
+          completed measurement.</p>
       </div>
     </div>
     <div class="leaderboard-table-wrap">
@@ -52,7 +53,7 @@
             <td>{{ p.rank if p.rank is not none else '—' }}</td>
             <td><a href="/providers/{{ p.provider }}">{{ p.provider }}</a></td>
             <td>{{ p.model_count }}</td>
-            <td>{% if p.success_rate is not none %}{{ '%.2f'|format(p.success_rate * 100) }}%{% else %}—{% endif %}</td>
+            <td>{% if p.success_rate is not none %}{{ '%.2f'|format(p.success_rate * 100) }}%{% else %}Awaiting sample{% endif %}</td>
             <td>{% if p.p50_completion_seconds is not none %}{{ p.p50_completion_seconds }} s{% else %}—{% endif %}</td>
             <td>{% if p.p95_completion_seconds is not none %}{{ p.p95_completion_seconds }} s{% else %}—{% endif %}</td>
             <td>{% if p.p50_cost_per_second_usd is not none %}${{ p.p50_cost_per_second_usd }}{% else %}—{% endif %}</td>
@@ -89,7 +90,7 @@
             <td>{{ m.provider }}</td>
             <td>{{ m.input_modes|join(', ') if m.input_modes else '—' }}</td>
             <td>{% if m.audio_rate is none %}—{% elif m.audio_rate > 0 %}Yes{% else %}No{% endif %}</td>
-            <td>{% if m.success_rate is not none %}{{ '%.2f'|format(m.success_rate * 100) }}%{% else %}—{% endif %}</td>
+            <td>{% if m.success_rate is not none %}{{ '%.2f'|format(m.success_rate * 100) }}%{% else %}Awaiting sample{% endif %}</td>
             <td>{% if m.p50_completion_seconds is not none %}{{ m.p50_completion_seconds }} s{% else %}—{% endif %}</td>
             <td>{% if m.p95_completion_seconds is not none %}{{ m.p95_completion_seconds }} s{% else %}—{% endif %}</td>
             <td>{% if m.p50_generation_seconds_per_output_second is not none %}{{ m.p50_generation_seconds_per_output_second }} s{% else %}—{% endif %}</td>

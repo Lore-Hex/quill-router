@@ -906,6 +906,7 @@ async def video_generation_probe(
     provider: str = VIDEO_GENERATION_PROVIDER,
     duration_seconds: int = VIDEO_GENERATION_DURATION_SECONDS,
     resolution: str = VIDEO_GENERATION_RESOLUTION,
+    generate_audio: bool = False,
     poll_interval_seconds: float = 5.0,
     total_timeout_seconds: float = 300.0,
 ) -> SyntheticProbeSample:
@@ -921,7 +922,7 @@ async def video_generation_probe(
         "duration": duration_seconds,
         "resolution": resolution,
         "aspect_ratio": "16:9",
-        "generate_audio": False,
+        "generate_audio": generate_audio,
         "provider": {"only": [provider], "allow_fallbacks": False},
     }
     started = time.perf_counter()
@@ -937,7 +938,10 @@ async def video_generation_probe(
                     started=started,
                     status="down",
                     http_status=response.status_code,
-                    error_type="video_generation_http_error",
+                    error_type=_probe_response_error(
+                        response,
+                        operation="video_generation",
+                    ),
                     provider=provider,
                     model=model,
                 )
@@ -973,7 +977,10 @@ async def video_generation_probe(
                         started=started,
                         status="down",
                         http_status=status_response.status_code,
-                        error_type="video_poll_http_error",
+                        error_type=_probe_response_error(
+                            status_response,
+                            operation="video_poll",
+                        ),
                         provider=provider,
                         model=model,
                     )

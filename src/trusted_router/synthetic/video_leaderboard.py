@@ -91,6 +91,7 @@ def _aggregate_group(
         if audio_samples
         else None,
         "last_seen": max((sample.created_at for sample in samples), default=None),
+        "measurement_status": "measured" if samples else "awaiting_samples",
     }
 
 
@@ -98,10 +99,15 @@ def aggregate_video_leaderboard(
     samples: Iterable[ProviderBenchmarkSample],
     *,
     min_samples: int = 1,
+    configured_routes: Iterable[tuple[str, str]] = (),
 ) -> dict[str, Any]:
     rows = list(samples)
     by_model: dict[tuple[str, str], list[ProviderBenchmarkSample]] = defaultdict(list)
     by_provider: dict[str, list[ProviderBenchmarkSample]] = defaultdict(list)
+    configured = set(configured_routes)
+    for provider, model in configured:
+        by_model[(provider, model)]
+        by_provider[provider]
     for sample in rows:
         by_model[(sample.provider, sample.model)].append(sample)
         by_provider[sample.provider].append(sample)
@@ -113,16 +119,29 @@ def aggregate_video_leaderboard(
     providers = [
         {
             **_aggregate_group(provider=provider, model=None, samples=group),
-            "model_count": len({sample.model for sample in group}),
+            "model_count": len(
+                {
+                    model
+                    for route_provider, model in by_model
+                    if route_provider == provider
+                }
+            ),
         }
         for provider, group in by_provider.items()
     ]
 
-    def rank_key(row: dict[str, Any]) -> tuple[float, int, int, str]:
+    def rank_key(row: dict[str, Any]) -> tuple[int, float, int, int, str]:
+        awaiting_samples = int(int(row["sample_count"]) == 0)
         success_rate = float(row["success_rate"] or 0)
         completion = int(row["p50_completion_ms"] or 2**31 - 1)
         cost = int(row["p50_cost_per_second_microdollars"] or 2**31 - 1)
-        return (-success_rate, completion, cost, str(row.get("model") or row["provider"]))
+        return (
+            awaiting_samples,
+            -success_rate,
+            completion,
+            cost,
+            str(row.get("model") or row["provider"]),
+        )
 
     models.sort(key=rank_key)
     providers.sort(key=rank_key)

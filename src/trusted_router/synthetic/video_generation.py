@@ -23,6 +23,7 @@ class DailyVideoProfile:
     duration_seconds: int
     resolution: str
     expected_cost_microdollars: int
+    generate_audio: bool = False
 
 
 # One shortest-valid direct generation per UTC day. The order is deliberately
@@ -40,8 +41,9 @@ DAILY_VIDEO_PROFILES: tuple[DailyVideoProfile, ...] = (
         4,
         "720p",
         480_000,
+        True,
     ),
-    DailyVideoProfile("minimax/hailuo-3", "minimax", 4, "2K", 672_000),
+    DailyVideoProfile("minimax/hailuo-3", "minimax", 4, "2K", 672_000, True),
 )
 
 
@@ -75,6 +77,12 @@ async def run() -> int:
         ),
     )
     resolution = os.environ.get("TR_SYNTHETIC_VIDEO_RESOLUTION", profile.resolution)
+    audio_override = os.environ.get("TR_SYNTHETIC_VIDEO_GENERATE_AUDIO")
+    generate_audio = (
+        profile.generate_audio
+        if audio_override is None
+        else audio_override.strip().casefold() in {"1", "true", "yes", "on"}
+    )
     timeout_seconds = float(os.environ.get("TR_SYNTHETIC_VIDEO_TIMEOUT_SECONDS", "900"))
     poll_interval_seconds = max(
         0.0,
@@ -106,6 +114,7 @@ async def run() -> int:
             provider=provider,
             duration_seconds=duration_seconds,
             resolution=resolution,
+            generate_audio=generate_audio,
             poll_interval_seconds=poll_interval_seconds,
             total_timeout_seconds=timeout_seconds,
         )

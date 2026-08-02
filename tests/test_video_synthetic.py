@@ -46,6 +46,14 @@ def test_daily_video_profiles_rotate_all_direct_providers_at_minimum_cost() -> N
         2_499_276
     )
     assert max(profile.expected_cost_microdollars for profile in DAILY_VIDEO_PROFILES) <= 672_000
+    profiles = {profile.provider: profile for profile in DAILY_VIDEO_PROFILES}
+    assert profiles["minimax"].generate_audio is True
+    assert profiles["google-ai-studio"].generate_audio is True
+    assert all(
+        not profile.generate_audio
+        for provider, profile in profiles.items()
+        if provider not in {"minimax", "google-ai-studio"}
+    )
 
 
 @pytest.mark.asyncio
@@ -143,7 +151,7 @@ async def test_video_probe_failure_never_retries_generation_or_copies_error_body
 
     assert create_calls == 1
     assert sample.status == "down"
-    assert sample.error_type == "video_generation_http_error"
+    assert sample.error_type == "video_generation_http_502"
     assert private_error not in json.dumps(sample.public_dict())
 
 
@@ -191,6 +199,7 @@ async def test_daily_video_job_ingests_one_metadata_only_sample(
         if request.method == "POST" and request.url.path == "/v1/videos":
             create_calls += 1
             assert request.headers["idempotency-key"].startswith("trustedrouter-daily-video-")
+            assert json.loads(request.content)["generate_audio"] is True
             return httpx.Response(
                 200,
                 json={
@@ -230,6 +239,7 @@ async def test_daily_video_job_ingests_one_metadata_only_sample(
             VIDEO_GENERATION_DURATION_SECONDS,
             VIDEO_GENERATION_RESOLUTION,
             60_000,
+            True,
         ),
     )
     monkeypatch.setattr(video_job.httpx, "AsyncClient", client_factory)

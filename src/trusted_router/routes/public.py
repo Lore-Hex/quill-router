@@ -37,6 +37,7 @@ from trusted_router.benchmark_samples import (
 from trusted_router.catalog import (
     META_MODEL_IDS,
     MODELS,
+    endpoints_for_model,
     provider_to_openrouter_shape,
     providers_for_display,
 )
@@ -1694,7 +1695,16 @@ def _video_leaderboard_snapshot(settings: Settings) -> dict[str, Any]:
         limit=VIDEO_LEADERBOARD_SAMPLE_LIMIT,
         recent_minutes=VIDEO_LEADERBOARD_RECENT_WINDOW_MINUTES,
     )
-    payload = aggregate_video_leaderboard(samples)
+    configured_routes = {
+        (endpoint.provider, model.id)
+        for model in MODELS.values()
+        if model.supports_video
+        for endpoint in endpoints_for_model(model.id)
+    }
+    payload = aggregate_video_leaderboard(
+        samples,
+        configured_routes=configured_routes,
+    )
     payload["generated_at"] = utcnow().isoformat().replace("+00:00", "Z")
     payload["sample_window_count"] = len(samples)
     payload["sample_limit"] = VIDEO_LEADERBOARD_SAMPLE_LIMIT
