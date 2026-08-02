@@ -29,6 +29,7 @@ from trusted_router.security import (
     new_key_id,
     verify_api_key,
 )
+from trusted_router.spend_windows import KeyWindowLimitExceeded, window_floors
 from trusted_router.storage_errors import StoreConflict, StoreUnavailable
 from trusted_router.storage_gcp_codec import (
     json_body,
@@ -65,6 +66,7 @@ from trusted_router.storage_models import (
     VideoJob,
     WalletChallenge,
     Workspace,
+    _is_byok,
     _is_expired,
     iso_now,
     normalize_provider_access_role,
@@ -1255,7 +1257,96 @@ class PostgresStore:
         *,
         usage_type: UsageType | str,
     ) -> None:
-        self._not_implemented("reserve_key_limit")
+        """Hold `amount` against this key's caps, or raise.
+
+        Mirrors InMemoryApiKeys.reserve_limit (storage_keys.py), which is the
+        semantic reference the conformance suite pins:
+
+          * BYOK spend on a key that excludes BYOK is a NO-OP — lifetime cap
+            and windows both.
+          * Window limits are checked FIRST and independently of the lifetime
+            cap, raising KeyWindowLimitExceeded(window) so the gateway can
+            answer 429 with a Retry-After derived from that window's reset.
+            In-flight `reserved` is deliberately not counted toward windows,
+            matching the typed authorize check.
+          * A key with no lifetime limit is uncapped: no-op after windows.
+          * Otherwise reserve conditionally; 0 rows updated means the
+            predicate failed, i.e. insufficient headroom.
+
+        The conditional UPDATE is a single statement so two concurrent
+        reserves cannot both pass the predicate. On DSQL a contended key is a
+        hot row and loses the race with a 40001 abort, which _run_transaction
+        retries.
+        """
+        window_floor_map = window_floors(utcnow())
+
+        def reserve(conn: Any) -> None:
+            row = conn.execute(
+                "SELECT limit_micro, usage, byok_usage, reserved, include_byok,"
+                " day_limit_micro, week_limit_micro, month_limit_micro,"
+                " day_usage, day_start, week_usage, week_start, month_usage, month_start"
+                " FROM tr_key_limit WHERE key_hash = %s AND shard = 0",
+                (key_hash,),
+                prepare=False,
+            ).fetchone()
+            if row is None:
+                # No typed row: nothing to enforce here. The gateway's own
+                # KEY_MISSING handling covers the typed-authorize path.
+                return
+            (
+                limit_micro,
+                _usage,
+                _byok_usage,
+                _reserved,
+                include_byok,
+                day_limit,
+                week_limit,
+                month_limit,
+                day_usage,
+                day_start,
+                week_usage,
+                week_start,
+                month_usage,
+                month_start,
+            ) = row
+
+            if _is_byok(usage_type) and not include_byok:
+                return
+
+            # Lazy windows: a NULL or stale *_start means the window has not
+            # started in this period, so its usage reads as ZERO. No reset job
+            # exists (or could silently stop and leave keys stuck over limit).
+            windows = (
+                ("daily", day_limit, day_usage, day_start),
+                ("weekly", week_limit, week_usage, week_start),
+                ("monthly", month_limit, month_usage, month_start),
+            )
+            for name, limit, used, started in windows:
+                if limit is None:
+                    continue
+                floor = window_floor_map[name]
+                current = 0 if started is None or _as_utc(started) < floor else int(used or 0)
+                if current + amount_microdollars > int(limit):
+                    raise KeyWindowLimitExceeded(name)
+
+            if limit_micro is None:
+                return
+
+            updated = conn.execute(
+                "UPDATE tr_key_limit"
+                " SET reserved = reserved + %s, updated_at = CURRENT_TIMESTAMP"
+                " WHERE key_hash = %s AND shard = 0"
+                " AND limit_micro IS NOT NULL"
+                " AND limit_micro - usage"
+                "     - CASE WHEN include_byok THEN byok_usage ELSE 0 END"
+                "     - reserved >= %s",
+                (amount_microdollars, key_hash, amount_microdollars),
+                prepare=False,
+            ).rowcount
+            if updated == 0:
+                raise ValueError("key limit exceeded")
+
+        self._run_transaction(reserve)
 
     def settle_key_limit(
         self,
@@ -1265,7 +1356,21 @@ class PostgresStore:
         *,
         usage_type: UsageType | str,
     ) -> None:
-        self._not_implemented("settle_key_limit")
+        """Release the hold and roll the window counters by the ACTUAL cost.
+
+        The lifetime `usage` column is booked by add_generation, not here —
+        same split as InMemory, where settle_limit only releases the hold and
+        add_usage books the spend. The window counters ARE rolled here because
+        nothing else does it, using the same lazy floor as reserve: a window
+        whose start is missing or stale restarts at this settlement rather
+        than accumulating across periods.
+        """
+        self._release_key_hold(
+            key_hash,
+            reserved_microdollars,
+            usage_type=usage_type,
+            window_amount=max(0, int(actual_microdollars)),
+        )
 
     def refund_key_limit(
         self,
@@ -1274,7 +1379,73 @@ class PostgresStore:
         *,
         usage_type: UsageType | str,
     ) -> None:
-        self._not_implemented("refund_key_limit")
+        """Release the hold without booking any spend (the request failed)."""
+        self._release_key_hold(
+            key_hash,
+            reserved_microdollars,
+            usage_type=usage_type,
+            window_amount=0,
+        )
+
+    def _release_key_hold(
+        self,
+        key_hash: str,
+        reserved_microdollars: int,
+        *,
+        usage_type: UsageType | str,
+        window_amount: int,
+    ) -> None:
+        floors = window_floors(utcnow())
+
+        def release(conn: Any) -> None:
+            row = conn.execute(
+                "SELECT limit_micro, include_byok FROM tr_key_limit"
+                " WHERE key_hash = %s AND shard = 0",
+                (key_hash,),
+                prepare=False,
+            ).fetchone()
+            if row is None:
+                return
+            limit_micro, include_byok = row
+            if _is_byok(usage_type) and not include_byok:
+                return
+            # GREATEST(...) floors the release at zero so a duplicate settle
+            # cannot drive `reserved` negative and hand the key free headroom.
+            # Window counters roll in the same statement so a settle is one
+            # round trip; each window restarts when its start is NULL or older
+            # than the current floor.
+            conn.execute(
+                "UPDATE tr_key_limit SET"
+                "   reserved = GREATEST(reserved - %s, 0)"
+                " , day_usage = CASE WHEN day_start IS NULL OR day_start < %s"
+                "       THEN %s ELSE COALESCE(day_usage, 0) + %s END"
+                " , day_start = CASE WHEN day_start IS NULL OR day_start < %s"
+                "       THEN %s ELSE day_start END"
+                " , week_usage = CASE WHEN week_start IS NULL OR week_start < %s"
+                "       THEN %s ELSE COALESCE(week_usage, 0) + %s END"
+                " , week_start = CASE WHEN week_start IS NULL OR week_start < %s"
+                "       THEN %s ELSE week_start END"
+                " , month_usage = CASE WHEN month_start IS NULL OR month_start < %s"
+                "       THEN %s ELSE COALESCE(month_usage, 0) + %s END"
+                " , month_start = CASE WHEN month_start IS NULL OR month_start < %s"
+                "       THEN %s ELSE month_start END"
+                " , updated_at = CURRENT_TIMESTAMP"
+                " WHERE key_hash = %s AND shard = 0",
+                (
+                    reserved_microdollars,
+                    floors["daily"], window_amount, window_amount,
+                    floors["daily"], floors["daily"],
+                    floors["weekly"], window_amount, window_amount,
+                    floors["weekly"], floors["weekly"],
+                    floors["monthly"], window_amount, window_amount,
+                    floors["monthly"], floors["monthly"],
+                    key_hash,
+                ),
+                prepare=False,
+            )
+            _ = limit_micro  # read for the BYOK/uncapped guard above only.
+
+        self._run_transaction(release)
 
     def update_key(
         self,
@@ -2053,3 +2224,15 @@ def _rollup_retention_cutoff(now: dt.datetime) -> dt.datetime:
     cutoff_month = current.year * 12 + current.month - 1 - ROLLUP_RETENTION_MONTHS + 1
     year, zero_based_month = divmod(cutoff_month, 12)
     return dt.datetime(year, zero_based_month + 1, 1, tzinfo=dt.UTC)
+
+
+def _as_utc(value: dt.datetime) -> dt.datetime:
+    """Normalize a DB timestamp for comparison against a tz-aware floor.
+
+    psycopg returns TIMESTAMPTZ as tz-aware, but a column written before the
+    type was settled (or a backend returning naive values) would raise
+    "can't compare offset-naive and offset-aware datetimes" mid-reserve —
+    turning a limit check into a 500. Assume UTC for naive values, which is
+    what every writer here stores.
+    """
+    return value if value.tzinfo is not None else value.replace(tzinfo=dt.UTC)
