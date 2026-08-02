@@ -8,6 +8,13 @@ Type=simple
 User=tr-clickhouse-ingest
 Group=tr-clickhouse-ingest
 WorkingDirectory=/opt/tr-clickhouse
+# The venv MUST be built on Python >= 3.11. trusted_router.types imports
+# StrEnum, which is 3.11+. The AWS-EU ClickHouse node runs Ubuntu 22.04 whose
+# system python is 3.10, so `python3 -m venv` there produces an interpreter
+# that imports this package fine until it reaches that one line and dies with
+# ImportError. Provision 3.12 explicitly (deadsnakes on 22.04) and build the
+# venv from it; verified working with 3.12.13 on the live node.
+#
 # Supplies TR_POSTGRES_DSN, TR_POSTGRES_IAM_AUTH=aws-dsql and CH_PASSWORD, plus
 # TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER / _DATABASE. Those two default to
 # "tr"/"tr" for the GCP node and MUST be set to "default"/"default" on the
