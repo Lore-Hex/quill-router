@@ -1048,3 +1048,31 @@ def test_internal_rate_limit_precedence_matches_route_auth(
         json={"api_key_lookup_hash": key.lookup_hash},
     )
     assert mixed.status_code == 200, mixed.text
+
+
+def test_in_memory_rate_limit_bucket_cardinality_is_capped() -> None:
+    """Attacker-fabricated identities (rotated tokens, spoofed XFF) must not
+    grow the process map without bound (review finding on #400, round 3).
+    At the cap, new subjects fold into a shared per-namespace overflow bucket:
+    memory stays bounded and fabricated identities throttle collectively."""
+    import threading as _threading
+
+    from trusted_router.storage_rate_limits import InMemoryRateLimits
+
+    limits = InMemoryRateLimits(lock=_threading.RLock(), max_buckets=50)
+    for n in range(200):
+        hit = limits.hit(
+            namespace="internal",
+            subject=f"fabricated-{n}",
+            limit=3,
+            window_seconds=60,
+        )
+    assert len(limits.buckets) <= 51  # cap + at most the one overflow bucket
+    # Identities past the cap share the overflow bucket, so a rotation attack
+    # is throttled collectively instead of resetting per identity.
+    assert hit.allowed is False
+    # Distinct subjects below the cap keep their own buckets untouched.
+    early = limits.hit(
+        namespace="internal", subject="fabricated-1", limit=3, window_seconds=60
+    )
+    assert early.allowed is True
