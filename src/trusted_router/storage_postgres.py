@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import hashlib
 import json
 import re
 import secrets
@@ -169,6 +170,9 @@ def _aws_dsql_token_provider(hostname: str, region: str) -> Callable[[], str]:
     return generate_token
 
 
+_GATEWAY_AUTHORIZATION_KIND = "gateway_authorization"
+_GATEWAY_IDEMPOTENCY_KIND = "gateway_authorization_idempotency"
+_GATEWAY_FINALIZATION_KIND = "gateway_authorization_finalization"
 _RESERVATION_KIND = "reservation"
 _RESERVATION_IDEMPOTENCY_KIND = "reservation_idempotency"
 _RESERVATION_FINALIZATION_KIND = "reservation_finalization"
@@ -1395,57 +1399,78 @@ class PostgresStore:
         usage_type: UsageType | str,
         window_amount: int,
     ) -> None:
-        floors = window_floors(utcnow())
-
-        def release(conn: Any) -> None:
-            row = conn.execute(
-                "SELECT limit_micro, include_byok FROM tr_key_limit"
-                " WHERE key_hash = %s AND shard = 0",
-                (key_hash,),
-                prepare=False,
-            ).fetchone()
-            if row is None:
-                return
-            limit_micro, include_byok = row
-            if _is_byok(usage_type) and not include_byok:
-                return
-            # GREATEST(...) floors the release at zero so a duplicate settle
-            # cannot drive `reserved` negative and hand the key free headroom.
-            # Window counters roll in the same statement so a settle is one
-            # round trip; each window restarts when its start is NULL or older
-            # than the current floor.
-            conn.execute(
-                "UPDATE tr_key_limit SET"
-                "   reserved = GREATEST(reserved - %s, 0)"
-                " , day_usage = CASE WHEN day_start IS NULL OR day_start < %s"
-                "       THEN %s ELSE COALESCE(day_usage, 0) + %s END"
-                " , day_start = CASE WHEN day_start IS NULL OR day_start < %s"
-                "       THEN %s ELSE day_start END"
-                " , week_usage = CASE WHEN week_start IS NULL OR week_start < %s"
-                "       THEN %s ELSE COALESCE(week_usage, 0) + %s END"
-                " , week_start = CASE WHEN week_start IS NULL OR week_start < %s"
-                "       THEN %s ELSE week_start END"
-                " , month_usage = CASE WHEN month_start IS NULL OR month_start < %s"
-                "       THEN %s ELSE COALESCE(month_usage, 0) + %s END"
-                " , month_start = CASE WHEN month_start IS NULL OR month_start < %s"
-                "       THEN %s ELSE month_start END"
-                " , updated_at = CURRENT_TIMESTAMP"
-                " WHERE key_hash = %s AND shard = 0",
-                (
-                    reserved_microdollars,
-                    floors["daily"], window_amount, window_amount,
-                    floors["daily"], floors["daily"],
-                    floors["weekly"], window_amount, window_amount,
-                    floors["weekly"], floors["weekly"],
-                    floors["monthly"], window_amount, window_amount,
-                    floors["monthly"], floors["monthly"],
-                    key_hash,
-                ),
-                prepare=False,
+        self._run_transaction(
+            lambda conn: self._release_key_hold_tx(
+                conn,
+                key_hash,
+                reserved_microdollars,
+                usage_type=usage_type,
+                window_amount=window_amount,
             )
-            _ = limit_micro  # read for the BYOK/uncapped guard above only.
+        )
 
-        self._run_transaction(release)
+    def _release_key_hold_tx(
+        self,
+        conn: Any,
+        key_hash: str,
+        reserved_microdollars: int,
+        *,
+        usage_type: UsageType | str,
+        window_amount: int,
+    ) -> None:
+        """Release + window-roll inside a CALLER's transaction.
+
+        finalize_gateway_authorization must do this in the same transaction
+        as the credit release, or a crash between them leaves the key hold
+        stranded while the money moved.
+        """
+        floors = window_floors(utcnow())
+        row = conn.execute(
+            "SELECT limit_micro, include_byok FROM tr_key_limit"
+            " WHERE key_hash = %s AND shard = 0",
+            (key_hash,),
+            prepare=False,
+        ).fetchone()
+        if row is None:
+            return
+        limit_micro, include_byok = row
+        if _is_byok(usage_type) and not include_byok:
+            return
+        # GREATEST(...) floors the release at zero so a duplicate settle
+        # cannot drive `reserved` negative and hand the key free headroom.
+        # Window counters roll in the same statement so a settle is one
+        # round trip; each window restarts when its start is NULL or older
+        # than the current floor.
+        conn.execute(
+            "UPDATE tr_key_limit SET"
+            "   reserved = GREATEST(reserved - %s, 0)"
+            " , day_usage = CASE WHEN day_start IS NULL OR day_start < %s"
+            "       THEN %s ELSE COALESCE(day_usage, 0) + %s END"
+            " , day_start = CASE WHEN day_start IS NULL OR day_start < %s"
+            "       THEN %s ELSE day_start END"
+            " , week_usage = CASE WHEN week_start IS NULL OR week_start < %s"
+            "       THEN %s ELSE COALESCE(week_usage, 0) + %s END"
+            " , week_start = CASE WHEN week_start IS NULL OR week_start < %s"
+            "       THEN %s ELSE week_start END"
+            " , month_usage = CASE WHEN month_start IS NULL OR month_start < %s"
+            "       THEN %s ELSE COALESCE(month_usage, 0) + %s END"
+            " , month_start = CASE WHEN month_start IS NULL OR month_start < %s"
+            "       THEN %s ELSE month_start END"
+            " , updated_at = CURRENT_TIMESTAMP"
+            " WHERE key_hash = %s AND shard = 0",
+            (
+                reserved_microdollars,
+                floors["daily"], window_amount, window_amount,
+                floors["daily"], floors["daily"],
+                floors["weekly"], window_amount, window_amount,
+                floors["weekly"], floors["weekly"],
+                floors["monthly"], window_amount, window_amount,
+                floors["monthly"], floors["monthly"],
+                key_hash,
+            ),
+            prepare=False,
+        )
+        _ = limit_micro  # read for the BYOK/uncapped guard above only.
 
     def update_key(
         self,
@@ -1878,10 +1903,79 @@ class PostgresStore:
         custom_model_revision: int | None = None,
         additional_cost_reservation_microdollars: int = 0,
     ) -> GatewayAuthorization:
-        self._not_implemented("create_gateway_authorization")
+        """Record an authorization, deduplicating on the idempotency key.
+
+        The idempotency index is a SEPARATE entity inserted with
+        insert-once semantics, so two concurrent identical requests cannot
+        both create an authorization: the loser reads the winner's row and
+        returns it. That matters because an authorization holds a credit
+        reservation — duplicating one double-holds the customer's money.
+        """
+        authorization = GatewayAuthorization(
+            id=f"gwauth_{uuid.uuid4().hex}",
+            workspace_id=workspace_id,
+            key_hash=key_hash,
+            model_id=model_id,
+            provider=provider,
+            usage_type=cast(Any, usage_type),
+            estimated_microdollars=estimated_microdollars,
+            credit_reservation_id=credit_reservation_id,
+            requested_model_id=requested_model_id,
+            candidate_model_ids=list(candidate_model_ids or []),
+            region=region,
+            endpoint_id=endpoint_id,
+            candidate_endpoint_ids=list(candidate_endpoint_ids or []),
+            idempotency_key=idempotency_key,
+            tags=dict(tags or {}),
+            idempotency_fingerprint=idempotency_fingerprint,
+            custom_model_id=custom_model_id,
+            custom_model_revision=custom_model_revision,
+            additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
+        )
+
+        def create(conn: Any) -> GatewayAuthorization:
+            if idempotency_key:
+                index_id = _gateway_idempotency_id(workspace_id, key_hash, idempotency_key)
+                won = self._insert_entity_once_tx(
+                    conn,
+                    _GATEWAY_IDEMPOTENCY_KIND,
+                    index_id,
+                    {"authorization_id": authorization.id},
+                )
+                if not won:
+                    pointer = self._read_entity_tx(
+                        conn, _GATEWAY_IDEMPOTENCY_KIND, index_id, dict
+                    )
+                    existing_id = str((pointer or {}).get("authorization_id") or "")
+                    existing = (
+                        self._read_entity_tx(
+                            conn, _GATEWAY_AUTHORIZATION_KIND, existing_id, GatewayAuthorization
+                        )
+                        if existing_id
+                        else None
+                    )
+                    if existing is not None:
+                        return existing
+                    # Index row without its authorization: a create that died
+                    # between the two writes. Fall through and take ownership
+                    # rather than failing the request forever.
+                    self._write_entity_tx(
+                        conn,
+                        _GATEWAY_IDEMPOTENCY_KIND,
+                        index_id,
+                        {"authorization_id": authorization.id},
+                    )
+            self._write_entity_tx(
+                conn, _GATEWAY_AUTHORIZATION_KIND, authorization.id, authorization
+            )
+            return authorization
+
+        return self._run_transaction(create)
 
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None:
-        self._not_implemented("get_gateway_authorization")
+        return self._read_entity(
+            _GATEWAY_AUTHORIZATION_KIND, authorization_id, GatewayAuthorization
+        )
 
     def get_gateway_authorization_by_idempotency_key(
         self,
@@ -1889,7 +1983,15 @@ class PostgresStore:
         key_hash: str,
         idempotency_key: str,
     ) -> GatewayAuthorization | None:
-        self._not_implemented("get_gateway_authorization_by_idempotency_key")
+        pointer = self._read_entity(
+            _GATEWAY_IDEMPOTENCY_KIND,
+            _gateway_idempotency_id(workspace_id, key_hash, idempotency_key),
+            dict,
+        )
+        authorization_id = str((pointer or {}).get("authorization_id") or "")
+        if not authorization_id:
+            return None
+        return self.get_gateway_authorization(authorization_id)
 
     def mark_gateway_authorization_settled(self, authorization_id: str) -> None:
         self._not_implemented("mark_gateway_authorization_settled")
@@ -1903,7 +2005,109 @@ class PostgresStore:
         selected_usage_type: UsageType | str,
         generation: Generation | None = None,
     ) -> bool:
-        self._not_implemented("finalize_gateway_authorization")
+        """Settle a gateway authorization exactly once, in ONE transaction.
+
+        Mirrors the Spanner/InMemory contract: release the credit hold,
+        release the key-limit hold, book usage, and mark the authorization
+        settled together. Returns True when this call did the work, False
+        when it was already finalized.
+
+        Exactly-once comes from an insert-once finalization marker keyed by
+        authorization id, the same primitive the reservation path uses. A
+        settle that is retried after a timeout MUST NOT release the hold
+        twice — doing so hands the customer free headroom and corrupts the
+        balance, which is the one failure mode money code cannot have.
+        """
+
+        def finalize(conn: Any) -> bool:
+            authorization = self._read_entity_tx(
+                conn,
+                _GATEWAY_AUTHORIZATION_KIND,
+                authorization_id,
+                GatewayAuthorization,
+            )
+            if authorization is None:
+                return False
+
+            won = self._insert_entity_once_tx(
+                conn,
+                _GATEWAY_FINALIZATION_KIND,
+                authorization_id,
+                {
+                    "success": success,
+                    "actual_microdollars": actual_microdollars,
+                },
+            )
+            if not won:
+                # Already finalized by a concurrent or earlier call.
+                return False
+
+            booked = max(0, int(actual_microdollars)) if success else 0
+
+            # 1. Credit hold: release the reservation, book actual spend.
+            if authorization.credit_reservation_id:
+                reservation = self._read_entity_tx(
+                    conn, _RESERVATION_KIND, authorization.credit_reservation_id, Reservation
+                )
+                if reservation is not None:
+                    conn.execute(
+                        "UPDATE tr_credit_balance SET"
+                        "   reserved = GREATEST(reserved - %s, 0)"
+                        " , total_usage = total_usage + %s"
+                        " , updated_at = CURRENT_TIMESTAMP"
+                        " WHERE workspace_id = %s AND shard = 0",
+                        (
+                            reservation.amount_microdollars,
+                            booked,
+                            authorization.workspace_id,
+                        ),
+                        prepare=False,
+                    )
+                    self._insert_entity_once_tx(
+                        conn,
+                        _RESERVATION_FINALIZATION_KIND,
+                        authorization.credit_reservation_id,
+                        {
+                            "actual_microdollars": booked,
+                            "operation": "gateway_finalize",
+                        },
+                    )
+
+            # 2. Key-limit hold: release, and roll the windows by actual spend.
+            #    Reuses the same lazy-window rules as settle_key_limit.
+            self._release_key_hold_tx(
+                conn,
+                authorization.key_hash,
+                authorization.estimated_microdollars,
+                usage_type=selected_usage_type,
+                window_amount=booked,
+            )
+
+            # 3. Lifetime key usage. settle_key_limit deliberately does NOT
+            #    book this (add_generation owns it on other backends); here
+            #    the gateway finalize is that owner.
+            if booked:
+                column = "byok_usage" if _is_byok(selected_usage_type) else "usage"
+                conn.execute(
+                    f"UPDATE tr_key_limit SET {column} = {column} + %s"  # noqa: S608
+                    " , updated_at = CURRENT_TIMESTAMP"
+                    " WHERE key_hash = %s AND shard = 0",
+                    (booked, authorization.key_hash),
+                    prepare=False,
+                )
+
+            # 4. Generation metadata, when the caller supplied one.
+            if generation is not None:
+                self._write_entity_tx(conn, "generation", generation.id, generation)
+
+            # 5. Mark settled.
+            authorization.settled = True
+            self._write_entity_tx(
+                conn, _GATEWAY_AUTHORIZATION_KIND, authorization_id, authorization
+            )
+            return True
+
+        return self._run_transaction(finalize)
 
     # Generations + activity -------------------------------------------------
 
@@ -2236,3 +2440,17 @@ def _as_utc(value: dt.datetime) -> dt.datetime:
     what every writer here stores.
     """
     return value if value.tzinfo is not None else value.replace(tzinfo=dt.UTC)
+
+
+def _gateway_idempotency_id(workspace_id: str, key_hash: str, idempotency_key: str) -> str:
+    """Stable id for the gateway idempotency index entity.
+
+    Hashed rather than concatenated so an idempotency key containing the
+    separator cannot collide with a different (workspace, key) pair — the
+    consequence of a collision is one customer's authorization being handed
+    to another, so this is not a stylistic choice.
+    """
+    digest = hashlib.sha256(
+        b"\x00".join(x.encode("utf-8") for x in (workspace_id, key_hash, idempotency_key))
+    ).hexdigest()
+    return f"gwidem_{digest}"
