@@ -97,7 +97,18 @@ def _spanner_emulator_store() -> Store:
 
 
 def _postgres_store() -> Store:
-    """A PostgresStore pointed at the conformance database."""
+    """A PostgresStore pointed at the conformance database.
+
+    Honours the SAME IAM-auth switches production uses
+    (TR_POSTGRES_IAM_AUTH / TR_POSTGRES_IAM_REGION). Without them this
+    harness could only ever reach a password-authenticated Postgres, so
+    Aurora DSQL — the backend the EU deployment actually runs on — was
+    unreachable and every DSQL run died in the fixture with
+    `fe_sendauth: no password supplied`, before exercising a single
+    behaviour. A conformance suite that cannot connect to the real
+    backend proves nothing about it, which is exactly how "Postgres-wire
+    compatible" hid three DSQL incompatibilities previously.
+    """
     dsn = os.environ.get("TR_CONFORMANCE_POSTGRES_DSN")
     if not dsn:
         pytest.skip(
@@ -106,7 +117,11 @@ def _postgres_store() -> Store:
         )
     from trusted_router.storage_postgres import PostgresStore
 
-    store = PostgresStore(dsn)
+    store = PostgresStore(
+        dsn,
+        postgres_iam_auth=os.environ.get("TR_POSTGRES_IAM_AUTH", ""),
+        postgres_iam_region=os.environ.get("TR_POSTGRES_IAM_REGION", ""),
+    )
     store.apply_schema()
     return store
 
