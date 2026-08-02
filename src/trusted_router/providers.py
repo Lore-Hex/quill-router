@@ -91,6 +91,7 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
         ("NEUROMETRIC_API_KEY",),
         "https://wharf.neurometric.ai/v1",
     ),
+    "engy": (("ENGY_API_KEY",), "https://api.engy.ai/v1"),
     # 0G Private Computer. TeeTLS only attests the router; forcing private
     # ensures inference itself uses a TeeML confidential-compute route.
     "zero-g": (("ZERO_G_API_KEY",), "https://router-api.0g.ai/v1"),

@@ -811,6 +811,24 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://www.neurometric.ai/privacy",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    "engy": Provider(
+        slug="engy",
+        name="Engy",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=True,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Engy states that prompts, outputs, tool arguments, images, and "
+            "embeddings are not stored or used for training. It retains "
+            "request metadata such as model, token counts, cost, and latency. "
+            "Engy's verified-inference sampling is not a user-verifiable TEE "
+            "attestation, so this route is ZDR but not confidential or E2EE."
+        ),
+        provider_policy_url="https://engy.ai/privacy",
+    ),
     "zero-g": Provider(
         slug="zero-g",
         name="0G Private Computer",
@@ -1064,6 +1082,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "atlas-cloud",
         "streamlake",
         "neurometric",
+        "engy",
         "zero-g",
         "nebius",
         "minimax",

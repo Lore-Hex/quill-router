@@ -107,6 +107,15 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "digitalocean"
   },
+  "engy": {
+    "card_version": 1,
+    "model_count": 2,
+    "name": "Engy",
+    "privacy": "Zero retention",
+    "route_count": 2,
+    "route_mode": "Prepaid",
+    "slug": "engy"
+  },
   "fireworks": {
     "card_version": 1,
     "model_count": 11,

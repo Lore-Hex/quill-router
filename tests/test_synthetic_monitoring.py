@@ -2622,6 +2622,8 @@ def test_synthetic_deploy_targets_public_api_domain() -> None:
     deploy_script = Path(__file__).resolve().parents[1] / "scripts/deploy/synthetic.sh"
     body = deploy_script.read_text()
 
+    assert '"TR_ENVIRONMENT=worker"' in body
+    assert '"TR_ENVIRONMENT=production"' not in body
     assert "TR_API_BASE_URL=https://api.trustedrouter.com/v1" in body
     assert "TR_API_BASE_URL=https://api.quillrouter.com/v1" not in body
     assert 'throughput_job_name="trusted-router-throughput-${throughput_region}"' in body
