@@ -20,8 +20,10 @@ from trusted_router.storage_models import FUTURE_SAMPLE_SKEW_SECONDS, SyntheticP
 from trusted_router.synthetic.rollups import raw_sample_is_within_retention
 from trusted_router.synthetic.status import (
     CURRENT_SAMPLE_TTL_SECONDS,
+    SILENT_PROBE_TTL_SECONDS,
     _current_status,
     _monitor_freshness,
+    _slo_current,
 )
 
 NOW = dt.datetime(2026, 8, 2, 12, 0, 0, tzinfo=dt.UTC)
@@ -185,6 +187,54 @@ class TestSilentProbeDisappearance:
         assert by_probe["attestation_nonce"] == "down"
         assert by_probe["tls_health"] == "up"
         assert current["overall_status"] == "down"
+
+    def test_one_late_monitor_cycle_is_degraded_not_down(self) -> None:
+        """Five-minute workers can finish a few seconds late.
+
+        A normal 5m07 cadence must not trigger the deploy watchdog. It remains
+        visible as degraded until a second cycle is missed.
+        """
+        samples = self._pair(
+            fresh_age=30,
+            stale_age=CURRENT_SAMPLE_TTL_SECONDS + 7,
+        )
+        current = _current_status(samples, now=NOW)
+        by_probe = {c["probe_type"]: c["effective_status"] for c in current["checks"]}
+        assert by_probe["attestation_nonce"] == "degraded"
+        assert by_probe["tls_health"] == "up"
+        assert current["overall_status"] == "degraded"
+
+    def test_control_plane_region_waits_for_two_missed_cycles(self) -> None:
+        fresh = SyntheticProbeSample(
+            id="eu-fresh",
+            probe_type="control_plane_health",
+            target="us-central1",
+            target_url="https://trusted-router.example/health",
+            monitor_region="europe-west4",
+            target_region="us-central1",
+            status="up",
+            created_at=(NOW - dt.timedelta(seconds=30)).isoformat().replace("+00:00", "Z"),
+        )
+        jittered = SyntheticProbeSample(
+            id="us-jittered",
+            probe_type="control_plane_health",
+            target="us-central1",
+            target_url="https://trusted-router.example/health",
+            monitor_region="us-central1",
+            target_region="us-central1",
+            status="up",
+            created_at=(NOW - dt.timedelta(seconds=CURRENT_SAMPLE_TTL_SECONDS + 7))
+            .isoformat()
+            .replace("+00:00", "Z"),
+        )
+
+        current = _slo_current([fresh, jittered], now=NOW)
+
+        assert current["by_region"]["us-central1"]["status"] == "degraded"
+        assert current["by_region"]["us-central1"]["status"] != "down"
+
+    def test_silent_probe_threshold_covers_two_monitor_cycles(self) -> None:
+        assert SILENT_PROBE_TTL_SECONDS > 2 * CURRENT_SAMPLE_TTL_SECONDS
 
     def test_whole_monitor_stale_stays_unknown_not_false_outage(self) -> None:
         """Cold start / monitor down: every probe stale. monitor_freshness

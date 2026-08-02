@@ -25,6 +25,11 @@ from trusted_router.synthetic.components import (
 from trusted_router.synthetic.rollups import merge_rollups, new_rollup_for_sample
 
 CURRENT_SAMPLE_TTL_SECONDS = 5 * 60
+# Regional monitor jobs run on a five-minute cadence. Treating a sample as
+# failed at exactly one cadence boundary makes normal scheduler jitter look
+# like an outage. One missed/late cycle is degraded; only two missed cycles
+# plus a small scheduling allowance are a silent-probe failure.
+SILENT_PROBE_TTL_SECONDS = (2 * CURRENT_SAMPLE_TTL_SECONDS) + 60
 IMAGE_GENERATION_SAMPLE_TTL_SECONDS = 7 * 60 * 60
 STATUS_HISTORY_HOURS = 48
 # Uptime thresholds for per-bucket coloring. Single-sample blips
@@ -295,13 +300,16 @@ def _sample_effective_status(
 
     Too OLD depends on whether the monitor is otherwise alive:
 
-      * monitor_reporting=True  -> "down". This probe stopped emitting
-        while its siblings kept going. That is the silent-disappearance
-        outage: previously it dropped to "unknown", and _worse_status
-        treats unknown as no-opinion, so a probe that vanished entirely
-        left the SLO green. A reachability break emits `down` samples and
-        was caught; a probe that simply stops emitting produced NOTHING
-        to aggregate, and nothing is not evidence of health.
+      * monitor_reporting=True and one cadence late -> "degraded". Regional
+        jobs run every five minutes and routinely cross that boundary by a
+        few seconds. The status stays visible without turning scheduler
+        jitter into a deploy rollback.
+
+      * monitor_reporting=True and two cadences late -> "down". This probe
+        stopped emitting while its siblings kept going. That is the
+        silent-disappearance outage: previously it dropped to "unknown",
+        and _worse_status treats unknown as no-opinion, so a probe that
+        vanished entirely left the SLO green.
 
       * monitor_reporting=False -> "unknown". Every probe is stale, so
         the monitor itself is down or cold-starting. monitor_freshness
@@ -311,8 +319,10 @@ def _sample_effective_status(
     age = (now - _parse_time(sample.created_at)).total_seconds()
     if age < -FUTURE_SAMPLE_SKEW_SECONDS:
         return "unknown", age
-    if age > CURRENT_SAMPLE_TTL_SECONDS:
+    if age > SILENT_PROBE_TTL_SECONDS:
         return ("down" if monitor_reporting else "unknown"), age
+    if age > CURRENT_SAMPLE_TTL_SECONDS:
+        return ("degraded" if monitor_reporting else "unknown"), age
     return sample.status, age
 
 
