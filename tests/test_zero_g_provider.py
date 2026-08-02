@@ -218,6 +218,7 @@ def test_zero_g_fetch_forces_private_canary_and_enables_only_after_pong(
         "model": "0gm-1.0-35b-a3b",
         "extra_headers": {"X-0G-Provider-Trust-Mode": "private"},
         "expected_content": "PONG",
+        "max_tokens": 256,
     }
     assert zero_g._LIVE_CANARY_OK is True
     assert all(
@@ -263,11 +264,13 @@ def test_zero_g_canary_requires_exact_openai_pong(
             model="0gm-1.0-35b-a3b",
             extra_headers=zero_g.PRIVATE_TRUST_HEADERS,
             expected_content="PONG",
+            max_tokens=256,
         )
         is expected
     )
     assert captured["url"] == "https://router-api.0g.ai/v1/chat/completions"
     assert captured["headers"]["X-0G-Provider-Trust-Mode"] == "private"
+    assert captured["json"]["max_tokens"] == 256
 
 
 def test_zero_g_missing_key_keeps_every_route_dark(

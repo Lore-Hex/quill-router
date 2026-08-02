@@ -127,6 +127,7 @@ def probe_openai_chat(
     model: str,
     extra_headers: dict[str, str] | None = None,
     expected_content: str | None = None,
+    max_tokens: int = 4,
 ) -> bool:
     """Run a minimal paid-path canary without logging response content."""
 
@@ -145,7 +146,7 @@ def probe_openai_chat(
             json={
                 "model": model,
                 "messages": [{"role": "user", "content": "Reply PONG"}],
-                "max_tokens": 4,
+                "max_tokens": max_tokens,
                 "stream": False,
             },
             timeout=PROVIDER_FETCH_TIMEOUT,
