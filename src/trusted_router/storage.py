@@ -1419,6 +1419,9 @@ def create_store(settings: Any) -> Store:
             dsn,
             postgres_iam_auth=str(getattr(settings, "postgres_iam_auth", "") or ""),
             postgres_iam_region=str(getattr(settings, "postgres_iam_region", "") or ""),
+            operational_analytics_outbox_enabled=bool(
+                getattr(settings, "operational_analytics_outbox_enabled", False)
+            ),
         )
         store.apply_schema()
         return store

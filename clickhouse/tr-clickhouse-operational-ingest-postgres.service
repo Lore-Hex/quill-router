@@ -1,0 +1,35 @@
+[Unit]
+Description=TrustedRouter operational analytics ClickHouse ingester (Postgres/Aurora DSQL source)
+After=network-online.target clickhouse-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tr-clickhouse-ingest
+Group=tr-clickhouse-ingest
+WorkingDirectory=/opt/tr-clickhouse
+# Supplies TR_POSTGRES_DSN, TR_POSTGRES_IAM_AUTH=aws-dsql and CH_PASSWORD, plus
+# TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER / _DATABASE. Those two default to
+# "tr"/"tr" for the GCP node and MUST be set to "default"/"default" on the
+# AWS-EU node, whose schema is applied unqualified — a mismatch fails
+# authentication only after a batch has already been read.
+# The DSN must NOT carry a password: on DSQL the token is minted per
+# connection, and on plain Postgres libpq reads PGPASSWORD from this file
+# rather than from argv, where every local user could read it.
+EnvironmentFile=/etc/tr-clickhouse-ingest-postgres.env
+ExecStart=/opt/tr-clickhouse/venv/bin/python -m clickhouse.ingest_operational_outbox_postgres
+# The drain sweeps shards independently and contains per-shard failures, so it
+# survives a bad row or a ClickHouse blip on its own. Restart=always covers
+# what it cannot: process-fatal faults, and Aurora DSQL expiring the long-lived
+# connection. Without this the first such event silently ends delivery and the
+# ClickHouse tables quietly return to reading zero rows.
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/tr-clickhouse-ingest
+
+[Install]
+WantedBy=multi-user.target

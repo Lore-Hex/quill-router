@@ -215,9 +215,18 @@ class SpannerOperationalOutboxSource:
 
 
 class ClickHouseOperationalWriter:
-    def __init__(self, *, password: str, database: str = "tr") -> None:
+    def __init__(
+        self, *, password: str, database: str = "tr", user: str = "tr"
+    ) -> None:
         self._password = password
         self._database = database
+        # The user was hardcoded to "tr" while the database was already a
+        # parameter, so this class silently only worked on the GCP cluster.
+        # The AWS-EU node authenticates as "default" into database "default"
+        # (its schema is applied unqualified), so a drain pointed at it failed
+        # authentication on the very first insert -- after the rows had been
+        # read, which is the worst place to discover a credential mismatch.
+        self._user = user
 
     def insert(self, events: list[CanonicalOperationalEvent]) -> None:
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -233,7 +242,7 @@ class ClickHouseOperationalWriter:
             command = [
                 "/usr/bin/clickhouse-client",
                 "--user",
-                "tr",
+                self._user,
                 "--database",
                 self._database,
                 "--query",

@@ -10,7 +10,6 @@ import dataclasses
 import datetime as dt
 import hashlib
 import json
-import re
 import secrets
 import uuid
 from collections.abc import Callable
@@ -21,6 +20,10 @@ import psycopg
 from psycopg_pool import ConnectionPool
 
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
+from trusted_router.postgres_dsn import (
+    aws_dsql_connection_details,
+    dsql_token_is_admin,
+)
 from trusted_router.security import (
     hash_api_key,
     key_label,
@@ -31,9 +34,9 @@ from trusted_router.security import (
     verify_api_key,
 )
 from trusted_router.spend_windows import KeyWindowLimitExceeded, window_floors
+from trusted_router.storage_codec import json_body
 from trusted_router.storage_errors import StoreConflict, StoreUnavailable
 from trusted_router.storage_gcp_codec import (
-    json_body,
     member_id,
     normalize_email,
     workspace_key_id,
@@ -74,6 +77,9 @@ from trusted_router.storage_models import (
     normalize_provider_access_slug,
     utcnow,
 )
+from trusted_router.storage_postgres_operational_analytics_outbox import (
+    PostgresOperationalAnalyticsOutbox,
+)
 from trusted_router.synthetic.rollups import (
     RAW_SYNTHETIC_RETENTION_DAYS,
     ROLLUP_RETENTION_MONTHS,
@@ -86,10 +92,6 @@ from trusted_router.types import UsageType
 T = TypeVar("T")
 
 _AWS_DSQL_IAM_AUTH = "aws-dsql"
-_AWS_DSQL_HOST_RE = re.compile(
-    r"^[^.]+\.dsql\.(?P<region>[a-z0-9-]+)\.on\.aws$",
-    re.IGNORECASE,
-)
 
 
 class _IamTokenConnectionPool(ConnectionPool):
@@ -129,38 +131,35 @@ def _aws_dsql_connection_details(
     *,
     region_override: str = "",
 ) -> tuple[str, str]:
-    params = psycopg.conninfo.conninfo_to_dict(dsn)
-    hostname = str(params.get("host") or "").rstrip(".")
-    if not hostname:
-        raise ValueError("AWS DSQL IAM auth requires a hostname in TR_POSTGRES_DSN")
-    if params.get("password"):
-        raise ValueError(
-            "TR_POSTGRES_DSN must not contain a password when TR_POSTGRES_IAM_AUTH=aws-dsql"
-        )
-
-    region = region_override.strip()
-    if not region:
-        match = _AWS_DSQL_HOST_RE.fullmatch(hostname)
-        if match is None:
-            raise ValueError(
-                "Could not infer the AWS region from TR_POSTGRES_DSN host "
-                f"{hostname!r}; set TR_POSTGRES_IAM_REGION"
-            )
-        region = match.group("region")
-    return hostname, region
+    # Thin alias kept for callers/tests; the parser itself is shared with the
+    # ClickHouse drain so the two cannot disagree about what a DSN means.
+    return aws_dsql_connection_details(dsn, region_override=region_override)
 
 
-def _aws_dsql_token_provider(hostname: str, region: str) -> Callable[[], str]:
+def _aws_dsql_token_provider(
+    hostname: str,
+    region: str,
+    *,
+    admin: bool = True,
+) -> Callable[[], str]:
     # Infrastructure SDK imports stay inside the selected adapter path so
     # ordinary Postgres deployments do not import or initialize boto3.
     import boto3
 
     client = boto3.client("dsql", region_name=region)
+    # DSQL mints a token per role. The control plane IS the system of record and
+    # connects as `admin`; anything connecting as a lesser role (the analytics
+    # drain) must get the non-admin token or authentication fails.
+    mint = (
+        client.generate_db_connect_admin_auth_token
+        if admin
+        else client.generate_db_connect_auth_token
+    )
 
     def generate_token() -> str:
         return cast(
             str,
-            client.generate_db_connect_admin_auth_token(
+            mint(
                 Hostname=hostname,
                 Region=region,
                 ExpiresIn=900,
@@ -209,6 +208,7 @@ class PostgresStore:
         transaction_attempts: int = 8,
         postgres_iam_auth: str = "",
         postgres_iam_region: str = "",
+        operational_analytics_outbox_enabled: bool = False,
     ) -> None:
         if not dsn:
             raise ValueError("Postgres DSN is required")
@@ -229,7 +229,11 @@ class PostgresStore:
             )
             self._pool = _IamTokenConnectionPool(
                 conninfo=dsn,
-                token_provider=_aws_dsql_token_provider(hostname, region),
+                token_provider=_aws_dsql_token_provider(
+                    hostname,
+                    region,
+                    admin=dsql_token_is_admin(dsn),
+                ),
                 min_size=pool_min_size,
                 max_size=pool_max_size,
                 open=True,
@@ -239,6 +243,15 @@ class PostgresStore:
                 "Unsupported TR_POSTGRES_IAM_AUTH value "
                 f"{postgres_iam_auth!r}; expected 'aws-dsql' or empty"
             )
+        # Durable ClickHouse hand-off for tenant activity and synthetic status.
+        # Off by default and gated on the same config flag as the Spanner path
+        # (`operational_analytics_outbox_enabled`), so enabling delivery is one
+        # decision made in one place rather than per-cloud.
+        self._operational_analytics_outbox = (
+            PostgresOperationalAnalyticsOutbox(self._run_transaction)
+            if operational_analytics_outbox_enabled
+            else None
+        )
 
     def close(self) -> None:
         """Close the connection pool."""
@@ -2109,9 +2122,16 @@ class PostgresStore:
                     prepare=False,
                 )
 
-            # 4. Generation metadata, when the caller supplied one.
+            # 4. Generation metadata, when the caller supplied one, plus the
+            #    ClickHouse delivery intent for it. The outbox row rides the
+            #    SAME transaction as the money and the generation record, so
+            #    the activity stream cannot disagree with the ledger: either
+            #    both commit or neither does. ClickHouse is never in this
+            #    transaction — only the durable intent to deliver to it.
             if generation is not None:
                 self._write_entity_tx(conn, "generation", generation.id, generation)
+                if self._operational_analytics_outbox is not None:
+                    self._operational_analytics_outbox.enqueue_activity_tx(conn, generation)
 
             # 5. Mark settled.
             authorization.settled = True
@@ -2193,6 +2213,14 @@ class PostgresStore:
                 index_probe_type=sample.probe_type,
                 index_monitor_region=sample.monitor_region,
             )
+            # Delivery intent commits with the sample. The Spanner path
+            # enqueues best-effort in a SEPARATE transaction and logs when
+            # that fails, because its sample write is not one transaction;
+            # here the whole record IS one transaction, so the stronger
+            # guarantee is free and a probe can never be recorded without
+            # its status event.
+            if self._operational_analytics_outbox is not None:
+                self._operational_analytics_outbox.enqueue_synthetic_tx(conn, sample)
             for period, component in sample_rollup_ids(sample):
                 update = new_rollup_for_sample(
                     sample,
