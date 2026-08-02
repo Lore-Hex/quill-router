@@ -139,18 +139,19 @@ def test_gmi_only_credits_serves_allowlisted_models() -> None:
     assert len(gmi_byok) > len(gmi_credits)
 
 
-def test_anthropic_models_credits_route_first_party_only() -> None:
-    # Policy: Anthropic-authored (anthropic/*) models route via Anthropic
-    # directly for Credits, never resellers (which list Claude ids they mostly
-    # don't serve). BYOK is untouched — a customer's own reseller key is theirs.
+def test_anthropic_models_credits_route_through_verified_account_catalogs_only() -> None:
+    # Policy: Anthropic-authored models use first-party surfaces or a narrowly
+    # approved authenticated account catalog. Generic reseller claims remain
+    # blocked because they mostly resolve to dead routes.
     credits_providers = {
         e.provider
         for e in MODEL_ENDPOINTS.values()
         if e.model_id.startswith("anthropic/") and e.usage_type == "Credits"
     }
-    assert credits_providers <= {"anthropic"}
+    assert credits_providers <= {"anthropic", "zero-g"}
     # Anthropic-direct Credits lineup stays fully routable.
     assert "anthropic/claude-fable-5@anthropic/prepaid" in MODEL_ENDPOINTS
+    assert "anthropic/claude-fable-5@zero-g/prepaid" in MODEL_ENDPOINTS
     # A reseller that lists Claude keeps its BYOK route but loses Credits.
     byok_providers = {
         e.provider

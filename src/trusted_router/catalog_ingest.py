@@ -971,14 +971,17 @@ def _embedding_manifest_cost(spec: _EmbeddingSpec) -> int | None:
 
 
 # Providers through which we route Anthropic-authored (anthropic/*) models on
-# Credits. Anthropic-direct only today; add "vertex"/"bedrock" here if/when
-# first-party Claude routing through those surfaces is enabled. Resellers that
-# merely list Claude ids are intentionally excluded (see _keep policy below).
-_ANTHROPIC_FIRST_PARTY_PROVIDERS: frozenset[str] = frozenset(
-    # First-party Anthropic surfaces are OK for Claude Credits routing; resellers
-    # are not. Vertex + Bedrock included per product decision (2026-07-18) so
-    # Claude-on-Vertex/Bedrock Credits routes are permitted when they exist.
-    {"anthropic", "google-vertex", "bedrock", "aws-bedrock"}
+# Credits. First-party surfaces are always eligible. Aggregators remain blocked
+# unless their authenticated account catalog is authoritative and routinely
+# refreshed; 0G is the first narrow exception.
+_ANTHROPIC_CREDITS_PROVIDERS: frozenset[str] = frozenset(
+    {
+        "anthropic",
+        "google-vertex",
+        "bedrock",
+        "aws-bedrock",
+        "zero-g",
+    }
 )
 
 
@@ -999,8 +1002,8 @@ def _filter_unserved_provider_endpoints(
         providers and account-verified Credits models for static allowlists.
       * model denylist    — drop the listed Credits models on EVERY provider (GPT-5.4/pro).
       * provider denylist — drop a Credits model on ONE provider only (gmi closed models).
-      * Claude first-party — route Anthropic-authored models via Anthropic only
-        for Credits, never resellers (policy; see _ANTHROPIC_FIRST_PARTY_PROVIDERS).
+      * Claude allowlist — route Anthropic-authored models only through approved
+        first-party surfaces or an authenticated authoritative catalog.
     """
     allow = dict(_PROVIDER_SERVED_MODEL_ALLOWLIST)
     for provider_slug in _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS:
@@ -1024,16 +1027,14 @@ def _filter_unserved_provider_endpoints(
             return False
         if endpoint.usage_type != "Credits":
             return True
-        # Policy (2026-07-18): serve Anthropic-authored models via Anthropic
-        # directly for Credits, not resellers. Resellers list Claude ids they
-        # mostly don't actually serve (uniform upstream 404s) and add no value
-        # over first-party; keeping them only produced dead routes and alert
-        # noise. BYOK is untouched — a customer's own reseller key is their
-        # choice. Extend _ANTHROPIC_FIRST_PARTY_PROVIDERS if first-party
-        # Vertex/Bedrock Claude routing is ever enabled.
+        # Most resellers list Claude ids they do not actually serve, so credits
+        # routing stays allowlisted. 0G is included because its authenticated
+        # all-model catalog is refreshed from the same account key used at
+        # runtime. BYOK is untouched because a customer's reseller account is
+        # their choice.
         if (
             endpoint.model_id.startswith("anthropic/")
-            and endpoint.provider not in _ANTHROPIC_FIRST_PARTY_PROVIDERS
+            and endpoint.provider not in _ANTHROPIC_CREDITS_PROVIDERS
         ):
             return False
         if endpoint.provider in allow and endpoint.model_id not in allow[endpoint.provider]:

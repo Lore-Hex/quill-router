@@ -813,21 +813,18 @@ PROVIDERS: dict[str, Provider] = {
     ),
     "zero-g": Provider(
         slug="zero-g",
-        name="0G Private Computer",
+        name="0G",
         supports_prepaid=True,
         supports_byok=False,
-        stores_content=False,
-        provider_zero_data_retention=None,
-        provider_confidential_compute=True,
+        stores_content=True,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
         provider_e2ee=False,
         provider_policy=(
-            "0G labels these routes private, TeeML, TEE-attested, and healthy. "
-            "TrustedRouter requests that mode with X-0G-Provider-Trust-Mode: "
-            "private and excludes standard and TeeTLS routes. The current live "
-            "0G router path does not expose the route quote, audited code "
-            "measurement, or response authentication needed for TrustedRouter "
-            "to verify and encrypt each request end to end, so 0G is not in the "
-            "trustedrouter/e2e pool."
+            "TrustedRouter uses 0G's unrestricted standard router catalog. "
+            "These routes can include ordinary upstream providers and are not "
+            "classified as ZDR, confidential compute, attested, or end-to-end "
+            "encrypted by TrustedRouter."
         ),
         provider_policy_url="https://pc.0g.ai/models",
     ),
