@@ -514,9 +514,16 @@ def test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option(
     # would fail those guards anyway. Uniqueness against persistent
     # conformance databases comes from filtering assertions to this
     # test's own target below, not from an exclusive time range.
+    # Stay well inside ROLLUP_RETENTION_MONTHS (24). An earlier version of
+    # this fix used a ~17,000 hour spread (~23 months), which could place
+    # the window a month or two outside retention depending on `unique`
+    # and the day of the month — rollup_is_within_retention then filtered
+    # every row and the assertions saw an empty list. 4,000 hours (~166
+    # days) keeps every generated window recent, and uniqueness comes from
+    # filtering to this test's own target below, not from the time range.
     now = dt.datetime.now(dt.UTC).replace(
         minute=10, second=0, microsecond=0
-    ) - dt.timedelta(hours=3 + int(unique, 16) % 17_000)
+    ) - dt.timedelta(hours=3 + int(unique, 16) % 4_000)
     target = f"status-{unique}"
     probe_type = f"probe-{unique}"
     monitor_region = f"monitor-{unique}"
