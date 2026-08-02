@@ -962,3 +962,55 @@ def test_finalize_failure_books_no_usage(store: Store, workspace_id: str, unique
     row = _key_limit_row(store, kh)
     assert row["reserved"] == 0, "hold released even on failure"
     assert (row["day_usage"] or 0) == 0, "a failed request spent nothing"
+
+
+def test_federated_key_is_resolvable_on_a_LATER_request(store: Store, unique: str) -> None:
+    """A federated key must resolve by lookup hash on every SUBSEQUENT request.
+
+    This is the regression that matters. The first federated request never
+    touches this path — the resolve returns the record directly — so a
+    lookup-index written under the wrong field name still passes any smoke
+    test that makes one call. It fails on request number two, in production,
+    for a user who is already authenticated.
+    """
+    record = {
+        "lookup_hash": f"lh-{unique}",
+        "key_hash": f"kh-{unique}",
+        "workspace_id": f"ws-{unique}",
+        "name": "federated",
+        "disabled": False,
+        "limit_microdollars": 1_000,
+        "include_byok_in_limit": True,
+        "revision": "2026-08-02T00:00:00Z",
+    }
+    try:
+        stored = store.upsert_federated_api_key(record)
+    except NotImplementedError:
+        pytest.skip("backend is a federation HOME plane; it does not import keys")
+
+    assert stored.hash == f"kh-{unique}"
+
+    # The second request's path: resolve purely from the lookup index.
+    resolved = store.get_key_by_lookup_hash(f"lh-{unique}")
+    assert resolved is not None, "federated key vanished on the second lookup"
+    assert resolved.hash == f"kh-{unique}"
+    assert resolved.workspace_id == f"ws-{unique}"
+
+
+def test_federated_key_carries_no_secret_material(store: Store, unique: str) -> None:
+    """A peer holds no home-issued key material, so the raw-bearer path
+    (which verifies secret_hash) can never authenticate a federated key."""
+    try:
+        store.upsert_federated_api_key({
+            "lookup_hash": f"lh2-{unique}",
+            "key_hash": f"kh2-{unique}",
+            "workspace_id": f"ws2-{unique}",
+            "name": "federated",
+        })
+    except NotImplementedError:
+        pytest.skip("backend is a federation HOME plane")
+
+    resolved = store.get_key_by_lookup_hash(f"lh2-{unique}")
+    assert resolved is not None
+    assert resolved.secret_hash == ""
+    assert resolved.salt == ""

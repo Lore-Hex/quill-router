@@ -524,7 +524,13 @@ class InMemoryStore:
         Spending on this plane requires an explicit transfer.
         """
         key = federated_api_key_from_record(record)
+        # BOTH the entity and its lookup index. Writing only `keys` made the
+        # first federated request work (the resolve returns the record
+        # directly) and every one after it miss — the same defect the
+        # Postgres backend had, because I wrote both by hand instead of
+        # going through one shared helper.
         self.api_keys.keys[key.hash] = key
+        self.api_keys.key_ids_by_lookup_hash[key.lookup_hash] = key.hash
         return key
 
     def get_key_by_lookup_hash(self, lookup_hash: str) -> ApiKey | None:

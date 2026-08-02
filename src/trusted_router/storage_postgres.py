@@ -1178,8 +1178,13 @@ class PostgresStore:
 
         def upsert(conn: Any) -> ApiKey:
             self._write_entity_tx(conn, "api_key", key.hash, key)
+            # The reader (get_key_by_lookup_hash) indexes this by "key_id",
+            # matching create_key. Writing "key_hash" here made the FIRST
+            # federated request work — _federate_api_key returns the record
+            # directly — and every request after it raise KeyError, which is
+            # exactly the shape a naive smoke test passes.
             self._write_entity_tx(
-                conn, "api_key_lookup", key.lookup_hash, {"key_hash": key.hash}
+                conn, "api_key_lookup", key.lookup_hash, {"key_id": key.hash}
             )
             # A typed key-limit row is MANDATORY: the typed authorize path
             # fail-closes with KEY_MISSING when a key has a JSON entity but
