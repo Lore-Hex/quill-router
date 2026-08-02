@@ -133,6 +133,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "telnyx",
         "together",
         "wafer",
+        "engy",
         "zero-g",
     }
 )
@@ -742,6 +743,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "atlas-cloud",
         "streamlake",
         "neurometric",
+        "engy",
         "zero-g",
         "kimi",
         "zai",

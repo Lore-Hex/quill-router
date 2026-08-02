@@ -1,0 +1,68 @@
+{
+  "provider": "engy",
+  "source": "https://api.engy.ai/v1/models",
+  "price_scale": "microdollars_per_million",
+  "models": [
+    {
+      "display_name": "qwen3.6-35b-a3b",
+      "title": "qwen3.6-35b-a3b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.6-35b-a3b",
+      "upstream_id": "qwen3.6-35b-a3b",
+      "context_length": 208192,
+      "routable": true,
+      "supported_features": [
+        "chat",
+        "completion",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "input_token_price_per_m": 45000,
+      "output_token_price_per_m": 300000,
+      "cached_input_token_price_per_m": 15000
+    },
+    {
+      "display_name": "glm-5.2",
+      "title": "glm-5.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "glm-5.2",
+      "context_length": 262144,
+      "routable": true,
+      "supported_features": [
+        "chat",
+        "completion",
+        "reasoning",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "prompt_caching"
+      ],
+      "input_token_price_per_m": 680000,
+      "output_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 180000
+    }
+  ],
+  "generated_at": "2026-08-02T20:15:55Z",
+  "model_count": 2
+}

@@ -348,6 +348,12 @@ _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
         ("NEUROMETRIC_API_KEY",),
         _identity_model_id,
     ),
+    (
+        "engy",
+        "https://api.engy.ai/v1/models",
+        ("ENGY_API_KEY",),
+        canonicalize_unqualified_model_id,
+    ),
 )
 
 _GLM_DISCOVERABLE_PROVIDER_APIS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
