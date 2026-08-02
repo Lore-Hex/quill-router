@@ -367,7 +367,7 @@ async def test_throughput_only_cli_skips_every_health_path(
     )
     monkeypatch.setattr(cli_module, "get_settings", lambda: settings)
     monkeypatch.setattr(cli_module, "_one_probe_pass", forbidden_probe)
-    monkeypatch.setattr(cli_module, "_rotation_pass", forbidden_probe)
+    monkeypatch.setattr(cli_module, "rotation_pass", forbidden_probe)
     monkeypatch.setattr(cli_module, "_throughput_pass", fake_throughput_pass)
     monkeypatch.setattr(cli_module.httpx, "AsyncClient", _Client)
     monkeypatch.setenv("TR_SYNTHETIC_MONITOR_REGION", "us-central1")
