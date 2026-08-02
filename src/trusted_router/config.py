@@ -547,6 +547,12 @@ class Settings(BaseSettings):
             missing.append("TR_STRIPE_SECRET_KEY")
         if not self.sentry_dsn:
             missing.append("TR_SENTRY_DSN")
+        if not self.aws_access_key_id:
+            missing.append("TR_AWS_ACCESS_KEY_ID")
+        if not self.aws_secret_access_key:
+            missing.append("TR_AWS_SECRET_ACCESS_KEY")
+        if not self.ses_from_email:
+            missing.append("TR_SES_FROM_EMAIL")
         if self.bootstrap_management_key:
             missing.append("unset TR_BOOTSTRAP_MANAGEMENT_KEY")
         if self.storage_backend == "memory":

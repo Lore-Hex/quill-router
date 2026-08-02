@@ -174,6 +174,9 @@ def test_issue_chat_browser_key_secure_flag_in_production() -> None:
         stripe_webhook_secret="w",  # noqa: S106 - test fixture.
         stripe_secret_key="s",  # noqa: S106 - test fixture.
         sentry_dsn="https://example@example.ingest.sentry.io/1",
+        aws_access_key_id="test-access-key",
+        aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
+        ses_from_email="noreply@example.com",
         storage_backend="spanner-bigtable",
         spanner_instance_id="i",
         spanner_database_id="d",

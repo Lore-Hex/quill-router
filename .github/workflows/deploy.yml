@@ -276,6 +276,24 @@ jobs:
         run: bash scripts/deploy/secrets.sh
         continue-on-error: true   # secrets are managed locally; runner has none
 
+      - name: Sync required SES credentials
+        env:
+          TR_AWS_ACCESS_KEY_ID: ${{ secrets.TR_AWS_ACCESS_KEY_ID }}
+          TR_AWS_SECRET_ACCESS_KEY: ${{ secrets.TR_AWS_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TR_AWS_ACCESS_KEY_ID:-}" ] || [ -z "${TR_AWS_SECRET_ACCESS_KEY:-}" ]; then
+            echo "TR_AWS_ACCESS_KEY_ID and TR_AWS_SECRET_ACCESS_KEY are required" >&2
+            exit 1
+          fi
+          source scripts/deploy/_lib.sh
+          ensure_secret_value \
+            "trustedrouter-aws-access-key-id" \
+            "${TR_AWS_ACCESS_KEY_ID}"
+          ensure_secret_value \
+            "trustedrouter-aws-secret-access-key" \
+            "${TR_AWS_SECRET_ACCESS_KEY}"
+
       - name: Push provider analytics reader credential
         env:
           TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD: ${{ secrets.TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD }}
