@@ -10,7 +10,43 @@ on:
   # CI explicitly for the generated commit before dispatching deploy.yml.
   workflow_dispatch: {}
 
+# Four independent jobs instead of one serial pipeline: wall time becomes the
+# slowest job, not the sum. deploy.yml's gate polls this WORKFLOW RUN's
+# conclusion for the SHA, and a run only concludes success when every job
+# succeeds, so the gate semantics are unchanged by the split.
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Sync
+        run: uv sync --frozen
+      - name: Ruff
+        run: uv run ruff check .
+      - name: Mypy
+        run: uv run mypy
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install npm deps
+        run: npm ci
+      - name: TypeScript build (verify dashboard.js matches dashboard.ts)
+        run: |
+          npx tsc
+          git diff --exit-code -- src/trusted_router/static/dashboard.js
+      - name: ESLint
+        run: npx eslint frontend/src
+      - name: Stylelint
+        run: npx stylelint "src/trusted_router/static/*.css"
+
   test:
     runs-on: ubuntu-latest
     env:
@@ -45,29 +81,36 @@ jobs:
           version: "latest"
       - name: Sync
         run: uv sync --frozen
-      - name: Ruff
-        run: uv run ruff check .
-      - name: Mypy
-        run: uv run mypy
+      # The coverage invocation executes the complete test suite. Running a
+      # separate plain pytest pass doubled CI time and delayed every guarded
+      # production rollout without checking any additional behavior.
+      # -n 4 (pytest-xdist) uses the runner's 4 vCPUs; pytest-cov combines
+      # worker coverage natively. --dist loadgroup is LOAD-BEARING: the
+      # server-backed conformance backends are xdist_group-marked (see
+      # tests/conformance/conftest.py) because the Spanner PG emulator rejects
+      # concurrent schema changes -- measured 14 setup errors under plain -n 4,
+      # 53/53 with grouping. Per-test id namespacing makes the shared DATABASE
+      # order-independent; grouping is what serializes the DDL.
+      - name: Tests and coverage
+        run: uv run pytest -q -n 4 --dist loadgroup --cov=trusted_router --cov-report=term-missing --cov-fail-under=70
+
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Sync
+        run: uv sync --frozen
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
       - name: Install npm deps
         run: npm ci
-      - name: TypeScript build (verify dashboard.js matches dashboard.ts)
-        run: |
-          npx tsc
-          git diff --exit-code -- src/trusted_router/static/dashboard.js
-      - name: ESLint
-        run: npx eslint frontend/src
-      - name: Stylelint
-        run: npx stylelint "src/trusted_router/static/*.css"
-      # The coverage invocation executes the complete test suite. Running a
-      # separate plain pytest pass doubled CI time and delayed every guarded
-      # production rollout without checking any additional behavior.
-      - name: Tests and coverage
-        run: uv run pytest -q --cov=trusted_router --cov-report=term-missing --cov-fail-under=70
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
+      # playwright.config.js starts the app itself (uv run uvicorn, memory
+      # backend) and waits on /health — no DB service containers needed.
       - name: Browser smoke
         run: npm run test:browser
