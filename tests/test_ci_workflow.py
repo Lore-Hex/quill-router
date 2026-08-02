@@ -10,6 +10,6 @@ def test_ci_runs_python_suite_once_with_coverage() -> None:
 
     assert workflow.count("uv run pytest") == 1
     assert (
-        "uv run pytest -q --cov=trusted_router --cov-report=term-missing "
-        "--cov-fail-under=70"
+        "uv run pytest -q -n 4 --dist loadgroup --cov=trusted_router "
+        "--cov-report=term-missing --cov-fail-under=70"
     ) in workflow

@@ -153,7 +153,26 @@ BACKENDS: dict[str, Callable[[], Store]] = {
 }
 
 
-@pytest.fixture(params=sorted(BACKENDS), ids=lambda name: f"backend={name}")
+# Server-backed backends are marked into one xdist_group each: the Spanner PG
+# emulator rejects CONCURRENT schema changes, and every server-backed store
+# fixture applies schema on construction. Measured: plain `-n 4` against the
+# real containers produced 14 setup errors on backend=spanner-pg; a serial run
+# passed 53/53. With `--dist loadgroup` each backend's tests share one worker
+# (DDL serialized) while memory-backend tests parallelize freely. The per-test
+# `unique` fixture keeps the shared database ORDER-independent; this keeps it
+# CONCURRENCY-safe too. Marks ride the fixture params (not
+# collection_modifyitems) so xdist's scheduler sees them reliably.
+_BACKEND_PARAMS = [
+    name
+    if name == "memory"
+    else pytest.param(
+        name, marks=pytest.mark.xdist_group(f"conformance-{name}")
+    )
+    for name in sorted(BACKENDS)
+]
+
+
+@pytest.fixture(params=_BACKEND_PARAMS, ids=lambda name: f"backend={name}")
 def store(request: pytest.FixtureRequest) -> Iterator[Store]:
     """A live store for each registered backend.
 
