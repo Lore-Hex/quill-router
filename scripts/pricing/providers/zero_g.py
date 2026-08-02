@@ -306,6 +306,7 @@ def fetch() -> ProviderPricingResult:
         model="0gm-1.0-35b-a3b",
         extra_headers=PRIVATE_TRUST_HEADERS,
         expected_content="PONG",
+        max_tokens=256,
     )
     for row in discovered.values():
         row["routable"] = _LIVE_CANARY_OK
