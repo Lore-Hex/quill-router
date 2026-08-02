@@ -148,3 +148,45 @@ class TestControlPlaneResolution:
         settings = _settings(synthetic_monitor_api_key="sk-test-monitor")
         assert _post_run(settings, {}).status_code == 200
         assert no_network_probes["billing_urls"] == ["https://trustedrouter.com"]
+
+
+class TestDetachMode:
+    """EventBridge API destinations abandon a request after ~5s; a probe
+    pass takes 10-17s. Every tick was a FailedInvocation even though the
+    app completed and returned 200 — invisible from the service side.
+    detach=true acknowledges immediately and probes in the background.
+    """
+
+    def test_detach_returns_202_scheduled(self, no_network_probes: dict[str, Any]) -> None:
+        settings = _settings(synthetic_monitor_api_key="sk-test-monitor")
+        resp = _post_run(settings, {"detach": True, "rotation_count": 1})
+        assert resp.status_code == 202
+        assert resp.json()["data"] == {"scheduled": True}
+        # Deliberately does NOT claim a recorded count it cannot know yet.
+        assert "recorded" not in resp.json()["data"]
+
+    def test_detach_still_runs_the_pass(self, no_network_probes: dict[str, Any]) -> None:
+        settings = _settings(synthetic_monitor_api_key="sk-test-monitor")
+        _post_run(settings, {"detach": True, "rotation_count": 2})
+        # TestClient drives the event loop to completion on exit, so the
+        # background task has run by the time the response is returned.
+        assert no_network_probes["rotation_calls"], "detached pass never executed"
+        assert no_network_probes["rotation_calls"][0]["count"] == 2
+
+    def test_default_is_synchronous(self, no_network_probes: dict[str, Any]) -> None:
+        settings = _settings(synthetic_monitor_api_key="sk-test-monitor")
+        resp = _post_run(settings, {})
+        assert resp.status_code == 200
+        assert "recorded" in resp.json()["data"]
+
+    @pytest.mark.parametrize("value", ["true", "1", "yes", "on", True])
+    def test_truthy_spellings_detach(self, no_network_probes: dict[str, Any], value: Any) -> None:
+        settings = _settings(synthetic_monitor_api_key="sk-test-monitor")
+        assert _post_run(settings, {"detach": value}).status_code == 202
+
+    @pytest.mark.parametrize("value", ["false", "0", "no", False, None, ""])
+    def test_falsy_spellings_stay_synchronous(
+        self, no_network_probes: dict[str, Any], value: Any
+    ) -> None:
+        settings = _settings(synthetic_monitor_api_key="sk-test-monitor")
+        assert _post_run(settings, {"detach": value}).status_code == 200

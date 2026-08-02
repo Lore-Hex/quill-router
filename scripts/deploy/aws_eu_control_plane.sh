@@ -155,6 +155,33 @@ echo "https://${URL}"
 # ---------------------------------------------------------------------------
 if [ "${SKIP_EVENTBRIDGE:-0}" != "1" ]; then
   log "aligning EventBridge rule tr-eu-synthetic-1min"
+
+  # Re-authorize the connection with the CURRENT internal gateway token.
+  #
+  # The connection stores its own copy of the credential. When the token
+  # this service reads changes (e.g. moving it from a plaintext env var
+  # to Secrets Manager, as this script did), that stored copy goes stale,
+  # every invocation 401s, and EventBridge flips the connection to
+  # DEAUTHORIZED and stops trying. Nothing on the service side reports
+  # this — the app is healthy, the rule is ENABLED, and the status page
+  # simply goes quietly stale. Observed exactly that: 15/15
+  # FailedInvocations with the app returning 200 to manual calls.
+  #
+  # Re-authorizing here binds the credential to the same token the
+  # service was just deployed with, so the two cannot drift.
+  CONN_TOKEN=$(aws secretsmanager get-secret-value --region "$REGION" \
+    --secret-id quill/trustedrouter-internal-gateway-token --query SecretString --output text)
+  aws events update-connection --region "$REGION" --name tr-eu-synthetic \
+    --authorization-type API_KEY \
+    --auth-parameters "ApiKeyAuthParameters={ApiKeyName=Authorization,ApiKeyValue=Bearer ${CONN_TOKEN}}" >/dev/null
+  for _ in $(seq 1 15); do
+    CONN_STATE=$(aws events describe-connection --region "$REGION" --name tr-eu-synthetic --query ConnectionState --output text)
+    [ "$CONN_STATE" = "AUTHORIZED" ] && break
+    sleep 10
+  done
+  [ "$CONN_STATE" = "AUTHORIZED" ] || { echo "FAILED: connection state $CONN_STATE" >&2; exit 1; }
+  log "connection AUTHORIZED with current token"
+
   DEST_ARN=$(aws events list-api-destinations --region "$REGION" --name-prefix tr-eu-synthetic-run --query 'ApiDestinations[0].ApiDestinationArn' --output text)
   ROLE_ARN="arn:aws:iam::${ACCOUNT}:role/tr-eu-eventbridge-invoke-par"
   TARGETS=$(python3 - "$DEST_ARN" "$ROLE_ARN" "$REGION" <<'PY'
@@ -166,6 +193,12 @@ rule_input = {
     "monitor_region": region,
     "rotation_count": 2,
     "rotation_models": ["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"],
+    # REQUIRED here: EventBridge API destinations abandon the request
+    # after ~5s and a probe pass takes 10-17s, so without detach every
+    # tick is a FailedInvocation (observed 15/15) even though the app
+    # completes the run and returns 200. detach acknowledges in
+    # milliseconds and probes in the background.
+    "detach": True,
 }
 print(json.dumps([
     {
