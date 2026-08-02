@@ -1,4 +1,5 @@
 {% extends "public/_base.html" %}
+{% from "public/_provider_identity.html" import provider_identity %}
 {% block body %}
 <section class="public-proof-strip">
   <div><strong>Gateway boundary</strong><span>TLS terminates inside TrustedRouter's attested gateway.</span></div>
@@ -35,7 +36,7 @@
       <tbody>
         {% for provider in providers %}
         <tr>
-          <td><a href="{{ provider.detail_href }}"><strong>{{ provider.name }}</strong></a><br><code>{{ provider.id }}</code></td>
+          <td>{{ provider_identity(provider.id, provider.name, provider.detail_href, subtitle=provider.id) }}</td>
           <td><span class="pill {% if provider.privacy_tier in ['Confidential', 'TR gateway', 'No logs', 'No logs (prepaid)'] %}good{% endif %}">{{ provider.privacy_tier }}</span></td>
           <td>{% if provider.supports_prepaid %}<span class="pill good">yes</span>{% else %}no{% endif %}</td>
           <td>{% if provider.supports_byok %}<span class="pill good">yes</span>{% else %}no{% endif %}</td>

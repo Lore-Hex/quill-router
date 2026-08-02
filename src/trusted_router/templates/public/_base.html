@@ -64,6 +64,7 @@
     </section>
     {% endblock %}
     {% block body %}{% endblock %}
+    {% if catalog_evidence %}{% include "public/_catalog_evidence.html" %}{% endif %}
     {% if faq_items %}
     <section class="panel faq-panel" aria-label="Frequently asked questions">
       <div class="panel-head"><h2>Questions</h2></div>

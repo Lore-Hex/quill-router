@@ -213,6 +213,9 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit $rc
 
+      - name: Refresh provider social cards
+        run: uv run python scripts/generate_provider_og.py
+
       - name: Price-source coverage audit
         # General stale-price gaps stay visibility-only, but provider docs that
         # announce a model we do not publish are a hard failure. That catches
@@ -245,6 +248,7 @@ jobs:
           git add \
             src/trusted_router/data/openrouter_snapshot.json \
             src/trusted_router/data/provider_models/ \
+            src/trusted_router/static/og/providers/ \
             scripts/pricing/parsers/
 
           if git diff --cached --quiet; then

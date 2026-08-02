@@ -1,5 +1,6 @@
 {% extends "public/_base.html" %}
 {% from "public/_provider_privacy_badges.html" import provider_privacy_badges %}
+{% from "public/_provider_identity.html" import provider_identity %}
 {% block body %}
 <section class="public-proof-strip">
   <div><strong>Public catalog</strong><span>No auth needed to inspect routes.</span></div>
@@ -60,7 +61,7 @@
             </div>
             {% endif %}
           </td>
-          <td>{{ model.provider }}</td>
+          <td>{{ provider_identity(model.publisher_slug, model.provider, "/providers/" ~ model.publisher_slug) }}</td>
           <td>
             {% if model.ai_iq %}
             <a class="ai-iq-link" href="{{ model.ai_iq.url }}" rel="nofollow noopener">
@@ -75,7 +76,7 @@
           <td>
             <div class="provider-chip-list" aria-label="{{ model.provider_count }} provider{{ '' if model.provider_count == 1 else 's' }}">
               {% for provider in model.providers %}
-              <span class="pill" title="{{ provider.slug }}">{{ provider.name }}</span>
+              <a class="pill provider-chip" href="/providers/{{ provider.slug }}" title="{{ provider.slug }}"><img class="provider-logo" src="{{ provider.logo_url }}" alt="" width="22" height="22" loading="lazy" decoding="async"><span>{{ provider.name }}</span></a>
               {% endfor %}
             </div>
           </td>

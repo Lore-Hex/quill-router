@@ -55,11 +55,17 @@ from trusted_router.content.legal import (
 from trusted_router.measured import measured_for_model, measured_for_provider
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR, format_money_precise
 from trusted_router.og import OG_DESCRIPTION, OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, OG_TITLE
+from trusted_router.provider_branding import (
+    provider_homepage_url,
+    provider_logo_url,
+    provider_og_image_url,
+)
 from trusted_router.provider_contract import (
     PROVIDER_CATALOG_EXAMPLE,
     PROVIDER_CATALOG_V2_EXAMPLE,
 )
 from trusted_router.regions import configured_regions, region_map_payload
+from trusted_router.seo_catalog import seo_catalog_evidence
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -1300,6 +1306,7 @@ def _env() -> Environment:
         keep_trailing_newline=True,
     )
     env.filters["uptime_pct"] = _format_uptime
+    env.globals["provider_logo_url"] = provider_logo_url
     return env
 
 
@@ -1330,11 +1337,7 @@ def dashboard_html(
     canonical_site_url = f"https://{domain}/"
     site_url = site_url or canonical_site_url
     alternate_brand = brand_name != "TrustedRouter"
-    page_title = (
-        f"{brand_name} | Every model. Provable privacy."
-        if alternate_brand
-        else OG_TITLE
-    )
+    page_title = f"{brand_name} | Every model. Provable privacy." if alternate_brand else OG_TITLE
     tr_config = {
         "environment": environment,
         "defaultDevUser": "" if environment == "production" else DEV_USER_FALLBACK,
@@ -1578,10 +1581,60 @@ def _item_list_node(
     }
 
 
+def _catalog_evidence_item_list_node(
+    settings: Settings,
+    evidence: Mapping[str, object] | None,
+) -> dict[str, object] | None:
+    if evidence is None:
+        return None
+    raw_models = evidence.get("models")
+    if not isinstance(raw_models, list):
+        return None
+    items: list[dict[str, object]] = []
+    for raw_model in raw_models:
+        if not isinstance(raw_model, Mapping):
+            continue
+        name = raw_model.get("name")
+        href = raw_model.get("detail_href")
+        if isinstance(name, str) and isinstance(href, str):
+            items.append(
+                {
+                    "name": name,
+                    "url": f"https://{settings.trusted_domain}{href}",
+                }
+            )
+    if not items:
+        return None
+    return _item_list_node(name="Featured TrustedRouter model routes", items=items)
+
+
+def _provider_page_node(settings: Settings, provider: Provider) -> dict[str, object]:
+    page_url = f"https://{settings.trusted_domain}/providers/{provider.slug}"
+    organization: dict[str, object] = {
+        "@type": "Organization",
+        "name": provider.name,
+        "logo": _absolute_url(settings, provider_logo_url(provider.slug)),
+    }
+    homepage_url = provider_homepage_url(provider.slug)
+    if homepage_url:
+        organization["url"] = homepage_url
+    return {
+        "@type": "WebPage",
+        "name": f"{provider.name} models on TrustedRouter",
+        "url": page_url,
+        "about": organization,
+    }
+
+
 def public_page_html(settings: Settings, page_key: str, *, site_url: str | None = None) -> str:
     page = PUBLIC_PAGES[page_key]
     path = f"/{page_key}"
     resolved_site_url = site_url or f"https://{settings.trusted_domain}{path}"
+    catalog_evidence = (
+        seo_catalog_evidence(page_key, test_mode=settings.environment == "test")
+        if page.template.startswith("public/seo_")
+        else None
+    )
     return (
         _env()
         .get_template(page.template)
@@ -1599,9 +1652,11 @@ def public_page_html(settings: Settings, page_key: str, *, site_url: str | None 
             # static/og/, with zero risk of a 404 unfurl in the meantime.
             og_image=_og_image_url(settings, page.og_card),
             faq_items=page.faq_items,
+            catalog_evidence=catalog_evidence,
             json_ld_blob=_json_ld_graph(
                 _breadcrumb_node(settings, (("Home", "/"), (page.title, path))),
                 _faq_node(page.faq_items),
+                _catalog_evidence_item_list_node(settings, catalog_evidence),
             ),
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
@@ -2177,6 +2232,8 @@ def public_provider_detail_html(settings: Settings, provider_slug: str) -> str |
             description=(
                 f"{provider.name} models on TrustedRouter with prices, routes, policy notes, and source links."
             ),
+            og_image=_absolute_url(settings, provider_og_image_url(provider.slug)),
+            og_image_alt=f"{provider.name} models and routes on TrustedRouter",
             provider=_provider_detail_view(provider, served_models=served_models),
             served_models=served_models,
             measured=measured_for_provider(provider.slug, test_mode=settings.environment == "test"),
@@ -2199,6 +2256,7 @@ def public_provider_detail_html(settings: Settings, provider_slug: str) -> str |
                         for model in served_models[:200]
                     ],
                 ),
+                _provider_page_node(settings, provider),
             ),
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
@@ -2232,6 +2290,8 @@ def public_provider_performance_html(settings: Settings, provider_slug: str) -> 
             description=(
                 f"Measured TTFT, TTFB, effective throughput, uptime, and sampled model routes for {provider.name}."
             ),
+            og_image=_absolute_url(settings, provider_og_image_url(provider.slug)),
+            og_image_alt=f"{provider.name} route performance on TrustedRouter",
             provider=_provider_detail_view(
                 provider,
                 served_models=_provider_model_rows(
@@ -3024,7 +3084,13 @@ def _endpoint_provider_views(
             continue
         seen.add(slug)
         provider = PROVIDERS.get(slug)
-        provider_views.append({"name": provider.name if provider else slug, "slug": slug})
+        provider_views.append(
+            {
+                "name": provider.name if provider else slug,
+                "slug": slug,
+                "logo_url": provider_logo_url(slug),
+            }
+        )
     return provider_views
 
 
@@ -3032,6 +3098,8 @@ def _provider_view(provider: Provider) -> dict[str, object]:
     return {
         "id": provider.slug,
         "name": provider.name,
+        "logo_url": provider_logo_url(provider.slug),
+        "homepage_url": provider_homepage_url(provider.slug),
         "supports_prepaid": provider.supports_prepaid,
         "supports_byok": provider.supports_byok,
         "attested_gateway": provider.attested_gateway,
@@ -3123,6 +3191,7 @@ def _model_detail_view(
                 "provider": ep_provider.name if ep_provider else endpoint.provider,
                 "provider_slug": endpoint.provider,
                 "provider_href": f"/providers/{endpoint.provider}",
+                "provider_logo_url": provider_logo_url(endpoint.provider),
                 "usage_type": endpoint.usage_type,
                 "prompt_price": _price(endpoint.prompt_price_microdollars_per_million_tokens),
                 "completion_price": _price(
@@ -3629,6 +3698,7 @@ def _model_service_node(settings: Settings, model: Model, site_url: str) -> dict
         "brand": {
             "@type": "Brand",
             "name": brand_name,
+            "logo": _absolute_url(settings, provider_logo_url(model.provider)),
         },
         "areaServed": "Worldwide",
         "offers": {

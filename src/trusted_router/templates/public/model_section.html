@@ -1,5 +1,6 @@
 {% extends "public/_base.html" %}
 {% from "public/_provider_privacy_badges.html" import provider_privacy_badges %}
+{% from "public/_provider_identity.html" import provider_identity %}
 {% block body %}
 <section class="panel">
   <div class="panel-head">
@@ -83,7 +84,7 @@
       <tbody>
         {% for endpoint in model.endpoints %}
         <tr>
-          <td><a href="{{ endpoint.provider_href }}">{{ endpoint.provider }}</a> <code>{{ endpoint.provider_slug }}</code></td>
+          <td>{{ provider_identity(endpoint.provider_slug, endpoint.provider, endpoint.provider_href, subtitle=endpoint.provider_slug) }}</td>
           <td>{{ endpoint.usage_type }}</td>
           <td>{{ endpoint.prompt_price }}</td>
           <td>{{ endpoint.completion_price }}</td>
@@ -104,7 +105,7 @@
         <tbody>
           {% for r in measured %}
           <tr>
-            <td><a href="/providers/{{ r.provider }}">{{ r.provider }}</a></td>
+            <td>{{ provider_identity(r.provider, r.provider, "/providers/" ~ r.provider) }}</td>
             <td>{% if r.p50_ttft_ms is not none %}{{ r.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
             <td>{% if r.p95_ttft_ms is not none %}{{ r.p95_ttft_ms }} ms{% else %}—{% endif %}</td>
             <td>{% if r.p50_ttfb_ms is not none %}{{ r.p50_ttfb_ms }} ms{% else %}—{% endif %}</td>
@@ -151,7 +152,7 @@
       <tbody>
         {% for endpoint in model.endpoints %}
         <tr>
-          <td><a href="{{ endpoint.provider_href }}">{{ endpoint.provider }}</a></td>
+          <td>{{ provider_identity(endpoint.provider_slug, endpoint.provider, endpoint.provider_href) }}</td>
           <td>{{ endpoint.usage_type }}</td>
           <td>{{ endpoint.prompt_price }}</td>
           <td>{{ endpoint.completion_price }}</td>
@@ -175,7 +176,7 @@
         <p class="muted-copy">{{ model.endpoint_count }} endpoint{{ '' if model.endpoint_count == 1 else 's' }} across {{ model.providers|length }} provider{{ '' if model.providers|length == 1 else 's' }}.</p>
         <ul class="link-list">
           {% for provider in model.providers %}
-          <li><a href="/providers/{{ provider.slug }}">{{ provider.name }}</a><span>{{ provider.slug }}</span></li>
+          <li>{{ provider_identity(provider.slug, provider.name, "/providers/" ~ provider.slug, subtitle=provider.slug) }}</li>
           {% endfor %}
         </ul>
       </div>

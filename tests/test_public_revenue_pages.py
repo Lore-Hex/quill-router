@@ -311,9 +311,10 @@ def test_public_models_page_does_not_require_api_key(client: TestClient) -> None
     assert "trustedrouter/auto" in response.text
     assert "trustedrouter/eu" in response.text
     assert "API JSON remains" in response.text
-    assert '<span class="pill" title="kimi">Kimi</span>' in response.text
-    assert '<span class="pill" title="parasail">Parasail</span>' in response.text
-    assert '<span class="pill" title="tinfoil">Tinfoil</span>' in response.text
+    for slug, name in (("kimi", "Kimi"), ("parasail", "Parasail"), ("tinfoil", "Tinfoil")):
+        assert f'href="/providers/{slug}" title="{slug}"' in response.text
+        assert f'src="/static/provider-logos/{slug}.png"' in response.text
+        assert f"<span>{name}</span>" in response.text
     assert 'href="https://aiiq.org/models/kimi-k2.6/"' in response.text
     assert "IQ 116" in response.text
 

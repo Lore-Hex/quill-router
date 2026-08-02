@@ -1,8 +1,9 @@
 {% extends "public/_base.html" %}
+{% from "public/_provider_identity.html" import provider_identity %}
 {% block body %}
 <section class="panel">
   <div class="panel-head">
-    <h2><code>{{ provider.id }}</code></h2>
+    <h2 class="provider-detail-title">{{ provider_identity(provider.id, provider.name, size="large", subtitle=provider.id) }}</h2>
     {% if measured.provider_row %}
     <span class="pill good">{{ measured.provider_row.sample_count }} samples</span>
     {% else %}

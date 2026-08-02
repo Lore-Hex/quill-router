@@ -1,5 +1,6 @@
 {% extends "public/_base.html" %}
 {% from "public/_provider_privacy_badges.html" import provider_privacy_badges %}
+{% from "public/_provider_identity.html" import provider_identity %}
 {% block body %}
 <section class="panel">
   <div class="panel-head">
@@ -8,7 +9,7 @@
       {% if model.open_weights %}<span class="pill good">open weights</span>{% endif %}
       {% if model.us_provider_available %}<span class="pill">US providers</span>{% endif %}
       {% if model.eu_focused_provider_available %}<span class="pill">EU-focused</span>{% endif %}
-      <span class="pill good">{{ model.provider }}</span>
+      <a class="pill provider-chip" href="/providers/{{ model.publisher_slug }}"><img class="provider-logo" src="{{ provider_logo_url(model.publisher_slug) }}" alt="" width="22" height="22"><span>{{ model.provider }}</span></a>
     </div>
   </div>
   <div class="panel-body">
@@ -20,7 +21,7 @@
     </nav>
     <table>
       <tbody>
-        <tr><th>Publisher</th><td>{{ model.provider }} ({{ model.publisher_slug }})</td></tr>
+        <tr><th>Publisher</th><td>{{ provider_identity(model.publisher_slug, model.provider, "/providers/" ~ model.publisher_slug, subtitle=model.publisher_slug) }}</td></tr>
         <tr><th>AI IQ</th><td>
           {% if model.ai_iq %}
           <a class="ai-iq-link" href="{{ model.ai_iq.url }}" rel="nofollow noopener">
@@ -55,7 +56,7 @@
           {% else %}
           <div class="provider-chip-list">
             {% for provider in model.providers %}
-            <a class="pill" href="/providers/{{ provider.slug }}" title="{{ provider.slug }}">{{ provider.name }}</a>
+            <a class="pill provider-chip" href="/providers/{{ provider.slug }}" title="{{ provider.slug }}"><img class="provider-logo" src="{{ provider.logo_url }}" alt="" width="22" height="22" loading="lazy" decoding="async"><span>{{ provider.name }}</span></a>
             {% endfor %}
           </div>
           {% endif %}
@@ -112,7 +113,7 @@
         {% for candidate in model.candidate_models %}
         <tr>
           <td><a href="{{ candidate.detail_href }}">{{ candidate.id }}</a>{% if candidate.open_weights %} <span class="pill good">open weights</span>{% endif %}<br><span class="muted-copy">{{ candidate.name }}</span></td>
-          <td>{{ candidate.provider }}</td>
+          <td>{{ provider_identity(candidate.publisher_slug, candidate.provider, "/providers/" ~ candidate.publisher_slug) }}</td>
           <td>{{ candidate.prompt_price }}</td>
           <td>{{ candidate.completion_price }}</td>
         </tr>
@@ -145,7 +146,7 @@
       <tbody>
         {% for endpoint in model.endpoints %}
         <tr>
-          <td><a href="{{ endpoint.provider_href }}">{{ endpoint.provider }}</a> <code>({{ endpoint.provider_slug }})</code></td>
+          <td>{{ provider_identity(endpoint.provider_slug, endpoint.provider, endpoint.provider_href, subtitle=endpoint.provider_slug) }}</td>
           <td>{{ endpoint.usage_type }}</td>
           <td>{{ endpoint.prompt_price }}</td>
           <td>{{ endpoint.completion_price }}</td>

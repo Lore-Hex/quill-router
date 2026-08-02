@@ -1,4 +1,5 @@
 {% extends "public/_base.html" %}
+{% from "public/_provider_identity.html" import provider_identity %}
 
 {% block hero %}
 <section class="status-hero">
@@ -59,7 +60,7 @@
           {% for p in snapshot.providers %}
           <tr>
             <td>{% if p.rank is not none %}{{ p.rank }}{% else %}—{% endif %}</td>
-            <td><a href="/providers/{{ p.provider }}">{{ p.provider }}</a>
+            <td>{{ provider_identity(p.provider, p.provider, "/providers/" ~ p.provider) }}
               {% if not p.rank_eligible %}<span class="lb-badge">warming</span>{% endif %}
             </td>
             <td>{{ p.model_count }}</td>
@@ -105,7 +106,7 @@
             <td><a href="/models/{{ m.model }}/performance">{{ m.model }}</a>
               {% if not m.rank_eligible %}<span class="lb-badge">warming</span>{% endif %}
             </td>
-            <td>{{ m.provider }}</td>
+            <td>{{ provider_identity(m.provider, m.provider, "/providers/" ~ m.provider) }}</td>
             <td>{% if m.completion_rate is not none %}{{ '%.2f'|format(m.completion_rate * 100) }}%{% else %}—{% endif %}</td>
             <td>{% if m.provider_availability is not none %}{{ '%.2f'|format(m.provider_availability * 100) }}%{% else %}—{% endif %}</td>
             <td>{% if m.availability_within_deadline is not none %}{{ '%.2f'|format(m.availability_within_deadline * 100) }}% <span class="lb-badge">{{ '%.0f'|format(m.first_token_deadline_ms / 1000) }}s</span>{% else %}—{% endif %}</td>

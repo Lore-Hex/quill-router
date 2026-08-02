@@ -45,6 +45,7 @@ dev = [
   "docling>=2.58.0",
   "hypothesis>=6.152.4",
   "mypy>=1.13",
+  "pillow>=12.2.0",
   "pytest>=8.3.0",
   "pytest-asyncio>=0.24.0",
   "pytest-cov>=7.1.0",

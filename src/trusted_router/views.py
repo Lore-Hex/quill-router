@@ -15,6 +15,8 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from trusted_router.provider_branding import provider_logo_url
+
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
@@ -64,6 +66,7 @@ def _env() -> Environment:
     )
     env.filters["uptime_pct"] = _format_uptime
     env.filters["datetime_iso"] = _format_datetime_iso
+    env.globals["provider_logo_url"] = provider_logo_url
     return env
 
 

@@ -1,8 +1,9 @@
 {% extends "public/_base.html" %}
+{% from "public/_provider_identity.html" import provider_identity %}
 {% block body %}
 <section class="panel">
   <div class="panel-head">
-    <h2><code>{{ provider.id }}</code></h2>
+    <h2 class="provider-detail-title">{{ provider_identity(provider.id, provider.name, size="large", subtitle=provider.id) }}</h2>
     <span class="pill {% if provider.privacy_tier in ['Confidential', 'TR gateway', 'No logs', 'No logs (prepaid)'] %}good{% endif %}">{{ provider.privacy_tier }}</span>
   </div>
   <div class="panel-body">
@@ -10,6 +11,7 @@
     <table>
       <tbody>
         <tr><th>Provider</th><td>{{ provider.name }}</td></tr>
+        {% if provider.homepage_url %}<tr><th>Provider website</th><td><a href="{{ provider.homepage_url }}" rel="nofollow noopener">{{ provider.homepage_url }}</a></td></tr>{% endif %}
         <tr><th>Models</th><td>{{ provider.served_model_count }} public model{{ '' if provider.served_model_count == 1 else 's' }}</td></tr>
         <tr><th>Prepaid routes</th><td>{{ provider.prepaid_model_count }}</td></tr>
         <tr><th>BYOK routes</th><td>{{ provider.byok_model_count }}</td></tr>
