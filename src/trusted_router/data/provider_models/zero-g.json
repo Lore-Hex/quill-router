@@ -1,0 +1,174 @@
+{
+  "_about": "Provider-native private-route supplement for 0G Private Computer. Prices and capabilities refresh hourly from 0G's public marketplace. Routes remain disabled until the managed account passes a private TeeML PONG canary.",
+  "provider": "zero-g",
+  "source": "https://pc.0g.ai/models",
+  "pricing_source": "https://pc.0g.ai/models",
+  "price_scale": "microdollars_per_million",
+  "models": [
+    {
+      "display_name": "GLM-5.2",
+      "title": "GLM-5.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "glm-5.2",
+      "context_length": 1048576,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "chat",
+        "completion",
+        "private_inference",
+        "teeml",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "supported_parameters": [
+        "chat_template_kwargs",
+        "frequency_penalty",
+        "max_tokens",
+        "presence_penalty",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_p"
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "trust_mode": "private",
+      "verifiability": "TeeML",
+      "tee_attested": true,
+      "tee_type": "TDX",
+      "tee_verifier": "dstack",
+      "private_provider_count": 1,
+      "pricing_policy": "maximum-active-private-route",
+      "input_token_price_per_m": 900000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 180000
+    },
+    {
+      "display_name": "0GM-1.0-35B-A3B",
+      "title": "0GM-1.0-35B-A3B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "zero-g/0gm-1.0-35b-a3b",
+      "upstream_id": "0gm-1.0-35b-a3b",
+      "context_length": 262144,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "chat",
+        "completion",
+        "private_inference",
+        "teeml",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "supported_parameters": [
+        "chat_template_kwargs",
+        "frequency_penalty",
+        "max_tokens",
+        "presence_penalty",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_p"
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "trust_mode": "private",
+      "verifiability": "TeeML",
+      "tee_attested": true,
+      "tee_type": "TDX",
+      "tee_verifier": "dstack",
+      "private_provider_count": 1,
+      "pricing_policy": "maximum-active-private-route",
+      "input_token_price_per_m": 80000,
+      "output_token_price_per_m": 480000,
+      "cached_input_token_price_per_m": 26667
+    },
+    {
+      "display_name": "0GM-1.0-35B-A3B-SIA",
+      "title": "0GM-1.0-35B-A3B-SIA",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "zero-g/0gm-1.0-35b-a3b-sia",
+      "upstream_id": "0gm-1.0-35b-a3b-sia",
+      "context_length": 32768,
+      "max_output_tokens": 8192,
+      "supported_features": [
+        "chat",
+        "completion",
+        "private_inference",
+        "teeml",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "supported_parameters": [
+        "chat_template_kwargs",
+        "frequency_penalty",
+        "max_tokens",
+        "presence_penalty",
+        "reasoning_effort",
+        "stop",
+        "temperature",
+        "top_k",
+        "top_p"
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "trust_mode": "private",
+      "verifiability": "TeeML",
+      "tee_attested": true,
+      "tee_type": "TDX",
+      "tee_verifier": "dstack",
+      "private_provider_count": 1,
+      "pricing_policy": "maximum-active-private-route",
+      "input_token_price_per_m": 80000,
+      "output_token_price_per_m": 480000,
+      "cached_input_token_price_per_m": 26667
+    }
+  ],
+  "model_count": 3,
+  "generated_at": "2026-08-02T05:02:39Z"
+}

@@ -120,19 +120,28 @@ def discover_openai_chat_catalog(
     return prices, discovered
 
 
-def probe_openai_chat(*, base_url: str, api_key: str | None, model: str) -> bool:
+def probe_openai_chat(
+    *,
+    base_url: str,
+    api_key: str | None,
+    model: str,
+    extra_headers: dict[str, str] | None = None,
+    expected_content: str | None = None,
+) -> bool:
     """Run a minimal paid-path canary without logging response content."""
 
     if not api_key:
         return False
     try:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": PROVIDER_FETCH_UA,
+        }
+        headers.update(extra_headers or {})
         response = httpx.post(
             f"{base_url.rstrip('/')}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "User-Agent": PROVIDER_FETCH_UA,
-            },
+            headers=headers,
             json={
                 "model": model,
                 "messages": [{"role": "user", "content": "Reply PONG"}],
@@ -143,4 +152,21 @@ def probe_openai_chat(*, base_url: str, api_key: str | None, model: str) -> bool
         )
     except httpx.HTTPError:
         return False
-    return response.status_code == 200
+    if response.status_code != 200:
+        return False
+    if expected_content is None:
+        return True
+    try:
+        payload = response.json()
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return False
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        return False
+    content = message.get("content")
+    return isinstance(content, str) and content.strip() == expected_content

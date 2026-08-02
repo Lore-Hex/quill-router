@@ -91,6 +91,9 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
         ("NEUROMETRIC_API_KEY",),
         "https://wharf.neurometric.ai/v1",
     ),
+    # 0G Private Computer. TeeTLS only attests the router; forcing private
+    # ensures inference itself uses a TeeML confidential-compute route.
+    "zero-g": (("ZERO_G_API_KEY",), "https://router-api.0g.ai/v1"),
     # Alibaba Cloud Model Studio / DashScope — workspace-scoped OpenAI-compatible endpoint.
     "alibaba": (
         ("ALIBABA_API_KEY", "DASHSCOPE_API_KEY", "ALIYUN_API_KEY"),
@@ -452,6 +455,8 @@ class ProviderClient:
 
     @staticmethod
     def _provider_extra_headers(model: Model) -> dict[str, str]:
+        if model.provider == "zero-g":
+            return {"X-0G-Provider-Trust-Mode": "private"}
         if model.provider == "wafer" and _wafer_model_supports_zdr(model.upstream_id or model.id):
             return {"Wafer-ZDR": "required"}
         return {}
