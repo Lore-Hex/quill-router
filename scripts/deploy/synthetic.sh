@@ -38,7 +38,11 @@ add_secret_env_if_exists "ZAI_API_KEY" "trustedrouter-zai-api-key"
 UPDATE_SECRETS="$(IFS=,; echo "${SECRET_ENVS[*]}")"
 
 BASE_ENV_VARS=(
-  "TR_ENVIRONMENT=production"
+  # These are one-shot workers, not the public control-plane process. Using
+  # the worker runtime keeps control-plane-only dependencies such as SES out
+  # of the monitor containers while their actual storage and probe inputs
+  # remain explicit below.
+  "TR_ENVIRONMENT=worker"
   "TR_RELEASE=$(git rev-parse --short HEAD 2>/dev/null || echo local)"
   "TR_ENABLE_LIVE_PROVIDERS=false"
   "TR_API_BASE_URL=https://api.trustedrouter.com/v1"
