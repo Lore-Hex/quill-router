@@ -2343,6 +2343,16 @@ async def test_run_synthetic_once_bounds_credit_bearing_probe_concurrency(
 async def test_rotation_pass_fans_out_model_samples(monkeypatch: pytest.MonkeyPatch) -> None:
     from trusted_router.synthetic import cli as cli_module
 
+    # Concurrency is asserted STRUCTURALLY (peak in-flight), not by wall
+    # clock: an elapsed-time bound flaked under contended CI CPU (xdist
+    # workers sharing cores pushed 120ms to 128ms). The interleaving of an
+    # in-flight counter is deterministic on one event loop — the second
+    # probe's increment always runs while the first awaits — so this proves
+    # the same fan-out with zero timing sensitivity, and additionally pins
+    # the billing budget: peak must be exactly the semaphore's 2.
+    active = 0
+    peak = 0
+
     async def fake_rotation_probe(
         _client: httpx.AsyncClient,
         _target: SyntheticTarget,
@@ -2353,10 +2363,14 @@ async def test_rotation_pass_fans_out_model_samples(monkeypatch: pytest.MonkeyPa
         model: str,
         default_timeout_seconds: float,
     ) -> tuple[str, str, str, str]:
+        nonlocal active, peak
         assert monitor_region == "us-central1"
         assert api_key == "sk-tr-test"
         assert default_timeout_seconds == 20.0
-        await asyncio.sleep(0.03)
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.005)
+        active -= 1
         return (provider, model, monitor_region, api_key)
 
     monkeypatch.setattr(
@@ -2366,7 +2380,6 @@ async def test_rotation_pass_fans_out_model_samples(monkeypatch: pytest.MonkeyPa
     )
     monkeypatch.setattr(cli_module, "provider_rotation_probe", fake_rotation_probe)
 
-    started = time.perf_counter()
     samples = await cli_module._rotation_pass(
         settings=Settings(environment="test", api_base_url="https://api.trustedrouter.com/v1"),
         monitor_region="us-central1",
@@ -2375,10 +2388,10 @@ async def test_rotation_pass_fans_out_model_samples(monkeypatch: pytest.MonkeyPa
         count=4,
         rng=random.Random(0),  # noqa: S311 - deterministic test selection.
     )
-    elapsed = time.perf_counter() - started
 
     assert len(samples) == 4
-    assert elapsed < 0.12
+    # Parallel within the billing budget, never beyond it.
+    assert peak == 2
 
 
 @pytest.mark.asyncio
@@ -2387,21 +2400,31 @@ async def test_probe_and_rotation_pass_runs_independent_blocks_concurrently(
 ) -> None:
     from trusted_router.synthetic import cli as cli_module
 
+    # Overlap is proven by a mutual handshake, not wall clock (an elapsed
+    # bound flaked under contended CI CPU): each block signals its start and
+    # then WAITS for the other block to have started before it can finish.
+    # Serialized execution deadlocks the first block until wait_for's timeout
+    # fails the test deterministically; concurrent execution releases both
+    # immediately. No timing margin exists to erode.
+    probe_started = asyncio.Event()
+    rotation_started = asyncio.Event()
+
     async def fake_one_probe_pass(**_kwargs: Any) -> list[SyntheticProbeSample]:
-        await asyncio.sleep(0.03)
+        probe_started.set()
+        await asyncio.wait_for(rotation_started.wait(), timeout=5)
         return [
             _sample(id="tls", probe_type="tls_health", status="up"),
             _sample(id="settle", probe_type="gateway_authorize_settle", status="up"),
         ]
 
     async def fake_rotation_pass(**_kwargs: Any) -> list[str]:
-        await asyncio.sleep(0.03)
+        rotation_started.set()
+        await asyncio.wait_for(probe_started.wait(), timeout=5)
         return ["rotation-a", "rotation-b"]
 
     monkeypatch.setattr(cli_module, "_one_probe_pass", fake_one_probe_pass)
     monkeypatch.setattr(cli_module, "_rotation_pass", fake_rotation_pass)
 
-    started = time.perf_counter()
     samples, rotation_samples = await cli_module._probe_and_rotation_pass(
         settings=Settings(environment="test", api_base_url="https://api.trustedrouter.com/v1"),
         monitor_region="us-central1",
@@ -2413,14 +2436,12 @@ async def test_probe_and_rotation_pass_runs_independent_blocks_concurrently(
         rotation_per_pass=4,
         rotation_rng=random.Random(0),  # noqa: S311 - deterministic test selection.
     )
-    elapsed = time.perf_counter() - started
 
     assert [sample.probe_type for sample in samples] == [
         "tls_health",
         "gateway_authorize_settle",
     ]
     assert rotation_samples == ["rotation-a", "rotation-b"]
-    assert elapsed < 0.06
 
 
 @pytest.mark.asyncio
