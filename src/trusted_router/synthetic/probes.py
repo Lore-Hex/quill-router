@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import contextlib
+import hashlib
 import json
 import random
 import secrets
@@ -18,6 +20,8 @@ from urllib.parse import urljoin, urlsplit
 
 import cbor2
 import httpx
+from cryptography import x509
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from trusted_router.config import Settings
 from trusted_router.provider_reliability import model_deadlines
@@ -65,10 +69,54 @@ class SyntheticTarget:
     # None for the canonical target since that probe already hits the
     # global enclave LB by definition.
     control_plane_url: str | None = None
+    # ATTESTED-CERT-ONLY target: the gateway serves a self-signed cert it
+    # minted inside the TEE (AWS Nitro standalone deployments), so CA
+    # verification can never pass and is not the trust model. Probes use
+    # a no-CA-verify TLS context instead, and the attestation probe
+    # closes the loop by verifying the attestation document binds the
+    # exact cert served on its own connection (SPKI + fingerprint).
+    # Skipping CA verification WITHOUT that binding check would be a
+    # plain `verify=False` hack; the pairing is what makes it sound.
+    attested: bool = False
+    # When set, the attestation probe additionally pins PCR0 (the EIF
+    # measurement) to this hex value; a running enclave with any other
+    # measurement reports pcr0_mismatch. None = binding-only, so a fresh
+    # deployment isn't permanently red before the pin is configured.
+    expected_pcr0: str | None = None
+
+
+def _attested_ssl_context() -> ssl.SSLContext:
+    """TLS context for attested-cert-only targets: no CA verification.
+
+    Sound ONLY in combination with the attestation probe's binding check
+    (SPKI + fingerprint of the cert served on this same probe pass). See
+    SyntheticTarget.attested.
+    """
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    return context
 
 
 def configured_targets(settings: Settings) -> list[SyntheticTarget]:
-    targets = [SyntheticTarget("canonical", settings.api_base_url, choose_region(settings))]
+    targets = [
+        SyntheticTarget(
+            "canonical",
+            settings.api_base_url,
+            choose_region(settings),
+            control_plane_url=settings.synthetic_control_plane_health_url,
+            attested=settings.synthetic_canonical_attested,
+            expected_pcr0=settings.attestation_expected_pcr0,
+        )
+    ]
+    if not settings.synthetic_regional_probes_enabled:
+        # Standalone single-gateway deployment: the per-region alias and
+        # Cloud Run URL templates below are GCP topology and would
+        # fabricate targets that do not exist (verified live: with
+        # TR_REGIONS=eu-west-3 the loop appends
+        # api-eu-west-3.quillrouter.com + a nonexistent *.run.app URL,
+        # both permanently down). One gateway, one target.
+        return targets
     for region in region_payload(settings):
         name = str(region["id"])
         api_base_url = str(region["api_base_url"])
@@ -118,20 +166,30 @@ async def run_synthetic_once(
     timeout = httpx.Timeout(settings.synthetic_monitor_timeout_seconds)
     limiter = billing_semaphore or asyncio.Semaphore(DEFAULT_SYNTHETIC_BILLING_CONCURRENCY)
     samples: list[SyntheticProbeSample] = []
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        target_results = await asyncio.gather(
-            *[
+    # Attested targets serve a self-signed TEE-minted cert, so they need
+    # a no-CA-verify client; everything else keeps full verification on
+    # the shared client. Never mix the two: handing the attested client
+    # to a CA-certified target would silently drop its TLS verification.
+    async with contextlib.AsyncExitStack() as stack:
+        default_client = await stack.enter_async_context(httpx.AsyncClient(timeout=timeout))
+        clients: dict[bool, httpx.AsyncClient] = {False: default_client}
+        probe_tasks = []
+        for target in configured_targets(settings):
+            if target.attested and True not in clients:
+                clients[True] = await stack.enter_async_context(
+                    httpx.AsyncClient(timeout=timeout, verify=_attested_ssl_context())
+                )
+            probe_tasks.append(
                 _run_target_synthetic_probes(
-                    client,
+                    clients[target.attested],
                     target,
                     monitor_region=region,
                     api_key=key,
                     model=settings.synthetic_monitor_model,
                     billing_semaphore=limiter,
                 )
-                for target in configured_targets(settings)
-            ]
-        )
+            )
+        target_results = await asyncio.gather(*probe_tasks)
     for target_samples in target_results:
         samples.extend(target_samples)
     return samples
@@ -305,7 +363,7 @@ async def gateway_latency_phase_probes(
         if raw_socket is None or tcp_ms is None:
             raise last_connect_error or OSError("no resolved address accepted TCP")
 
-        tls_context = ssl.create_default_context()
+        tls_context = _attested_ssl_context() if target.attested else ssl.create_default_context()
         tls_context.set_alpn_protocols(["http/1.1"])
         tls_started = time.perf_counter()
         reader, stream_writer = await asyncio.wait_for(
@@ -586,10 +644,28 @@ async def attestation_nonce_probe(
     url = _root_url(target.api_base_url, f"/attestation?nonce={nonce}")
     started = time.perf_counter()
     try:
-        response = await client.get(url)
+        if target.attested:
+            # Stream so the TLS connection is still open when we read the
+            # peer certificate: for an attested target the document must
+            # bind THE cert served on THIS connection, otherwise a relay
+            # could front a healthy enclave with its own TLS.
+            async with client.stream("GET", url) as response:
+                body = await response.aread()
+                status_code = response.status_code
+                peer_cert_der = _response_peer_cert_der(response)
+        else:
+            response = await client.get(url)
+            body = response.content
+            status_code = response.status_code
+            peer_cert_der = None
         latency_ms = _elapsed_ms(started)
-        evidence = _attestation_evidence(response.content, nonce)
-        ok = response.status_code == 200 and evidence["nonce_ok"]
+        evidence = _attestation_evidence(
+            body,
+            nonce,
+            peer_cert_der=peer_cert_der,
+            expected_pcr0=target.expected_pcr0,
+        )
+        ok = status_code == 200 and evidence["nonce_ok"] and evidence["error_type"] is None
         return _sample(
             "attestation_nonce",
             target,
@@ -598,7 +674,7 @@ async def attestation_nonce_probe(
             status="up" if ok else "trust_degraded",
             latency_milliseconds=latency_ms,
             ttfb_milliseconds=latency_ms,
-            http_status=response.status_code,
+            http_status=status_code,
             error_type=None if ok else str(evidence["error_type"]),
             attestation_digest=_evidence_str(evidence, "attestation_digest"),
             source_commit=_evidence_str(evidence, "source_commit"),
@@ -613,6 +689,28 @@ async def attestation_nonce_probe(
             latency_milliseconds=_elapsed_ms(started),
             error_type=exc.__class__.__name__,
         )
+
+
+def _response_peer_cert_der(response: httpx.Response) -> bytes | None:
+    """Peer certificate (DER) of the TLS connection a response arrived on.
+
+    Only available while the response is still streaming — httpx returns
+    the connection to the pool once the body is closed. Returns None when
+    the transport doesn't expose an ssl_object (HTTP, mocks, HTTP/2
+    transports without the extension); callers treat None as "binding
+    unverifiable", which for an attested target is a failure, not a pass.
+    """
+    try:
+        network_stream = response.extensions.get("network_stream")
+        if network_stream is None:
+            return None
+        ssl_object = network_stream.get_extra_info("ssl_object")
+        if ssl_object is None:
+            return None
+        der = ssl_object.getpeercert(binary_form=True)
+        return der if isinstance(der, bytes) else None
+    except Exception:  # noqa: BLE001 - diagnostics must never crash the probe
+        return None
 
 
 async def openai_chat_pong_probe(
@@ -2293,7 +2391,13 @@ def _responses_text(response: httpx.Response) -> str:
         return ""
 
 
-def _attestation_evidence(body: bytes, nonce_hex: str) -> dict[str, str | bool | None]:
+def _attestation_evidence(
+    body: bytes,
+    nonce_hex: str,
+    *,
+    peer_cert_der: bytes | None = None,
+    expected_pcr0: str | None = None,
+) -> dict[str, str | bool | None]:
     """Extract nonce binding + identity evidence from an attestation body.
 
     Two live formats:
@@ -2342,10 +2446,22 @@ def _attestation_evidence(body: bytes, nonce_hex: str) -> dict[str, str | bool |
         nonce_ok = isinstance(nonce, bytes) and nonce.hex() == nonce_hex.lower()
         pcrs = aws.get("pcrs")
         pcr0 = pcrs.get(0) if isinstance(pcrs, dict) else None
+        pcr0_hex = pcr0.hex() if isinstance(pcr0, bytes) else None
+        # Failure precedence: an unbound nonce is a replay and trumps
+        # everything; then the served-cert binding; then the measurement
+        # pin. The four error_types are deliberately distinct — they mean
+        # completely different things and top_error is how you triage.
+        error: str | None = None
+        if not nonce_ok:
+            error = "nonce_missing"
+        elif peer_cert_der is not None and not _aws_cert_binding_ok(aws, peer_cert_der):
+            error = "cert_binding_mismatch"
+        elif expected_pcr0 and (pcr0_hex or "").lower() != expected_pcr0.lower():
+            error = "pcr0_mismatch"
         return {
             "nonce_ok": nonce_ok,
-            "error_type": None if nonce_ok else "nonce_missing",
-            "attestation_digest": pcr0.hex() if isinstance(pcr0, bytes) else None,
+            "error_type": error,
+            "attestation_digest": pcr0_hex,
             "source_commit": None,
         }
     return {
@@ -2354,6 +2470,40 @@ def _attestation_evidence(body: bytes, nonce_hex: str) -> dict[str, str | bool |
         "attestation_digest": None,
         "source_commit": None,
     }
+
+
+def _aws_cert_binding_ok(payload: dict[Any, Any], peer_cert_der: bytes) -> bool:
+    """Does the attestation document bind the cert served on this probe's
+    own TLS connection?
+
+    The enclave publishes two independent bindings (mirrors
+    quill-cloud-proxy tools/verify-attestation.py):
+      * payload["public_key"]     — the served cert's SPKI, DER bytes
+      * payload["user_data"][:32] — sha256 of the full cert DER
+    Both present must both match. NEITHER present fails: an attested
+    target whose document binds nothing is indistinguishable from a
+    relay, and "unverifiable" must not read as "verified".
+    """
+    checked = 0
+    doc_spki = payload.get("public_key")
+    if isinstance(doc_spki, bytes) and doc_spki:
+        try:
+            cert = x509.load_der_x509_certificate(peer_cert_der)
+            live_spki = cert.public_key().public_bytes(
+                encoding=Encoding.DER,
+                format=PublicFormat.SubjectPublicKeyInfo,
+            )
+        except (ValueError, TypeError):
+            return False
+        if doc_spki != live_spki:
+            return False
+        checked += 1
+    user_data = payload.get("user_data")
+    if isinstance(user_data, bytes) and len(user_data) >= 32:
+        if user_data[:32] != hashlib.sha256(peer_cert_der).digest():
+            return False
+        checked += 1
+    return checked > 0
 
 
 def _decode_aws_attestation_payload(body: bytes) -> dict[Any, Any] | None:

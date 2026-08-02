@@ -1,27 +1,47 @@
 #!/usr/bin/env bash
-# Deploy the AWS-EU control plane: App Runner (Dublin) on Aurora DSQL.
+# Deploy the AWS-EU control plane: App Runner (Paris) on Aurora DSQL.
 #
 # Mirrors azure_canary*.sh in shape — build locally, push, deploy, verify with
-# the same cloud-agnostic scripts/deploy/verify_deployment.sh. App Runner over
-# ECS+ALB for the same reason Container Apps won on Azure: an HTTPS URL with no
-# cert/LB ceremony, so the e2e loop closes fast. The four-nines active/active
-# topology (Dublin + Stockholm behind health-checked DNS) comes after
-# reserve/settle land; this is deliberately the single-region first rung.
+# the same cloud-agnostic scripts/deploy/verify_deployment.sh.
+#
+# THIS FILE IS THE SOURCE OF TRUTH FOR THE SERVICE ENV. The live service
+# once carried TR_API_BASE_URL out-of-band (unversioned), pointed at its
+# own App Runner URL — so the synthetic monitor probed the control plane
+# for /attestation (404) and reported the EU cloud 50% trust_degraded
+# while the actual enclave was healthy. Every runtime variable now lives
+# here; change it here or not at all.
 #
 # Auth to the database is IAM: the instance role tr-eu-app holds
-# dsql:DbConnectAdmin on the Dublin cluster, and TR_POSTGRES_IAM_AUTH=aws-dsql
+# dsql:DbConnectAdmin on the Paris cluster, and TR_POSTGRES_IAM_AUTH=aws-dsql
 # makes PostgresStore mint a fresh token per physical connection (DSQL tokens
 # expire in minutes — a static password dies within the hour). The DSN
 # deliberately carries NO password.
+#
+# Secrets (internal gateway token, synthetic monitor API key) are wired via
+# RuntimeEnvironmentSecrets from eu-west-3 Secrets Manager — NOT plaintext
+# env vars. describe-service returns RuntimeEnvironmentVariables in
+# cleartext to any caller with apprunner:DescribeService; it masks
+# RuntimeEnvironmentSecrets.
 set -euo pipefail
 
-REGION="${REGION:-eu-west-1}"
+REGION="${REGION:-eu-west-3}"                       # Paris. Dublin is GONE.
 ACCOUNT="${ACCOUNT:-330422590279}"
-CLUSTER_ID="${CLUSTER_ID:-7rt62n5uiz6xjdsoi2ahypz3cq}"
+CLUSTER_ID="${CLUSTER_ID:-tnt642i3ofzpn5z62msacutpuu}"
 ECR="${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/trusted-router"
 TAG="${TAG:-eu}"
 SVC="${SVC:-tr-eu}"
 DSQL_HOST="${CLUSTER_ID}.dsql.${REGION}.on.aws"
+
+# The attested Nitro gateway this control plane fronts. The PCR0 pin must
+# match the EIF measurement the enclave deploy published — pass it in from
+# the same value quill-cloud-proxy's deploy-aws-nitro.sh pinned:
+#   ATTESTATION_PCR0=<hex> bash scripts/deploy/aws_eu_control_plane.sh
+API_BASE_URL="${API_BASE_URL:-https://api-aws.trustedrouter.com/v1}"
+ATTESTATION_PCR0="${ATTESTATION_PCR0:?set ATTESTATION_PCR0 to the published enclave PCR0 - measurement pinning is the point of the probe}"
+
+# Secrets Manager ARNs (eu-west-3 — App Runner requires same-region secrets).
+INTERNAL_TOKEN_SECRET_ARN="${INTERNAL_TOKEN_SECRET_ARN:-$(aws secretsmanager describe-secret --region "$REGION" --secret-id quill/trustedrouter-internal-gateway-token --query ARN --output text)}"
+MONITOR_KEY_SECRET_ARN="${MONITOR_KEY_SECRET_ARN:-$(aws secretsmanager describe-secret --region "$REGION" --secret-id quill/trustedrouter-synthetic-monitor-api-key --query ARN --output text)}"
 
 log(){ printf '\n=== %s\n' "$*" >&2; }
 
@@ -43,7 +63,21 @@ CONFIG=$(cat <<JSON
         "TR_POSTGRES_DSN": "host=${DSQL_HOST} port=5432 user=admin dbname=postgres sslmode=require",
         "TR_POSTGRES_IAM_AUTH": "aws-dsql",
         "TR_ENABLE_LIVE_PROVIDERS": "false",
-        "TR_SYNTHETIC_MONITOR_REGION": "${REGION}"
+
+        "TR_API_BASE_URL": "${API_BASE_URL}",
+        "TR_PRIMARY_REGION": "${REGION}",
+        "TR_REGIONS": "${REGION}",
+
+        "TR_SYNTHETIC_MONITOR_REGION": "${REGION}",
+        "TR_SYNTHETIC_CANONICAL_ATTESTED": "true",
+        "TR_ATTESTATION_EXPECTED_PCR0": "${ATTESTATION_PCR0}",
+        "TR_SYNTHETIC_REGIONAL_PROBES_ENABLED": "false",
+        "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL": "https://aws.trustedrouter.com",
+        "TR_SYNTHETIC_CONTROL_PLANE_BASE_URL": "https://trustedrouter.com"
+      },
+      "RuntimeEnvironmentSecrets": {
+        "TR_INTERNAL_GATEWAY_TOKEN": "${INTERNAL_TOKEN_SECRET_ARN}",
+        "TR_SYNTHETIC_MONITOR_API_KEY": "${MONITOR_KEY_SECRET_ARN}"
       }
     }
   },
@@ -54,6 +88,13 @@ CONFIG=$(cat <<JSON
 }
 JSON
 )
+# TR_SYNTHETIC_CONTROL_PLANE_BASE_URL is DELIBERATELY the GCP plane for
+# now: the enclave's authorize/settle dependency IS https://trustedrouter.com
+# today (see quill-cloud-proxy deploy-aws-nitro.sh
+# QUILL_TR_CONTROL_PLANE_BASE_URL). The billing probe must measure the
+# dependency the gateway actually has, not the one we wish it had. Flip
+# BOTH together when key federation makes the EU plane the authorize
+# target.
 
 if aws apprunner list-services --region "$REGION" --query "ServiceSummaryList[?ServiceName=='${SVC}'].ServiceArn" --output text | grep -q arn; then
   ARN=$(aws apprunner list-services --region "$REGION" --query "ServiceSummaryList[?ServiceName=='${SVC}'].ServiceArn" --output text)
@@ -78,3 +119,39 @@ done
 URL=$(aws apprunner describe-service --region "$REGION" --service-arn "$ARN" --query 'Service.ServiceUrl' --output text)
 log "service: https://${URL}"
 echo "https://${URL}"
+
+# ---------------------------------------------------------------------------
+# EventBridge synthetic cadence — versioned here for the same reason the env
+# is: an unversioned rule Input is how a probe silently measures the wrong
+# cloud. rotation_count=2 keeps steady-state spend bounded (2 real rotation
+# completions/min + the pong/billing probes); the route clamps at 8
+# regardless of what this Input says.
+# ---------------------------------------------------------------------------
+if [ "${SKIP_EVENTBRIDGE:-0}" != "1" ]; then
+  log "aligning EventBridge rule tr-eu-synthetic-1min"
+  DEST_ARN=$(aws events list-api-destinations --region "$REGION" --name-prefix tr-eu-synthetic-run --query 'ApiDestinations[0].ApiDestinationArn' --output text)
+  ROLE_ARN="arn:aws:iam::${ACCOUNT}:role/tr-eu-eventbridge-invoke-par"
+  TARGETS=$(python3 - "$DEST_ARN" "$ROLE_ARN" "$REGION" <<'PY'
+import json
+import sys
+
+dest_arn, role_arn, region = sys.argv[1:4]
+rule_input = {
+    "monitor_region": region,
+    "rotation_count": 2,
+    "rotation_models": ["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"],
+}
+print(json.dumps([
+    {
+        "Id": "synthetic",
+        "Arn": dest_arn,
+        "RoleArn": role_arn,
+        "Input": json.dumps(rule_input),
+    }
+]))
+PY
+)
+  aws events put-rule --region "$REGION" --name tr-eu-synthetic-1min --schedule-expression 'rate(1 minute)' --state ENABLED >/dev/null
+  aws events put-targets --region "$REGION" --rule tr-eu-synthetic-1min --targets "$TARGETS" >/dev/null
+  log "rule aligned: rotation_count=2, DSv4-pinned"
+fi

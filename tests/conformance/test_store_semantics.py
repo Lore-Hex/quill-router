@@ -352,13 +352,19 @@ def test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option(
     store: Store, unique: str
 ) -> None:
     """Status history uses inclusive period ranges and newest-N ordering."""
-    # Rollup reads have no target/probe filters, and server-backed conformance
-    # databases persist between runs. Give this test a practically unique
-    # three-hour range so old test rows cannot consume its limit.
-    now = (
-        dt.datetime(2100, 1, 1, 0, 10, tzinfo=dt.UTC)
-        + dt.timedelta(hours=int(unique, 16) % 50_000_000)
-    )
+    # The window must be in the PAST and inside ROLLUP_RETENTION_MONTHS.
+    # An earlier version made it "practically unique" by basing it at
+    # 2100-01-01 (+ up to ~5,700 years of offset) — and a run pointed at
+    # a live store wrote year-7748 rows into production, where they
+    # sorted first in every newest-first read and permanently pinned the
+    # staleness detector's "latest sample". Future-dated samples are now
+    # rejected at ingest and filtered at read, so a future-based range
+    # would fail those guards anyway. Uniqueness against persistent
+    # conformance databases comes from filtering assertions to this
+    # test's own target below, not from an exclusive time range.
+    now = dt.datetime.now(dt.UTC).replace(
+        minute=10, second=0, microsecond=0
+    ) - dt.timedelta(hours=3 + int(unique, 16) % 17_000)
     target = f"status-{unique}"
     probe_type = f"probe-{unique}"
     monitor_region = f"monitor-{unique}"
@@ -383,17 +389,29 @@ def test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option(
         (now - dt.timedelta(hours=2)).replace(minute=0)
     )
     newest_start = _iso_utc(now.replace(minute=0))
-    newest = store.synthetic_rollups(
+    middle_start = _iso_utc(
+        (now - dt.timedelta(hours=1)).replace(minute=0)
+    )
+    # A persistent conformance database may hold foreign rows in the same
+    # hours, so exact-membership assertions go through this test's own
+    # target; the limit clause is asserted as a pure cap + newest-first
+    # prefix property, which holds regardless of what else is present.
+    full = store.synthetic_rollups(
+        period="hour",
+        since=oldest_start,
+        until=newest_start,
+        limit=1000,
+    )
+    own_full = [row for row in full if row.target == target]
+    assert [row.period_start for row in own_full] == [newest_start, middle_start, oldest_start]
+    capped = store.synthetic_rollups(
         period="hour",
         since=oldest_start,
         until=newest_start,
         limit=2,
     )
-    assert len(newest) == 2
-    middle_start = _iso_utc(
-        (now - dt.timedelta(hours=1)).replace(minute=0)
-    )
-    assert [row.period_start for row in newest] == [newest_start, middle_start]
+    assert len(capped) == 2
+    assert [row.id for row in capped] == [row.id for row in full[:2]]
 
     ranged = store.synthetic_rollups(
         period="hour",

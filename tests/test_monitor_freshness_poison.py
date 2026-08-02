@@ -1,0 +1,151 @@
+"""Future-dated samples must never disable the staleness detector.
+
+Regression for a live incident: conformance fixtures dated in the year
+7748 were written to a production store. The freshness computation took
+`max(samples, key=created_at)` and clamped the (negative) age to 0, so
+`latest_sample_age_seconds` read 0 and `is_stale` read False permanently —
+through what would otherwise be a total monitor outage. A staleness
+detector that one poison row disables forever is worse than none.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
+
+from trusted_router.storage_models import FUTURE_SAMPLE_SKEW_SECONDS, SyntheticProbeSample
+from trusted_router.synthetic.rollups import raw_sample_is_within_retention
+from trusted_router.synthetic.status import (
+    CURRENT_SAMPLE_TTL_SECONDS,
+    _current_status,
+    _monitor_freshness,
+)
+
+NOW = dt.datetime(2026, 8, 2, 12, 0, 0, tzinfo=dt.UTC)
+
+
+def _sample(created_at: dt.datetime, *, status: str = "up", sample_id: str = "s1") -> SyntheticProbeSample:
+    return SyntheticProbeSample(
+        id=sample_id,
+        probe_type="tls_health",
+        target="canonical",
+        target_url="https://api-aws.trustedrouter.com/health",
+        monitor_region="eu-west-3",
+        status=status,
+        created_at=created_at.isoformat().replace("+00:00", "Z"),
+    )
+
+
+class TestMonitorFreshness:
+    def test_poison_row_does_not_define_latest(self) -> None:
+        poison = _sample(dt.datetime(7748, 6, 5, tzinfo=dt.UTC), sample_id="poison")
+        real = _sample(NOW - dt.timedelta(seconds=42), sample_id="real")
+        freshness = _monitor_freshness([poison, real], now=NOW)
+        assert freshness["latest_sample_age_seconds"] == 42
+        assert freshness["is_stale"] is False
+        assert freshness["future_dated_samples"] == 1
+
+    def test_only_poison_rows_is_stale_not_fresh(self) -> None:
+        poison = _sample(dt.datetime(7748, 6, 5, tzinfo=dt.UTC))
+        freshness = _monitor_freshness([poison], now=NOW)
+        assert freshness["is_stale"] is True
+        assert freshness["latest_sample_at"] is None
+        assert freshness["future_dated_samples"] == 1
+
+    def test_stale_real_samples_behind_poison_read_stale(self) -> None:
+        """The exact live failure shape: monitor died, poison remained."""
+        poison = _sample(dt.datetime(7748, 6, 5, tzinfo=dt.UTC), sample_id="poison")
+        old = _sample(NOW - dt.timedelta(hours=3), sample_id="old")
+        freshness = _monitor_freshness([poison, old], now=NOW)
+        assert freshness["is_stale"] is True
+
+    def test_ordinary_clock_skew_tolerated(self) -> None:
+        skewed = _sample(NOW + dt.timedelta(seconds=FUTURE_SAMPLE_SKEW_SECONDS - 5))
+        freshness = _monitor_freshness([skewed], now=NOW)
+        assert freshness["is_stale"] is False
+        assert freshness["future_dated_samples"] == 0
+        # Display clamps to zero; the decision logic does not.
+        assert freshness["latest_sample_age_seconds"] == 0
+
+    def test_empty_is_stale(self) -> None:
+        assert _monitor_freshness([], now=NOW)["is_stale"] is True
+
+
+class TestCurrentStatusPoison:
+    def test_future_dated_up_sample_cannot_pin_green(self) -> None:
+        poison = _sample(dt.datetime(7748, 6, 5, tzinfo=dt.UTC), status="up")
+        current = _current_status([poison], now=NOW)
+        (row,) = current["checks"]
+        assert row["effective_status"] == "unknown"
+        assert current["overall_status"] == "unknown"
+
+    def test_fresh_sample_still_reports_normally(self) -> None:
+        fresh = _sample(NOW - dt.timedelta(seconds=30), status="up")
+        current = _current_status([fresh], now=NOW)
+        assert current["overall_status"] == "up"
+
+    def test_old_sample_still_degrades_to_unknown(self) -> None:
+        old = _sample(NOW - dt.timedelta(seconds=CURRENT_SAMPLE_TTL_SECONDS + 60))
+        current = _current_status([old], now=NOW)
+        assert current["overall_status"] == "unknown"
+
+
+class TestRetentionUpperBound:
+    def test_future_sample_outside_skew_excluded(self) -> None:
+        poison = _sample(NOW + dt.timedelta(hours=1))
+        assert raw_sample_is_within_retention(poison, now=NOW) is False
+
+    def test_future_sample_inside_skew_included(self) -> None:
+        skewed = _sample(NOW + dt.timedelta(seconds=FUTURE_SAMPLE_SKEW_SECONDS - 5))
+        assert raw_sample_is_within_retention(skewed, now=NOW) is True
+
+    def test_recent_past_sample_included(self) -> None:
+        assert raw_sample_is_within_retention(_sample(NOW - dt.timedelta(days=1)), now=NOW) is True
+
+
+class TestIngestBoundary:
+    @pytest.fixture
+    def client(self) -> TestClient:
+        from trusted_router.config import Settings
+        from trusted_router.main import create_app
+
+        settings = Settings(
+            environment="test",
+            sentry_dsn=None,
+            internal_gateway_token="test-internal-secret",  # noqa: S106 - test fixture.
+        )
+        return TestClient(create_app(settings, init_observability=False))
+
+    def _post(self, client: TestClient, created_at: str) -> Any:
+        return client.post(
+            "/v1/internal/synthetic/samples",
+            json={
+                "samples": [
+                    {
+                        "id": "ingest-guard-1",
+                        "probe_type": "tls_health",
+                        "target": "canonical",
+                        "target_url": "https://example.com",
+                        "monitor_region": "eu-west-3",
+                        "status": "up",
+                        "created_at": created_at,
+                    }
+                ]
+            },
+            headers={"x-trustedrouter-internal-token": "test-internal-secret"},
+        )
+
+    def test_far_future_created_at_rejected(self, client: TestClient) -> None:
+        response = self._post(client, "7748-06-05T20:10:00Z")
+        assert response.status_code == 400
+        assert "future" in response.json()["error"]["message"]
+
+    def test_recent_created_at_accepted(self, client: TestClient) -> None:
+        recent = dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z")
+        assert self._post(client, recent).status_code == 200
+
+    def test_garbage_created_at_rejected_as_400(self, client: TestClient) -> None:
+        assert self._post(client, "not-a-timestamp").status_code == 400

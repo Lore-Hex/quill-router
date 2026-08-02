@@ -318,6 +318,29 @@ class Settings(BaseSettings):
     # plane or its probes measure another cloud's health. A per-request
     # body override still wins over this setting.
     synthetic_control_plane_base_url: str | None = None
+    # The canonical target serves a self-signed cert minted inside the
+    # TEE (AWS Nitro standalone deployments): probes skip CA verification
+    # and the attestation probe instead verifies the document binds the
+    # cert served on its own connection. Leave False wherever the
+    # canonical gateway has a CA-issued cert (GCP).
+    synthetic_canonical_attested: bool = False
+    # Pin the enclave's PCR0 (EIF measurement). Set at deploy time from
+    # the same value tools/deploy-aws-nitro.sh pins, so the probe turns
+    # trust_degraded (pcr0_mismatch) if the serving enclave ever differs
+    # from the deployed measurement. None = binding-only.
+    attestation_expected_pcr0: str | None = None
+    # Per-region alias/Cloud-Run probing is a GCP-topology concept: it
+    # derives api-{region}.quillrouter.com aliases and *.run.app direct
+    # URLs from templates. On a standalone single-gateway deployment
+    # those templates produce hostnames that DO NOT EXIST, painting
+    # permanent failures onto the status page. False = probe only the
+    # canonical target.
+    synthetic_regional_probes_enabled: bool = True
+    # Explicit control-plane /health URL attached to the canonical
+    # target. Standalone deployments set this to their own control plane
+    # (e.g. the App Runner URL) so control_plane_health measures the
+    # RIGHT cloud; on GCP the per-region Cloud Run URLs already cover it.
+    synthetic_control_plane_health_url: str | None = None
     # Per-probe HTTP timeout for real provider-effective synthetic checks.
     # Keep this aligned with the gateway's first-byte budget. A successful
     # /responses probe in europe-west4 can legitimately take >10s on slow

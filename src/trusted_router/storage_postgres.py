@@ -37,6 +37,7 @@ from trusted_router.storage_gcp_codec import (
     workspace_key_id,
 )
 from trusted_router.storage_models import (
+    FUTURE_SAMPLE_SKEW_SECONDS,
     AcquisitionAttribution,
     ApiKey,
     AuthSession,
@@ -1745,13 +1746,21 @@ class PostgresStore:
         limit: int = 1000,
     ) -> list[SyntheticProbeSample]:
         def list_samples(conn: Any) -> list[SyntheticProbeSample]:
+            # Bounded on BOTH sides. The lower bound is retention; the
+            # upper bound keeps future-dated poison out of every read:
+            # indexed_at = sample.created_at, ORDER BY indexed_at DESC —
+            # so without the upper bound a single year-7748 fixture row
+            # sorts first in every response forever, and retention (a
+            # lower bound) never expires it.
             predicates = [
                 "kind = %s",
                 "indexed_at >= %s",
+                "indexed_at <= %s",
             ]
             params: list[Any] = [
                 "synthetic_probe",
                 utcnow() - dt.timedelta(days=RAW_SYNTHETIC_RETENTION_DAYS),
+                utcnow() + dt.timedelta(seconds=FUTURE_SAMPLE_SKEW_SECONDS),
             ]
             if date is not None:
                 predicates.append("index_date = %s")
