@@ -179,6 +179,10 @@ class ApiKey:
     # approximate snapshot checks and may sum usage across shards.
     usage_shard_count: int = 1
     tags: dict[str, str] = field(default_factory=dict)
+    # Non-empty marks a key learned from a home plane via federation. Such a
+    # key has NO usable secret_hash, so it can only ever authenticate through
+    # the attested gateway (lookup-hash) path, never the direct raw-bearer one.
+    federated_home: str = ""
 
 
 @dataclass
@@ -1175,3 +1179,41 @@ class RateLimitHit:
     remaining: int
     reset_at: str
     retry_after_seconds: int
+
+
+def federated_api_key_from_record(record: dict[str, Any]) -> ApiKey:
+    """Build a local ApiKey from a home plane's federated record.
+
+    Two absences are the security design, not omissions:
+
+      * salt / secret_hash are set to empty. A peer never holds
+        home-issued key material, so the direct raw-bearer path (which
+        verifies secret_hash) can never authenticate a federated key —
+        only the attested gateway path, which matches on lookup_hash.
+        verify_api_key against an empty secret_hash fails closed.
+      * usage/byok counters start at ZERO and no credits come across.
+        Identity is an assertion and copies safely; a balance is a
+        quantity under a conservation law and copying it mints money.
+    """
+    return ApiKey(
+        hash=str(record.get("key_hash") or ""),
+        salt="",
+        secret_hash="",
+        lookup_hash=str(record.get("lookup_hash") or ""),
+        name=str(record.get("name") or ""),
+        # Display label only. Derived inline rather than importing
+        # security.key_label, which would create an import cycle.
+        label=(str(record.get("name") or "federated"))[:24],
+        workspace_id=str(record.get("workspace_id") or ""),
+        creator_user_id=None,
+        disabled=bool(record.get("disabled", False)),
+        management=False,  # never federated; the home plane refuses to serve them
+        limit_microdollars=record.get("limit_microdollars"),
+        limit_daily_microdollars=record.get("limit_daily_microdollars"),
+        limit_weekly_microdollars=record.get("limit_weekly_microdollars"),
+        limit_monthly_microdollars=record.get("limit_monthly_microdollars"),
+        budget_alert_only=bool(record.get("budget_alert_only", False)),
+        include_byok_in_limit=bool(record.get("include_byok_in_limit", True)),
+        expires_at=record.get("expires_at"),
+        federated_home=str(record.get("revision") or "") or "federated",
+    )

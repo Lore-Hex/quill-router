@@ -15,6 +15,7 @@ import json
 import logging
 import uuid
 from datetime import datetime
+from functools import lru_cache
 from time import perf_counter
 from typing import Any, cast
 
@@ -35,7 +36,7 @@ from trusted_router.catalog import (
     effective_endpoint,
     endpoint_for_id,
 )
-from trusted_router.config import Settings
+from trusted_router.config import Settings, get_settings
 from trusted_router.errors import api_error, assert_workspace_billing_active
 from trusted_router.money import money_pair, token_cost_microdollars
 from trusted_router.openai_service_tiers import (
@@ -80,6 +81,7 @@ from trusted_router.services.broadcast import (
     gateway_destination_payload,
     should_drain_inline,
 )
+from trusted_router.services.federation import FederationClient, FederationUnavailable
 from trusted_router.services.settle_outbox_apply import normalized_prompt_accounting
 from trusted_router.services.settle_outbox_drain import (
     drain_settle_outbox,
@@ -881,13 +883,68 @@ def _api_key_for_gateway_lookup(
     api_key_hash: str | None,
     api_key_lookup_hash: str | None,
 ) -> Any | None:
+    """Resolve the caller's key, federating from the home plane on a miss.
+
+    Hooked HERE and not inside the store on purpose. This function is the
+    exclusive resolver for the four enclave endpoints (validate, key,
+    resolve-custom-model, authorize). Hooking STORE.get_key_by_lookup_hash
+    instead would also silently federate the direct-to-control-plane
+    raw-bearer path, which verifies secret_hash — material a federated
+    record deliberately does not carry. Same lookup, different trust
+    decision; they must not share a code path.
+    """
     if api_key_hash:
         api_key = STORE.get_key_by_hash(api_key_hash)
         if api_key is not None:
             return api_key
-    if api_key_lookup_hash:
-        return STORE.get_key_by_lookup_hash(api_key_lookup_hash)
-    return None
+    if not api_key_lookup_hash:
+        return None
+    api_key = STORE.get_key_by_lookup_hash(api_key_lookup_hash)
+    if api_key is not None:
+        return api_key
+    return _federate_api_key(api_key_lookup_hash)
+
+
+def _federate_api_key(lookup_hash: str) -> Any | None:
+    """Resolve an unknown key from the home plane, once, and cache locally.
+
+    Returns None when federation is not configured or the home plane
+    genuinely does not know the key — both mean "no such key" and the
+    caller's existing 401 is correct.
+
+    Raises through FederationUnavailable when the home plane is
+    unreachable: that must become 503 + Retry-After, never 401. Telling a
+    paying customer their key is invalid because OUR upstream is down
+    costs them a key rotation and a support ticket over our outage.
+    """
+    settings = get_settings()
+    home = getattr(settings, "federation_home_base_url", "") or ""
+    token = getattr(settings, "federation_home_token", "") or ""
+    if not home or not token:
+        return None
+
+    client = _federation_client(home, token)
+    try:
+        record = client.resolve(lookup_hash)
+    except FederationUnavailable as exc:
+        raise api_error(
+            503,
+            "Key directory is temporarily unavailable; retry shortly",
+            ErrorType.SERVICE_UNAVAILABLE,
+            headers={"Retry-After": "5"},
+        ) from exc
+    if record is None:
+        return None
+
+    stored = STORE.upsert_federated_api_key(record)
+    return stored
+
+
+@lru_cache(maxsize=4)
+def _federation_client(home: str, token: str) -> FederationClient:
+    """One client per (home, token) so the breaker and single-flight state
+    are shared across requests rather than reset on every call."""
+    return FederationClient(home_base_url=home, peer_token=token)
 
 
 def _require_monitor_model_key(
