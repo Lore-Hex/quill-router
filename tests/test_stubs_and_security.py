@@ -988,3 +988,63 @@ def test_internal_rate_limit_guessed_tokens_share_the_ip_bucket(
         json={"api_key_lookup_hash": key.lookup_hash},
     )
     assert fleet.status_code == 200, fleet.text
+
+
+def test_internal_rate_limit_precedence_matches_route_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Middleware credential precedence must mirror require_internal_gateway
+    (bearer first, then header). A valid BEARER internal token plus a stale
+    x-trustedrouter-internal-token header authenticates at the route, so it
+    must land in the fleet bucket -- not the per-IP bucket an attacker can
+    exhaust (review finding on #400, round 2)."""
+    import datetime as _dt
+
+    from trusted_router import storage_rate_limits
+
+    monkeypatch.setattr(
+        storage_rate_limits,
+        "utcnow",
+        lambda: _dt.datetime(2026, 8, 1, 18, 22, 30, tzinfo=_dt.UTC),
+    )
+    internal_token = "internal-precedence-token"  # noqa: S105 - test fixture token.
+    settings = Settings(
+        environment="test",
+        internal_gateway_token=internal_token,
+        rate_limit_enabled=True,
+        rate_limit_internal_per_window=2,
+        rate_limit_window_seconds=60,
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+    user = STORE.ensure_user("internal-precedence@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    _raw, key = STORE.create_api_key(
+        workspace_id=workspace.id,
+        name="precedence",
+        creator_user_id=user.id,
+    )
+
+    # Exhaust the per-IP bucket with wrong-token guesses (401 inside the
+    # limit, then 429).
+    guesses = [
+        client.post(
+            "/v1/internal/gateway/key",
+            headers={"x-trustedrouter-internal-token": f"stale-{n}"},
+            json={"api_key_lookup_hash": key.lookup_hash},
+        )
+        for n in range(settings.rate_limit_internal_per_window + 1)
+    ]
+    assert [r.status_code for r in guesses] == [401, 401, 429]
+
+    # Valid bearer + stale header: route auth accepts the bearer, so the
+    # middleware must too -- fleet bucket, NOT the exhausted IP bucket.
+    mixed = client.post(
+        "/v1/internal/gateway/key",
+        headers={
+            "Authorization": f"Bearer {internal_token}",
+            "x-trustedrouter-internal-token": "stale-header",
+        },
+        json={"api_key_lookup_hash": key.lookup_hash},
+    )
+    assert mixed.status_code == 200, mixed.text

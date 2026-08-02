@@ -343,7 +343,11 @@ def _rate_limit_request(
         # credential that matches the configured internal secret earns the
         # shared fleet bucket; everything else counts against the caller's IP,
         # the same bounded identity the anonymous namespace uses.
-        supplied = internal_token or bearer or ""
+        # Credential precedence MUST mirror require_internal_gateway (bearer
+        # first, then header): a valid bearer plus a stale header must land in
+        # the fleet bucket exactly like it authenticates at the route, or
+        # legitimate NAT'd fleet traffic gets throttled per-IP.
+        supplied = bearer or internal_token or ""
         if settings.internal_gateway_token and constant_time_equal(
             supplied, settings.internal_gateway_token
         ):
