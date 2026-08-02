@@ -214,3 +214,29 @@ def test_evidence_kwargs_default_to_prior_behavior() -> None:
         "attestation_digest": PCR0.hex(),
         "source_commit": None,
     }
+
+
+class TestHealthReachability:
+    """The latency-phase probes measure DNS/TCP/TLS/first-byte, not
+    authorization. The AWS Nitro gateway answers /health with 401 (it
+    protects every route but /attestation) where GCP answers 200 —
+    without treating that 401 as reachable, tls_health reported `up`
+    and the two latency probes reported `down` for the SAME response.
+    """
+
+    @pytest.mark.parametrize(
+        ("status", "body", "expected"),
+        [
+            (200, b'{"status":"ok"}', True),
+            (401, b'{"error":{"message":"Invalid API key","status":401}}', True),
+            (401, b'{"error":{"message":"rate limited"}}', False),
+            (401, b"not json", False),
+            (500, b"boom", False),
+            (200, b"garbage", False),
+            (503, b'{"error":{"message":"Invalid API key"}}', False),
+        ],
+    )
+    def test_reachability(self, status: int, body: bytes, expected: bool) -> None:
+        from trusted_router.synthetic.probes import _health_status_reachable
+
+        assert _health_status_reachable(status, body) is expected

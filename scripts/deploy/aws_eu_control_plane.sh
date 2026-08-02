@@ -49,10 +49,26 @@ log "building linux/amd64 image and pushing to ${ECR}:${TAG}"
 aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com" >/dev/null
 docker buildx build --platform linux/amd64 -t "${ECR}:${TAG}" --push .
 
+# Resolve the tag to its DIGEST and deploy by digest.
+#
+# App Runner keys "did the source change?" off the ImageIdentifier STRING.
+# With a mutable tag that string is constant, so update-service applies new
+# environment variables but does NOT re-pull the image: the service comes
+# back RUNNING, the operation reports SUCCEEDED, describe-service shows the
+# new env — and the OLD CODE is still serving. That happened on this very
+# service and cost a full verification cycle chasing a "deployed" fix that
+# was never running. A digest changes whenever the image does, so the
+# update is honest by construction.
+IMAGE_DIGEST=$(aws ecr describe-images --region "$REGION" --repository-name trusted-router \
+  --image-ids "imageTag=${TAG}" --query 'imageDetails[0].imageDigest' --output text)
+[ -n "$IMAGE_DIGEST" ] && [ "$IMAGE_DIGEST" != "None" ] || { echo "could not resolve ${TAG} to a digest" >&2; exit 1; }
+IMAGE_REF="${ECR}@${IMAGE_DIGEST}"
+log "deploying by digest: ${IMAGE_DIGEST}"
+
 CONFIG=$(cat <<JSON
 {
   "ImageRepository": {
-    "ImageIdentifier": "${ECR}:${TAG}",
+    "ImageIdentifier": "${IMAGE_REF}",
     "ImageRepositoryType": "ECR",
     "ImageConfiguration": {
       "Port": "8080",
@@ -117,6 +133,16 @@ for _ in $(seq 1 60); do
   sleep 20
 done
 URL=$(aws apprunner describe-service --region "$REGION" --service-arn "$ARN" --query 'Service.ServiceUrl' --output text)
+
+# Assert the service is SERVING the digest we just built. RUNNING +
+# operation SUCCEEDED is not that assertion — see the digest note above.
+RUNNING_REF=$(aws apprunner describe-service --region "$REGION" --service-arn "$ARN" \
+  --query 'Service.SourceConfiguration.ImageRepository.ImageIdentifier' --output text)
+if [ "$RUNNING_REF" != "$IMAGE_REF" ]; then
+  echo "FAILED: service is serving ${RUNNING_REF}, expected ${IMAGE_REF}" >&2
+  exit 1
+fi
+log "verified serving digest ${IMAGE_DIGEST}"
 log "service: https://${URL}"
 echo "https://${URL}"
 
