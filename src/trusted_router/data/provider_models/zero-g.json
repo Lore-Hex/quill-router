@@ -1,7 +1,7 @@
 {
-  "_about": "Provider-native private-route supplement for 0G Private Computer. Prices and capabilities refresh hourly from 0G's public marketplace. Routes remain disabled until the managed account passes a private TeeML PONG canary.",
+  "_about": "Provider-native unrestricted 0G router catalog. Chat model availability, capabilities, and account-billable prices refresh hourly from the authenticated /v1/models endpoint. TrustedRouter makes no ZDR, confidential-compute, attestation, or end-to-end-encryption claim for these standard routes.",
   "provider": "zero-g",
-  "source": "https://pc.0g.ai/models",
+  "source": "https://router-api.0g.ai/v1/models",
   "pricing_source": "https://pc.0g.ai/models",
   "price_scale": "microdollars_per_million",
   "models": [
@@ -22,17 +22,14 @@
       "id": "z-ai/glm-5.2",
       "upstream_id": "glm-5.2",
       "context_length": 1048576,
-      "max_output_tokens": 32768,
+      "max_output_tokens": 131072,
       "supported_features": [
         "chat",
         "completion",
-        "private_inference",
-        "teeml",
         "tools",
         "json_mode",
         "structured_outputs",
-        "reasoning",
-        "prompt_caching"
+        "reasoning"
       ],
       "supported_parameters": [
         "chat_template_kwargs",
@@ -42,23 +39,22 @@
         "reasoning_effort",
         "response_format",
         "stop",
+        "stream",
         "temperature",
+        "thinking",
         "tool_choice",
         "tools",
         "top_k",
         "top_p"
       ],
       "routable": true,
-      "trust_mode": "private",
-      "verifiability": "TeeML",
-      "tee_attested": true,
-      "tee_type": "TDX",
-      "tee_verifier": "dstack",
-      "private_provider_count": 1,
-      "pricing_policy": "maximum-active-private-route",
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "pricing_policy": "authenticated-router-catalog",
       "input_token_price_per_m": 900000,
       "output_token_price_per_m": 3000000,
-      "cached_input_token_price_per_m": 180000
+      "provider_route_count": 3
     },
     {
       "display_name": "0GM-1.0-35B-A3B",
@@ -82,13 +78,10 @@
       "supported_features": [
         "chat",
         "completion",
-        "private_inference",
-        "teeml",
         "tools",
         "json_mode",
         "structured_outputs",
-        "reasoning",
-        "prompt_caching"
+        "reasoning"
       ],
       "supported_parameters": [
         "chat_template_kwargs",
@@ -105,16 +98,13 @@
         "top_p"
       ],
       "routable": true,
-      "trust_mode": "private",
-      "verifiability": "TeeML",
-      "tee_attested": true,
-      "tee_type": "TDX",
-      "tee_verifier": "dstack",
-      "private_provider_count": 1,
-      "pricing_policy": "maximum-active-private-route",
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "pricing_policy": "authenticated-router-catalog",
       "input_token_price_per_m": 80000,
       "output_token_price_per_m": 480000,
-      "cached_input_token_price_per_m": 26667
+      "provider_route_count": 1
     },
     {
       "display_name": "0GM-1.0-35B-A3B-SIA",
@@ -137,10 +127,7 @@
       "supported_features": [
         "chat",
         "completion",
-        "private_inference",
-        "teeml",
-        "reasoning",
-        "prompt_caching"
+        "reasoning"
       ],
       "supported_parameters": [
         "chat_template_kwargs",
@@ -154,18 +141,922 @@
         "top_p"
       ],
       "routable": true,
-      "trust_mode": "private",
-      "verifiability": "TeeML",
-      "tee_attested": true,
-      "tee_type": "TDX",
-      "tee_verifier": "dstack",
-      "private_provider_count": 1,
-      "pricing_policy": "maximum-active-private-route",
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "pricing_policy": "authenticated-router-catalog",
       "input_token_price_per_m": 80000,
       "output_token_price_per_m": 480000,
-      "cached_input_token_price_per_m": 26667
+      "provider_route_count": 1
+    },
+    {
+      "display_name": "Claude Fable 5",
+      "title": "Claude Fable 5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-fable-5",
+      "upstream_id": "claude-fable-5",
+      "context_length": 1000000,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools"
+      ],
+      "supported_parameters": [
+        "cache_control",
+        "max_tokens",
+        "metadata",
+        "output_config",
+        "stop_sequences",
+        "stream",
+        "system",
+        "tool_choice",
+        "tools"
+      ],
+      "routable": true,
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "provider_route_count": 1,
+      "pricing_policy": "authenticated-router-catalog",
+      "input_token_price_per_m": 9000000,
+      "output_token_price_per_m": 45000000
+    },
+    {
+      "display_name": "Claude Opus 4.8",
+      "title": "Claude Opus 4.8",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.8",
+      "upstream_id": "claude-opus-4-8",
+      "context_length": 1000000,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "reasoning"
+      ],
+      "supported_parameters": [
+        "cache_control",
+        "max_tokens",
+        "metadata",
+        "output_config",
+        "stop_sequences",
+        "stream",
+        "system",
+        "thinking",
+        "tool_choice",
+        "tools"
+      ],
+      "routable": true,
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "provider_route_count": 1,
+      "pricing_policy": "authenticated-router-catalog",
+      "input_token_price_per_m": 4500000,
+      "output_token_price_per_m": 22500000
+    },
+    {
+      "display_name": "Claude Opus 5",
+      "title": "Claude Opus 5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-5",
+      "upstream_id": "claude-opus-5",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "reasoning"
+      ],
+      "supported_parameters": [
+        "cache_control",
+        "max_tokens",
+        "metadata",
+        "output_config",
+        "stream",
+        "system",
+        "thinking",
+        "tool_choice",
+        "tools"
+      ],
+      "routable": true,
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "provider_route_count": 1,
+      "pricing_policy": "authenticated-router-catalog",
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000
+    },
+    {
+      "display_name": "Claude Sonnet 5",
+      "title": "Claude Sonnet 5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-sonnet-5",
+      "upstream_id": "claude-sonnet-5",
+      "context_length": 1000000,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "reasoning"
+      ],
+      "supported_parameters": [
+        "cache_control",
+        "max_tokens",
+        "metadata",
+        "output_config",
+        "stop_sequences",
+        "stream",
+        "system",
+        "thinking",
+        "tool_choice",
+        "tools"
+      ],
+      "routable": true,
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "provider_route_count": 1,
+      "pricing_policy": "authenticated-router-catalog",
+      "input_token_price_per_m": 1900000,
+      "output_token_price_per_m": 9500000
+    },
+    {
+      "display_name": "DeepSeek-V4-Flash",
+      "title": "DeepSeek-V4-Flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash",
+      "upstream_id": "deepseek-v4-flash",
+      "context_length": 1000000,
+      "max_output_tokens": 393216,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_parameters": [
+        "enable_thinking",
+        "frequency_penalty",
+        "max_tokens",
+        "presence_penalty",
+        "reasoning",
+        "reasoning_effort",
+        "repetition_penalty",
+        "response_format",
+        "seed",
+        "stop",
+        "stream",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_p"
+      ],
+      "routable": true,
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "provider_route_count": 3,
+      "pricing_policy": "authenticated-router-catalog",
+      "input_token_price_per_m": 121440,
+      "output_token_price_per_m": 242000
+    },
+    {
+      "display_name": "DeepSeek-V4-Pro",
+      "title": "DeepSeek-V4-Pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-pro",
+      "upstream_id": "deepseek-v4-pro",
+      "context_length": 1000000,
+      "max_output_tokens": 393216,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_parameters": [
+        "enable_thinking",
+        "max_tokens",
+        "presence_penalty",
+        "reasoning_effort",
+        "repetition_penalty",
+        "response_format",
+        "seed",
+        "stop",
+        "stream",
+        "temperature",
+        "tools",
+        "top_k",
+        "top_p"
+      ],
+      "routable": true,
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "provider_route_count": 1,
+      "pricing_policy": "authenticated-router-catalog",
+      "input_token_price_per_m": 1452000,
+      "output_token_price_per_m": 2904880
+    },
+    {
+      "display_name": "MiniMax-M3",
+      "title": "MiniMax-M3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m3",
+      "upstream_id": "minimax-m3",
+      "context_length": 1000000,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "reasoning"
+      ],
+      "supported_parameters": [
+        "max_tokens",
+        "reasoning_effort",
+        "reasoning_split",
+        "stream",
+        "temperature",
+        "thinking",
+        "tool_choice",
+        "tools",
+        "top_p"
+      ],
+      "routable": true,
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "provider_route_count": 1,
+      "pricing_policy": "authenticated-router-catalog",
+      "input_token_price_per_m": 270000,
+      "output_token_price_per_m": 1080000
+    },
+    {
+      "display_name": "Kimi-K2.7-Code",
+      "title": "Kimi-K2.7-Code",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2.7-code",
+      "upstream_id": "kimi-k2.7-code",
+      "context_length": 262144,
+      "max_output_tokens": 16384,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools"
+      ],
+      "supported_parameters": [
+        "frequency_penalty",
+        "max_tokens",
+        "presence_penalty",
+        "stop",
+        "stream",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_p"
+      ],
+      "routable": true,
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "provider_route_count": 1,
+      "pricing_policy": "authenticated-router-catalog",
+      "input_token_price_per_m": 786632,
+      "output_token_price_per_m": 3267528
+    },
+    {
+      "display_name": "Kimi-K3",
+      "title": "Kimi-K3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3",
+      "upstream_id": "kimi-k3",
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "supported_parameters": [
+        "frequency_penalty",
+        "max_completion_tokens",
+        "max_tokens",
+        "presence_penalty",
+        "response_format",
+        "stop",
+        "stream",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_p"
+      ],
+      "routable": true,
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "provider_route_count": 3,
+      "pricing_policy": "authenticated-router-catalog",
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000
+    },
+    {
+      "display_name": "GPT-5.6 Luna",
+      "title": "GPT-5.6 Luna",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.6-luna",
+      "upstream_id": "gpt-5.6-luna",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "reasoning"
+      ],
+      "supported_parameters": [
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning_effort",
+        "stream",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_p"
+      ],
+      "routable": true,
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "provider_route_count": 1,
+      "pricing_policy": "authenticated-router-catalog",
+      "input_token_price_per_m": 900000,
+      "output_token_price_per_m": 5400000
+    },
+    {
+      "display_name": "GPT-5.6 Sol",
+      "title": "GPT-5.6 Sol",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.6-sol",
+      "upstream_id": "gpt-5.6-sol",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "reasoning"
+      ],
+      "supported_parameters": [
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning_effort",
+        "stream",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_p"
+      ],
+      "routable": true,
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "provider_route_count": 1,
+      "pricing_policy": "authenticated-router-catalog",
+      "input_token_price_per_m": 4500000,
+      "output_token_price_per_m": 27000000
+    },
+    {
+      "display_name": "GPT-5.6 Terra",
+      "title": "GPT-5.6 Terra",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.6-terra",
+      "upstream_id": "gpt-5.6-terra",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "reasoning"
+      ],
+      "supported_parameters": [
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning_effort",
+        "stream",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_p"
+      ],
+      "routable": true,
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "provider_route_count": 1,
+      "pricing_policy": "authenticated-router-catalog",
+      "input_token_price_per_m": 2250000,
+      "output_token_price_per_m": 13500000
+    },
+    {
+      "display_name": "Qwen3-VL-30B-A3B-Instruct",
+      "title": "Qwen3-VL-30B-A3B-Instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-vl-30b-a3b-instruct",
+      "upstream_id": "qwen3-vl-30b",
+      "context_length": 262144,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "supported_parameters": [
+        "max_tokens",
+        "presence_penalty",
+        "response_format",
+        "seed",
+        "stop",
+        "stream",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_p"
+      ],
+      "routable": true,
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "provider_route_count": 2,
+      "pricing_policy": "authenticated-router-catalog",
+      "input_token_price_per_m": 19360,
+      "output_token_price_per_m": 189200
+    },
+    {
+      "display_name": "Qwen3.6-Plus",
+      "title": "Qwen3.6-Plus",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.6-plus",
+      "upstream_id": "qwen3.6-plus",
+      "context_length": 1000000,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_parameters": [
+        "enable_thinking",
+        "max_tokens",
+        "presence_penalty",
+        "reasoning_effort",
+        "repetition_penalty",
+        "response_format",
+        "seed",
+        "stop",
+        "stream",
+        "temperature",
+        "tools",
+        "top_k",
+        "top_p"
+      ],
+      "routable": true,
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "provider_route_count": 1,
+      "pricing_policy": "authenticated-router-catalog",
+      "input_token_price_per_m": 242880,
+      "output_token_price_per_m": 1452880
+    },
+    {
+      "display_name": "Qwen3.7-Max",
+      "title": "Qwen3.7-Max",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.7-max",
+      "upstream_id": "qwen3.7-max",
+      "context_length": 1000000,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_parameters": [
+        "enable_thinking",
+        "max_tokens",
+        "presence_penalty",
+        "reasoning_effort",
+        "repetition_penalty",
+        "response_format",
+        "seed",
+        "stop",
+        "stream",
+        "temperature",
+        "tools",
+        "top_k",
+        "top_p"
+      ],
+      "routable": true,
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "provider_route_count": 1,
+      "pricing_policy": "authenticated-router-catalog",
+      "input_token_price_per_m": 825000,
+      "output_token_price_per_m": 2475500
+    },
+    {
+      "display_name": "Qwen3.7-Plus",
+      "title": "Qwen3.7-Plus",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.7-plus",
+      "upstream_id": "qwen3.7-plus",
+      "context_length": 1000000,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_parameters": [
+        "enable_thinking",
+        "max_tokens",
+        "presence_penalty",
+        "reasoning_effort",
+        "repetition_penalty",
+        "response_format",
+        "seed",
+        "stop",
+        "stream",
+        "temperature",
+        "tools",
+        "top_k",
+        "top_p"
+      ],
+      "routable": true,
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "provider_route_count": 2,
+      "pricing_policy": "authenticated-router-catalog",
+      "input_token_price_per_m": 220800,
+      "output_token_price_per_m": 880800
+    },
+    {
+      "display_name": "Hunyuan-3",
+      "title": "Hunyuan-3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "tencent/hy3",
+      "upstream_id": "hy3",
+      "context_length": 262144,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "supported_parameters": [
+        "frequency_penalty",
+        "max_tokens",
+        "presence_penalty",
+        "response_format",
+        "stop",
+        "stream",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_p"
+      ],
+      "routable": true,
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "provider_route_count": 1,
+      "pricing_policy": "authenticated-router-catalog",
+      "input_token_price_per_m": 132000,
+      "output_token_price_per_m": 528000
+    },
+    {
+      "display_name": "GLM-5",
+      "title": "GLM-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5",
+      "upstream_id": "glm-5",
+      "context_length": 202752,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_parameters": [
+        "chat_template_kwargs",
+        "frequency_penalty",
+        "max_tokens",
+        "presence_penalty",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "seed",
+        "stop",
+        "stream",
+        "temperature",
+        "thinking",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_p"
+      ],
+      "routable": true,
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "provider_route_count": 4,
+      "pricing_policy": "authenticated-router-catalog",
+      "input_token_price_per_m": 504240,
+      "output_token_price_per_m": 2270400
+    },
+    {
+      "display_name": "GLM-5.1",
+      "title": "GLM-5.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.1",
+      "upstream_id": "glm-5.1",
+      "context_length": 206848,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_parameters": [
+        "chat_template_kwargs",
+        "frequency_penalty",
+        "max_tokens",
+        "presence_penalty",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "stream",
+        "temperature",
+        "thinking",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_p"
+      ],
+      "routable": true,
+      "trust_mode": "standard",
+      "verifiability": null,
+      "tee_attested": false,
+      "provider_route_count": 3,
+      "pricing_policy": "authenticated-router-catalog",
+      "input_token_price_per_m": 726000,
+      "output_token_price_per_m": 2904880
     }
   ],
-  "model_count": 3,
-  "generated_at": "2026-08-02T17:02:24Z"
+  "model_count": 22,
+  "generated_at": "2026-08-02T18:15:53Z"
 }

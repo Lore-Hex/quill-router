@@ -6,7 +6,6 @@ from typing import Any
 
 import pytest
 
-from scripts.pricing import openai_catalog
 from scripts.pricing.base import ProviderPricingResult
 from scripts.pricing.providers import zero_g
 from scripts.pricing.refresh import (
@@ -29,154 +28,86 @@ from trusted_router.providers import OPENAI_COMPATIBLE_PROVIDERS, ProviderClient
 from trusted_router.services.inference_errors import default_provider_secret_ref
 
 
-def _marketplace_html() -> str:
-    models = [
-        {
-            "id": "0gm-1.0-35b-a3b",
-            "name": "0GM 1.0 35B A3B",
-            "context_length": 262_144,
-            "max_completion_tokens": 32_768,
+def _model(
+    model_id: str,
+    *,
+    model_type: str = "chatbot",
+    prompt: str = "0.00000008",
+    completion: str = "0.00000048",
+    cached: str | None = "0.00000002",
+    parameters: list[str] | None = None,
+) -> dict[str, Any]:
+    pricing = {"prompt": prompt, "completion": completion}
+    if cached is not None:
+        pricing["cached_prompt"] = cached
+    return {
+        "id": model_id,
+        "object": "model",
+        "owned_by": "0G Foundation",
+        "name": model_id,
+        "type": model_type,
+        "context_length": 1_048_576,
+        "max_completion_tokens": 131_072,
+        "architecture": {
+            "input_modalities": ["text", "image"],
+            "output_modalities": ["text"],
         },
-        {
-            "id": "0gm-1.0-35b-a3b-sia",
-            "name": "0GM 1.0 35B A3B SIA",
-            "context_length": 32_768,
-            "max_completion_tokens": 16_384,
-        },
-        {
-            "id": "glm-5.2",
-            "name": "GLM 5.2",
-            "context_length": 1_048_576,
-            "max_completion_tokens": 131_072,
-        },
-    ]
-
-    def route(
-        model_id: str,
-        *,
-        prompt: str,
-        completion: str,
-        cached: str | None = None,
-        trust_mode: str = "private",
-        verifiability: str = "TeeML",
-        model_type: str = "chatbot",
-        healthy: bool = True,
-    ) -> dict[str, Any]:
-        return {
-            "model_id": model_id,
-            "canonical_id": model_id,
-            "name": model_id,
-            "service_type": model_type,
-            "type": model_type,
-            "trust_mode": trust_mode,
-            "verifiability": verifiability,
-            "tee_attested": verifiability == "TeeML",
-            "is_healthy": healthy,
-            "tee_type": "TDX",
-            "tee_verifier": "0g",
-            "context_length": 1_048_576,
-            "max_completion_tokens": 131_072,
-            "architecture": {
-                "input_modalities": ["text"],
-                "output_modalities": ["text"],
-            },
-            "supported_parameters": ["tools", "response_format", "thinking"],
-            "pricing_usd": {
-                "prompt": prompt,
-                "completion": completion,
-                "cached_prompt": cached,
-            },
-        }
-
-    providers = [
-        route(
-            "0gm-1.0-35b-a3b",
-            prompt="0.00000008",
-            completion="0.00000048",
-            cached="0.0000000266667",
-        ),
-        route(
-            "0gm-1.0-35b-a3b-sia",
-            prompt="0.00000008",
-            completion="0.00000048",
-            cached="0.0000000266667",
-        ),
-        route(
-            "glm-5.2",
-            prompt="0.0000009",
-            completion="0.000003",
-            cached="0.00000018",
-        ),
-        # A second private provider can be selected by 0G's router. The
-        # highest active private price must win so settlement cannot underbill.
-        route(
-            "glm-5.2",
-            prompt="0.000001",
-            completion="0.0000032",
-            cached="0.0000002",
-        ),
-        # TeeTLS attests only the routing proxy. It must never enter the
-        # confidential provider manifest, even if it is cheaper.
-        route(
-            "glm-5.2",
-            prompt="0.0000001",
-            completion="0.0000002",
-            trust_mode="verified",
-            verifiability="TeeTLS",
-        ),
-        route(
-            "claude-opus-4-8",
-            prompt="0.000005",
-            completion="0.000025",
-            trust_mode="standard",
-            verifiability="None",
-        ),
-        route(
-            "z-image",
-            prompt="0.01",
-            completion="0.01",
-            model_type="image",
-        ),
-        route(
-            "dead-private-model",
-            prompt="0.01",
-            completion="0.01",
-            healthy=False,
-        ),
-    ]
-    flight = {
-        "dehydratedState": {
-            "queries": [
-                {"queryKey": ["models"], "state": {"data": models}},
-                {"queryKey": ["providers"], "state": {"data": providers}},
-            ]
-        }
+        "supported_parameters": parameters or ["tools", "response_format", "reasoning_effort"],
+        "pricing_usd": pricing,
+        # The authenticated account can see upstream attestation metadata, but
+        # TrustedRouter deliberately does not promote it to a product claim.
+        "verifiability": "TeeML",
+        "tee_attested": True,
+        "provider_count": 3,
     }
-    pushed = [1, "1:" + json.dumps(flight, separators=(",", ":"))]
-    return (
-        "<html><body><script>self.__next_f.push("
-        + json.dumps(pushed, separators=(",", ":"))
-        + ")</script></body></html>"
-    )
 
 
-def test_zero_g_parser_admits_only_healthy_private_teeml_chat_routes() -> None:
-    prices, rows = zero_g.parse_private_catalog(_marketplace_html())
+def _catalog_payload() -> dict[str, Any]:
+    return {
+        "object": "list",
+        "data": [
+            _model("0gm-1.0-35b-a3b"),
+            _model("claude-opus-4-8", prompt="0.0000045", completion="0.0000225"),
+            _model("glm-5.2", prompt="0.0000009", completion="0.000003"),
+            _model("kimi-k3", prompt="0.000003", completion="0.000015"),
+            _model("minimax-m3", prompt="0.00000027", completion="0.00000108"),
+            _model("gpt-5.6-sol", prompt="0.0000045", completion="0.000027"),
+            _model("qwen3-vl-30b", prompt="0.0000000193", completion="0.0000001892"),
+            _model("qwen3.7-plus", prompt="0.0000002208", completion="0.0000008808"),
+            _model("z-image-turbo", model_type="text-to-image"),
+            _model("whisper-large-v3", model_type="speech-to-text"),
+        ],
+    }
+
+
+def test_zero_g_parser_admits_every_priced_chat_model_as_standard() -> None:
+    prices, rows = zero_g.parse_catalog(_catalog_payload())
 
     assert set(rows) == {
         "zero-g/0gm-1.0-35b-a3b",
-        "zero-g/0gm-1.0-35b-a3b-sia",
+        "anthropic/claude-opus-4.8",
         "z-ai/glm-5.2",
+        "moonshotai/kimi-k3",
+        "minimax/minimax-m3",
+        "openai/gpt-5.6-sol",
+        "qwen/qwen3-vl-30b-a3b-instruct",
+        "qwen/qwen3.7-plus",
     }
-    assert rows["z-ai/glm-5.2"]["private_provider_count"] == 2
-    assert rows["z-ai/glm-5.2"]["trust_mode"] == "private"
-    assert rows["z-ai/glm-5.2"]["verifiability"] == "TeeML"
-    assert rows["z-ai/glm-5.2"]["tee_attested"] is True
+    assert set(prices) == set(rows)
+    assert all(row["trust_mode"] == "standard" for row in rows.values())
+    assert all(row["verifiability"] is None for row in rows.values())
+    assert all(row["tee_attested"] is False for row in rows.values())
+    assert all("private_inference" not in row["supported_features"] for row in rows.values())
+    assert all("teeml" not in row["supported_features"] for row in rows.values())
+
+    glm = prices["z-ai/glm-5.2"]
+    assert glm.prompt_micro_per_m == 900_000
+    assert glm.completion_micro_per_m == 3_000_000
+    assert glm.tiers[0].prompt_cached_micro_per_m == 20_000
+    assert rows["z-ai/glm-5.2"]["provider_route_count"] == 3
     assert rows["z-ai/glm-5.2"]["supported_features"] == [
         "chat",
         "completion",
-        "private_inference",
-        "teeml",
         "tools",
         "json_mode",
         "structured_outputs",
@@ -184,32 +115,50 @@ def test_zero_g_parser_admits_only_healthy_private_teeml_chat_routes() -> None:
         "prompt_caching",
     ]
 
-    glm = prices["z-ai/glm-5.2"]
-    assert glm.prompt_micro_per_m == 1_000_000
-    assert glm.completion_micro_per_m == 3_200_000
-    assert glm.tiers[0].prompt_cached_micro_per_m == 200_000
-    assert prices["zero-g/0gm-1.0-35b-a3b"].prompt_micro_per_m == 80_000
-    assert prices["zero-g/0gm-1.0-35b-a3b"].completion_micro_per_m == 480_000
+
+def test_zero_g_parser_excludes_non_chat_and_unpriced_models() -> None:
+    payload = _catalog_payload()
+    payload["data"].append(_model("price-missing"))
+    payload["data"][-1].pop("pricing_usd")
+
+    _prices, rows = zero_g.parse_catalog(payload)
+
+    assert "zero-g/z-image-turbo" not in rows
+    assert "zero-g/whisper-large-v3" not in rows
+    assert all("price-missing" not in model_id for model_id in rows)
 
 
-def test_zero_g_future_private_model_families_normalize_without_allowlists() -> None:
+@pytest.mark.parametrize("payload", [None, {}, {"data": {}}, {"data": "models"}])
+def test_zero_g_parser_rejects_malformed_catalog(payload: object) -> None:
+    with pytest.raises(RuntimeError, match="data list"):
+        zero_g.parse_catalog(payload)
+
+
+def test_zero_g_future_model_families_normalize_without_allowlists() -> None:
     assert zero_g._canonical_model_id("claude-opus-5") == "anthropic/claude-opus-5"
     assert zero_g._canonical_model_id("gpt-5.6-sol") == "openai/gpt-5.6-sol"
     assert zero_g._canonical_model_id("kimi-k3") == "moonshotai/kimi-k3"
     assert zero_g._canonical_model_id("qwen3.7-plus") == "qwen/qwen3.7-plus"
 
 
-def test_zero_g_fetch_forces_private_canary_and_enables_only_after_pong(
+def test_zero_g_fetch_uses_all_model_key_and_standard_canary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured: dict[str, Any] = {}
+    catalog_call: dict[str, Any] = {}
+    canary_call: dict[str, Any] = {}
+
+    def fetch_json(url: str, **kwargs: Any) -> dict[str, Any]:
+        catalog_call["url"] = url
+        catalog_call.update(kwargs)
+        return _catalog_payload()
 
     def probe(**kwargs: Any) -> bool:
-        captured.update(kwargs)
+        canary_call.update(kwargs)
         return True
 
-    monkeypatch.setenv("ZERO_G_API_KEY", "test-key")
-    monkeypatch.setattr(zero_g, "fetch_html", lambda _url: _marketplace_html())
+    monkeypatch.setenv("ZERO_G_ALL_API_KEY", "all-model-key")
+    monkeypatch.setattr(zero_g, "EXPECTED_MODELS", ["zero-g/0gm-1.0-35b-a3b"])
+    monkeypatch.setattr(zero_g, "fetch_json", fetch_json)
     monkeypatch.setattr(zero_g, "probe_openai_chat", probe)
     monkeypatch.setattr(zero_g, "_DISCOVERED_MANIFEST_ROWS", {})
     monkeypatch.setattr(zero_g, "_LIVE_CANARY_OK", False)
@@ -217,95 +166,57 @@ def test_zero_g_fetch_forces_private_canary_and_enables_only_after_pong(
     result = zero_g.fetch()
 
     assert result.slug == "zero-g"
-    assert captured == {
+    assert catalog_call == {
+        "url": "https://router-api.0g.ai/v1/models",
+        "extra_headers": {"Authorization": "Bearer all-model-key"},
+    }
+    assert canary_call == {
         "base_url": "https://router-api.0g.ai/v1",
-        "api_key": "test-key",
+        "api_key": "all-model-key",
         "model": "0gm-1.0-35b-a3b",
-        "extra_headers": {"X-0G-Provider-Trust-Mode": "private"},
         "expected_content": "PONG",
         "max_tokens": 256,
     }
+    assert "extra_headers" not in canary_call
     assert zero_g._LIVE_CANARY_OK is True
-    assert all(
-        row["routable"] is True
-        for row in zero_g._DISCOVERED_MANIFEST_ROWS.values()
-    )
+    assert all(row["routable"] is True for row in zero_g._DISCOVERED_MANIFEST_ROWS.values())
 
 
-@pytest.mark.parametrize(
-    ("payload", "expected"),
-    [
-        ({"choices": [{"message": {"content": "PONG"}}]}, True),
-        ({"choices": [{"message": {"content": "not pong"}}]}, False),
-        ({"choices": []}, False),
-        ({"unexpected": "shape"}, False),
-    ],
-)
-def test_zero_g_canary_requires_exact_openai_pong(
-    payload: dict[str, Any],
-    expected: bool,
+def test_zero_g_fetch_fails_closed_without_all_model_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured: dict[str, Any] = {}
+    monkeypatch.delenv("ZERO_G_ALL_API_KEY", raising=False)
+    monkeypatch.setenv("ZERO_G_API_KEY", "legacy-key-must-not-be-used")
 
-    class FakeResponse:
-        status_code = 200
-
-        @staticmethod
-        def json() -> dict[str, Any]:
-            return payload
-
-    def post(url: str, **kwargs: Any) -> FakeResponse:
-        captured["url"] = url
-        captured.update(kwargs)
-        return FakeResponse()
-
-    monkeypatch.setattr(openai_catalog.httpx, "post", post)
-
-    assert (
-        openai_catalog.probe_openai_chat(
-            base_url=zero_g.BASE_URL,
-            api_key="test-key",
-            model="0gm-1.0-35b-a3b",
-            extra_headers=zero_g.PRIVATE_TRUST_HEADERS,
-            expected_content="PONG",
-            max_tokens=256,
-        )
-        is expected
-    )
-    assert captured["url"] == "https://router-api.0g.ai/v1/chat/completions"
-    assert captured["headers"]["X-0G-Provider-Trust-Mode"] == "private"
-    assert captured["json"]["max_tokens"] == 256
-
-
-def test_zero_g_missing_key_keeps_every_route_dark(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("ZERO_G_API_KEY", raising=False)
-    monkeypatch.setattr(zero_g, "fetch_html", lambda _url: _marketplace_html())
-    monkeypatch.setattr(zero_g, "probe_openai_chat", lambda **_kwargs: False)
-    monkeypatch.setattr(zero_g, "_DISCOVERED_MANIFEST_ROWS", {})
-    monkeypatch.setattr(zero_g, "_LIVE_CANARY_OK", True)
-
-    zero_g.fetch()
-
-    assert zero_g._LIVE_CANARY_OK is False
-    assert zero_g._DISCOVERED_MANIFEST_ROWS
-    assert all(
-        row["routable"] is False
-        and row["routable_reason"] == "provider-canary-failed"
-        for row in zero_g._DISCOVERED_MANIFEST_ROWS.values()
-    )
+    with pytest.raises(RuntimeError, match="ZERO_G_ALL_API_KEY"):
+        zero_g.fetch()
 
 
 def test_zero_g_manifest_writer_preserves_dark_launch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    prices, rows = zero_g.parse_private_catalog(_marketplace_html())
+    prices, rows = zero_g.parse_catalog(_catalog_payload())
     manifest_path = tmp_path / "zero-g.json"
     manifest_path.write_text(
-        json.dumps({"provider": "zero-g", "models": []}) + "\n",
+        json.dumps(
+            {
+                "_about": "legacy private TeeML catalog",
+                "provider": "zero-g",
+                "models": [
+                    {
+                        "id": model_id,
+                        "tee_type": "TDX",
+                        "tee_verifier": "dstack",
+                        "private_provider_count": 1,
+                        "routable": False,
+                        "routable_reason": "provider-canary-failed",
+                    }
+                    for model_id in rows
+                ],
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(zero_g, "MANIFEST_PATH", manifest_path)
@@ -321,27 +232,30 @@ def test_zero_g_manifest_writer_preserves_dark_launch(
     zero_g.write_provider_manifest(result)
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["model_count"] == 3
+    assert manifest["model_count"] == 8
+    assert "unrestricted 0G router catalog" in manifest["_about"]
+    assert "no ZDR" in manifest["_about"]
+    assert all(not (zero_g._LEGACY_PRIVATE_FIELDS & row.keys()) for row in manifest["models"])
     assert all(
-        row["routable"] is False
-        and row["routable_reason"] == "provider-canary-failed"
+        row["routable"] is False and row["routable_reason"] == "provider-canary-failed"
         for row in manifest["models"]
     )
 
 
-def test_zero_g_catalog_and_local_adapter_request_private_tee_without_e2ee() -> None:
+def test_zero_g_catalog_and_local_adapter_make_no_privacy_claim() -> None:
     provider = PROVIDERS["zero-g"]
     assert provider.supports_prepaid is True
     assert provider.supports_byok is False
-    assert provider.provider_zero_data_retention is None
-    assert provider.provider_confidential_compute is True
+    assert provider.stores_content is True
+    assert provider.provider_zero_data_retention is False
+    assert provider.provider_confidential_compute is False
     assert provider.provider_e2ee is False
     assert provider_privacy_tier(provider) != PRIVACY_TIER_CONFIDENTIAL
-    assert "TeeTLS" in provider.provider_policy
-    assert "not in the trustedrouter/e2e pool" in provider.provider_policy
+    assert "unrestricted standard router catalog" in provider.provider_policy
+    assert "not classified as ZDR" in provider.provider_policy
     assert "zero-g" in GATEWAY_PREPAID_PROVIDER_SLUGS
     assert OPENAI_COMPATIBLE_PROVIDERS["zero-g"] == (
-        ("ZERO_G_API_KEY",),
+        ("ZERO_G_ALL_API_KEY",),
         "https://router-api.0g.ai/v1",
     )
     model = Model(
@@ -351,33 +265,26 @@ def test_zero_g_catalog_and_local_adapter_request_private_tee_without_e2ee() -> 
         context_length=1_048_576,
         upstream_id="glm-5.2",
     )
-    assert ProviderClient._provider_extra_headers(model) == {
-        "X-0G-Provider-Trust-Mode": "private"
-    }
-    assert default_provider_secret_ref("zero-g") == "env://ZERO_G_API_KEY"
+    assert ProviderClient._provider_extra_headers(model) == {}
+    assert default_provider_secret_ref("zero-g") == "env://ZERO_G_ALL_API_KEY"
 
     manifest_path = (
-        Path(__file__).resolve().parents[1]
-        / "src/trusted_router/data/provider_models/zero-g.json"
+        Path(__file__).resolve().parents[1] / "src/trusted_router/data/provider_models/zero-g.json"
     )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    routable_rows = {
-        row["id"]: row for row in manifest["models"] if row.get("routable") is True
-    }
+    routable_rows = {row["id"]: row for row in manifest["models"] if row.get("routable") is True}
     zero_g_endpoints = {
         endpoint.model_id: endpoint
         for endpoint in MODEL_ENDPOINTS.values()
         if endpoint.provider == "zero-g"
     }
 
-    # Before the account canary passes the manifest is dark and imports no
-    # routes. Once activated, the catalog must import exactly the canary-backed
-    # private TeeML rows as prepaid-only endpoints.
     assert zero_g_endpoints.keys() == routable_rows.keys()
     assert all(
-        row["trust_mode"] == "private"
-        and row["verifiability"] == "TeeML"
-        and row["tee_attested"] is True
+        row["trust_mode"] == "standard"
+        and row["verifiability"] is None
+        and row["tee_attested"] is False
+        and not (zero_g._LEGACY_PRIVATE_FIELDS & row.keys())
         for row in routable_rows.values()
     )
     assert all(
@@ -401,18 +308,18 @@ def test_zero_g_activated_manifest_imports_prepaid_route_only(
         "price_scale": "microdollars_per_million",
         "models": [
             {
-                "id": "zero-g/test-private-model",
-                "upstream_id": "test-private-model",
-                "display_name": "Test Private Model",
+                "id": "zero-g/test-standard-model",
+                "upstream_id": "test-standard-model",
+                "display_name": "Test Standard Model",
                 "model_type": "chat",
                 "endpoints": ["chat/completions"],
                 "input_modalities": ["text"],
                 "output_modalities": ["text"],
                 "context_length": 131_072,
                 "routable": True,
-                "trust_mode": "private",
-                "verifiability": "TeeML",
-                "tee_attested": True,
+                "trust_mode": "standard",
+                "verifiability": None,
+                "tee_attested": False,
                 "input_token_price_per_m": 80_000,
                 "output_token_price_per_m": 480_000,
             }
@@ -426,56 +333,48 @@ def test_zero_g_activated_manifest_imports_prepaid_route_only(
 
     models, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
 
-    assert set(models) == {"zero-g/test-private-model"}
-    assert set(endpoints) == {"zero-g/test-private-model@zero-g/prepaid"}
-    endpoint = endpoints["zero-g/test-private-model@zero-g/prepaid"]
+    assert set(models) == {"zero-g/test-standard-model"}
+    assert set(endpoints) == {"zero-g/test-standard-model@zero-g/prepaid"}
+    endpoint = endpoints["zero-g/test-standard-model@zero-g/prepaid"]
     assert endpoint.provider == "zero-g"
     assert endpoint.usage_type == "Credits"
-    assert endpoint.upstream_id == "test-private-model"
+    assert endpoint.upstream_id == "test-standard-model"
+    assert endpoint_e2ee(endpoint) is False
+    assert endpoint_privacy_tier(endpoint) != PRIVACY_TIER_CONFIDENTIAL
 
 
-def test_zero_g_hourly_refresh_and_optional_secret_wiring_are_complete() -> None:
+def test_zero_g_hourly_refresh_and_secret_wiring_are_complete() -> None:
     assert "zero_g" in PROVIDER_SLUGS
     assert _PRICING_RESULT_PROVIDER_ALIASES["zero_g"] == ("zero-g",)
 
     root = Path(__file__).resolve().parents[1]
     secrets = (root / "scripts/deploy/secrets.sh").read_text(encoding="utf-8")
     rollout = (root / "scripts/deploy/rollout.sh").read_text(encoding="utf-8")
-    workflow = (root / ".github/workflows/refresh-prices.yml").read_text(
-        encoding="utf-8"
-    )
+    workflow = (root / ".github/workflows/refresh-prices.yml").read_text(encoding="utf-8")
     assert (
-        'ensure_secret_from_env_file "ZERO_G_API_KEY" '
-        '"trustedrouter-zero-g-api-key"'
+        'ensure_secret_from_env_file "ZERO_G_ALL_API_KEY" "trustedrouter-zero-g-api-key"'
     ) in secrets
+    assert 'grant_tr_deploy_secret_access "trustedrouter-zero-g-api-key"' in secrets
     assert (
-        'grant_tr_deploy_secret_access "trustedrouter-zero-g-api-key"'
-        in secrets
-    )
-    assert (
-        'add_secret_env_if_exists "ZERO_G_API_KEY" '
-        '"trustedrouter-zero-g-api-key"'
+        'add_secret_env_if_exists "ZERO_G_ALL_API_KEY" "trustedrouter-zero-g-api-key"'
     ) in rollout
-    assert "Pull optional 0G Private Computer key" in workflow
-    assert "ZERO_G_API_KEY=${KEY}" in workflow
+    assert "Pull optional unrestricted 0G router key" in workflow
+    assert "ZERO_G_ALL_API_KEY=${KEY}" in workflow
 
 
-def test_zero_g_public_provider_page_is_published(
-    client: Any,
-) -> None:
+def test_zero_g_public_provider_page_is_published(client: Any) -> None:
     page = client.get("/providers/zero-g")
     assert page.status_code == 200
-    assert "0G Private Computer" in page.text
-    assert "TeeML" in page.text
-    assert "TeeTLS" in page.text
+    assert "0G" in page.text
+    assert "unrestricted standard router catalog" in page.text
+    assert "end-to-end encrypted" in page.text
 
-    providers = {
-        row["id"]: row for row in client.get("/v1/providers").json()["data"]
-    }
+    providers = {row["id"]: row for row in client.get("/v1/providers").json()["data"]}
     provider = providers["zero-g"]
     assert provider["supports_prepaid"] is True
     assert provider["supports_byok"] is False
-    assert provider["provider_confidential_compute"] is True
+    assert provider["provider_zero_data_retention"] is False
+    assert provider["provider_confidential_compute"] is False
     assert provider["provider_e2ee"] is False
 
     sitemap = client.get("/sitemap-providers.xml")

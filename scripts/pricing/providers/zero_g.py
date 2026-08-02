@@ -1,23 +1,27 @@
-"""0G Private Computer private-route catalog and pricing refresh.
+"""0G router catalog, pricing, and account canary.
 
-0G publishes its live marketplace catalog as structured Next.js hydration data
-on the public models page. TrustedRouter intentionally ingests only healthy
-``TeeML`` chat routes and forces 0G's ``private`` trust mode at inference time.
-``TeeTLS`` verifies the proxy hop but not the model execution, so those rows and
-ordinary unverified routes are excluded from this provider integration.
+The authenticated OpenAI-compatible ``/v1/models`` endpoint is the source of
+truth for every model available to TrustedRouter's unrestricted 0G account.
+TrustedRouter uses ordinary 0G routing and deliberately makes no confidential
+compute, attestation, or end-to-end-encryption claim for these routes.
+
+Only chat models are published here. 0G's image and speech models require
+different API surfaces and remain absent until those product paths exist.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import re
-from collections.abc import Iterator
-from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-from scripts.pricing.base import ModelPrice, ProviderPricingResult, fetch_html, validate
+from scripts.pricing.base import (
+    ModelPrice,
+    ProviderPricingResult,
+    fetch_json,
+    validate,
+)
 from scripts.pricing.manifest import (
     set_manifest_canary_state,
     write_discovered_chat_manifest,
@@ -30,9 +34,9 @@ from scripts.pricing.openai_catalog import (
 )
 
 SLUG = "zero-g"
-URL = "https://pc.0g.ai/models"
 BASE_URL = "https://router-api.0g.ai/v1"
-PRIVATE_TRUST_HEADERS = {"X-0G-Provider-Trust-Mode": "private"}
+URL = f"{BASE_URL}/models"
+API_KEY_ENV = "ZERO_G_ALL_API_KEY"
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src"
@@ -43,94 +47,36 @@ MANIFEST_PATH = (
 )
 EXPECTED_MODELS = [
     "zero-g/0gm-1.0-35b-a3b",
-    "zero-g/0gm-1.0-35b-a3b-sia",
+    "anthropic/claude-opus-5",
+    "minimax/minimax-m3",
+    "moonshotai/kimi-k3",
+    "openai/gpt-5.6-sol",
+    "qwen/qwen3.7-plus",
     "z-ai/glm-5.2",
 ]
+CANARY_MODEL = "0gm-1.0-35b-a3b"
 
+_MODEL_ID_OVERRIDES = {
+    "claude-opus-4-8": "anthropic/claude-opus-4.8",
+    "qwen3-vl-30b": "qwen/qwen3-vl-30b-a3b-instruct",
+}
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 _LIVE_CANARY_OK = False
-
-
-class _ScriptCollector(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self.scripts: list[str] = []
-        self._in_script = False
-        self._current: list[str] = []
-
-    def handle_starttag(
-        self, tag: str, _attrs: list[tuple[str, str | None]]
-    ) -> None:
-        if tag == "script":
-            self._in_script = True
-            self._current = []
-
-    def handle_data(self, data: str) -> None:
-        if self._in_script:
-            self._current.append(data)
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "script" and self._in_script:
-            self.scripts.append("".join(self._current))
-            self._in_script = False
-            self._current = []
-
-
-def _walk_json(value: object) -> Iterator[dict[str, Any]]:
-    if isinstance(value, dict):
-        yield value
-        for child in value.values():
-            yield from _walk_json(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from _walk_json(child)
-
-
-def _flight_values(html: str) -> Iterator[object]:
-    collector = _ScriptCollector()
-    collector.feed(html)
-    decoder = json.JSONDecoder()
-    for script in collector.scripts:
-        match = re.fullmatch(r"self\.__next_f\.push\((.*)\)", script, flags=re.DOTALL)
-        if match is None:
-            continue
-        try:
-            flight_call = json.loads(match.group(1))
-        except (TypeError, ValueError):
-            continue
-        if (
-            not isinstance(flight_call, list)
-            or len(flight_call) < 2
-            or not isinstance(flight_call[1], str)
-            or ":" not in flight_call[1]
-        ):
-            continue
-        encoded_value = flight_call[1].split(":", 1)[1].lstrip()
-        try:
-            value, _end = decoder.raw_decode(encoded_value)
-        except ValueError:
-            continue
-        yield value
-
-
-def _query_rows(html: str, query_name: str) -> list[dict[str, Any]]:
-    for value in _flight_values(html):
-        for candidate in _walk_json(value):
-            query_key = candidate.get("queryKey")
-            if not isinstance(query_key, list) or not query_key:
-                continue
-            if query_key[0] != query_name:
-                continue
-            state = candidate.get("state")
-            rows = state.get("data") if isinstance(state, dict) else None
-            if not isinstance(rows, list):
-                raise RuntimeError(f"0G {query_name} query has no data list")
-            return [row for row in rows if isinstance(row, dict)]
-    raise RuntimeError(f"0G page has no {query_name} catalog query")
+_LEGACY_PRIVATE_FIELDS = frozenset(
+    {
+        "tee_type",
+        "tee_verifier",
+        "private_provider_count",
+    }
+)
 
 
 def _canonical_model_id(native_id: str) -> str | None:
     normalized = native_id.strip().casefold().replace("_", "-")
+    if not normalized:
+        return None
+    if normalized in _MODEL_ID_OVERRIDES:
+        return _MODEL_ID_OVERRIDES[normalized]
     if normalized.startswith("0gm-"):
         return f"zero-g/{normalized}"
     if normalized == "hy3":
@@ -150,7 +96,7 @@ def _canonical_model_id(native_id: str) -> str | None:
 def _modalities(value: object, *, default: list[str]) -> list[str]:
     if not isinstance(value, list):
         return default
-    allowed = {"text", "image"}
+    allowed = {"text", "image", "audio", "video", "file"}
     result = list(
         dict.fromkeys(
             str(item).strip().casefold()
@@ -161,82 +107,52 @@ def _modalities(value: object, *, default: list[str]) -> list[str]:
     return result or default
 
 
-def _private_chat_route(row: dict[str, Any]) -> bool:
-    return (
-        row.get("service_type") == "chatbot"
-        and row.get("type") == "chatbot"
-        and row.get("trust_mode") == "private"
-        and row.get("verifiability") == "TeeML"
-        and row.get("tee_attested") is True
-        and row.get("is_healthy") is True
-    )
+def _chat_model(row: dict[str, Any]) -> bool:
+    return row.get("type") == "chatbot" or row.get("serviceType") == "chat"
 
 
-def parse_private_catalog(
-    html: str,
+def parse_catalog(
+    payload: object,
 ) -> tuple[dict[str, ModelPrice], dict[str, dict[str, Any]]]:
-    """Return healthy private chat prices and manifest rows.
+    """Normalize 0G's authenticated router catalog into prepaid chat routes."""
 
-    When multiple TeeML providers serve the same canonical model, the highest
-    observed rates win. This avoids underbilling if 0G's health-aware router
-    moves a request to a more expensive private provider.
-    """
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        raise RuntimeError("0G /v1/models response has no data list")
 
-    model_rows = {
-        str(row.get("id")): row
-        for row in _query_rows(html, "models")
-        if isinstance(row.get("id"), str)
-    }
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    for route in _query_rows(html, "providers"):
-        if not _private_chat_route(route):
+    prices: dict[str, ModelPrice] = {}
+    discovered: dict[str, dict[str, Any]] = {}
+    for source in payload["data"]:
+        if not isinstance(source, dict) or not _chat_model(source):
             continue
-        native_id = route.get("canonical_id") or route.get("model_id")
+        native_id = source.get("id")
         if not isinstance(native_id, str):
             continue
         model_id = _canonical_model_id(native_id)
         if model_id is None:
             continue
-        grouped.setdefault(model_id, []).append(route)
 
-    prices: dict[str, ModelPrice] = {}
-    discovered: dict[str, dict[str, Any]] = {}
-    for model_id, routes in sorted(grouped.items()):
-        priced_routes: list[tuple[dict[str, Any], int, int, int | None]] = []
-        for route in routes:
-            pricing = route.get("pricing_usd")
-            if not isinstance(pricing, dict):
-                continue
-            prompt = dollars_per_token_to_micro_per_m(pricing.get("prompt"))
-            completion = dollars_per_token_to_micro_per_m(pricing.get("completion"))
-            cached = dollars_per_token_to_micro_per_m(pricing.get("cached_prompt"))
-            if prompt is None or completion is None or prompt <= 0 or completion <= 0:
-                continue
-            priced_routes.append((route, prompt, completion, cached))
-        if not priced_routes:
+        pricing = source.get("pricing_usd")
+        if not isinstance(pricing, dict):
             continue
-
-        representative, _prompt, _completion, _cached = priced_routes[0]
-        prompt = max(item[1] for item in priced_routes)
-        completion = max(item[2] for item in priced_routes)
-        cached_values = [item[3] for item in priced_routes if item[3] is not None]
-        cached = max(cached_values) if cached_values else None
+        prompt = dollars_per_token_to_micro_per_m(pricing.get("prompt"))
+        completion = dollars_per_token_to_micro_per_m(pricing.get("completion"))
+        cached = dollars_per_token_to_micro_per_m(pricing.get("cached_prompt"))
+        if prompt is None or completion is None or prompt <= 0 or completion <= 0:
+            continue
         prices[model_id] = ModelPrice(
             prompt_micro_per_m=prompt,
             completion_micro_per_m=completion,
             prompt_cached_micro_per_m=cached,
         )
 
-        native_id = str(representative.get("canonical_id") or representative["model_id"])
-        public_model = model_rows.get(native_id, {})
-        architecture = representative.get("architecture")
+        architecture = source.get("architecture")
         if not isinstance(architecture, dict):
             architecture = {}
-        parameters = representative.get("supported_parameters")
-        parameter_set = {
-            str(item).casefold() for item in parameters
-        } if isinstance(parameters, list) else set()
-        features = ["chat", "completion", "private_inference", "teeml"]
+        parameters = source.get("supported_parameters")
+        parameter_set = (
+            {str(item).casefold() for item in parameters} if isinstance(parameters, list) else set()
+        )
+        features = ["chat", "completion"]
         if "tools" in parameter_set:
             features.append("tools")
         if "response_format" in parameter_set:
@@ -246,29 +162,16 @@ def parse_private_catalog(
         if cached is not None:
             features.append("prompt_caching")
 
-        display_name = str(
-            public_model.get("name")
-            or representative.get("name")
-            or representative.get("model_id")
-            or native_id
-        )
-        row: dict[str, Any] = {
+        display_name = str(source.get("name") or native_id)
+        discovered[model_id] = {
             "id": model_id,
             "upstream_id": native_id,
             "display_name": display_name,
             "title": display_name,
             "model_type": "chat",
-            "context_length": positive_int(representative.get("context_length"))
-            or positive_int(public_model.get("context_length"))
-            or 131072,
-            "max_output_tokens": positive_int(
-                representative.get("max_completion_tokens")
-            )
-            or positive_int(public_model.get("max_completion_tokens"))
-            or 32768,
-            "input_modalities": _modalities(
-                architecture.get("input_modalities"), default=["text"]
-            ),
+            "context_length": positive_int(source.get("context_length")) or 131_072,
+            "max_output_tokens": positive_int(source.get("max_completion_tokens")) or 32_768,
+            "input_modalities": _modalities(architecture.get("input_modalities"), default=["text"]),
             "output_modalities": _modalities(
                 architecture.get("output_modalities"), default=["text"]
             ),
@@ -278,33 +181,34 @@ def parse_private_catalog(
             "status": 1,
             "routable": _LIVE_CANARY_OK,
             "routable_reason": None if _LIVE_CANARY_OK else "provider-canary-failed",
-            "trust_mode": "private",
-            "verifiability": "TeeML",
-            "tee_attested": True,
-            "tee_type": representative.get("tee_type"),
-            "tee_verifier": representative.get("tee_verifier"),
-            "private_provider_count": len(priced_routes),
-            "pricing_policy": "maximum-active-private-route",
+            "trust_mode": "standard",
+            "verifiability": None,
+            "tee_attested": False,
+            "provider_route_count": positive_int(source.get("provider_count")) or 1,
+            "pricing_policy": "authenticated-router-catalog",
         }
-        discovered[model_id] = row
     return prices, discovered
 
 
 def fetch() -> ProviderPricingResult:
     global _DISCOVERED_MANIFEST_ROWS, _LIVE_CANARY_OK  # noqa: PLW0603
 
-    html = fetch_html(URL)
-    prices, discovered = parse_private_catalog(html)
+    api_key = os.environ.get(API_KEY_ENV)
+    if not api_key:
+        raise RuntimeError(f"{API_KEY_ENV} is required for 0G model discovery")
+    payload = fetch_json(
+        URL,
+        extra_headers={"Authorization": f"Bearer {api_key}"},
+    )
+    prices, discovered = parse_catalog(payload)
     errors = validate(prices, EXPECTED_MODELS)
     if errors:
         raise RuntimeError("; ".join(errors))
 
-    api_key = os.environ.get("ZERO_G_API_KEY")
     _LIVE_CANARY_OK = probe_openai_chat(
         base_url=BASE_URL,
         api_key=api_key,
-        model="0gm-1.0-35b-a3b",
-        extra_headers=PRIVATE_TRUST_HEADERS,
+        model=CANARY_MODEL,
         expected_content="PONG",
         max_tokens=256,
     )
@@ -322,9 +226,9 @@ def fetch() -> ProviderPricingResult:
         source="api",
         fetched_url=URL,
         notes=[
-            f"discovered {len(discovered)} healthy TeeML private chat models",
-            f"private account canary {'passed' if _LIVE_CANARY_OK else 'not enabled'}",
-            "TeeTLS and standard routes intentionally excluded",
+            f"discovered {len(discovered)} authenticated 0G chat models",
+            f"unrestricted account canary {'passed' if _LIVE_CANARY_OK else 'failed'}",
+            "standard routing; no confidential-compute, attestation, or E2EE claim",
         ],
     )
 
@@ -335,6 +239,23 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         manifest_path=MANIFEST_PATH,
         discovered_rows=_DISCOVERED_MANIFEST_ROWS,
         source_url=URL,
+    )
+    raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    raw["_about"] = (
+        "Provider-native unrestricted 0G router catalog. Chat model availability, "
+        "capabilities, and account-billable prices refresh hourly from the "
+        "authenticated /v1/models endpoint. TrustedRouter makes no ZDR, "
+        "confidential-compute, attestation, or end-to-end-encryption claim for "
+        "these standard routes."
+    )
+    for row in raw.get("models", []):
+        if not isinstance(row, dict):
+            continue
+        for field in _LEGACY_PRIVATE_FIELDS:
+            row.pop(field, None)
+    MANIFEST_PATH.write_text(
+        json.dumps(raw, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
     )
     set_manifest_canary_state(MANIFEST_PATH, healthy=_LIVE_CANARY_OK)
     return notes
