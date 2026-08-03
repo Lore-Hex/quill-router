@@ -169,6 +169,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/docs/mcp",
     "/docs/migrate-from-openrouter",
     "/docs/tagging",
+    "/docs/prompt-caching",
     "/docs/web-search",
     "/docs/video",
     "/for-developers",
@@ -314,6 +315,16 @@ class PublicPage:
 class BlogIndexPost:
     post: BlogPost
     image: str
+
+
+_NOT_FOUND_PAGE = PublicPage(
+    template="public/not_found.html",
+    title="Page Not Found",
+    description=(
+        "The requested page does not exist. Continue to TrustedRouter "
+        "documentation, models, status, or support."
+    ),
+)
 
 
 PUBLIC_PAGES: dict[str, PublicPage] = {
@@ -890,6 +901,14 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         description=(
             "Attach AWS style tags and OpenRouter attribution metadata to LLM requests "
             "without adding them to model prompts or provider payloads."
+        ),
+    ),
+    "docs/prompt-caching": PublicPage(
+        template="public/prompt_caching.html",
+        title="Prompt Caching For Lower LLM Costs",
+        description=(
+            "Reuse stable prompt prefixes through provider native caches, inspect cached "
+            "token usage, and preserve TrustedRouter's no prompt storage boundary."
         ),
     ),
     "docs/web-search": PublicPage(
@@ -1626,13 +1645,38 @@ def _provider_page_node(settings: Settings, provider: Provider) -> dict[str, obj
     }
 
 
-def public_page_html(settings: Settings, page_key: str, *, site_url: str | None = None) -> str:
+def public_page_html(
+    settings: Settings,
+    page_key: str,
+    *,
+    site_url: str | None = None,
+    robots_meta: str | None = None,
+) -> str:
     page = PUBLIC_PAGES[page_key]
     path = f"/{page_key}"
+    return _render_public_page(
+        settings,
+        page,
+        path=path,
+        page_key=page_key,
+        site_url=site_url,
+        robots_meta=robots_meta,
+    )
+
+
+def _render_public_page(
+    settings: Settings,
+    page: PublicPage,
+    *,
+    path: str,
+    page_key: str | None = None,
+    site_url: str | None = None,
+    robots_meta: str | None = None,
+) -> str:
     resolved_site_url = site_url or f"https://{settings.trusted_domain}{path}"
     catalog_evidence = (
         seo_catalog_evidence(page_key, test_mode=settings.environment == "test")
-        if page.template.startswith("public/seo_")
+        if page_key is not None and page.template.startswith("public/seo_")
         else None
     )
     return (
@@ -1651,6 +1695,7 @@ def public_page_html(settings: Settings, page_key: str, *, site_url: str | None 
             # each card auto-activates the moment its image is generated into
             # static/og/, with zero risk of a 404 unfurl in the meantime.
             og_image=_og_image_url(settings, page.og_card),
+            robots_meta=robots_meta,
             faq_items=page.faq_items,
             catalog_evidence=catalog_evidence,
             json_ld_blob=_json_ld_graph(
@@ -1670,6 +1715,17 @@ def public_page_html(settings: Settings, page_key: str, *, site_url: str | None 
                 indent=2,
             ),
         )
+    )
+
+
+def public_not_found_html(settings: Settings, requested_path: str) -> str:
+    safe_path = requested_path if requested_path.startswith("/") else f"/{requested_path}"
+    return _render_public_page(
+        settings,
+        _NOT_FOUND_PAGE,
+        path=safe_path,
+        site_url=f"https://{settings.trusted_domain}{safe_path}",
+        robots_meta="noindex,follow",
     )
 
 
@@ -2701,6 +2757,7 @@ def llms_txt(settings: Settings) -> str:
         f"- Evals guide: https://{domain}/docs/evals",
         f"- Synth guide: https://{domain}/docs/synth",
         f"- Responses web search: https://{domain}/docs/web-search",
+        f"- Prompt caching: https://{domain}/docs/prompt-caching",
         f"- Video generation: https://{domain}/docs/video",
         f"- Request tagging and cost allocation: https://{domain}/docs/tagging",
         f"- Blog: https://{domain}/blog",
@@ -2788,6 +2845,7 @@ def docs_llms_txt(settings: Settings) -> str:
             f"- Evals guide: https://{domain}/docs/evals",
             f"- Synth guide: https://{domain}/docs/synth",
             f"- Responses web search: https://{domain}/docs/web-search",
+            f"- Prompt caching: https://{domain}/docs/prompt-caching",
             f"- Video generation: https://{domain}/docs/video",
             f"- OpenRouter alternative: https://{domain}/openrouter-alternative",
             f"- Private LLM API: https://{domain}/private-llm-api",
@@ -2897,6 +2955,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         f"- Evals guide: https://{domain}/docs/evals",
         f"- Synth guide: https://{domain}/docs/synth",
         f"- Responses web search: https://{domain}/docs/web-search",
+        f"- Prompt caching: https://{domain}/docs/prompt-caching",
         f"- Video generation: https://{domain}/docs/video",
         f"- Blog: https://{domain}/blog",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
@@ -2926,6 +2985,17 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- trustedrouter/zeus-1.0: frontier Synth preset with commercial frontier models on the panel.",
         "- trustedrouter/iris-code-1.0, trustedrouter/prometheus-code-1.0, trustedrouter/zeus-code-1.0: code-tuned variants with the same preset tiers.",
         "- trustedrouter/iris, trustedrouter/prometheus, trustedrouter/zeus, and their -code aliases track the latest preset version.",
+        "",
+        "## Prompt Caching",
+        f"- Guide: https://{domain}/docs/prompt-caching",
+        "- TrustedRouter preserves provider-native caching controls and normalizes provider-reported cached token usage.",
+        "- Chat Completions reports usage.prompt_tokens_details.cached_tokens.",
+        "- Responses reports usage.input_tokens_details.cached_tokens.",
+        "- Anthropic Messages preserves content-block cache_control and reports cache_creation_input_tokens plus cache_read_input_tokens.",
+        "- Cached reads and cache writes settle using the selected endpoint's cache-aware rates when available.",
+        "- Provider caches are provider and route scoped. Fallback can reduce cache hits, while provider.only improves locality at the cost of rollover.",
+        "- TrustedRouter does not create a durable router-side prompt cache or store prompt/output content.",
+        "- prompt_cache_retention is not supported and returns a stable 501 error.",
         "",
         "## Synth",
         "- Endpoint shape: POST /v1/chat/completions.",
