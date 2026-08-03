@@ -215,8 +215,26 @@ class SpannerOperationalOutboxSource:
 
 
 class ClickHouseOperationalWriter:
+    """Inserts a batch into one ClickHouse endpoint via clickhouse-client.
+
+    `host`/`port`/`secure` default to unset, and an unset connection flag is
+    omitted from argv entirely rather than passed as a default. That is what
+    keeps a writer constructed the historical way — password/user/database
+    only — emitting the byte-identical command it always did, talking to the
+    node on this machine. A drain with one configured endpoint therefore
+    behaves exactly as it did before remote endpoints existed.
+    """
+
     def __init__(
-        self, *, password: str, database: str = "tr", user: str = "tr"
+        self,
+        *,
+        password: str,
+        database: str = "tr",
+        user: str = "tr",
+        host: str = "",
+        port: int = 0,
+        secure: bool = False,
+        timeout_seconds: float | None = None,
     ) -> None:
         self._password = password
         self._database = database
@@ -227,6 +245,16 @@ class ClickHouseOperationalWriter:
         # authentication on the very first insert -- after the rows had been
         # read, which is the worst place to discover a credential mismatch.
         self._user = user
+        self._host = host
+        self._port = port
+        self._secure = secure
+        # None means "wait forever", which is what the local writer has always
+        # done and what it keeps doing. A REMOTE endpoint needs a finite bound:
+        # a node that completes the TCP handshake and then stalls -- a wedged
+        # server, a silently blackholed path -- would otherwise hang
+        # subprocess.run indefinitely, freezing the whole sweep inside a daemon
+        # that still looks alive while the outbox grows behind it.
+        self._timeout_seconds = timeout_seconds
 
     def insert(self, events: list[CanonicalOperationalEvent]) -> None:
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -239,8 +267,17 @@ class ClickHouseOperationalWriter:
             payload = "\n".join(
                 json.dumps(row, separators=(",", ":"), sort_keys=True) for row in rows
             ).encode("utf-8")
-            command = [
-                "/usr/bin/clickhouse-client",
+            command = ["/usr/bin/clickhouse-client"]
+            # Omitted, not defaulted: see the class docstring. With no host,
+            # port or TLS configured this list is exactly what it has always
+            # been, so the single-node deployment is untouched.
+            if self._host:
+                command += ["--host", self._host]
+            if self._port:
+                command += ["--port", str(self._port)]
+            if self._secure:
+                command.append("--secure")
+            command += [
                 "--user",
                 self._user,
                 "--database",
@@ -250,13 +287,23 @@ class ClickHouseOperationalWriter:
             ]
             env = os.environ.copy()
             env["CLICKHOUSE_PASSWORD"] = self._password
-            result = subprocess.run(  # noqa: S603 - fixed executable and table allowlist.
-                command,
-                input=payload,
-                env=env,
-                capture_output=True,
-                check=False,
-            )
+            try:
+                result = subprocess.run(  # noqa: S603 - fixed executable and table allowlist.
+                    command,
+                    input=payload,
+                    env=env,
+                    capture_output=True,
+                    check=False,
+                    timeout=self._timeout_seconds,
+                )
+            except subprocess.TimeoutExpired as exc:
+                # Raising is the point: the caller must not reach its DELETE,
+                # so the rows stay queued and the next sweep retries them.
+                raise RuntimeError(
+                    f"ClickHouse {event_kind} insert to "
+                    f"{self._host or 'localhost'} timed out after "
+                    f"{self._timeout_seconds}s"
+                ) from exc
             if result.returncode != 0:
                 detail = result.stderr.decode("utf-8", errors="replace")[:1000]
                 raise RuntimeError(f"ClickHouse {event_kind} insert failed: {detail}")

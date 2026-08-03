@@ -33,6 +33,86 @@ unwind the sweep, because a single undeliverable row would otherwise stop
 delivery for all 32 shards.  Non-retryable errors drop the connection so the
 next pass reconnects; DSQL expires long-lived connections, so that path is
 ordinary rather than exceptional.
+
+Durability: two independent nodes, no quorum
+--------------------------------------------
+
+This cloud's analytics history lives on ClickHouse EBS volumes.  With one node
+that is one volume holding every operational row the cloud has ever produced,
+and losing it loses the history.  This is not an availability problem — the
+gateway never reads ClickHouse, and the analytics write is a durable outbox row
+inside the settle transaction — it is purely a durability problem.
+
+The fix is a second node in a second region, written by extending the property
+the drain already has rather than by replicating underneath it:
+
+    SELECT batch -> write EVERY target -> DELETE the outbox rows
+
+with the DELETE gated on *all* writes succeeding.  If any node is unreachable
+the rows are simply not deleted, so they redeliver on the next sweep, and the
+``ReplacingMergeTree`` on ``ingest_version`` collapses the duplicate that
+redelivery creates on the nodes that already had it.  Two independent copies,
+no coordination between them, and the failure mode is "the outbox grows"
+instead of "data is lost".
+
+**Why not ReplicatedReplacingMergeTree + Keeper.**  That is what the GCP
+cluster runs, on a 3-node Keeper quorum.  Across exactly TWO regions a quorum
+is worse than useless: two Keeper nodes cannot form a majority when either one
+dies, so losing a region freezes writes on the *survivor*.  The AWS nodes
+deliberately run plain ``ReplacingMergeTree``
+(``006_operational_analytics_single_node.sql``) and are kept in step by this
+drain.
+
+**Unbounded outbox growth when a node stays down.**  There is no automatic
+bound, and that is deliberate: any automatic bound would have to either delete
+undelivered rows — the exact loss this design exists to prevent — or stop the
+drain, which does not help.  So the bound is operator-enforced and the drain's
+job is to make the condition impossible to miss:
+
+* every sweep logs ``degraded_targets=`` naming each endpoint whose last write
+  failed, so "which node is behind" is never a guess;
+* ``drain_lag_seconds`` is the age of the oldest undelivered row, and crossing
+  ``--max-lag-seconds`` (default 1 hour) logs
+  ``operational_analytics_outbox.backlog_alarm`` at ERROR.  That log line is
+  the alert to page on.
+
+The documented operator action on that alarm is one of exactly two things:
+
+1. restore the failing node — nothing was deleted, so it catches up by itself
+   (see below); or
+2. decide the node is not coming back, remove its ``*_REPLICA_*`` variables
+   from the drain's environment file and restart the drain.  Deletion resumes
+   immediately, at the cost of that node being permanently behind.
+
+Doing neither means the outbox grows until the operational database's storage
+does, which is a much worse day than either choice above.
+
+**Can a long-down node catch up?**  It depends on which of those two the
+operator chose, and the distinction is the whole limitation:
+
+* *Still configured, just failing* — YES, automatically and exactly.  Nothing
+  is ever deleted while it fails, so the outbox is holding the node's entire
+  backlog.  When it returns, the ordinary sweep delivers every missed row and
+  dedup makes the overlap harmless.  A node can be down for as long as the
+  operator is willing to let the outbox grow.
+* *Removed from the config (option 2), or restored from a blank volume* — NO.
+  Once the remaining targets ack and the rows are deleted, the outbox no longer
+  holds them and nothing in this pipeline can reproduce them.  That node has a
+  permanent hole for the whole window, and re-adding it to the config does NOT
+  backfill it; it only resumes delivery from the moment it is re-added.
+
+  Closing such a hole is an out-of-band copy from a node that has the rows,
+  and it is safe for the same reason redelivery is:
+
+      INSERT INTO activity_generations
+      SELECT * FROM remote('<healthy-node>:9000', 'default',
+                           'activity_generations', '<user>', '<password>')
+      WHERE created_at >= '<hole start>' AND created_at < '<hole end>'
+
+  ``ingest_version`` is carried through unchanged, so rows the node already has
+  collapse rather than double.  This is a deliberate operator action with a
+  window the operator must determine; it is not automatic, and pretending
+  otherwise is how a "replicated" store quietly ends up with one real copy.
 """
 
 from __future__ import annotations
@@ -43,6 +123,7 @@ import datetime as dt
 import logging
 import os
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -101,6 +182,234 @@ SELECT_OLDEST_SQL = (
 )
 
 log = logging.getLogger("trusted_router.operational_analytics_ingest_postgres")
+
+# --------------------------------------------------------------------------
+# ClickHouse targets: one endpoint per durable copy
+# --------------------------------------------------------------------------
+
+#: Environment prefix the control plane already uses for the ClickHouse it
+#: READS from. The primary target reuses those names unchanged so the drain and
+#: the reader cannot disagree about user and database; extra copies are
+#: additive suffixes underneath the same prefix, so nothing existing moves.
+CLICKHOUSE_ENV_PREFIX = "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE"
+
+#: The endpoint the drain has always written to: the node on this machine.
+PRIMARY_TARGET_NAME = "primary"
+
+#: Suffixes searched for additional endpoints. `_REPLICA_HOST` is the second
+#: copy (Stockholm today); the numbered forms exist so a third is a deployment
+#: change rather than a code change. An unset `*_HOST` means "not configured"
+#: and is skipped, which is why one endpoint stays the default.
+REPLICA_ENV_SUFFIXES: tuple[str, ...] = ("REPLICA", "REPLICA_2", "REPLICA_3")
+
+#: Native protocol. The HTTP port (8123) also works but the native port is what
+#: clickhouse-client speaks by default.
+DEFAULT_REPLICA_PORT = 9000
+
+#: Finite by construction for remote endpoints — see ClickHouseOperationalWriter.
+DEFAULT_REPLICA_TIMEOUT_SECONDS = 60.0
+
+#: Age of the oldest undelivered row at which the backlog stops being normal
+#: catch-up and becomes something an operator has to decide about.
+DEFAULT_MAX_LAG_SECONDS = 3600.0
+
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0", "[::1]"})  # noqa: S104
+
+
+@dataclass(frozen=True)
+class ClickHouseTarget:
+    """One ClickHouse endpoint that must hold a copy of every row.
+
+    `host` empty means the node on this machine, addressed with no connection
+    flags at all — the historical deployment. Every other field is per-endpoint
+    on purpose: the two nodes are independent installations that do not share a
+    password, and nothing about them is required to match.
+    """
+
+    name: str
+    password: str
+    user: str = "tr"
+    database: str = "tr"
+    host: str = ""
+    port: int = 0
+    secure: bool = False
+    timeout_seconds: float | None = None
+
+    def writer(self) -> ClickHouseOperationalWriter:
+        return ClickHouseOperationalWriter(
+            password=self.password,
+            user=self.user,
+            database=self.database,
+            host=self.host,
+            port=self.port,
+            secure=self.secure,
+            timeout_seconds=self.timeout_seconds,
+        )
+
+    def describe(self) -> str:
+        """Loggable identity. Never includes the password."""
+        endpoint = f"{self.host}:{self.port}" if self.host else "local"
+        return f"{self.name}@{endpoint}/{self.database}"
+
+
+class FanOutWriteError(RuntimeError):
+    """At least one target did not accept the batch, so nothing may be deleted.
+
+    Carries which targets succeeded as well as which failed, because the
+    difference is the operator's whole diagnosis: "Stockholm failed, Paris has
+    it" is a redelivery, "both failed" is an outage.
+    """
+
+    def __init__(
+        self,
+        failures: Sequence[tuple[str, BaseException]],
+        *,
+        succeeded: Sequence[str],
+    ) -> None:
+        self.failed_targets = [name for name, _ in failures]
+        self.succeeded_targets = list(succeeded)
+        detail = "; ".join(f"{name}: {exc}" for name, exc in failures)
+        super().__init__(
+            "ClickHouse fan-out incomplete, outbox rows NOT deleted "
+            f"(ok={','.join(self.succeeded_targets) or '-'} "
+            f"failed={','.join(self.failed_targets)}): {detail}"
+        )
+
+
+class FanOutOperationalWriter:
+    """Writes one batch to every target and succeeds only if ALL of them do.
+
+    The caller (`drain_shard_once`) reaches its DELETE only when `insert`
+    returns normally, so raising here is exactly "leave the rows queued". That
+    is the entire durability contract: two independent copies, and a partial
+    write is retried rather than acknowledged.
+    """
+
+    def __init__(self, targets: Sequence[tuple[str, Any]]) -> None:
+        if not targets:
+            raise ValueError("at least one ClickHouse target is required")
+        self._targets = list(targets)
+        self.consecutive_failures: dict[str, int] = {name: 0 for name, _ in self._targets}
+
+    def insert(self, events: list[Any]) -> None:
+        failures: list[tuple[str, BaseException]] = []
+        succeeded: list[str] = []
+        for name, writer in self._targets:
+            try:
+                writer.insert(events)
+            except Exception as exc:  # noqa: BLE001 - recorded, then re-raised below.
+                # EVERY target is attempted even after one fails, rather than
+                # short-circuiting. Stopping at the first failure would mean a
+                # down primary also starves the healthy replica: nothing is
+                # deleted either way, so the rows are not lost, but the healthy
+                # node would sit at the same staleness as the broken one for as
+                # long as the outage lasted. Attempting all of them keeps every
+                # reachable copy current and confines the lag to the node that
+                # actually earned it.
+                failures.append((name, exc))
+            else:
+                succeeded.append(name)
+        for name in succeeded:
+            self.consecutive_failures[name] = 0
+        for name, _ in failures:
+            self.consecutive_failures[name] += 1
+        if failures:
+            raise FanOutWriteError(failures, succeeded=succeeded)
+
+    def degraded_targets(self) -> list[str]:
+        return [name for name, count in self.consecutive_failures.items() if count]
+
+
+def build_operational_writer(targets: Sequence[ClickHouseTarget]) -> Any:
+    """The writer for `targets`: a bare one for a single copy, a fan-out for more.
+
+    A single-endpoint deployment gets the plain `ClickHouseOperationalWriter`
+    rather than a fan-out of one, so it keeps not only today's argv but today's
+    exception type and today's log text. "No behaviour change for one node"
+    should mean nothing at all changed, not that a wrapper happened to be
+    transparent.
+    """
+    writers = [(target.name, target.writer()) for target in targets]
+    if len(writers) == 1:
+        return writers[0][1]
+    return FanOutOperationalWriter(writers)
+
+
+def degraded_target_names(writer: Any) -> list[str]:
+    """Names of endpoints whose most recent write failed; empty for one node."""
+    getter = getattr(writer, "degraded_targets", None)
+    return list(getter()) if callable(getter) else []
+
+
+def _env_flag(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def clickhouse_targets_from_env(env: Mapping[str, str]) -> list[ClickHouseTarget]:
+    """Read the configured endpoints, primary first.
+
+    The primary is described by exactly the variables that already existed —
+    `CH_PASSWORD` plus the control plane's `_USER` / `_DATABASE` — and every
+    additional copy is a separate, optional block. So an environment that has
+    never heard of replicas yields precisely one target and precisely today's
+    behaviour, and adding Stockholm is additive rather than a migration.
+    """
+    password = env.get("CH_PASSWORD", "")
+    if not password:
+        raise ValueError("CH_PASSWORD is required")
+    user = env.get(f"{CLICKHOUSE_ENV_PREFIX}_USER", "tr")
+    database = env.get(f"{CLICKHOUSE_ENV_PREFIX}_DATABASE", "tr")
+    targets = [
+        ClickHouseTarget(
+            name=PRIMARY_TARGET_NAME,
+            password=password,
+            user=user,
+            database=database,
+        )
+    ]
+    for suffix in REPLICA_ENV_SUFFIXES:
+        prefix = f"{CLICKHOUSE_ENV_PREFIX}_{suffix}"
+        host = env.get(f"{prefix}_HOST", "").strip()
+        if not host:
+            continue
+        if host.lower() in _LOOPBACK_HOSTS:
+            # A "replica" on this machine is a second copy on the SAME EBS
+            # volume, which is zero additional durability while reading as two
+            # copies everywhere. Refuse it at startup rather than let it be
+            # discovered after the volume is gone.
+            raise ValueError(
+                f"{prefix}_HOST={host!r} points at this machine; a second copy "
+                "on the same volume is not a second copy"
+            )
+        replica_password = env.get(f"CH_{suffix}_PASSWORD", "")
+        if not replica_password:
+            # Fail here, at startup, and not on the first insert: by then a
+            # batch has already been read out of the outbox, which is the worst
+            # possible moment to learn the credentials are missing.
+            raise ValueError(f"CH_{suffix}_PASSWORD is required when {prefix}_HOST is set")
+        targets.append(
+            ClickHouseTarget(
+                name=env.get(f"{prefix}_NAME", "").strip() or suffix.lower(),
+                password=replica_password,
+                # Default to the primary's identity but allow an override: the
+                # two nodes are independent installations and need not agree.
+                user=env.get(f"{prefix}_USER", "").strip() or user,
+                database=env.get(f"{prefix}_DATABASE", "").strip() or database,
+                host=host,
+                port=int(env.get(f"{prefix}_PORT", "").strip() or DEFAULT_REPLICA_PORT),
+                secure=_env_flag(env.get(f"{prefix}_SECURE", "")),
+                timeout_seconds=float(
+                    env.get(f"{prefix}_TIMEOUT_SECONDS", "").strip()
+                    or DEFAULT_REPLICA_TIMEOUT_SECONDS
+                ),
+            )
+        )
+    names = [target.name for target in targets]
+    if len(set(names)) != len(names):
+        # Names are how the logs and the alarm identify which copy is behind;
+        # two endpoints sharing one makes that report unreadable.
+        raise ValueError(f"ClickHouse target names must be unique, got {names}")
+    return targets
 
 
 @dataclass(frozen=True)
@@ -321,6 +630,12 @@ def drain_shard_once(
 
     The delete is reached only by the write returning normally. If the writer
     raises, this raises with it and the rows stay queued.
+
+    This is unchanged by dual-write, and deliberately so: with several targets
+    the writer is a `FanOutOperationalWriter` that returns normally only when
+    EVERY target accepted the batch, so "the delete is gated on the write" and
+    "the delete is gated on all copies" are the same statement. Nothing here
+    knows how many copies there are.
     """
     rows = source.fetch_shard(shard, limit=batch_size)
     if not rows:
@@ -391,6 +706,17 @@ def main() -> int:
     # them permanently while its lag metric still read zero.
     parser.add_argument("--batch-size", type=int, default=500)
     parser.add_argument("--poll-seconds", type=float, default=2.0)
+    # The backlog alarm. With more than one target the outbox is what absorbs a
+    # node being down, so its depth is the signal that a node has been down
+    # long enough to need a decision rather than patience.
+    parser.add_argument(
+        "--max-lag-seconds",
+        type=float,
+        default=float(
+            os.environ.get("TR_OPERATIONAL_ANALYTICS_MAX_LAG_SECONDS", "")
+            or DEFAULT_MAX_LAG_SECONDS
+        ),
+    )
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(
@@ -399,9 +725,6 @@ def main() -> int:
     )
     if not args.dsn:
         raise SystemExit("TR_POSTGRES_DSN (or --dsn) is required")
-    password = os.environ.get("CH_PASSWORD", "")
-    if not password:
-        raise SystemExit("CH_PASSWORD is required")
     source = PostgresOperationalOutboxSource(
         dsn=args.dsn,
         iam_auth=args.iam_auth,
@@ -412,13 +735,20 @@ def main() -> int:
     # user, and database they mean. Defaults stay "tr"/"tr" so the GCP path is
     # untouched; the AWS-EU node is "default"/"default" because its schema is
     # applied unqualified. Getting this wrong fails authentication only after
-    # a batch has been read, which is the worst moment to find out.
-    writer = ClickHouseOperationalWriter(
-        password=password,
-        user=os.environ.get("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER", "tr"),
-        database=os.environ.get("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE", "tr"),
+    # a batch has been read, which is the worst moment to find out — so every
+    # configuration error the drain can detect is raised here, at startup.
+    try:
+        targets = clickhouse_targets_from_env(os.environ)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    writer = build_operational_writer(targets)
+    log.info(
+        "operational_analytics_outbox.targets backend=postgres copies=%d targets=%s",
+        len(targets),
+        ",".join(target.describe() for target in targets),
     )
     poll_seconds = max(0.1, args.poll_seconds)
+    max_lag_seconds = max(0.0, args.max_lag_seconds)
     while True:
         result = drain_once(
             source,
@@ -432,14 +762,32 @@ def main() -> int:
         except Exception:
             log.exception("operational_analytics_outbox.lag_unavailable backend=postgres")
             lag_seconds = -1.0
+        degraded = degraded_target_names(writer)
         log.info(
             "operational_analytics_outbox.metrics backend=postgres rows=%d "
-            "rows_per_second=%.3f drain_lag_seconds=%.3f failed_shards=%d",
+            "rows_per_second=%.3f drain_lag_seconds=%.3f failed_shards=%d "
+            "copies=%d degraded_targets=%s",
             result.inserted,
             result.rows_per_second,
             lag_seconds,
             result.failed_shards,
+            len(targets),
+            ",".join(degraded) or "-",
         )
+        # The bound on outbox growth is this line plus an operator. There is no
+        # automatic one: the only automatic bounds available are "delete rows a
+        # copy never received", which is the loss this whole design exists to
+        # prevent, and "stop draining", which helps nobody. See the module
+        # docstring for the two actions this alarm asks for.
+        if lag_seconds >= max_lag_seconds > 0:
+            log.error(
+                "operational_analytics_outbox.backlog_alarm backend=postgres "
+                "drain_lag_seconds=%.3f max_lag_seconds=%.3f degraded_targets=%s "
+                "action=restore-the-node-or-drop-it-from-the-drain-config",
+                lag_seconds,
+                max_lag_seconds,
+                ",".join(degraded) or "-",
+            )
         if args.once:
             return 1 if result.failed_shards else 0
         # Back off after a failing sweep as well as an empty one. Without this

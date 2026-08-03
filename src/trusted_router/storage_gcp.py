@@ -11,6 +11,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any, TypeVar
 
+from trusted_router import storage_gcp_credit_transfer as spanner_credit_transfer
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.operational_analytics import (
     OperationalAnalyticsClient,
@@ -73,7 +74,7 @@ from trusted_router.storage_gcp_codec import (
 from trusted_router.storage_gcp_codec import (
     normalize_email as _normalize_email,
 )
-from trusted_router.storage_gcp_counter_dml import insert_entity_dml_at
+from trusted_router.storage_gcp_counter_dml import credit_credit_shard, insert_entity_dml_at
 from trusted_router.storage_gcp_counters import (
     CREDIT_BALANCE_COLUMNS,
     CREDIT_BALANCE_TABLE,
@@ -908,29 +909,14 @@ class SpannerBigtableStore:
 
     # --- Cross-plane credit transfer ---------------------------------------
     #
-    # DELIBERATELY UNIMPLEMENTED on the native-Spanner backend, and this is the
-    # decision most worth arguing with.
-    #
-    # Spanner's credit balance is SHARDED (tr_credit_balance rows per
-    # workspace), so an escrow debit here is not the single conditional UPDATE
-    # the Postgres implementation uses — it has to pick a donor shard, record
-    # which one it took from, and return to that same shard. That is new money
-    # DML that this repo cannot currently execute in a test: the conformance
-    # suite's `spanner-emulator` backend skips (no emulator schema
-    # provisioning), so a Spanner implementation would ship UNEXERCISED.
-    # Untested money code that mints on the wrong branch is strictly worse than
-    # an explicit gap.
-    #
-    # The conformance suite already registers `spanner-pg` — PostgresStore
-    # against Spanner's PostgreSQL dialect — precisely so ONE money
-    # implementation can cover GCP, AWS and Azure. Writing a second one here
-    # would recreate the two-backends-with-different-money-code risk that
-    # backend is meant to retire.
-    #
-    # CONSEQUENCE, stated plainly: while GCP runs the native-Spanner store, it
-    # cannot be the SOURCE of a transfer, so no credits can move to the AWS
-    # plane in production yet. Closing that needs either the Spanner shard-aware
-    # escrow (with emulator-backed conformance) or GCP on the PG-dialect store.
+    # See trusted_router.storage_gcp_credit_transfer for the implementation and
+    # the two ways it necessarily differs from the Postgres one: the escrow
+    # debit is a conditional PLAN over the sharded balance (Spanner has no
+    # single authoritative row to decrement), and the refund's serialization is
+    # re-derived from the insert-once row plus Spanner's read-set validation
+    # rather than copied from `SELECT ... FOR UPDATE`, which Spanner does not
+    # have. `tests/conformance/test_store_semantics.py` holds this store to the
+    # SAME assertions as Postgres via the `spanner-fake` backend.
 
     def open_credit_transfer(
         self,
@@ -940,26 +926,39 @@ class SpannerBigtableStore:
         amount_microdollars: int,
         destination: str,
     ) -> CreditTransfer:
-        raise NotImplementedError(
-            "cross-plane credit transfer is not implemented on the native Spanner "
-            "backend: the sharded escrow debit has no emulator-backed test yet"
+        return spanner_credit_transfer.open_credit_transfer(
+            database=self._database,
+            param_types=self._param_types,
+            read_entity_tx=self._read_entity_tx,
+            transfer_id=transfer_id,
+            workspace_id=workspace_id,
+            amount_microdollars=amount_microdollars,
+            destination=destination,
         )
 
     def get_credit_transfer(self, transfer_id: str) -> CreditTransfer | None:
-        raise NotImplementedError(
-            "cross-plane credit transfer is not implemented on the native Spanner backend"
+        return spanner_credit_transfer.get_credit_transfer(
+            read_entity=self._read_entity, transfer_id=transfer_id
         )
 
     def list_open_credit_transfers(
         self, limit: int = 100, *, after_id: str = ""
     ) -> list[CreditTransfer]:
-        raise NotImplementedError(
-            "cross-plane credit transfer is not implemented on the native Spanner backend"
+        return spanner_credit_transfer.list_open_credit_transfers(
+            database=self._database,
+            param_types=self._param_types,
+            read_entity_tx=self._read_entity_tx,
+            limit=limit,
+            after_id=after_id,
         )
 
     def resolve_credit_transfer(self, *, transfer_id: str, outcome: str) -> CreditTransfer:
-        raise NotImplementedError(
-            "cross-plane credit transfer is not implemented on the native Spanner backend"
+        return spanner_credit_transfer.resolve_credit_transfer(
+            database=self._database,
+            param_types=self._param_types,
+            read_entity_tx=self._read_entity_tx,
+            transfer_id=transfer_id,
+            outcome=outcome,
         )
 
     def claim_credit_transfer(
@@ -971,8 +970,15 @@ class SpannerBigtableStore:
         source: str,
         accept: bool,
     ) -> str:
-        raise NotImplementedError(
-            "cross-plane credit transfer is not implemented on the native Spanner backend"
+        return spanner_credit_transfer.claim_credit_transfer(
+            database=self._database,
+            param_types=self._param_types,
+            read_entity_tx=self._read_entity_tx,
+            transfer_id=transfer_id,
+            workspace_id=workspace_id,
+            amount_microdollars=amount_microdollars,
+            source=source,
+            accept=accept,
         )
 
     def get_key_by_lookup_hash(self, lookup_hash: str) -> ApiKey | None:
@@ -1231,23 +1237,8 @@ class SpannerBigtableStore:
             pt = self._param_types
 
             for shard, shard_delta in enumerate(shard_deltas):
-                updated = transaction.execute_update(
-                    "UPDATE tr_credit_balance "
-                    "SET total_credits = total_credits + @amount, "
-                    "source_updated_at=@now, updated_at=@now "
-                    "WHERE workspace_id=@ws AND shard=@shard",
-                    params={
-                        "amount": shard_delta,
-                        "now": now,
-                        "ws": workspace_id,
-                        "shard": shard,
-                    },
-                    param_types={
-                        "amount": pt.INT64,
-                        "now": pt.TIMESTAMP,
-                        "ws": pt.STRING,
-                        "shard": pt.INT64,
-                    },
+                updated = credit_credit_shard(
+                    transaction, pt, workspace_id, shard_delta, shard=shard, now=now
                 )
                 if updated != 0:
                     continue

@@ -22,6 +22,7 @@ from trusted_router.storage_errors import (
     StoreConflict,
     StoreUnavailable,
     conflict_store_error_types,
+    duplicate_key_store_error_types,
     is_conflict_error,
     is_transient_store_error,
     transient_store_error_types,
@@ -216,3 +217,56 @@ def test_kms_is_used_when_no_explicit_local_key() -> None:
     )
     assert isinstance(wrapper, GcpKmsKeyWrapper)
     assert wrapper.key_ref.endswith("cryptoKeys/k")
+
+
+# --------------------------------------------------------------------------
+# Duplicate-key classification (insert-once idempotency)
+# --------------------------------------------------------------------------
+
+
+def test_spanner_and_postgres_duplicate_keys_are_both_recognised() -> None:
+    """Insert-once is how every idempotent money path decides "already done",
+    so both backends' spelling of "that PK is taken" has to classify."""
+    from google.api_core.exceptions import AlreadyExists
+
+    from trusted_router.storage_errors import is_duplicate_key_error
+
+    assert is_duplicate_key_error(AlreadyExists("dup"))
+
+    import psycopg
+
+    assert psycopg.errors.UniqueViolation in duplicate_key_store_error_types()
+
+
+def test_a_duplicate_key_is_not_classified_as_a_retryable_conflict() -> None:
+    """The distinction that keeps a losing insert from looping forever.
+
+    A conflict means nothing committed and replaying the transaction is the
+    fix. A duplicate key means the WINNER committed: replaying re-runs the same
+    insert against the same existing row and fails identically, forever. Code
+    that lumped them together would spin instead of reading the winner's row.
+    """
+    from google.api_core.exceptions import AlreadyExists
+
+    from trusted_router.storage_errors import is_duplicate_key_error
+
+    duplicate = AlreadyExists("dup")
+    assert is_duplicate_key_error(duplicate)
+    assert not is_conflict_error(duplicate)
+    assert not is_transient_store_error(duplicate)
+
+
+def test_the_spanner_fake_duplicate_error_classifies_too() -> None:
+    """The in-process fake is what exercises every Spanner insert-once path in
+    CI; if its duplicate error did not classify, those paths would take the
+    error branch in tests and the replay branch in production."""
+    from tests.fakes.spanner import FakeAlreadyExists
+    from trusted_router.storage_errors import is_duplicate_key_error
+
+    assert is_duplicate_key_error(FakeAlreadyExists("dup"))
+
+
+def test_an_unrelated_error_is_not_a_duplicate_key() -> None:
+    from trusted_router.storage_errors import is_duplicate_key_error
+
+    assert not is_duplicate_key_error(ValueError("nope"))
