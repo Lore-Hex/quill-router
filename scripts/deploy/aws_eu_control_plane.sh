@@ -30,7 +30,21 @@ CLUSTER_ID="${CLUSTER_ID:-tnt642i3ofzpn5z62msacutpuu}"
 ECR="${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/trusted-router"
 TAG="${TAG:-eu}"
 SVC="${SVC:-tr-eu}"
-DSQL_HOST="${CLUSTER_ID}.dsql.${REGION}.on.aws"
+# DSQL endpoint region is INDEPENDENT of the App Runner region.
+#
+# App Runner does not exist in eu-north-1, and DSQL has no endpoint in
+# eu-west-1, so the second control plane runs Ireland compute against the
+# STOCKHOLM endpoint of the same multi-region cluster (both peers ACTIVE,
+# verified). That pairing is deliberate: it shares no region with the Paris
+# service, so losing eu-west-3 entirely takes out neither the compute nor the
+# database of the standby. Deriving the host from REGION would silently point
+# the standby back at the region it exists to survive.
+#
+# The IAM token region is parsed from this hostname (see
+# aws_dsql_connection_details), so naming the Stockholm endpoint is sufficient -
+# nothing else needs to know.
+DSQL_REGION="${DSQL_REGION:-$REGION}"
+DSQL_HOST="${DSQL_HOST:-${CLUSTER_ID}.dsql.${DSQL_REGION}.on.aws}"
 
 # The attested Nitro gateway this control plane fronts. The PCR0 pin must
 # match the EIF measurement the enclave deploy published — pass it in from
@@ -65,7 +79,10 @@ GATEWAY_REGION_TARGETS="${GATEWAY_REGION_TARGETS:-eu-west-1=quill-enclave-nlb-6e
 # Secrets Manager ARNs (eu-west-3 — App Runner requires same-region secrets).
 INTERNAL_TOKEN_SECRET_ARN="${INTERNAL_TOKEN_SECRET_ARN:-$(aws secretsmanager describe-secret --region "$REGION" --secret-id quill/trustedrouter-internal-gateway-token --query ARN --output text)}"
 MONITOR_KEY_SECRET_ARN="${MONITOR_KEY_SECRET_ARN:-$(aws secretsmanager describe-secret --region "$REGION" --secret-id quill/trustedrouter-synthetic-monitor-api-key --query ARN --output text)}"
-CLICKHOUSE_SECRET_ARN="${CLICKHOUSE_SECRET_ARN:-$(aws secretsmanager describe-secret --region "$REGION" --secret-id quill/tr-eu-clickhouse-password --query ARN --output text)}"
+# Analytics is optional, so its secret must be too. A standby region has no
+# ClickHouse node and no replica of this secret; requiring it would block the
+# region whose entire job is to survive the loss of the one that has it.
+CLICKHOUSE_SECRET_ARN="${CLICKHOUSE_SECRET_ARN:-$(aws secretsmanager describe-secret --region "$REGION" --secret-id quill/tr-eu-clickhouse-password --query ARN --output text 2>/dev/null || true)}"
 
 # This cloud's OWN ClickHouse (tools/aws_eu_clickhouse.sh), private in the
 # VPC. Deliberately NOT replicated from the GCP cluster: each cloud owns its
@@ -88,8 +105,14 @@ CLICKHOUSE_DATABASE="${CLICKHOUSE_DATABASE:-default}"
 VPC_CONNECTOR_ARN="${VPC_CONNECTOR_ARN:-$(aws apprunner list-vpc-connectors --region "$REGION" \
   --query "VpcConnectors[?VpcConnectorName=='tr-eu-vpc-private' && Status=='ACTIVE'].VpcConnectorArn | [0]" \
   --output text)}"
-[ -n "$VPC_CONNECTOR_ARN" ] && [ "$VPC_CONNECTOR_ARN" != "None" ] || {
-  echo "no ACTIVE tr-eu-vpc-private connector; run tools/aws-private-egress.sh first" >&2; exit 1; }
+# The analytics egress is optional. ClickHouse is a single private node in
+# eu-west-3; a standby control plane in another region cannot reach it and must
+# not be blocked from existing because of it. Analytics degrade to absent on the
+# standby, which is correct - it is not the serving path.
+if [ "${REQUIRE_VPC_EGRESS:-1}" = "1" ]; then
+  [ -n "$VPC_CONNECTOR_ARN" ] && [ "$VPC_CONNECTOR_ARN" != "None" ] || {
+    echo "no ACTIVE tr-eu-vpc-private connector; run tools/aws-private-egress.sh first" >&2; exit 1; }
+fi
 
 log(){ printf '\n=== %s\n' "$*" >&2; }
 
@@ -112,6 +135,20 @@ IMAGE_DIGEST=$(aws ecr describe-images --region "$REGION" --repository-name trus
 [ -n "$IMAGE_DIGEST" ] && [ "$IMAGE_DIGEST" != "None" ] || { echo "could not resolve ${TAG} to a digest" >&2; exit 1; }
 IMAGE_REF="${ECR}@${IMAGE_DIGEST}"
 log "deploying by digest: ${IMAGE_DIGEST}"
+
+# With no ClickHouse secret in this region there is no analytics path, so the
+# outbox stays off rather than enqueuing rows nothing will ever drain.
+if [ -n "$CLICKHOUSE_SECRET_ARN" ] && [ "$CLICKHOUSE_SECRET_ARN" != "None" ]; then
+  OUTBOX_ENABLED="true"
+  CLICKHOUSE_URL_EFFECTIVE="$CLICKHOUSE_URL"
+  CLICKHOUSE_SECRET_JSON=",
+        \"TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD\": \"${CLICKHOUSE_SECRET_ARN}\""
+else
+  log "no ClickHouse secret in ${REGION}: analytics disabled for this service"
+  OUTBOX_ENABLED="false"
+  CLICKHOUSE_URL_EFFECTIVE=""
+  CLICKHOUSE_SECRET_JSON=""
+fi
 
 CONFIG=$(cat <<JSON
 {
@@ -141,15 +178,14 @@ CONFIG=$(cat <<JSON
         "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL": "https://aws.trustedrouter.com",
         "TR_SYNTHETIC_CONTROL_PLANE_BASE_URL": "https://trustedrouter.com",
 
-        "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED": "true",
-        "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL": "${CLICKHOUSE_URL}",
+        "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED": "${OUTBOX_ENABLED}",
+        "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL": "${CLICKHOUSE_URL_EFFECTIVE}",
         "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER": "${CLICKHOUSE_USER}",
         "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE": "${CLICKHOUSE_DATABASE}"
       },
       "RuntimeEnvironmentSecrets": {
         "TR_INTERNAL_GATEWAY_TOKEN": "${INTERNAL_TOKEN_SECRET_ARN}",
-        "TR_SYNTHETIC_MONITOR_API_KEY": "${MONITOR_KEY_SECRET_ARN}",
-        "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD": "${CLICKHOUSE_SECRET_ARN}"
+        "TR_SYNTHETIC_MONITOR_API_KEY": "${MONITOR_KEY_SECRET_ARN}"${CLICKHOUSE_SECRET_JSON}
       }
     }
   },
@@ -168,7 +204,11 @@ JSON
 # BOTH together when key federation makes the EU plane the authorize
 # target.
 
-NETWORK_CONFIG=$(cat <<JSON
+# VPC egress only when there is a connector to use. A standby region has no
+# private ClickHouse to reach, and forcing VPC egress there would route its
+# entire outbound through a NAT it does not have - i.e. no internet at all.
+if [ -n "$VPC_CONNECTOR_ARN" ] && [ "$VPC_CONNECTOR_ARN" != "None" ]; then
+  NETWORK_CONFIG=$(cat <<JSON
 {
   "EgressConfiguration": {
     "EgressType": "VPC",
@@ -177,6 +217,9 @@ NETWORK_CONFIG=$(cat <<JSON
 }
 JSON
 )
+else
+  NETWORK_CONFIG='{"EgressConfiguration":{"EgressType":"DEFAULT"}}'
+fi
 
 if aws apprunner list-services --region "$REGION" --query "ServiceSummaryList[?ServiceName=='${SVC}'].ServiceArn" --output text | grep -q arn; then
   ARN=$(aws apprunner list-services --region "$REGION" --query "ServiceSummaryList[?ServiceName=='${SVC}'].ServiceArn" --output text)
