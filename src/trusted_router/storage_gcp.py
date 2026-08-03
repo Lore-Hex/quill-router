@@ -950,7 +950,9 @@ class SpannerBigtableStore:
             "cross-plane credit transfer is not implemented on the native Spanner backend"
         )
 
-    def list_open_credit_transfers(self, limit: int = 100) -> list[CreditTransfer]:
+    def list_open_credit_transfers(
+        self, limit: int = 100, *, after_id: str = ""
+    ) -> list[CreditTransfer]:
         raise NotImplementedError(
             "cross-plane credit transfer is not implemented on the native Spanner backend"
         )

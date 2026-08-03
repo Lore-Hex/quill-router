@@ -30,6 +30,7 @@ from tests.fakes.postgres import (
 )
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.services import federation
 from trusted_router.services.federation import FederationClient
 from trusted_router.storage import STORE, InMemoryStore, configure_store
 from trusted_router.storage_errors import StoreConflict
@@ -391,3 +392,209 @@ class TestFederatedRequestReachesAuthorize:
 
         assert response.status_code == 402, response.text
         assert response.json()["error"]["type"] == "insufficient_credits"
+
+
+# --------------------------------------------------------------------------
+# Staleness: the only revocation mechanism a peer plane has
+# --------------------------------------------------------------------------
+
+
+class TestAFederatedKeyStopsServingWhenItGoesStale:
+    """A shadow is a CACHED COPY of a credential, and nothing invalidates it.
+
+    `upsert_federated_api_key` runs on a cache MISS only. There is no
+    revocation feed, no push, no refresh — so before the age check, a key the
+    customer deleted at home kept authorizing here forever, spending whatever
+    credits had been transferred to this plane, with a manual per-region row
+    delete as the only remedy. The same holds for `workspace_billing_paused`:
+    a pause that never arrives cannot quiesce anything.
+
+    This was inert until the shadow workspace landed, because every federated
+    request 403'd before it. Making federation work is what armed it.
+    """
+
+    def _revocable_client(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        answers: list[httpx.Response],
+    ) -> tuple[TestClient, list[int]]:
+        """An app whose home plane replies from `answers`, one per call."""
+        from trusted_router.routes.internal import gateway as gateway_routes
+
+        calls = [0]
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            index = min(calls[0], len(answers) - 1)
+            calls[0] += 1
+            return answers[index]
+
+        federation_client = FederationClient(
+            home_base_url="https://trustedrouter.com",
+            peer_token="home-token",  # noqa: S106 - test fixture.
+            client=httpx.Client(transport=httpx.MockTransport(handler)),
+        )
+        monkeypatch.setattr(
+            gateway_routes, "_federation_client", lambda *_a, **_k: federation_client
+        )
+        monkeypatch.setenv("TR_FEDERATION_HOME_BASE_URL", "https://trustedrouter.com")
+        monkeypatch.setenv("TR_FEDERATION_HOME_TOKEN", "home-token")
+        settings = Settings(
+            environment="test",
+            sentry_dsn=None,
+            internal_gateway_token=None,
+            stripe_secret_key=None,
+            stripe_webhook_secret=None,
+            federation_home_base_url="https://trustedrouter.com",
+            federation_home_token="home-token",  # noqa: S106 - test fixture.
+        )
+        return TestClient(create_app(settings, init_observability=False)), calls
+
+    def _age_the_cached_key(self, seconds: int) -> None:
+        """Backdate the shadow, which is what "time passed" means here."""
+        import datetime as dt
+
+        stored = STORE.get_key_by_lookup_hash(HOME_RECORD["lookup_hash"])
+        assert stored is not None
+        stale = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=seconds)
+        stored.created_at = stale.isoformat().replace("+00:00", "Z")
+        STORE.api_keys.keys[stored.hash] = stored
+
+    def test_a_fresh_record_is_served_without_calling_home(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The availability property this whole workstream exists to buy.
+
+        If the age check turned every request into a home-plane call, the
+        coupling would be back and worse than before.
+        """
+        client, calls = self._revocable_client(
+            monkeypatch, answers=[httpx.Response(200, json={"data": HOME_RECORD})]
+        )
+
+        for _ in range(3):
+            _authorize(client, HOME_RECORD["lookup_hash"])
+
+        assert calls[0] == 1
+
+    def test_a_key_revoked_at_home_stops_working_here(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A 404 from home is a VERDICT, not an outage: revoke immediately."""
+        client, _calls = self._revocable_client(
+            monkeypatch,
+            answers=[
+                httpx.Response(200, json={"data": HOME_RECORD}),
+                httpx.Response(404, json={"error": {"message": "Unknown API key"}}),
+            ],
+        )
+        first = _authorize(client, HOME_RECORD["lookup_hash"])
+        assert first.status_code != 401, first.text
+
+        # The customer deletes the key at home; time passes past the soft TTL.
+        self._age_the_cached_key(federation.SOFT_TTL_SECONDS + 60)
+        after = _authorize(client, HOME_RECORD["lookup_hash"])
+
+        assert after.status_code == 401, after.text
+
+    def test_a_home_outage_does_not_revoke_a_recently_seen_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """STALE-WHILE-REVALIDATE. Between the soft and hard TTLs, a home plane
+        that cannot answer must not take this plane's requests down with it —
+        that is the exact coupling being removed."""
+        client, _calls = self._revocable_client(
+            monkeypatch,
+            answers=[
+                httpx.Response(200, json={"data": HOME_RECORD}),
+                httpx.Response(503, json={"error": {"message": "down"}}),
+            ],
+        )
+        assert _authorize(client, HOME_RECORD["lookup_hash"]).status_code != 401
+
+        self._age_the_cached_key(federation.SOFT_TTL_SECONDS + 60)
+        during_outage = _authorize(client, HOME_RECORD["lookup_hash"])
+
+        # Served from the stale copy: not a 401 (wrong — blames the customer)
+        # and not a 503 (wrong — the record is still young enough to trust).
+        assert during_outage.status_code not in (401, 503), during_outage.text
+
+    def test_past_the_hard_ttl_an_unreachable_home_refuses_rather_than_serves(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """503, never 401, and never "serve it anyway".
+
+        At some age "probably still valid" stops being good enough for a
+        credential, because a revocation may have been waiting the whole time.
+        503 + Retry-After is the honest answer: it is our outage, not a bad key.
+        """
+        client, _calls = self._revocable_client(
+            monkeypatch,
+            answers=[
+                httpx.Response(200, json={"data": HOME_RECORD}),
+                httpx.Response(503, json={"error": {"message": "down"}}),
+            ],
+        )
+        assert _authorize(client, HOME_RECORD["lookup_hash"]).status_code != 401
+
+        self._age_the_cached_key(federation.HARD_TTL_SECONDS + 60)
+        expired = _authorize(client, HOME_RECORD["lookup_hash"])
+
+        assert expired.status_code == 503, expired.text
+        assert expired.headers.get("Retry-After") == "5"
+
+    def test_a_locally_issued_key_is_never_age_checked(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Only a SHADOW expires. A key this plane issued is authoritative, and
+        ageing it out would be inventing an expiry the customer never set."""
+        client, calls = self._revocable_client(
+            monkeypatch, answers=[httpx.Response(404, json={"error": {}})]
+        )
+        user = STORE.ensure_user("local", "local@example.com")
+        workspace = STORE.create_workspace(
+            user.id, "local", trial_credit_microdollars=1_000_000
+        )
+        _raw, created = STORE.create_api_key(
+            workspace_id=workspace.id, name="local key", creator_user_id=user.id
+        )
+        # Older than any TTL. A locally issued key must not care.
+        created.created_at = "2000-01-01T00:00:00Z"
+        STORE.api_keys.keys[created.hash] = created
+
+        response = _authorize(client, created.lookup_hash)
+
+        assert response.status_code != 401, response.text
+        assert calls[0] == 0
+
+
+class TestTheNegativeCacheIsBounded:
+    def test_unknown_keys_cannot_grow_the_cache_without_limit(self) -> None:
+        """The entries are keyed on an ATTACKER-CHOSEN lookup hash.
+
+        N requests with N random bearer tokens produce N distinct misses on a
+        client that lives for the process lifetime. Expired entries were read
+        past rather than deleted and nothing else evicted them, so the dict was
+        an unbounded memory leak driven by unauthenticated traffic.
+        """
+        calls = [0]
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            calls[0] += 1
+            return httpx.Response(404, json={"error": {"message": "Unknown API key"}})
+
+        client = FederationClient(
+            home_base_url="https://trustedrouter.com",
+            peer_token="home-token",  # noqa: S106 - test fixture.
+            client=httpx.Client(transport=httpx.MockTransport(handler)),
+        )
+
+        for index in range(federation.NEGATIVE_MAX_ENTRIES * 2):
+            assert client.resolve(f"random-lookup-{index}") is None
+
+        assert len(client._negative) <= federation.NEGATIVE_MAX_ENTRIES
+        # Still a cache, not a bypass: a repeat of a remembered miss is free.
+        before = calls[0]
+        last = f"random-lookup-{federation.NEGATIVE_MAX_ENTRIES * 2 - 1}"
+        assert client.resolve(last) is None
+        assert calls[0] == before

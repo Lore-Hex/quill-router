@@ -18,10 +18,16 @@ The shape, and why each piece is load-bearing:
     background sync would need a directory-wide feed and would be one more
     thing to silently stop.
 
-  * STALE-WHILE-REVALIDATE. Past the soft TTL a refresh is scheduled but
-    the cached record still serves. Blocking inference on a refresh would
-    make this plane's availability a function of the home plane's, which
-    is precisely what the separation exists to prevent.
+  * STALE-WHILE-REVALIDATE. Past the soft TTL the record is re-resolved,
+    but a home plane that cannot answer does NOT take the request down —
+    the cached record keeps serving until the hard TTL. Failing the
+    request on a failed refresh would make this plane's availability a
+    function of the home plane's, which is precisely what the separation
+    exists to prevent. Past the HARD TTL the record is refused, because
+    the alternative is a key that was revoked at home serving here
+    forever: nothing else propagates a revocation to a peer plane, so
+    this TTL is the entire revocation mechanism. The driver is
+    routes/internal/gateway.py, which owns the cached record.
 
   * A CIRCUIT BREAKER, so a home-plane outage cannot exhaust this plane's
     worker pool. Without it a US outage takes EU down with it — the exact
@@ -54,6 +60,12 @@ HARD_TTL_SECONDS = 24 * 60 * 60
 # this long, so a leaked or rotated key in a retry loop cannot turn into
 # sustained cross-border QPS.
 NEGATIVE_TTL_SECONDS = 60
+# Hard cap on remembered negatives. The entries are keyed on an
+# ATTACKER-CHOSEN lookup hash: N requests with N random bearer tokens produce N
+# distinct misses, and an unbounded dict on a process-lifetime client turns
+# that into unbounded RSS. Bounded, it is a cache that stops helping under
+# flood rather than a memory leak — the requests still 401 either way.
+NEGATIVE_MAX_ENTRIES = 4096
 # Consecutive failures before the breaker opens, and how long it stays open.
 BREAKER_THRESHOLD = 5
 BREAKER_COOLDOWN_SECONDS = 30
@@ -165,7 +177,7 @@ class FederationClient:
         try:
             record = self._resolve_uncached(lookup_hash)
             if record is None:
-                self._negative[lookup_hash] = time.monotonic() + NEGATIVE_TTL_SECONDS
+                self._remember_negative(lookup_hash)
             self._breaker.record_success()
             inflight.record = record
             return record
@@ -177,6 +189,28 @@ class FederationClient:
             with self._lock:
                 self._inflight.pop(lookup_hash, None)
             inflight.done.set()
+
+    def _remember_negative(self, lookup_hash: str) -> None:
+        """Cache a "home does not know this key", under a hard size cap.
+
+        Read entries are never evicted on the read path (an expired one is
+        simply read past), so nothing else ever removes them. Purge what has
+        expired when the cap is reached, and if a flood of live entries still
+        fills it, drop the ones expiring soonest — they are the ones whose
+        remaining protection is smallest.
+        """
+        now = time.monotonic()
+        with self._lock:
+            if len(self._negative) >= NEGATIVE_MAX_ENTRIES:
+                for key, until in list(self._negative.items()):
+                    if until <= now:
+                        del self._negative[key]
+            if len(self._negative) >= NEGATIVE_MAX_ENTRIES:
+                for key, _until in sorted(
+                    self._negative.items(), key=lambda item: item[1]
+                )[: max(1, NEGATIVE_MAX_ENTRIES // 8)]:
+                    del self._negative[key]
+            self._negative[lookup_hash] = now + NEGATIVE_TTL_SECONDS
 
     def _resolve_uncached(self, lookup_hash: str) -> dict[str, Any] | None:
         url = f"{self._home}/v1/internal/federation/resolve-key"

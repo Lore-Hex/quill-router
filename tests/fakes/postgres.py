@@ -46,7 +46,14 @@ class SqlitePostgresConn:
     def execute(self, sql: str, params: tuple[Any, ...] = (), **_kwargs: Any) -> Any:
         if self.fail_on is not None and self.fail_on in sql:
             raise RuntimeError("connection reset mid-transaction")
-        translated = sql.replace("%s", "?").replace("::jsonb", "")
+        # `FOR UPDATE` is stripped, not honoured: SQLite has no row locks, and
+        # this harness runs one connection, so there is nothing to serialize
+        # against. Every guarantee under test here therefore has to hold
+        # WITHOUT the lock — which is the point, since row-lock behaviour is
+        # what differs most between plain Postgres and Aurora DSQL.
+        translated = (
+            sql.replace("%s", "?").replace("::jsonb", "").replace(" FOR UPDATE", "")
+        )
         return self._raw.execute(translated, params)
 
     def transaction(self) -> Any:

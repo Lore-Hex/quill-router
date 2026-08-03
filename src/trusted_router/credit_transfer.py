@@ -192,12 +192,46 @@ def validate_outcome(outcome: str) -> str:
     return outcome
 
 
-class DestinationMismatch(ValueError):
+class TransferIdReused(CreditTransferConflict):
+    """A transfer id was reused with DIFFERENT terms.
+
+    Idempotency is keyed on the transfer id, but AN ID IS NOT AN AGREEMENT.
+    The id says "this is the same move"; the workspace, the amount and the
+    destination say WHICH move. Treating a reused id as a retry without
+    checking the terms loses value in both directions:
+
+      * On the SOURCE, returning workspace A's escrow to a caller asking about
+        workspace B reports a completed transfer that moved nothing for B.
+      * On the DESTINATION, replaying the recorded verdict for a DIFFERENT
+        (workspace, amount) hands a second source plane "accepted" for free.
+        That plane debited; nothing here was credited. Value destroyed, and
+        both planes report success.
+
+    A reused id with different terms is never a retry, so it is refused rather
+    than answered. Refusing parks value; answering loses it.
+    """
+
+
+class DestinationMismatch(TransferIdReused):
     """A transfer id was reused for a DIFFERENT destination.
 
-    Idempotency is keyed on the transfer id, but an id does not identify the
-    agreement. Two planes must not be able to answer for the same escrow.
+    The most dangerous flavour of reuse, and why it keeps its own type: two
+    planes must not be able to answer for one escrow. A REJECTED tombstone
+    written by B releases an escrow that A may already have accepted, putting
+    the value in two places at once.
     """
+
+
+def _field(record: Any, name: str) -> Any:
+    """Read a field off either a `CreditTransfer` or a raw claim dict.
+
+    The source keeps a dataclass and the destination keeps a JSON row; both
+    have to be compared against the same request, and one accessor is better
+    than two copies of the comparison that can drift apart.
+    """
+    if isinstance(record, dict):
+        return record.get(name)
+    return getattr(record, name, None)
 
 
 def require_matching_destination(existing: Any, destination: str) -> None:
@@ -207,11 +241,77 @@ def require_matching_destination(existing: Any, destination: str) -> None:
     client for destination B, lets push/cancel ask B to rule on value held for
     A. A REJECTED tombstone from B releases the escrow while A may already have
     accepted — value in two places at once. Fail closed instead.
+
+    Compared only when BOTH sides carry a label: the destination is an audit
+    field, a record written before it existed has none, and refusing to resolve
+    a legitimately escrowed transfer over a missing label would strand value
+    that is otherwise recoverable.
     """
-    held = str(getattr(existing, "destination", "") or "")
+    held = str(_field(existing, "destination") or "")
     asked = str(destination or "")
     if held and asked and held != asked:
         raise DestinationMismatch(
-            f"transfer {getattr(existing, 'id', '?')!r} is escrowed for {held!r}, "
+            f"transfer {_field(existing, 'id') or '?'!r} is escrowed for {held!r}, "
             f"not {asked!r}"
+        )
+
+
+def require_matching_transfer(
+    transfer_id: str,
+    existing: Any,
+    *,
+    workspace_id: str,
+    amount_microdollars: int,
+    destination: str | None = None,
+    source: str | None = None,
+) -> None:
+    """Assert a reused id names the SAME move, on either side of the wire.
+
+    Called on the LOSING branch of every insert-once — precisely where the code
+    is about to say "already done" and skip a balance change. If the terms
+    disagree, "already done" is a statement about somebody else's transfer, so
+    this raises and every plane's value stays where it is.
+
+    `destination` is checked on the source side, `source` on the destination
+    side; each plane compares the counterparty it is not.
+
+    WHY THE SOURCE LABEL IS PART OF A CLAIM'S IDENTITY, despite being free text
+    the wire supplies: two INDEPENDENT source planes — the two AWS regions run
+    separate databases — can pick the same operator-chosen id ("topup-2026-08")
+    for the same workspace and the same amount. Every other field matches, so
+    nothing else can tell a genuine retry from a collision, and the loser is
+    handed "accepted" for a credit that never happened after it has already
+    debited itself. This is duplicate detection, NOT authorization: the label
+    is never consulted to decide whether a caller may credit anything, only
+    whether this is the same move as the one already recorded. A caller that
+    lies about it can strand or destroy its OWN value and cannot mint.
+
+    KNOWN GAP: two planes that both leave `api_base_url` unset send an empty
+    label and become indistinguishable again. Compared only when both sides are
+    non-empty, because refusing over a MISSING label would strand recoverable
+    value on every record written before the field existed — so a plane that
+    pushes credits should set it.
+    """
+    if destination is not None:
+        require_matching_destination(existing, destination)
+    if source is not None:
+        held_source = str(_field(existing, "source") or "")
+        asked_source = str(source or "")
+        if held_source and asked_source and held_source != asked_source:
+            raise TransferIdReused(
+                f"transfer {transfer_id!r} was already claimed from "
+                f"{held_source!r}, not {asked_source!r}"
+            )
+    held_workspace = str(_field(existing, "workspace_id") or "")
+    asked_workspace = str(workspace_id or "")
+    if held_workspace != asked_workspace:
+        raise TransferIdReused(
+            f"transfer {transfer_id!r} already names workspace {held_workspace!r}, "
+            f"not {asked_workspace!r}"
+        )
+    held_amount = _field(existing, "amount_microdollars")
+    if held_amount is not None and int(held_amount) != int(amount_microdollars):
+        raise TransferIdReused(
+            f"transfer {transfer_id!r} already names {int(held_amount)} "
+            f"microdollars, not {int(amount_microdollars)}"
         )

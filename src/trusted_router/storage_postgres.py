@@ -194,6 +194,13 @@ _CREDIT_TRANSFER_KIND = "credit_transfer"
 _CREDIT_TRANSFER_OPEN_KIND = "credit_transfer_open"
 # DESTINATION side. Insert-once; the row IS the verdict and is never rewritten.
 _CREDIT_TRANSFER_CLAIM_KIND = "credit_transfer_claim"
+# SOURCE side. Insert-once; the row IS the authority to apply a verdict's
+# balance change, exactly once. Without it the refund on RETURNED is decided by
+# a read-then-write over the transfer row, and two callers that both read
+# ESCROWED (an operator cancel racing the recovery pass) both refund — the one
+# transition in this design that was not guarded by an insert-once row, and the
+# only place the module's own conservation claim was false.
+_CREDIT_TRANSFER_RESOLUTION_KIND = "credit_transfer_resolution"
 
 
 def _split_sql_statements(schema: str) -> list[str]:
@@ -1992,7 +1999,19 @@ class PostgresStore:
                 # recover_credit_transfers already skips on this exact
                 # mismatch; the check belongs here too, where every caller
                 # passes through.
-                credit_transfer.require_matching_destination(existing, destination)
+                #
+                # The workspace and amount are checked for the same reason. An
+                # operator funding workspace B with an id already spent on
+                # workspace A would otherwise be handed A's record and told
+                # "delivered" — a 200 for a transfer that moved nothing for B,
+                # and no field in the reply to notice it by.
+                credit_transfer.require_matching_transfer(
+                    transfer_id,
+                    existing,
+                    workspace_id=workspace_id,
+                    amount_microdollars=amount,
+                    destination=destination,
+                )
                 return existing
             self._write_entity_tx(
                 conn,
@@ -2019,28 +2038,48 @@ class PostgresStore:
     def get_credit_transfer(self, transfer_id: str) -> CreditTransfer | None:
         return self._read_entity(_CREDIT_TRANSFER_KIND, transfer_id, CreditTransfer)
 
-    def list_open_credit_transfers(self, limit: int = 100) -> list[CreditTransfer]:
+    def list_open_credit_transfers(
+        self, limit: int = 100, *, after_id: str = ""
+    ) -> list[CreditTransfer]:
         """Transfers still in ESCROWED — the recovery queue.
 
         Bounded PK-prefix scan of the open index, which the resolve path
         deletes from. A transfer appears here exactly while its fate is
         unknown, which is precisely what a recovery pass must ask the
         destination about.
+
+        PAGED, because not every row leaves the queue by being resolved. A
+        transfer escrowed for a DIFFERENT destination is skipped on every pass
+        and stays in the index; once `limit` of those sort ahead of the live
+        escrows, an unpaged "first N" would return nothing but skips forever
+        and silently stop recovering anything else. `after_id` lets the driver
+        walk past them.
         """
         bounded = max(1, min(int(limit), 500))
+        cursor_id = str(after_id or "")
 
         def read(conn: Any) -> list[CreditTransfer]:
             rows = conn.execute(
-                "SELECT id FROM tr_entities WHERE kind = %s ORDER BY id LIMIT %s",
-                (_CREDIT_TRANSFER_OPEN_KIND, bounded),
+                "SELECT id FROM tr_entities WHERE kind = %s AND id > %s "
+                "ORDER BY id LIMIT %s",
+                (_CREDIT_TRANSFER_OPEN_KIND, cursor_id, bounded),
             ).fetchall()
             transfers = []
             for row in rows:
+                entity_id = str(row[0])
                 transfer = self._read_entity_tx(
-                    conn, _CREDIT_TRANSFER_KIND, str(row[0]), CreditTransfer
+                    conn, _CREDIT_TRANSFER_KIND, entity_id, CreditTransfer
                 )
                 if transfer is not None and transfer.state == credit_transfer.ESCROWED:
                     transfers.append(transfer)
+                    continue
+                # An index row whose transfer is resolved (or absent) is
+                # garbage: resolve deletes both in one transaction, so this
+                # only exists after a partial repair. Dropping it here keeps
+                # "a row in the index means an escrowed transfer is returned"
+                # true, which is what lets the driver page on the last
+                # RETURNED id without a filtered-out row stalling the walk.
+                self._delete_entity_tx(conn, _CREDIT_TRANSFER_OPEN_KIND, entity_id)
             return transfers
 
         return self._run_transaction(read)
@@ -2057,6 +2096,16 @@ class PostgresStore:
         This plane never invents a verdict. A repeat of the SAME verdict is a
         no-op; a DISAGREEING one raises CreditTransferConflict rather than
         applying a second balance change.
+
+        THE GUARD IS THE INSERT-ONCE ROW, not the state read. Reading the
+        transfer and branching on `state` in Python decides on a snapshot: two
+        transactions that both read ESCROWED — an operator cancel racing the
+        recovery pass, which the recovery docstring explicitly says is safe —
+        would both fall through and both run the refund. The read is still
+        taken FOR UPDATE so the ordinary case serializes on the row, but
+        correctness rests on the insert, which is the same mechanism
+        `open_credit_transfer` and `claim_credit_transfer` already use and the
+        one this transition was missing.
         """
         transfer_id = validate_transfer_id(transfer_id)
         outcome = validate_outcome(outcome)
@@ -2064,7 +2113,7 @@ class PostgresStore:
 
         def resolve(conn: Any) -> CreditTransfer:
             existing = self._read_entity_tx(
-                conn, _CREDIT_TRANSFER_KIND, transfer_id, CreditTransfer
+                conn, _CREDIT_TRANSFER_KIND, transfer_id, CreditTransfer, for_update=True
             )
             if existing is None:
                 raise KeyError(transfer_id)
@@ -2078,6 +2127,40 @@ class PostgresStore:
             resolved = dataclasses.replace(
                 existing, state=target_state, resolved_at=iso_now()
             )
+            # Insert-once FIRST, exactly as at escrow: if this loses, the
+            # balance change below must not run. The loser learns the winner's
+            # verdict instead of applying a second one.
+            won = self._insert_entity_once_tx(
+                conn,
+                _CREDIT_TRANSFER_RESOLUTION_KIND,
+                transfer_id,
+                {
+                    "outcome": outcome,
+                    "workspace_id": existing.workspace_id,
+                    "amount_microdollars": existing.amount_microdollars,
+                    "resolved_at": resolved.resolved_at,
+                },
+            )
+            if not won:
+                recorded = self._read_entity_tx(
+                    conn, _CREDIT_TRANSFER_RESOLUTION_KIND, transfer_id, dict
+                )
+                if recorded is None:
+                    raise RuntimeError("credit transfer resolution disappeared")
+                decided = str(recorded["outcome"])
+                if decided != outcome:
+                    raise CreditTransferConflict(
+                        f"transfer {transfer_id} was already resolved as "
+                        f"{decided}; cannot re-resolve it as {outcome}"
+                    )
+                # Same verdict, already applied by the winner. The transfer row
+                # this transaction read was stale; report the settled shape
+                # without touching a balance.
+                return dataclasses.replace(
+                    existing,
+                    state=credit_transfer.STATE_FOR_OUTCOME[decided],
+                    resolved_at=str(recorded.get("resolved_at") or "") or None,
+                )
             self._write_entity_tx(conn, _CREDIT_TRANSFER_KIND, transfer_id, resolved)
             # Leaves the recovery queue only now: while this row exists the
             # fate is unknown and a recovery pass must keep asking.
@@ -2142,6 +2225,21 @@ class PostgresStore:
                 )
                 if recorded is None:
                     raise RuntimeError("credit transfer claim disappeared after conflict")
+                # The recorded verdict answers for the (workspace, amount) it
+                # was written with, and for NO other. Replaying it blindly is
+                # how a second source plane gets "accepted" for free: it
+                # debited, nothing here was credited, and both planes report
+                # success. Two AWS regions pushing an operator-chosen id like
+                # "topup-2026-08" is enough to reach it. Refuse instead — the
+                # source treats a non-200 as unknown and keeps the value
+                # escrowed, which is recoverable; a false "accepted" is not.
+                credit_transfer.require_matching_transfer(
+                    transfer_id,
+                    recorded,
+                    workspace_id=workspace_id,
+                    amount_microdollars=amount,
+                    source=str(source or ""),
+                )
                 return str(recorded["outcome"])
             if requested == credit_transfer.REJECTED:
                 return credit_transfer.REJECTED

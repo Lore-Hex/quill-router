@@ -968,10 +968,17 @@ class InMemoryStore:
             existing = self.credit_transfers.get(transfer_id)
             if existing is not None:
                 # Redelivered open: return the first one, debit nothing.
-                # But only to a caller bound for the SAME destination — an id
-                # is not an agreement, and two planes must not be able to rule
-                # on one escrow.
-                credit_transfer.require_matching_destination(existing, destination)
+                # But only to a caller naming the SAME move — an id is not an
+                # agreement. A different destination lets two planes rule on
+                # one escrow; a different workspace or amount reports somebody
+                # else's completed transfer as this caller's.
+                credit_transfer.require_matching_transfer(
+                    transfer_id,
+                    existing,
+                    workspace_id=workspace_id,
+                    amount_microdollars=amount,
+                    destination=destination,
+                )
                 return existing
             money = self.credit_money.get(workspace_id)
             available = (
@@ -1000,14 +1007,17 @@ class InMemoryStore:
         with self._lock:
             return self.credit_transfers.get(transfer_id)
 
-    def list_open_credit_transfers(self, limit: int = 100) -> list[CreditTransfer]:
-        """Transfers still in ESCROWED — the recovery queue."""
+    def list_open_credit_transfers(
+        self, limit: int = 100, *, after_id: str = ""
+    ) -> list[CreditTransfer]:
+        """Transfers still in ESCROWED — the recovery queue, paged by id."""
         bounded = max(1, min(int(limit), 500))
+        cursor_id = str(after_id or "")
         with self._lock:
             return [
                 transfer
                 for transfer in sorted(self.credit_transfers.values(), key=lambda t: t.id)
-                if transfer.state == credit_transfer.ESCROWED
+                if transfer.state == credit_transfer.ESCROWED and transfer.id > cursor_id
             ][:bounded]
 
     def resolve_credit_transfer(self, *, transfer_id: str, outcome: str) -> CreditTransfer:
@@ -1026,16 +1036,26 @@ class InMemoryStore:
                         f"cannot re-resolve it as {target_state}"
                     )
                 return existing
+            # Look the balance up BEFORE recording the state. The Postgres twin
+            # gets this for free — a rowcount != 1 rolls the whole transaction
+            # back — but a dict store has no rollback, so writing the state
+            # first and then raising leaves the transfer RETURNED with nothing
+            # returned. That is value destroyed in the store the conservation
+            # tests assert against, i.e. a place a real bug could hide.
+            money = (
+                self.credit_money.get(existing.workspace_id)
+                if outcome == credit_transfer.REJECTED
+                else None
+            )
+            if outcome == credit_transfer.REJECTED and money is None:
+                raise RuntimeError(
+                    f"missing credit money for workspace {existing.workspace_id}"
+                )
             resolved = dataclasses.replace(
                 existing, state=target_state, resolved_at=iso_now()
             )
             self.credit_transfers[transfer_id] = resolved
-            if outcome == credit_transfer.REJECTED:
-                money = self.credit_money.get(existing.workspace_id)
-                if money is None:
-                    raise RuntimeError(
-                        "missing credit money for workspace " f"{existing.workspace_id}"
-                    )
+            if money is not None:
                 money.total_credits_microdollars += existing.amount_microdollars
             return resolved
 
@@ -1055,7 +1075,18 @@ class InMemoryStore:
         with self._lock:
             recorded = self.credit_transfer_claims.get(transfer_id)
             if recorded is not None:
-                # First writer won; every later caller learns that verdict.
+                # First writer won; every later caller learns that verdict —
+                # but only a caller asking about the SAME move. The recorded
+                # verdict says nothing about a different (workspace, amount),
+                # and replaying it hands a second source plane "accepted" for
+                # free: it debited, nothing here was credited.
+                credit_transfer.require_matching_transfer(
+                    transfer_id,
+                    recorded,
+                    workspace_id=workspace_id,
+                    amount_microdollars=amount,
+                    source=str(source or ""),
+                )
                 return str(recorded["outcome"])
             if requested == credit_transfer.ACCEPTED:
                 money = self.credit_money.get(workspace_id)

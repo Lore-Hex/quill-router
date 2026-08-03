@@ -255,7 +255,17 @@ class Store(Protocol):
         ...
 
     def get_credit_transfer(self, transfer_id: str) -> CreditTransfer | None: ...
-    def list_open_credit_transfers(self, limit: int = ...) -> list[CreditTransfer]: ...
+    def list_open_credit_transfers(
+        self, limit: int = ..., *, after_id: str = ...
+    ) -> list[CreditTransfer]:
+        """SOURCE: the recovery queue, in id order, starting after `after_id`.
+
+        Paged rather than "the first N", because a transfer the recovery pass
+        must SKIP (one escrowed for a different destination) never leaves the
+        queue. Without a cursor, enough such rows sorting ahead of the live
+        ones would hide every later escrow from recovery forever.
+        """
+        ...
 
     def resolve_credit_transfer(self, *, transfer_id: str, outcome: str) -> CreditTransfer:
         """SOURCE: record the destination's verdict; never invent one.

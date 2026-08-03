@@ -196,6 +196,14 @@ def register(router: APIRouter) -> None:
                 source=str(body.get("source_plane") or ""),
                 accept=action == "accepted",
             )
+        except credit_transfer.CreditTransferConflict as exc:
+            # The id is already recorded against DIFFERENT terms, so the stored
+            # verdict does not answer this request. Refusing is the whole point:
+            # replying "accepted" here would let a second source plane bank a
+            # verdict it never earned, having already debited itself. 409 keeps
+            # that plane's value escrowed and recoverable — the source treats
+            # every non-200 as "unknown" and never as a rejection.
+            raise api_error(409, str(exc), ErrorType.CONFLICT) from exc
         except ValueError as exc:
             # No local balance row: this workspace has not been federated here
             # yet. 409, not 400 — the request is well-formed and will succeed
@@ -253,6 +261,15 @@ def register(router: APIRouter) -> None:
                 )
         except KeyError as exc:
             raise api_error(404, "Unknown transfer id", ErrorType.NOT_FOUND) from exc
+        except credit_transfer.CreditTransferConflict as exc:
+            # MUST precede the ValueError arm below, which it subclasses.
+            # Falling through to that arm reports a reused id as 402
+            # "insufficient credits" under a message promising the id is still
+            # usable — the opposite of the truth. This id already names a
+            # DIFFERENT move whose escrow is debited and live, and an operator
+            # who believed that message would retry with a fresh id and take a
+            # SECOND debit. 409: pick another id, and go look at this one.
+            raise api_error(409, str(exc), ErrorType.CONFLICT) from exc
         except ValueError as exc:
             # The conditional debit refused. Nothing was written, so the same
             # transfer id is still usable after a top-up.
@@ -274,6 +291,11 @@ def register(router: APIRouter) -> None:
         return {
             "data": {
                 "transfer_id": transfer.id,
+                # Echoed from the RECORD, not the request. An operator reading
+                # a "delivered" reply needs to see which workspace it is
+                # delivered for; without this field a reply about somebody
+                # else's transfer is indistinguishable from one about theirs.
+                "workspace_id": transfer.workspace_id,
                 "state": transfer.state,
                 "amount_microdollars": transfer.amount_microdollars,
                 "value_held_by": _value_held_by(transfer.state),

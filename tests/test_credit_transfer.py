@@ -18,6 +18,7 @@ from __future__ import annotations
 import random
 import threading
 from typing import Any
+from unittest import mock
 
 import httpx
 import pytest
@@ -132,13 +133,19 @@ def _client_for(destination: InMemoryStore, **kwargs: Any) -> CreditTransferClie
         import json
 
         body = json.loads(request.content)
-        outcome = destination.claim_credit_transfer(
-            transfer_id=body["transfer_id"],
-            workspace_id=body["workspace_id"],
-            amount_microdollars=body["amount_microdollars"],
-            source=body.get("source_plane", ""),
-            accept=body["action"] == credit_transfer.ACCEPTED,
-        )
+        try:
+            outcome = destination.claim_credit_transfer(
+                transfer_id=body["transfer_id"],
+                workspace_id=body["workspace_id"],
+                amount_microdollars=body["amount_microdollars"],
+                source=body.get("source_plane", ""),
+                accept=body["action"] == credit_transfer.ACCEPTED,
+            )
+        except CreditTransferConflict as exc:
+            # Mirrors the real route: a reused id whose recorded terms do not
+            # answer this request is a 409, never a verdict. The source must
+            # see it as "unknown" and keep the value escrowed.
+            return httpx.Response(409, json={"error": {"message": str(exc)}})
         return httpx.Response(200, json={"data": {"outcome": outcome}})
 
     return CreditTransferClient(
@@ -1254,3 +1261,465 @@ class TestATransferIdIsNotAnAgreement:
         wrong = _client_for(_destination_plane(), destination_base_url="https://b.example")
         with pytest.raises(credit_transfer.DestinationMismatch):
             cancel_credit_transfer(transfer_id="t-3", client=wrong, store=store)
+
+
+class TestReusedIdWithDifferentTerms:
+    """A transfer id is an idempotency key, NOT a statement of what moved.
+
+    Every "already done, nothing to do" branch in this design sits on the
+    losing side of an insert-once. Each one is about to skip a balance change,
+    so each one has to be sure the stored row answers THIS request. Where it
+    did not, value went missing in both directions and every plane reported
+    success — the worst shape a money bug can have.
+    """
+
+    def test_the_destination_refuses_a_verdict_meant_for_another_transfer(self) -> None:
+        """DESTROYS money: a second source plane banks a verdict it never earned.
+
+        Two AWS regions run separate DSQL clusters and both push to the same
+        destination. An operator-chosen id (`topup-2026-08`) collides. Before
+        the fix the destination replied "accepted" off the FIRST region's claim
+        row without crediting anything, and the second region — which had
+        already debited itself — recorded DELIVERED.
+        """
+        destination = _destination_plane()
+
+        first = destination.claim_credit_transfer(
+            transfer_id="topup-2026-08",
+            workspace_id=WORKSPACE,
+            amount_microdollars=1_000_000,
+            source="eu-west-1",
+            accept=True,
+        )
+        assert first == credit_transfer.ACCEPTED
+        assert _spendable(destination) == 1_000_000
+
+        # A DIFFERENT amount under the same id: not a retry of the above.
+        with pytest.raises(credit_transfer.TransferIdReused):
+            destination.claim_credit_transfer(
+                transfer_id="topup-2026-08",
+                workspace_id=WORKSPACE,
+                amount_microdollars=750_000,
+                source="eu-west-3",
+                accept=True,
+            )
+        # And a different workspace under the same id.
+        destination.upsert_federated_api_key(
+            {
+                "lookup_hash": "lh-other",
+                "key_hash": "kh-other",
+                "workspace_id": "ws-other",
+                "name": "federated",
+            }
+        )
+        with pytest.raises(credit_transfer.TransferIdReused):
+            destination.claim_credit_transfer(
+                transfer_id="topup-2026-08",
+                workspace_id="ws-other",
+                amount_microdollars=1_000_000,
+                source="eu-west-3",
+                accept=True,
+            )
+        assert _spendable(destination) == 1_000_000
+        assert _spendable(destination, "ws-other") == 0
+
+    def test_a_second_region_keeps_its_value_escrowed_instead_of_losing_it(self) -> None:
+        """End to end: the total across all three planes must not shrink.
+
+        The refusal is only worth having because of where the value ends up.
+        The second region's push must stay ESCROWED — parked, visible and
+        recoverable — rather than being marked DELIVERED against a credit that
+        never happened.
+        """
+        destination = _destination_plane()
+        region_a = _plane_with_credits(1_000_000)
+        region_b = _plane_with_credits(1_000_000)
+        # EVERY term matches — same id, same workspace, same amount. Only the
+        # source label distinguishes two regions that independently chose
+        # "topup-2026-08", which is why the claim's identity includes it.
+        from_a = _client_for(destination, source_plane="https://eu-west-1.example")
+        from_b = _client_for(destination, source_plane="https://eu-west-3.example")
+
+        push_credit_transfer(
+            transfer_id="topup-2026-08",
+            workspace_id=WORKSPACE,
+            amount_microdollars=1_000_000,
+            client=from_a,
+            store=region_a,
+        )
+        with pytest.raises(CreditTransferUnavailable):
+            push_credit_transfer(
+                transfer_id="topup-2026-08",
+                workspace_id=WORKSPACE,
+                amount_microdollars=1_000_000,
+                client=from_b,
+                store=region_b,
+            )
+
+        assert region_a.credit_transfers["topup-2026-08"].state == credit_transfer.DELIVERED
+        # Region B debited, so its spendable is 0 — but the value is in escrow,
+        # not gone. `_undecided_escrow` counts it because the destination's
+        # claim row does not answer for B's transfer.
+        assert region_b.credit_transfers["topup-2026-08"].state == credit_transfer.ESCROWED
+        assert _spendable(region_b) == 0
+        assert _escrowed(region_b) == 1_000_000
+        # Region A's push landed: it is debited, the destination holds it.
+        assert _spendable(region_a) == 0
+        assert _spendable(destination) == 1_000_000
+        # Nothing destroyed: 2,000,000 in, 2,000,000 accounted for.
+        assert (
+            _spendable(region_a)
+            + _spendable(region_b)
+            + _escrowed(region_b)
+            + _spendable(destination)
+        ) == 2_000_000
+
+    def test_the_source_refuses_to_report_another_workspaces_transfer(self) -> None:
+        """Silently moves nothing while reporting a completed transfer.
+
+        An operator funding ws-B with an id already spent on ws-A used to get
+        back A's record — state `delivered`, and (before the reply carried a
+        workspace_id) no field to notice the swap by.
+        """
+        source = _plane_with_credits(1_000_000)
+        source.workspaces["ws-B"] = source.workspaces[WORKSPACE]
+        source.credit_money["ws-B"] = source.credit_money[WORKSPACE]
+
+        source.open_credit_transfer(
+            transfer_id="t-shared",
+            workspace_id=WORKSPACE,
+            amount_microdollars=100_000,
+            destination=PEER_URL,
+        )
+        with pytest.raises(credit_transfer.TransferIdReused):
+            source.open_credit_transfer(
+                transfer_id="t-shared",
+                workspace_id="ws-B",
+                amount_microdollars=100_000,
+                destination=PEER_URL,
+            )
+
+    def test_the_source_refuses_a_reused_id_with_a_different_amount(self) -> None:
+        source = _plane_with_credits(1_000_000)
+        source.open_credit_transfer(
+            transfer_id="t-amount",
+            workspace_id=WORKSPACE,
+            amount_microdollars=100_000,
+            destination=PEER_URL,
+        )
+        with pytest.raises(credit_transfer.TransferIdReused):
+            source.open_credit_transfer(
+                transfer_id="t-amount",
+                workspace_id=WORKSPACE,
+                amount_microdollars=250_000,
+                destination=PEER_URL,
+            )
+        # The first escrow is untouched, and no second debit happened.
+        assert _spendable(source) == 900_000
+
+
+class TestResolutionIsGuardedByAnInsertOnceRow:
+    """The one transition that was decided by a read-then-write.
+
+    `credit_transfer.py` claims every transition "changes bucket only via a
+    transition guarded by a single INSERT-ONCE row". `open` and `claim` were;
+    `resolve` was not — it read the transfer, compared `state` in Python, and
+    then refunded unconditionally. Two callers that both read ESCROWED both
+    refunded. That interleaving is not exotic: `recover_credit_transfers`
+    documents itself as safe to run concurrently with a first attempt, and an
+    operator cancel racing the recovery cron reaches it directly.
+    """
+
+    def _escrowed_pg(self) -> Any:
+        conn = sqlite_postgres_conn()
+        store = postgres_store_on(conn)
+        store.upsert_federated_api_key(
+            {
+                "lookup_hash": "lh-r",
+                "key_hash": "kh-r",
+                "workspace_id": WORKSPACE,
+                "name": "federated",
+            }
+        )
+        store.claim_credit_transfer(
+            transfer_id="seed",
+            workspace_id=WORKSPACE,
+            amount_microdollars=1_000_000,
+            source="home",
+            accept=True,
+        )
+        store.open_credit_transfer(
+            transfer_id="t-race",
+            workspace_id=WORKSPACE,
+            amount_microdollars=600_000,
+            destination=PEER_URL,
+        )
+        return conn, store
+
+    def test_a_second_resolve_that_still_sees_escrowed_refunds_nothing(self) -> None:
+        """THE conservation test for this transition.
+
+        Rewinding the transfer row to `escrowed` after a completed refund
+        reproduces exactly what the losing transaction sees under READ
+        COMMITTED: its snapshot was taken before the winner committed, so the
+        Python state check passes and it walks straight into the balance
+        change. The insert-once row is the only thing that can stop it, which
+        is why the row and not the state check is the guard.
+        """
+        conn, store = self._escrowed_pg()
+        assert conn.spendable(WORKSPACE) == 400_000
+
+        store.resolve_credit_transfer(
+            transfer_id="t-race", outcome=credit_transfer.REJECTED
+        )
+        assert conn.spendable(WORKSPACE) == 1_000_000
+
+        # Rewind ONLY the state, as a stale snapshot would show it.
+        with conn.transaction() as tx:
+            store._write_entity_tx(
+                tx,
+                "credit_transfer",
+                "t-race",
+                {
+                    "id": "t-race",
+                    "workspace_id": WORKSPACE,
+                    "amount_microdollars": 600_000,
+                    "destination": PEER_URL,
+                    "state": credit_transfer.ESCROWED,
+                    "created_at": "2026-08-01T00:00:00Z",
+                    "resolved_at": None,
+                },
+            )
+
+        resolved = store.resolve_credit_transfer(
+            transfer_id="t-race", outcome=credit_transfer.REJECTED
+        )
+
+        assert resolved.state == credit_transfer.RETURNED
+        # 1,600,000 here would be 600,000 minted out of nothing.
+        assert conn.spendable(WORKSPACE) == 1_000_000
+
+    def test_a_disagreeing_second_resolve_raises_instead_of_applying(self) -> None:
+        """A cancel and a delivery cannot both be recorded for one escrow."""
+        conn, store = self._escrowed_pg()
+        store.resolve_credit_transfer(
+            transfer_id="t-race", outcome=credit_transfer.ACCEPTED
+        )
+        with conn.transaction() as tx:
+            store._write_entity_tx(
+                tx,
+                "credit_transfer",
+                "t-race",
+                {
+                    "id": "t-race",
+                    "workspace_id": WORKSPACE,
+                    "amount_microdollars": 600_000,
+                    "destination": PEER_URL,
+                    "state": credit_transfer.ESCROWED,
+                    "created_at": "2026-08-01T00:00:00Z",
+                    "resolved_at": None,
+                },
+            )
+
+        with pytest.raises(CreditTransferConflict):
+            store.resolve_credit_transfer(
+                transfer_id="t-race", outcome=credit_transfer.REJECTED
+            )
+        # The accepted verdict stands: the source was debited and stays debited.
+        assert conn.spendable(WORKSPACE) == 400_000
+
+    def test_the_inmemory_twin_does_not_record_a_refund_it_cannot_make(self) -> None:
+        """A dict store has no rollback, so ordering IS the transaction.
+
+        Recording RETURNED and then failing to find the balance row leaves the
+        transfer saying the value came back when it did not — value destroyed
+        in the very store the conservation tests assert against.
+        """
+        source = _plane_with_credits(1_000_000)
+        source.open_credit_transfer(
+            transfer_id="t-mem",
+            workspace_id=WORKSPACE,
+            amount_microdollars=100_000,
+            destination=PEER_URL,
+        )
+        del source.credit_money[WORKSPACE]
+
+        with pytest.raises(RuntimeError):
+            source.resolve_credit_transfer(
+                transfer_id="t-mem", outcome=credit_transfer.REJECTED
+            )
+
+        # Still ESCROWED, so the value is still accounted for and a later
+        # recovery pass can return it once the balance row is back.
+        assert source.credit_transfers["t-mem"].state == credit_transfer.ESCROWED
+
+
+class TestRecoveryQueueCannotStarve:
+    def test_skipped_transfers_do_not_hide_the_ones_behind_them(self) -> None:
+        """A permanently-unresolvable row must not block every later escrow.
+
+        Rows escrowed for a DIFFERENT destination are skipped on every pass and
+        never leave the queue. Re-reading "the first N" each pass means that
+        once N of them sort ahead of the live ones, recovery silently stops
+        resolving anything — while still reporting success.
+        """
+        source = _plane_with_credits(1_000_000)
+        destination = _destination_plane()
+
+        # Three rows for a plane this pass will never talk to, sorting FIRST.
+        for index in range(3):
+            source.open_credit_transfer(
+                transfer_id=f"aaa-other-{index}",
+                workspace_id=WORKSPACE,
+                amount_microdollars=1_000,
+                destination="https://elsewhere.example",
+            )
+        # ...and one real escrow for the plane we are about to recover against.
+        source.open_credit_transfer(
+            transfer_id="zzz-live",
+            workspace_id=WORKSPACE,
+            amount_microdollars=250_000,
+            destination=PEER_URL,
+        )
+
+        # A page size smaller than the skip backlog: the live row is invisible
+        # to an unpaged scan.
+        report = recover_credit_transfers(
+            client=_client_for(destination), store=source, limit=2
+        )
+
+        assert report["skipped_other_destination"] == 3
+        assert report["delivered"] == 1
+        assert source.credit_transfers["zzz-live"].state == credit_transfer.DELIVERED
+        assert _spendable(destination) == 250_000
+
+
+class TestConflictIsNeverReportedAsInsufficientCredits:
+    def test_a_reused_id_is_409_not_402(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """402 here tells an operator the exact wrong thing.
+
+        `CreditTransferConflict` subclasses `ValueError`, so it used to land in
+        the insufficient-credits arm, whose message promises "the same transfer
+        id is still usable after a top-up". For a reused id that is false — the
+        escrow is debited and live — and an operator who believes it retries
+        with a fresh id and takes a SECOND debit.
+        """
+        from trusted_router.routes.internal import federation as federation_routes
+
+        destination = _destination_plane()
+        settings = Settings(
+            environment="test",
+            sentry_dsn=None,
+            internal_gateway_token=None,
+            stripe_secret_key=None,
+            stripe_webhook_secret=None,
+        )
+        monkeypatch.setattr(
+            federation_routes,
+            "credit_transfer_client_from_settings",
+            lambda _s: _client_for(destination),
+        )
+        client = TestClient(create_app(settings, init_observability=False))
+        user = STORE.ensure_user("owner", "owner@example.com")
+        first = STORE.create_workspace(user.id, "a", trial_credit_microdollars=1_000_000)
+        second = STORE.create_workspace(user.id, "b", trial_credit_microdollars=1_000_000)
+        # The destination can only credit a workspace it has federated in.
+        for index, workspace_id in enumerate((first.id, second.id)):
+            destination.upsert_federated_api_key(
+                {
+                    "lookup_hash": f"lh-dup-{index}",
+                    "key_hash": f"kh-dup-{index}",
+                    "workspace_id": workspace_id,
+                    "name": "federated",
+                }
+            )
+
+        ok = client.post(
+            "/v1/internal/federation/credit-transfers",
+            json={
+                "transfer_id": "t-dup",
+                "workspace_id": first.id,
+                "amount_microdollars": 100_000,
+            },
+        )
+        assert ok.status_code == 200, ok.text
+        # The reply names the workspace it actually moved value for.
+        assert ok.json()["data"]["workspace_id"] == first.id
+
+        clash = client.post(
+            "/v1/internal/federation/credit-transfers",
+            json={
+                "transfer_id": "t-dup",
+                "workspace_id": second.id,
+                "amount_microdollars": 100_000,
+            },
+        )
+
+        assert clash.status_code == 409, clash.text
+        assert "insufficient" not in clash.text.lower()
+        # The second workspace was never debited and never reported delivered.
+        assert STORE.credit_money[second.id].total_credits_microdollars == 1_000_000
+
+
+class TestResolveTakesTheRowLock:
+    """The refund transition must SELECT ... FOR UPDATE.
+
+    resolve_credit_transfer is the one transition not guarded by an
+    insert-once row: it reads the transfer, compares state in Python, then
+    writes and refunds. Without a lock on that read, two concurrent resolvers
+    (an operator cancel and the scheduled recovery pass — whose docstring
+    explicitly says it may run concurrently with a first attempt) both read
+    ESCROWED, both pass the state check, and both run the unconditional
+    refund. That MINTS money.
+
+    Why this test asserts on the call rather than driving the race: the
+    Postgres fake executes the real SQL on SQLite, which has no cross-
+    connection row locking to observe, so a genuine interleaving cannot be
+    reproduced here. The conformance suite covers it against a real backend
+    when TR_CONFORMANCE_POSTGRES_DSN is set. Until that runs, this pins the
+    one line that stands between us and a mint — removing for_update turns
+    this red, which is the whole point.
+    """
+
+    def test_the_escrow_read_is_locked(self) -> None:
+        from trusted_router.storage_postgres import PostgresStore
+
+        seen: list[dict[str, Any]] = []
+        real = PostgresStore._read_entity_tx
+
+        def spy(self: Any, conn: Any, kind: str, key: str, model: Any, **kw: Any) -> Any:
+            if kind == "credit_transfer":
+                seen.append(kw)
+            return real(self, conn, kind, key, model, **kw)
+
+        conn = sqlite_postgres_conn()
+        store = postgres_store_on(conn)
+        store.upsert_federated_api_key(
+            {
+                "lookup_hash": "lh-lock",
+                "key_hash": "kh-lock",
+                "workspace_id": WORKSPACE,
+                "name": "federated",
+            }
+        )
+        store.claim_credit_transfer(
+            transfer_id="seed-lock",
+            workspace_id=WORKSPACE,
+            amount_microdollars=10_000,
+            source=PEER_URL,
+            accept=True,
+        )
+        store.open_credit_transfer(
+            transfer_id="lock-1",
+            workspace_id=WORKSPACE,
+            amount_microdollars=1_000,
+            destination=PEER_URL,
+        )
+        with mock.patch.object(PostgresStore, "_read_entity_tx", spy):
+            store.resolve_credit_transfer(transfer_id="lock-1", outcome=credit_transfer.REJECTED)
+
+        assert seen, "resolve_credit_transfer did not read the transfer row"
+        assert any(kw.get("for_update") for kw in seen), (
+            "the escrow read in resolve_credit_transfer must use for_update=True; "
+            "without it two concurrent resolvers both see ESCROWED and both refund"
+        )

@@ -1263,6 +1263,22 @@ def federated_api_key_from_record(record: dict[str, Any]) -> ApiKey:
       * usage/byok counters start at ZERO and no credits come across.
         Identity is an assertion and copies safely; a balance is a
         quantity under a conservation law and copying it mints money.
+
+    KNOWN CONSEQUENCE of that second absence, recorded because it reads as an
+    oversight otherwise: the LIMITS copy but the counters do not, so a key
+    capped at $10/day is capped at $10/day *per plane*. Home plus two AWS
+    regions is $30/day, and `limit_microdollars` multiplies the same way. That
+    cap is exactly the field a customer sets to bound a leak, so the
+    multiplication is worth stating plainly.
+
+    It is accepted rather than fixed because the alternative is worse: keeping
+    a shared counter accurate across planes means a synchronous cross-plane
+    read on every authorize, which is the coupling this whole design exists to
+    remove, and federating the counters instead would federate a quantity —
+    the thing the conservation law forbids. Total spend on a peer plane stays
+    bounded by the credits explicitly TRANSFERRED to it, so this widens blast
+    radius without breaking conservation. Per-plane caps should be sized with
+    that in mind.
     """
     return ApiKey(
         hash=str(record.get("key_hash") or ""),

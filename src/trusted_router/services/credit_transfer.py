@@ -242,45 +242,69 @@ def recover_credit_transfers(
     escrow. See `cancel_credit_transfer` for the consequence: a cancel that
     never reached the destination is not recorded anywhere, so this can deliver
     a transfer an operator meant to cancel.
+
+    IT PAGES, and that is a correctness property rather than a scale one. Rows
+    this pass SKIPS — escrowed for a different destination — are never
+    resolved and never leave the queue. Re-reading "the first `limit`" every
+    pass means that once `limit` such rows sort ahead of the live ones, every
+    later escrow becomes invisible to recovery permanently, with the endpoint
+    still reporting success. Walking a cursor past them is what stops a
+    permanently-unresolvable row from starving the ones behind it.
     """
     delivered = returned = unresolved = skipped = failed = 0
-    for transfer in store.list_open_credit_transfers(limit):
-        if transfer.destination and transfer.destination != client.destination:
-            # This transfer was escrowed for a DIFFERENT plane. Asking this one
-            # about it would not be a harmless no-op: a destination accepts any
-            # (id, workspace, amount) presented with a valid credit token — it
-            # has no way to check that this source escrowed it — so the wrong
-            # plane would happily credit itself and the intended one would
-            # never receive the value.
-            skipped += 1
-            continue
-        try:
-            resolved = _deliver_and_record(transfer, client=client, store=store, accept=True)
-        except CreditTransferUnavailable:
-            unresolved += 1
-            logger.warning(
-                "credit transfer %s remains escrowed: destination unreachable",
-                transfer.id,
-            )
-            continue
-        except Exception:  # noqa: BLE001 - one bad row must not abort the batch.
-            # Same reasoning as the settle-outbox drain: a single anomalous row
-            # (a disagreeing verdict, a storage blip) must not strand every
-            # OTHER escrow behind it. The row keeps its escrow and is retried
-            # next pass; nothing is refunded on the way out.
-            failed += 1
-            logger.exception("credit transfer %s could not be resolved", transfer.id)
-            continue
-        if resolved.state == credit_transfer.DELIVERED:
-            delivered += 1
-        else:
-            returned += 1
+    cursor = ""
+    scanned = 0
+    #: Hard ceiling on one pass, so a queue full of skips cannot turn a single
+    #: HTTP call into an unbounded walk. Recovery is re-run on a schedule; a
+    #: pass that stops early resumes from the start next time and still makes
+    #: progress, because resolved rows leave the queue.
+    budget = max(1, min(int(limit), 500)) * 20
+    while scanned < budget:
+        page = store.list_open_credit_transfers(limit, after_id=cursor)
+        if not page:
+            break
+        cursor = page[-1].id
+        scanned += len(page)
+        for transfer in page:
+            if transfer.destination and transfer.destination != client.destination:
+                # This transfer was escrowed for a DIFFERENT plane. Asking this
+                # one about it would not be a harmless no-op: a destination
+                # accepts any (id, workspace, amount) presented with a valid
+                # credit token — it has no way to check that this source
+                # escrowed it — so the wrong plane would happily credit itself
+                # and the intended one would never receive the value.
+                skipped += 1
+                continue
+            try:
+                resolved = _deliver_and_record(
+                    transfer, client=client, store=store, accept=True
+                )
+            except CreditTransferUnavailable:
+                unresolved += 1
+                logger.warning(
+                    "credit transfer %s remains escrowed: destination unreachable",
+                    transfer.id,
+                )
+                continue
+            except Exception:  # noqa: BLE001 - one bad row must not abort the batch.
+                # Same reasoning as the settle-outbox drain: a single anomalous
+                # row (a disagreeing verdict, a storage blip) must not strand
+                # every OTHER escrow behind it. The row keeps its escrow and is
+                # retried next pass; nothing is refunded on the way out.
+                failed += 1
+                logger.exception("credit transfer %s could not be resolved", transfer.id)
+                continue
+            if resolved.state == credit_transfer.DELIVERED:
+                delivered += 1
+            else:
+                returned += 1
     return {
         "delivered": delivered,
         "returned": returned,
         "unresolved": unresolved,
         "skipped_other_destination": skipped,
         "failed": failed,
+        "scanned": scanned,
     }
 
 
