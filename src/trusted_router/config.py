@@ -341,6 +341,14 @@ class Settings(BaseSettings):
     # permanent failures onto the status page. False = probe only the
     # canonical target.
     synthetic_regional_probes_enabled: bool = True
+    # Image generation is sampled by a SEPARATE scheduled job
+    # (-m trusted_router.synthetic.image_generation), not by the 1-minute
+    # synthetic run. Only scripts/deploy/synthetic.sh creates that job, so
+    # a deployment without it can never produce an image sample and must
+    # not publish the component at all — an "unknown" row on a public
+    # status page reads as "we are not sure our own service works".
+    # Defaults True (the GCP shape); standalone deployments set it False.
+    synthetic_image_probe_enabled: bool = True
     # Explicit control-plane /health URL attached to the canonical
     # target. Standalone deployments set this to their own control plane
     # (e.g. the App Runner URL) so control_plane_health measures the

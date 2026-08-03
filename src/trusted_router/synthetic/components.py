@@ -1,8 +1,22 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
+from trusted_router.config import Settings
 from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup
+
+# Target name of the billing/settlement and provider-fallback probes. Unlike
+# the gateway targets these do not come from the region topology — every
+# deployment runs them against its own control plane — so they are always
+# part of the applicable set.
+CONTROL_PLANE_TARGET = "control-plane"
+
+# Bucket rollups land in when a sample maps to no public component at all
+# (the diagnostic gateway_cold_path / gateway_reused_path timings). It is an
+# internal bucket, never a published component: rendering it produced public
+# "Uncategorized — Major outage" rows carrying an internal error slug.
+UNCATEGORIZED_COMPONENT = "uncategorized"
 
 REGIONAL_GATEWAY_PROBES = {"tls_health", "attestation_nonce"}
 CONTROL_PLANE_PROBES = {"control_plane_health"}
@@ -47,6 +61,12 @@ SLO_DEFINITIONS: tuple[dict[str, str], ...] = (
     },
 )
 
+# FULL CATALOGUE of every component any TrustedRouter deployment has ever
+# published. This is deliberately NOT the published list: a component only
+# belongs on a deployment's public status page if that deployment can
+# actually sample it (see applicable_component_definitions). The catalogue
+# stays complete so 24-month historical rollups naming a component that no
+# longer applies here still resolve to a human-readable name.
 COMPONENT_DEFINITIONS: tuple[dict[str, str], ...] = (
     {
         "id": "canonical_api",
@@ -89,6 +109,75 @@ COMPONENT_DEFINITIONS: tuple[dict[str, str], ...] = (
         "description": "Public attested Gemini image generation and binary image validation.",
     },
 )
+
+# Which probe target has to exist for a catalogue component to be
+# measurable. This is the inverse of sample_component_ids() below — keep the
+# two in sync — and it is what scopes the published list to the running
+# deployment. Kept out of COMPONENT_DEFINITIONS on purpose: those dicts are
+# spread verbatim into the public status payload.
+COMPONENT_PROBE_TARGETS: dict[str, str] = {
+    "canonical_api": "canonical",
+    "us_central1_regional_api": "us-central1",
+    "us_east4_regional_api": "us-east4",
+    "eu_regional_api": "europe-west4",
+    "attestation": "canonical",
+    "billing_settlement": CONTROL_PLANE_TARGET,
+    "provider_fallback": CONTROL_PLANE_TARGET,
+    "image_generation": "canonical",
+}
+
+# A probe target is necessary but not always sufficient. Image generation
+# runs against the "canonical" target — which every deployment has — yet its
+# samples come from a SEPARATE scheduled job that only
+# scripts/deploy/synthetic.sh creates. Target presence alone therefore keeps
+# publishing a component the AWS EU cloud can never sample, so measurability
+# also consults the capability flag that says whether this deployment
+# schedules the job at all.
+COMPONENT_REQUIRED_CAPABILITIES: dict[str, Callable[[Settings], bool]] = {
+    "image_generation": lambda settings: settings.synthetic_image_probe_enabled,
+}
+
+
+def deployment_probe_targets(settings: Settings) -> frozenset[str]:
+    """Probe target names this deployment's monitor can actually sample."""
+    # Imported here, not at module scope: probes.py imports this module, so a
+    # top-level import would be circular. Deriving the names from the single
+    # place that builds the monitor's targets is the point — a second,
+    # hand-maintained list is exactly how the published components drifted
+    # away from the probes in the first place.
+    from trusted_router.synthetic.probes import configured_targets
+
+    return frozenset(
+        {target.name for target in configured_targets(settings)} | {CONTROL_PLANE_TARGET}
+    )
+
+
+def applicable_component_definitions(settings: Settings) -> tuple[dict[str, str], ...]:
+    """Catalogue components this deployment can produce samples for.
+
+    A public status page must only assert things it measures. The AWS EU
+    cloud has no us-central1, us-east4, or europe-west4 anything, so
+    publishing those components there produced three permanent "unknown"
+    rows — which reads as "we are not sure our own service works" and is
+    worse than not listing them at all. Scope comes from configuration
+    (regions + synthetic_regional_probes_enabled), never a per-cloud list.
+    """
+    targets = deployment_probe_targets(settings)
+    applicable: list[dict[str, str]] = []
+    for definition in COMPONENT_DEFINITIONS:
+        component_id = str(definition["id"])
+        required = COMPONENT_PROBE_TARGETS.get(component_id)
+        # An unmapped catalogue entry is published rather than hidden:
+        # silently dropping a component nobody has classified yet would be
+        # the worse failure. test_component_probe_targets_cover_the_catalogue
+        # keeps the map complete so this branch stays theoretical.
+        if required is not None and required not in targets:
+            continue
+        capability = COMPONENT_REQUIRED_CAPABILITIES.get(component_id)
+        if capability is not None and not capability(settings):
+            continue
+        applicable.append(definition)
+    return tuple(applicable)
 
 
 def sample_component_ids(sample: SyntheticProbeSample) -> list[str]:
@@ -171,14 +260,13 @@ def component_probe_types(component_id: str) -> set[str]:
 
 
 def component_name(component_id: str) -> str:
+    # Resolves against the FULL catalogue on purpose: a 24-month rollup can
+    # name a component this deployment no longer publishes, and it still has
+    # to render with its real name rather than a slug.
     for definition in COMPONENT_DEFINITIONS:
         if definition["id"] == component_id:
             return definition["name"]
     return component_id.replace("_", " ").title()
-
-
-def public_component_definitions() -> tuple[dict[str, Any], ...]:
-    return COMPONENT_DEFINITIONS
 
 
 def public_slo_definitions() -> tuple[dict[str, Any], ...]:

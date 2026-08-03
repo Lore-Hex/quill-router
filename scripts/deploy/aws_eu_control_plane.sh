@@ -113,6 +113,7 @@ CONFIG=$(cat <<JSON
         "TR_SYNTHETIC_CANONICAL_ATTESTED": "true",
         "TR_ATTESTATION_EXPECTED_PCR0": "${ATTESTATION_PCR0}",
         "TR_SYNTHETIC_REGIONAL_PROBES_ENABLED": "false",
+        "TR_SYNTHETIC_IMAGE_PROBE_ENABLED": "false",
         "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL": "https://aws.trustedrouter.com",
         "TR_SYNTHETIC_CONTROL_PLANE_BASE_URL": "https://trustedrouter.com",
 

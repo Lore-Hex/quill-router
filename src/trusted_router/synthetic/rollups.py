@@ -12,7 +12,10 @@ from trusted_router.storage_models import (
     SyntheticRollup,
     iso_now,
 )
-from trusted_router.synthetic.components import sample_component_ids
+from trusted_router.synthetic.components import (
+    UNCATEGORIZED_COMPONENT,
+    sample_component_ids,
+)
 
 ROLLUP_PERIODS = {"hour", "day", "month"}
 ROLLUP_RETENTION_MONTHS = 24
@@ -33,7 +36,7 @@ def rollup_period_start(created_at: str, period: str) -> str:
 
 
 def sample_rollup_ids(sample: SyntheticProbeSample) -> list[tuple[str, str]]:
-    component_ids = sample_component_ids(sample) or ["uncategorized"]
+    component_ids = sample_component_ids(sample) or [UNCATEGORIZED_COMPONENT]
     return [
         (period, component_id)
         for period in ("hour", "day", "month")

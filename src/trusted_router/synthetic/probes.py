@@ -314,9 +314,14 @@ async def gateway_latency_phase_probes(
     This probe is diagnostic, not an uptime signal. It uses an HTTP/1.1-only
     connection so DNS, TCP, TLS, and application processing can be timed
     independently without relying on private httpx/httpcore trace APIs.
+
+    Both requests go to the route THIS gateway keeps warm for real traffic
+    (see _warm_path_request_path), so the reuse check exercises the same
+    socket behaviour paying customers depend on instead of a route the
+    gateway hangs up on.
     """
 
-    url = _root_url(target.api_base_url, "/health")
+    url = _root_url(target.api_base_url, _warm_path_request_path(target))
     parsed = urlsplit(url)
     host = parsed.hostname
     if parsed.scheme != "https" or not host:
@@ -382,16 +387,23 @@ async def gateway_latency_phase_probes(
             ssl_object.selected_alpn_protocol() if ssl_object is not None else None
         ) or "http/1.1"
 
+        max_body_bytes = _warm_path_max_body_bytes(target)
         first_started = time.perf_counter()
         first_status, first_headers, first_body, first_ttfb = await _health_http11_request(
             reader,
             stream_writer,
             host=host,
             path=path,
+            max_body_bytes=max_body_bytes,
             timeout_seconds=_remaining_probe_seconds(started, timeout_seconds),
         )
         first_total_ms = _elapsed_ms(started)
-        first_ok = _health_status_reachable(first_status, first_body)
+        # SERVED vs merely REACHABLE is the whole discriminator here. A
+        # rejected credential still proves DNS/TCP/TLS/first-byte completed,
+        # which is all the cold path claims — but it is NOT a request the
+        # gateway agreed to handle, so it can never license a reuse verdict.
+        first_served = _warm_path_served(target, first_status, first_headers, first_body)
+        first_ok = _warm_path_reachable(target, first_status, first_headers, first_body)
         cold = _sample(
             "gateway_cold_path",
             target,
@@ -411,7 +423,9 @@ async def gateway_latency_phase_probes(
         )
 
         reusable = first_headers.get("connection", "").casefold() != "close"
-        if not reusable or not first_ok:
+        if not first_ok:
+            # The first request never completed cleanly, so there is nothing
+            # to reuse. Report the request failure rather than blaming reuse.
             return [
                 cold,
                 _sample(
@@ -423,6 +437,52 @@ async def gateway_latency_phase_probes(
                     latency_milliseconds=_elapsed_ms(first_started),
                     connection_reused=False,
                     protocol=negotiated_protocol,
+                    http_status=first_status,
+                    error_type="bad_health_response",
+                ),
+            ]
+        if not first_served:
+            # The gateway REJECTED the request rather than serving it, so we
+            # never exercised the warm path at all. Calling that a reuse
+            # failure would be a false red; calling it a success would be a
+            # false green. Emit an explicit not-measurable sample instead.
+            #
+            # Both probe paths are anonymous today (measured live), so this
+            # is a future-proofing branch, not a routine state: it fires only
+            # if a gateway starts demanding credentials on /health or
+            # /attestation.
+            return [
+                cold,
+                _sample(
+                    "gateway_reused_path",
+                    target,
+                    monitor_region,
+                    url,
+                    status="unknown",
+                    latency_milliseconds=None,
+                    connection_reused=False,
+                    protocol=negotiated_protocol,
+                    http_status=first_status,
+                    error_type="reuse_not_measurable_request_rejected",
+                ),
+            ]
+        if not reusable:
+            # `Connection: close` on a request the gateway SERVED is a real
+            # reuse failure. This is the branch that must stay able to go
+            # red: tolerating the close header here would make the check
+            # green forever and hide a genuine regression.
+            return [
+                cold,
+                _sample(
+                    "gateway_reused_path",
+                    target,
+                    monitor_region,
+                    url,
+                    status="down",
+                    latency_milliseconds=_elapsed_ms(first_started),
+                    connection_reused=False,
+                    protocol=negotiated_protocol,
+                    http_status=first_status,
                     error_type="connection_not_reusable",
                 ),
             ]
@@ -434,11 +494,16 @@ async def gateway_latency_phase_probes(
                 stream_writer,
                 host=host,
                 path=path,
+                max_body_bytes=max_body_bytes,
                 timeout_seconds=_remaining_probe_seconds(started, timeout_seconds),
             )
         )
         second_total_ms = _elapsed_ms(reused_started)
-        second_ok = _health_status_reachable(second_status, second_body)
+        # SERVED, not merely reachable: the reused request must be one the
+        # gateway actually handled. Accepting a rejection here would report
+        # `up` for a request the gateway refused — success without having
+        # measured the thing.
+        second_ok = _warm_path_served(target, second_status, second_headers, second_body)
         return [
             cold,
             _sample(
@@ -482,11 +547,12 @@ async def _health_http11_request(
     host: str,
     path: str,
     timeout_seconds: float,
+    max_body_bytes: int = 4096,
 ) -> tuple[int, dict[str, str], bytes, int]:
     request = (
         f"GET {path} HTTP/1.1\r\n"
         f"Host: {host}\r\n"
-        "Accept: application/json\r\n"
+        "Accept: */*\r\n"
         "User-Agent: TrustedRouter-Synthetic/1\r\n"
         "Connection: keep-alive\r\n\r\n"
     ).encode("ascii")
@@ -519,7 +585,7 @@ async def _health_http11_request(
             raise ValueError("invalid HTTP header")
         headers[name.strip().casefold()] = value.strip()
     content_length = int(headers.get("content-length", "0"))
-    if content_length < 0 or content_length > 4096:
+    if content_length < 0 or content_length > max_body_bytes:
         raise ValueError("invalid health response length")
     body = await asyncio.wait_for(
         reader.readexactly(content_length),
@@ -2290,22 +2356,88 @@ def _health_ok(response: httpx.Response) -> bool:
         return False
 
 
-def _health_status_reachable(status: int, body: bytes) -> bool:
-    """Did /health prove the request path is alive?
+def _warm_path_request_path(target: SyntheticTarget) -> str:
+    """The route THIS gateway keeps warm for real traffic.
 
-    These latency-phase probes measure DNS/TCP/TLS/first-byte — they are
-    diagnostic timing, not an authorization signal. A 401 "Invalid API
-    key" still proves every one of those phases completed, so it counts
-    as reachable, matching what tls_health_probe already does.
+    Measured live with curl --http1.1 and a two-request raw socket
+    (2026-08-01):
 
-    Not cosmetic: the AWS Nitro gateway protects every route except
-    /attestation and answers /health with 401, while the GCP gateway
-    answers 200. Without this, tls_health reported `up` and the two
-    latency probes reported `down` for the SAME 401 on the SAME URL —
-    a permanent false red on the EU status page.
+      api.trustedrouter.com      /health                200 keep-alive
+      api-us-central1…           /health                200 keep-alive
+      api-aws.trustedrouter.com  /health   (no key)     401 Connection: close
+      api-aws.trustedrouter.com  /health   (any bearer) 404 Connection: close
+      api-aws.trustedrouter.com  /attestation           200 keep-alive
+
+    So on the attested gateway /health can NEVER measure reuse: TLS
+    terminates inside the enclave, which protects every route but
+    /attestation and hangs up on everything it does not serve. A key does
+    not help — /health is not a route there at all, so an authenticated
+    request gets 404 + close, which would have turned the cold path red too.
+
+    /attestation is not a workaround for that, it is the real warm path:
+    G6 session binding REQUIRES a pinned client to send its prompt on the
+    same TLS session whose exporter was attested, so attest-then-reuse is
+    exactly the sequence every AWS client performs (and the sequence
+    tools/verify-attestation.py already exercises).
+
+    Derived from target.attested — the same configuration flag that selects
+    the attested-cert TLS context — so no per-cloud list is hardcoded and
+    GCP keeps probing /health untouched.
     """
-    if status == 200 and body == b'{"status":"ok"}':
+    return "/attestation" if target.attested else "/health"
+
+
+def _warm_path_max_body_bytes(target: SyntheticTarget) -> int:
+    # A Nitro attestation document is ~4.6 KB (4648 bytes measured live) and
+    # grows with the embedded cert chain, so the 4 KB /health bound would
+    # reject it as a malformed response and report a phantom ValueError.
+    return 65536 if target.attested else 4096
+
+
+def _warm_path_served(
+    target: SyntheticTarget, status: int, headers: dict[str, str], body: bytes
+) -> bool:
+    """Did the gateway SERVE this request, rather than reject or misroute it?
+
+    This is the reuse verdict's licence. It deliberately does NOT tolerate
+    a rejected credential: reuse may only be called `up` on a request the
+    gateway actually handled.
+    """
+    if target.attested:
+        content_type = headers.get("content-type", "").casefold()
+        return (
+            status == 200 and content_type.startswith("application/cbor") and bool(body)
+        )
+    return status == 200 and body == b'{"status":"ok"}'
+
+
+def _warm_path_reachable(
+    target: SyntheticTarget, status: int, headers: dict[str, str], body: bytes
+) -> bool:
+    """Did the request path complete end to end? (the COLD path's signal)
+
+    The latency-phase probes measure DNS/TCP/TLS/first-byte — diagnostic
+    timing, not authorization. A 401 "Invalid API key" still proves every
+    one of those phases completed, so it counts as reachable, matching what
+    tls_health_probe does. Without that tolerance tls_health reported `up`
+    and the two latency probes reported `down` for the SAME 401 on the SAME
+    URL — a permanent false red on the EU status page.
+
+    Scope note: the tolerance is reachability-only. The reuse verdict uses
+    _warm_path_served, which does NOT tolerate a rejection — otherwise the
+    probe would report `up` for a request the gateway refused to handle.
+    """
+    if _warm_path_served(target, status, headers, body):
         return True
+    return _health_rejected_api_key(status, body)
+
+
+def _health_rejected_api_key(status: int, body: bytes) -> bool:
+    """Did the gateway reject the credential rather than serve the request?
+
+    This is the discriminator for the connection-reuse check: reuse is only
+    measurable on a request the gateway actually accepted.
+    """
     if status != 401:
         return False
     try:

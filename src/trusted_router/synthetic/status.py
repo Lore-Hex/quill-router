@@ -6,6 +6,7 @@ from collections import defaultdict
 from dataclasses import replace
 from typing import Any
 
+from trusted_router.config import Settings, get_settings
 from trusted_router.storage_models import (
     FUTURE_SAMPLE_SKEW_SECONDS,
     SyntheticProbeSample,
@@ -16,6 +17,8 @@ from trusted_router.storage_models import (
 from trusted_router.synthetic.components import (
     COMPONENT_DEFINITIONS,
     SLO_DEFINITIONS,
+    UNCATEGORIZED_COMPONENT,
+    applicable_component_definitions,
     component_name,
     component_probe_types,
     rollup_slo_class_ids,
@@ -63,6 +66,7 @@ def status_snapshot(
     *,
     rollups: list[SyntheticRollup] | None = None,
     now: dt.datetime | None = None,
+    settings: Settings | None = None,
 ) -> dict[str, Any]:
     # `now` defaults to wall-clock so production callers don't need to
     # pass it; tests inject a fixed timestamp so daily-rollup bucketing
@@ -71,6 +75,12 @@ def status_snapshot(
     # depending on whether it's morning vs. late-night UTC).
     if now is None:
         now = utcnow()
+    # `settings` scopes which components this deployment publishes at all.
+    # Defaulting to the running deployment's own configuration is the point:
+    # a caller that forgets to pass it must not silently fall back to
+    # advertising another cloud's regions.
+    if settings is None:
+        settings = get_settings()
     precomputed_rollups = rollups or []
     ordered = sorted(samples, key=lambda sample: sample.created_at, reverse=True)
     freshness = _monitor_freshness(ordered, now=now)
@@ -105,7 +115,7 @@ def status_snapshot(
         router_core_samples
     )
     monthly = _monthly_history(router_core_rollups)
-    components = _components(ordered, now=now, rollups=precomputed_rollups)
+    components = _components(ordered, now=now, rollups=precomputed_rollups, settings=settings)
     slo_classes = _slo_classes(ordered, precomputed_rollups, now=now)
     slo_history = {
         str(definition["id"]): _slo_long_term_history(
@@ -735,11 +745,15 @@ def _components(
     samples: list[SyntheticProbeSample],
     *,
     now: dt.datetime,
+    settings: Settings,
     rollups: list[SyntheticRollup] | None = None,
 ) -> list[dict[str, Any]]:
     rows = []
     precomputed_rollups = rollups or []
-    for definition in COMPONENT_DEFINITIONS:
+    # Only what THIS deployment can measure. Iterating the full catalogue
+    # here is what made the AWS EU status page advertise GCP's regional
+    # gateways as permanently "unknown".
+    for definition in applicable_component_definitions(settings):
         component_id = str(definition["id"])
         component_samples = [
             sample for sample in samples if component_id in sample_component_ids(sample)
@@ -1350,6 +1364,16 @@ def _recent_events(
         reverse=True,
     )
     for rollup in recent_rollups:
+        # Apply the SAME publishability rule the raw-sample loop above uses.
+        # The two loops render into one public list, so disagreeing about
+        # what belongs there is the defect: component-less diagnostics
+        # (gateway_cold_path / gateway_reused_path) were skipped as raw
+        # samples but then reappeared an hour later as their rollup, drawn
+        # as "Uncategorized — Major outage" with an internal error slug.
+        # The underlying sample and rollup are still recorded and still red;
+        # only the unlabelled public row is suppressed.
+        if rollup.component == UNCATEGORIZED_COMPONENT and not rollup_slo_class_ids(rollup):
+            continue
         counts = _rollup_status_counts(rollup)
         failure_count = sum(
             count for status, count in counts.items() if status != "up"
