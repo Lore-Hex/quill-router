@@ -1,0 +1,172 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Prompt caching quickstart">
+  <div class="marketing-copy">
+    <span class="eyebrow">Prompt caching</span>
+    <h2>Reuse long prompt prefixes. Pay the provider cache rate.</h2>
+    <p>TrustedRouter preserves provider native caching controls, reports cache hit tokens, and settles cached input at the selected route's cache price when the provider publishes one.</p>
+    <p>TrustedRouter does not keep a second prompt cache. Prompt and output content still terminate inside the attested gateway and are not written to the control plane, billing database, analytics store, logs, or Sentry.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Automatic prefix caching</span><span>Python</span></div>
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    api_key="sk-tr-v1-...",
+    base_url="{{ api_base_url }}"
+)
+
+response = client.chat.completions.create(
+    model="deepseek/deepseek-v4-pro",
+    messages=[
+        {"role": "system", "content": LONG_STABLE_CONTEXT},
+        {"role": "user", "content": "Summarize section 4."}
+    ],
+    extra_body={
+        "provider": {
+            "only": ["deepseek"],
+            "allow_fallbacks": False
+        }
+    }
+)
+
+details = response.usage.prompt_tokens_details
+print(details.cached_tokens if details else 0)</code></pre>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">How it works</h2>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
+      <span class="card-label">1. Stable prefix</span>
+      <h3>Put reusable content first.</h3>
+      <p>Keep tool definitions, system instructions, examples, documents, and conversation history byte stable. Put the changing question at the end.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">2. Provider cache</span>
+      <h3>The selected provider reuses it.</h3>
+      <p>Automatic caching requires no TrustedRouter setting when the selected provider and model support prefix caching. Minimum prompt size, lifetime, and hit rules are provider specific.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">3. Exact settlement</span>
+      <h3>Cache usage reaches the ledger.</h3>
+      <p>The attested gateway normalizes provider usage fields. Cached reads, cache writes, uncached input, and output are settled with integer microdollar arithmetic.</p>
+    </div>
+  </div>
+</section>
+
+<section class="marketing-split" style="margin-top:48px">
+  <div class="marketing-copy">
+    <span class="eyebrow">Anthropic</span>
+    <h2>Set an explicit cache breakpoint.</h2>
+    <p>On <code>POST /v1/messages</code>, TrustedRouter preserves Anthropic content blocks and their <code>cache_control</code> values through the attested gateway. Put the breakpoint on the last block of the stable prefix.</p>
+    <p>The first request can include a cache creation charge. Repeated reads are normally cheaper. Check the returned usage rather than assuming every request hit.</p>
+    <p><a href="https://platform.claude.com/docs/en/build-with-claude/prompt-caching">Anthropic prompt caching reference</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Explicit breakpoint</span><span>Anthropic Python SDK</span></div>
+    <pre><code>from anthropic import Anthropic
+
+client = Anthropic(
+    api_key="sk-tr-v1-...",
+    base_url="{{ api_base_url|replace('/v1', '') }}"
+)
+
+response = client.messages.create(
+    model="anthropic/claude-sonnet-4.6",
+    max_tokens=600,
+    system=[{
+        "type": "text",
+        "text": LONG_STABLE_CONTEXT,
+        "cache_control": {"type": "ephemeral"}
+    }],
+    messages=[{
+        "role": "user",
+        "content": "Summarize section 4."
+    }]
+)
+
+print(response.usage.cache_creation_input_tokens)
+print(response.usage.cache_read_input_tokens)</code></pre>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">Read the cache result</h2>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
+      <span class="card-label">Chat Completions</span>
+      <h3><code>cached_tokens</code></h3>
+      <p>Read <code>usage.prompt_tokens_details.cached_tokens</code>. The cached count is included within total prompt tokens for OpenAI compatible responses.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Responses API</span>
+      <h3><code>cached_tokens</code></h3>
+      <p>Read <code>usage.input_tokens_details.cached_tokens</code>. TrustedRouter returns the normalized provider reported count.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Anthropic Messages</span>
+      <h3>Creation and read counts</h3>
+      <p>Read <code>cache_creation_input_tokens</code> and <code>cache_read_input_tokens</code> from <code>usage</code>.</p>
+    </div>
+  </div>
+</section>
+
+<section class="marketing-split" style="margin-top:48px">
+  <div class="marketing-copy">
+    <span class="eyebrow">Routing choice</span>
+    <h2>Choose cache locality or broad rollover.</h2>
+    <p>Provider caches are generally scoped to a provider, account, model, and prompt prefix. A fallback to another provider can be a cache miss even when it serves the same model.</p>
+    <p>For a repeated, cache sensitive workload, use <code>provider.only</code> and optionally disable fallbacks. For higher availability, keep fallbacks enabled and accept that the first request on a new route may rebuild the cache.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Prefer one provider, retain fallback</span><span>JSON</span></div>
+    <pre><code>{
+  "model": "your/model",
+  "provider": {
+    "order": ["your-preferred-provider"],
+    "allow_fallbacks": true
+  }
+}</code></pre>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">Provider behavior</h2>
+  <div class="marketing-grid two">
+    <div class="marketing-card">
+      <h3>Automatic caches</h3>
+      <p>TrustedRouter recognizes standard OpenAI cached token details and provider specific usage from DeepSeek, Kimi, and Gemini adapters. Automatic cache creation and eviction remain controlled by the selected provider.</p>
+      <ul class="check-list">
+        <li><a href="https://platform.openai.com/docs/guides/prompt-caching">OpenAI prompt caching</a></li>
+        <li><a href="https://api-docs.deepseek.com/guides/kv_cache">DeepSeek context caching</a></li>
+        <li><a href="https://ai.google.dev/gemini-api/docs/caching">Gemini context caching</a></li>
+      </ul>
+    </div>
+    <div class="marketing-card">
+      <h3>Current limits</h3>
+      <ul class="check-list">
+        <li>Cache hits are not guaranteed</li>
+        <li>Provider and model minimum token thresholds apply</li>
+        <li><code>prompt_cache_retention</code> returns <code>501 not_supported_in_alpha</code></li>
+        <li>TrustedRouter does not expose provider cache object create, list, or delete APIs</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="quote-feature" style="margin-top:48px">
+  <div>
+    <span class="eyebrow">Privacy boundary</span>
+    <h2>No router side prompt copy.</h2>
+  </div>
+  <div>
+    <p>Provider caching is upstream model processing, so the selected provider's policy still applies. A cache feature does not upgrade an Open route to ZDR or confidential compute.</p>
+    <p>Use <code>provider.min_privacy = "zdr"</code>, <code>trustedrouter/zdr</code>, or <code>trustedrouter/e2e</code> when the workload requires a hard privacy floor. Routing applies that floor before any prompt is sent.</p>
+    <p><a class="btn" href="/providers">Review provider posture</a> <a class="btn" href="https://trust.trustedrouter.com">Verify the gateway</a></p>
+  </div>
+</section>
+
+{% endblock %}

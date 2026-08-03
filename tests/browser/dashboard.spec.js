@@ -139,6 +139,26 @@ test("homepage and console redirect are usable on mobile width", async ({ page }
   expect(overflow).toBeLessThanOrEqual(2);
 });
 
+test("prompt caching guide and public 404 remain useful on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/docs/prompt-caching");
+
+  await expect(page.getByRole("heading", { name: "Prompt Caching For Lower LLM Costs" })).toBeVisible();
+  await expect(page.getByText("Reuse long prompt prefixes.")).toBeVisible();
+  let overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(overflow).toBeLessThanOrEqual(2);
+
+  const response = await page.goto("/missing-public-page");
+  expect(response.status()).toBe(404);
+  await expect(page.getByRole("heading", { name: "Page Not Found" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open documentation" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Browse models" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "View status" })).toBeVisible();
+  await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", "noindex,follow");
+  overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(overflow).toBeLessThanOrEqual(2);
+});
+
 test("Charter design remains shared and responsive across public surfaces", async ({ page }) => {
   for (const path of ["/", "/models", "/security", "/status", "/blog"]) {
     await page.goto(path);

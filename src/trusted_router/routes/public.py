@@ -71,6 +71,7 @@ from trusted_router.dashboard import (
     public_model_not_found_html,
     public_model_section_html,
     public_models_html,
+    public_not_found_html,
     public_page_html,
     public_privacy_html,
     public_provider_detail_html,
@@ -654,6 +655,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def tagging_docs() -> str:
         return public_page_html(settings, "docs/tagging")
 
+    @public_html_route("/docs/prompt-caching")
+    async def prompt_caching_docs() -> str:
+        return public_page_html(settings, "docs/prompt-caching")
+
     @public_html_route("/docs/web-search")
     async def web_search_docs() -> str:
         return public_page_html(settings, "docs/web-search")
@@ -966,7 +971,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             )
         html = public_blog_post_html(settings, slug)
         if html is None:
-            return HTMLResponse(public_page_html(settings, "docs"), status_code=404)
+            return HTMLResponse(
+                public_not_found_html(settings, f"/blog/{slug}"),
+                status_code=404,
+            )
         return html
 
     @public_html_route("/security")

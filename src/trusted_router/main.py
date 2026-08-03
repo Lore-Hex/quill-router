@@ -14,14 +14,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, FastAPI, HTTPException, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from trusted_router.analytics_sink import create_analytics_sink
 from trusted_router.axiom_config import init_axiom
 from trusted_router.catalog import validate_auto_model_order
 from trusted_router.config import Settings, get_settings
+from trusted_router.dashboard import public_not_found_html
 from trusted_router.errors import error_response
 from trusted_router.middleware import register_http_middleware
 from trusted_router.routes.acquisition import register_acquisition_routes
@@ -87,8 +89,10 @@ def create_app(
 
     register_http_middleware(app, settings)
 
-    @app.exception_handler(HTTPException)
-    async def http_exception_handler(_request: Request, exc: HTTPException) -> Response:
+    @app.exception_handler(StarletteHTTPException)
+    async def http_exception_handler(
+        request: Request, exc: StarletteHTTPException
+    ) -> Response:
         # Redirect-shaped HTTPExceptions (e.g. console gating raising 302
         # to /?reason=signin) need to stay redirects, not become JSON
         # error envelopes.
@@ -99,6 +103,12 @@ def create_app(
         if isinstance(exc.detail, dict) and "error" in exc.detail:
             return JSONResponse(
                 exc.detail, status_code=exc.status_code, headers=exc.headers
+            )
+        if exc.status_code == 404 and _is_public_html_request(request):
+            return HTMLResponse(
+                public_not_found_html(settings, request.url.path),
+                status_code=404,
+                headers=exc.headers,
             )
         response = error_response(
             exc.status_code,
@@ -159,6 +169,26 @@ def create_app(
     app.include_router(api)
     app.include_router(api, prefix="/v1")
     return app
+
+
+def _is_public_html_request(request: Request) -> bool:
+    if request.method not in {"GET", "HEAD"}:
+        return False
+    if "text/html" not in request.headers.get("accept", "").lower():
+        return False
+    path = request.url.path
+    non_public_prefixes = (
+        "/v1",
+        "/internal",
+        "/api",
+        "/auth",
+        "/oauth",
+        "/console",
+        "/static",
+        "/webhooks",
+        "/.well-known",
+    )
+    return not any(path == prefix or path.startswith(f"{prefix}/") for prefix in non_public_prefixes)
 
 
 def _make_api_router(settings: Settings) -> APIRouter:
