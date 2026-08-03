@@ -50,6 +50,7 @@ from trusted_router.storage_models import (
     BroadcastDestination,
     ByokProviderConfig,
     CreditAccount,
+    CreditTransfer,
     CustomModel,
     EmailSendBlock,
     EncryptedSecretEnvelope,
@@ -72,6 +73,7 @@ from trusted_router.storage_models import (
     _is_byok,
     _is_expired,
     federated_api_key_from_record,
+    federated_workspace_from_record,
     iso_now,
     normalize_provider_access_role,
     normalize_provider_access_slug,
@@ -175,6 +177,16 @@ _GATEWAY_FINALIZATION_KIND = "gateway_authorization_finalization"
 _RESERVATION_KIND = "reservation"
 _RESERVATION_IDEMPOTENCY_KIND = "reservation_idempotency"
 _RESERVATION_FINALIZATION_KIND = "reservation_finalization"
+# Cross-plane credit transfer (see trusted_router.credit_transfer).
+_CREDIT_TRANSFER_KIND = "credit_transfer"
+# Bounded recovery queue: written at escrow, DELETED at resolution, so the
+# "which transfers are still unresolved?" scan is a PK-prefix range that
+# shrinks to empty in steady state. Same reasoning as the analytics outbox,
+# which deletes what it has delivered rather than advancing a cursor over a
+# table that grows forever.
+_CREDIT_TRANSFER_OPEN_KIND = "credit_transfer_open"
+# DESTINATION side. Insert-once; the row IS the verdict and is never rewritten.
+_CREDIT_TRANSFER_CLAIM_KIND = "credit_transfer_claim"
 
 
 def _split_sql_statements(schema: str) -> list[str]:
@@ -1186,10 +1198,18 @@ class PostgresStore:
         key material) and NO credits — a federated key seeds at ZERO local
         balance, because copying a balance mints money. Spending on this
         plane requires an explicit transfer.
+
+        The shadow workspace is written in the SAME transaction as the key.
+        A key without its workspace 403s on every request (the authorize path
+        reads the workspace before it reads credits), so the two must commit
+        together or not at all — a half-written pair would be a permanently
+        broken key that looks successfully federated.
         """
         key = federated_api_key_from_record(record)
+        workspace = federated_workspace_from_record(record)
 
         def upsert(conn: Any) -> ApiKey:
+            self._materialize_federated_workspace_tx(conn, workspace)
             self._write_entity_tx(conn, "api_key", key.hash, key)
             # The reader (get_key_by_lookup_hash) indexes this by "key_id",
             # matching create_key. Writing "key_hash" here made the FIRST
@@ -1230,6 +1250,40 @@ class PostgresStore:
             return key
 
         return self._run_transaction(upsert)
+
+    def _materialize_federated_workspace_tx(self, conn: Any, workspace: Workspace) -> None:
+        """Write (or refresh) the shadow workspace a federated key needs.
+
+        Two guards, both of which protect money or a real tenant:
+
+        * A pre-existing NON-federated workspace with this id is a directory
+          COLLISION. Overwriting it would replace a real tenant's workspace
+          with an ownerless shadow, so this raises loudly instead. Refusing to
+          federate one key is recoverable; silently destroying a workspace is
+          not.
+        * The credit-balance row is inserted ON CONFLICT DO NOTHING, at ZERO.
+          Re-federating a key must never reset a balance that a completed
+          credit transfer already funded. An upsert here would silently delete
+          transferred money on the next cache miss.
+        """
+        if not workspace.id:
+            raise ValueError("federated record carries no workspace_id")
+        existing = self._read_entity_tx(conn, "workspace", workspace.id, Workspace)
+        if existing is not None and not existing.federated_home:
+            raise StoreConflict(
+                f"workspace {workspace.id} exists locally and is not federated; "
+                "refusing to overwrite it with a federated shadow"
+            )
+        self._write_entity_tx(conn, "workspace", workspace.id, workspace)
+        conn.execute(
+            "INSERT INTO tr_credit_balance "
+            "(workspace_id, shard, total_credits, total_usage, reserved, "
+            " source_updated_at, updated_at) "
+            "VALUES (%s, 0, 0, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+            "ON CONFLICT (workspace_id, shard) DO NOTHING",
+            (workspace.id,),
+            prepare=False,
+        )
 
     def get_key_by_lookup_hash(self, lookup_hash: str) -> ApiKey | None:
         lookup = self._read_entity("api_key_lookup", lookup_hash, dict)

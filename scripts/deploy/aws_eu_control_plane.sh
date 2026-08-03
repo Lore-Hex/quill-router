@@ -216,9 +216,19 @@ echo "https://${URL}"
 # ---------------------------------------------------------------------------
 # EventBridge synthetic cadence — versioned here for the same reason the env
 # is: an unversioned rule Input is how a probe silently measures the wrong
-# cloud. rotation_count=2 keeps steady-state spend bounded (2 real rotation
-# completions/min + the pong/billing probes); the route clamps at 8
-# regardless of what this Input says.
+# cloud.
+#
+# rotation_count=8 (the route's hard clamp) with NO rotation_models pin. The
+# pin to two DeepSeek ids meant exactly two of the 448 catalogue models ever
+# saw a real completion on this plane, so every other model and provider had
+# zero samples and could never show a verdict on the AWS leaderboard - not
+# green, not red, just absent. Unpinned rotation walks the catalogue.
+#
+# This IS real inference and it costs real money: 8 completions/min steady
+# state, ~11.5k/day, roughly 25 samples per model per day across 448 models.
+# That is the price of a leaderboard that reflects what this cloud can
+# actually serve rather than what we hope it serves. Lower rotation_count to
+# cut spend; the trade is slower coverage, not wrong data.
 # ---------------------------------------------------------------------------
 if [ "${SKIP_EVENTBRIDGE:-0}" != "1" ]; then
   log "aligning EventBridge rule tr-eu-synthetic-1min"
@@ -258,8 +268,7 @@ import sys
 dest_arn, role_arn, region = sys.argv[1:4]
 rule_input = {
     "monitor_region": region,
-    "rotation_count": 2,
-    "rotation_models": ["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"],
+    "rotation_count": 8,
     # REQUIRED here: EventBridge API destinations abandon the request
     # after ~5s and a probe pass takes 10-17s, so without detach every
     # tick is a FailedInvocation (observed 15/15) even though the app
@@ -279,5 +288,5 @@ PY
 )
   aws events put-rule --region "$REGION" --name tr-eu-synthetic-1min --schedule-expression 'rate(1 minute)' --state ENABLED >/dev/null
   aws events put-targets --region "$REGION" --rule tr-eu-synthetic-1min --targets "$TARGETS" >/dev/null
-  log "rule aligned: rotation_count=2, DSv4-pinned"
+  log "rule aligned: rotation_count=8, full catalogue (unpinned)"
 fi
