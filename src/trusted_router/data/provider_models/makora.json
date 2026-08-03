@@ -3,7 +3,7 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-08-02T23:04:16Z",
+  "generated_at": "2026-08-03T06:26:52Z",
   "price_scale": "microdollars_per_million",
   "model_count": 12,
   "models": [
@@ -388,7 +388,6 @@
       ],
       "supported_parameters": [
         "temperature",
-        "min_p",
         "presence_penalty",
         "seed",
         "max_tokens",
@@ -396,8 +395,7 @@
         "top_p",
         "top_k",
         "frequency_penalty",
-        "stop",
-        "logit_bias"
+        "stop"
       ],
       "title": "zai-org/GLM-5.2-NVFP4",
       "model_type": "chat",
