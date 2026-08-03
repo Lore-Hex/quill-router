@@ -17,6 +17,7 @@ from trusted_router.storage_models import ProviderBenchmarkSample, SyntheticProb
 from trusted_router.synthetic.probes import (
     DEFAULT_SYNTHETIC_BILLING_CONCURRENCY,
     SyntheticTarget,
+    _attested_ssl_context,
     choose_rotation_target,
     gateway_billing_probe,
     gateway_fallback_probe,
@@ -208,10 +209,34 @@ async def rotation_pass(
             for provider, candidates in pool.items()
         }
         pool = {provider: candidates for provider, candidates in pool.items() if candidates}
-    target = SyntheticTarget("rotation", settings.api_base_url, monitor_region)
+    # The rotation target must inherit the canonical target's TRANSPORT, not
+    # just its URL.
+    #
+    # This probe had NEVER once succeeded on the AWS plane: 10,993 error
+    # samples against 10 successes, and all 10 of those were test fixtures.
+    # Every real attempt returned ConnectError, because the AWS gateway serves
+    # a SELF-SIGNED certificate minted inside the enclave — trust comes from
+    # the attestation binding the cert, not from a CA — and this function
+    # built a plain httpx.AsyncClient whose default verification rejects it
+    # before a byte of the request is sent.
+    #
+    # The failure was invisible for two reasons. The EventBridge Input pinned
+    # rotation to two DeepSeek ids, so it looked like a narrow gap rather than
+    # a dead path; and a benchmark sample that records status="error" is
+    # indistinguishable, on a leaderboard, from a provider that is genuinely
+    # down. The board was not reporting bad providers — it was reporting a
+    # monitor that could not reach its own gateway.
+    target = SyntheticTarget(
+        "rotation",
+        settings.api_base_url,
+        monitor_region,
+        attested=settings.synthetic_canonical_attested,
+        expected_pcr0=settings.attestation_expected_pcr0,
+    )
+    verify: Any = _attested_ssl_context() if target.attested else True
     limiter = billing_semaphore or asyncio.Semaphore(DEFAULT_SYNTHETIC_BILLING_CONCURRENCY)
     probes = []
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, verify=verify) as client:
         for _ in range(max(0, count)):
             picked = choose_rotation_target(pool, rng)
             if picked is None:
