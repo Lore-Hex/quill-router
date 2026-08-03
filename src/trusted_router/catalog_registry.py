@@ -863,7 +863,7 @@ _VIDEO_MODELS: dict[str, Model] = {
         context_length=7_000,
         supports_chat=False,
         supports_video=True,
-        input_modalities=("text", "image", "audio"),
+        input_modalities=("text", "image", "audio", "video"),
         output_modalities=("video",),
         prepaid_available=True,
         byok_available=False,
@@ -1025,29 +1025,33 @@ _VIDEO_UPSTREAM_IDS = {
     "shengshu/vidu-q3": "vidu-q3-text-to-video",
     "pixverse/c1": "pixverse-c1-text-to-video",
 }
-_DIRECT_VIDEO_UPSTREAM_IDS = {
-    "lightricks/ltx-2.3": ("ltx", "ltx-2-3-pro"),
-    "lightricks/ltx-2.3-fast": ("ltx", "ltx-2-3-fast"),
-    "minimax/hailuo-3": ("minimax", "MiniMax-H3"),
-    "google/veo-3.1": ("google-ai-studio", "veo-3.1-generate-preview"),
-    "google/veo-3.1-fast": ("google-ai-studio", "veo-3.1-fast-generate-preview"),
-    "alibaba/wan-2.7": ("alibaba", "wan2.7-t2v"),
-    "x-ai/grok-imagine-video": ("grok", "grok-imagine-video"),
-    "runway/gen-4.5": ("runway", "gen4.5"),
-    "openai/sora-2": ("openai", "sora-2"),
-    "openai/sora-2-pro": ("openai", "sora-2-pro"),
-    "kling/v3-pro": ("kling", "kling-3.0"),
-    "kling/o3-pro": ("kling", "kling-3.0-omni"),
+_NATIVE_VIDEO_UPSTREAM_IDS = {
+    "lightricks/ltx-2.3": (("ltx", "ltx-2-3-pro"),),
+    "lightricks/ltx-2.3-fast": (("ltx", "ltx-2-3-fast"),),
+    "minimax/hailuo-3": (
+        ("minimax", "MiniMax-H3"),
+        ("atlas-cloud", "minimax/h3/text-to-video"),
+    ),
+    "google/veo-3.1": (("google-ai-studio", "veo-3.1-generate-preview"),),
+    "google/veo-3.1-fast": (("google-ai-studio", "veo-3.1-fast-generate-preview"),),
+    "alibaba/wan-2.7": (("alibaba", "wan2.7-t2v"),),
+    "x-ai/grok-imagine-video": (("grok", "grok-imagine-video"),),
+    "runway/gen-4.5": (("runway", "gen4.5"),),
+    "openai/sora-2": (("openai", "sora-2"),),
+    "openai/sora-2-pro": (("openai", "sora-2-pro"),),
+    "kling/v3-pro": (("kling", "kling-3.0"),),
+    "kling/o3-pro": (("kling", "kling-3.0-omni"),),
 }
-for _model_id, (_provider_slug, _upstream_id) in _DIRECT_VIDEO_UPSTREAM_IDS.items():
-    _endpoint_id = f"{_model_id}@{_provider_slug}/prepaid"
-    MODEL_ENDPOINTS[_endpoint_id] = ModelEndpoint(
-        id=_endpoint_id,
-        model_id=_model_id,
-        provider=_provider_slug,
-        usage_type="Credits",
-        upstream_id=_upstream_id,
-    )
+for _model_id, _native_routes in _NATIVE_VIDEO_UPSTREAM_IDS.items():
+    for _provider_slug, _upstream_id in _native_routes:
+        _endpoint_id = f"{_model_id}@{_provider_slug}/prepaid"
+        MODEL_ENDPOINTS[_endpoint_id] = ModelEndpoint(
+            id=_endpoint_id,
+            model_id=_model_id,
+            provider=_provider_slug,
+            usage_type="Credits",
+            upstream_id=_upstream_id,
+        )
 for _model_id, _upstream_id in _VIDEO_UPSTREAM_IDS.items():
     _endpoint_id = f"{_model_id}@venice/prepaid"
     MODEL_ENDPOINTS[_endpoint_id] = ModelEndpoint(
