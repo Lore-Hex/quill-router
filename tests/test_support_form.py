@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from trusted_router.routes import public as public_routes
 from trusted_router.services.email import EmailMessage
+from trusted_router.services.ops_chat import OpsChatFanoutResult, OpsChatSupportMessage
 
 
 @pytest.fixture(autouse=True)
@@ -34,6 +35,7 @@ def test_support_submission_sends_to_help_with_reply_to(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     sent_messages: list[EmailMessage] = []
+    ops_messages: list[OpsChatSupportMessage] = []
 
     class FakeEmailService:
         def send(self, message: EmailMessage) -> bool:
@@ -45,6 +47,15 @@ def test_support_submission_sends_to_help_with_reply_to(
         "get_email_service",
         lambda _settings: FakeEmailService(),
     )
+
+    async def fake_fanout(
+        _settings: object,
+        message: OpsChatSupportMessage,
+    ) -> OpsChatFanoutResult:
+        ops_messages.append(message)
+        return OpsChatFanoutResult(configured=3, accepted=3)
+
+    monkeypatch.setattr(public_routes, "fanout_support_message", fake_fanout)
     support_text = "Sensitive support marker that must not enter application logs."
     with caplog.at_level(logging.INFO, logger="trusted_router.routes.public"):
         response = client.post(
@@ -63,6 +74,10 @@ def test_support_submission_sends_to_help_with_reply_to(
     )
     assert "req_support_123" in message.text_body
     assert support_text in message.text_body
+    assert len(ops_messages) == 1
+    assert ops_messages[0].message == (
+        f"Request ID: req_support_123\n\n{support_text}"
+    )
     assert all(support_text not in record.getMessage() for record in caplog.records)
     assert any(
         record.getMessage().startswith("support_inquiry.sent category=api ")
@@ -131,6 +146,33 @@ def test_support_delivery_failure_tells_user_to_use_email(
 
     assert response.status_code == 503
     assert response.json() == {"ok": False, "error": "delivery_unavailable"}
+
+
+def test_support_matrix_failure_does_not_override_successful_email(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeEmailService:
+        def send(self, _message: EmailMessage) -> bool:
+            return True
+
+    async def broken_fanout(
+        _settings: object,
+        _message: OpsChatSupportMessage,
+    ) -> OpsChatFanoutResult:
+        raise RuntimeError("matrix transport failed")
+
+    monkeypatch.setattr(
+        public_routes,
+        "get_email_service",
+        lambda _settings: FakeEmailService(),
+    )
+    monkeypatch.setattr(public_routes, "fanout_support_message", broken_fanout)
+
+    response = client.post("/support/inquiry", json=_payload())
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
 
 
 def test_support_submission_is_rate_limited(

@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     legal_signatory_title: str = "CEO"
     security_contact_email: str = "security@trustedrouter.com"
     support_email: str = "help@trustedrouter.com"
+    # Optional three-cloud Matrix support fanout. Values are comma-separated
+    # pinned node URLs; every destination receives the same signed payload and
+    # Matrix room state deduplicates it across federation.
+    ops_chat_webhook_urls: str = ""
+    ops_chat_webhook_secret: str | None = None
+    ops_chat_webhook_timeout_seconds: float = 3.0
 
     enable_live_providers: bool = False
     local_keys_file: Path = Path("~/.quill_cloud_keys.private").expanduser()
@@ -516,6 +522,28 @@ class Settings(BaseSettings):
                     "Google Data Manager is enabled but missing "
                     + ", ".join(missing_google_data_manager)
                 )
+        if not 0.1 <= self.ops_chat_webhook_timeout_seconds <= 10.0:
+            raise ValueError(
+                "TR_OPS_CHAT_WEBHOOK_TIMEOUT_SECONDS must be between 0.1 and 10"
+            )
+        ops_chat_urls = tuple(
+            dict.fromkeys(
+                value.strip().rstrip("/")
+                for value in self.ops_chat_webhook_urls.split(",")
+                if value.strip()
+            )
+        )
+        if bool(ops_chat_urls) != bool(self.ops_chat_webhook_secret):
+            raise ValueError(
+                "TR_OPS_CHAT_WEBHOOK_URLS and TR_OPS_CHAT_WEBHOOK_SECRET "
+                "must both be set or both unset"
+            )
+        if environment == "production" and any(
+            not url.startswith("https://") for url in ops_chat_urls
+        ):
+            raise ValueError(
+                "TR_OPS_CHAT_WEBHOOK_URLS must contain only HTTPS URLs in production"
+            )
         if ":" in self.google_ads_conversion_feed_username:
             raise ValueError("TR_GOOGLE_ADS_CONVERSION_FEED_USERNAME cannot contain ':'")
         if (

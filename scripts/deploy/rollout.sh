@@ -80,6 +80,9 @@ add_secret_env_if_exists \
 # SES email credentials only; not used for AWS hosting or failover.
 add_secret_env_if_exists "TR_AWS_ACCESS_KEY_ID" "trustedrouter-aws-access-key-id"
 add_secret_env_if_exists "TR_AWS_SECRET_ACCESS_KEY" "trustedrouter-aws-secret-access-key"
+add_secret_env_if_exists \
+  "TR_OPS_CHAT_WEBHOOK_SECRET" \
+  "trustedrouter-ops-chat-webhook-secret"
 add_secret_env_if_exists "TR_PAYPAL_CLIENT_ID" "trustedrouter-paypal-client-id"
 add_secret_env_if_exists "TR_PAYPAL_CLIENT_SECRET" "trustedrouter-paypal-client-secret"
 add_secret_env_if_exists "TR_PAYPAL_WEBHOOK_ID" "trustedrouter-paypal-webhook-id"
@@ -307,6 +310,7 @@ ENV_VARS=(
   "TR_SES_FROM_EMAIL=noreply@trustedrouter.com"
   "TR_SES_FROM_NAME=TrustedRouter"
   "TR_SUPPORT_EMAIL=help@trustedrouter.com"
+  "TR_OPS_CHAT_WEBHOOK_URLS=https://a.uptimerouter.com,https://b.trustedrouter.com,https://c.allyrouter.com"
   # /trustedos partner-inquiry form leads. Plain env (an address, not a
   # secret); without it the handler falls back to TR_SES_FROM_EMAIL, which
   # is send-only and effectively a black hole.
