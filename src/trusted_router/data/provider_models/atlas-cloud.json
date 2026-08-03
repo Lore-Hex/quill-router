@@ -3459,8 +3459,31 @@
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
       "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "GPT 5.6 Sol",
+      "title": "openai/gpt-5.6-sol-az",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.6-sol-az",
+      "upstream_id": "openai/gpt-5.6-sol-az",
+      "context_length": 1050000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 30000000,
+      "cached_input_token_price_per_m": 500000
     }
   ],
-  "generated_at": "2026-08-03T10:44:54Z",
-  "model_count": 126
+  "generated_at": "2026-08-03T13:43:30Z",
+  "model_count": 127
 }
