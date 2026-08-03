@@ -192,6 +192,10 @@ ensure_secret_from_prompt_file "trustedrouter-athena-worker-prompt-v1" "$ATHENA_
 
 ensure_secret_from_env_file "TR_SYNTHETIC_MONITOR_API_KEY" "trustedrouter-synthetic-monitor-api-key" "SYNTHETIC_MONITOR_API_KEY"
 ensure_secret_from_env_file "SENTRY_DSN" "trustedrouter-sentry-dsn"
+ensure_secret_from_env_file \
+  "TR_OPS_CHAT_WEBHOOK_SECRET" \
+  "trustedrouter-ops-chat-webhook-secret" \
+  "OPS_SUPPORT_HOOK_SECRET"
 
 # Credentials used by the hourly pricing refresh GHA workflow. Values are
 # pushed to Secret Manager like every other TR secret. The GHA WIF service
@@ -213,6 +217,7 @@ grant_tr_deploy_secret_access() {
 }
 
 grant_tr_deploy_secret_access "trustedrouter-tr-api-key-for-self-heal"
+grant_tr_deploy_secret_access "trustedrouter-ops-chat-webhook-secret"
 grant_tr_deploy_secret_access "trustedrouter-together-api-key"
 grant_tr_deploy_secret_access "trustedrouter-parasail-api-key"
 grant_tr_deploy_secret_access "trustedrouter-lightning-api-key"

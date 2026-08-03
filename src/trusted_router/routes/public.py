@@ -7,6 +7,7 @@ import logging
 import re
 import threading
 import time
+import uuid
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -105,6 +106,7 @@ from trusted_router.provider_contract import (
     PROVIDER_CATALOG_V2_SCHEMA,
 )
 from trusted_router.services.email import EmailMessage, get_email_service
+from trusted_router.services.ops_chat import OpsChatSupportMessage, fanout_support_message
 from trusted_router.services.trust_release import (
     ResolvedTrustRelease,
     TrustReleaseResolver,
@@ -443,6 +445,39 @@ async def _handle_support_inquiry(settings: Settings, request: Request) -> JSONR
         return JSONResponse(
             {"ok": False, "error": "delivery_unavailable"},
             status_code=503,
+        )
+
+    ops_message = OpsChatSupportMessage(
+        message_id=f"support:{uuid.uuid4().hex}",
+        name=name,
+        email=email,
+        subject=f"{category_label}: {subject}",
+        message=(
+            f"Request ID: {request_id}\n\n{message}"
+            if request_id
+            else message
+        ),
+    )
+    try:
+        fanout = await fanout_support_message(settings, ops_message)
+    except Exception:  # noqa: BLE001 - email delivery remains authoritative
+        fanout = None
+        log.exception(
+            "support_inquiry.ops_fanout_exception category=%s",
+            category,
+        )
+    if fanout is not None and fanout.configured and fanout.accepted == 0:
+        log.error(
+            "support_inquiry.ops_fanout_failed configured=%d category=%s",
+            fanout.configured,
+            category,
+        )
+    elif fanout is not None and fanout.accepted < fanout.configured:
+        log.warning(
+            "support_inquiry.ops_fanout_partial accepted=%d configured=%d category=%s",
+            fanout.accepted,
+            fanout.configured,
+            category,
         )
 
     log.info(

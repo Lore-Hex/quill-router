@@ -40,6 +40,20 @@ def test_deploy_pins_ten_cent_signup_credit_policy() -> None:
     assert '"TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=100000"' in rollout
 
 
+def test_deploy_wires_three_cloud_ops_chat_support_fanout() -> None:
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+    secrets = (ROOT / "scripts/deploy/secrets.sh").read_text()
+
+    assert "TR_OPS_CHAT_WEBHOOK_URLS=https://a.uptimerouter.com," in rollout
+    assert "https://b.trustedrouter.com,https://c.allyrouter.com" in rollout
+    assert "trustedrouter-ops-chat-webhook-secret" in rollout
+    assert '"OPS_SUPPORT_HOOK_SECRET"' in secrets
+    assert (
+        'grant_tr_deploy_secret_access "trustedrouter-ops-chat-webhook-secret"'
+        in secrets
+    )
+
+
 def test_all_attested_control_plane_regions_remain_warm() -> None:
     library = (ROOT / "scripts/deploy/_lib.sh").read_text()
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
