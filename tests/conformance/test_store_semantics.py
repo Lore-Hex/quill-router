@@ -1014,3 +1014,241 @@ def test_federated_key_carries_no_secret_material(store: Store, unique: str) -> 
     assert resolved is not None
     assert resolved.secret_hash == ""
     assert resolved.salt == ""
+
+
+def test_federating_a_key_materializes_its_workspace(store: Store, unique: str) -> None:
+    """A federated key without a workspace 403s on EVERY request.
+
+    The authorize path reads the workspace before it reads credits, so a
+    backend that writes the key but not its workspace produces a key that
+    resolves perfectly and can never spend — a failure that looks like a
+    billing problem and is not.
+    """
+    workspace_id = f"ws3-{unique}"
+    try:
+        store.upsert_federated_api_key({
+            "lookup_hash": f"lh3-{unique}",
+            "key_hash": f"kh3-{unique}",
+            "workspace_id": workspace_id,
+            "name": "federated",
+        })
+    except NotImplementedError:
+        pytest.skip("backend is a federation HOME plane; it does not import keys")
+
+    workspace = store.get_workspace(workspace_id)
+    assert workspace is not None, "federated key has no workspace to authorize against"
+    assert workspace.federated_home, "a shadow must be distinguishable from a real workspace"
+    assert workspace.owner_user_id == "", "this plane has no user directory to own it"
+
+
+# --------------------------------------------------------------------------
+# Cross-plane credit transfer
+# --------------------------------------------------------------------------
+#
+# The conservation law, at the backend contract level. These use the same
+# observable-capacity trick as the reservation tests above: the Store protocol
+# exposes no backend-neutral balance read, so a balance is asserted by proving
+# exactly how much can still be moved and that one more microdollar cannot.
+
+
+def _transferable(store: Store, workspace_id: str, unique: str, amount: int) -> None:
+    """Assert exactly `amount` is still transferable, and not one more."""
+    store.open_credit_transfer(
+        transfer_id=f"cap-{unique}",
+        workspace_id=workspace_id,
+        amount_microdollars=amount,
+        destination="peer",
+    )
+    with pytest.raises(ValueError, match="insufficient credits"):
+        store.open_credit_transfer(
+            transfer_id=f"cap-over-{unique}",
+            workspace_id=workspace_id,
+            amount_microdollars=1,
+            destination="peer",
+        )
+
+
+def _fund(store: Store, workspace_id: str, unique: str, amount: int) -> None:
+    assert store.credit_workspace_once(workspace_id, amount, f"evt-xfer-{unique}") is True
+
+
+def test_opening_a_transfer_debits_the_source(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    """Escrow must leave the source's SPENDABLE balance immediately.
+
+    A backend that recorded the transfer without debiting would let the same
+    microdollars be spent locally and moved to another plane.
+    """
+    _fund(store, workspace_id, unique, 100)
+    try:
+        store.open_credit_transfer(
+            transfer_id=f"t-{unique}",
+            workspace_id=workspace_id,
+            amount_microdollars=60,
+            destination="peer",
+        )
+    except NotImplementedError:
+        pytest.skip("backend does not implement cross-plane credit transfer")
+
+    _transferable(store, workspace_id, unique, 40)
+
+
+def test_opening_the_same_transfer_twice_debits_once(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    """The retry path. A second debit for one transfer id destroys value."""
+    _fund(store, workspace_id, unique, 100)
+    try:
+        for _ in range(3):
+            store.open_credit_transfer(
+                transfer_id=f"t-dup-{unique}",
+                workspace_id=workspace_id,
+                amount_microdollars=60,
+                destination="peer",
+            )
+    except NotImplementedError:
+        pytest.skip("backend does not implement cross-plane credit transfer")
+
+    _transferable(store, workspace_id, unique, 40)
+
+
+def test_an_overdrawing_transfer_is_refused_and_leaves_no_record(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    """The id must stay usable after a top-up. A backend that recorded the
+    failed attempt would return that phantom record on the retry and move
+    nothing, while reporting success."""
+    _fund(store, workspace_id, unique, 100)
+    try:
+        with pytest.raises(ValueError, match="insufficient credits"):
+            store.open_credit_transfer(
+                transfer_id=f"t-over-{unique}",
+                workspace_id=workspace_id,
+                amount_microdollars=101,
+                destination="peer",
+            )
+    except NotImplementedError:
+        pytest.skip("backend does not implement cross-plane credit transfer")
+
+    assert store.get_credit_transfer(f"t-over-{unique}") is None
+    _transferable(store, workspace_id, unique, 100)
+
+
+def test_a_rejected_transfer_returns_the_escrow_exactly_once(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    """Repeating the destination's verdict must not refund twice."""
+    _fund(store, workspace_id, unique, 100)
+    try:
+        store.open_credit_transfer(
+            transfer_id=f"t-ret-{unique}",
+            workspace_id=workspace_id,
+            amount_microdollars=60,
+            destination="peer",
+        )
+    except NotImplementedError:
+        pytest.skip("backend does not implement cross-plane credit transfer")
+    for _ in range(3):
+        store.resolve_credit_transfer(transfer_id=f"t-ret-{unique}", outcome="rejected")
+
+    _transferable(store, workspace_id, unique, 100)
+
+
+def test_claiming_the_same_transfer_twice_credits_once(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    """The DESTINATION side of the retry path, and the one that MINTS money if
+    a backend gets it wrong: a duplicate delivery that credits twice creates
+    value out of nothing."""
+    try:
+        for _ in range(3):
+            outcome = store.claim_credit_transfer(
+                transfer_id=f"t-claim-{unique}",
+                workspace_id=workspace_id,
+                amount_microdollars=100,
+                source="home",
+                accept=True,
+            )
+            assert outcome == "accepted"
+    except NotImplementedError:
+        pytest.skip("backend does not implement cross-plane credit transfer")
+
+    _transferable(store, workspace_id, unique, 100)
+
+
+def test_a_rejected_claim_tombstones_the_transfer_id(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    """Once rejected, an id can never credit — that immutability is what makes
+    cancellation safe against an in-flight accept."""
+    try:
+        assert store.claim_credit_transfer(
+            transfer_id=f"t-tomb-{unique}",
+            workspace_id=workspace_id,
+            amount_microdollars=100,
+            source="home",
+            accept=False,
+        ) == "rejected"
+    except NotImplementedError:
+        pytest.skip("backend does not implement cross-plane credit transfer")
+
+    assert store.claim_credit_transfer(
+        transfer_id=f"t-tomb-{unique}",
+        workspace_id=workspace_id,
+        amount_microdollars=100,
+        source="home",
+        accept=True,
+    ) == "rejected"
+    with pytest.raises(ValueError, match="insufficient credits"):
+        store.open_credit_transfer(
+            transfer_id=f"t-tomb-check-{unique}",
+            workspace_id=workspace_id,
+            amount_microdollars=1,
+            destination="peer",
+        )
+
+
+def test_concurrent_transfers_cannot_overdraw(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    """Real threads, separate pooled connections on a server-backed backend.
+
+    Four transfers with DIFFERENT ids each try to move the whole balance, so
+    idempotency cannot save the backend — only a conditional debit can.
+    """
+    _fund(store, workspace_id, unique, 100)
+    try:
+        store.open_credit_transfer(
+            transfer_id=f"t-probe-{unique}",
+            workspace_id=workspace_id,
+            amount_microdollars=1,
+            destination="peer",
+        )
+    except NotImplementedError:
+        pytest.skip("backend does not implement cross-plane credit transfer")
+
+    moved: list[bool] = []
+    lock = threading.Lock()
+
+    def attempt(index: int) -> None:
+        try:
+            store.open_credit_transfer(
+                transfer_id=f"t-race-{unique}-{index}",
+                workspace_id=workspace_id,
+                amount_microdollars=99,
+                destination="peer",
+            )
+            outcome = True
+        except ValueError:
+            outcome = False
+        with lock:
+            moved.append(outcome)
+
+    threads = [threading.Thread(target=attempt, args=(index,)) for index in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert moved.count(True) == 1, f"oversubscribed the balance: {moved}"

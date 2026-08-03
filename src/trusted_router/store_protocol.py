@@ -20,6 +20,7 @@ from trusted_router.storage_models import (
     BroadcastDestination,
     ByokProviderConfig,
     CreditAccount,
+    CreditTransfer,
     CustomModel,
     EmailSendBlock,
     EncryptedSecretEnvelope,
@@ -228,7 +229,53 @@ class Store(Protocol):
 
         No secret material, no credits: a federated key seeds at ZERO
         local balance. Copying a balance would mint money.
+
+        Materializes the SHADOW workspace atomically with the key — a key
+        whose workspace is missing 403s on every request, so the two must
+        never exist apart.
         """
+        ...
+
+    # Cross-plane credit transfer ---------------------------------------------
+    # The state machine, which plane holds the value in each state, and the
+    # conservation invariant live in `trusted_router.credit_transfer`. A store
+    # may act as SOURCE (open/resolve) and DESTINATION (claim) at once.
+    def open_credit_transfer(
+        self,
+        *,
+        transfer_id: str,
+        workspace_id: str,
+        amount_microdollars: int,
+        destination: str,
+    ) -> CreditTransfer:
+        """SOURCE: conditionally debit into escrow, idempotent on transfer_id.
+
+        Raises ValueError("insufficient credits") rather than overdrawing.
+        """
+        ...
+
+    def get_credit_transfer(self, transfer_id: str) -> CreditTransfer | None: ...
+    def list_open_credit_transfers(self, limit: int = ...) -> list[CreditTransfer]: ...
+
+    def resolve_credit_transfer(self, *, transfer_id: str, outcome: str) -> CreditTransfer:
+        """SOURCE: record the destination's verdict; never invent one.
+
+        Repeating the same verdict is a no-op; a disagreeing one raises
+        CreditTransferConflict instead of moving value a second time.
+        """
+        ...
+
+    def claim_credit_transfer(
+        self,
+        *,
+        transfer_id: str,
+        workspace_id: str,
+        amount_microdollars: int,
+        source: str,
+        accept: bool,
+    ) -> str:
+        """DESTINATION: decide once. Returns the DECIDED outcome, which may
+        differ from `accept` when another caller got there first."""
         ...
     def get_key_by_raw(self, raw_key: str) -> ApiKey | None: ...
     def list_keys(self, workspace_id: str) -> list[ApiKey]: ...

@@ -19,6 +19,13 @@ from typing import Any, Never, TypeVar, cast
 import psycopg
 from psycopg_pool import ConnectionPool
 
+from trusted_router import credit_transfer
+from trusted_router.credit_transfer import (
+    CreditTransferConflict,
+    validate_amount,
+    validate_outcome,
+    validate_transfer_id,
+)
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.postgres_dsn import (
     aws_dsql_connection_details,
@@ -1928,6 +1935,235 @@ class PostgresStore:
                 raise RuntimeError("reservation release row-count != 1")
 
         self._run_transaction(finalize)
+
+    # --- Cross-plane credit transfer ---------------------------------------
+    #
+    # See trusted_router.credit_transfer for the state machine, which plane
+    # holds the value in each state, and the conservation invariant. Every
+    # transition below pairs an INSERT-ONCE row with the balance change it
+    # authorizes, in ONE transaction, so a retry re-runs an insert that loses
+    # and therefore moves nothing.
+
+    def open_credit_transfer(
+        self,
+        *,
+        transfer_id: str,
+        workspace_id: str,
+        amount_microdollars: int,
+        destination: str,
+    ) -> CreditTransfer:
+        """SOURCE side: debit into escrow. Value becomes held by THIS plane.
+
+        Idempotent on `transfer_id`: a redelivered open returns the existing
+        record and debits nothing. Raises ValueError("insufficient credits")
+        when the workspace cannot cover the amount — a CONDITIONAL debit, never
+        a blind decrement, so two concurrent transfers cannot overdraw between
+        a read and a write.
+        """
+        transfer_id = validate_transfer_id(transfer_id)
+        amount = validate_amount(amount_microdollars)
+        transfer = CreditTransfer(
+            id=transfer_id,
+            workspace_id=workspace_id,
+            amount_microdollars=amount,
+            destination=str(destination or ""),
+            state=credit_transfer.ESCROWED,
+        )
+
+        def open_transfer(conn: Any) -> CreditTransfer:
+            # Insert-once FIRST: if this loses, the debit below must not run.
+            won = self._insert_entity_once_tx(
+                conn, _CREDIT_TRANSFER_KIND, transfer_id, transfer
+            )
+            if not won:
+                existing = self._read_entity_tx(
+                    conn, _CREDIT_TRANSFER_KIND, transfer_id, CreditTransfer
+                )
+                if existing is None:
+                    raise RuntimeError("credit transfer row disappeared after conflict")
+                # Idempotency is keyed on the id, but the id alone does not
+                # identify the AGREEMENT. Returning a transfer escrowed for
+                # destination A to a caller holding a client for destination B
+                # lets push/cancel ask the WRONG plane for a verdict on value
+                # this plane is holding for someone else — and a REJECTED
+                # tombstone written by B releases the escrow while A may have
+                # already accepted. That is a double-spend, not a retry.
+                #
+                # recover_credit_transfers already skips on this exact
+                # mismatch; the check belongs here too, where every caller
+                # passes through.
+                credit_transfer.require_matching_destination(existing, destination)
+                return existing
+            self._write_entity_tx(
+                conn,
+                _CREDIT_TRANSFER_OPEN_KIND,
+                transfer_id,
+                {"transfer_id": transfer_id},
+            )
+            cursor = conn.execute(
+                "UPDATE tr_credit_balance "
+                "SET total_credits = total_credits - %s, updated_at = CURRENT_TIMESTAMP "
+                "WHERE workspace_id = %s AND shard = 0 "
+                "AND total_credits - total_usage - reserved >= %s",
+                (amount, workspace_id, amount),
+            )
+            if cursor.rowcount != 1:
+                # Rolls the whole transaction back, including the insert-once
+                # row, so the same transfer id stays usable after the customer
+                # tops up. A refused transfer must leave no trace.
+                raise ValueError("insufficient credits")
+            return transfer
+
+        return self._run_transaction(open_transfer)
+
+    def get_credit_transfer(self, transfer_id: str) -> CreditTransfer | None:
+        return self._read_entity(_CREDIT_TRANSFER_KIND, transfer_id, CreditTransfer)
+
+    def list_open_credit_transfers(self, limit: int = 100) -> list[CreditTransfer]:
+        """Transfers still in ESCROWED — the recovery queue.
+
+        Bounded PK-prefix scan of the open index, which the resolve path
+        deletes from. A transfer appears here exactly while its fate is
+        unknown, which is precisely what a recovery pass must ask the
+        destination about.
+        """
+        bounded = max(1, min(int(limit), 500))
+
+        def read(conn: Any) -> list[CreditTransfer]:
+            rows = conn.execute(
+                "SELECT id FROM tr_entities WHERE kind = %s ORDER BY id LIMIT %s",
+                (_CREDIT_TRANSFER_OPEN_KIND, bounded),
+            ).fetchall()
+            transfers = []
+            for row in rows:
+                transfer = self._read_entity_tx(
+                    conn, _CREDIT_TRANSFER_KIND, str(row[0]), CreditTransfer
+                )
+                if transfer is not None and transfer.state == credit_transfer.ESCROWED:
+                    transfers.append(transfer)
+            return transfers
+
+        return self._run_transaction(read)
+
+    def resolve_credit_transfer(self, *, transfer_id: str, outcome: str) -> CreditTransfer:
+        """SOURCE side: record the DESTINATION's verdict, and only that.
+
+        ACCEPTED -> DELIVERED: value is now held by the destination; the source
+        balance is untouched (it was debited at escrow).
+        REJECTED -> RETURNED: the escrowed amount is credited back here, in the
+        same transaction that records the state, so it cannot be returned
+        twice.
+
+        This plane never invents a verdict. A repeat of the SAME verdict is a
+        no-op; a DISAGREEING one raises CreditTransferConflict rather than
+        applying a second balance change.
+        """
+        transfer_id = validate_transfer_id(transfer_id)
+        outcome = validate_outcome(outcome)
+        target_state = credit_transfer.STATE_FOR_OUTCOME[outcome]
+
+        def resolve(conn: Any) -> CreditTransfer:
+            existing = self._read_entity_tx(
+                conn, _CREDIT_TRANSFER_KIND, transfer_id, CreditTransfer
+            )
+            if existing is None:
+                raise KeyError(transfer_id)
+            if existing.state != credit_transfer.ESCROWED:
+                if existing.state != target_state:
+                    raise CreditTransferConflict(
+                        f"transfer {transfer_id} is {existing.state}; "
+                        f"cannot re-resolve it as {target_state}"
+                    )
+                return existing
+            resolved = dataclasses.replace(
+                existing, state=target_state, resolved_at=iso_now()
+            )
+            self._write_entity_tx(conn, _CREDIT_TRANSFER_KIND, transfer_id, resolved)
+            # Leaves the recovery queue only now: while this row exists the
+            # fate is unknown and a recovery pass must keep asking.
+            self._delete_entity_tx(conn, _CREDIT_TRANSFER_OPEN_KIND, transfer_id)
+            if outcome == credit_transfer.REJECTED:
+                cursor = conn.execute(
+                    "UPDATE tr_credit_balance "
+                    "SET total_credits = total_credits + %s, "
+                    "updated_at = CURRENT_TIMESTAMP "
+                    "WHERE workspace_id = %s AND shard = 0",
+                    (existing.amount_microdollars, existing.workspace_id),
+                )
+                if cursor.rowcount != 1:
+                    raise RuntimeError(
+                        "missing authoritative tr_credit_balance for "
+                        f"workspace {existing.workspace_id}"
+                    )
+            return resolved
+
+        return self._run_transaction(resolve)
+
+    def claim_credit_transfer(
+        self,
+        *,
+        transfer_id: str,
+        workspace_id: str,
+        amount_microdollars: int,
+        source: str,
+        accept: bool,
+    ) -> str:
+        """DESTINATION side: decide a transfer's fate, exactly once.
+
+        Returns the DECIDED outcome, which may differ from `accept` — the
+        first writer wins and every later caller learns that verdict instead
+        of overriding it. That single insert-once row is what makes a
+        duplicate delivery credit once, and what makes an accept that races a
+        cancel resolve one way for both planes.
+
+        On ACCEPTED the local balance is credited in the same transaction as
+        the row, so the row existing and the money existing are the same fact.
+        """
+        transfer_id = validate_transfer_id(transfer_id)
+        amount = validate_amount(amount_microdollars)
+        requested = credit_transfer.ACCEPTED if accept else credit_transfer.REJECTED
+
+        def claim(conn: Any) -> str:
+            won = self._insert_entity_once_tx(
+                conn,
+                _CREDIT_TRANSFER_CLAIM_KIND,
+                transfer_id,
+                {
+                    "outcome": requested,
+                    "workspace_id": workspace_id,
+                    "amount_microdollars": amount,
+                    "source": str(source or ""),
+                    "created_at": iso_now(),
+                },
+            )
+            if not won:
+                recorded = self._read_entity_tx(
+                    conn, _CREDIT_TRANSFER_CLAIM_KIND, transfer_id, dict
+                )
+                if recorded is None:
+                    raise RuntimeError("credit transfer claim disappeared after conflict")
+                return str(recorded["outcome"])
+            if requested == credit_transfer.REJECTED:
+                return credit_transfer.REJECTED
+            cursor = conn.execute(
+                "UPDATE tr_credit_balance "
+                "SET total_credits = total_credits + %s, "
+                "source_updated_at = CURRENT_TIMESTAMP, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE workspace_id = %s AND shard = 0",
+                (amount, workspace_id),
+            )
+            if cursor.rowcount != 1:
+                # No balance row means no such workspace here. Rolling back
+                # discards the claim row too, so the source can retry once the
+                # workspace has been federated rather than being told the
+                # transfer was accepted by a plane that never credited it.
+                raise ValueError(
+                    f"no credit balance for workspace {workspace_id} on this plane"
+                )
+            return credit_transfer.ACCEPTED
+
+        return self._run_transaction(claim)
 
     def update_auto_refill_settings(
         self,

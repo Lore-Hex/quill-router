@@ -457,7 +457,7 @@ def _authorize_gateway_sync(
             window_limits=window_limits or None,
         )
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
-            raise api_error(402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS)
+            raise _insufficient_credits_error(workspace)
         if outcome.startswith(AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED):
             _, _, window = outcome.partition(":")
             window = window or "daily"
@@ -520,9 +520,7 @@ def _authorize_gateway_sync(
                 credit_reservation_id = credit_reservation.id
             except ValueError as exc:
                 STORE.refund_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
-                raise api_error(
-                    402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS
-                ) from exc
+                raise _insufficient_credits_error(workspace) from exc
 
         authorization = STORE.create_gateway_authorization(
             workspace_id=workspace.id,
@@ -876,6 +874,45 @@ def _gateway_authorize_response(
             ],
         }
     }
+
+
+def _insufficient_credits_error(workspace: Any) -> Exception:
+    """402, but say WHICH plane the money is on when that is the real answer.
+
+    A federated workspace is a SHADOW of one on the home plane, and credits
+    never federate — they seed at zero here and only an explicit transfer moves
+    them (trusted_router.credit_transfer). So a bare "Insufficient credits"
+    would be actively misleading: it tells a customer who has a healthy balance
+    on the home plane to go top up, and it tells an operator nothing about the
+    actual fix, which is to run a transfer.
+
+    Deliberately NOT auto-transferring on demand. Three reasons, any one of
+    which is disqualifying:
+
+      * A leaked key would become a drain on the whole workspace balance, not
+        just this plane's. Auto-transfer turns "spend up to the key's limit
+        here" into "pull the home balance across a jurisdiction boundary and
+        then spend it", and it re-arms itself on every subsequent request.
+      * It reintroduces the coupling federation exists to remove: the first
+        request on a cold key would block on a synchronous home-plane call
+        that MOVES MONEY. If the home plane goes away mid-transfer, an
+        inference request is holding an escrow it has no durable place to
+        resolve.
+      * Moving funds across planes is an audited action, not a cache fill.
+
+    The message stays true whether the customer never transferred or
+    transferred and then spent it, because both have the same fix.
+    """
+    if getattr(workspace, "federated_home", ""):
+        return api_error(
+            402,
+            "No spendable credits on this plane. This workspace is federated: "
+            "credits do not federate with identity and must be transferred to "
+            "this plane explicitly. A balance on the home plane is not "
+            "spendable here.",
+            ErrorType.CREDITS_NOT_ON_THIS_PLANE,
+        )
+    return api_error(402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS)
 
 
 def _api_key_for_gateway_lookup(

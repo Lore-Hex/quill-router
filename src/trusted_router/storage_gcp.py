@@ -24,6 +24,7 @@ from trusted_router.storage import (
     BroadcastDestination,
     ByokProviderConfig,
     CreditAccount,
+    CreditTransfer,
     CustomModel,
     EmailSendBlock,
     EncryptedSecretEnvelope,
@@ -903,6 +904,73 @@ class SpannerBigtableStore:
         _ = record
         raise NotImplementedError(
             "GCP is the federation home plane; it does not import federated keys"
+        )
+
+    # --- Cross-plane credit transfer ---------------------------------------
+    #
+    # DELIBERATELY UNIMPLEMENTED on the native-Spanner backend, and this is the
+    # decision most worth arguing with.
+    #
+    # Spanner's credit balance is SHARDED (tr_credit_balance rows per
+    # workspace), so an escrow debit here is not the single conditional UPDATE
+    # the Postgres implementation uses — it has to pick a donor shard, record
+    # which one it took from, and return to that same shard. That is new money
+    # DML that this repo cannot currently execute in a test: the conformance
+    # suite's `spanner-emulator` backend skips (no emulator schema
+    # provisioning), so a Spanner implementation would ship UNEXERCISED.
+    # Untested money code that mints on the wrong branch is strictly worse than
+    # an explicit gap.
+    #
+    # The conformance suite already registers `spanner-pg` — PostgresStore
+    # against Spanner's PostgreSQL dialect — precisely so ONE money
+    # implementation can cover GCP, AWS and Azure. Writing a second one here
+    # would recreate the two-backends-with-different-money-code risk that
+    # backend is meant to retire.
+    #
+    # CONSEQUENCE, stated plainly: while GCP runs the native-Spanner store, it
+    # cannot be the SOURCE of a transfer, so no credits can move to the AWS
+    # plane in production yet. Closing that needs either the Spanner shard-aware
+    # escrow (with emulator-backed conformance) or GCP on the PG-dialect store.
+
+    def open_credit_transfer(
+        self,
+        *,
+        transfer_id: str,
+        workspace_id: str,
+        amount_microdollars: int,
+        destination: str,
+    ) -> CreditTransfer:
+        raise NotImplementedError(
+            "cross-plane credit transfer is not implemented on the native Spanner "
+            "backend: the sharded escrow debit has no emulator-backed test yet"
+        )
+
+    def get_credit_transfer(self, transfer_id: str) -> CreditTransfer | None:
+        raise NotImplementedError(
+            "cross-plane credit transfer is not implemented on the native Spanner backend"
+        )
+
+    def list_open_credit_transfers(self, limit: int = 100) -> list[CreditTransfer]:
+        raise NotImplementedError(
+            "cross-plane credit transfer is not implemented on the native Spanner backend"
+        )
+
+    def resolve_credit_transfer(self, *, transfer_id: str, outcome: str) -> CreditTransfer:
+        raise NotImplementedError(
+            "cross-plane credit transfer is not implemented on the native Spanner backend"
+        )
+
+    def claim_credit_transfer(
+        self,
+        *,
+        transfer_id: str,
+        workspace_id: str,
+        amount_microdollars: int,
+        source: str,
+        accept: bool,
+    ) -> str:
+        raise NotImplementedError(
+            "cross-plane credit transfer is not implemented on the native Spanner backend"
         )
 
     def get_key_by_lookup_hash(self, lookup_hash: str) -> ApiKey | None:

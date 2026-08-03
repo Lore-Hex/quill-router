@@ -425,6 +425,24 @@ class Settings(BaseSettings):
     # simply unknown.
     federation_home_base_url: str = ""
     federation_home_token: str = ""
+    # --- Cross-plane credit transfer ---------------------------------------
+    # A THIRD token, deliberately not either of the two above.
+    #
+    # federation_peer_token must never move money — that is the stated reason
+    # it is not the internal gateway token (see routes/internal/federation.py).
+    # If accepting credits were gated on it, the low-trust directory secret
+    # would silently gain the power to change a balance. So credit transfer
+    # gets its own secret, and the direction of the call follows the direction
+    # of the value: the plane that HOLDS the credits pushes them.
+    #
+    # INBOUND: what this plane requires to be credited. Empty = this plane
+    # refuses every inbound transfer, so a deployment cannot be funded by
+    # accident or by a leaked directory token.
+    federation_credit_inbound_token: str = ""
+    # OUTBOUND: the plane this deployment may push credits TO, and the token it
+    # presents there. Both empty = this plane cannot send credits anywhere.
+    federation_credit_peer_base_url: str = ""
+    federation_credit_peer_token: str = ""
     # The canonical target serves a self-signed cert minted inside the
     # TEE (AWS Nitro standalone deployments): probes skip CA verification
     # and the attestation probe instead verifies the document binds the
