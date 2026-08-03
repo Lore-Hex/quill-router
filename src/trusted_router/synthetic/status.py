@@ -16,11 +16,15 @@ from trusted_router.storage_models import (
 )
 from trusted_router.synthetic.components import (
     COMPONENT_DEFINITIONS,
+    COMPONENT_PROBE_TARGETS,
+    GATEWAY_REGION_TARGET_NAMES,
+    REGIONAL_GATEWAY_PROBES,
     SLO_DEFINITIONS,
     UNCATEGORIZED_COMPONENT,
     applicable_component_definitions,
     component_name,
     component_probe_types,
+    published_gateway_region_components,
     rollup_slo_class_ids,
     sample_component_ids,
     sample_slo_class_ids,
@@ -87,7 +91,21 @@ def status_snapshot(
     router_core_samples = [
         sample for sample in ordered if ROUTER_CORE_SLO_ID in sample_slo_class_ids(sample)
     ]
-    current = _current_status(router_core_samples, now=now)
+    gateway_region_components = published_gateway_region_components(settings)
+    # `current.checks` is the MACHINE-readable surface, not a second copy of
+    # the components table: quill-cloud-proxy's watchdog decides per-region
+    # rollback from checks[].target_region, and its deploy gate waits on the
+    # same array. Restricting it to router_core (canonical-only) meant a
+    # region pinned probe could be flat down and no automation would ever see
+    # an eu-west-1 row at all — the gate would sit at "waiting" forever
+    # instead of "down", and nobody would be paged. The SLO windows below
+    # stay canonical-only on purpose: they measure the address customers
+    # resolve, and mixing in diagnostic per-region probes would triple the
+    # denominator of a published SLO.
+    current = _current_status(
+        router_core_samples + _gateway_region_samples(ordered, settings=settings),
+        now=now,
+    )
     router_core_rollups = [
         rollup
         for rollup in precomputed_rollups
@@ -126,7 +144,24 @@ def status_snapshot(
         for definition in SLO_DEFINITIONS
     }
     router_core_status = str(slo_classes.get(ROUTER_CORE_SLO_ID, {}).get("status") or "unknown")
-    overall_status = router_core_status
+    # A dead region behind an anycast record must not read "All Systems
+    # Operational". router_core measures the hostname customers resolve,
+    # which Global Accelerator keeps answering from the SURVIVING region, so
+    # the pinned per-region rows are the only evidence that half the fleet is
+    # gone. Without this the banner contradicted the table directly beneath
+    # it. `_worse_status` treats "unknown" as no-opinion and the tuple is
+    # empty on every deployment that configures no pinned endpoints, so this
+    # is a byte-identical no-op on GCP.
+    overall_status = _worse_status(
+        router_core_status,
+        _aggregate_component_statuses(
+            [
+                str(row["status"])
+                for row in components
+                if str(row["id"]) in gateway_region_components
+            ]
+        ),
+    )
     return {
         "generated_at": iso_now(),
         "overall_status": overall_status,
@@ -226,6 +261,25 @@ def _headline_metrics(samples: list[SyntheticProbeSample], *, now: dt.datetime) 
     }
 
 
+def _gateway_region_samples(
+    samples: list[SyntheticProbeSample],
+    *,
+    settings: Settings,
+) -> list[SyntheticProbeSample]:
+    """Gateway samples from the pinned per-region targets this cloud publishes."""
+    published = {
+        COMPONENT_PROBE_TARGETS[component_id]
+        for component_id in published_gateway_region_components(settings)
+    }
+    if not published:
+        return []
+    return [
+        sample
+        for sample in samples
+        if sample.target in published and sample.probe_type in REGIONAL_GATEWAY_PROBES
+    ]
+
+
 def _gateway_latency_values(
     samples: list[SyntheticProbeSample],
     *,
@@ -237,6 +291,16 @@ def _gateway_latency_values(
     rows = []
     for sample in samples:
         if sample.probe_type != "tls_health" or sample.status != "up":
+            continue
+        # The headline "gateway overhead" numbers describe the path customers
+        # take. A pinned per-region probe deliberately BYPASSES Global
+        # Accelerator by dialling one load balancer directly, so its latency
+        # describes a path nobody is served on: pooling it dropped the
+        # published in-region p50 from ~30 ms to ~12 ms on deploy with no
+        # change whatsoever in what customers experience. Asking for that
+        # target by name still returns it — this only excludes it from the
+        # unscoped in-region/global aggregates.
+        if target is None and sample.target in GATEWAY_REGION_TARGET_NAMES:
             continue
         if sample.latency_milliseconds is None or _parse_time(sample.created_at) < cutoff:
             continue
@@ -1066,6 +1130,12 @@ def _target_label(target: str) -> str:
         "us-central1": "US Central direct",
         "us-east4": "US East direct",
         "europe-west4": "EU direct",
+        # Per-region AWS targets: same hostname as "canonical", pinned to
+        # one region's load balancer (which fronts that region's enclave
+        # fleet — see COMPONENT_DEFINITIONS on why this does not say
+        # "enclave").
+        "eu-west-1": "Ireland gateway direct",
+        "eu-west-3": "Paris gateway direct",
         "control-plane": "Control plane",
     }.get(target, target.replace("-", " ").title())
 

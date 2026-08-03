@@ -39,6 +39,29 @@ DSQL_HOST="${CLUSTER_ID}.dsql.${REGION}.on.aws"
 API_BASE_URL="${API_BASE_URL:-https://api-aws.trustedrouter.com/v1}"
 ATTESTATION_PCR0="${ATTESTATION_PCR0:?set ATTESTATION_PCR0 to the published enclave PCR0 - measurement pinning is the point of the probe}"
 
+# PER-ENCLAVE health checks. api-aws.trustedrouter.com is an AWS Global
+# Accelerator anycast record, so every unpinned probe lands on WHICHEVER
+# region the accelerator prefers: with two regions behind it, one dead region
+# is invisible on the status page. Each entry below makes the synthetic
+# monitor connect to that region's NLB directly, producing its own status
+# component ("EU West 1 Enclave (Ireland)" / "EU West 3 Enclave (Paris)").
+#
+# The value is name=CONNECT_HOST, and the connect host is deliberately a raw
+# load-balancer hostname rather than a friendly DNS name. DO NOT "simplify"
+# this into api-eu-west-1.trustedrouter.com or similar: the enclave mints its
+# TLS cert INSIDE the TEE with exactly one SAN, DNS:api-aws.trustedrouter.com.
+# Any other name fails hostname validation, and giving the cert more SANs
+# would change the enclave image and therefore its PCR0 measurement — a far
+# bigger blast radius than an observability change deserves. The probes
+# instead connect to this host while SNI and the Host header stay
+# api-aws.trustedrouter.com, exactly like
+#   tools/verify-attestation.py --api-host X --connect-ip Y.
+#
+# The names (eu-west-1 / eu-west-3) are what bind each target to its public
+# component in src/trusted_router/synthetic/components.py — renaming one here
+# silently unpublishes its component, so change both together.
+GATEWAY_REGION_TARGETS="${GATEWAY_REGION_TARGETS:-eu-west-1=quill-enclave-nlb-6ed55aa238055cfc.elb.eu-west-1.amazonaws.com,eu-west-3=quill-enclave-nlb-aa2d3be423fa9027.elb.eu-west-3.amazonaws.com}"
+
 # Secrets Manager ARNs (eu-west-3 — App Runner requires same-region secrets).
 INTERNAL_TOKEN_SECRET_ARN="${INTERNAL_TOKEN_SECRET_ARN:-$(aws secretsmanager describe-secret --region "$REGION" --secret-id quill/trustedrouter-internal-gateway-token --query ARN --output text)}"
 MONITOR_KEY_SECRET_ARN="${MONITOR_KEY_SECRET_ARN:-$(aws secretsmanager describe-secret --region "$REGION" --secret-id quill/trustedrouter-synthetic-monitor-api-key --query ARN --output text)}"
@@ -113,6 +136,7 @@ CONFIG=$(cat <<JSON
         "TR_SYNTHETIC_CANONICAL_ATTESTED": "true",
         "TR_ATTESTATION_EXPECTED_PCR0": "${ATTESTATION_PCR0}",
         "TR_SYNTHETIC_REGIONAL_PROBES_ENABLED": "false",
+        "TR_SYNTHETIC_GATEWAY_REGION_TARGETS": "${GATEWAY_REGION_TARGETS}",
         "TR_SYNTHETIC_IMAGE_PROBE_ENABLED": "false",
         "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL": "https://aws.trustedrouter.com",
         "TR_SYNTHETIC_CONTROL_PLANE_BASE_URL": "https://trustedrouter.com",

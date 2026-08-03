@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,107 @@ from pydantic_settings import (
     PydanticBaseSettingsSource,
     SettingsConfigDict,
 )
+
+# Target names the synthetic monitor already assigns itself. A configured
+# entry reusing one would quietly merge two different measurements into one
+# status component, so it is rejected instead.
+_RESERVED_SYNTHETIC_TARGET_NAMES = frozenset({"canonical", "control-plane"})
+_GATEWAY_REGION_TARGET_NAME_CHARACTERS = set(
+    "abcdefghijklmnopqrstuvwxyz0123456789-_."
+)
+_GATEWAY_REGION_CONNECT_HOST_CHARACTERS = set("abcdefghijklmnopqrstuvwxyz0123456789-.")
+# An entry name that LOOKS like a cloud region ("eu-west-1", or the zonal
+# "eu-west-1a") is published to the world as that region's health, so it has
+# to actually be that region's endpoint. Names that are not region-shaped
+# ("ireland") are left alone — there is nothing to cross-check them against.
+_REGION_SHAPED_NAME = re.compile(r"^[a-z]{2}(?:-[a-z]+)+-\d+[a-z]?$")
+
+
+def _elb_region(connect_host: str) -> str | None:
+    """Region an AWS ELB hostname lives in, or None if it is not one.
+
+    ``<lb>-<id>.elb.<region>.amazonaws.com`` and the per-AZ zonal form
+    ``<az>.<lb>-<id>.elb.<region>.amazonaws.com``.
+    """
+    labels = connect_host.split(".")
+    if labels[-2:] != ["amazonaws", "com"] or "elb" not in labels:
+        return None
+    region_index = labels.index("elb") + 1
+    if region_index >= len(labels) - 2:
+        return None
+    return labels[region_index]
+
+
+def parse_gateway_region_targets(raw: str) -> tuple[tuple[str, str], ...]:
+    """Parse ``TR_SYNTHETIC_GATEWAY_REGION_TARGETS`` into ``(name, host)`` pairs.
+
+    Format: ``name=connect_host,name=connect_host``. Blank/unset yields an
+    empty tuple — the single-canonical-target behaviour every deployment had
+    before this setting existed.
+
+    Every malformed entry RAISES. Skipping one would publish a status page
+    that silently stops measuring an enclave: the component would vanish (its
+    probe target is gone) rather than go red, which is the failure mode this
+    whole feature exists to remove.
+    """
+    if not raw.strip():
+        return ()
+    entries: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for chunk in raw.split(","):
+        entry = chunk.strip()
+        name, separator, connect_host = entry.partition("=")
+        name = name.strip().casefold()
+        connect_host = connect_host.strip().casefold().rstrip(".")
+        if not separator or not name or not connect_host:
+            raise ValueError(
+                "TR_SYNTHETIC_GATEWAY_REGION_TARGETS entries must be "
+                f"'name=connect_host'; got {entry!r}"
+            )
+        if not set(name) <= _GATEWAY_REGION_TARGET_NAME_CHARACTERS:
+            raise ValueError(
+                "TR_SYNTHETIC_GATEWAY_REGION_TARGETS name may only contain "
+                f"letters, digits, '-', '_' and '.'; got {name!r}"
+            )
+        if name in _RESERVED_SYNTHETIC_TARGET_NAMES:
+            raise ValueError(
+                f"TR_SYNTHETIC_GATEWAY_REGION_TARGETS name {name!r} is reserved"
+            )
+        if name in seen:
+            raise ValueError(
+                f"TR_SYNTHETIC_GATEWAY_REGION_TARGETS name {name!r} is duplicated"
+            )
+        # A bare hostname or IP literal only: a scheme, port, or path here
+        # would be silently dropped by the connect path (it dials host:443 of
+        # the canonical URL), i.e. a probe measuring something other than what
+        # the operator wrote.
+        if not set(connect_host) <= _GATEWAY_REGION_CONNECT_HOST_CHARACTERS:
+            raise ValueError(
+                "TR_SYNTHETIC_GATEWAY_REGION_TARGETS connect host must be a bare "
+                f"hostname or IPv4 literal; got {connect_host!r}"
+            )
+        # THE name/endpoint binding, cross-checked. Everything downstream —
+        # the target name, its target_region, its public status component —
+        # comes from `name`, and nothing else ever re-derives it from the
+        # endpoint. Two sibling NLB hostnames differ only in a 16-hex-char
+        # middle segment, so transposing them is an easy edit to get wrong
+        # and its consequence is the worst one available: the page reports
+        # Ireland's health under Paris's name, so an operator failing over
+        # reads the page and evacuates the region that is actually healthy.
+        elb_region = _elb_region(connect_host)
+        if (
+            elb_region is not None
+            and _REGION_SHAPED_NAME.match(name)
+            and not name.startswith(elb_region)
+        ):
+            raise ValueError(
+                f"TR_SYNTHETIC_GATEWAY_REGION_TARGETS name {name!r} does not match "
+                f"its connect host's region {elb_region!r} ({connect_host!r}); the "
+                "name is what the public status page calls this endpoint"
+            )
+        seen.add(name)
+        entries.append((name, connect_host))
+    return tuple(entries)
 
 
 class Settings(BaseSettings):
@@ -354,6 +456,21 @@ class Settings(BaseSettings):
     # (e.g. the App Runner URL) so control_plane_health measures the
     # RIGHT cloud; on GCP the per-region Cloud Run URLs already cover it.
     synthetic_control_plane_health_url: str | None = None
+    # Extra gateway targets that share the canonical hostname but are
+    # addressed at a SPECIFIC TCP endpoint: "name=connect_host,..." (e.g.
+    # "eu-west-1=quill-enclave-nlb-....elb.eu-west-1.amazonaws.com").
+    #
+    # Why an endpoint instead of a hostname: an anycast/global record
+    # (api-aws.trustedrouter.com -> AWS Global Accelerator) routes to
+    # WHICHEVER region it prefers, so every probe lands on one of them and
+    # a dead sibling is invisible. The enclave mints its cert inside the
+    # TEE with a single SAN — the canonical hostname — so addressing a
+    # region by its own load-balancer hostname would (correctly) fail
+    # hostname validation. The probes therefore connect to connect_host
+    # while SNI and the Host header stay derived from api_base_url.
+    #
+    # Empty = today's behaviour, exactly one canonical target.
+    synthetic_gateway_region_targets: str = ""
     # Per-probe HTTP timeout for real provider-effective synthetic checks.
     # Keep this aligned with the gateway's first-byte budget. A successful
     # /responses probe in europe-west4 can legitimately take >10s on slow
@@ -462,6 +579,10 @@ class Settings(BaseSettings):
                     "TR_REGIONAL_QUOTA_LEASES_ENABLED requires "
                     "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS"
                 )
+        # Parse for effect: a malformed entry must fail the process at
+        # construction, not degrade into "no extra targets" that nobody
+        # notices until a dead enclave goes unreported.
+        parse_gateway_region_targets(self.synthetic_gateway_region_targets)
         if not 0.1 <= self.ops_chat_webhook_timeout_seconds <= 10.0:
             raise ValueError(
                 "TR_OPS_CHAT_WEBHOOK_TIMEOUT_SECONDS must be between 0.1 and 10"

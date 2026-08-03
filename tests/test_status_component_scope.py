@@ -90,11 +90,20 @@ def _published_ids(snapshot: dict[str, object]) -> list[str]:
     return [str(row["id"]) for row in components]
 
 
-def test_gcp_publishes_the_full_catalogue_unchanged() -> None:
-    assert applicable_component_definitions(_gcp_settings()) == COMPONENT_DEFINITIONS
-    assert tuple(
-        str(definition["id"]) for definition in applicable_component_definitions(_gcp_settings())
-    ) == GCP_COMPONENT_IDS
+def test_gcp_publishes_exactly_its_own_components_unchanged() -> None:
+    """GCP's page is defined by GCP's probe targets, never by the catalogue.
+
+    The catalogue also carries per-enclave AWS components, which GCP has no
+    targets for; the published list must therefore stay exactly the eight
+    rows above, in that order.
+    """
+    published = applicable_component_definitions(_gcp_settings())
+
+    assert tuple(str(definition["id"]) for definition in published) == GCP_COMPONENT_IDS
+    # Each published row is the catalogue entry verbatim, not a copy that
+    # scoping could have reworded.
+    catalogue = {str(definition["id"]): definition for definition in COMPONENT_DEFINITIONS}
+    assert published == tuple(catalogue[component_id] for component_id in GCP_COMPONENT_IDS)
 
 
 def test_gcp_status_snapshot_components_are_byte_identical() -> None:
@@ -108,7 +117,13 @@ def test_gcp_status_snapshot_components_are_byte_identical() -> None:
     # scoping change cannot reword GCP's page as a side effect.
     published = {str(row["id"]): row for row in snapshot["components"]}
     for definition in COMPONENT_DEFINITIONS:
-        row = published[str(definition["id"])]
+        component_id = str(definition["id"])
+        if component_id not in GCP_COMPONENT_IDS:
+            # Catalogue entries GCP cannot sample (the per-enclave AWS rows)
+            # must not appear on GCP's page at all.
+            assert component_id not in published
+            continue
+        row = published[component_id]
         assert row["name"] == definition["name"]
         assert row["description"] == definition["description"]
 
