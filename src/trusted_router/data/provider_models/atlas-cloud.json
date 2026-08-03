@@ -3413,8 +3413,54 @@
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 280000,
       "cached_input_token_price_per_m": 28000
+    },
+    {
+      "display_name": "Claude Opus 5",
+      "title": "anthropic/claude-opus-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-5",
+      "upstream_id": "anthropic/claude-opus-5",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Sonnet 5",
+      "title": "anthropic/claude-sonnet-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-sonnet-5",
+      "upstream_id": "anthropic/claude-sonnet-5",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 200000
     }
   ],
-  "generated_at": "2026-08-03T06:26:52Z",
-  "model_count": 124
+  "generated_at": "2026-08-03T10:44:54Z",
+  "model_count": 126
 }

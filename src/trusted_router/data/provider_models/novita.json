@@ -3,8 +3,8 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-08-03T06:26:52Z",
-  "model_count": 139,
+  "generated_at": "2026-08-03T10:44:54Z",
+  "model_count": 140,
   "models": [
     {
       "id": "Sao10K/L3-8B-Stheno-v3.2",
@@ -3926,6 +3926,39 @@
       "input_token_price_per_m": 1400,
       "output_token_price_per_m": 2800,
       "cached_input_token_price_per_m": 280
+    },
+    {
+      "id": "qwen/qwen3.8-max",
+      "upstream_id": "qwen/qwen3.8-max",
+      "display_name": "Qwen3.8 Max",
+      "title": "qwen/qwen3.8-max",
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "reasoning",
+        "structured-outputs",
+        "function-calling"
+      ],
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "anthropic",
+        "responses"
+      ],
+      "status": 1,
+      "created": 1785494178,
+      "context_length": 1000000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 20000,
+      "output_token_price_per_m": 60000,
+      "cached_input_token_price_per_m": 2500
     }
   ]
 }
