@@ -472,6 +472,19 @@ class _FakeTransaction:
             )
         self._did_dml = True
         p = params or {}
+        if "UPDATE tr_credit_balance SET total_usage = total_usage + @amt" in sql:
+            # Federated settlement's usage booking: UNCONDITIONAL by design.
+            # The spend already happened on a peer plane while this one was
+            # unreachable; a headroom predicate here would lose the debit.
+            # Negative available balance is the honest ledger.
+            _require_pred(sql, "WHERE workspace_id = @ws AND shard = 0", "federated-usage-booking")
+            pk = (p["ws"], 0)
+            rec = self._typed_current("tr_credit_balance", pk)
+            if rec is None:
+                return 0
+            new = dict(rec, total_usage=rec["total_usage"] + p["amt"])
+            self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
+            return 1
         if "UPDATE tr_credit_balance SET total_credits = total_credits + @amount" in sql:
             _require_pred(sql, "WHERE workspace_id=@ws AND shard=@shard", "credit-top-up")
             # Tracked by storage_gcp_credit_shard_admin / storage_gcp_counters;
@@ -520,6 +533,25 @@ class _FakeTransaction:
                 return 0
             new = dict(rec, total_credits=rec["total_credits"] + p["move"])
             self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
+            return 1
+        if "INSERT INTO tr_credit_balance (workspace_id, shard, total_credits, total_usage, reserved, updated_at)" in sql:
+            # Federated settlement's recreate-on-missing path: a fixed shard 0
+            # with total_usage seeded to the booked amount, no source_updated_at.
+            pk = (p["ws"], 0)
+            if pk in self.db.typed.get("tr_credit_balance", {}):
+                raise FakeAlreadyExists(f"tr_credit_balance/{pk}")
+            record = dict(_TYPED_DEFAULTS["tr_credit_balance"])
+            record.update(
+                {
+                    "workspace_id": p["ws"],
+                    "shard": 0,
+                    "total_credits": 0,
+                    "total_usage": p["amt"],
+                    "reserved": 0,
+                    "updated_at": p["now"],
+                }
+            )
+            self.pending_writes.append(("insert_typed_dml", "tr_credit_balance", pk, record))
             return 1
         if sql.startswith("INSERT INTO tr_credit_balance"):
             pk = (p["ws"], p["shard"])

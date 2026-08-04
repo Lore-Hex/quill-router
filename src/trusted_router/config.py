@@ -44,6 +44,59 @@ def _elb_region(connect_host: str) -> str | None:
     return labels[region_index]
 
 
+_SETTLEMENT_PLANE_NAME_CHARACTERS = set("abcdefghijklmnopqrstuvwxyz0123456789-")
+
+
+def parse_settlement_inbound_tokens(raw: str) -> dict[str, str]:
+    """Parse ``TR_FEDERATION_SETTLEMENT_INBOUND_TOKENS`` into {token: plane}.
+
+    Keyed by TOKEN because that is the lookup the request handler performs:
+    which token authenticated decides which plane is speaking. Every
+    malformed entry RAISES — a skipped entry is a peer that silently cannot
+    settle, which surfaces weeks later as a backlog nobody can explain.
+
+    Duplicate token values are rejected outright: one secret matching two
+    plane names would make source identity ambiguous, and the insert-once
+    key (source_plane, authorization_id) is only as strong as that identity.
+    """
+    if not raw.strip():
+        return {}
+    by_token: dict[str, str] = {}
+    seen_planes: set[str] = set()
+    for chunk in raw.split(","):
+        entry = chunk.strip()
+        plane, separator, token = entry.partition("=")
+        plane = plane.strip().casefold()
+        token = token.strip()
+        if not separator or not plane or not token:
+            raise ValueError(
+                "TR_FEDERATION_SETTLEMENT_INBOUND_TOKENS entries must be "
+                "'plane=token'; got a malformed entry"
+            )
+        if not set(plane) <= _SETTLEMENT_PLANE_NAME_CHARACTERS:
+            raise ValueError(
+                "TR_FEDERATION_SETTLEMENT_INBOUND_TOKENS plane names may only "
+                f"contain lowercase letters, digits and '-'; got {plane!r}"
+            )
+        if plane in seen_planes:
+            raise ValueError(
+                f"TR_FEDERATION_SETTLEMENT_INBOUND_TOKENS plane {plane!r} is duplicated"
+            )
+        if token in by_token:
+            raise ValueError(
+                "TR_FEDERATION_SETTLEMENT_INBOUND_TOKENS has two planes sharing "
+                "one token; source identity would be ambiguous"
+            )
+        if len(token) < 32:
+            raise ValueError(
+                "TR_FEDERATION_SETTLEMENT_INBOUND_TOKENS tokens must be at "
+                "least 32 characters; this secret authorizes ledger debits"
+            )
+        seen_planes.add(plane)
+        by_token[token] = plane
+    return by_token
+
+
 def parse_gateway_region_targets(raw: str) -> tuple[tuple[str, str], ...]:
     """Parse ``TR_SYNTHETIC_GATEWAY_REGION_TARGETS`` into ``(name, host)`` pairs.
 
@@ -486,6 +539,25 @@ class Settings(BaseSettings):
     # reaper the counter inflates permanently and the cap becomes a
     # self-inflicted, unrecoverable 402. Matches the 2h idempotency horizon.
     federation_deferred_authorization_ttl_seconds: int = 7_200
+    # HOME side: which peers may apply usage to this plane's ledger, as
+    # "plane=token,plane=token". The plane NAME is derived from WHICH token
+    # authenticated — the request body never carries it — so one peer can
+    # never claim under another's identity, and the insert-once key
+    # (source_plane, authorization_id) is anchored in possession of a secret
+    # rather than in text on the wire. Empty = this plane accepts no
+    # federated settlements. NOT the resolve-key token (directory reads must
+    # never gain money powers) and NOT the credit-transfer tokens (those
+    # CREDIT a plane; this DEBITS usage — different power, different secret).
+    federation_settlement_inbound_tokens: str = ""
+    # PEER side: the token this plane presents to the home plane's
+    # apply-usage endpoint. The target is federation_home_base_url.
+    federation_settlement_home_token: str = ""
+    # HOME's aggregate clamp: maximum usage one peer may apply to one
+    # workspace per UTC day. Per-row ceilings bound nothing when the sender
+    # controls row count; this is the number that actually caps a
+    # compromised peer's damage per workspace per day. Default 4x the peer's
+    # own outstanding cap.
+    federation_settlement_workspace_daily_cap_microdollars: int = 100_000_000
     # The canonical target serves a self-signed cert minted inside the
     # TEE (AWS Nitro standalone deployments): probes skip CA verification
     # and the attestation probe instead verifies the document binds the
@@ -644,6 +716,45 @@ class Settings(BaseSettings):
         # construction, not degrade into "no extra targets" that nobody
         # notices until a dead enclave goes unreported.
         parse_gateway_region_targets(self.synthetic_gateway_region_targets)
+        # Same rule for the settlement token map: a malformed entry must not
+        # degrade into "that peer silently cannot settle".
+        settlement_tokens = parse_settlement_inbound_tokens(
+            self.federation_settlement_inbound_tokens
+        )
+        if self.federation_settlement_home_token and not self.federation_home_base_url:
+            raise ValueError(
+                "TR_FEDERATION_SETTLEMENT_HOME_TOKEN is set but "
+                "TR_FEDERATION_HOME_BASE_URL is not; the forwarder would have "
+                "a token and nowhere to present it"
+            )
+        # ENFORCED credential separation, not just documented. The whole token
+        # doctrine (routes/internal/federation.py docstring) is that no single
+        # secret grants both directory reads and money movement — but a config
+        # that reuses the resolve-key token as a settlement-map value would
+        # quietly hand every peer holding the directory secret the power to
+        # debit arbitrary workspaces up to the clamp. Reuse fails startup.
+        if settlement_tokens:
+            other_credentials: dict[str, str] = {
+                cred_name: cred_value
+                for cred_name, cred_value in (
+                    ("TR_FEDERATION_PEER_TOKEN", self.federation_peer_token),
+                    ("TR_FEDERATION_HOME_TOKEN", self.federation_home_token),
+                    ("TR_FEDERATION_CREDIT_INBOUND_TOKEN", self.federation_credit_inbound_token),
+                    ("TR_FEDERATION_CREDIT_PEER_TOKEN", self.federation_credit_peer_token),
+                    ("TR_FEDERATION_SETTLEMENT_HOME_TOKEN", self.federation_settlement_home_token),
+                    ("TR_INTERNAL_GATEWAY_TOKEN", self.internal_gateway_token or ""),
+                )
+                if cred_value
+            }
+            for token in settlement_tokens:
+                for cred_name, cred_value in other_credentials.items():
+                    if token == cred_value:
+                        raise ValueError(
+                            "TR_FEDERATION_SETTLEMENT_INBOUND_TOKENS reuses the value "
+                            f"of {cred_name}; a settlement token must be a dedicated "
+                            "secret — reuse would let a directory or gateway "
+                            "credential debit workspaces"
+                        )
         if not 0.1 <= self.ops_chat_webhook_timeout_seconds <= 10.0:
             raise ValueError(
                 "TR_OPS_CHAT_WEBHOOK_TIMEOUT_SECONDS must be between 0.1 and 10"

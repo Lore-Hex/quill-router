@@ -153,6 +153,104 @@ def register(router: APIRouter) -> None:
             }
         }
 
+    @router.post("/internal/federation/apply-usage")
+    async def federation_apply_usage(request: Request, settings: SettingsDep) -> dict[str, Any]:
+        """HOME side of deferred settlement: book a peer's recorded debt.
+
+        The peer served a federated key's CREDITS traffic while this plane
+        was unreachable and now delivers the frozen cost. Insert-once per
+        (source_plane, authorization_id); replays get the RECORDED verdict.
+        Debit-only: nothing on this path can create spendable credits.
+
+        source_plane comes from WHICH token authenticated — the body never
+        carries it, so one peer cannot claim under another's identity, and
+        the insert-once key is anchored in possession of a secret rather
+        than in text on the wire. (The credit-transfer route treats its
+        body-supplied source as AUDIT ONLY for the same reason.)
+
+        Every non-200 answer here carries a STRUCTURED code the peer's
+        forwarder classifies on. A peer that receives a bare 404 (a rollback
+        past this deploy, a proxy default page) must treat it as an outage —
+        which is exactly what its classifier does with anything that lacks
+        these codes.
+        """
+        from trusted_router.config import parse_settlement_inbound_tokens
+
+        token_map = parse_settlement_inbound_tokens(
+            getattr(settings, "federation_settlement_inbound_tokens", "") or ""
+        )
+        if not token_map:
+            raise api_error(
+                403,
+                "This plane does not accept federated settlements",
+                ErrorType.FORBIDDEN,
+            )
+        supplied = request.headers.get("x-trustedrouter-federation-settlement-token") or ""
+        source_plane = ""
+        for token, plane in token_map.items():
+            if constant_time_equal(supplied, token):
+                source_plane = plane
+                break
+        if not source_plane:
+            raise api_error(
+                401, "Invalid federation settlement token", ErrorType.UNAUTHORIZED
+            )
+
+        apply = getattr(STORE, "apply_federated_usage", None)
+        if apply is None:
+            raise api_error(
+                501,
+                "This plane's store cannot apply federated settlements",
+                ErrorType.ENDPOINT_NOT_SUPPORTED,
+            )
+
+        body = await json_body(request)
+        authorization_id = str(body.get("authorization_id") or "")
+        workspace_id = str(body.get("workspace_id") or "")
+        cost = body.get("cost_microdollars")
+        if not authorization_id or len(authorization_id) > 128:
+            raise api_error(400, "authorization_id is required", ErrorType.BAD_REQUEST)
+        if not workspace_id:
+            raise api_error(400, "workspace_id is required", ErrorType.BAD_REQUEST)
+        if isinstance(cost, bool) or not isinstance(cost, int) or cost <= 0:
+            raise api_error(
+                400, "cost_microdollars must be a positive integer", ErrorType.BAD_REQUEST
+            )
+
+        outcome = await run_in_threadpool(
+            lambda: apply(
+                source_plane=source_plane,
+                authorization_id=authorization_id,
+                workspace_id=workspace_id,
+                cost_microdollars=cost,
+                daily_cap_microdollars=(
+                    settings.federation_settlement_workspace_daily_cap_microdollars
+                ),
+            )
+        )
+        if outcome in {"applied", "already"}:
+            return {"data": {"outcome": outcome, "authorization_id": authorization_id}}
+        if outcome == "conflict":
+            raise api_error(
+                409,
+                "This authorization id is recorded against different terms",
+                ErrorType.SETTLEMENT_TERMS_CONFLICT,
+            )
+        if outcome == "workspace_unknown":
+            raise api_error(
+                404,
+                "No such workspace on this plane",
+                ErrorType.WORKSPACE_UNKNOWN,
+            )
+        if outcome == "clamped":
+            raise api_error(
+                429,
+                "Daily federated-settlement cap reached for this workspace",
+                ErrorType.SETTLEMENT_CLAMPED,
+                headers={"Retry-After": "3600"},
+            )
+        raise api_error(500, f"Unrecognized outcome {outcome!r}", ErrorType.INTERNAL_ERROR)
+
     @router.post("/internal/federation/credit-transfer")
     async def federation_credit_transfer(
         request: Request, settings: SettingsDep

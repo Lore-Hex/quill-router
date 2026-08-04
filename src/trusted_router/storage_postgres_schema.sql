@@ -212,6 +212,14 @@ CREATE TABLE IF NOT EXISTS tr_home_settlement_outbox (
     state TEXT NOT NULL DEFAULT 'pending',
     attempts BIGINT NOT NULL DEFAULT 0,
     last_error TEXT,
+    -- ISO-8601 TEXT, compared against a Python-supplied now — the same
+    -- lexicographic-equals-chronological trick the reaper's expires_at uses,
+    -- and for the same reason: one spelling that means the same thing on
+    -- Postgres, DSQL and the SQLite test fake. Empty string = eligible now.
+    -- Without this column the drain has no backoff at all: the oldest 50
+    -- clamped rows would be re-presented to home every 20-45s pass, from
+    -- every instance, while eligible rows behind them starve.
+    next_attempt_at TEXT NOT NULL DEFAULT '',
     enqueued_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (authorization_id)
@@ -221,4 +229,4 @@ CREATE TABLE IF NOT EXISTS tr_home_settlement_outbox (
 -- drain pass scans the whole table, which is worst exactly when a backlog has
 -- made it expensive.
 CREATE INDEX IF NOT EXISTS tr_home_settlement_outbox_pending_idx
-    ON tr_home_settlement_outbox (state, enqueued_at);
+    ON tr_home_settlement_outbox (state, next_attempt_at);

@@ -810,6 +810,28 @@ def register(router: APIRouter) -> None:
         require_internal_gateway(request, settings)
         return await run_in_threadpool(drain_settle_outbox, limit)
 
+    @router.post("/internal/gateway/home-settlement/drain")
+    async def gateway_home_settlement_drain(
+        request: Request,
+        settings: SettingsDep,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Run one forwarding pass of recorded debt to the home plane.
+
+        The in-process scheduler drives this on its own; the endpoint is the
+        operator's lever for "drain it NOW" (after a home outage clears) and
+        the observability surface (the returned counts are the backlog
+        story: forwarded / dead_lettered / clamped / outage).
+        """
+        require_internal_gateway(request, settings)
+        from trusted_router.services.home_settlement import drain_home_settlements
+
+        return {
+            "data": await run_in_threadpool(
+                lambda: drain_home_settlements(settings, limit=limit)
+            )
+        }
+
     @router.post("/internal/gateway/deferred/reap")
     async def gateway_deferred_reap(
         request: Request,
