@@ -164,6 +164,48 @@ def test_settle_books_usage_when_reservation_entity_is_gone(
     assert settled is not None and settled.settled is True
 
 
+def test_local_settle_releases_hold_under_the_reserved_type(
+    harness: tuple[Any, Any],
+) -> None:
+    """Mixed Credits/BYOK authorization, BYOK endpoint selected, on a key that
+    excludes BYOK from its limits.
+
+    The key-limit hold was reserved under CREDITS (a credit candidate
+    existed). Releasing under the SELECTED type made _release_key_hold_tx's
+    early-return skip the release entirely on include_byok=false keys:
+    `reserved` stranded forever, the key's effective cap shrinking with every
+    mixed request that landed on BYOK. The Spanner typed path is immune — it
+    releases the EXACT recorded hold and only books by settled type — so this
+    pins the Postgres local path to the same semantics.
+    """
+    store, conn = harness
+    _seed_balance(conn)
+    conn.execute(
+        "INSERT INTO tr_key_limit"
+        " (workspace_id, key_hash, shard, limit_micro, usage, byok_usage,"
+        "  reserved, include_byok, updated_at)"
+        " VALUES (%s, %s, 0, 10000000, 0, 0, 0, 0, CURRENT_TIMESTAMP)",
+        (WS, KEY),
+    )
+    store.reserve_key_limit(KEY, 100, usage_type="Credits")
+    auth = _authorize_with_reservation(store, estimate=100)
+
+    assert store.finalize_gateway_authorization(
+        auth.id, success=True, actual_microdollars=40, selected_usage_type="BYOK"
+    ) is True
+
+    row = conn.execute(
+        "SELECT reserved, day_usage, byok_usage FROM tr_key_limit"
+        " WHERE key_hash = %s AND shard = 0",
+        (KEY,),
+    ).fetchone()
+    assert row[0] == 0, "the Credits-typed hold must release regardless of selection"
+    assert (row[1] or 0) == 0, (
+        "an include_byok=false key must not roll BYOK spend into its windows"
+    )
+    assert row[2] == 40, "lifetime attribution still keys off the SELECTED type"
+
+
 def test_failed_settle_on_deleted_row_books_nothing_but_recreates(
     harness: tuple[Any, Any],
 ) -> None:
