@@ -2,7 +2,7 @@
   "_about": "Provider-native Baseten Model API routes, capabilities, context windows, and account-billable prices refreshed hourly from Baseten's authenticated /v1/models feed.",
   "provider": "baseten",
   "source": "https://inference.baseten.co/v1/models",
-  "generated_at": "2026-08-04T04:16:30Z",
+  "generated_at": "2026-08-04T07:42:28Z",
   "price_scale": "microdollars_per_million",
   "model_count": 18,
   "models": [
