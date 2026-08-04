@@ -78,6 +78,11 @@ add_secret_env_if_exists "ALIBABA_API_KEY" "trustedrouter-alibaba-api-key"
 add_secret_env_if_exists "ENGY_API_KEY" "trustedrouter-engy-api-key"
 add_secret_env_if_exists "ZERO_G_API_KEY" "trustedrouter-zero-g-api-key"
 add_secret_env_if_exists "TR_SYNTHETIC_MONITOR_API_KEY" "trustedrouter-synthetic-monitor-api-key"
+# HOME side of lazy key federation: peers present this token to
+# /v1/internal/federation/resolve-key and get identity + limits, never
+# credits and never key material. Setting it is what turns federation
+# serving ON for this plane (unset = 403 for every peer).
+add_secret_env_if_exists "TR_FEDERATION_PEER_TOKEN" "trustedrouter-federation-peer-token"
 add_secret_env_if_exists "TR_GOOGLE_CLIENT_ID" "trustedrouter-google-client-id"
 add_secret_env_if_exists "TR_GOOGLE_CLIENT_SECRET" "trustedrouter-google-client-secret"
 add_secret_env_if_exists \
