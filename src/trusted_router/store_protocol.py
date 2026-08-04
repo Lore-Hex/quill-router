@@ -223,6 +223,11 @@ class Store(Protocol):
         reason: str,
         bounce_type: str | None = ...,
         feedback_id: str | None = ...,
+        mail_class: str | None = ...,
+        sender_profile: str | None = ...,
+        acquisition_source: str | None = ...,
+        acquisition_medium: str | None = ...,
+        acquisition_campaign: str | None = ...,
     ) -> EmailSendBlock: ...
     def is_email_blocked(self, email: str) -> bool: ...
     def get_email_block(self, email: str) -> EmailSendBlock | None: ...

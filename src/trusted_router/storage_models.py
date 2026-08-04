@@ -1114,6 +1114,11 @@ class EmailSendBlock:
     reason: str
     bounce_type: str | None = None
     feedback_id: str | None = None
+    mail_class: str | None = None
+    sender_profile: str | None = None
+    acquisition_source: str | None = None
+    acquisition_medium: str | None = None
+    acquisition_campaign: str | None = None
     created_at: str = field(default_factory=iso_now)
 
 

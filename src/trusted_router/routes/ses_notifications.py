@@ -67,8 +67,6 @@ def register_ses_notification_routes(router: APIRouter) -> None:
             raise api_error(403, "SNS signature verification failed", ErrorType.FORBIDDEN) from exc
 
         message_id = str(envelope.get("MessageId") or "")
-        if message_id and not STORE.record_sns_message_once(message_id):
-            return JSONResponse({"data": {"replayed": True, "message_id": message_id}})
 
         msg_type = envelope.get("Type")
         if msg_type == "SubscriptionConfirmation":
@@ -82,9 +80,13 @@ def register_ses_notification_routes(router: APIRouter) -> None:
                 log.exception("ses_notification.subscribe_failed url=%s", subscribe_url)
                 raise api_error(502, "failed to confirm SNS subscription", ErrorType.INTERNAL_ERROR) from exc
             log.info("ses_notification.subscribed topic=%s", envelope.get("TopicArn"))
+            if message_id:
+                STORE.record_sns_message_once(message_id)
             return JSONResponse({"data": {"confirmed": True, "topic_arn": envelope.get("TopicArn")}})
 
         if msg_type == "UnsubscribeConfirmation":
+            if message_id:
+                STORE.record_sns_message_once(message_id)
             return JSONResponse({"data": {"unsubscribed": True}})
 
         # Notification path: parse the SES feedback envelope.
@@ -97,46 +99,124 @@ def register_ses_notification_routes(router: APIRouter) -> None:
             return JSONResponse({"data": {"ignored": True, "reason": "Message is not JSON"}})
 
         kind = str(feedback.get("notificationType") or feedback.get("eventType") or "")
-        blocked = _apply_feedback(kind, feedback)
-        return JSONResponse({"data": {"kind": kind, "blocked_emails": blocked}})
+        blocked_count = _apply_feedback(kind, feedback)
+        replayed = bool(message_id and not STORE.record_sns_message_once(message_id))
+        return JSONResponse(
+            {
+                "data": {
+                    "kind": kind,
+                    "blocked_count": blocked_count,
+                    "replayed": replayed,
+                }
+            }
+        )
 
 
-def _apply_feedback(kind: str, feedback: dict[str, Any]) -> list[str]:
+def _apply_feedback(kind: str, feedback: dict[str, Any]) -> int:
     """Inspect a parsed SES feedback envelope and add email blocks.
 
-    Returns the list of blocked email addresses for telemetry. Both the
-    legacy `notificationType` and new EventBridge-style `eventType` field
-    names are supported.
+    Returns a count, never recipient identities. Both the legacy
+    `notificationType` and new EventBridge-style `eventType` field names are
+    supported. Processing is idempotent because suppression writes use the
+    normalized recipient as their key.
     """
-    blocked: list[str] = []
+    blocked_count = 0
+    tags = _mail_tags(feedback)
+    recipient_count = 0
+    bounce_type: str | None = None
     if kind in {"Bounce", "bounce"}:
-        bounce = feedback.get("bounce", {}) or {}
-        bounce_type = bounce.get("bounceType")
+        raw_bounce = feedback.get("bounce")
+        bounce = raw_bounce if isinstance(raw_bounce, dict) else {}
+        raw_bounce_type = bounce.get("bounceType")
+        bounce_type = str(raw_bounce_type) if raw_bounce_type else None
+        raw_recipients = bounce.get("bouncedRecipients")
+        recipients = raw_recipients if isinstance(raw_recipients, list) else []
+        recipient_count = len(recipients)
         # Only PERMANENT bounces stop sends. Transient bounces (mailbox full,
         # greylisting) self-resolve and shouldn't suppress permanently.
         if bounce_type and bounce_type.lower() != "permanent":
-            return blocked
-        feedback_id = bounce.get("feedbackId") or feedback.get("mail", {}).get("messageId")
-        for recipient in bounce.get("bouncedRecipients", []) or []:
-            email = recipient.get("emailAddress") if isinstance(recipient, dict) else None
-            if isinstance(email, str) and email:
-                STORE.block_email_sending(
-                    email=email,
-                    reason="bounce",
-                    bounce_type=bounce_type,
-                    feedback_id=str(feedback_id) if feedback_id else None,
-                )
-                blocked.append(email.lower())
+            recipients = []
+        else:
+            feedback_id = bounce.get("feedbackId") or _mail_message_id(feedback)
+            for recipient in recipients:
+                email = recipient.get("emailAddress") if isinstance(recipient, dict) else None
+                if isinstance(email, str) and email:
+                    STORE.block_email_sending(
+                        email=email,
+                        reason="bounce",
+                        bounce_type=bounce_type,
+                        feedback_id=str(feedback_id) if feedback_id else None,
+                        **tags,
+                    )
+                    blocked_count += 1
     elif kind in {"Complaint", "complaint"}:
-        complaint = feedback.get("complaint", {}) or {}
-        feedback_id = complaint.get("feedbackId") or feedback.get("mail", {}).get("messageId")
-        for recipient in complaint.get("complainedRecipients", []) or []:
+        raw_complaint = feedback.get("complaint")
+        complaint = raw_complaint if isinstance(raw_complaint, dict) else {}
+        raw_recipients = complaint.get("complainedRecipients")
+        recipients = raw_recipients if isinstance(raw_recipients, list) else []
+        recipient_count = len(recipients)
+        feedback_id = complaint.get("feedbackId") or _mail_message_id(feedback)
+        for recipient in recipients:
             email = recipient.get("emailAddress") if isinstance(recipient, dict) else None
             if isinstance(email, str) and email:
                 STORE.block_email_sending(
                     email=email,
                     reason="complaint",
                     feedback_id=str(feedback_id) if feedback_id else None,
+                    **tags,
                 )
-                blocked.append(email.lower())
-    return blocked
+                blocked_count += 1
+    if kind in {"Bounce", "bounce", "Complaint", "complaint"}:
+        log.warning(
+            "ses_feedback.received kind=%s bounce_type=%s recipients=%d blocked=%d "
+            "class=%s profile=%s source=%s medium=%s campaign=%s",
+            kind.lower(),
+            bounce_type or "none",
+            recipient_count,
+            blocked_count,
+            tags["mail_class"] or "unknown",
+            tags["sender_profile"] or "unknown",
+            tags["acquisition_source"] or "unknown",
+            tags["acquisition_medium"] or "unknown",
+            tags["acquisition_campaign"] or "unknown",
+            extra={
+                "event": "ses_feedback.received",
+                "feedback_kind": kind.lower(),
+                "bounce_type": bounce_type or "none",
+                "recipient_count": recipient_count,
+                "blocked_count": blocked_count,
+                **{name: value or "unknown" for name, value in tags.items()},
+            },
+        )
+    return blocked_count
+
+
+def _mail_tags(feedback: dict[str, Any]) -> dict[str, str | None]:
+    mail = feedback.get("mail")
+    raw_tags = mail.get("tags") if isinstance(mail, dict) else None
+    if not isinstance(raw_tags, dict):
+        raw_tags = {}
+
+    def first(name: str) -> str | None:
+        value = raw_tags.get(name)
+        if isinstance(value, list) and value and isinstance(value[0], str):
+            return value[0][:256]
+        if isinstance(value, str):
+            return value[:256]
+        return None
+
+    return {
+        "mail_class": first("mail_class"),
+        "sender_profile": first("sender_profile"),
+        "acquisition_source": first("acquisition_source"),
+        "acquisition_medium": first("acquisition_medium"),
+        "acquisition_campaign": first("acquisition_campaign"),
+    }
+
+
+def _mail_message_id(feedback: dict[str, Any]) -> str | None:
+    mail = feedback.get("mail")
+    if not isinstance(mail, dict):
+        return None
+    message_id = mail.get("messageId")
+    return str(message_id) if message_id else None

@@ -309,6 +309,9 @@ ENV_VARS=(
   "TR_AWS_REGION=us-east-1" # SES region only; hosted compute is GCP-only.
   "TR_SES_FROM_EMAIL=noreply@trustedrouter.com"
   "TR_SES_FROM_NAME=TrustedRouter"
+  "TR_SES_ALERT_FROM_EMAIL=alerts@alerts.trustedrouter.com"
+  "TR_SES_ALERT_FROM_NAME=TrustedRouter Alerts"
+  "TR_SES_ALERT_CONFIGURATION_SET=trustedrouter-alerts"
   "TR_SUPPORT_EMAIL=help@trustedrouter.com"
   "TR_OPS_CHAT_WEBHOOK_URLS=https://a.uptimerouter.com,https://b.trustedrouter.com,https://c.allyrouter.com"
   # /trustedos partner-inquiry form leads. Plain env (an address, not a

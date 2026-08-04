@@ -20,7 +20,7 @@ from fastapi import APIRouter, Form, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from trusted_router.acquisition import record_signup_attribution
+from trusted_router.acquisition import record_signup_attribution, request_attribution
 from trusted_router.auth import (
     SESSION_COOKIE_NAME,
     SettingsDep,
@@ -190,10 +190,15 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
             ttl_seconds=VERIFICATION_TTL_SECONDS,
         )
         verify_url = _verify_url(request, raw_token)
+        attribution = request_attribution(request)
+        touch = attribution.last_touch if attribution is not None else {}
         message = build_verification_email(
             to=email_normalized,
             verification_url=verify_url,
             from_name=settings.ses_from_name,
+            acquisition_source=touch.get("utm_source"),
+            acquisition_medium=touch.get("utm_medium"),
+            acquisition_campaign=touch.get("utm_campaign"),
         )
         sent = get_email_service(settings).send(message)
         return HTMLResponse(render_template(

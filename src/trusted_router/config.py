@@ -231,6 +231,13 @@ class Settings(BaseSettings):
     # Configuration set used on every SendEmail call so SES emits bounce +
     # complaint events to our SNS topic (subscribed at /internal/ses/notifications).
     ses_configuration_set: str | None = "trustedrouter-default"
+    # Operational alerts use a dedicated authenticated subdomain and
+    # configuration set. This keeps their mailbox-domain reputation and
+    # telemetry distinct from sign-in and support mail. EmailService refuses
+    # to fall back to the default sender for an alert-profile message.
+    ses_alert_from_email: str | None = "alerts@alerts.trustedrouter.com"
+    ses_alert_from_name: str = "TrustedRouter Alerts"
+    ses_alert_configuration_set: str | None = "trustedrouter-alerts"
     # Destination for TrustedOS partner-inquiry form submissions (/trustedos).
     # Falls back to ses_from_email when unset so the lead never silently drops.
     partner_inquiry_email: str | None = None
@@ -782,6 +789,9 @@ _LOCAL_KEY_FALLBACKS: tuple[str, ...] = (
     "aws_region",
     "ses_from_email",
     "ses_from_name",
+    "ses_alert_from_email",
+    "ses_alert_from_name",
+    "ses_alert_configuration_set",
     "internal_gateway_token",
     "stripe_webhook_secret",
     "stripe_secret_key",

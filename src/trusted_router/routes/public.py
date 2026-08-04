@@ -332,7 +332,12 @@ async def _handle_trustedos_inquiry(settings: Settings, request: Request) -> JSO
     subject = f"TrustedOS inquiry: {company or name}"
     try:
         sent = get_email_service(settings).send(
-            EmailMessage(to=recipient, subject=subject, text_body=text_body)
+            EmailMessage(
+                to=recipient,
+                subject=subject,
+                text_body=text_body,
+                mail_class="partner_inquiry",
+            )
         )
     except Exception:  # noqa: BLE001 - never surface mailer errors to the form
         sent = False
@@ -418,6 +423,7 @@ async def _handle_support_inquiry(settings: Settings, request: Request) -> JSONR
         reply_to=email,
         subject=f"TrustedRouter support: {category_label}: {subject}",
         text_body=text_body,
+        mail_class="support_inquiry",
     )
     try:
         sent = await run_in_threadpool(

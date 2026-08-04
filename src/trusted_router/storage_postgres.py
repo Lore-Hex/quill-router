@@ -1103,6 +1103,11 @@ class PostgresStore:
         reason: str,
         bounce_type: str | None = None,
         feedback_id: str | None = None,
+        mail_class: str | None = None,
+        sender_profile: str | None = None,
+        acquisition_source: str | None = None,
+        acquisition_medium: str | None = None,
+        acquisition_campaign: str | None = None,
     ) -> EmailSendBlock:
         self._not_implemented("block_email_sending")
 

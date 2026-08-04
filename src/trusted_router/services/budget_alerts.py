@@ -86,11 +86,16 @@ def _deliver(
     if owner is None or not owner.email:
         log.info("budget_alert.no_owner_email key=%s ws=%s", api_key_hash, workspace_id)
         return
+    attribution = STORE.get_acquisition_attribution(workspace_id)
+    touch = attribution.last_touch if attribution is not None else {}
     message = build_budget_alert_email(
         to=owner.email,
         key_name=key_name,
         workspace_name=workspace.name,
         crossings=crossings,
+        acquisition_source=touch.get("utm_source"),
+        acquisition_medium=touch.get("utm_medium"),
+        acquisition_campaign=touch.get("utm_campaign"),
     )
     try:
         get_email_service(settings).send(message)
@@ -109,6 +114,9 @@ def build_budget_alert_email(
     workspace_name: str,
     crossings: list[tuple[str, int, int]],
     from_name: str = "TrustedRouter",
+    acquisition_source: str | None = None,
+    acquisition_medium: str | None = None,
+    acquisition_campaign: str | None = None,
 ) -> EmailMessage:
     windows = ", ".join(w for w, _, _ in crossings)
     subject = f"[{from_name}] Budget alert: key “{key_name}” crossed its {windows} budget"
@@ -141,4 +149,14 @@ def build_budget_alert_email(
         "<p>To hard-stop this key when a budget is crossed, switch it to Limit mode "
         "in the console (Console → API Keys → uncheck “Alert only”).</p>"
     )
-    return EmailMessage(to=to, subject=subject, text_body=text, html_body=html)
+    return EmailMessage(
+        to=to,
+        subject=subject,
+        text_body=text,
+        html_body=html,
+        mail_class="budget_alert",
+        sender_profile="alerts",
+        acquisition_source=acquisition_source,
+        acquisition_medium=acquisition_medium,
+        acquisition_campaign=acquisition_campaign,
+    )

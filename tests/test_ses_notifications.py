@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import hashlib
 import json
 import logging
 from typing import Any
@@ -42,7 +43,12 @@ def _envelope(**overrides: Any) -> dict[str, Any]:
     return base
 
 
-def _bounce_message(emails: list[str], bounce_type: str = "Permanent") -> str:
+def _bounce_message(
+    emails: list[str],
+    bounce_type: str = "Permanent",
+    *,
+    tags: dict[str, list[str]] | None = None,
+) -> str:
     return json.dumps({
         "notificationType": "Bounce",
         "bounce": {
@@ -50,7 +56,7 @@ def _bounce_message(emails: list[str], bounce_type: str = "Permanent") -> str:
             "feedbackId": "feedback-abc",
             "bouncedRecipients": [{"emailAddress": e} for e in emails],
         },
-        "mail": {"messageId": "ses-msg-1"},
+        "mail": {"messageId": "ses-msg-1", "tags": tags or {}},
     })
 
 
@@ -83,7 +89,7 @@ def test_permanent_bounce_blocks_email(verified_client: TestClient) -> None:
         )
     assert resp.status_code == 200
     assert resp.json()["data"]["kind"] == "Bounce"
-    assert resp.json()["data"]["blocked_emails"] == ["bounce@example.com"]
+    assert resp.json()["data"]["blocked_count"] == 1
     assert STORE.is_email_blocked("BOUNCE@example.com")
     block = STORE.get_email_block("bounce@example.com")
     assert block is not None
@@ -106,7 +112,7 @@ def test_complaint_blocks_email(verified_client: TestClient) -> None:
     with patch("trusted_router.routes.ses_notifications.verify_sns_message"):
         resp = verified_client.post("/internal/ses/notifications", json=envelope)
     assert resp.status_code == 200
-    assert resp.json()["data"]["blocked_emails"] == ["mad@example.com"]
+    assert resp.json()["data"]["blocked_count"] == 1
     block = STORE.get_email_block("mad@example.com")
     assert block is not None and block.reason == "complaint"
 
@@ -116,8 +122,59 @@ def test_replayed_message_id_is_idempotent(verified_client: TestClient) -> None:
     with patch("trusted_router.routes.ses_notifications.verify_sns_message"):
         first = verified_client.post("/internal/ses/notifications", json=envelope)
         second = verified_client.post("/internal/ses/notifications", json=envelope)
-    assert first.json()["data"].get("blocked_emails") == ["dup@example.com"]
-    assert second.json()["data"] == {"replayed": True, "message_id": "dup-msg"}
+    assert first.json()["data"] == {
+        "kind": "Bounce",
+        "blocked_count": 1,
+        "replayed": False,
+    }
+    assert second.json()["data"] == {
+        "kind": "Bounce",
+        "blocked_count": 1,
+        "replayed": True,
+    }
+
+
+def test_feedback_persists_privacy_safe_send_classification(
+    verified_client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    envelope = _envelope(
+        MessageId="msg-attributed-bounce",
+        Message=_bounce_message(
+            ["campaign-recipient@example.com"],
+            tags={
+                "mail_class": ["email_verification"],
+                "sender_profile": ["default"],
+                "acquisition_source": ["google"],
+                "acquisition_medium": ["paid_search"],
+                "acquisition_campaign": ["legal-startups"],
+            },
+        ),
+    )
+    with (
+        patch("trusted_router.routes.ses_notifications.verify_sns_message"),
+        caplog.at_level(logging.WARNING, logger="trusted_router.routes.ses_notifications"),
+    ):
+        response = verified_client.post("/internal/ses/notifications", json=envelope)
+
+    assert response.status_code == 200
+    assert "campaign-recipient@example.com" not in response.text
+    block = STORE.get_email_block("campaign-recipient@example.com")
+    assert block is not None
+    assert block.mail_class == "email_verification"
+    assert block.sender_profile == "default"
+    assert block.acquisition_source == "google"
+    assert block.acquisition_medium == "paid_search"
+    assert block.acquisition_campaign == "legal-startups"
+    feedback_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("ses_feedback.received ")
+    ]
+    assert len(feedback_logs) == 1
+    assert "campaign-recipient@example.com" not in feedback_logs[0]
+    assert "class=email_verification" in feedback_logs[0]
+    assert "source=google" in feedback_logs[0]
 
 
 def test_signature_failure_returns_403(verified_client: TestClient) -> None:
@@ -192,10 +249,12 @@ def test_email_service_fallback_logs_body_length_not_body(caplog: pytest.LogCapt
         if record.name == "trusted_router.services.email"
         and record.getMessage().startswith("email_send.fallback ")
     ]
+    fingerprint = hashlib.sha256(b"user@example.com").hexdigest()[:16]
     assert fallback_logs == [
-        "email_send.fallback to=user@example.com "
+        f"email_send.fallback recipient={fingerprint} class=transactional "
         f"subject_len={len(subject)} body_len={len(body)}"
     ]
+    assert "user@example.com" not in fallback_logs[0]
     assert "subject=" not in fallback_logs[0]
     assert subject_marker not in fallback_logs[0]
     assert subject not in fallback_logs[0]
@@ -252,6 +311,86 @@ def test_email_service_sends_expected_ses_payload(monkeypatch) -> None:
     # Routes the send through the configuration set so SES emits bounce +
     # complaint events to the SNS topic our /internal/ses/notifications owns.
     assert call.get("ConfigurationSetName") == "trustedrouter-default"
+    assert {tag["Name"]: tag["Value"] for tag in call["Tags"]} == {
+        "mail_class": "email_verification",
+        "sender_profile": "default",
+    }
+
+
+def test_email_service_uses_dedicated_alert_sender_and_sanitized_tags(monkeypatch) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class FakeSESClient:
+        def send_email(self, **kwargs: Any) -> dict[str, str]:
+            calls.append(kwargs)
+            return {"MessageId": "ses-alert-1"}
+
+    monkeypatch.setattr("boto3.client", lambda *_args, **_kwargs: FakeSESClient())
+    service = EmailService(
+        Settings(
+            environment="test",
+            aws_access_key_id="AKIA_TEST",
+            aws_secret_access_key="secret",  # noqa: S106 - test fixture secret.
+            ses_from_email="noreply@example.com",
+            ses_alert_from_email="alerts@alerts.example.com",
+            ses_alert_from_name="Example Alerts",
+            ses_alert_configuration_set="example-alerts",
+        )
+    )
+
+    assert service.send(
+        EmailMessage(
+            to="owner@example.com",
+            subject="Budget alert",
+            text_body="Budget crossed.",
+            mail_class="budget alert",
+            sender_profile="alerts",
+            acquisition_source="ads.example/path",
+            acquisition_campaign="Legal teams: Q3",
+        )
+    )
+
+    call = calls[0]
+    assert call["Source"] == "Example Alerts <alerts@alerts.example.com>"
+    assert call["ConfigurationSetName"] == "example-alerts"
+    assert {tag["Name"]: tag["Value"] for tag in call["Tags"]} == {
+        "mail_class": "budget-alert",
+        "sender_profile": "alerts",
+        "acquisition_source": "ads-example-path",
+        "acquisition_campaign": "Legal-teams-Q3",
+    }
+
+
+def test_alert_sender_never_falls_back_to_default_identity(monkeypatch) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class FakeSESClient:
+        def send_email(self, **kwargs: Any) -> None:
+            calls.append(kwargs)
+
+    monkeypatch.setattr("boto3.client", lambda *_args, **_kwargs: FakeSESClient())
+    service = EmailService(
+        Settings(
+            environment="test",
+            aws_access_key_id="AKIA_TEST",
+            aws_secret_access_key="secret",  # noqa: S106 - test fixture secret.
+            ses_from_email="noreply@example.com",
+            ses_alert_from_email=None,
+        )
+    )
+
+    sent = service.send(
+        EmailMessage(
+            to="owner@example.com",
+            subject="Budget alert",
+            text_body="Budget crossed.",
+            mail_class="budget_alert",
+            sender_profile="alerts",
+        )
+    )
+
+    assert sent is False
+    assert calls == []
 
 
 def test_email_service_sets_reply_to_for_support_mail(monkeypatch) -> None:
