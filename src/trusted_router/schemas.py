@@ -54,6 +54,7 @@ class CheckoutRequest(_Lenient):
         "crypto",
         "usdc",
         "paypal",
+        "adyen",
     ] = "auto"
 
     @field_validator("amount")

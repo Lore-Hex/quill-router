@@ -17,6 +17,12 @@ from trusted_router.auth import SettingsDep
 from trusted_router.domains import request_control_origin
 from trusted_router.routes.console._shared import ConsoleDep, money, render
 from trusted_router.schemas import CheckoutRequest
+from trusted_router.services.adyen_billing import (
+    ADYEN_WEB_CSS_SRI,
+    ADYEN_WEB_JS_SRI,
+    adyen_web_asset_urls,
+    create_adyen_checkout_session,
+)
 from trusted_router.services.paypal_billing import (
     capture_paypal_order_for_workspace,
     create_paypal_checkout_session,
@@ -81,6 +87,7 @@ def register(app: FastAPI) -> None:
             last_auto_refill_at=credit.last_auto_refill_at if credit else None,
             last_auto_refill_status=credit.last_auto_refill_status if credit else None,
             paypal_enabled=settings.paypal_enabled or settings.environment.lower() in {"local", "test"},
+            adyen_enabled=settings.adyen_checkout_ready,
             payments=payments,
             saved_payment_method=saved_payment_method,
             api_base_url=ctx.api_base_url,
@@ -99,11 +106,12 @@ def register(app: FastAPI) -> None:
         payment_method: str = Form("auto"),
     ) -> Response:
         origin = request_control_origin(request, settings)
-        success_url = (
-            f"{origin}/console/credits/paypal/capture"
-            if payment_method == "paypal"
-            else f"{origin}/console/credits?checkout=success"
-        )
+        if payment_method == "paypal":
+            success_url = f"{origin}/console/credits/paypal/capture"
+        elif payment_method == "adyen":
+            success_url = f"{origin}/console/credits?checkout=processing"
+        else:
+            success_url = f"{origin}/console/credits?checkout=success"
         try:
             # CheckoutRequest validates payment_method against the Literal
             # set; the cast just tells mypy that the form value will be
@@ -120,7 +128,16 @@ def register(app: FastAPI) -> None:
         credit = STORE.get_credit_account(ctx.workspace.id)
         try:
             data = (
-                create_paypal_checkout_session(
+                create_adyen_checkout_session(
+                    body=body,
+                    workspace_id=ctx.workspace.id,
+                    customer_email=(
+                        ctx.user.email if ctx.user.email and "@" in ctx.user.email else None
+                    ),
+                    settings=settings,
+                )
+                if body.payment_method == "adyen"
+                else create_paypal_checkout_session(
                     body=body,
                     workspace_id=ctx.workspace.id,
                     customer_email=ctx.user.email if ctx.user.email and "@" in ctx.user.email else None,
@@ -139,6 +156,36 @@ def register(app: FastAPI) -> None:
             return RedirectResponse(url="/console/credits?error=checkout_unavailable", status_code=303)
         if str(data.get("mode", "")).startswith("mock"):
             return RedirectResponse(url="/console/credits?checkout=mock", status_code=303)
+        if data.get("mode") == "adyen":
+            adyen_js_url, adyen_css_url = adyen_web_asset_urls(settings)
+            checkout_config = {
+                "clientKey": data["client_key"],
+                "environment": data["environment"],
+                "session": {"id": data["id"], "sessionData": data["session_data"]},
+                "successUrl": success_url,
+                "cancelUrl": f"{origin}/console/credits?checkout=cancel",
+            }
+            return HTMLResponse(
+                render(
+                    "console/adyen_checkout.html",
+                    settings=settings,
+                    ctx=ctx,
+                    active="credits",
+                    page_title="Adyen checkout",
+                    page_subtitle="Add prepaid credits with Adyen.",
+                    checkout_config=checkout_config,
+                    adyen_js_url=adyen_js_url,
+                    adyen_css_url=adyen_css_url,
+                    adyen_js_sri=ADYEN_WEB_JS_SRI,
+                    adyen_css_sri=ADYEN_WEB_CSS_SRI,
+                    amount_display=money(int(data["amount_microdollars"])),
+                    processing_fee_display=money(
+                        int(data["processing_fee_microdollars"])
+                    ),
+                    total_display=money(int(data["total_microdollars"])),
+                    api_base_url=ctx.api_base_url,
+                )
+            )
         return RedirectResponse(url=str(data["url"]), status_code=303)
 
     @app.get("/console/credits/paypal/capture")

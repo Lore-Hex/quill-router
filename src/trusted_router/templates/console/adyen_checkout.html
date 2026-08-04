@@ -1,0 +1,65 @@
+{% extends "console/_layout.html" %}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ adyen_css_url }}" integrity="{{ adyen_css_sri }}" crossorigin="anonymous">
+{% endblock %}
+{% block scripts %}
+<script src="{{ adyen_js_url }}" integrity="{{ adyen_js_sri }}" crossorigin="anonymous"></script>
+<script id="adyen-checkout-config" type="application/json">{{ checkout_config | tojson }}</script>
+<script>
+  document.addEventListener("DOMContentLoaded", async function () {
+    const status = document.getElementById("adyen-checkout-status");
+    const root = document.getElementById("adyen-dropin");
+    const config = JSON.parse(document.getElementById("adyen-checkout-config").textContent);
+    try {
+      const { AdyenCheckout, Dropin } = window.AdyenWeb;
+      const checkout = await AdyenCheckout({
+        clientKey: config.clientKey,
+        environment: config.environment,
+        locale: "en-US",
+        countryCode: "US",
+        session: config.session,
+        onPaymentCompleted: function () {
+          window.location.assign(config.successUrl);
+        },
+        onPaymentFailed: function () {
+          window.location.assign(config.cancelUrl);
+        },
+        onError: function () {
+          status.hidden = false;
+          status.textContent = "Adyen could not complete checkout. No credits were added.";
+        }
+      });
+      new Dropin(checkout, {
+        paymentMethodsConfiguration: {
+          card: { hasHolderName: true, holderNameRequired: true }
+        }
+      }).mount(root);
+    } catch (error) {
+      status.hidden = false;
+      status.textContent = "Adyen checkout is temporarily unavailable. No credits were added.";
+      root.hidden = true;
+    }
+  });
+</script>
+{% endblock %}
+{% block body %}
+<section class="panel">
+  <div class="panel-head"><h2>Review and pay</h2></div>
+  <div class="panel-body">
+    <dl class="checkout-summary">
+      <div><dt>TrustedRouter credits</dt><dd>{{ amount_display }}</dd></div>
+      <div><dt>Payment processing fee</dt><dd>{{ processing_fee_display }}</dd></div>
+      <div class="checkout-summary-total"><dt>Total</dt><dd>{{ total_display }}</dd></div>
+    </dl>
+    <p class="form-help">
+      Credits are added only after Adyen confirms a successful payment.
+      Card details are collected directly by Adyen and do not pass through TrustedRouter.
+    </p>
+    <div id="adyen-checkout-status" class="notice warn" hidden></div>
+    <div id="adyen-dropin" aria-label="Adyen secure checkout"></div>
+    <div class="button-row" style="margin-top:16px">
+      <a class="btn" href="/console/credits?checkout=cancel">Cancel</a>
+    </div>
+  </div>
+</section>
+{% endblock %}
