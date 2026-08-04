@@ -423,6 +423,17 @@ class GatewayAuthorization:
     custom_model_id: str | None = None
     custom_model_revision: int | None = None
     additional_cost_reservation_microdollars: int = 0
+    # The settlement DECISION, made at authorize and stored — settle must not
+    # re-derive it from key state, which can change between authorize and
+    # settle. "local" books against the plane's own balance (every
+    # authorization before this field existed); "deferred_home" records the
+    # spend as debt to the home plane's ledger, forwarded asynchronously.
+    settlement: str = "local"
+    # Only deferred authorizations carry an expiry: it is what lets the reaper
+    # reclaim the outstanding-counter estimate when the enclave dies between
+    # authorize and settle. Local authorizations keep their pre-existing
+    # lifecycle untouched.
+    expires_at: str | None = None
 
     def __post_init__(self) -> None:
         # JSON round-trip stores usage_type as a string; coerce so the field

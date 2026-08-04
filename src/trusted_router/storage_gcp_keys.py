@@ -304,7 +304,19 @@ class SpannerApiKeys:
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         additional_cost_reservation_microdollars: int = 0,
+        settlement: str = "local",
+        expires_at: str | None = None,
+        deferred_cap_microdollars: int | None = None,
     ) -> GatewayAuthorization:
+        if deferred_cap_microdollars is not None:
+            # Deferred settlement is a PEER-plane mechanism: a plane spending
+            # on credit at some other plane's ledger. This is the HOME plane's
+            # own store, so a caller asking it to defer has a configuration
+            # error, and silently ignoring the argument would admit spend
+            # against a cap that is not being enforced anywhere.
+            raise NotImplementedError(
+                "deferred settlement is not available on the home plane's store"
+            )
         existing = (
             self.get_gateway_authorization_by_idempotency_key(
                 workspace_id, key_hash, idempotency_key
@@ -323,6 +335,8 @@ class SpannerApiKeys:
             usage_type=UsageType.coerce(usage_type),
             estimated_microdollars=estimated_microdollars,
             credit_reservation_id=credit_reservation_id,
+            settlement=settlement,
+            expires_at=expires_at,
             requested_model_id=requested_model_id,
             candidate_model_ids=list(candidate_model_ids or []),
             region=region,

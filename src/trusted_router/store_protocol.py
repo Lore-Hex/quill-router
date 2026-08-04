@@ -496,6 +496,16 @@ class Store(Protocol):
         custom_model_id: str | None = ...,
         custom_model_revision: int | None = ...,
         additional_cost_reservation_microdollars: int = ...,
+        # Deferred settlement. `settlement="deferred_home"` records that this
+        # spend is debt owed to the home plane's ledger rather than a debit
+        # here; `expires_at` is what lets the reaper reclaim its admitted
+        # estimate if settle never arrives. `deferred_cap_microdollars`, when
+        # given, makes this call the ADMISSION point: the outstanding counter
+        # moves in the same transaction as the authorization insert, and
+        # DeferredSettlementCapReached is raised if the cap refuses.
+        settlement: str = ...,
+        expires_at: str | None = ...,
+        deferred_cap_microdollars: int | None = ...,
     ) -> GatewayAuthorization: ...
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None: ...
     def get_gateway_authorization_by_idempotency_key(
