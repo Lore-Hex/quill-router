@@ -271,10 +271,10 @@
   },
   "neurometric": {
     "card_version": 2,
-    "model_count": 5,
+    "model_count": 6,
     "name": "Neurometric AI",
     "privacy": "Policy documented",
-    "route_count": 5,
+    "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "neurometric"
   },

@@ -3,7 +3,7 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-08-04T13:05:11Z",
+  "generated_at": "2026-08-04T16:14:01Z",
   "price_scale": "microdollars_per_million",
   "model_count": 12,
   "models": [
@@ -87,7 +87,8 @@
         "json_mode",
         "structured_outputs",
         "logprobs"
-      ]
+      ],
+      "missing_since": "2026-08-04"
     },
     {
       "id": "google/gemma-4-26b-a4b-it",
