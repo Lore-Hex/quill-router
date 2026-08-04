@@ -580,6 +580,11 @@ class Settings(BaseSettings):
     #
     # 0 = disabled (the default, so GCP/AWS keep their existing schedulers and
     # nothing double-runs).
+    # MUST stay comfortably under the status page's staleness threshold
+    # (monitor_freshness.stale_after_seconds, 300s). An interval EQUAL to the
+    # threshold guarantees intermittent "Monitor Data Stale" banners: a pass
+    # takes 10-17s, so the newest sample is always older than the interval by
+    # the time the next one lands. 0 = disabled.
     synthetic_scheduler_interval_seconds: int = 0
     # Completions per pass. This IS real inference and it costs real money;
     # it is also the only thing that puts model/provider rows on the

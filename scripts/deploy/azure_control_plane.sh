@@ -80,7 +80,9 @@ SECRETS_DIR="${SECRETS_DIR:-$HOME/.quill-secrets}"
 # settlement stays OFF until its token is present AND explicitly enabled.
 FEDERATION_HOME_BASE_URL="${FEDERATION_HOME_BASE_URL:-https://trustedrouter.com}"
 DEFERRED_SETTLEMENT_ENABLED="${DEFERRED_SETTLEMENT_ENABLED:-false}"
-SYNTHETIC_INTERVAL_SECONDS="${SYNTHETIC_INTERVAL_SECONDS:-300}"
+# 120s, not 300s: the status page calls the monitor stale at 300s, so an
+# interval equal to the threshold flaps in and out of a stale banner.
+SYNTHETIC_INTERVAL_SECONDS="${SYNTHETIC_INTERVAL_SECONDS:-120}"
 SYNTHETIC_ROTATION_COUNT="${SYNTHETIC_ROTATION_COUNT:-8}"
 
 log() { printf '\n=== %s\n' "$*" >&2; }
