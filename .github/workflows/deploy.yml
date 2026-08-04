@@ -461,18 +461,45 @@ jobs:
             local previous
             previous="$(previous_revision "${region}")"
             echo "deploying ${region} no-traffic"
-            TR_DEPLOY_TARGET_REGIONS="${region}" \
-              TR_DEPLOY_NO_TRAFFIC="1" \
-              IMAGE_TAG="${IMAGE_TAG}" \
-              bash scripts/deploy/rollout.sh
+            if ! TR_DEPLOY_TARGET_REGIONS="${region}" \
+                TR_DEPLOY_NO_TRAFFIC="1" \
+                IMAGE_TAG="${IMAGE_TAG}" \
+                bash scripts/deploy/rollout.sh; then
+              echo "${region} no-traffic deploy failed"
+              return 1
+            fi
 
             local revision
             revision="$(gcloud run services describe "${SERVICE}" \
               --region="${region}" --project="${PROJECT_ID}" \
               --format='value(status.latestCreatedRevisionName)')"
+            if [ -z "${revision}" ]; then
+              echo "${region} deploy did not create a revision"
+              return 1
+            fi
             echo "new ${region} revision: ${revision}"
 
-            bash scripts/deploy/staged_traffic.sh "${region}" "${revision}" "${previous}"
+            if ! bash scripts/deploy/staged_traffic.sh \
+                "${region}" "${revision}" "${previous}"; then
+              rollback_region "${region}" || true
+              return 1
+            fi
+
+            local active_traffic
+            active_traffic="$(gcloud run services describe "${SERVICE}" \
+              --region="${region}" --project="${PROJECT_ID}" \
+              --format=json | jq -r --arg revision "${revision}" '
+                [
+                  .status.traffic[]?
+                  | select(.percent == 100 and .revisionName == $revision)
+                ]
+                | length
+              ')"
+            if [ "${active_traffic}" != "1" ]; then
+              echo "${region} staged rollout did not put 100% on ${revision}"
+              rollback_region "${region}" || true
+              return 1
+            fi
 
             if ! python3 scripts/deploy/watchdog.py \
               --regions "${region}" \
@@ -587,11 +614,51 @@ jobs:
           # miss a stale cold revision. Exercise the shared-storage reader in
           # every load-balanced control-plane region directly.
           for region in us-central1 us-east4 europe-west4 southamerica-east1; do
-            service_url=$(gcloud run services describe "${SERVICE}" \
+            service_json=$(gcloud run services describe "${SERVICE}" \
               --project="${PROJECT_ID}" --region="${region}" \
-              --format='value(status.url)')
+              --format=json)
+            service_url=$(jq -r '.status.url' <<<"${service_json}")
             check_url "ready_${region}" "${service_url}/ready"
             check_url "status_${region}" "${service_url}/status.json"
+
+            latest_ready=$(jq -r '.status.latestReadyRevisionName // ""' \
+              <<<"${service_json}")
+            latest_created=$(jq -r '.status.latestCreatedRevisionName // ""' \
+              <<<"${service_json}")
+            active_revision=$(jq -r '
+              [.status.traffic[]? | select(.percent == 100) | .revisionName][0] // ""
+            ' <<<"${service_json}")
+            active_count=$(jq -r '
+              [.status.traffic[]? | select(.percent > 0)] | length
+            ' <<<"${service_json}")
+            if [ "${active_count}" != "1" ] || \
+               [ -z "${active_revision}" ] || \
+               [ "${active_revision}" != "${latest_ready}" ] || \
+               [ "${latest_ready}" != "${latest_created}" ]; then
+              echo "${region} is not fully converged on its latest ready revision" >&2
+              echo "created=${latest_created} ready=${latest_ready} active=${active_revision} count=${active_count}" >&2
+              exit 1
+            fi
+
+            revision_json=$(gcloud run revisions describe "${active_revision}" \
+              --project="${PROJECT_ID}" --region="${region}" \
+              --format=json)
+            active_release=$(jq -r '
+              [.spec.containers[0].env[]? | select(.name == "TR_RELEASE") | .value][0] // ""
+            ' <<<"${revision_json}")
+            retired_secret_count=$(jq -r '
+              [
+                .spec.containers[0].env[]?
+                | select(.name == "TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")
+              ]
+              | length
+            ' <<<"${revision_json}")
+            if [ "${active_release}" != "${SHA}" ] || \
+               [ "${retired_secret_count}" != "0" ]; then
+              echo "${region} active revision failed release/config verification" >&2
+              echo "release=${active_release} expected=${SHA} retired_secret_count=${retired_secret_count}" >&2
+              exit 1
+            fi
           done
 
           python3 - <<'PY'
