@@ -32,11 +32,14 @@ log = logging.getLogger(__name__)
 ATTRIBUTION_COOKIE_NAME = "tr_attribution"
 ATTRIBUTION_COOKIE_MAX_AGE = 60 * 60 * 24 * 90
 RETENTION_MILESTONE_SECONDS = 60 * 60 * 24 * 7
-_COOKIE_VERSION = 1
+_COOKIE_VERSION = 2
 _MAX_COOKIE_BYTES = 3_800
 _ANONYMOUS_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 _CLICK_ID_RE = re.compile(r"^[A-Za-z0-9._~-]{1,256}$")
-_CLICK_ID_FIELDS = ("gclid", "gbraid", "wbraid", "twclid")
+_RAW_CLICK_ID_FIELDS = ("gclid", "gbraid", "wbraid", "twclid")
+_CLICK_FINGERPRINT_FIELDS = tuple(
+    f"{name}_fingerprint" for name in _RAW_CLICK_ID_FIELDS
+)
 _AUTOMATED_USER_AGENT_TOKENS = (
     "bot",
     "crawler",
@@ -53,10 +56,7 @@ _TOUCH_FIELDS = frozenset(
         "utm_campaign",
         "utm_term",
         "utm_content",
-        "gclid",
-        "gbraid",
-        "wbraid",
-        "twclid",
+        *_CLICK_FINGERPRINT_FIELDS,
         "landing_path",
         "referer_host",
         "captured_at",
@@ -91,7 +91,7 @@ def prepare_request_attribution(
     if not _should_capture_request(request):
         return context, False
 
-    touch = _touch_from_request(request)
+    touch = _touch_from_request(request, settings)
     now = iso_now()
     if context is None:
         context = AttributionContext(
@@ -333,7 +333,7 @@ def log_browser_funnel_event(request: Request, event: str) -> None:
             "event": f"acquisition.{event}",
             "anonymous_fingerprint": _fingerprint(context.anonymous_id),
             **_safe_touch_log_fields(touch),
-            **_click_id_log_fields(request, touch),
+            **_click_id_log_fields(touch),
         },
     )
 
@@ -345,7 +345,7 @@ def pageview_attribution_fields(request: Request) -> dict[str, object]:
     return {
         "anonymous_fingerprint": _fingerprint(context.anonymous_id),
         **_safe_touch_log_fields(context.last_touch),
-        **_click_id_log_fields(request, context.last_touch),
+        **_click_id_log_fields(context.last_touch),
     }
 
 
@@ -380,27 +380,33 @@ def _safe_touch_log_fields(touch: dict[str, str]) -> dict[str, object]:
         "utm_content": touch.get("utm_content"),
         "landing_path": touch.get("landing_path"),
         "referer_host": touch.get("referer_host"),
-        "has_gclid": bool(touch.get("gclid")),
-        "has_gbraid": bool(touch.get("gbraid")),
-        "has_wbraid": bool(touch.get("wbraid")),
-        "has_twclid": bool(touch.get("twclid")),
+        "has_gclid": bool(touch.get("gclid_fingerprint")),
+        "has_gbraid": bool(touch.get("gbraid_fingerprint")),
+        "has_wbraid": bool(touch.get("wbraid_fingerprint")),
+        "has_twclid": bool(touch.get("twclid_fingerprint")),
     }
 
 
-def _touch_from_request(request: Request) -> dict[str, str]:
+def _touch_from_request(request: Request, settings: Settings) -> dict[str, str]:
     touch: dict[str, str] = {}
     for name in ("utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"):
         value = _safe_text(request.query_params.get(name), 128)
         if value:
             touch[name] = value
-    for name in _CLICK_ID_FIELDS:
+    click_fields: set[str] = set()
+    for name in _RAW_CLICK_ID_FIELDS:
         value = str(request.query_params.get(name) or "").strip()
         if _CLICK_ID_RE.fullmatch(value):
-            touch[name] = value
-    if "gclid" in touch or "gbraid" in touch or "wbraid" in touch:
+            touch[f"{name}_fingerprint"] = _click_id_fingerprint(
+                name,
+                value,
+                settings,
+            )
+            click_fields.add(name)
+    if click_fields.intersection({"gclid", "gbraid", "wbraid"}):
         touch.setdefault("utm_source", "google")
         touch.setdefault("utm_medium", "paid_search")
-    if "twclid" in touch:
+    if "twclid" in click_fields:
         touch.setdefault("utm_source", "x")
         touch.setdefault("utm_medium", "paid_social")
     touch.setdefault("utm_source", "direct")
@@ -423,8 +429,8 @@ def _validated_touch(value: Any) -> dict[str, str]:
     for key, raw_value in value.items():
         if key not in _TOUCH_FIELDS or not isinstance(raw_value, str):
             continue
-        if key in {"gclid", "gbraid", "wbraid", "twclid"}:
-            if _CLICK_ID_RE.fullmatch(raw_value):
+        if key in _CLICK_FINGERPRINT_FIELDS:
+            if re.fullmatch(r"[a-f0-9]{64}", raw_value):
                 touch[key] = raw_value
             continue
         limit = 256 if key == "landing_path" else 128
@@ -487,10 +493,7 @@ def _has_explicit_campaign_touch(request: Request) -> bool:
             "utm_campaign",
             "utm_term",
             "utm_content",
-            "gclid",
-            "gbraid",
-            "wbraid",
-            "twclid",
+            *_RAW_CLICK_ID_FIELDS,
         )
     )
 
@@ -527,25 +530,25 @@ def _cookie_signing_key(settings: Settings) -> bytes:
     ).digest()
 
 
-def _click_id_log_fields(request: Request, touch: dict[str, str]) -> dict[str, str]:
-    settings = getattr(request.app.state, "settings", None)
-    if not isinstance(settings, Settings):
-        return {}
+def _click_id_fingerprint(name: str, value: str, settings: Settings) -> str:
     key = hmac.new(
         _cookie_signing_key(settings),
         b"trustedrouter-attribution-click-fingerprint-v1",
         hashlib.sha256,
     ).digest()
-    fields: dict[str, str] = {}
-    for name in _CLICK_ID_FIELDS:
-        value = touch.get(name)
-        if value:
-            fields[f"{name}_fingerprint"] = hmac.new(
-                key,
-                f"{name}:{value}".encode(),
-                hashlib.sha256,
-            ).hexdigest()
-    return fields
+    return hmac.new(
+        key,
+        f"{name}:{value}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _click_id_log_fields(touch: dict[str, str]) -> dict[str, str]:
+    return {
+        name: value
+        for name in _CLICK_FINGERPRINT_FIELDS
+        if (value := touch.get(name))
+    }
 
 
 def _cookie_expired(created_at: str) -> bool:

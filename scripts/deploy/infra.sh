@@ -13,7 +13,6 @@ gc services enable \
   secretmanager.googleapis.com \
   cloudscheduler.googleapis.com \
   cloudkms.googleapis.com \
-  datamanager.googleapis.com \
   spanner.googleapis.com \
   bigtableadmin.googleapis.com \
   cloudbuild.googleapis.com
@@ -110,33 +109,3 @@ ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/secretmanager
 ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/spanner.databaseUser"
 ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/bigtable.user"
 ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/aiplatform.user"
-
-# Metadata-only Google Ads conversion worker. It has no access to application
-# secrets, provider keys, BYOK decrypt permission, or prompt-path Bigtable
-# access. Google
-# Ads account access is granted separately after this identity exists.
-GOOGLE_DATA_MANAGER_SERVICE_ACCOUNT_ID="${TR_GOOGLE_DATA_MANAGER_SERVICE_ACCOUNT_ID:-tr-google-data-manager}"
-GOOGLE_DATA_MANAGER_SERVICE_ACCOUNT="${GOOGLE_DATA_MANAGER_SERVICE_ACCOUNT_ID}@${PROJECT_ID}.iam.gserviceaccount.com"
-if ! gc iam service-accounts describe \
-  "$GOOGLE_DATA_MANAGER_SERVICE_ACCOUNT" >/dev/null 2>&1; then
-  gc iam service-accounts create "$GOOGLE_DATA_MANAGER_SERVICE_ACCOUNT_ID" \
-    --display-name="TrustedRouter Google Data Manager" \
-    --description="Uploads metadata-only signup and settled-purchase conversions to Google Ads" \
-    --quiet
-fi
-ensure_project_role \
-  "serviceAccount:${GOOGLE_DATA_MANAGER_SERVICE_ACCOUNT}" \
-  "roles/spanner.databaseUser"
-ensure_project_role \
-  "serviceAccount:${GOOGLE_DATA_MANAGER_SERVICE_ACCOUNT}" \
-  "roles/serviceusage.serviceUsageConsumer"
-gc iam service-accounts add-iam-policy-binding \
-  "$GOOGLE_DATA_MANAGER_SERVICE_ACCOUNT" \
-  --member="serviceAccount:${DEPLOY_SERVICE_ACCOUNT}" \
-  --role="roles/iam.serviceAccountUser" \
-  --quiet >/dev/null
-gc iam service-accounts add-iam-policy-binding \
-  "$GOOGLE_DATA_MANAGER_SERVICE_ACCOUNT" \
-  --member="serviceAccount:service-${PROJECT_NUMBER}@serverless-robot-prod.iam.gserviceaccount.com" \
-  --role="roles/iam.serviceAccountTokenCreator" \
-  --quiet >/dev/null

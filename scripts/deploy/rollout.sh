@@ -28,7 +28,6 @@ SECRET_ENVS=(
   "TR_STRIPE_SECRET_KEY=trustedrouter-stripe-secret-key:latest"
   "TR_STRIPE_WEBHOOK_SECRET=trustedrouter-stripe-webhook-secret:latest"
   "TR_INTERNAL_GATEWAY_TOKEN=trustedrouter-internal-gateway-token:latest"
-  "TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD=trustedrouter-google-ads-conversion-feed-password:latest"
 )
 add_secret_env_if_exists() {
   local env_name="$1"
