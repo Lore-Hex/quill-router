@@ -1623,12 +1623,22 @@ class PostgresStore:
         *,
         usage_type: UsageType | str,
         window_amount: int,
+        window_is_byok: bool | None = None,
     ) -> None:
         """Release + window-roll inside a CALLER's transaction.
 
         finalize_gateway_authorization must do this in the same transaction
         as the credit release, or a crash between them leaves the key hold
         stranded while the money moved.
+
+        `usage_type` is the type the hold was RESERVED under; `window_is_byok`
+        is whether the spend being rolled into the windows was BYOK. They
+        differ on a mixed-candidate authorization: the hold is Credits-typed
+        whenever any credit candidate existed, but the enclave may select a
+        BYOK endpoint. Deriving both from one value made the early-return
+        below skip the RELEASE for include_byok=false keys — stranding
+        `reserved` forever — when what should be skipped is only the window
+        contribution.
         """
         floors = window_floors(utcnow())
         row = conn.execute(
@@ -1641,7 +1651,16 @@ class PostgresStore:
             return
         limit_micro, include_byok = row
         if _is_byok(usage_type) and not include_byok:
+            # Symmetric with reserve_key_limit: no hold was ever taken for a
+            # BYOK-typed reservation on a key that excludes BYOK, so there is
+            # nothing to release and nothing to roll.
             return
+        if window_is_byok is None:
+            window_is_byok = _is_byok(usage_type)
+        if window_is_byok and not include_byok:
+            # The hold (Credits-typed) still releases; only the spend's window
+            # contribution is excluded, because the key excludes BYOK.
+            window_amount = 0
         # GREATEST(...) floors the release at zero so a duplicate settle
         # cannot drive `reserved` negative and hand the key free headroom.
         # Window counters roll in the same statement so a settle is one
@@ -2606,7 +2625,15 @@ class PostgresStore:
             #    in this one transaction, so the debt can never exist without
             #    its usage record or vice versa.
             if authorization.settlement == _DEFERRED_HOME_SETTLEMENT:
-                if booked:
+                # A BYOK-selected settle owes home NOTHING: the customer's own
+                # provider key paid for the tokens. Mixed candidate lists make
+                # this reachable — authorize went deferred because the CREDITS
+                # candidates needed money the local plane doesn't hold, but
+                # the enclave was still free to pick a BYOK endpoint. Debiting
+                # home's ledger for spend the customer already paid a provider
+                # for would charge them twice.
+                owes_home = 0 if _is_byok(selected_usage_type) else booked
+                if owes_home:
                     conn.execute(
                         "INSERT INTO tr_home_settlement_outbox"
                         "   (authorization_id, workspace_id, cost_microdollars,"
@@ -2614,24 +2641,31 @@ class PostgresStore:
                         " VALUES (%s, %s, %s, 'pending', 0,"
                         "         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
                         " ON CONFLICT (authorization_id) DO NOTHING",
-                        (authorization_id, authorization.workspace_id, booked),
+                        (authorization_id, authorization.workspace_id, owes_home),
                         prepare=False,
                     )
-                # True up the counter to the FROZEN actual. Authorize admitted
-                # the estimate; a failed request (booked == 0) hands the whole
-                # estimate back, which is why this is a signed delta rather
-                # than an increment.
+                # True up the counter to the FROZEN debt. Authorize admitted
+                # the estimate; a failed request or a BYOK-selected one owes
+                # nothing and hands the whole estimate back, which is why this
+                # is a signed delta rather than an increment.
                 self._adjust_deferred_outstanding_tx(
                     conn,
                     authorization.workspace_id,
-                    booked - int(authorization.estimated_microdollars),
+                    owes_home - int(authorization.estimated_microdollars),
                 )
                 self._release_key_hold_tx(
                     conn,
                     authorization.key_hash,
                     authorization.estimated_microdollars,
-                    usage_type=selected_usage_type,
+                    # The hold was reserved under the AUTHORIZE-time type
+                    # (Credits whenever a credit candidate existed) — release
+                    # under the same type, or an include_byok=false key whose
+                    # request settled on a BYOK endpoint strands its hold
+                    # forever. The window contribution keys off what was
+                    # actually SELECTED.
+                    usage_type=authorization.usage_type,
                     window_amount=booked,
+                    window_is_byok=_is_byok(selected_usage_type),
                 )
                 if booked:
                     column = "byok_usage" if _is_byok(selected_usage_type) else "usage"

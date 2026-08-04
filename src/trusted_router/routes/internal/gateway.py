@@ -97,7 +97,7 @@ from trusted_router.storage import (
     typed_billing_store,
 )
 from trusted_router.storage_custom_models import is_custom_model_id, normalize_custom_model_id
-from trusted_router.storage_errors import DeferredSettlementCapReached
+from trusted_router.storage_errors import DeferredSettlementCapReached, StoreConflict
 from trusted_router.storage_models import (
     SettleOutboxRow,
     TypedFinalizeResult,
@@ -595,6 +595,19 @@ def _authorize_gateway_sync(
                 ErrorType.DEFERRED_SETTLEMENT_CAP,
                 headers={"Retry-After": "30"},
             ) from cap_exc
+        except StoreConflict as conflict_exc:
+            # DSQL OCC exhausted its retries (a hot outstanding row under
+            # burst load will do this). Same rule as the cap arm: the escrow
+            # committed OUTSIDE this transaction, so nothing downstream will
+            # ever release it for a request that produced no authorization —
+            # swallowing this into a bare 503 leaks it silently, forever.
+            STORE.refund_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
+            raise api_error(
+                503,
+                "Authorization contention; retry shortly.",
+                ErrorType.SERVICE_UNAVAILABLE,
+                headers={"Retry-After": "1"},
+            ) from conflict_exc
     byok_config = (
         _get_byok_provider(workspace.id, endpoint.provider) if model_usage_type.is_byok() else None
     )
@@ -796,6 +809,31 @@ def register(router: APIRouter) -> None:
     ) -> dict[str, Any]:
         require_internal_gateway(request, settings)
         return await run_in_threadpool(drain_settle_outbox, limit)
+
+    @router.post("/internal/gateway/deferred/reap")
+    async def gateway_deferred_reap(
+        request: Request,
+        settings: SettingsDep,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Reclaim deferred authorizations whose settle never arrived.
+
+        A reaper that exists but is never run is the same as no reaper: each
+        abandoned authorization (the enclave dying between authorize and
+        settle — every deploy) leaks its estimate into the outstanding
+        counter until the workspace hits the cap and 402s forever. This
+        endpoint is the operator's lever today and the scheduler's target
+        when the forwarder increment wires periodic passes.
+        """
+        require_internal_gateway(request, settings)
+        reap = getattr(STORE, "reap_expired_deferred_authorizations", None)
+        if reap is None:
+            raise api_error(
+                501,
+                "This plane's store has no deferred-settlement reaper",
+                ErrorType.ENDPOINT_NOT_SUPPORTED,
+            )
+        return {"data": await run_in_threadpool(lambda: reap(limit=limit))}
 
 
 def _api_key_for_gateway_authorization(body: GatewayAuthorizeRequest) -> Any | None:

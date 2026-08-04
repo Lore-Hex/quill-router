@@ -234,6 +234,57 @@ def test_failed_request_enqueues_nothing_and_returns_the_whole_estimate(
     assert store.deferred_outstanding(WS)["outstanding"] == 3_000_000
 
 
+def test_byok_selected_settle_owes_home_nothing(harness: tuple[Any, Any]) -> None:
+    """Mixed candidates: authorize went deferred for the CREDITS candidates,
+    but the enclave picked a BYOK endpoint — the customer's own provider key
+    paid for the tokens. Enqueuing that as home debt charges them twice.
+    """
+    store, conn = harness
+    auth = _authorize(store, estimate=1_000_000)
+
+    assert store.finalize_gateway_authorization(
+        auth.id, success=True, actual_microdollars=400_000, selected_usage_type="BYOK"
+    ) is True
+
+    assert _outbox(conn) == [], "BYOK spend must never become home debt"
+    assert store.deferred_outstanding(WS)["outstanding"] == 0, (
+        "the whole estimate comes back: nothing is owed"
+    )
+
+
+def test_byok_selected_settle_releases_the_credits_hold(
+    harness: tuple[Any, Any],
+) -> None:
+    """The hold was reserved under CREDITS (a credit candidate existed); the
+    release must use that same type. Releasing under the SELECTED type made
+    _release_key_hold_tx's early-return skip the release entirely on
+    include_byok=false keys — reserved stranded forever, and the key's cap
+    shrinking with every mixed-candidate request that landed on BYOK.
+    """
+    store, conn = harness
+    conn.execute(
+        "INSERT INTO tr_key_limit"
+        " (workspace_id, key_hash, shard, limit_micro, usage, byok_usage,"
+        "  reserved, include_byok, updated_at)"
+        " VALUES (%s, %s, 0, 10000000, 0, 0, 1000000, 0, CURRENT_TIMESTAMP)",
+        (WS, KEY),
+    )
+    auth = _authorize(store, estimate=1_000_000)
+
+    assert store.finalize_gateway_authorization(
+        auth.id, success=True, actual_microdollars=400_000, selected_usage_type="BYOK"
+    ) is True
+
+    row = conn.execute(
+        "SELECT reserved, day_usage FROM tr_key_limit WHERE key_hash = %s AND shard = 0",
+        (KEY,),
+    ).fetchone()
+    assert row[0] == 0, "the Credits-typed hold must release regardless of selection"
+    assert (row[1] or 0) == 0, (
+        "an include_byok=false key must not have BYOK spend rolled into windows"
+    )
+
+
 # --------------------------------------------------------------------------
 # The reaper
 # --------------------------------------------------------------------------
