@@ -46,6 +46,7 @@ class CheckoutRequest(_Lenient):
     cancel_url: str | None = None
     payment_method: Literal[
         "auto",
+        "card",
         "ach",
         "bank",
         "us_bank_account",

@@ -30,6 +30,77 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="sign-in-with-trustedrouter-slopnazi",
+        title="Sign in with TrustedRouter",
+        description=(
+            "Let users sign in, fund their own AI balance, choose an app spending cap, "
+            "and grant an inference-only key. Now live on SlopNazi."
+        ),
+        published_date="2026-08-03",
+        source_label=None,
+        source_url=None,
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="Sign in with TrustedRouter user funded AI authorization flow">
+<rect width="1200" height="630" fill="#ffffff"/>
+<text x="60" y="58" font-size="22" font-weight="700" fill="#0f6e56">TrustedRouter</text>
+<text x="60" y="126" font-size="48" font-weight="700" fill="#111827">Sign in with TrustedRouter</text>
+<text x="60" y="166" font-size="22" fill="#6b7280">Your users bring their own AI, credits, and spending limit.</text>
+<defs>
+  <marker id="oauth-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0 0 L8 3 L0 6 z" fill="#6b7280"/>
+  </marker>
+</defs>
+
+<rect x="60" y="235" width="235" height="190" rx="8" fill="#f3f4f6" stroke="#d1d5db" stroke-width="2"/>
+<text x="177" y="275" text-anchor="middle" font-size="15" font-weight="700" fill="#6b7280">APP</text>
+<text x="177" y="320" text-anchor="middle" font-size="25" font-weight="700" fill="#111827">SlopNazi</text>
+<text x="177" y="354" text-anchor="middle" font-size="16" fill="#4b5563">Improve writing</text>
+<text x="177" y="384" text-anchor="middle" font-size="16" fill="#4b5563">Requests a $5 monthly cap</text>
+
+<line x1="295" y1="330" x2="350" y2="330" stroke="#6b7280" stroke-width="2.5" marker-end="url(#oauth-arrow)"/>
+
+<rect x="365" y="235" width="235" height="190" rx="8" fill="#ecfdf5" stroke="#6ee7b7" stroke-width="2"/>
+<text x="482" y="275" text-anchor="middle" font-size="15" font-weight="700" fill="#047857">USER</text>
+<text x="482" y="320" text-anchor="middle" font-size="25" font-weight="700" fill="#111827">Sign in</text>
+<text x="482" y="354" text-anchor="middle" font-size="16" fill="#4b5563">New account starts at $0</text>
+<text x="482" y="384" text-anchor="middle" font-size="16" fill="#4b5563">No provider key to copy</text>
+
+<line x1="600" y1="330" x2="655" y2="330" stroke="#6b7280" stroke-width="2.5" marker-end="url(#oauth-arrow)"/>
+
+<rect x="670" y="235" width="235" height="190" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="2"/>
+<text x="787" y="275" text-anchor="middle" font-size="15" font-weight="700" fill="#1d4ed8">CONTROL</text>
+<text x="787" y="320" text-anchor="middle" font-size="25" font-weight="700" fill="#111827">Fund and cap</text>
+<text x="787" y="354" text-anchor="middle" font-size="16" fill="#4b5563">$5  |  $20  |  $100</text>
+<text x="787" y="384" text-anchor="middle" font-size="16" fill="#4b5563">User chooses the maximum</text>
+
+<line x1="905" y1="330" x2="960" y2="330" stroke="#6b7280" stroke-width="2.5" marker-end="url(#oauth-arrow)"/>
+
+<rect x="975" y="235" width="165" height="190" rx="8" fill="#e1f5ee" stroke="#1d9e75" stroke-width="2.5"/>
+<text x="1057" y="275" text-anchor="middle" font-size="15" font-weight="700" fill="#0f6e56">KEY</text>
+<text x="1057" y="320" text-anchor="middle" font-size="23" font-weight="700" fill="#111827">Inference only</text>
+<text x="1057" y="354" text-anchor="middle" font-size="15" fill="#4b5563">Revocable</text>
+<text x="1057" y="384" text-anchor="middle" font-size="15" fill="#4b5563">PKCE protected</text>
+
+<rect x="60" y="475" width="1080" height="82" rx="8" fill="#111827"/>
+<text x="90" y="511" font-size="18" font-weight="700" fill="#ffffff">Live now at slopnazi.com</text>
+<text x="90" y="540" font-size="16" fill="#d1d5db">The app gets a capped key. The user keeps billing control. TrustedRouter keeps no prompt or output logs.</text>
+<text x="1140" y="612" text-anchor="end" font-size="18" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
+</svg>
+</figure>
+<p>Your users should be able to pay for their own AI without finding, copying, and trusting you with a provider API key.</p>
+<p>We shipped <a href="/sign-in-with-trustedrouter">Sign in with TrustedRouter</a>. An app sends its user to TrustedRouter. The user signs in, adds credits if needed, chooses exactly how much the app may spend, and approves one inference-only key. The app never receives a management key. It cannot change billing, inspect other keys, or take over the workspace.</p>
+<p><a href="https://slopnazi.com/editor">SlopNazi</a> is using it now for its full, context-aware writing editor. SlopNazi asks for a $5 monthly limit. The writer sees that number before approval and can change it. The resulting key pays for the writing calls from the writer's TrustedRouter balance.</p>
+<p>A person who creates a TrustedRouter account inside this flow starts at exactly <strong>$0</strong>. Direct email and OAuth signups on TrustedRouter still get the normal ten cents of starter credit. App-originated accounts do not. That closes an obvious credit-farming hole and makes the economic relationship honest from the first request.</p>
+<p>The funding step lives inside consent. The user can add $5, $20, or $100, with $20 selected by default. Stripe processes the payment and saves the card to the user's TrustedRouter account. The card can be removed later from the Credits page. Existing users see their current balance and can skip funding when they already have enough.</p>
+<p>The authorization itself uses PKCE. The app creates a verifier, sends only its SHA-256 challenge to TrustedRouter, and keeps the verifier for the code exchange. A stolen callback code is useless without it. The final key can carry a fixed, daily, weekly, or monthly maximum and an expiry. The user can revoke it at any time.</p>
+<p>The obvious objection is that the writing app sees the writing. Of course it does. The user gave text to that application to improve it, and the application needs its own honest privacy policy. Once the app calls a model, TrustedRouter sends that request through the <a href="https://trust.trustedrouter.com">attested API gateway</a>. TrustedRouter keeps no prompt or output logs, always. The delegated auth control plane handles identity, billing, and key metadata. It does not receive the model request body.</p>
+<p>The official SDKs already support Sign in with TrustedRouter. The <a href="https://github.com/Lore-Hex/trusted-router-py">Python SDK</a> ships <span class="mono">create_oauth_authorization</span> and <span class="mono">exchange_oauth_key</span>. The <a href="https://github.com/Lore-Hex/trusted-router-js">TypeScript SDK</a> ships <span class="mono">BrowserOAuthFlow</span>. The <a href="https://github.com/jperla/trusted-router-swift">Swift SDK</a> ships <span class="mono">TrustedRouterOAuth</span>. They generate PKCE state, build the authorization URL, validate the callback, and exchange the code.</p>
+<p>The complete flow is in the <a href="https://github.com/Lore-Hex/quill-router/blob/main/docs/sign-in-with-trustedrouter.md">developer documentation</a>, with SPA, backend, native, and loopback examples.</p>
+<p>Add one button. Let the user choose the bill and the boundary.</p>
+""",
+    ),
+    BlogPost(
         slug="how-confidential-computing-protects-ai-prompts",
         title="The cloud should not be able to read your prompts",
         description=(

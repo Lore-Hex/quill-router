@@ -62,8 +62,12 @@ def github_client(github_settings: Settings) -> Iterator[TestClient]:
         yield client
 
 
-def _begin_oauth(client: TestClient, provider: str) -> str:
-    response = client.get(f"/auth/{provider}/login", follow_redirects=False)
+def _begin_oauth(client: TestClient, provider: str, *, next_path: str | None = None) -> str:
+    response = client.get(
+        f"/auth/{provider}/login",
+        params={"next": next_path} if next_path else None,
+        follow_redirects=False,
+    )
     assert response.status_code == 302
     state = parse_qs(urlsplit(response.headers["location"]).query)["state"][0]
     assert client.cookies.get("tr_oauth_state") == state
@@ -203,6 +207,54 @@ async def test_google_callback_creates_session_for_new_user(google_client: TestC
     assert user.email_verified is True
     workspace = STORE.list_workspaces_for_user(user.id)[0]
     assert live_credit_summary(workspace.id)["total_credits"] == 100_000
+
+
+@pytest.mark.asyncio
+async def test_google_callback_delegated_signup_starts_at_zero_without_management_key(
+    google_client: TestClient,
+) -> None:
+    next_path = (
+        "/auth?callback_url=https%3A%2F%2Fslopnazi.com%2Feditor"
+        "&key_label=SlopNazi&limit=5&usage_limit_type=monthly"
+    )
+    state = _begin_oauth(google_client, "google", next_path=next_path)
+
+    async def fake_exchange(**_: Any) -> str:
+        return "access-token"  # noqa: S105
+
+    async def fake_fetch_user(**_: Any) -> Any:
+        from trusted_router.oauth_provider import OAuthUserInfo
+
+        return OAuthUserInfo(
+            sub="google-slopnazi-user",
+            email="writer@example.com",
+            email_verified=True,
+            display_name="Writer",
+        )
+
+    with patch("trusted_router.routes.oauth.exchange_code", fake_exchange), patch(
+        "trusted_router.routes.oauth.fetch_user", fake_fetch_user
+    ):
+        response = google_client.get(
+            f"/google_oauth_callback?code=auth-code&state={state}",
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == next_path
+    assert "tr_pending_reveal=" not in response.headers.get("set-cookie", "")
+    user = STORE.find_user_by_email("writer@example.com")
+    assert user is not None
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    assert live_credit_summary(workspace.id)["total_credits"] == 0
+    assert STORE.list_keys(workspace.id) == []
+
+    consent = google_client.get(response.headers["location"])
+    assert consent.status_code == 200
+    assert "$0.00 available" in consent.text
+    assert "This account starts at $0" in consent.text
+    assert 'value="5"' in consent.text
+    assert '<option value="monthly" selected>' in consent.text
 
 
 @pytest.mark.asyncio
