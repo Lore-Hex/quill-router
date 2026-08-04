@@ -92,7 +92,11 @@ from trusted_router.storage_gcp_credit_shards import (
 from trusted_router.storage_gcp_custom_models import SpannerCustomModels
 from trusted_router.storage_gcp_email_blocks import SpannerEmailBlocks
 from trusted_router.storage_gcp_generations import SpannerGenerations
-from trusted_router.storage_gcp_io import SpannerIO, run_in_transaction_with_retry
+from trusted_router.storage_gcp_io import (
+    SpannerIO,
+    configure_spanner_rpc_deadlines,
+    run_in_transaction_with_retry,
+)
 from trusted_router.storage_gcp_keys import SpannerApiKeys
 from trusted_router.storage_gcp_oauth_codes import SpannerOAuthCodes
 from trusted_router.storage_gcp_operational_analytics_outbox import (
@@ -274,6 +278,7 @@ class SpannerBigtableStore:
                 pool=FixedSizePool(size=pool_size),
             )
         )
+        configure_spanner_rpc_deadlines(self._database)
         # Bigtable app-profile selection. Empty string = use the
         # instance's implicit default profile (current behavior; single-
         # cluster routing). Setting `tr-multi` (or whatever name we

@@ -23,6 +23,7 @@ from trusted_router.storage_gcp_counter_dml import (
     clear_reservation_retention,
     complete_reservation_retention,
 )
+from trusted_router.storage_gcp_io import run_in_transaction_with_retry
 from trusted_router.storage_gcp_request_records import (
     clear_gateway_authorization_retention,
     complete_gateway_authorization_retention,
@@ -202,7 +203,7 @@ class SpannerSettleOutbox:
             )
 
         try:
-            self._database.run_in_transaction(insert_txn)
+            run_in_transaction_with_retry(self._database, insert_txn)
             return ENQ_INSERTED
         except Exception as exc:  # ALREADY_EXISTS -> the intent is already recorded
             if not _is_already_exists(exc):
@@ -252,7 +253,7 @@ class SpannerSettleOutbox:
                 )
             return refreshed
 
-        refreshed = self._database.run_in_transaction(refresh_txn)
+        refreshed = run_in_transaction_with_retry(self._database, refresh_txn)
         if refreshed == 1:
             return ENQ_REFRESHED
         # 0-row: classify for accurate observability (codex #113) — a still-pending
@@ -312,7 +313,7 @@ class SpannerSettleOutbox:
                 },
             )
 
-        return self._database.run_in_transaction(txn) == 1
+        return run_in_transaction_with_retry(self._database, txn) == 1
 
     def mark(
         self,
@@ -455,7 +456,7 @@ class SpannerSettleOutbox:
                 self._defer_retention(transaction, authorization_id, reservation_id)
             return new_status
 
-        return self._database.run_in_transaction(txn)
+        return run_in_transaction_with_retry(self._database, txn)
 
     def _defer_retention(
         self,
@@ -536,7 +537,7 @@ class SpannerSettleOutbox:
             self._defer_retention(transaction, authorization_id, parked_reservation_id)
             return True
 
-        return bool(self._database.run_in_transaction(txn))
+        return bool(run_in_transaction_with_retry(self._database, txn))
 
     # ── reaper guard predicate ───────────────────────────────────────────────
     def has_intent(self, authorization_id: str) -> bool:
