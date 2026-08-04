@@ -105,8 +105,7 @@ def _render_page(ctx: ConsoleDep, settings: SettingsDep, *, request: Request) ->
     return render(
         "console/custom_models.html",
         settings=settings,
-        user=ctx.user,
-        workspace=ctx.workspace,
+        ctx=ctx,
         active="custom-models",
         page_title="Custom Models",
         page_subtitle="Create hidden-prompt model aliases that run through the attested gateway.",

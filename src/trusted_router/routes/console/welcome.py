@@ -39,7 +39,7 @@ def register(app: FastAPI) -> None:
         response = HTMLResponse(render(
             "console/welcome.html",
             settings=settings,
-            user=ctx.user,
+            ctx=ctx,
             active="api-keys",
             page_title="Welcome",
             page_subtitle="Save your API key — it won't be shown again.",
@@ -50,7 +50,6 @@ def register(app: FastAPI) -> None:
             # from accounts configured with the grant disabled.
             trial_credit=money(trial_microdollars),
             trial_credit_microdollars=trial_microdollars,
-            api_base_url=ctx.api_base_url,
         ))
         if clear_pending_reveal:
             # Delete cookie with the same path it was set with — otherwise

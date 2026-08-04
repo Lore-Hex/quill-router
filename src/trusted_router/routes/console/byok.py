@@ -32,12 +32,11 @@ def register(app: FastAPI) -> None:
         return HTMLResponse(render(
             "console/byok.html",
             settings=settings,
-            user=ctx.user,
+            ctx=ctx,
             active="byok",
             page_title="BYOK",
             page_subtitle="Bring your own provider keys.",
             providers=providers,
-            api_base_url=ctx.api_base_url,
         ))
 
     @app.post("/console/byok")
