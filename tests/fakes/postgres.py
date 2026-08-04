@@ -53,6 +53,10 @@ class SqlitePostgresConn:
         # what differs most between plain Postgres and Aurora DSQL.
         translated = (
             sql.replace("%s", "?").replace("::jsonb", "").replace(" FOR UPDATE", "")
+            # SQLite's scalar max is multi-arg MAX(); it has no GREATEST.
+            # GREATEST always takes >=2 args here, so the mapping is exact —
+            # single-arg MAX (the aggregate) can never be produced by it.
+            .replace("GREATEST(", "MAX(")
         )
         return self._raw.execute(translated, params)
 
