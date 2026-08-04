@@ -63,6 +63,21 @@ deliberately run plain ``ReplacingMergeTree``
 (``006_operational_analytics_single_node.sql``) and are kept in step by this
 drain.
 
+**A failing node must not freeze the read.**  The batch SELECT has no offset,
+so the DELETE is the only thing that advances it.  While any target fails
+nothing is deleted, which means an unpaged drain re-reads the identical
+lowest-ordered batch every sweep for the whole outage: rows sorting above that
+window reach NO node, and the *healthy* node — the one holding the only copy of
+this cloud's history — goes permanently stale.  So a batch that could not be
+deleted steps an in-memory cursor over itself (`drain_shard_once`), and the
+cursor resets at the end of the shard, which is what re-offers those rows once
+the failing node returns.  Nothing is deleted by stepping over it; the outbox is
+still the record of what is owed.
+
+The cost of that is a bounded re-write: during an outage each full pass re-offers
+the backlog to the nodes that are up, and `ReplacingMergeTree` collapses it.  One
+rewrite per pass, not one per poll.
+
 **Unbounded outbox growth when a node stays down.**  There is no automatic
 bound, and that is deliberate: any automatic bound would have to either delete
 undelivered rows — the exact loss this design exists to prevent — or stop the
@@ -113,6 +128,38 @@ operator chose, and the distinction is the whole limitation:
   collapse rather than double.  This is a deliberate operator action with a
   window the operator must determine; it is not automatic, and pretending
   otherwise is how a "replicated" store quietly ends up with one real copy.
+
+  Run it FROM PARIS, pushing (``INSERT INTO FUNCTION remote(...) SELECT``).
+  A pull from Stockholm cannot connect: the Paris security group admits only
+  the Paris VPC CIDR and the Paris ``default`` user is pinned to that CIDR plus
+  loopback, so Stockholm is refused at both layers.  Only Paris → Stockholm is
+  open.
+
+What this does NOT protect against
+----------------------------------
+
+Stated plainly, because a durability mechanism that oversells itself is worse
+than one whose edges are known:
+
+* **An ack is a server ack, not an fsync.**  A target "succeeded" means
+  ``clickhouse-client`` exited 0, i.e. the server accepted the insert.  Neither
+  node sets ``fsync_after_insert``, so an accepted part is in the page cache.
+  If a node takes an unclean shutdown in the seconds after it acked a batch that
+  was then deleted from the outbox, that batch survives on the other node only —
+  and nothing notices, because the drain has forgotten the rows and the two
+  nodes are never compared to each other.  The fan-out makes *total* loss much
+  less likely; it does not make a single node's just-acked writes durable.
+* **Two of the four tables.**  This drain writes ``activity_generations`` and
+  ``synthetic_probe_samples`` (``EVENT_TABLES``).  The single-node DDL also
+  creates ``synthetic_status_rollups`` and ``public_analytics_snapshots``, which
+  nothing on this cloud writes today — they are produced by GCP timers — so both
+  nodes hold them empty.  If such a job is ever pointed at Paris, its output is
+  NOT replicated by this drain and the second copy is not complete until it is.
+* **The alarm needs this process alive.**  ``backlog_alarm`` is emitted from the
+  sweep loop, so it says nothing while the drain is not running.  A
+  configuration error therefore exits with ``CONFIG_EXIT_CODE``, which the unit
+  file refuses to restart, so a bad environment leaves a *failed* unit rather
+  than a silent crash-loop with the outbox growing behind it.
 """
 
 from __future__ import annotations
@@ -170,6 +217,26 @@ SELECT_SHARD_BATCH_SQL = (
     "ORDER BY event_kind, event_id "
     "LIMIT %s"
 )
+# The same read, resumed past a key. Needed because the DELETE is the only thing
+# that advances the unpaged statement above: while any target is failing nothing
+# is deleted, so an unpaged drain re-reads the identical lowest-ordered batch on
+# every sweep forever. The healthy node then stops receiving new rows entirely —
+# a down replica starving the copy that is up — and rows sorting above that
+# window reach NO node at all. Same defect and same fix as
+# `list_open_credit_transfers`, which pages for exactly this reason.
+#
+# Scalar comparisons rather than the row-value form `(a, b) > (c, d)`: both are
+# standard SQL, but only the scalar shape is already proven against Aurora DSQL
+# in this codebase, and a syntax the drain cannot parse is a drain that delivers
+# nothing.
+SELECT_SHARD_BATCH_AFTER_SQL = (
+    "SELECT shard, enqueued_at, event_kind, event_id, payload "
+    "FROM tr_operational_analytics_outbox "
+    "WHERE shard = %s "
+    "AND (event_kind > %s OR (event_kind = %s AND event_id > %s)) "
+    "ORDER BY event_kind, event_id "
+    "LIMIT %s"
+)
 DELETE_BY_KEY_SQL = (
     "DELETE FROM tr_operational_analytics_outbox "
     "WHERE shard = %s AND event_kind = %s AND event_id = %s"
@@ -202,6 +269,19 @@ PRIMARY_TARGET_NAME = "primary"
 #: and is skipped, which is why one endpoint stays the default.
 REPLICA_ENV_SUFFIXES: tuple[str, ...] = ("REPLICA", "REPLICA_2", "REPLICA_3")
 
+#: Per-replica fields under `{PREFIX}_{SUFFIX}_`. Written out rather than
+#: inferred so a setting that is NOT one of these can be rejected as a typo
+#: instead of silently ignored — see `_refuse_orphaned_replica_settings`.
+REPLICA_ENV_FIELDS: tuple[str, ...] = (
+    "HOST",
+    "NAME",
+    "PORT",
+    "USER",
+    "DATABASE",
+    "SECURE",
+    "TIMEOUT_SECONDS",
+)
+
 #: Native protocol. The HTTP port (8123) also works but the native port is what
 #: clickhouse-client speaks by default.
 DEFAULT_REPLICA_PORT = 9000
@@ -212,6 +292,19 @@ DEFAULT_REPLICA_TIMEOUT_SECONDS = 60.0
 #: Age of the oldest undelivered row at which the backlog stops being normal
 #: catch-up and becomes something an operator has to decide about.
 DEFAULT_MAX_LAG_SECONDS = 3600.0
+
+#: Failures a single target may accumulate in one sweep before the rest of that
+#: sweep skips it. Bounds a wedged node's cost from "one timeout per shard" to
+#: "a handful per sweep" without disabling a target over a single blip.
+SWEEP_TARGET_FAILURE_LIMIT = 3
+
+#: Exit status for a configuration error, distinct from a crash so systemd can
+#: refuse to restart it (RestartPreventExitStatus in the unit file). A bad
+#: environment cannot be fixed by running again: with Restart=always the drain
+#: would crash-loop invisibly while the outbox grew at full rate, and the alarm
+#: that is supposed to bound that growth is emitted BY the process that is not
+#: running. A unit in `failed` is visible; a unit restarting every 5s is not.
+CONFIG_EXIT_CODE = 78  # EX_CONFIG
 
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0", "[::1]"})  # noqa: S104
 
@@ -252,6 +345,22 @@ class ClickHouseTarget:
         return f"{self.name}@{endpoint}/{self.database}"
 
 
+class TargetCircuitOpen(RuntimeError):
+    """This target already failed repeatedly during the current sweep.
+
+    Recorded exactly like any other write failure, so a batch containing one of
+    these is never deleted. It is a *reason* the batch was not delivered, not a
+    lesser kind of success.
+    """
+
+    def __init__(self, name: str) -> None:
+        super().__init__(
+            f"skipped for the rest of this sweep after "
+            f"{SWEEP_TARGET_FAILURE_LIMIT} consecutive failures; "
+            f"nothing is deleted for {name}"
+        )
+
+
 class FanOutWriteError(RuntimeError):
     """At least one target did not accept the batch, so nothing may be deleted.
 
@@ -290,23 +399,45 @@ class FanOutOperationalWriter:
             raise ValueError("at least one ClickHouse target is required")
         self._targets = list(targets)
         self.consecutive_failures: dict[str, int] = {name: 0 for name, _ in self._targets}
+        self._sweep_failures: dict[str, int] = {name: 0 for name, _ in self._targets}
+
+    def begin_sweep(self) -> None:
+        """Re-arm the per-sweep breaker. Called by `drain_once` per sweep."""
+        self._sweep_failures = {name: 0 for name, _ in self._targets}
 
     def insert(self, events: list[Any]) -> None:
         failures: list[tuple[str, BaseException]] = []
         succeeded: list[str] = []
         for name, writer in self._targets:
+            if self._sweep_failures.get(name, 0) >= SWEEP_TARGET_FAILURE_LIMIT:
+                # Hard-down node: stop paying its timeout on every remaining
+                # shard of this sweep. A remote write is bounded by
+                # DEFAULT_REPLICA_TIMEOUT_SECONDS and is issued once per target
+                # per event kind per shard, so a node that stalls rather than
+                # refusing would otherwise cost 32 shards x 2 kinds x 60s ~ 64
+                # MINUTES for a single sweep -- during which the healthy node
+                # receives nothing new and the backlog alarm, which is the only
+                # bound on outbox growth, is evaluated once.
+                #
+                # A skip is recorded as a FAILURE, never as a success: nothing
+                # may be deleted for a target that did not receive the batch.
+                # The threshold is >1 so a single blip does not disable a target
+                # for the rest of the sweep.
+                failures.append((name, TargetCircuitOpen(name)))
+                continue
             try:
                 writer.insert(events)
             except Exception as exc:  # noqa: BLE001 - recorded, then re-raised below.
                 # EVERY target is attempted even after one fails, rather than
-                # short-circuiting. Stopping at the first failure would mean a
-                # down primary also starves the healthy replica: nothing is
-                # deleted either way, so the rows are not lost, but the healthy
-                # node would sit at the same staleness as the broken one for as
-                # long as the outage lasted. Attempting all of them keeps every
-                # reachable copy current and confines the lag to the node that
-                # actually earned it.
+                # short-circuiting on the first. Stopping at the first failure
+                # would mean a down primary also delayed the healthy replica's
+                # copy of THIS batch, for no gain: nothing is deleted either
+                # way. (What actually keeps the healthy node current across
+                # sweeps is the read cursor in `drain_shard_once`, not this
+                # loop -- without it a down target freezes the read window and
+                # the healthy node stops receiving new rows entirely.)
                 failures.append((name, exc))
+                self._sweep_failures[name] = self._sweep_failures.get(name, 0) + 1
             else:
                 succeeded.append(name)
         for name in succeeded:
@@ -345,7 +476,89 @@ def _env_flag(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def clickhouse_targets_from_env(env: Mapping[str, str]) -> list[ClickHouseTarget]:
+def _refuse_orphaned_replica_settings(env: Mapping[str, str]) -> None:
+    """A replica half-configured is a replica silently not configured.
+
+    Validation here used to run in one direction only: `_HOST` without a
+    password was fatal, but a password (or a name, or a port) without a `_HOST`
+    was skipped in silence. The drain then built ONE target, logged
+    `copies=1 degraded_targets=-`, and — because a single target is deletable —
+    started deleting rows the second node never received. Indistinguishable in
+    every log line from a deliberate single-node deployment, and reached by
+    misspelling one variable in a hand-edited environment file.
+
+    So any `*_REPLICA*` setting is treated as evidence that a second copy was
+    INTENDED, and a missing host for it is a startup error rather than a
+    shrug. Nothing here can tell a typo from a decision, which is exactly why
+    it must refuse instead of guess.
+    """
+    recognised: dict[str, str] = {}
+    for suffix in REPLICA_ENV_SUFFIXES:
+        recognised[f"CH_{suffix}_PASSWORD"] = suffix
+        for field in REPLICA_ENV_FIELDS:
+            recognised[f"{CLICKHOUSE_ENV_PREFIX}_{suffix}_{field}"] = suffix
+
+    for key, value in sorted(env.items()):
+        if "REPLICA" not in key or not str(value).strip():
+            continue
+        if not key.startswith(("CH_", CLICKHOUSE_ENV_PREFIX)):
+            continue
+        suffix = recognised.get(key)
+        if suffix is None:
+            # Spelled like replica configuration but matching nothing this code
+            # reads: `..._REPLICA_HOSTS`, `..._REPLICA1_HOST`, the right name
+            # under the wrong prefix. Ignoring it is what makes a typo look
+            # exactly like a working two-copy deployment.
+            raise ValueError(
+                f"{key} is set but is not a setting this drain reads. "
+                "It looks like replica configuration, so it is refused rather "
+                "than ignored: an ignored replica setting means the drain runs "
+                "single-node and deletes rows the second node never received."
+            )
+        if not env.get(f"{CLICKHOUSE_ENV_PREFIX}_{suffix}_HOST", "").strip():
+            raise ValueError(
+                f"{key} is set but {CLICKHOUSE_ENV_PREFIX}_{suffix}_HOST is not. "
+                "A replica configured this way is silently NOT a second copy: "
+                "the drain would run single-node and delete rows that never "
+                "reached it."
+            )
+
+
+def _is_own_address(host: str) -> bool:
+    """Whether `host` is an address belonging to THIS machine.
+
+    An address can be bound only on the machine that owns it, so a UDP bind is
+    the answer without a name lookup, without a packet, and without a timeout to
+    get wrong. Deliberately NOT resolution-based: a hostname lookup here would
+    put DNS (and, on a laptop, mDNS) on the drain's startup path.
+
+    Literal addresses only, which is also the realistic mistake: the deployment
+    addresses ClickHouse by private IP -- the provisioning script's own
+    instructions paste one -- so pasting the LOCAL node's private IP is how a
+    "second copy" ends up on the same EBS volume. A non-literal host is left to
+    the name-based check.
+    """
+    import ipaddress
+    import socket
+
+    try:
+        parsed = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    family = socket.AF_INET6 if parsed.version == 6 else socket.AF_INET
+    try:
+        with socket.socket(family, socket.SOCK_DGRAM) as probe:
+            probe.bind((host, 0))
+    except OSError:
+        return False
+    return True
+
+
+def clickhouse_targets_from_env(
+    env: Mapping[str, str],
+    *,
+    local_hosts: frozenset[str] | set[str] | None = None,
+) -> list[ClickHouseTarget]:
     """Read the configured endpoints, primary first.
 
     The primary is described by exactly the variables that already existed —
@@ -367,12 +580,16 @@ def clickhouse_targets_from_env(env: Mapping[str, str]) -> list[ClickHouseTarget
             database=database,
         )
     ]
+    is_local = (
+        (lambda host: host in local_hosts) if local_hosts is not None else _is_own_address
+    )
+    _refuse_orphaned_replica_settings(env)
     for suffix in REPLICA_ENV_SUFFIXES:
         prefix = f"{CLICKHOUSE_ENV_PREFIX}_{suffix}"
         host = env.get(f"{prefix}_HOST", "").strip()
         if not host:
             continue
-        if host.lower() in _LOOPBACK_HOSTS:
+        if host.lower() in _LOOPBACK_HOSTS or is_local(host):
             # A "replica" on this machine is a second copy on the SAME EBS
             # volume, which is zero additional durability while reading as two
             # copies everywhere. Refuse it at startup rather than let it be
@@ -427,12 +644,17 @@ class SweepResult:
     Carries `failed_shards` because a sweep is no longer all-or-nothing: shards
     fail independently, and a caller that could not tell the difference would
     log a healthy-looking rows=0 while delivery was entirely broken.
+
+    `degraded_targets` is every endpoint that failed at least ONE shard during
+    the sweep, which is not the same question as "did the last write fail" and
+    is the one an operator is actually asking.
     """
 
     fetched: int
     inserted: int
     rows_per_second: float
     failed_shards: int = 0
+    degraded_targets: tuple[str, ...] = ()
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -572,12 +794,30 @@ class PostgresOperationalOutboxSource:
 
     # -- source surface -----------------------------------------------------
 
-    def fetch_shard(self, shard: int, *, limit: int) -> list[OperationalOutboxRow]:
+    def fetch_shard(
+        self,
+        shard: int,
+        *,
+        limit: int,
+        after: tuple[str, str] | None = None,
+    ) -> list[OperationalOutboxRow]:
+        """The next `limit` rows of `shard`, optionally resumed past `after`.
+
+        `after=None` issues the byte-identical statement this has always issued,
+        so the single-node deployment reads exactly what it read before paging
+        existed. Paging is used only when a batch could not be deleted.
+        """
         if limit < 1:
             return []
+        if after is None:
+            statement, params = SELECT_SHARD_BATCH_SQL, (shard, limit)
+        else:
+            event_kind, event_id = after
+            statement = SELECT_SHARD_BATCH_AFTER_SQL
+            params = (shard, event_kind, event_kind, event_id, limit)  # type: ignore[assignment]
 
         def read(conn: Any) -> list[OperationalOutboxRow]:
-            rows = conn.execute(SELECT_SHARD_BATCH_SQL, (shard, limit)).fetchall()
+            rows = conn.execute(statement, params).fetchall()
             return [
                 OperationalOutboxRow(
                     shard=int(row[0]),
@@ -625,6 +865,7 @@ def drain_shard_once(
     *,
     shard: int,
     batch_size: int,
+    cursors: dict[int, tuple[str, str]] | None = None,
 ) -> ShardDrainResult:
     """One bounded SELECT -> ClickHouse write -> DELETE for a single shard.
 
@@ -636,13 +877,52 @@ def drain_shard_once(
     EVERY target accepted the batch, so "the delete is gated on the write" and
     "the delete is gated on all copies" are the same statement. Nothing here
     knows how many copies there are.
+
+    `cursors` is the caller's in-memory read position per shard, and exists
+    because the DELETE is the only thing that advances an unpaged read. A batch
+    that could not be deleted — a target down, or a payload this build cannot
+    normalise — would otherwise be re-read and re-written on every sweep for
+    the whole outage, while every row sorting above it reached no node at all.
+    So a batch that is NOT deleted steps the cursor over itself, and a batch
+    that IS deleted clears it: the rows are gone, and the next read starts at
+    the head exactly as it always did.
+
+    Stepping over a batch never forgets it. Nothing was deleted, so the rows are
+    still in the outbox, and the cursor resets at the end of the shard — the
+    next pass re-reads them and delivers them once the failing target is back.
     """
-    rows = source.fetch_shard(shard, limit=batch_size)
+    after = cursors.get(shard) if cursors is not None else None
+    # `after=None` calls this with exactly the historical arguments, so a source
+    # that has never heard of paging (and the single-node deployment) is
+    # untouched.
+    rows = (
+        source.fetch_shard(shard, limit=batch_size)
+        if after is None
+        else source.fetch_shard(shard, limit=batch_size, after=after)
+    )
     if not rows:
+        # End of the shard. Restart at the head next pass, which is what
+        # re-offers any batch this pass stepped over.
+        if cursors is not None:
+            cursors.pop(shard, None)
         return ShardDrainResult(shard=shard, fetched=0, inserted=0, deleted=0)
-    events = [normalise_operational_event(row) for row in rows]
-    writer.insert(events)
+    # A short batch means this is the shard's last one; there is nothing further
+    # to make progress on, so the cursor resets whatever happens below.
+    exhausted = len(rows) < batch_size
+    last_key = (rows[-1].event_kind, rows[-1].event_id)
+    try:
+        events = [normalise_operational_event(row) for row in rows]
+        writer.insert(events)
+    except BaseException:
+        if cursors is not None:
+            if exhausted:
+                cursors.pop(shard, None)
+            else:
+                cursors[shard] = last_key
+        raise
     deleted = source.delete(rows)
+    if cursors is not None:
+        cursors.pop(shard, None)
     return ShardDrainResult(
         shard=shard,
         fetched=len(rows),
@@ -657,6 +937,7 @@ def drain_once(
     *,
     batch_size: int,
     shard_count: int = OUTBOX_SHARDS,
+    cursors: dict[int, tuple[str, str]] | None = None,
 ) -> SweepResult:
     """Sweep every shard once, bounding each shard's batch.
 
@@ -671,14 +952,29 @@ def drain_once(
     fetched = 0
     inserted = 0
     failed_shards = 0
+    degraded: dict[str, None] = {}
+    # Lets a fan-out stop re-dialling a target that has already failed several
+    # times THIS sweep; see FanOutOperationalWriter.begin_sweep. Absent on the
+    # plain single-node writer, which is why this is a getattr.
+    begin_sweep = getattr(writer, "begin_sweep", None)
+    if callable(begin_sweep):
+        begin_sweep()
     started = time.monotonic()
     for shard in range(shard_count):
         try:
-            result = drain_shard_once(source, writer, shard=shard, batch_size=batch_size)
-        except Exception:
+            result = drain_shard_once(
+                source, writer, shard=shard, batch_size=batch_size, cursors=cursors
+            )
+        except Exception as exc:
             # Deliberately broad: this is a daemon sweeping independent shards,
             # and no single shard's failure is a reason to stop the others.
             failed_shards += 1
+            # Accumulated over the WHOLE sweep, not read off the writer at the
+            # end of it. The writer's own counter is reset by any success, so a
+            # target that rejected 31 shards and accepted the 32nd would report
+            # as healthy in the one field the runbook says to watch.
+            for name in getattr(exc, "failed_targets", ()):
+                degraded[str(name)] = None
             log.exception(
                 "operational_analytics_outbox.shard_failed backend=postgres shard=%d",
                 shard,
@@ -692,6 +988,7 @@ def drain_once(
         inserted=inserted,
         rows_per_second=inserted / elapsed,
         failed_shards=failed_shards,
+        degraded_targets=tuple(degraded),
     )
 
 
@@ -740,7 +1037,12 @@ def main() -> int:
     try:
         targets = clickhouse_targets_from_env(os.environ)
     except ValueError as exc:
-        raise SystemExit(str(exc)) from exc
+        # CONFIG_EXIT_CODE, not the default 1: the unit sets
+        # RestartPreventExitStatus for it, so a bad environment stops the unit
+        # visibly instead of crash-looping every RestartSec while the outbox
+        # grows and nothing is left running to raise the backlog alarm.
+        log.error("operational_analytics_outbox.config_invalid backend=postgres error=%s", exc)
+        raise SystemExit(CONFIG_EXIT_CODE) from exc
     writer = build_operational_writer(targets)
     log.info(
         "operational_analytics_outbox.targets backend=postgres copies=%d targets=%s",
@@ -748,12 +1050,28 @@ def main() -> int:
         ",".join(target.describe() for target in targets),
     )
     poll_seconds = max(0.1, args.poll_seconds)
-    max_lag_seconds = max(0.0, args.max_lag_seconds)
+    max_lag_seconds = float(args.max_lag_seconds)
+    if max_lag_seconds <= 0:
+        # `lag >= max > 0` used to silently disable the alarm for a
+        # non-positive value. The alarm is the ONLY bound on outbox growth, so
+        # a value that turns it off is a configuration error, not a setting.
+        log.error(
+            "operational_analytics_outbox.config_invalid backend=postgres "
+            "error=--max-lag-seconds must be positive (got %s); it is the only "
+            "bound on outbox growth",
+            max_lag_seconds,
+        )
+        raise SystemExit(CONFIG_EXIT_CODE)
+    # Per-shard read position, owned here so it survives ACROSS sweeps: a batch
+    # that could not be deleted is stepped over, and that only helps if the next
+    # sweep remembers where it got to.
+    cursors: dict[int, tuple[str, str]] = {}
     while True:
         result = drain_once(
             source,
             writer,
             batch_size=max(1, int(args.batch_size)),
+            cursors=cursors,
         )
         # Lag is observability, so it must never be the thing that kills the
         # drain: an error reading it says nothing about whether delivery works.
@@ -762,7 +1080,10 @@ def main() -> int:
         except Exception:
             log.exception("operational_analytics_outbox.lag_unavailable backend=postgres")
             lag_seconds = -1.0
-        degraded = degraded_target_names(writer)
+        # Union of "failed at some point during this sweep" and "is failing
+        # right now". The first is what the operator is asking; the second
+        # carries across a sweep in which the target was skipped by the breaker.
+        degraded = sorted({*result.degraded_targets, *degraded_target_names(writer)})
         log.info(
             "operational_analytics_outbox.metrics backend=postgres rows=%d "
             "rows_per_second=%.3f drain_lag_seconds=%.3f failed_shards=%d "

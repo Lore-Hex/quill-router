@@ -23,6 +23,24 @@ WorkingDirectory=/opt/tr-clickhouse
 # The DSN must NOT carry a password: on DSQL the token is minted per
 # connection, and on plain Postgres libpq reads PGPASSWORD from this file
 # rather than from argv, where every local user could read it.
+#
+# SECOND DURABLE COPY (optional, additive). Setting
+# TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_REPLICA_HOST turns the drain into a
+# dual-write: it writes each batch to the local node AND to that host, and
+# deletes the outbox rows only when BOTH accept. Provision the second node with
+# scripts/deploy/aws_eu_north_clickhouse.sh, which prints this block. Also
+# needs CH_REPLICA_PASSWORD, and takes optional _REPLICA_NAME / _REPLICA_PORT /
+# _REPLICA_USER / _REPLICA_DATABASE / _REPLICA_SECURE / _REPLICA_TIMEOUT_SECONDS.
+# With none of these set the drain is exactly what it was: one node, one copy.
+#
+# While a configured node is unreachable NOTHING is deleted, so the outbox
+# absorbs the whole backlog and the node catches up by itself when it returns.
+# That is also why the outbox can grow without bound: watch for
+# `operational_analytics_outbox.backlog_alarm` (ERROR, past
+# --max-lag-seconds, default 1h) and for `degraded_targets=` in the metrics
+# line. The two supported responses are to restore the node, or to remove its
+# _REPLICA_ variables here and restart — after which that node is permanently
+# behind and needs an out-of-band backfill. See the module docstring.
 EnvironmentFile=/etc/tr-clickhouse-ingest-postgres.env
 ExecStart=/opt/tr-clickhouse/venv/bin/python -m clickhouse.ingest_operational_outbox_postgres
 # The drain sweeps shards independently and contains per-shard failures, so it
@@ -32,6 +50,13 @@ ExecStart=/opt/tr-clickhouse/venv/bin/python -m clickhouse.ingest_operational_ou
 # ClickHouse tables quietly return to reading zero rows.
 Restart=always
 RestartSec=5
+# ...except for a CONFIGURATION error (EX_CONFIG), which running again cannot
+# fix. Without this, a typo in the replica block below crash-loops every 5s
+# forever: the outbox grows at full rate, and the backlog alarm that is meant to
+# bound that growth is emitted BY this process, so it never fires. A unit sitting
+# in `failed` is visible to an operator and to any unit-state alerting; a unit
+# restarting silently is not.
+RestartPreventExitStatus=78
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true

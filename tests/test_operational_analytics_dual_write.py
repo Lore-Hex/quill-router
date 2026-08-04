@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
@@ -34,6 +36,7 @@ from typing import Any
 import pytest
 
 import clickhouse.ingest_operational_outbox as writer_module
+import clickhouse.ingest_operational_outbox_postgres as drain_module
 from clickhouse.ingest_operational_outbox import (
     ClickHouseOperationalWriter,
     OperationalOutboxRow,
@@ -72,7 +75,6 @@ HISTORICAL_COMMAND = [
     "INSERT INTO activity_generations FORMAT JSONEachRow",
 ]
 
-PARIS = "10.0.4.11"
 STOCKHOLM = "10.60.1.7"
 
 DUAL_ENV = {
@@ -194,14 +196,32 @@ def _row(event_id: str, *, shard: int | None = None) -> OperationalOutboxRow:
 
 
 class _Source:
-    """The outbox table, keyed exactly as Postgres keys it."""
+    """The outbox table, keyed and ORDERED exactly as Postgres orders it.
+
+    `fetch_shard` models SELECT_SHARD_BATCH_SQL literally -- `WHERE shard = %s
+    ORDER BY event_kind, event_id LIMIT %s`, optionally resumed past a key --
+    because the defect this file now pins is a property of that statement: it
+    has no offset, so the DELETE is the only thing that advances it.
+    """
 
     def __init__(self, rows: list[OperationalOutboxRow]) -> None:
         self.rows = list(rows)
         self.delete_calls: list[list[OperationalOutboxRow]] = []
 
-    def fetch_shard(self, shard: int, *, limit: int) -> list[OperationalOutboxRow]:
-        return [row for row in self.rows if row.shard == shard][:limit]
+    def fetch_shard(
+        self,
+        shard: int,
+        *,
+        limit: int,
+        after: tuple[str, str] | None = None,
+    ) -> list[OperationalOutboxRow]:
+        candidates = [row for row in self.rows if row.shard == shard]
+        if after is not None:
+            candidates = [
+                row for row in candidates if (row.event_kind, row.event_id) > after
+            ]
+        candidates.sort(key=lambda row: (row.event_kind, row.event_id))
+        return candidates[:limit]
 
     def delete(self, rows: list[OperationalOutboxRow]) -> int:
         self.delete_calls.append(list(rows))
@@ -346,6 +366,96 @@ def test_a_replica_pointed_at_this_machine_is_refused() -> None:
             )
 
 
+def test_a_replica_pointed_at_this_machines_own_private_ip_is_refused() -> None:
+    """REGRESSION. The same-machine guard used to match NAMES only.
+
+    Nothing in the deployment addresses ClickHouse by name -- it listens on the
+    private IP and the provisioning script's instructions paste one -- so the
+    realistic form of this mistake is pasting the LOCAL node's private address
+    as the replica host. That sailed past a `localhost`/`127.0.0.1` allowlist
+    and produced two writes to one EBS volume, logged as `copies=2`: the exact
+    "one copy that reports as two" the guard exists to make unrepresentable.
+    """
+    own = "10.42.7.9"
+
+    with pytest.raises(ValueError, match="not a second copy"):
+        clickhouse_targets_from_env(
+            {**DUAL_ENV, "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_REPLICA_HOST": own},
+            local_hosts={own},
+        )
+
+    # A genuinely remote address is still accepted.
+    targets = clickhouse_targets_from_env(DUAL_ENV, local_hosts={own})
+    assert [target.host for target in targets] == ["", STOCKHOLM]
+
+
+def test_the_own_address_check_reaches_a_real_local_address() -> None:
+    """Pins the default detector, not just the injected one.
+
+    `local_hosts` is injectable so the tests need no sockets, which would be a
+    fine way to test a guard that never actually runs. 127.0.0.1 is bindable on
+    any machine this suite runs on, so the real implementation is exercised.
+    """
+    assert drain_module._is_own_address("127.0.0.1") is True
+    # Not an address of this machine, and not a resolvable name either: the
+    # check must not fall back to DNS.
+    assert drain_module._is_own_address("10.60.1.7") is False
+    assert drain_module._is_own_address("clickhouse.invalid") is False
+
+
+def test_replica_settings_without_a_replica_host_are_refused() -> None:
+    """REGRESSION. Validation used to run in one direction only.
+
+    `_HOST` without a password was fatal; a password (or name, or port) without
+    a `_HOST` was skipped in silence. The drain then built ONE target, logged
+    `copies=1 degraded_targets=-` -- indistinguishable from a deliberate
+    single-node deployment -- and, because one target IS deletable, began
+    deleting rows the second node never received. One misspelled variable in a
+    hand-edited env file was enough, and the only symptom was `copies=1`.
+    """
+    base = {
+        "CH_PASSWORD": "paris-secret",
+        "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER": "default",
+        "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE": "default",
+    }
+    orphaned = [
+        # A password for a replica that was never given a host.
+        {"CH_REPLICA_PASSWORD": "stockholm-secret"},
+        {"TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_REPLICA_NAME": "stockholm"},
+        {"TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_REPLICA_PORT": "9000"},
+        # Misspellings of the one load-bearing variable.
+        {
+            "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_REPLICA_HOSTS": STOCKHOLM,
+            "CH_REPLICA_PASSWORD": "stockholm-secret",
+        },
+        {
+            "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_REPLICA1_HOST": STOCKHOLM,
+            "CH_REPLICA1_PASSWORD": "stockholm-secret",
+        },
+    ]
+    for extra in orphaned:
+        with pytest.raises(ValueError) as failure:
+            clickhouse_targets_from_env({**base, **extra})
+        assert "single-node" in str(failure.value), extra
+
+    # A blank host is the same mistake with whitespace on it.
+    with pytest.raises(ValueError, match="single-node"):
+        clickhouse_targets_from_env(
+            {
+                **base,
+                "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_REPLICA_HOST": "   ",
+                "CH_REPLICA_PASSWORD": "stockholm-secret",
+            }
+        )
+
+
+def test_an_environment_with_no_replica_settings_at_all_is_still_one_target() -> None:
+    """The guard above must not make a single-node deployment un-startable."""
+    targets = clickhouse_targets_from_env({"CH_PASSWORD": "x", "CH_PASSWORD_FILE": "/x"})
+
+    assert [target.name for target in targets] == ["primary"]
+
+
 def test_endpoints_may_not_share_a_name() -> None:
     """Names are how the backlog alarm says WHICH copy is behind."""
     with pytest.raises(ValueError, match="must be unique"):
@@ -449,8 +559,9 @@ def test_a_failing_node_does_not_starve_the_healthy_one(
     """Every target is attempted, even after an earlier one fails.
 
     Short-circuiting on the first failure would be safe -- nothing is deleted
-    either way -- but it would hold the healthy node at the SAME staleness as
-    the broken one for the whole outage, for no reason.
+    either way -- but it would delay the healthy node's copy of THIS batch for
+    no reason. (Keeping the healthy node current ACROSS sweeps is a different
+    mechanism entirely; see the starvation test below.)
     """
     fleet = _Fleet(down={"local"})
     fleet.install(monkeypatch)
@@ -460,6 +571,213 @@ def test_a_failing_node_does_not_starve_the_healthy_one(
 
     assert {call.host for call in fleet.calls} == {"local", STOCKHOLM}
     assert len(fleet.stored(STOCKHOLM)) == 1
+
+
+def test_a_down_replica_does_not_freeze_the_read_window_on_the_healthy_node(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REGRESSION. A down Stockholm used to stop Paris receiving ANYTHING new.
+
+    The batch SELECT has no offset, so the DELETE is the only thing that
+    advances it. While Stockholm failed nothing was deleted, so every sweep
+    re-read and re-wrote the identical lowest-ordered `batch_size` rows: rows
+    sorting above that window reached NO node, and Paris -- up, healthy, and
+    holding the only copy of this cloud's history -- went permanently stale.
+    Measured before the fix: over 40 sweeps of a 1500-row backlog at
+    batch_size=500, Paris saw 500 distinct rows out of 1500 and 20,000
+    row-inserts, i.e. 40x write amplification for zero new information.
+
+    The fix is the read cursor: a batch that could not be deleted is stepped
+    over, so the rest of the shard still reaches whichever nodes are up. The
+    rows are NOT forgotten -- nothing deleted them, and the cursor resets at
+    the end of the shard, which is what re-offers them once Stockholm returns.
+    """
+    fleet = _Fleet(down={STOCKHOLM})
+    fleet.install(monkeypatch)
+    backlog = [_row(f"gen-{index:04d}", shard=0) for index in range(6)]
+    source = _Source(backlog)
+    writer = _dual_writer()
+    cursors: dict[int, tuple[str, str]] = {}
+
+    for _ in range(4):
+        drain_once(source, writer, batch_size=2, shard_count=1, cursors=cursors)
+
+    delivered = {row["generation_id"] for row in fleet.stored("local")}
+    assert delivered == {f"gen-{index:04d}" for index in range(6)}, (
+        "the healthy node must reach the whole shard, not just the first batch"
+    )
+    # And none of it was acknowledged: Stockholm never got a row, so the outbox
+    # still holds every one of them.
+    assert len(source.rows) == 6
+    assert source.delete_calls == []
+
+
+def test_the_cursor_never_lets_a_row_be_deleted_for_only_one_node(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stepping over a batch must not be mistaken for delivering it.
+
+    The cursor exists to keep the healthy node current. If advancing it also
+    let the rows be deleted, it would be the exact data-loss the whole design
+    prevents -- so this pins that a full pass with a node down deletes nothing
+    and every row is still queued at the end of it.
+    """
+    fleet = _Fleet(down={STOCKHOLM})
+    fleet.install(monkeypatch)
+    backlog = [_row(f"gen-keep-{index:04d}", shard=0) for index in range(6)]
+    source = _Source(backlog)
+    cursors: dict[int, tuple[str, str]] = {}
+
+    for _ in range(6):
+        drain_once(source, _dual_writer(), batch_size=2, shard_count=1, cursors=cursors)
+
+    assert source.delete_calls == []
+    assert {row.event_id for row in source.rows} == {
+        f"gen-keep-{index:04d}" for index in range(6)
+    }
+
+
+def test_the_backlog_is_delivered_and_deleted_once_the_node_returns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cursor's other half: stepping over a batch is not abandoning it.
+
+    A cursor that only ever advanced would leave the rows it skipped queued
+    forever. It resets at the end of the shard, so the next pass re-offers the
+    whole backlog -- and when Stockholm is back, that pass delivers and deletes.
+    """
+    fleet = _Fleet(down={STOCKHOLM})
+    fleet.install(monkeypatch)
+    backlog = [_row(f"gen-back-{index:04d}", shard=0) for index in range(6)]
+    source = _Source(backlog)
+    writer = _dual_writer()
+    cursors: dict[int, tuple[str, str]] = {}
+
+    for _ in range(4):
+        drain_once(source, writer, batch_size=2, shard_count=1, cursors=cursors)
+    assert len(source.rows) == 6
+
+    fleet.down.clear()
+    for _ in range(6):
+        drain_once(source, writer, batch_size=2, shard_count=1, cursors=cursors)
+
+    assert source.rows == []
+    assert len(fleet.stored(STOCKHOLM)) == 6
+    assert len(fleet.stored("local")) == 6
+
+
+def test_a_poison_batch_no_longer_blocks_the_rest_of_its_shard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same root cause, non-ClickHouse trigger.
+
+    A payload this build cannot normalise fails its batch, so the batch is
+    never deleted -- and with an unpaged read that one row blocked its shard's
+    window permanently, taking every well-formed row behind it with it. The
+    cursor steps over the bad batch; the bad rows stay queued for a build that
+    can read them.
+    """
+    fleet = _Fleet()
+    fleet.install(monkeypatch)
+    poison = OperationalOutboxRow(
+        shard=0,
+        commit_ts=dt.datetime(2026, 7, 31, 12, 35, tzinfo=dt.UTC),
+        event_kind=ACTIVITY_EVENT_KIND,
+        event_id="gen-0000-poison",
+        payload=json.dumps({"generation_id": "missing-every-other-column"}),
+    )
+    healthy = [_row(f"gen-{index:04d}", shard=0) for index in range(1, 4)]
+    source = _Source([poison, *healthy])
+    cursors: dict[int, tuple[str, str]] = {}
+
+    # Progress is not free: a delivered batch resets the cursor to the head, so
+    # the unreadable batch is re-attempted before each good one. That is the
+    # deliberate trade -- the healthy path must read from the head exactly as it
+    # always did -- and it is bounded work, not a block. Before the cursor, the
+    # good rows behind this one were delivered NEVER, at any sweep count.
+    for _ in range(8):
+        drain_once(source, _dual_writer(), batch_size=1, shard_count=1, cursors=cursors)
+
+    delivered = {row["generation_id"] for row in fleet.stored("local")}
+    assert delivered == {f"gen-{index:04d}" for index in range(1, 4)}
+    # The unreadable row is still queued -- not delivered, and not dropped.
+    assert [row.event_id for row in source.rows] == ["gen-0000-poison"]
+
+
+def test_a_hard_down_target_is_skipped_after_a_few_failures_in_one_sweep(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wedged node must not cost one timeout per shard.
+
+    A remote write is bounded at 60s and issued once per target per event kind
+    per shard. Retrying a node that has already failed repeatedly this sweep
+    would make a single sweep 32 x 2 x 60s ~ 64 MINUTES, during which the
+    healthy node receives nothing new and the backlog alarm -- the only bound
+    on outbox growth -- is evaluated once.
+
+    The skip is recorded as a FAILURE, never a success, so nothing is deleted
+    for a node that did not receive the batch.
+    """
+    fleet = _Fleet(down={STOCKHOLM})
+    fleet.install(monkeypatch)
+    rows = [_row(f"gen-wedged-{index}", shard=index) for index in range(12)]
+    source = _Source(rows)
+    writer = _dual_writer()
+
+    result = drain_once(source, writer, batch_size=10, shard_count=12)
+
+    attempts = len([call for call in fleet.calls if call.host == STOCKHOLM])
+    assert attempts == drain_module.SWEEP_TARGET_FAILURE_LIMIT, (
+        "a hard-down target must stop being dialled for the rest of the sweep"
+    )
+    # Every shard still failed -- a skipped target is an undelivered target.
+    assert result.failed_shards == 12
+    assert source.delete_calls == []
+    assert len(source.rows) == 12
+    # And the healthy node still got every shard: the breaker is per-target.
+    assert len([call for call in fleet.calls if call.host == "local"]) == 12
+
+
+def test_a_target_failing_most_shards_is_reported_degraded_for_the_sweep(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REGRESSION. `degraded_targets` used to be last-write-wins.
+
+    `consecutive_failures` is reset by ANY success, so a node that rejected 31
+    shards and happened to accept the 32nd reported as healthy in the one field
+    the runbook and the unit file both tell the operator to watch. Measured
+    before the fix: 31 of 32 shards failed, `degraded_targets` logged `-`.
+    """
+    fleet = _Fleet(down={STOCKHOLM})
+    fleet.install(monkeypatch)
+    shards = 3
+    rows = [_row(f"gen-mostly-{index}", shard=index) for index in range(shards)]
+    source = _Source(rows)
+    writer = _dual_writer()
+
+    # Stockholm rejects every shard but the LAST one of the sweep -- the shape
+    # that made the old report say "healthy". Recovery happens before the final
+    # shard, while the per-sweep breaker has seen fewer failures than its limit,
+    # so the last shard really is attempted.
+    seen = 0
+    original = drain_module.drain_shard_once
+
+    def recovering(*args: Any, **kwargs: Any) -> Any:
+        nonlocal seen
+        seen += 1
+        if seen >= shards:
+            fleet.down.clear()
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(drain_module, "drain_shard_once", recovering)
+
+    result = drain_once(source, writer, batch_size=10, shard_count=shards)
+
+    assert result.failed_shards == shards - 1
+    # The writer's own counter says "healthy" -- it was reset by the last
+    # shard's success. The SWEEP is what the operator is asking about.
+    assert degraded_target_names(writer) == []
+    assert result.degraded_targets == ("stockholm",)
 
 
 def test_both_nodes_failing_is_reported_as_both(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -665,3 +983,164 @@ def test_a_fan_out_with_no_targets_is_refused() -> None:
 def test_degraded_targets_is_empty_for_a_plain_writer() -> None:
     """main() asks any writer for its degraded targets, including the bare one."""
     assert degraded_target_names(ClickHouseOperationalWriter(password="x")) == []  # noqa: S106
+
+
+# --------------------------------------------------------------------------
+# 7. What the operator actually sees
+#
+# The outbox growing without bound is the designed failure mode, so the ONLY
+# thing standing between it and a full database is that a human is told. These
+# pin the telling.
+# --------------------------------------------------------------------------
+
+
+def _run_main(
+    monkeypatch: pytest.MonkeyPatch,
+    env: dict[str, str],
+    *,
+    oldest: dt.datetime | None,
+    argv: list[str] | None = None,
+    once: bool = True,
+) -> int:
+    import clickhouse.ingest_operational_outbox_postgres as drain
+
+    class _NoRows:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        def fetch_shard(self, shard: int, *, limit: int) -> list[OperationalOutboxRow]:
+            return []
+
+        def delete(self, rows: list[OperationalOutboxRow]) -> int:
+            return 0
+
+        def oldest_enqueued_at(self) -> dt.datetime | None:
+            return oldest
+
+    monkeypatch.setattr(drain, "PostgresOperationalOutboxSource", _NoRows)
+    for key in list(os.environ):
+        if key.startswith("TR_OPERATIONAL_ANALYTICS_") or key.startswith("CH_"):
+            monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "drain",
+            *(["--once"] if once else []),
+            "--dsn",
+            "host=db.example",
+            *(argv or []),
+        ],
+    )
+    return drain.main()
+
+
+def test_a_misconfigured_replica_stops_the_drain_before_it_reads_anything(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("ERROR")
+    env = dict(DUAL_ENV)
+    del env["CH_REPLICA_PASSWORD"]
+
+    with pytest.raises(SystemExit) as exit_info:
+        _run_main(monkeypatch, env, oldest=None)
+
+    # A CONFIG exit, not a generic one: the unit's RestartPreventExitStatus
+    # keys off it so a bad environment stops the unit visibly instead of
+    # crash-looping every RestartSec with nothing left running to alarm.
+    assert exit_info.value.code == drain_module.CONFIG_EXIT_CODE
+    assert "CH_REPLICA_PASSWORD is required" in caplog.text
+
+
+def test_the_configured_copies_are_logged_at_startup(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """"How many copies is this actually keeping?" must be answerable from the
+    log, not from reading the environment file over someone's shoulder."""
+    caplog.set_level("INFO")
+
+    _run_main(monkeypatch, DUAL_ENV, oldest=None)
+
+    startup = next(r for r in caplog.records if "outbox.targets" in r.getMessage())
+    assert "copies=2" in startup.getMessage()
+    assert "stockholm@10.60.1.7:9000/default" in startup.getMessage()
+    assert "stockholm-secret" not in startup.getMessage()
+
+
+def test_a_long_backlog_raises_an_alarm_naming_the_action(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The bound on outbox growth is this log line plus an operator.
+
+    There is deliberately no automatic bound -- the only two available are
+    "delete rows a copy never received" and "stop draining" -- so if this line
+    does not fire, nothing does.
+    """
+    caplog.set_level("INFO")
+    stale = dt.datetime.now(dt.UTC) - dt.timedelta(hours=9)
+
+    _run_main(monkeypatch, DUAL_ENV, oldest=stale)
+
+    alarms = [r for r in caplog.records if "backlog_alarm" in r.getMessage()]
+    assert len(alarms) == 1
+    assert alarms[0].levelname == "ERROR"
+    assert "action=restore-the-node-or-drop-it-from-the-drain-config" in alarms[0].getMessage()
+
+
+def test_an_alarm_threshold_that_disables_the_alarm_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REGRESSION. `lag >= max > 0` silently disabled the alarm at 0.
+
+    That log line is the ONLY bound on outbox growth, so a value that turns it
+    off is a configuration error rather than a setting -- and one that would
+    otherwise be discovered when the operational database filled up.
+    """
+    for value in ("0", "-1"):
+        with pytest.raises(SystemExit) as exit_info:
+            _run_main(
+                monkeypatch, DUAL_ENV, oldest=None, argv=["--max-lag-seconds", value]
+            )
+        assert exit_info.value.code == drain_module.CONFIG_EXIT_CODE
+
+
+def test_the_drain_reuses_one_read_cursor_across_sweeps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cursor only helps if it survives the sweep that created it.
+
+    A cursor rebuilt per sweep would step over the stuck batch and then forget
+    it had, leaving the healthy node exactly as starved as before. `main()`
+    therefore owns it, and this pins that the same object reaches every sweep.
+    """
+    seen: list[int] = []
+
+    def recording(*args: Any, **kwargs: Any) -> Any:
+        seen.append(id(kwargs["cursors"]))
+        if len(seen) >= 3:
+            raise SystemExit(0)
+        return drain_module.SweepResult(fetched=0, inserted=0, rows_per_second=0.0)
+
+    monkeypatch.setattr(drain_module, "drain_once", recording)
+    monkeypatch.setattr(drain_module.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(SystemExit):
+        _run_main(monkeypatch, DUAL_ENV, oldest=None, once=False)
+
+    assert len(seen) == 3
+    assert len(set(seen)) == 1, "each sweep must resume the previous sweep's cursor"
+
+
+def test_a_healthy_drain_raises_no_alarm(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An alarm that fires when nothing is wrong is an alarm nobody reads."""
+    caplog.set_level("INFO")
+
+    _run_main(monkeypatch, DUAL_ENV, oldest=None)
+
+    assert [r for r in caplog.records if "backlog_alarm" in r.getMessage()] == []
+    metrics = next(r for r in caplog.records if "outbox.metrics" in r.getMessage())
+    assert "copies=2 degraded_targets=-" in metrics.getMessage()

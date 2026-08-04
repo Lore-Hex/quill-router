@@ -53,6 +53,7 @@ set -euo pipefail
 REGION="${REGION:-eu-north-1}"                     # Stockholm.
 PARIS_REGION="${PARIS_REGION:-eu-west-3}"
 PARIS_VPC_ID="${PARIS_VPC_ID:-vpc-05b829b9cae6a9cd8}"
+PARIS_NODE_NAME="${PARIS_NODE_NAME:-tr-eu-clickhouse-1}"   # Where the drain runs.
 ACCOUNT="${ACCOUNT:-330422590279}"
 VPC_CIDR="${VPC_CIDR:-10.60.0.0/16}"               # Must not overlap Paris.
 SUBNET_CIDR="${SUBNET_CIDR:-10.60.1.0/24}"
@@ -405,13 +406,34 @@ if [ "$PEER_WITH_PARIS" = "1" ]; then
     aws ec2 describe-transit-gateways --region "$REGION" --transit-gateway-ids "$NORTH_TGW" \
     --query 'TransitGateways[0].State' --output text
 
+  # The subnet the PARIS CLICKHOUSE NODE is actually in -- not `Subnets[0]`.
+  # This one value picks both the TGW VPC attachment and (below) the route
+  # table that receives the return route, and `describe-subnets` has no defined
+  # ordering while a VPC has one subnet per AZ. Two silent blackholes follow
+  # from getting it wrong, and the script would print "inter-region path ready"
+  # for both:
+  #   * a TGW VPC attachment only carries traffic for AZs in which it has a
+  #     subnet/ENI, so an attachment in the wrong AZ drops the drain's packets;
+  #   * the 10.60.0.0/16 route lands in whichever route table that subnet is
+  #     associated with, which need not be the ClickHouse subnet's.
+  # So it is derived from the instance that runs the drain, by tag, and a
+  # failure to find it stops the script instead of guessing.
   if [ -z "${PARIS_SUBNET_ID:-}" ]; then
-    PARIS_SUBNET_ID="$(aws ec2 describe-subnets --region "$PARIS_REGION" \
-      --filters "Name=vpc-id,Values=$PARIS_VPC_ID" \
-      --query 'Subnets[0].SubnetId' --output text)"
+    PARIS_SUBNET_ID="$(aws ec2 describe-instances --region "$PARIS_REGION" \
+      --filters "Name=tag:Name,Values=$PARIS_NODE_NAME" \
+                "Name=instance-state-name,Values=running,pending" \
+      --query 'Reservations[0].Instances[0].SubnetId' --output text 2>/dev/null || true)"
   fi
   [ -n "$PARIS_SUBNET_ID" ] && [ "$PARIS_SUBNET_ID" != "None" ] || {
-    echo "could not determine a subnet in $PARIS_VPC_ID; set PARIS_SUBNET_ID" >&2; exit 1; }
+    echo "could not find the subnet of the Paris ClickHouse node (tag Name=$PARIS_NODE_NAME) in $PARIS_REGION." >&2
+    echo "The inter-region path must be built against the subnet the DRAIN runs in:" >&2
+    echo "an attachment or route in any other subnet is a blackhole that reports healthy." >&2
+    echo "Set PARIS_SUBNET_ID explicitly if the node is tagged differently." >&2
+    exit 1; }
+  PARIS_SUBNET_VPC="$(aws ec2 describe-subnets --region "$PARIS_REGION" \
+    --subnet-ids "$PARIS_SUBNET_ID" --query 'Subnets[0].VpcId' --output text)"
+  [ "$PARIS_SUBNET_VPC" = "$PARIS_VPC_ID" ] || {
+    echo "PARIS_SUBNET_ID $PARIS_SUBNET_ID is in $PARIS_SUBNET_VPC, not $PARIS_VPC_ID" >&2; exit 1; }
   log "attaching VPCs (paris subnet $PARIS_SUBNET_ID)"
   PARIS_ATTACHMENT="$(ensure_attachment "$PARIS_REGION" "$PARIS_TGW" "$PARIS_VPC_ID" "$PARIS_SUBNET_ID")"
   NORTH_ATTACHMENT="$(ensure_attachment "$REGION" "$NORTH_TGW" "$VPC_ID" "$SUBNET_ID")"
@@ -496,16 +518,26 @@ echo "PRIVATE_IP=${PRIVATE_IP}"
 echo "VPC_ID=${VPC_ID}"
 echo "SECRET_ID=${SECRET_ID} (region ${REGION})"
 echo
-echo "Next, on the PARIS ClickHouse node (where the drain runs), append to"
-echo "/etc/tr-clickhouse-ingest-postgres.env:"
+echo "Next, on the PARIS ClickHouse node (where the drain runs), append these"
+echo "five literals to /etc/tr-clickhouse-ingest-postgres.env:"
 echo
 echo "  TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_REPLICA_NAME=stockholm"
 echo "  TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_REPLICA_HOST=${PRIVATE_IP}"
 echo "  TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_REPLICA_PORT=9000"
 echo "  TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_REPLICA_USER=default"
 echo "  TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_REPLICA_DATABASE=default"
-echo "  CH_REPLICA_PASSWORD=\$(aws secretsmanager get-secret-value --region ${REGION} \\"
-echo "      --secret-id ${SECRET_ID} --query SecretString --output text)"
+echo
+echo "and add the password by RUNNING this, rather than by pasting it:"
+echo
+echo "  umask 077 && printf 'CH_REPLICA_PASSWORD=%s\\n' \\"
+echo "    \"\$(aws secretsmanager get-secret-value --region ${REGION} \\"
+echo "        --secret-id ${SECRET_ID} --query SecretString --output text)\" \\"
+echo "    >> /etc/tr-clickhouse-ingest-postgres.env"
+echo
+echo "That file is a systemd EnvironmentFile, which performs NO command or"
+echo "variable substitution: a literal \$(aws ...) written into it becomes the"
+echo "password, is non-empty so every startup check passes, and then fails"
+echo "authentication on every insert forever while the outbox grows."
 echo
 echo "then: systemctl restart tr-clickhouse-operational-ingest-postgres.service"
 echo
@@ -516,8 +548,23 @@ echo "degraded_targets means rows are accumulating in the outbox, not lost."
 echo
 echo "This node starts EMPTY. It holds only rows drained after it was wired in;"
 echo "history already deleted from the outbox is not backfilled by adding it."
-echo "To copy the existing history across, from THIS node:"
-echo "  INSERT INTO activity_generations SELECT * FROM"
-echo "    remote('<paris-private-ip>:9000','default','activity_generations','default','<paris password>')"
-echo "ingest_version is carried through, so re-running it collapses instead of"
-echo "double-counting."
+echo
+echo "To copy the existing history across, run this ON THE PARIS NODE -- it"
+echo "PUSHES to Stockholm. The reverse (a pull from Stockholm) cannot connect:"
+echo "the Paris security group admits only the Paris VPC CIDR, and the Paris"
+echo "ClickHouse 'default' user is pinned to <networks>Paris-VPC + 127.0.0.1</networks>,"
+echo "so Stockholm is refused at both layers. Only Paris->Stockholm is open."
+echo
+echo "  clickhouse-client --user default --database default --query \\"
+echo "    \"INSERT INTO FUNCTION remote('${PRIVATE_IP}:9000','default','activity_generations','default','<stockholm password>') \\"
+echo "     SELECT * FROM activity_generations\""
+echo
+echo "and again for synthetic_probe_samples. ingest_version is carried through,"
+echo "so re-running it collapses instead of double-counting."
+echo
+echo "COVERAGE: the drain replicates the two tables it drains --"
+echo "activity_generations and synthetic_probe_samples. It does NOT write"
+echo "synthetic_status_rollups or public_analytics_snapshots; on this cloud"
+echo "nothing does today (those are GCP timers), so both nodes hold them empty."
+echo "If a rollup or snapshot job is ever run against Paris, its output is NOT"
+echo "on this node and this node is not a complete copy until it is."
