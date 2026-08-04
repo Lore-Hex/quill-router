@@ -131,6 +131,19 @@ COMPONENT_DEFINITIONS: tuple[dict[str, str], ...] = (
             "Paris enclave is healthy."
         ),
     },
+    # Azure. NAMED "GATEWAY" for the same reason as the AWS rows above, even
+    # though this one currently fronts a SINGLE container group: the name must
+    # not promise per-enclave granularity the probe cannot deliver, and a
+    # second replica or region would silently make an "Enclave" label a lie.
+    {
+        "id": "uaenorth_gateway",
+        "name": "UAE North Gateway (Dubai)",
+        "description": (
+            "Azure confidential container addressed directly: publicly-trusted "
+            "TLS minted inside the TEE and SEV-SNP attestation through MAA "
+            "from a healthy UAE North enclave behind it."
+        ),
+    },
     {
         "id": "attestation",
         "name": "Attestation",
@@ -167,6 +180,10 @@ COMPONENT_PROBE_TARGETS: dict[str, str] = {
     # AWS EU control plane configures; nothing publishes them anywhere else.
     "eu_west_1_gateway": "eu-west-1",
     "eu_west_3_gateway": "eu-west-3",
+    # The Azure control plane's TR_SYNTHETIC_GATEWAY_REGION_TARGETS entry name
+    # (scripts/deploy/azure_control_plane.sh). Absent everywhere else, which is
+    # what keeps this row off the AWS and GCP status pages.
+    "uaenorth_gateway": "uaenorth",
     "attestation": "canonical",
     "billing_settlement": CONTROL_PLANE_TARGET,
     "provider_fallback": CONTROL_PLANE_TARGET,
@@ -183,7 +200,7 @@ COMPONENT_PROBE_TARGETS: dict[str, str] = {
 #   * the overall headline must INCLUDE them, or "All Systems Operational"
 #     sits directly above a red region row.
 GATEWAY_REGION_COMPONENT_IDS: frozenset[str] = frozenset(
-    {"eu_west_1_gateway", "eu_west_3_gateway"}
+    {"eu_west_1_gateway", "eu_west_3_gateway", "uaenorth_gateway"}
 )
 # Their probe target names, derived from the map above so the two cannot
 # drift apart.
@@ -277,6 +294,8 @@ def sample_component_ids(sample: SyntheticProbeSample) -> list[str]:
         ids.append("eu_west_1_gateway")
     if sample.target == "eu-west-3" and sample.probe_type in REGIONAL_GATEWAY_PROBES:
         ids.append("eu_west_3_gateway")
+    if sample.target == "uaenorth" and sample.probe_type in REGIONAL_GATEWAY_PROBES:
+        ids.append("uaenorth_gateway")
     # "Attestation" is a SHARED, service-wide row that predates the pinned
     # targets, and it is scoped to the addresses customers actually resolve.
     # Folding the pinned per-region probes in here averaged a public number
