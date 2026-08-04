@@ -269,6 +269,24 @@ class Settings(BaseSettings):
     paypal_client_secret: str | None = None
     paypal_webhook_id: str | None = None
     paypal_api_base_url: str = "https://api-m.paypal.com"
+    # Adyen is staged dark until the test merchant, HMAC webhook, and end-to-end
+    # checkout canary are all green. Keep checkout enablement separate from
+    # credentials so late webhooks remain verifiable after an operator disables
+    # new Adyen sessions.
+    adyen_enabled: bool = False
+    adyen_api_key: str | None = None
+    adyen_client_key: str | None = None
+    adyen_hmac_key: str | None = None
+    adyen_reference_key: str | None = None
+    adyen_merchant_account: str | None = None
+    adyen_environment: str = "test"
+    adyen_live_endpoint_prefix: str | None = None
+    adyen_checkout_api_version: int = 72
+    adyen_web_version: str = "6.41.0"
+    # Keep processor pricing explicit. The test deployment leaves this at zero;
+    # production must use the rates from the signed Adyen agreement.
+    adyen_card_fee_basis_points: int = 0
+    adyen_card_fee_fixed_cents: int = 0
     bootstrap_management_key: str | None = None
     byok_kms_key_name: str | None = None
     byok_envelope_key_b64: str | None = None
@@ -650,6 +668,43 @@ class Settings(BaseSettings):
             )
         if self.x402_allow_mock_payments and environment not in {"local", "test"}:
             raise ValueError("TR_X402_ALLOW_MOCK_PAYMENTS is only allowed in local/test")
+        if self.adyen_environment not in {"test", "live"}:
+            raise ValueError("TR_ADYEN_ENVIRONMENT must be test or live")
+        if not 0 <= self.adyen_card_fee_basis_points < 10_000:
+            raise ValueError("TR_ADYEN_CARD_FEE_BASIS_POINTS must be between 0 and 9999")
+        if self.adyen_card_fee_fixed_cents < 0:
+            raise ValueError("TR_ADYEN_CARD_FEE_FIXED_CENTS cannot be negative")
+        if not 1 <= self.adyen_checkout_api_version <= 999:
+            raise ValueError("TR_ADYEN_CHECKOUT_API_VERSION must be between 1 and 999")
+        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", self.adyen_web_version):
+            raise ValueError("TR_ADYEN_WEB_VERSION must be an exact semantic version")
+        if self.adyen_hmac_key:
+            try:
+                adyen_hmac_bytes = bytes.fromhex(self.adyen_hmac_key)
+            except ValueError as exc:
+                raise ValueError("TR_ADYEN_HMAC_KEY must be a hexadecimal key") from exc
+            if len(adyen_hmac_bytes) != 32:
+                raise ValueError("TR_ADYEN_HMAC_KEY must be exactly 32 bytes")
+        if self.adyen_reference_key and len(self.adyen_reference_key.encode("utf-8")) < 32:
+            raise ValueError("TR_ADYEN_REFERENCE_KEY must be at least 32 bytes")
+        if self.adyen_enabled:
+            missing_adyen = [
+                name
+                for name, value in (
+                    ("TR_ADYEN_API_KEY", self.adyen_api_key),
+                    ("TR_ADYEN_CLIENT_KEY", self.adyen_client_key),
+                    ("TR_ADYEN_HMAC_KEY", self.adyen_hmac_key),
+                    ("TR_ADYEN_REFERENCE_KEY", self.adyen_reference_key),
+                    ("TR_ADYEN_MERCHANT_ACCOUNT", self.adyen_merchant_account),
+                )
+                if not value
+            ]
+            if self.adyen_environment == "live" and not self.adyen_live_endpoint_prefix:
+                missing_adyen.append("TR_ADYEN_LIVE_ENDPOINT_PREFIX")
+            if missing_adyen:
+                raise ValueError(
+                    "TR_ADYEN_ENABLED requires " + ", ".join(missing_adyen)
+                )
         if (
             self.x402_enabled
             and environment not in {"local", "test"}
@@ -820,6 +875,26 @@ class Settings(BaseSettings):
         return bool(self.paypal_client_id and self.paypal_client_secret)
 
     @property
+    def adyen_checkout_ready(self) -> bool:
+        return bool(
+            self.adyen_enabled
+            and self.adyen_api_key
+            and self.adyen_client_key
+            and self.adyen_hmac_key
+            and self.adyen_reference_key
+            and self.adyen_merchant_account
+            and (self.adyen_environment == "test" or self.adyen_live_endpoint_prefix)
+        )
+
+    @property
+    def adyen_webhook_ready(self) -> bool:
+        return bool(
+            self.adyen_hmac_key
+            and self.adyen_reference_key
+            and self.adyen_merchant_account
+        )
+
+    @property
     def regional_quota_lease_pilot_workspaces(self) -> frozenset[str]:
         return frozenset(
             workspace_id.strip()
@@ -887,6 +962,12 @@ _LOCAL_KEY_FALLBACKS: tuple[str, ...] = (
     "paypal_client_secret",
     "paypal_webhook_id",
     "paypal_api_base_url",
+    "adyen_api_key",
+    "adyen_client_key",
+    "adyen_hmac_key",
+    "adyen_reference_key",
+    "adyen_merchant_account",
+    "adyen_live_endpoint_prefix",
     "sentry_dsn",
     "bootstrap_management_key",
     "byok_kms_key_name",

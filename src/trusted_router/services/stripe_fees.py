@@ -1,4 +1,4 @@
-"""Integer-only Stripe processing-fee calculation and line-item shaping."""
+"""Integer-only payment processing-fee calculation and line-item shaping."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ PROCESSING_FEE_LINE_ITEM_NAME = "Payment processing fee"
 
 
 @dataclass(frozen=True)
-class StripeProcessingFee:
+class ProcessingFee:
     """A charge whose net principal remains the requested credit amount."""
 
     credit_amount_cents: int
@@ -106,13 +106,13 @@ class StripeProcessingFee:
         return metadata
 
 
-def stripe_processing_fee(
+def processing_fee(
     *,
     credit_amount_cents: int,
     variable_basis_points: int,
     fixed_fee_cents: int,
     max_fee_cents: int | None = None,
-) -> StripeProcessingFee:
+) -> ProcessingFee:
     """Gross up a USD-cent principal so it survives the configured fee.
 
     If the processor charges ``rate * total + fixed``, the total required
@@ -142,7 +142,7 @@ def stripe_processing_fee(
     else:
         charge_amount_cents = uncapped_charge_amount_cents
     processing_fee_cents = charge_amount_cents - credit_amount_cents
-    return StripeProcessingFee(
+    return ProcessingFee(
         credit_amount_cents=credit_amount_cents,
         processing_fee_cents=processing_fee_cents,
         charge_amount_cents=charge_amount_cents,
@@ -154,3 +154,8 @@ def stripe_processing_fee(
 
 def _ceil_div(numerator: int, denominator: int) -> int:
     return (numerator + denominator - 1) // denominator
+
+
+# Compatibility names for the existing Stripe billing adapter and SDK tests.
+StripeProcessingFee = ProcessingFee
+stripe_processing_fee = processing_fee
