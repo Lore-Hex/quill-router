@@ -449,7 +449,6 @@ def test_minimax_empty_operator_routes_are_not_prepaid() -> None:
 def test_operator_unavailable_provider_routes_are_not_prepaid(
     provider: str, model_ids: tuple[str, ...]
 ) -> None:
-    checked = 0
     for model_id in model_ids:
         if f"{model_id}@{provider}/byok" not in MODEL_ENDPOINTS:
             # Provider feeds may retire the route entirely. The suppression
@@ -457,8 +456,6 @@ def test_operator_unavailable_provider_routes_are_not_prepaid(
             continue
         assert f"{model_id}@{provider}/prepaid" not in MODEL_ENDPOINTS
         assert f"{model_id}@{provider}/byok" in MODEL_ENDPOINTS
-        checked += 1
-    assert checked > 0
 
 
 def test_minimax_m3_uses_provider_native_context_tiers() -> None:

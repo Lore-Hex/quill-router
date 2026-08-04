@@ -298,10 +298,10 @@
   },
   "parasail": {
     "card_version": 2,
-    "model_count": 29,
+    "model_count": 26,
     "name": "Parasail",
     "privacy": "Zero retention",
-    "route_count": 56,
+    "route_count": 52,
     "route_mode": "Prepaid + BYOK",
     "slug": "parasail"
   },
