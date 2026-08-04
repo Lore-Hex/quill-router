@@ -92,6 +92,7 @@ from trusted_router.storage_gcp_credit_shards import (
 from trusted_router.storage_gcp_custom_models import SpannerCustomModels
 from trusted_router.storage_gcp_email_blocks import SpannerEmailBlocks
 from trusted_router.storage_gcp_generations import SpannerGenerations
+from trusted_router.storage_gcp_group_buy import SpannerBedrockGroupBuy
 from trusted_router.storage_gcp_io import (
     SpannerIO,
     configure_spanner_rpc_deadlines,
@@ -118,7 +119,12 @@ from trusted_router.storage_gcp_synthetic_rollups import (
 from trusted_router.storage_gcp_verification_tokens import SpannerVerificationTokens
 from trusted_router.storage_gcp_video_jobs import SpannerVideoJobs
 from trusted_router.storage_gcp_wallet_challenges import SpannerWalletChallenges
-from trusted_router.storage_models import TypedFinalizeResult
+from trusted_router.storage_models import (
+    BedrockGroupBuyAggregate,
+    BedrockGroupBuyPledge,
+    BedrockGroupBuyPublicMessage,
+    TypedFinalizeResult,
+)
 from trusted_router.types import UsageType
 
 T = TypeVar("T")
@@ -330,6 +336,7 @@ class SpannerBigtableStore:
         )
         self.api_keys = SpannerApiKeys(io)
         self.acquisition_store = SpannerAcquisitionAttribution(io)
+        self.bedrock_group_buy_store = SpannerBedrockGroupBuy(io)
         self._operational_analytics_outbox = (
             SpannerOperationalAnalyticsOutbox(self._database, self._param_types)
             if operational_analytics_outbox_enabled
@@ -413,6 +420,32 @@ class SpannerBigtableStore:
             amount_microdollars=amount_microdollars,
             occurred_at=occurred_at,
         )
+
+    def upsert_bedrock_group_buy_pledge(
+        self, pledge: BedrockGroupBuyPledge
+    ) -> BedrockGroupBuyPledge:
+        return self.bedrock_group_buy_store.upsert(pledge)
+
+    def get_bedrock_group_buy_pledge(
+        self, user_id: str
+    ) -> BedrockGroupBuyPledge | None:
+        return self.bedrock_group_buy_store.get(user_id)
+
+    def withdraw_bedrock_group_buy_pledge(self, user_id: str) -> bool:
+        return self.bedrock_group_buy_store.withdraw(user_id)
+
+    def bedrock_group_buy_aggregate(self) -> BedrockGroupBuyAggregate:
+        return self.bedrock_group_buy_store.aggregate()
+
+    def list_bedrock_group_buy_public_messages(
+        self, *, limit: int = 50
+    ) -> list[BedrockGroupBuyPublicMessage]:
+        return self.bedrock_group_buy_store.list_public_messages(limit=limit)
+
+    def list_bedrock_group_buy_private_pledges(
+        self, *, limit: int = 1000
+    ) -> list[BedrockGroupBuyPledge]:
+        return self.bedrock_group_buy_store.list_private_pledges(limit=limit)
 
     def ensure_user(
         self,

@@ -1076,6 +1076,73 @@ class AcquisitionAttribution:
 
 
 @dataclass
+class BedrockGroupBuyPledge:
+    """Private purchasing commitment for one signed-in user.
+
+    This record is never returned by a public endpoint. Public totals come
+    from aggregate shards and public comments come from the deliberately
+    identity-free ``BedrockGroupBuyPublicMessage`` projection below.
+    """
+
+    user_id: str
+    workspace_id: str
+    full_name: str
+    title: str
+    company_name: str
+    company_url: str
+    monthly_minimum_microdollars: int
+    expected_bedrock_monthly_microdollars: int
+    expected_all_llm_monthly_microdollars: int
+    aggregate_shard: int
+    last_month_llm_spend_microdollars: int = 0
+    last_month_spend_sources: tuple[str, ...] = ()
+    public_message: str = ""
+    publish_message: bool = False
+    public_message_id: str = ""
+    public_message_index_id: str = ""
+    created_at: str = field(default_factory=iso_now)
+    updated_at: str = field(default_factory=iso_now)
+    accepted_at: str = field(default_factory=iso_now)
+
+    def __post_init__(self) -> None:
+        # JSON persistence decodes tuples as lists; keep the in-process model
+        # immutable-shaped regardless of the storage backend that read it.
+        self.last_month_spend_sources = tuple(self.last_month_spend_sources)
+
+
+@dataclass
+class BedrockGroupBuyAggregateShard:
+    """One of the fixed shards used to avoid a hot global counter row."""
+
+    shard_id: int
+    active_pledge_count: int = 0
+    monthly_minimum_microdollars: int = 0
+    expected_bedrock_monthly_microdollars: int = 0
+    expected_all_llm_monthly_microdollars: int = 0
+    updated_at: str = field(default_factory=iso_now)
+
+
+@dataclass
+class BedrockGroupBuyAggregate:
+    """Online pledge totals before the organizer-provided founding baseline."""
+
+    active_pledge_count: int = 0
+    monthly_minimum_microdollars: int = 0
+    expected_bedrock_monthly_microdollars: int = 0
+    expected_all_llm_monthly_microdollars: int = 0
+
+
+@dataclass
+class BedrockGroupBuyPublicMessage:
+    """Identity-free projection that is safe to return on the public page."""
+
+    id: str
+    message: str
+    created_at: str = field(default_factory=iso_now)
+    updated_at: str = field(default_factory=iso_now)
+
+
+@dataclass
 class AuthSession:
     hash: str
     salt: str

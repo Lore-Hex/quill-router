@@ -1959,6 +1959,7 @@ def make_fake_store(
     from trusted_router.storage_gcp_byok import SpannerByok
     from trusted_router.storage_gcp_email_blocks import SpannerEmailBlocks
     from trusted_router.storage_gcp_generations import SpannerGenerations
+    from trusted_router.storage_gcp_group_buy import SpannerBedrockGroupBuy
     from trusted_router.storage_gcp_io import SpannerIO
     from trusted_router.storage_gcp_keys import SpannerApiKeys
     from trusted_router.storage_gcp_oauth_codes import SpannerOAuthCodes
@@ -2006,6 +2007,7 @@ def make_fake_store(
     )
     store.api_keys = SpannerApiKeys(io)
     store.acquisition_store = SpannerAcquisitionAttribution(io)
+    store.bedrock_group_buy_store = SpannerBedrockGroupBuy(io)
     store._operational_analytics_outbox = (
         SpannerOperationalAnalyticsOutbox(db, _ParamTypes)
         if operational_analytics_outbox_enabled
