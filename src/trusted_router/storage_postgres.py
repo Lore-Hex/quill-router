@@ -10,6 +10,7 @@ import dataclasses
 import datetime as dt
 import hashlib
 import json
+import logging
 import secrets
 import uuid
 from collections.abc import Callable
@@ -99,6 +100,8 @@ from trusted_router.synthetic.rollups import (
 from trusted_router.types import UsageType
 
 T = TypeVar("T")
+
+log = logging.getLogger(__name__)
 
 _AWS_DSQL_IAM_AUTH = "aws-dsql"
 
@@ -2459,33 +2462,68 @@ class PostgresStore:
             booked = max(0, int(actual_microdollars)) if success else 0
 
             # 1. Credit hold: release the reservation, book actual spend.
+            #
+            # UPSERT, not UPDATE. reserve() proved the balance row existed at
+            # authorize time, but retention jobs and cleanup can remove rows
+            # between reserve and settle, and a plain UPDATE matches zero rows
+            # SILENTLY: the spend vanishes while the authorization is marked
+            # settled. Recreating the row (zero credits, so the balance goes
+            # negative) keeps the ledger honest — a negative balance is a
+            # visible, billable fact; a missing debit is invisible forever.
+            #
+            # The same reasoning covers a vanished reservation ENTITY: only
+            # the release amount depends on it, so its absence must not skip
+            # the booking. Nothing is released (the reserved counter on a
+            # recreated row is already zero) and the anomaly is logged.
             if authorization.credit_reservation_id:
                 reservation = self._read_entity_tx(
                     conn, _RESERVATION_KIND, authorization.credit_reservation_id, Reservation
                 )
-                if reservation is not None:
-                    conn.execute(
-                        "UPDATE tr_credit_balance SET"
-                        "   reserved = GREATEST(reserved - %s, 0)"
-                        " , total_usage = total_usage + %s"
-                        " , updated_at = CURRENT_TIMESTAMP"
-                        " WHERE workspace_id = %s AND shard = 0",
-                        (
-                            reservation.amount_microdollars,
-                            booked,
-                            authorization.workspace_id,
-                        ),
-                        prepare=False,
-                    )
-                    self._insert_entity_once_tx(
-                        conn,
-                        _RESERVATION_FINALIZATION_KIND,
+                release = (
+                    reservation.amount_microdollars if reservation is not None else 0
+                )
+                if reservation is None:
+                    log.error(
+                        "finalize %s: reservation %s entity is gone; booking "
+                        "%s microdollars of usage without a release",
+                        authorization_id,
                         authorization.credit_reservation_id,
-                        {
-                            "actual_microdollars": booked,
-                            "operation": "gateway_finalize",
-                        },
+                        booked,
                     )
+                cursor = conn.execute(
+                    "INSERT INTO tr_credit_balance"
+                    "   (workspace_id, shard, total_usage, updated_at)"
+                    " VALUES (%s, 0, %s, CURRENT_TIMESTAMP)"
+                    " ON CONFLICT (workspace_id, shard) DO UPDATE SET"
+                    "   reserved = GREATEST(tr_credit_balance.reserved - %s, 0)"
+                    " , total_usage = tr_credit_balance.total_usage"
+                    "     + EXCLUDED.total_usage"
+                    " , updated_at = CURRENT_TIMESTAMP",
+                    (
+                        authorization.workspace_id,
+                        booked,
+                        release,
+                    ),
+                    prepare=False,
+                )
+                if cursor.rowcount != 1:
+                    # An upsert cannot miss; if it ever does, that is a driver
+                    # or dialect regression and it must fail the settle loudly
+                    # rather than repeat the silent-vanish this block fixes.
+                    raise RuntimeError(
+                        f"finalize {authorization_id}: balance upsert affected "
+                        f"{cursor.rowcount} rows for workspace "
+                        f"{authorization.workspace_id}"
+                    )
+                self._insert_entity_once_tx(
+                    conn,
+                    _RESERVATION_FINALIZATION_KIND,
+                    authorization.credit_reservation_id,
+                    {
+                        "actual_microdollars": booked,
+                        "operation": "gateway_finalize",
+                    },
+                )
 
             # 2. Key-limit hold: release, and roll the windows by actual spend.
             #    Reuses the same lazy-window rules as settle_key_limit.
