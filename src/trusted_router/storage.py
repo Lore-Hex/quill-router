@@ -93,6 +93,11 @@ class InMemoryStore:
         # insert-once verdict per transfer id). One store can be both.
         self.credit_transfers: dict[str, CreditTransfer] = {}
         self.credit_transfer_claims: dict[str, dict[str, Any]] = {}
+        #: Federated settlement claims, keyed (source_plane, authorization_id).
+        #: Insert-once: the recorded terms are the verdict for every replay.
+        self.federated_settlement_claims: dict[tuple[str, str], dict[str, Any]] = {}
+        #: Aggregate clamp counters, keyed (source_plane, workspace_id, utc_date).
+        self.federated_settlement_windows: dict[tuple[str, str, str], int] = {}
         # Composed feature stores. Each owns its own state and is importable
         # on its own. Keeps storage.py focused on identity + credit ledger;
         # spend control / BYOK / OAuth codes / auth sessions / generations /
@@ -843,6 +848,62 @@ class InMemoryStore:
 
     def mark_video_job_cleaned(self, job_id: str) -> VideoJob | None:
         return self.video_job_store.mark_cleaned(job_id)
+
+    def apply_federated_usage(
+        self,
+        *,
+        source_plane: str,
+        authorization_id: str,
+        workspace_id: str,
+        cost_microdollars: int,
+        daily_cap_microdollars: int,
+    ) -> str:
+        """HOME side of deferred settlement: book a peer's recorded debt.
+
+        Outcomes (strings, matched by the route):
+          applied            first application; usage booked
+          already            replay of the SAME terms; nothing booked again
+          conflict           same id, DIFFERENT terms; nothing booked, ever
+          workspace_unknown  no such workspace here
+          clamped            per-(plane, workspace) daily cap would be
+                             exceeded; nothing recorded — the row stays
+                             pending on the peer and retries tomorrow
+
+        Debit-only by construction: the only mutation is total_usage UP.
+        The clamp is checked BEFORE the claim is recorded, so a clamped row
+        leaves no residue and can apply cleanly later. The window is keyed by
+        THIS plane's clock — a peer-supplied timestamp choosing its own
+        window would let a compromised peer spread a burst across days.
+        """
+        from trusted_router.spend_windows import utcnow
+
+        cost = int(cost_microdollars)
+        if cost <= 0:
+            raise ValueError("cost_microdollars must be positive")
+        claim_key = (source_plane, authorization_id)
+        window_key = (source_plane, workspace_id, utcnow().date().isoformat())
+        with self._lock:
+            existing = self.federated_settlement_claims.get(claim_key)
+            if existing is not None:
+                if (
+                    existing["workspace_id"] == workspace_id
+                    and existing["cost_microdollars"] == cost
+                ):
+                    return "already"
+                return "conflict"
+            if self.workspaces.get(workspace_id) is None:
+                return "workspace_unknown"
+            applied_today = self.federated_settlement_windows.get(window_key, 0)
+            if applied_today + cost > int(daily_cap_microdollars):
+                return "clamped"
+            self.federated_settlement_claims[claim_key] = {
+                "workspace_id": workspace_id,
+                "cost_microdollars": cost,
+            }
+            self.federated_settlement_windows[window_key] = applied_today + cost
+            money = self.credit_money.setdefault(workspace_id, CreditMoney())
+            money.total_usage_microdollars += cost
+            return "applied"
 
     def credit_workspace_once(
         self, workspace_id: str, amount_microdollars: int, event_id: str

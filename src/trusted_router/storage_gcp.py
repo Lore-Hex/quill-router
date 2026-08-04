@@ -981,6 +981,27 @@ class SpannerBigtableStore:
             accept=accept,
         )
 
+    def apply_federated_usage(
+        self,
+        *,
+        source_plane: str,
+        authorization_id: str,
+        workspace_id: str,
+        cost_microdollars: int,
+        daily_cap_microdollars: int,
+    ) -> str:
+        from trusted_router import storage_gcp_federated_settlement
+
+        return storage_gcp_federated_settlement.apply_federated_usage(
+            self._database,
+            self._param_types,
+            source_plane=source_plane,
+            authorization_id=authorization_id,
+            workspace_id=workspace_id,
+            cost_microdollars=cost_microdollars,
+            daily_cap_microdollars=daily_cap_microdollars,
+        )
+
     def get_key_by_lookup_hash(self, lookup_hash: str) -> ApiKey | None:
         return self.api_keys.get_by_lookup_hash(lookup_hash)
 

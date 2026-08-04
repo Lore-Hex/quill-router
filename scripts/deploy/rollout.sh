@@ -83,6 +83,13 @@ add_secret_env_if_exists "TR_SYNTHETIC_MONITOR_API_KEY" "trustedrouter-synthetic
 # credits and never key material. Setting it is what turns federation
 # serving ON for this plane (unset = 403 for every peer).
 add_secret_env_if_exists "TR_FEDERATION_PEER_TOKEN" "trustedrouter-federation-peer-token"
+# HOME side of deferred settlement: the per-peer token map
+# ("plane=token,plane=token"). Which token authenticated IS the source
+# plane's identity; the request body never carries it. Setting this is what
+# turns /v1/internal/federation/apply-usage serving ON (unset = 403).
+add_secret_env_if_exists \
+  "TR_FEDERATION_SETTLEMENT_INBOUND_TOKENS" \
+  "trustedrouter-federation-settlement-inbound-tokens"
 add_secret_env_if_exists "TR_GOOGLE_CLIENT_ID" "trustedrouter-google-client-id"
 add_secret_env_if_exists "TR_GOOGLE_CLIENT_SECRET" "trustedrouter-google-client-secret"
 add_secret_env_if_exists \

@@ -61,6 +61,13 @@ class ErrorType(StrEnum):
     # says the customer is fine and the PLANE is at its self-imposed limit,
     # which clears as settlements are delivered. Retryable.
     DEFERRED_SETTLEMENT_CAP = "deferred_settlement_cap"
+    # Federated settlement verdicts. Each is a STRUCTURED code the peer's
+    # forwarder keys on — a bare 404 or an unparseable body must read as an
+    # outage (deploy skew, a proxy default page, a rollback), never as one of
+    # these, or a home rollback silently dead-letters the whole backlog.
+    SETTLEMENT_TERMS_CONFLICT = "settlement_terms_conflict"
+    WORKSPACE_UNKNOWN = "workspace_unknown"
+    SETTLEMENT_CLAMPED = "settlement_clamped"
     MODEL_NOT_SUPPORTED = "model_not_supported"
     PROVIDER_AUTH_ERROR = "provider_auth_error"
     PROVIDER_ERROR = "provider_error"

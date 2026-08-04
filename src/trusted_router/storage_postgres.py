@@ -1580,6 +1580,116 @@ class PostgresStore:
             )
         )
 
+    def pending_home_settlements(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        """Oldest pending debt rows, for the forwarder."""
+
+        def read(conn: Any) -> list[dict[str, Any]]:
+            rows = conn.execute(
+                "SELECT authorization_id, workspace_id, cost_microdollars, attempts"
+                " FROM tr_home_settlement_outbox"
+                " WHERE state = 'pending'"
+                " ORDER BY enqueued_at"
+                " LIMIT %s",
+                (int(limit),),
+                prepare=False,
+            ).fetchall()
+            return [
+                {
+                    "authorization_id": str(r[0]),
+                    "workspace_id": str(r[1]),
+                    "cost_microdollars": int(r[2]),
+                    "attempts": int(r[3]),
+                }
+                for r in rows
+            ]
+
+        return self._run_transaction(read)
+
+    def mark_home_settlement_forwarded(self, authorization_id: str) -> bool:
+        """pending -> forwarded, decrementing the outstanding counter ONCE.
+
+        The state flip is a conditional UPDATE and the counter decrement rides
+        the same transaction, gated on that flip having hit exactly one row —
+        so two drainers racing on one row produce one decrement, and the loser
+        changes nothing. Returns whether THIS call did the work.
+        """
+
+        def mark(conn: Any) -> bool:
+            row = conn.execute(
+                "SELECT workspace_id, cost_microdollars FROM tr_home_settlement_outbox"
+                " WHERE authorization_id = %s AND state = 'pending'",
+                (authorization_id,),
+                prepare=False,
+            ).fetchone()
+            if row is None:
+                return False
+            cursor = conn.execute(
+                "UPDATE tr_home_settlement_outbox SET"
+                "   state = 'forwarded', updated_at = CURRENT_TIMESTAMP"
+                " WHERE authorization_id = %s AND state = 'pending'",
+                (authorization_id,),
+                prepare=False,
+            )
+            if cursor.rowcount != 1:
+                return False
+            self._adjust_deferred_outstanding_tx(conn, str(row[0]), -int(row[1]))
+            return True
+
+        return self._run_transaction(mark)
+
+    def mark_home_settlement_dead_letter(self, authorization_id: str, *, reason: str) -> bool:
+        """pending -> dead_letter, moving the amount out of the serving cap.
+
+        The workspace's headroom is restored — one corruption-class row must
+        not brick a workspace forever — while the debt stays VISIBLE in the
+        dead_lettered column and in this row's preserved terms. Writing it
+        off or replaying it is an explicit operator action, never automatic.
+        """
+
+        def mark(conn: Any) -> bool:
+            row = conn.execute(
+                "SELECT workspace_id, cost_microdollars FROM tr_home_settlement_outbox"
+                " WHERE authorization_id = %s AND state = 'pending'",
+                (authorization_id,),
+                prepare=False,
+            ).fetchone()
+            if row is None:
+                return False
+            cursor = conn.execute(
+                "UPDATE tr_home_settlement_outbox SET"
+                "   state = 'dead_letter', last_error = %s,"
+                "   updated_at = CURRENT_TIMESTAMP"
+                " WHERE authorization_id = %s AND state = 'pending'",
+                (reason[:500], authorization_id),
+                prepare=False,
+            )
+            if cursor.rowcount != 1:
+                return False
+            conn.execute(
+                "UPDATE tr_deferred_outstanding SET"
+                "   outstanding = GREATEST(outstanding - %s, 0)"
+                " , dead_lettered = dead_lettered + %s"
+                " , updated_at = CURRENT_TIMESTAMP"
+                " WHERE workspace_id = %s",
+                (int(row[1]), int(row[1]), str(row[0])),
+                prepare=False,
+            )
+            return True
+
+        return self._run_transaction(mark)
+
+    def bump_home_settlement_attempt(self, authorization_id: str, *, error: str) -> None:
+        self._run_transaction(
+            lambda conn: conn.execute(
+                "UPDATE tr_home_settlement_outbox SET"
+                "   attempts = attempts + 1, last_error = %s,"
+                "   updated_at = CURRENT_TIMESTAMP"
+                " WHERE authorization_id = %s AND state = 'pending'",
+                (error[:500], authorization_id),
+                prepare=False,
+            )
+        )
+
     def deferred_outstanding(self, workspace_id: str) -> dict[str, int]:
         """Read the counter. For operators and tests, never for admission —
         admission is the conditional UPDATE above."""

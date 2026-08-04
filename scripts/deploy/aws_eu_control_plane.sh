@@ -86,6 +86,13 @@ MONITOR_KEY_SECRET_ARN="${MONITOR_KEY_SECRET_ARN:-$(aws secretsmanager describe-
 # are separate secrets and remain unset.
 FEDERATION_TOKEN_SECRET_ARN="${FEDERATION_TOKEN_SECRET_ARN:-$(aws secretsmanager describe-secret --region "$REGION" --secret-id quill/trustedrouter-federation-peer-token --query ARN --output text)}"
 FEDERATION_HOME_BASE_URL="${FEDERATION_HOME_BASE_URL:-https://trustedrouter.com}"
+# Deferred settlement, this plane's half: the token presented to home's
+# apply-usage endpoint (identifies this plane as aws-eu there), and the
+# master enable. OPTIONAL like the ClickHouse secret — the standby region
+# must not be blocked by a secret that has not been replicated yet, and
+# a missing secret simply leaves deferred settlement OFF on that service.
+SETTLEMENT_TOKEN_SECRET_ARN="${SETTLEMENT_TOKEN_SECRET_ARN:-$(aws secretsmanager describe-secret --region "$REGION" --secret-id quill/trustedrouter-federation-settlement-token-aws-eu --query ARN --output text 2>/dev/null || true)}"
+DEFERRED_SETTLEMENT_ENABLED="${DEFERRED_SETTLEMENT_ENABLED:-false}"
 # Analytics is optional, so its secret must be too. A standby region has no
 # ClickHouse node and no replica of this secret; requiring it would block the
 # region whose entire job is to survive the loss of the one that has it.
@@ -143,6 +150,19 @@ IMAGE_DIGEST=$(aws ecr describe-images --region "$REGION" --repository-name trus
 IMAGE_REF="${ECR}@${IMAGE_DIGEST}"
 log "deploying by digest: ${IMAGE_DIGEST}"
 
+# Deferred settlement rides the same optional-secret shape as ClickHouse:
+# no per-plane settlement token in this region means the forwarder has
+# nothing to present, so the enable flag is forced off rather than shipping
+# a plane that admits deferred spend it can never deliver.
+if [ -n "$SETTLEMENT_TOKEN_SECRET_ARN" ] && [ "$SETTLEMENT_TOKEN_SECRET_ARN" != "None" ]; then
+  SETTLEMENT_SECRET_JSON=",
+        \"TR_FEDERATION_SETTLEMENT_HOME_TOKEN\": \"${SETTLEMENT_TOKEN_SECRET_ARN}\""
+else
+  log "no settlement token in ${REGION}: deferred settlement disabled for this service"
+  SETTLEMENT_SECRET_JSON=""
+  DEFERRED_SETTLEMENT_ENABLED="false"
+fi
+
 # With no ClickHouse secret in this region there is no analytics path, so the
 # outbox stays off rather than enqueuing rows nothing will ever drain.
 if [ -n "$CLICKHOUSE_SECRET_ARN" ] && [ "$CLICKHOUSE_SECRET_ARN" != "None" ]; then
@@ -186,6 +206,7 @@ CONFIG=$(cat <<JSON
         "TR_SYNTHETIC_CONTROL_PLANE_BASE_URL": "https://trustedrouter.com",
 
         "TR_FEDERATION_HOME_BASE_URL": "${FEDERATION_HOME_BASE_URL}",
+        "TR_FEDERATION_DEFERRED_SETTLEMENT_ENABLED": "${DEFERRED_SETTLEMENT_ENABLED}",
 
         "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED": "${OUTBOX_ENABLED}",
         "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL": "${CLICKHOUSE_URL_EFFECTIVE}",
@@ -195,7 +216,7 @@ CONFIG=$(cat <<JSON
       "RuntimeEnvironmentSecrets": {
         "TR_INTERNAL_GATEWAY_TOKEN": "${INTERNAL_TOKEN_SECRET_ARN}",
         "TR_SYNTHETIC_MONITOR_API_KEY": "${MONITOR_KEY_SECRET_ARN}",
-        "TR_FEDERATION_HOME_TOKEN": "${FEDERATION_TOKEN_SECRET_ARN}"${CLICKHOUSE_SECRET_JSON}
+        "TR_FEDERATION_HOME_TOKEN": "${FEDERATION_TOKEN_SECRET_ARN}"${SETTLEMENT_SECRET_JSON}${CLICKHOUSE_SECRET_JSON}
       }
     }
   },

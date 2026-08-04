@@ -87,6 +87,48 @@ def create_app(
     )
     app.state.settings = settings
 
+    # Deferred settlement's forwarder + reaper. In-process, gated on the peer
+    # config actually being set — no external scheduler is a hard dependency
+    # on a plane whose entire purpose is fewer dependencies. Jittered so a
+    # fleet of instances doesn't synchronize; single-flight inside the
+    # forwarder collapses overlaps; daemon threads die with the process.
+    if (
+        settings.federation_deferred_settlement_enabled
+        and settings.federation_settlement_home_token
+    ):
+
+        @app.on_event("startup")
+        async def _start_home_settlement_loop() -> None:  # pragma: no cover - thread wiring
+            import logging as _logging
+            import random  # noqa: S311 - jitter, not cryptography
+            import threading
+            import time
+
+            from trusted_router.services.home_settlement import drain_home_settlements
+            from trusted_router.storage import STORE
+
+            def loop() -> None:
+                passes = 0
+                while True:
+                    time.sleep(random.uniform(20, 45))  # noqa: S311
+                    try:
+                        drain_home_settlements(settings, limit=50)
+                    except Exception:
+                        _logging.getLogger(__name__).exception("home settlement pass failed")
+                    passes += 1
+                    # Reap roughly every tenth pass (~5 min): abandoned
+                    # authorizations accumulate on deploy restarts, not
+                    # per-second, so this cadence is generous.
+                    if passes % 10 == 0:
+                        reap = getattr(STORE, "reap_expired_deferred_authorizations", None)
+                        if reap is not None:
+                            try:
+                                reap(limit=100)
+                            except Exception:
+                                _logging.getLogger(__name__).exception("deferred reap failed")
+
+            threading.Thread(target=loop, name="home-settlement", daemon=True).start()
+
     register_http_middleware(app, settings)
 
     @app.exception_handler(StarletteHTTPException)
