@@ -104,9 +104,33 @@ def drain_home_settlements(settings: Any, *, limit: int = 50) -> dict[str, Any]:
         _pass_lock.release()
 
 
+#: Backoff schedule. Clamped rows wait out home's daily window (the route's
+#: own Retry-After says 3600); outage-shaped rows back off exponentially so a
+#: parked backlog does not hammer a struggling home from every instance's
+#: loop, and CAPPED so a long outage still retries within a bounded delay.
+CLAMP_RETRY_SECONDS = 3600
+OUTAGE_RETRY_CAP_SECONDS = 1800
+
+
+def _outage_backoff_seconds(attempts: int) -> int:
+    return min(60 * (2 ** min(int(attempts), 5)), OUTAGE_RETRY_CAP_SECONDS)
+
+
 def _run_pass(store: Any, home: str, token: str, limit: int) -> dict[str, Any]:
     rows = store.pending_home_settlements(limit=limit)
-    counts = {"examined": len(rows), "forwarded": 0, "dead_lettered": 0, "clamped": 0, "outage": 0}
+    counts = {
+        "examined": len(rows),
+        "forwarded": 0,
+        "dead_lettered": 0,
+        "clamped": 0,
+        "outage": 0,
+        # Rows another drainer resolved between our read and our mark. The
+        # transitions COUNTED here are only ones this pass actually made —
+        # a count that includes the race loser's no-op reports transitions
+        # that never happened, and the drain endpoint is the observability
+        # surface operators trust during an incident.
+        "raced": 0,
+    }
     if not rows:
         return counts
 
@@ -127,7 +151,9 @@ def _run_pass(store: Any, home: str, token: str, limit: int) -> dict[str, Any]:
                 )
             except httpx.HTTPError as exc:
                 store.bump_home_settlement_attempt(
-                    authorization_id, error=f"transport: {exc}"
+                    authorization_id,
+                    error=f"transport: {exc}",
+                    retry_in_seconds=_outage_backoff_seconds(row.get("attempts", 0)),
                 )
                 counts["outage"] += 1
                 log.warning("home settlement pass parked: transport error to home")
@@ -137,19 +163,29 @@ def _run_pass(store: Any, home: str, token: str, limit: int) -> dict[str, Any]:
                 response.status_code, response.content
             )
             if classification == FORWARDED:
-                store.mark_home_settlement_forwarded(authorization_id)
-                counts["forwarded"] += 1
+                if store.mark_home_settlement_forwarded(authorization_id):
+                    counts["forwarded"] += 1
+                else:
+                    counts["raced"] += 1
             elif classification == DEAD_LETTER:
-                store.mark_home_settlement_dead_letter(authorization_id, reason=reason)
-                counts["dead_lettered"] += 1
-                log.error(
-                    "home settlement %s dead-lettered: %s", authorization_id, reason
-                )
+                if store.mark_home_settlement_dead_letter(authorization_id, reason=reason):
+                    counts["dead_lettered"] += 1
+                    log.error(
+                        "home settlement %s dead-lettered: %s", authorization_id, reason
+                    )
+                else:
+                    counts["raced"] += 1
             elif classification == CLAMPED:
-                store.bump_home_settlement_attempt(authorization_id, error=reason)
+                store.bump_home_settlement_attempt(
+                    authorization_id, error=reason, retry_in_seconds=CLAMP_RETRY_SECONDS
+                )
                 counts["clamped"] += 1
             else:  # RETRY — an outage signal parks the whole pass.
-                store.bump_home_settlement_attempt(authorization_id, error=reason)
+                store.bump_home_settlement_attempt(
+                    authorization_id,
+                    error=reason,
+                    retry_in_seconds=_outage_backoff_seconds(row.get("attempts", 0)),
+                )
                 counts["outage"] += 1
                 log.warning("home settlement pass parked: %s", reason)
                 break

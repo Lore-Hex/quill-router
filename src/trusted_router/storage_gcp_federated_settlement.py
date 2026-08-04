@@ -64,21 +64,46 @@ def _read_entity_body(
 
 
 def _book_usage(
-    transaction: Any, param_types: Any, workspace_id: str, cost: int
-) -> int:
-    """total_usage += cost on shard 0, UNCONDITIONAL, row count returned.
+    transaction: Any, param_types: Any, workspace_id: str, cost: int, now: Any
+) -> None:
+    """total_usage += cost on shard 0, UNCONDITIONAL — and UPSERT-shaped.
 
     Deliberately no headroom predicate: the spend already happened on the
     peer while this plane was unreachable. Booking it into a negative
     available balance is the honest ledger; refusing to book it would lose
-    the debit, which is the one failure money code cannot have. The row
-    count is the workspace-existence check.
+    the debit, which is the one failure money code cannot have.
+
+    UPSERT, not a bare UPDATE, for the same reason the Postgres settle path
+    learned in 2a: a zero-row UPDATE on a missing shard-0 row is SILENT, and
+    treating it as "workspace unknown" turns a deleted/unbackfilled balance
+    row into a terminal dead-letter on the peer — a valid debit dropped
+    forever. Workspace existence is the CALLER's check, against the
+    workspace entity itself; by the time we are here, the spend books, into
+    a recreated zero-credit row if it must.
     """
-    return transaction.execute_update(
+    updated = transaction.execute_update(
         f"UPDATE {CREDIT_BALANCE_TABLE} SET total_usage = total_usage + @amt "  # noqa: S608 - constant table name
         "WHERE workspace_id = @ws AND shard = 0",
         params={"amt": cost, "ws": workspace_id},
         param_types={"amt": param_types.INT64, "ws": param_types.STRING},
+    )
+    if updated == 1:
+        return
+    log.error(
+        "apply_federated_usage: workspace %s exists but has no shard-0 balance "
+        "row; recreating it at zero credits so the debit cannot vanish",
+        workspace_id,
+    )
+    transaction.execute_update(
+        f"INSERT INTO {CREDIT_BALANCE_TABLE} "  # noqa: S608 - constant table name
+        "(workspace_id, shard, total_credits, total_usage, reserved, updated_at) "
+        "VALUES (@ws, 0, 0, @amt, 0, @now)",
+        params={"amt": cost, "ws": workspace_id, "now": now},
+        param_types={
+            "amt": param_types.INT64,
+            "ws": param_types.STRING,
+            "now": param_types.TIMESTAMP,
+        },
     )
 
 
@@ -140,8 +165,15 @@ def apply_federated_usage(
         if applied_today + cost > int(daily_cap_microdollars):
             return "clamped"
 
-        if _book_usage(transaction, param_types, workspace_id, cost) != 1:
+        # Workspace existence is checked against the workspace ENTITY, never
+        # inferred from the balance UPDATE's row count. A missing shard-0
+        # balance row on a live workspace is drift to repair (book into a
+        # recreated row), not a verdict — the peer dead-letters
+        # workspace_unknown terminally, so conflating the two drops a valid
+        # debit forever.
+        if _read_entity_body(transaction, param_types, "workspace", workspace_id) is None:
             return "workspace_unknown"
+        _book_usage(transaction, param_types, workspace_id, cost, now)
 
         insert_entity_dml_at(
             transaction,

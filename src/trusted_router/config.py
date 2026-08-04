@@ -700,13 +700,43 @@ class Settings(BaseSettings):
         parse_gateway_region_targets(self.synthetic_gateway_region_targets)
         # Same rule for the settlement token map: a malformed entry must not
         # degrade into "that peer silently cannot settle".
-        parse_settlement_inbound_tokens(self.federation_settlement_inbound_tokens)
+        settlement_tokens = parse_settlement_inbound_tokens(
+            self.federation_settlement_inbound_tokens
+        )
         if self.federation_settlement_home_token and not self.federation_home_base_url:
             raise ValueError(
                 "TR_FEDERATION_SETTLEMENT_HOME_TOKEN is set but "
                 "TR_FEDERATION_HOME_BASE_URL is not; the forwarder would have "
                 "a token and nowhere to present it"
             )
+        # ENFORCED credential separation, not just documented. The whole token
+        # doctrine (routes/internal/federation.py docstring) is that no single
+        # secret grants both directory reads and money movement — but a config
+        # that reuses the resolve-key token as a settlement-map value would
+        # quietly hand every peer holding the directory secret the power to
+        # debit arbitrary workspaces up to the clamp. Reuse fails startup.
+        if settlement_tokens:
+            other_credentials = {
+                name: value
+                for name, value in (
+                    ("TR_FEDERATION_PEER_TOKEN", self.federation_peer_token),
+                    ("TR_FEDERATION_HOME_TOKEN", self.federation_home_token),
+                    ("TR_FEDERATION_CREDIT_INBOUND_TOKEN", self.federation_credit_inbound_token),
+                    ("TR_FEDERATION_CREDIT_PEER_TOKEN", self.federation_credit_peer_token),
+                    ("TR_FEDERATION_SETTLEMENT_HOME_TOKEN", self.federation_settlement_home_token),
+                    ("TR_INTERNAL_GATEWAY_TOKEN", self.internal_gateway_token or ""),
+                )
+                if value
+            }
+            for token in settlement_tokens:
+                for name, value in other_credentials.items():
+                    if token == value:
+                        raise ValueError(
+                            "TR_FEDERATION_SETTLEMENT_INBOUND_TOKENS reuses the value "
+                            f"of {name}; a settlement token must be a dedicated "
+                            "secret — reuse would let a directory or gateway "
+                            "credential debit workspaces"
+                        )
         if not 0.1 <= self.ops_chat_webhook_timeout_seconds <= 10.0:
             raise ValueError(
                 "TR_OPS_CHAT_WEBHOOK_TIMEOUT_SECONDS must be between 0.1 and 10"

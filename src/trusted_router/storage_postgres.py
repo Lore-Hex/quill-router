@@ -1581,16 +1581,23 @@ class PostgresStore:
         )
 
     def pending_home_settlements(self, *, limit: int = 50) -> list[dict[str, Any]]:
-        """Oldest pending debt rows, for the forwarder."""
+        """ELIGIBLE pending debt rows, most-overdue first.
+
+        Eligibility is next_attempt_at <= now: a clamped or outage-bumped row
+        waits out its backoff instead of being re-presented every pass while
+        eligible rows behind it starve. Ordering by next_attempt_at (not
+        enqueued_at) is what lets fresh rows overtake a parked backlog.
+        """
+        now = iso_now()
 
         def read(conn: Any) -> list[dict[str, Any]]:
             rows = conn.execute(
                 "SELECT authorization_id, workspace_id, cost_microdollars, attempts"
                 " FROM tr_home_settlement_outbox"
-                " WHERE state = 'pending'"
-                " ORDER BY enqueued_at"
+                " WHERE state = 'pending' AND next_attempt_at <= %s"
+                " ORDER BY next_attempt_at"
                 " LIMIT %s",
-                (int(limit),),
+                (now, int(limit)),
                 prepare=False,
             ).fetchall()
             return [
@@ -1678,14 +1685,20 @@ class PostgresStore:
 
         return self._run_transaction(mark)
 
-    def bump_home_settlement_attempt(self, authorization_id: str, *, error: str) -> None:
+    def bump_home_settlement_attempt(
+        self, authorization_id: str, *, error: str, retry_in_seconds: int = 60
+    ) -> None:
+        next_attempt = (
+            dt.datetime.now(dt.UTC) + dt.timedelta(seconds=max(1, int(retry_in_seconds)))
+        ).isoformat().replace("+00:00", "Z")
         self._run_transaction(
             lambda conn: conn.execute(
                 "UPDATE tr_home_settlement_outbox SET"
                 "   attempts = attempts + 1, last_error = %s,"
+                "   next_attempt_at = %s,"
                 "   updated_at = CURRENT_TIMESTAMP"
                 " WHERE authorization_id = %s AND state = 'pending'",
-                (error[:500], authorization_id),
+                (error[:500], next_attempt, authorization_id),
                 prepare=False,
             )
         )
