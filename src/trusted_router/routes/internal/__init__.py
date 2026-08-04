@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from . import adyen as adyen
 from . import broadcast_queue as broadcast_queue
 from . import chat_browser_key as chat_browser_key
 from . import federation as federation
@@ -23,6 +24,7 @@ from . import webhook as webhook
 def register_internal_routes(router: APIRouter) -> None:
     webhook.register(router)
     paypal.register(router)
+    adyen.register(router)
     broadcast_queue.register(router)
     gateway.register(router)
     video_jobs.register(router)

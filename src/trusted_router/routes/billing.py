@@ -14,6 +14,7 @@ from trusted_router.errors import api_error, deprecated
 from trusted_router.money import money_pair
 from trusted_router.routes.helpers import json_body
 from trusted_router.schemas import CheckoutRequest, X402FundingRequest, X402SettleRequest
+from trusted_router.services.adyen_billing import create_adyen_checkout_session
 from trusted_router.services.paypal_billing import (
     capture_paypal_order_for_workspace,
     create_paypal_checkout_session,
@@ -67,7 +68,14 @@ def register_billing_routes(router: APIRouter) -> None:
         return JSONResponse(
             {
                 "data": (
-                    create_paypal_checkout_session(
+                    create_adyen_checkout_session(
+                        body=body,
+                        workspace_id=workspace_id,
+                        customer_email=_checkout_customer_email(principal),
+                        settings=settings,
+                    )
+                    if body.payment_method == "adyen"
+                    else create_paypal_checkout_session(
                         body=body,
                         workspace_id=workspace_id,
                         customer_email=_checkout_customer_email(principal),
@@ -236,6 +244,9 @@ def _checkout_body_with_first_party_returns(
     if body.payment_method == "paypal":
         default_success = f"{origin}/billing/paypal/success"
         default_cancel = f"{origin}/billing/paypal/cancel"
+    elif body.payment_method == "adyen":
+        default_success = f"{origin}/billing/adyen/return"
+        default_cancel = f"{origin}/billing"
     else:
         default_success = f"{origin}/billing/success"
         default_cancel = f"{origin}/billing"

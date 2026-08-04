@@ -21,6 +21,9 @@
             {% if paypal_enabled %}
             <option value="paypal">PayPal</option>
             {% endif %}
+            {% if adyen_enabled %}
+            <option value="adyen">Adyen</option>
+            {% endif %}
           </select>
         </label>
       </div>
@@ -44,7 +47,7 @@
   <div class="panel-body">
     <p style="color:var(--muted);font-size:14px;margin:0 0 14px">
       Save a Stripe card for auto refill. One-time credit purchases can use a
-      card, ACH bank account, PayPal, or USDC above.
+      card, ACH bank account, PayPal{% if adyen_enabled %}, Adyen{% endif %}, or USDC above.
       {% if payment_method_pending %}
       <br><strong>Stripe setup is pending. Auto-refill will unlock after Stripe confirms the card.</strong>
       {% endif %}

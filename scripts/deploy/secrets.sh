@@ -251,6 +251,10 @@ grant_tr_deploy_secret_access "trustedrouter-neurometric-api-key"
 grant_tr_deploy_secret_access "trustedrouter-engy-api-key"
 grant_tr_deploy_secret_access "trustedrouter-zero-g-api-key"
 grant_tr_deploy_secret_access "trustedrouter-clickhouse-control-read-password"
+grant_tr_deploy_secret_access "trustedrouter-adyen-test-api-key"
+grant_tr_deploy_secret_access "trustedrouter-adyen-test-client-key"
+grant_tr_deploy_secret_access "trustedrouter-adyen-test-hmac-key"
+grant_tr_deploy_secret_access "trustedrouter-adyen-test-reference-key"
 
 # Axiom logging — ship structured logs to a dedicated dataset for
 # slice-and-dice analysis (request_id correlation, rate-limit hits,
@@ -280,6 +284,11 @@ ensure_secret_from_env_file "AWS_SECRET_ACCESS_KEY" "trustedrouter-aws-secret-ac
 ensure_secret_from_env_file "PAYPAL_CLIENT_ID" "trustedrouter-paypal-client-id"
 ensure_secret_from_env_file "PAYPAL_CLIENT_SECRET" "trustedrouter-paypal-client-secret"
 ensure_secret_from_env_file "PAYPAL_WEBHOOK_ID" "trustedrouter-paypal-webhook-id"
+ensure_secret_from_env_file "ADYEN_API_KEY" "trustedrouter-adyen-test-api-key"
+ensure_secret_from_env_file "ADYEN_CLIENT_KEY" "trustedrouter-adyen-test-client-key"
+ensure_secret_from_env_file "ADYEN_HMAC_KEY" "trustedrouter-adyen-test-hmac-key"
+ensure_secret_from_env_file \
+  "ADYEN_REFERENCE_KEY" "trustedrouter-adyen-test-reference-key"
 if ! gc secrets describe trustedrouter-internal-gateway-token >/dev/null 2>&1; then
   ensure_secret_value trustedrouter-internal-gateway-token "$(python3 - <<'PY'
 import secrets

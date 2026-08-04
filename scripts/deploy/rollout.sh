@@ -109,6 +109,11 @@ add_secret_env_if_exists \
 add_secret_env_if_exists "TR_PAYPAL_CLIENT_ID" "trustedrouter-paypal-client-id"
 add_secret_env_if_exists "TR_PAYPAL_CLIENT_SECRET" "trustedrouter-paypal-client-secret"
 add_secret_env_if_exists "TR_PAYPAL_WEBHOOK_ID" "trustedrouter-paypal-webhook-id"
+add_secret_env_if_exists "TR_ADYEN_API_KEY" "trustedrouter-adyen-test-api-key"
+add_secret_env_if_exists "TR_ADYEN_CLIENT_KEY" "trustedrouter-adyen-test-client-key"
+add_secret_env_if_exists "TR_ADYEN_HMAC_KEY" "trustedrouter-adyen-test-hmac-key"
+add_secret_env_if_exists \
+  "TR_ADYEN_REFERENCE_KEY" "trustedrouter-adyen-test-reference-key"
 add_secret_env_if_exists "AXIOM_API_TOKEN" "trustedrouter-axiom-api-token"
 add_secret_env_if_exists "TR_ATHENA_WORKER_PROMPT" "trustedrouter-athena-worker-prompt-v1"
 add_secret_env_if_exists \
@@ -340,6 +345,16 @@ ENV_VARS=(
   "TR_SES_ALERT_FROM_NAME=TrustedRouter Alerts"
   "TR_SES_ALERT_CONFIGURATION_SET=trustedrouter-alerts"
   "TR_SUPPORT_EMAIL=help@trustedrouter.com"
+  # Adyen ships dark. Activating checkout is an intentional one-line release
+  # after the merchant, HMAC webhook, and test-payment canary are green.
+  "TR_ADYEN_ENABLED=false"
+  "TR_ADYEN_ENVIRONMENT=test"
+  "TR_ADYEN_MERCHANT_ACCOUNT=TrustedRouterUS"
+  "TR_ADYEN_CHECKOUT_API_VERSION=72"
+  "TR_ADYEN_WEB_VERSION=6.41.0"
+  # Replace these zeros with the signed Adyen commercial terms before launch.
+  "TR_ADYEN_CARD_FEE_BASIS_POINTS=0"
+  "TR_ADYEN_CARD_FEE_FIXED_CENTS=0"
   "TR_OPS_CHAT_WEBHOOK_URLS=https://a.uptimerouter.com,https://b.trustedrouter.com,https://c.allyrouter.com"
   # /trustedos partner-inquiry form leads. Plain env (an address, not a
   # secret); without it the handler falls back to TR_SES_FROM_EMAIL, which
