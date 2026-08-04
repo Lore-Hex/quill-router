@@ -80,6 +80,8 @@ SECRETS_DIR="${SECRETS_DIR:-$HOME/.quill-secrets}"
 # settlement stays OFF until its token is present AND explicitly enabled.
 FEDERATION_HOME_BASE_URL="${FEDERATION_HOME_BASE_URL:-https://trustedrouter.com}"
 DEFERRED_SETTLEMENT_ENABLED="${DEFERRED_SETTLEMENT_ENABLED:-false}"
+SYNTHETIC_INTERVAL_SECONDS="${SYNTHETIC_INTERVAL_SECONDS:-300}"
+SYNTHETIC_ROTATION_COUNT="${SYNTHETIC_ROTATION_COUNT:-8}"
 
 log() { printf '\n=== %s\n' "$*" >&2; }
 exists() { "$@" >/dev/null 2>&1; }
@@ -182,6 +184,20 @@ ENV_VARS=(
   "TR_FEDERATION_HOME_BASE_URL=${FEDERATION_HOME_BASE_URL}"
   "TR_FEDERATION_DEFERRED_SETTLEMENT_ENABLED=${DEFERRED_SETTLEMENT_ENABLED}"
 
+  # The monitor runs IN THIS PROCESS. Azure has no Cloud Scheduler and no
+  # EventBridge, and Container Apps Jobs cannot carry a `python -c` argv
+  # through the CLI's argument handling. More importantly, a per-cloud
+  # scheduler is one more thing that stops silently: AWS once had an
+  # EventBridge connection go DEAUTHORIZED on a stale token and the status
+  # page simply went quiet while the app stayed healthy. In-process means the
+  # monitor arrives with the deployment.
+  #
+  # rotation_count=8 is REAL INFERENCE and costs real money. It is also the
+  # only thing that puts model/provider rows on the leaderboard: a model with
+  # no sample shows no verdict at all - not green, not red, absent.
+  "TR_SYNTHETIC_SCHEDULER_INTERVAL_SECONDS=${SYNTHETIC_INTERVAL_SECONDS}"
+  "TR_SYNTHETIC_SCHEDULER_ROTATION_COUNT=${SYNTHETIC_ROTATION_COUNT}"
+
   "TR_INTERNAL_GATEWAY_TOKEN=secretref:internal-token"
   "TR_SYNTHETIC_MONITOR_API_KEY=secretref:monitor-key"
   "TR_FEDERATION_HOME_TOKEN=secretref:federation-token"
@@ -223,10 +239,46 @@ fi
 FQDN="$(az containerapp show -g "$RG" -n "$APP" --query properties.configuration.ingress.fqdn -o tsv)"
 log "app URL: https://${FQDN}"
 
+# Schema, and then PROOF that it landed.
+#
+# The previous version ran `az containerapp exec` and, if that failed, logged
+# a NOTE and carried on. It failed — exec needs an interactive TTY, which a
+# deploy pipeline does not have — and the deploy reported success against an
+# EMPTY DATABASE. The app then served HTTP 200 on every page while every
+# write failed as `rate_limit.store_error`, and the status page published
+# five permanently-"unknown" components. That is the "reports success without
+# measuring" failure this codebase keeps re-finding, so the fix is not a
+# better exec: it is a CHECK that fails the deploy.
 log "applying the schema (idempotent; every statement is IF NOT EXISTS)"
-az containerapp exec -g "$RG" -n "$APP" \
-  --command "python -c 'from trusted_router.storage import STORE; STORE.apply_schema(); print(\"schema ok\")'" \
-  2>/dev/null || log "NOTE: exec unavailable; run apply_schema manually or on first boot"
+SCHEMA_SQL="${SCHEMA_SQL:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/src/trusted_router/storage_postgres_schema.sql}"
+[ -f "$SCHEMA_SQL" ] || die "schema file not found at $SCHEMA_SQL"
+
+if command -v psql >/dev/null 2>&1; then
+  # A temporary firewall rule for THIS host only, removed on every exit path.
+  MYIP="$(curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null || true)"
+  if [ -n "$MYIP" ]; then
+    az postgres flexible-server firewall-rule create -g "$RG" -s "$PG_NAME" \
+      --name "tmp-schema-$$" --start-ip-address "$MYIP" --end-ip-address "$MYIP" \
+      -o none 2>/dev/null || true
+    # shellcheck disable=SC2064
+    trap "az postgres flexible-server firewall-rule delete -g '$RG' -s '$PG_NAME' --name 'tmp-schema-$$' --yes -o none 2>/dev/null || true" EXIT
+    sleep 5
+  fi
+  PGPASSWORD="$PG_PASSWORD" psql \
+    "host=${PG_HOST} port=5432 user=${PG_ADMIN} dbname=${PG_DB} sslmode=require" \
+    -v ON_ERROR_STOP=1 -q -f "$SCHEMA_SQL" >/dev/null \
+    || die "schema application FAILED — the app would serve 200s over an empty database"
+  APPLIED=$(PGPASSWORD="$PG_PASSWORD" psql \
+    "host=${PG_HOST} port=5432 user=${PG_ADMIN} dbname=${PG_DB} sslmode=require" \
+    -tAc "select count(*) from information_schema.tables where table_schema='public' and table_name like 'tr\\_%'" 2>/dev/null || echo 0)
+  # Assert the COUNT, not the exit code: a psql that connects and applies
+  # nothing still exits 0.
+  [ "${APPLIED:-0}" -ge 6 ] || die "schema check FAILED: only ${APPLIED:-0} tr_* tables present (expected >= 6)"
+  log "schema verified: ${APPLIED} tr_* tables present"
+else
+  die "psql not found — required to apply and VERIFY the schema. Install it, or
+       apply ${SCHEMA_SQL} against ${PG_HOST}/${PG_DB} yourself and re-run."
+fi
 
 log "DNS: point azure.trustedrouter.com at this app"
 if command -v gcloud >/dev/null 2>&1; then
