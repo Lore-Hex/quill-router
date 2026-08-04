@@ -29,11 +29,23 @@ SECRET_ENVS=(
   "TR_STRIPE_WEBHOOK_SECRET=trustedrouter-stripe-webhook-secret:latest"
   "TR_INTERNAL_GATEWAY_TOKEN=trustedrouter-internal-gateway-token:latest"
 )
+# Retired environment bindings remain on Cloud Run until explicitly removed.
+REMOVE_SECRET_ENVS=("TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")
 add_secret_env_if_exists() {
   local env_name="$1"
   local secret_name="$2"
-  if gc secrets describe "$secret_name" >/dev/null 2>&1; then
+  local describe_error=""
+  if describe_error="$(gc secrets describe "$secret_name" 2>&1)"; then
     SECRET_ENVS+=("${env_name}=${secret_name}:latest")
+  elif [[ "$describe_error" == *"NOT_FOUND"* ]] || \
+       [[ "$describe_error" == *"not found"* ]]; then
+    # gcloud --update-secrets preserves old bindings. Explicit removal keeps
+    # a deleted optional secret from making an otherwise healthy revision
+    # unroutable in regions that still carry the stale environment entry.
+    REMOVE_SECRET_ENVS+=("${env_name}")
+  else
+    log "cannot determine whether optional secret ${secret_name} exists"
+    return 1
   fi
 }
 add_secret_env_if_exists "ANTHROPIC_API_KEY" "trustedrouter-anthropic-api-key"
@@ -94,6 +106,10 @@ add_secret_env_if_exists \
   "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD" \
   "trustedrouter-clickhouse-control-read-password"
 UPDATE_SECRETS="$(IFS=,; echo "${SECRET_ENVS[*]}")"
+REMOVE_SECRETS_ARGS=()
+if [ "${#REMOVE_SECRET_ENVS[@]}" -gt 0 ]; then
+  REMOVE_SECRETS_ARGS=(--remove-secrets "$(IFS=,; echo "${REMOVE_SECRET_ENVS[*]}")")
+fi
 
 REQUEST_RECORD_WRITE_MODE="${TR_REQUEST_RECORD_WRITE_MODE:-}"
 if [ -z "$REQUEST_RECORD_WRITE_MODE" ]; then
@@ -459,6 +475,7 @@ deploy_one_region() {
       --vpc-egress private-ranges-only \
       --set-env-vars "$SET_ENV_VARS" \
       --update-secrets "$UPDATE_SECRETS" \
+      "${REMOVE_SECRETS_ARGS[@]}" \
       ${traffic_arg} \
       --quiet >>"$logfile" 2>&1; then
     log "deploy succeeded: ${target}"

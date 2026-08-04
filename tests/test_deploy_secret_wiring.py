@@ -40,6 +40,22 @@ def test_deploy_pins_ten_cent_signup_credit_policy() -> None:
     assert '"TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=100000"' in rollout
 
 
+def test_deploy_removes_only_explicitly_missing_optional_secrets() -> None:
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+
+    mandatory_block = rollout.split("SECRET_ENVS=(", 1)[1].split(")", 1)[0]
+    assert "TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD" not in mandatory_block
+    assert (
+        'REMOVE_SECRET_ENVS=("TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")' in rollout
+    )
+    assert "trustedrouter-google-ads-conversion-feed-password" not in rollout
+    assert '[[ "$describe_error" == *"NOT_FOUND"* ]]' in rollout
+    assert "cannot determine whether optional secret" in rollout
+    assert 'REMOVE_SECRET_ENVS+=("${env_name}")' in rollout
+    assert 'REMOVE_SECRETS_ARGS=(--remove-secrets ' in rollout
+    assert '"${REMOVE_SECRETS_ARGS[@]}"' in rollout
+
+
 def test_deploy_wires_three_cloud_ops_chat_support_fanout() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
     secrets = (ROOT / "scripts/deploy/secrets.sh").read_text()
