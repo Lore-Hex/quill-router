@@ -79,6 +79,13 @@ GATEWAY_REGION_TARGETS="${GATEWAY_REGION_TARGETS:-eu-west-1=quill-enclave-nlb-6e
 # Secrets Manager ARNs (eu-west-3 — App Runner requires same-region secrets).
 INTERNAL_TOKEN_SECRET_ARN="${INTERNAL_TOKEN_SECRET_ARN:-$(aws secretsmanager describe-secret --region "$REGION" --secret-id quill/trustedrouter-internal-gateway-token --query ARN --output text)}"
 MONITOR_KEY_SECRET_ARN="${MONITOR_KEY_SECRET_ARN:-$(aws secretsmanager describe-secret --region "$REGION" --secret-id quill/trustedrouter-synthetic-monitor-api-key --query ARN --output text)}"
+# PEER side of lazy key federation: the token this plane presents to the home
+# plane's resolve-key endpoint. Identity only — a GCP-issued key becomes
+# known here on first use and keeps serving from cache for up to 24h of home
+# outage. Credits deliberately do NOT federate; the credit-transfer tokens
+# are separate secrets and remain unset.
+FEDERATION_TOKEN_SECRET_ARN="${FEDERATION_TOKEN_SECRET_ARN:-$(aws secretsmanager describe-secret --region "$REGION" --secret-id quill/trustedrouter-federation-peer-token --query ARN --output text)}"
+FEDERATION_HOME_BASE_URL="${FEDERATION_HOME_BASE_URL:-https://trustedrouter.com}"
 # Analytics is optional, so its secret must be too. A standby region has no
 # ClickHouse node and no replica of this secret; requiring it would block the
 # region whose entire job is to survive the loss of the one that has it.
@@ -178,6 +185,8 @@ CONFIG=$(cat <<JSON
         "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL": "https://aws.trustedrouter.com",
         "TR_SYNTHETIC_CONTROL_PLANE_BASE_URL": "https://trustedrouter.com",
 
+        "TR_FEDERATION_HOME_BASE_URL": "${FEDERATION_HOME_BASE_URL}",
+
         "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED": "${OUTBOX_ENABLED}",
         "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL": "${CLICKHOUSE_URL_EFFECTIVE}",
         "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER": "${CLICKHOUSE_USER}",
@@ -185,7 +194,8 @@ CONFIG=$(cat <<JSON
       },
       "RuntimeEnvironmentSecrets": {
         "TR_INTERNAL_GATEWAY_TOKEN": "${INTERNAL_TOKEN_SECRET_ARN}",
-        "TR_SYNTHETIC_MONITOR_API_KEY": "${MONITOR_KEY_SECRET_ARN}"${CLICKHOUSE_SECRET_JSON}
+        "TR_SYNTHETIC_MONITOR_API_KEY": "${MONITOR_KEY_SECRET_ARN}",
+        "TR_FEDERATION_HOME_TOKEN": "${FEDERATION_TOKEN_SECRET_ARN}"${CLICKHOUSE_SECRET_JSON}
       }
     }
   },
