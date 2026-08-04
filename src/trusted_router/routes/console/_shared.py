@@ -68,25 +68,29 @@ def require_console_context(request: Request, settings: SettingsDep) -> ConsoleC
 ConsoleDep = Annotated[ConsoleContext, Depends(require_console_context)]
 
 
-def render(template: str, **context: Any) -> str:
-    """Common template fan-out: every console template needs the user,
-    workspace list, current workspace, and a hint for which sidebar item
-    is active. Each page passes its own page_title / page_subtitle / data."""
-    settings: Settings = context.pop("settings")
-    user: User = context.pop("user")
+def render(
+    template: str,
+    *,
+    settings: Settings,
+    ctx: ConsoleContext,
+    **context: Any,
+) -> str:
+    """Render a console page with one authoritative workspace context.
+
+    Requiring ``ctx`` prevents pages from using the selected workspace for
+    their data while accidentally rendering the first workspace in the
+    shared selector.
+    """
     active = str(context.get("active") or "")
-    workspaces = STORE.list_workspaces_for_user(user.id)
-    current_workspace = context.get("workspace")
-    if not isinstance(current_workspace, Workspace):
-        current_workspace = workspaces[0] if workspaces else None
     return render_template(
         template,
-        api_base_url=context.pop("api_base_url", settings.api_base_url),
-        user=user,
-        user_email=user.email,
-        workspaces=workspaces,
-        current_workspace=current_workspace,
-        current_workspace_id=current_workspace.id if current_workspace else "",
+        api_base_url=context.pop("api_base_url", ctx.api_base_url),
+        user=ctx.user,
+        user_email=ctx.user.email,
+        workspace=ctx.workspace,
+        workspaces=ctx.workspaces,
+        current_workspace=ctx.workspace,
+        current_workspace_id=ctx.workspace.id,
         console_next_path=_console_path_for_active(active),
         **context,
     )

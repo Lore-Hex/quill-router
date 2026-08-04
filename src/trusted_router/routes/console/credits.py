@@ -58,7 +58,7 @@ def register(app: FastAPI) -> None:
         return HTMLResponse(render(
             "console/credits.html",
             settings=settings,
-            user=ctx.user,
+            ctx=ctx,
             active="credits",
             page_title="Credits",
             page_subtitle="Top up to keep prepaid routes flowing.",

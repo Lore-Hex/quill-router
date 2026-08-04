@@ -997,6 +997,23 @@ def test_console_workspace_selector_persists_session_workspace(
     assert refreshed is not None
     assert refreshed.workspace_id == org.id
 
+    console_pages = (
+        "/console/api-keys",
+        "/console/byok",
+        "/console/custom-models",
+        "/console/routing",
+        "/console/activity",
+        "/console/broadcast",
+        "/console/settings",
+        "/console/credits",
+        "/console/account/preferences",
+    )
+    for path in console_pages:
+        workspace_page = client.get(path)
+        assert workspace_page.status_code == 200, path
+        assert f'<option value="{org.id}" selected>' in workspace_page.text, path
+        assert f'<option value="{personal.id}" selected>' not in workspace_page.text, path
+
     created = client.post(
         "/console/api-keys",
         data={"name": "org-key", "limit": ""},

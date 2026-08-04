@@ -86,12 +86,11 @@ def register(app: FastAPI) -> None:
         return HTMLResponse(render(
             "console/activity.html",
             settings=settings,
-            user=ctx.user,
+            ctx=ctx,
             active="activity",
             page_title="Observability",
             page_subtitle="Per-request metadata, no prompt content.",
             activity=events,
-            api_base_url=ctx.api_base_url,
         ))
 
     @app.get("/console/activity/usage.json")

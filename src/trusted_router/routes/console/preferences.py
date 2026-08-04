@@ -15,11 +15,10 @@ def register(app: FastAPI) -> None:
         return HTMLResponse(render(
             "console/account/preferences.html",
             settings=settings,
-            user=ctx.user,
+            ctx=ctx,
             active="preferences",
             page_title="Preferences",
             page_subtitle="Account and sign-in.",
             provider=ctx.session.provider,
             environment=settings.environment,
-            api_base_url=ctx.api_base_url,
         ))

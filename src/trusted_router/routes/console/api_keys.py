@@ -54,7 +54,7 @@ def register(app: FastAPI) -> None:
         return HTMLResponse(render(
             "console/api_keys.html",
             settings=settings,
-            user=ctx.user,
+            ctx=ctx,
             active="api-keys",
             page_title="API Keys",
             page_subtitle="Long-lived keys for your applications.",
@@ -62,7 +62,6 @@ def register(app: FastAPI) -> None:
             created_key=created_key,
             flash=flash,
             suggested=suggested,
-            api_base_url=ctx.api_base_url,
         ))
 
     @app.get("/console/api-keys")
