@@ -3482,8 +3482,32 @@
       "input_token_price_per_m": 5000000,
       "output_token_price_per_m": 30000000,
       "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Qwen3.8 Max",
+      "title": "qwen/qwen3.8-max",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.8-max",
+      "upstream_id": "qwen/qwen3.8-max",
+      "context_length": 1000000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 6000000,
+      "cached_input_token_price_per_m": 250000
     }
   ],
-  "generated_at": "2026-08-03T22:11:38Z",
-  "model_count": 127
+  "generated_at": "2026-08-04T04:16:30Z",
+  "model_count": 128
 }

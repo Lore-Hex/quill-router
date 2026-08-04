@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for Together AI routes that are live ahead of the shared OpenRouter snapshot. Verified against https://api.together.xyz/v1/models on 2026-06-22.",
   "provider": "together",
   "source": "https://api.together.xyz/v1/endpoints?type=serverless",
-  "generated_at": "2026-08-03T22:11:38Z",
-  "model_count": 19,
+  "generated_at": "2026-08-04T04:16:30Z",
+  "model_count": 20,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -461,6 +461,30 @@
       "input_token_price_per_m": 3000000,
       "output_token_price_per_m": 15000000,
       "cached_input_token_price_per_m": 300000
+    },
+    {
+      "display_name": "Deepseek V4 Flash 0731",
+      "title": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "upstream_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "features": [
+        "serverless"
+      ],
+      "context_length": 1048576,
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 280000,
+      "cached_input_token_price_per_m": 30000
     }
   ],
   "price_scale": "microdollars_per_million"
