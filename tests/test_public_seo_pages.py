@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -67,7 +68,7 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
         in core.text
     )
     assert (
-        "<loc>https://trustedrouter.com/blog/sign-in-with-trustedrouter-slopnazi</loc>"
+        "<loc>https://trustedrouter.com/blog/sign-in-with-trustedrouter</loc>"
         in core.text
     )
     assert "<loc>https://trustedrouter.com/docs/synth</loc>" in core.text
@@ -446,15 +447,14 @@ def test_blog_index_shows_scannable_post_images(client: TestClient) -> None:
     assert response.text.count('class="blog-thumb"') >= 10
 
 
-def test_sign_in_with_trustedrouter_launch_post_documents_live_flow(
+def test_sign_in_with_trustedrouter_launch_post_documents_generic_flow(
     client: TestClient,
 ) -> None:
-    response = client.get("/blog/sign-in-with-trustedrouter-slopnazi")
+    response = client.get("/blog/sign-in-with-trustedrouter")
 
     assert response.status_code == 200
     assert "Sign in with TrustedRouter" in response.text
-    assert "https://slopnazi.com/editor" in response.text
-    assert "$5 monthly limit" in response.text
+    assert "writing tool, coding agent, research app" in response.text
     assert "starts at exactly <strong>$0</strong>" in response.text
     assert "$5, $20, or $100" in response.text
     assert "keeps no prompt or output logs, always" in response.text
@@ -463,7 +463,25 @@ def test_sign_in_with_trustedrouter_launch_post_documents_live_flow(
     assert "https://github.com/Lore-Hex/trusted-router-js" in response.text
     assert "https://github.com/jperla/trusted-router-swift" in response.text
     payload = _json_ld(response.text)
-    assert "sign-in-with-trustedrouter-slopnazi" in json.dumps(payload)
+    assert "sign-in-with-trustedrouter" in json.dumps(payload)
+    assert "slopnazi" not in response.text.lower()
+
+
+def test_removed_integration_is_absent_from_public_surfaces(client: TestClient) -> None:
+    for path in (
+        "/sign-in-with-trustedrouter",
+        "/blog/sign-in-with-trustedrouter",
+        "/blog",
+        "/sitemap-core.xml",
+        "/llms.txt",
+    ):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert "slopnazi" not in response.text.lower()
+
+    assert client.get("/blog/sign-in-with-trustedrouter-slopnazi").status_code == 404
+    docs = Path("docs/sign-in-with-trustedrouter.md").read_text(encoding="utf-8")
+    assert "slopnazi" not in docs.lower()
 
 
 def test_confidential_computing_blog_explains_and_verifies_the_boundary(

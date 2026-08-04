@@ -44,6 +44,11 @@ def test_provider_onboarding_page_has_machine_readable_requirements(
     assert "No separate pricing endpoint is required." in response.text
     assert "per_1m_tokens" in response.text
     assert "Do not invent a second format." in response.text
+    assert "Featured partnership" in response.text
+    assert "Neurometric AI is live on TrustedRouter." in response.text
+    assert 'href="/providers/neurometric"' in response.text
+    assert "ZDR classification: not contractual" in response.text
+    assert client.get("/providers/neurometric").status_code == 200
     assert 'href="/providers/marketplace/catalog.schema.json"' in response.text
     assert 'href="/providers/marketplace/catalog.v2.schema.json"' in response.text
     assert "Always send <code>Retry-After</code>" in response.text
