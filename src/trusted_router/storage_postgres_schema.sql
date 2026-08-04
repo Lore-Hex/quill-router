@@ -169,3 +169,56 @@ CREATE TABLE IF NOT EXISTS tr_operational_analytics_outbox (
 -- primary key prefix so its LIMIT is a bounded range scan.
 CREATE INDEX IF NOT EXISTS tr_operational_analytics_outbox_enqueued_at_idx
     ON tr_operational_analytics_outbox (enqueued_at);
+
+-- Deferred settlement: the peer plane's record of debt it owes the home
+-- plane's ledger.
+--
+-- tr_deferred_outstanding is a per-workspace COUNTER, and it is the actual
+-- bound on how much unsettled spend a workspace can run up while home is
+-- unreachable. It is enforced by a conditional UPDATE at authorize
+--   SET outstanding = outstanding + :estimate WHERE outstanding + :estimate <= :cap
+-- because a read-then-check bounds nothing: the authorize-to-settle gap is a
+-- whole provider stream, so every concurrent request would read the same
+-- stale total and admit.
+--
+-- `dead_lettered` is a SEPARATE column, not a decrement to zero. A row whose
+-- terms home rejects must stop consuming the workspace's serving headroom
+-- (otherwise one corrupt row bricks the workspace forever) while the debt
+-- stays visible for an operator to write off or replay deliberately.
+CREATE TABLE IF NOT EXISTS tr_deferred_outstanding (
+    workspace_id TEXT NOT NULL,
+    outstanding BIGINT NOT NULL DEFAULT 0,
+    dead_lettered BIGINT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (workspace_id)
+);
+
+-- One row per settled deferred authorization, awaiting delivery to home.
+--
+-- authorization_id is the PRIMARY KEY and the cross-plane idempotency key:
+-- home records a verdict per (source_plane, authorization_id), so a
+-- redelivered row applies exactly once. cost_microdollars is the FROZEN
+-- actual, never recomputed — the same rule the analytics outbox learned about
+-- enqueued_at, for the same reason.
+--
+-- state: pending -> forwarded (home recorded it) | dead_letter (home returned
+-- a STRUCTURED terms-conflict or unknown-workspace verdict; a bare 404 or an
+-- unparseable body is an OUTAGE and stays pending, or a home rollback would
+-- silently destroy the whole backlog).
+CREATE TABLE IF NOT EXISTS tr_home_settlement_outbox (
+    authorization_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    cost_microdollars BIGINT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'pending',
+    attempts BIGINT NOT NULL DEFAULT 0,
+    last_error TEXT,
+    enqueued_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (authorization_id)
+);
+
+-- The drain's batch selector: pending rows oldest-first. Without it every
+-- drain pass scans the whole table, which is worst exactly when a backlog has
+-- made it expensive.
+CREATE INDEX IF NOT EXISTS tr_home_settlement_outbox_pending_idx
+    ON tr_home_settlement_outbox (state, enqueued_at);

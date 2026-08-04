@@ -52,6 +52,22 @@ class StoreUnavailable(StoreError):
     """
 
 
+class DeferredSettlementCapReached(StoreError):
+    """This plane already holds the maximum unsettled spend for a workspace.
+
+    A refusal, not a failure: the request is admissible again as soon as
+    settlements are delivered to the home plane (or the reaper reclaims an
+    abandoned authorization). Distinct from insufficient credits, which is a
+    statement about the customer's money; this one is a statement about how
+    much debt THIS plane is willing to carry on their behalf while the home
+    plane is unreachable.
+
+    A StoreError rather than a bare ValueError because the routes must be able
+    to tell it apart from "the local balance refused" without matching on
+    message text — the two lead to opposite responses.
+    """
+
+
 @lru_cache(maxsize=1)
 def _google_error_types() -> tuple[tuple[type[Exception], ...], tuple[type[Exception], ...]]:
     """`(transient, conflict)` types contributed by the GCP backend.

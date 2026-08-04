@@ -443,6 +443,31 @@ class Settings(BaseSettings):
     # presents there. Both empty = this plane cannot send credits anywhere.
     federation_credit_peer_base_url: str = ""
     federation_credit_peer_token: str = ""
+
+    # --- Deferred settlement -----------------------------------------------
+    # Lets a PEER plane serve a federated key's CREDITS traffic while the home
+    # plane is unreachable: the spend is admitted against a transactional
+    # outstanding cap, recorded durably as debt, and forwarded to the home
+    # ledger when home returns. Identity federates and credits do not; usage
+    # is the third category — a debt record, safe to apply late because
+    # applying it only ever moves a home balance DOWN and an insert-once claim
+    # at home makes double application impossible.
+    #
+    # OFF by default. A plane with this unset behaves exactly as before: a
+    # federated key with no local balance gets 402 CREDITS_NOT_ON_THIS_PLANE.
+    federation_deferred_settlement_enabled: bool = False
+    # The bound on how much unsettled debt one workspace may run up on this
+    # plane. Enforced by a conditional UPDATE at authorize, not a read-then-
+    # check — 200 concurrent authorizes must not all see the same stale total.
+    # This IS the worst-case exposure per workspace per outage (plus in-flight
+    # estimate-vs-actual drift). $25.
+    federation_deferred_max_outstanding_microdollars: int = 25_000_000
+    # How long a deferred authorization may sit unsettled before the reaper
+    # reclaims its estimate and releases the key-limit escrow. The enclave
+    # dying between authorize and settle is routine (every deploy); without a
+    # reaper the counter inflates permanently and the cap becomes a
+    # self-inflicted, unrecoverable 402. Matches the 2h idempotency horizon.
+    federation_deferred_authorization_ttl_seconds: int = 7_200
     # The canonical target serves a self-signed cert minted inside the
     # TEE (AWS Nitro standalone deployments): probes skip CA verification
     # and the attestation probe instead verifies the document binds the

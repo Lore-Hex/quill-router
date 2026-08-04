@@ -54,6 +54,13 @@ class ErrorType(StrEnum):
     # transferred. Telling them "insufficient credits" would send them to top
     # up an account that already has a balance.
     CREDITS_NOT_ON_THIS_PLANE = "credits_not_on_this_plane"
+    # A peer plane already holds the maximum unsettled spend it will carry for
+    # this workspace while the home plane is unreachable. Distinct from both
+    # insufficient_credits (a statement about the customer's money) and
+    # credits_not_on_this_plane (a statement about where it lives): this one
+    # says the customer is fine and the PLANE is at its self-imposed limit,
+    # which clears as settlements are delivered. Retryable.
+    DEFERRED_SETTLEMENT_CAP = "deferred_settlement_cap"
     MODEL_NOT_SUPPORTED = "model_not_supported"
     PROVIDER_AUTH_ERROR = "provider_auth_error"
     PROVIDER_ERROR = "provider_error"

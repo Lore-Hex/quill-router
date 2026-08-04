@@ -1377,6 +1377,9 @@ class SpannerBigtableStore:
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         additional_cost_reservation_microdollars: int = 0,
+        settlement: str = "local",
+        expires_at: str | None = None,
+        deferred_cap_microdollars: int | None = None,
     ) -> GatewayAuthorization:
         return self.api_keys.create_gateway_authorization(
             workspace_id=workspace_id,
@@ -1397,6 +1400,9 @@ class SpannerBigtableStore:
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
             additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
+            settlement=settlement,
+            expires_at=expires_at,
+            deferred_cap_microdollars=deferred_cap_microdollars,
         )
 
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None:

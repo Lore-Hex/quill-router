@@ -43,7 +43,11 @@ from trusted_router.security import (
 )
 from trusted_router.spend_windows import KeyWindowLimitExceeded, window_floors
 from trusted_router.storage_codec import json_body
-from trusted_router.storage_errors import StoreConflict, StoreUnavailable
+from trusted_router.storage_errors import (
+    DeferredSettlementCapReached,
+    StoreConflict,
+    StoreUnavailable,
+)
 from trusted_router.storage_gcp_codec import (
     member_id,
     normalize_email,
@@ -184,6 +188,9 @@ def _aws_dsql_token_provider(
 _GATEWAY_AUTHORIZATION_KIND = "gateway_authorization"
 _GATEWAY_IDEMPOTENCY_KIND = "gateway_authorization_idempotency"
 _GATEWAY_FINALIZATION_KIND = "gateway_authorization_finalization"
+#: GatewayAuthorization.settlement value meaning "this spend is debt owed to
+#: the home plane's ledger", not a debit against this plane's balance.
+_DEFERRED_HOME_SETTLEMENT = "deferred_home"
 _RESERVATION_KIND = "reservation"
 _RESERVATION_IDEMPOTENCY_KIND = "reservation_idempotency"
 _RESERVATION_FINALIZATION_KIND = "reservation_finalization"
@@ -1488,6 +1495,108 @@ class PostgresStore:
             window_amount=0,
         )
 
+    # Deferred settlement ---------------------------------------------------
+
+    def _reserve_deferred_outstanding_tx(
+        self,
+        conn: Any,
+        workspace_id: str,
+        amount_microdollars: int,
+        *,
+        cap_microdollars: int,
+    ) -> None:
+        """Admit `amount` of deferred spend, or raise at the cap.
+
+        ONE conditional UPDATE, rowcount-gated — the same shape as `reserve`
+        and `reserve_key_limit`, and for the same reason. A read-then-check
+        would bound nothing: authorize-to-settle spans an entire provider
+        stream, so N concurrent requests would each read the same stale total
+        and each admit, and the cap this feature advertises as its worst-case
+        exposure would be advisory. The conditional UPDATE is what makes the
+        number true.
+
+        Takes `conn` rather than opening its own transaction: the caller runs
+        it inside the authorization insert, so the admission and the record it
+        admits commit together or not at all.
+        """
+        amount = max(0, int(amount_microdollars))
+        for _attempt in (1, 2):
+            cursor = conn.execute(
+                "UPDATE tr_deferred_outstanding SET"
+                "   outstanding = outstanding + %s"
+                " , updated_at = CURRENT_TIMESTAMP"
+                " WHERE workspace_id = %s AND outstanding + %s <= %s",
+                (amount, workspace_id, amount, int(cap_microdollars)),
+                prepare=False,
+            )
+            if cursor.rowcount == 1:
+                return
+            # Either the row does not exist yet (first deferred spend for this
+            # workspace) or the cap refused. Seeding is insert-once, so a
+            # concurrent seeder does not clobber a live counter; the retry
+            # then re-runs the SAME conditional statement, which is what keeps
+            # the cap authoritative on the second pass too.
+            seeded = conn.execute(
+                "INSERT INTO tr_deferred_outstanding"
+                "   (workspace_id, outstanding, dead_lettered, updated_at)"
+                " VALUES (%s, 0, 0, CURRENT_TIMESTAMP)"
+                " ON CONFLICT (workspace_id) DO NOTHING",
+                (workspace_id,),
+                prepare=False,
+            )
+            if seeded.rowcount != 1:
+                break
+        raise DeferredSettlementCapReached(
+            f"deferred settlement cap reached for workspace {workspace_id}"
+        )
+
+    def _adjust_deferred_outstanding_tx(
+        self, conn: Any, workspace_id: str, delta_microdollars: int
+    ) -> None:
+        """Move the counter by a signed delta, clamped at zero.
+
+        GREATEST is not defensive dressing: settle adjusts by
+        (actual - estimate), and an actual smaller than its estimate is the
+        common case, so the clamp is what keeps an arithmetic underflow from
+        turning into negative debt that silently hands a workspace headroom
+        it never earned.
+        """
+        conn.execute(
+            "UPDATE tr_deferred_outstanding SET"
+            "   outstanding = GREATEST(outstanding + %s, 0)"
+            " , updated_at = CURRENT_TIMESTAMP"
+            " WHERE workspace_id = %s",
+            (int(delta_microdollars), workspace_id),
+            prepare=False,
+        )
+
+    def release_deferred_outstanding(
+        self, workspace_id: str, amount_microdollars: int
+    ) -> None:
+        """Hand back an admitted amount (a cap-refused request unwinding)."""
+        self._run_transaction(
+            lambda conn: self._adjust_deferred_outstanding_tx(
+                conn, workspace_id, -max(0, int(amount_microdollars))
+            )
+        )
+
+    def deferred_outstanding(self, workspace_id: str) -> dict[str, int]:
+        """Read the counter. For operators and tests, never for admission —
+        admission is the conditional UPDATE above."""
+
+        def read(conn: Any) -> dict[str, int]:
+            row = conn.execute(
+                "SELECT outstanding, dead_lettered FROM tr_deferred_outstanding"
+                " WHERE workspace_id = %s",
+                (workspace_id,),
+                prepare=False,
+            ).fetchone()
+            if row is None:
+                return {"outstanding": 0, "dead_lettered": 0}
+            return {"outstanding": int(row[0]), "dead_lettered": int(row[1])}
+
+        return self._run_transaction(read)
+
     def _release_key_hold(
         self,
         key_hash: str,
@@ -2319,6 +2428,9 @@ class PostgresStore:
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         additional_cost_reservation_microdollars: int = 0,
+        settlement: str = "local",
+        expires_at: str | None = None,
+        deferred_cap_microdollars: int | None = None,
     ) -> GatewayAuthorization:
         """Record an authorization, deduplicating on the idempotency key.
 
@@ -2327,6 +2439,18 @@ class PostgresStore:
         both create an authorization: the loser reads the winner's row and
         returns it. That matters because an authorization holds a credit
         reservation — duplicating one double-holds the customer's money.
+
+        `deferred_cap_microdollars` turns this into the admission point for
+        deferred spend: the outstanding counter is incremented by the estimate
+        under a conditional UPDATE **in this same transaction**, and
+        DeferredSettlementCapReached is raised if the cap refuses. Both
+        properties matter. In-transaction means an idempotent replay — which
+        returns the existing authorization and writes nothing — cannot
+        double-count the estimate, and a cap refusal cannot leave an orphaned
+        authorization behind. Conditional means the cap is a real bound rather
+        than advice: authorize-to-settle spans a whole provider stream, so N
+        concurrent requests reading one stale total would every one of them
+        admit.
         """
         authorization = GatewayAuthorization(
             id=f"gwauth_{uuid.uuid4().hex}",
@@ -2348,6 +2472,8 @@ class PostgresStore:
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
             additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
+            settlement=settlement,
+            expires_at=expires_at,
         )
 
         def create(conn: Any) -> GatewayAuthorization:
@@ -2382,6 +2508,13 @@ class PostgresStore:
                         index_id,
                         {"authorization_id": authorization.id},
                     )
+            if deferred_cap_microdollars is not None:
+                self._reserve_deferred_outstanding_tx(
+                    conn,
+                    workspace_id,
+                    estimated_microdollars,
+                    cap_microdollars=deferred_cap_microdollars,
+                )
             self._write_entity_tx(
                 conn, _GATEWAY_AUTHORIZATION_KIND, authorization.id, authorization
             )
@@ -2460,6 +2593,69 @@ class PostgresStore:
                 return False
 
             booked = max(0, int(actual_microdollars)) if success else 0
+
+            # 0. DEFERRED settlement: the spend is debt to the home plane's
+            #    ledger, not a debit against this plane's balance. The
+            #    decision was made at authorize and STORED — re-deriving it
+            #    here from key state would read a record that can change
+            #    between authorize and settle.
+            #
+            #    The outbox insert is gated on having WON the finalization
+            #    marker above, so a redelivered settle cannot enqueue a second
+            #    row for the same authorization; the marker and the row commit
+            #    in this one transaction, so the debt can never exist without
+            #    its usage record or vice versa.
+            if authorization.settlement == _DEFERRED_HOME_SETTLEMENT:
+                if booked:
+                    conn.execute(
+                        "INSERT INTO tr_home_settlement_outbox"
+                        "   (authorization_id, workspace_id, cost_microdollars,"
+                        "    state, attempts, enqueued_at, updated_at)"
+                        " VALUES (%s, %s, %s, 'pending', 0,"
+                        "         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                        " ON CONFLICT (authorization_id) DO NOTHING",
+                        (authorization_id, authorization.workspace_id, booked),
+                        prepare=False,
+                    )
+                # True up the counter to the FROZEN actual. Authorize admitted
+                # the estimate; a failed request (booked == 0) hands the whole
+                # estimate back, which is why this is a signed delta rather
+                # than an increment.
+                self._adjust_deferred_outstanding_tx(
+                    conn,
+                    authorization.workspace_id,
+                    booked - int(authorization.estimated_microdollars),
+                )
+                self._release_key_hold_tx(
+                    conn,
+                    authorization.key_hash,
+                    authorization.estimated_microdollars,
+                    usage_type=selected_usage_type,
+                    window_amount=booked,
+                )
+                if booked:
+                    column = "byok_usage" if _is_byok(selected_usage_type) else "usage"
+                    conn.execute(
+                        f"UPDATE tr_key_limit SET {column} = {column} + %s"  # noqa: S608
+                        " , updated_at = CURRENT_TIMESTAMP"
+                        " WHERE key_hash = %s AND shard = 0",
+                        (booked, authorization.key_hash),
+                        prepare=False,
+                    )
+                if generation is not None:
+                    self._write_entity_tx(conn, "generation", generation.id, generation)
+                    if self._operational_analytics_outbox is not None:
+                        self._operational_analytics_outbox.enqueue_activity_tx(conn, generation)
+                authorization.settled = True
+                # Clearing the expiry is what takes this row out of the
+                # reaper's scan: settled work is no longer reclaimable, and
+                # leaving a past expires_at behind would make every future
+                # reap pass re-examine rows it can never act on.
+                authorization.expires_at = None
+                self._write_entity_tx(
+                    conn, _GATEWAY_AUTHORIZATION_KIND, authorization_id, authorization
+                )
+                return True
 
             # 1. Credit hold: release the reservation, book actual spend.
             #
@@ -2567,6 +2763,113 @@ class PostgresStore:
             return True
 
         return self._run_transaction(finalize)
+
+    def reap_expired_deferred_authorizations(self, *, limit: int = 100) -> dict[str, int]:
+        """Reclaim deferred authorizations whose settle never arrived.
+
+        WHY THIS IS PART OF THE FEATURE, not a follow-up: the enclave dying
+        between authorize and settle is the most ROUTINE failure there is —
+        every deploy does it — and this plane has no other sweeper (Spanner's
+        reap_expired_reservations is Spanner-only). Without this, each
+        abandoned authorization leaks its estimate into the outstanding
+        counter permanently; once the leaks reach the cap, every subsequent
+        CREDITS request for that workspace 402s forever, on a healthy plane,
+        with home back up and no way to recover. A bound meant to protect the
+        home ledger would become a self-inflicted, unrecoverable outage.
+
+        Reaping claims the SAME insert-once finalization marker that settle
+        claims, so reaper-vs-late-settle is first-writer-wins and never both.
+        A late settle that loses simply returns False, exactly like a
+        redelivered settle does today.
+        """
+        now = iso_now()
+
+        def reap(conn: Any) -> dict[str, int]:
+            # `expires_at IS NOT NULL` is the "still outstanding" predicate:
+            # settling a deferred authorization CLEARS it (see finalize), so
+            # this needs no boolean comparison. That matters beyond taste —
+            # `body ->> 'settled'` yields the text 'false' on Postgres and the
+            # integer 0 on SQLite, so a predicate written against one dialect
+            # silently matches nothing on the other, and a reaper that matches
+            # nothing looks exactly like a reaper with nothing to do.
+            rows = conn.execute(
+                "SELECT id FROM tr_entities"
+                " WHERE kind = %s"
+                "   AND body ->> 'settlement' = %s"
+                "   AND body ->> 'expires_at' IS NOT NULL"
+                "   AND body ->> 'expires_at' < %s"
+                " ORDER BY id"
+                " LIMIT %s",
+                (
+                    _GATEWAY_AUTHORIZATION_KIND,
+                    _DEFERRED_HOME_SETTLEMENT,
+                    now,
+                    int(limit),
+                ),
+                prepare=False,
+            ).fetchall()
+
+            reaped = 0
+            skipped_settled = 0
+            for (authorization_id,) in rows:
+                authorization = self._read_entity_tx(
+                    conn,
+                    _GATEWAY_AUTHORIZATION_KIND,
+                    str(authorization_id),
+                    GatewayAuthorization,
+                )
+                if authorization is None or authorization.settled:
+                    continue
+                # OUTBOX-GUARDED, ported from the Spanner reaper: an
+                # authorization whose settle already enqueued its debt must
+                # never be reaped. Reaping it would hand back an estimate that
+                # settle has already trued up, double-crediting the counter.
+                enqueued = conn.execute(
+                    "SELECT 1 FROM tr_home_settlement_outbox WHERE authorization_id = %s",
+                    (str(authorization_id),),
+                    prepare=False,
+                ).fetchone()
+                if enqueued is not None:
+                    skipped_settled += 1
+                    continue
+                won = self._insert_entity_once_tx(
+                    conn,
+                    _GATEWAY_FINALIZATION_KIND,
+                    str(authorization_id),
+                    {"success": False, "actual_microdollars": 0, "operation": "reap"},
+                )
+                if not won:
+                    # A settle is committing concurrently, or already did.
+                    skipped_settled += 1
+                    continue
+                self._adjust_deferred_outstanding_tx(
+                    conn,
+                    authorization.workspace_id,
+                    -int(authorization.estimated_microdollars),
+                )
+                self._release_key_hold_tx(
+                    conn,
+                    authorization.key_hash,
+                    authorization.estimated_microdollars,
+                    usage_type=authorization.usage_type,
+                    window_amount=0,
+                )
+                authorization.settled = True
+                authorization.expires_at = None
+                self._write_entity_tx(
+                    conn,
+                    _GATEWAY_AUTHORIZATION_KIND,
+                    str(authorization_id),
+                    authorization,
+                )
+                reaped += 1
+            return {
+                "examined": len(rows),
+                "reaped": reaped,
+                "skipped_settled": skipped_settled,
+            }
+
+        return self._run_transaction(reap)
 
     # Generations + activity -------------------------------------------------
 

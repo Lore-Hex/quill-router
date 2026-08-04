@@ -41,6 +41,7 @@ from trusted_router.spend_windows import (
     utcnow,
     window_floors,
 )
+from trusted_router.storage_errors import DeferredSettlementCapReached
 from trusted_router.storage_models import (
     ApiKey,
     CreditAccount,
@@ -76,6 +77,9 @@ class InMemoryApiKeys:
         self.reservation_id_by_idempotency_key: dict[str, str] = {}
         self.gateway_authorizations: dict[str, GatewayAuthorization] = {}
         self.gateway_authorization_id_by_idempotency_key: dict[str, str] = {}
+        #: Deferred settlement: unsettled spend this plane has admitted on
+        #: credit at the home plane's ledger, per workspace.
+        self.deferred_outstanding: dict[str, int] = {}
         # Per-key window usage: key_hash -> {window: [start_datetime, usage_micro]}.
         # Same lazy fixed-UTC-window semantics as the typed tr_key_limit columns
         # (spend_windows.py); lives beside the key so ApiKey stays a plain record.
@@ -395,6 +399,9 @@ class InMemoryApiKeys:
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         additional_cost_reservation_microdollars: int = 0,
+        settlement: str = "local",
+        expires_at: str | None = None,
+        deferred_cap_microdollars: int | None = None,
     ) -> GatewayAuthorization:
         with self._lock:
             if idempotency_key is not None:
@@ -404,7 +411,18 @@ class InMemoryApiKeys:
                     )
                 )
                 if existing_id is not None:
+                    # A REPLAY writes no new authorization, so it must not
+                    # consume cap either — the same reason the Postgres store
+                    # does the counter move inside this method rather than
+                    # before it.
                     return self.gateway_authorizations[existing_id]
+            if deferred_cap_microdollars is not None:
+                held = self.deferred_outstanding.get(workspace_id, 0)
+                if held + estimated_microdollars > deferred_cap_microdollars:
+                    raise DeferredSettlementCapReached(
+                        f"deferred settlement cap reached for workspace {workspace_id}"
+                    )
+                self.deferred_outstanding[workspace_id] = held + estimated_microdollars
             authorization = GatewayAuthorization(
                 id=f"gwa-{uuid.uuid4().hex}",
                 workspace_id=workspace_id,
@@ -425,6 +443,8 @@ class InMemoryApiKeys:
                 custom_model_id=custom_model_id,
                 custom_model_revision=custom_model_revision,
                 additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
+                settlement=settlement,
+                expires_at=expires_at,
             )
             self.gateway_authorizations[authorization.id] = authorization
             if idempotency_key is not None:

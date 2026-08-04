@@ -11,6 +11,7 @@ returns already_settled=True without double-charging.
 from __future__ import annotations
 
 import datetime as dt
+import functools
 import hashlib
 import json
 import logging
@@ -96,6 +97,7 @@ from trusted_router.storage import (
     typed_billing_store,
 )
 from trusted_router.storage_custom_models import is_custom_model_id, normalize_custom_model_id
+from trusted_router.storage_errors import DeferredSettlementCapReached
 from trusted_router.storage_models import (
     SettleOutboxRow,
     TypedFinalizeResult,
@@ -511,6 +513,8 @@ def _authorize_gateway_sync(
                 402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED
             ) from exc
 
+        settlement = "local"
+        authorization_expires_at: str | None = None
         if has_credit_candidate:
             try:
                 credit_reservation = STORE.reserve(
@@ -521,10 +525,25 @@ def _authorize_gateway_sync(
                 )
                 credit_reservation_id = credit_reservation.id
             except ValueError as exc:
-                STORE.refund_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
-                raise _insufficient_credits_error(workspace) from exc
+                # The local balance refused. On a peer plane with deferred
+                # settlement on, a FEDERATED key falls back to spending on
+                # credit at the home plane's ledger rather than 402ing.
+                #
+                # Local reserve is tried FIRST and this is only the fallback:
+                # a workspace that has been explicitly pre-funded by credit
+                # transfer must keep spending those transferred credits with
+                # local settlement. Reversing the order would strand real
+                # money that was deliberately moved here.
+                if not _deferred_settlement_applies(settings, api_key):
+                    STORE.refund_key_limit(
+                        api_key.hash, estimate, usage_type=reservation_usage_type
+                    )
+                    raise _insufficient_credits_error(workspace) from exc
+                settlement = _DEFERRED_HOME_SETTLEMENT
+                authorization_expires_at = _deferred_expires_at(settings)
 
-        authorization = STORE.create_gateway_authorization(
+        create_authorization = functools.partial(
+            STORE.create_gateway_authorization,
             workspace_id=workspace.id,
             key_hash=api_key.hash,
             model_id=model.id,
@@ -548,7 +567,34 @@ def _authorize_gateway_sync(
             custom_model_id=custom_model.id if custom_model else None,
             custom_model_revision=custom_model.revision if custom_model else None,
             additional_cost_reservation_microdollars=additional_cost_reservation,
+            settlement=settlement,
+            expires_at=authorization_expires_at,
+            # The outstanding increment rides the SAME transaction that
+            # inserts the authorization, so an idempotent replay (which
+            # returns the pre-existing row and writes nothing) cannot
+            # double-count, and a cap refusal cannot leave an authorization
+            # behind. Doing it as a separate call could do both.
+            deferred_cap_microdollars=(
+                settings.federation_deferred_max_outstanding_microdollars
+                if settlement == _DEFERRED_HOME_SETTLEMENT
+                else None
+            ),
         )
+        try:
+            authorization = create_authorization()
+        except DeferredSettlementCapReached as cap_exc:
+            # The key-limit escrow taken above must come back: nothing on this
+            # plane would ever release it for a request that never became an
+            # authorization (the reaper only sees authorizations).
+            STORE.refund_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
+            raise api_error(
+                402,
+                "This plane is holding the maximum unsettled spend for this workspace "
+                "while the home plane is unreachable; it will clear as settlements are "
+                "delivered.",
+                ErrorType.DEFERRED_SETTLEMENT_CAP,
+                headers={"Retry-After": "30"},
+            ) from cap_exc
     byok_config = (
         _get_byok_provider(workspace.id, endpoint.provider) if model_usage_type.is_byok() else None
     )
@@ -876,6 +922,40 @@ def _gateway_authorize_response(
             ],
         }
     }
+
+
+#: GatewayAuthorization.settlement value for spend booked as debt to the home
+#: plane's ledger. Mirrors storage_postgres._DEFERRED_HOME_SETTLEMENT; the
+#: value is written by this module and read by the store, so it is declared in
+#: both rather than importing a backend-specific module into the route.
+_DEFERRED_HOME_SETTLEMENT = "deferred_home"
+
+
+def _deferred_settlement_applies(settings: Settings, api_key: Any) -> bool:
+    """Whether this request may spend on credit at the home plane's ledger.
+
+    Two conditions, both required. The plane must have deferred settlement
+    switched on, and the key must be FEDERATED — a locally issued key whose
+    balance lives here is simply out of money, and letting it run up debt at
+    a home plane that has no account for it would be nonsense.
+    """
+    if not getattr(settings, "federation_deferred_settlement_enabled", False):
+        return False
+    return bool(getattr(api_key, "federated_home", ""))
+
+
+def _deferred_expires_at(settings: Settings) -> str:
+    """When the reaper may reclaim this authorization's admitted estimate.
+
+    Without an expiry there is no reclaim, and an enclave that dies between
+    authorize and settle — which every deploy causes — leaks its estimate into
+    the outstanding counter permanently.
+    """
+    from trusted_router.spend_windows import utcnow
+
+    ttl = int(getattr(settings, "federation_deferred_authorization_ttl_seconds", 7200))
+    expires = utcnow() + dt.timedelta(seconds=max(60, ttl))
+    return expires.isoformat().replace("+00:00", "Z")
 
 
 def _insufficient_credits_error(workspace: Any) -> Exception:
