@@ -30,11 +30,11 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
-        slug="sign-in-with-trustedrouter-slopnazi",
+        slug="sign-in-with-trustedrouter",
         title="Sign in with TrustedRouter",
         description=(
             "Let users sign in, fund their own AI balance, choose an app spending cap, "
-            "and grant an inference-only key. Now live on SlopNazi."
+            "and grant an inference-only key without copying provider credentials."
         ),
         published_date="2026-08-03",
         source_label=None,
@@ -54,9 +54,9 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
 
 <rect x="60" y="235" width="235" height="190" rx="8" fill="#f3f4f6" stroke="#d1d5db" stroke-width="2"/>
 <text x="177" y="275" text-anchor="middle" font-size="15" font-weight="700" fill="#6b7280">APP</text>
-<text x="177" y="320" text-anchor="middle" font-size="25" font-weight="700" fill="#111827">SlopNazi</text>
-<text x="177" y="354" text-anchor="middle" font-size="16" fill="#4b5563">Improve writing</text>
-<text x="177" y="384" text-anchor="middle" font-size="16" fill="#4b5563">Requests a $5 monthly cap</text>
+<text x="177" y="320" text-anchor="middle" font-size="25" font-weight="700" fill="#111827">Your app</text>
+<text x="177" y="354" text-anchor="middle" font-size="16" fill="#4b5563">Ship an AI feature</text>
+<text x="177" y="384" text-anchor="middle" font-size="16" fill="#4b5563">Suggest a spending cap</text>
 
 <line x1="295" y1="330" x2="350" y2="330" stroke="#6b7280" stroke-width="2.5" marker-end="url(#oauth-arrow)"/>
 
@@ -83,14 +83,14 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
 <text x="1057" y="384" text-anchor="middle" font-size="15" fill="#4b5563">PKCE protected</text>
 
 <rect x="60" y="475" width="1080" height="82" rx="8" fill="#111827"/>
-<text x="90" y="511" font-size="18" font-weight="700" fill="#ffffff">Live now at slopnazi.com</text>
+<text x="90" y="511" font-size="18" font-weight="700" fill="#ffffff">One account. One capped key. Any supported model.</text>
 <text x="90" y="540" font-size="16" fill="#d1d5db">The app gets a capped key. The user keeps billing control. TrustedRouter keeps no prompt or output logs.</text>
 <text x="1140" y="612" text-anchor="end" font-size="18" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
 </svg>
 </figure>
 <p>Your users should be able to pay for their own AI without finding, copying, and trusting you with a provider API key.</p>
 <p>We shipped <a href="/sign-in-with-trustedrouter">Sign in with TrustedRouter</a>. An app sends its user to TrustedRouter. The user signs in, adds credits if needed, chooses exactly how much the app may spend, and approves one inference-only key. The app never receives a management key. It cannot change billing, inspect other keys, or take over the workspace.</p>
-<p><a href="https://slopnazi.com/editor">SlopNazi</a> is using it now for its full, context-aware writing editor. SlopNazi asks for a $5 monthly limit. The writer sees that number before approval and can change it. The resulting key pays for the writing calls from the writer's TrustedRouter balance.</p>
+<p>A writing tool, coding agent, research app, or internal product can use the same flow. The app suggests a conservative limit. The user sees that number before approval, can change it, and can revoke the resulting key later. Model calls draw from the user's TrustedRouter balance, so the developer does not need to build a second inference billing system.</p>
 <p>A person who creates a TrustedRouter account inside this flow starts at exactly <strong>$0</strong> and receives only the inference key they explicitly approve. That closes an obvious credit-farming hole and makes the economic relationship honest from the first request.</p>
 <p>The funding step lives inside consent. The user can add $5, $20, or $100, with $20 selected by default. Stripe processes the payment and saves the card to the user's TrustedRouter account. The card can be removed later from the Credits page. Existing users see their current balance and can skip funding when they already have enough.</p>
 <p>The authorization itself uses PKCE. The app creates a verifier, sends only its SHA-256 challenge to TrustedRouter, and keeps the verifier for the code exchange. A stolen callback code is useless without it. The final key can carry a fixed, daily, weekly, or monthly maximum and an expiry. The user can revoke it at any time.</p>

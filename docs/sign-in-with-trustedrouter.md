@@ -180,9 +180,8 @@ to catch the `?code=…`, then exchange it. (Port 3000 is allowlisted by the
 backend for exactly this.)
 
 ## Consumers
-- **[SlopNazi](https://slopnazi.com/editor)** uses the flow for its full,
-  context-aware writing editor. It requests a $5 monthly cap, then exchanges
-  the code server-side for a delegated inference key.
+- Third-party web, native, desktop, and CLI applications use the same flow to
+  request a user-approved inference key without handling provider credentials.
 - **Lore web** signs in with this flow and uses the delegated key for game
   generation.
 - **Lore games (macOS, QuillUI)** uses the Swift SDK loopback flow.

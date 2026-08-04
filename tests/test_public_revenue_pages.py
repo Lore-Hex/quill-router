@@ -22,8 +22,8 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/careers": "Work on attested AI routing",
         "/blog": "TrustedRouter blog",
         "/blog/fusion-evals-open-source": "New SOTA: TrustedRouter Synth beats Fable and Frontier",
-        "/blog/sign-in-with-trustedrouter-slopnazi": "Sign in with TrustedRouter",
-        "/sign-in-with-trustedrouter": "SlopNazi lets each writer bring their own AI.",
+        "/blog/sign-in-with-trustedrouter": "Sign in with TrustedRouter",
+        "/sign-in-with-trustedrouter": "A complete user-funded AI flow.",
         "/security": "No prompt or output logs",
         "/eu": "Use the EU gateway and an EU-focused model alias.",
         # SEO landing pages — each targets a high-intent buyer query.
@@ -124,7 +124,7 @@ def test_signup_grant_amount_is_not_advertised(client: TestClient) -> None:
         "/",
         "/pricing",
         "/sign-in-with-trustedrouter",
-        "/blog/sign-in-with-trustedrouter-slopnazi",
+        "/blog/sign-in-with-trustedrouter",
     ]:
         response = client.get(path)
         assert response.status_code == 200, f"{path} returned {response.status_code}"
