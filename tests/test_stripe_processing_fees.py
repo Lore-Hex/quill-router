@@ -137,6 +137,37 @@ def test_card_checkout_uses_separate_credit_and_processing_fee_line_items(
     assert data["total_microdollars"] == 26_060_000
 
 
+def test_explicit_card_checkout_saves_only_a_reusable_card(
+    monkeypatch,
+    user_headers: dict[str, str],
+) -> None:
+    app = create_app(
+        Settings(environment="test", stripe_secret_key="sk_test_card_only"),  # noqa: S106
+        init_observability=False,
+    )
+    captured: dict[str, Any] = {}
+
+    def create_session(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"id": "cs_card_only", "url": "https://checkout.stripe.test/card"}
+
+    monkeypatch.setattr(
+        "trusted_router.services.stripe_billing.stripe.checkout.Session.create",
+        create_session,
+    )
+
+    with TestClient(app) as local_client:
+        response = local_client.post(
+            "/v1/billing/checkout",
+            headers=user_headers,
+            json={"amount": 20, "payment_method": "card"},
+        )
+
+    assert response.status_code == 201, response.text
+    assert captured["payment_method_types"] == ["card"]
+    assert captured["payment_intent_data"]["setup_future_usage"] == "off_session"
+
+
 def test_stablecoin_checkout_uses_stablecoin_fee_schedule(
     monkeypatch,
     user_headers: dict[str, str],

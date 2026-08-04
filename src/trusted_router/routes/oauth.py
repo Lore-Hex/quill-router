@@ -21,6 +21,7 @@ import base64
 import hashlib
 import hmac
 import secrets
+from urllib.parse import parse_qsl, urlsplit
 
 from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.responses import RedirectResponse
@@ -100,7 +101,9 @@ async def _handle_login(
         raise api_error(400, "Invalid OAuth host", ErrorType.BAD_REQUEST)
     if not _enabled(provider, settings, request_domain):
         raise api_error(
-            404, f"{provider.slug.title()} sign-in is not configured", ErrorType.NOT_FOUND,
+            404,
+            f"{provider.slug.title()} sign-in is not configured",
+            ErrorType.NOT_FOUND,
         )
     redirect_uri = _provider_redirect_uri(
         provider,
@@ -138,7 +141,9 @@ async def _handle_callback(
         raise api_error(400, "Invalid OAuth state", ErrorType.BAD_REQUEST)
     if not _enabled(provider, settings, state_domain):
         raise api_error(
-            404, f"{provider.slug.title()} sign-in is not configured", ErrorType.NOT_FOUND,
+            404,
+            f"{provider.slug.title()} sign-in is not configured",
+            ErrorType.NOT_FOUND,
         )
 
     request_domain = _request_oauth_domain(request, settings)
@@ -171,36 +176,57 @@ async def _handle_callback(
 
     existing_user = STORE.find_user_by_email(info.email)
     first_time = existing_user is None
+    next_target = _next_target(request)
+    delegated_signup = first_time and _is_credit_delegation_target(next_target)
     # `pending_reveal_raw_key` is the raw API key minted during signup; it
     # must survive the 302 to /console/welcome so the user can copy it.
     # Without this hand-off, the welcome page shows "key already been
     # displayed" on every first login. See PENDING_REVEAL_COOKIE above.
     pending_reveal_raw_key: str | None = None
     if existing_user is None:
-        # signup() returns None only on a TOCTOU race; fall back to a
-        # fresh lookup, surface a real 500 if even that fails so we
-        # don't deref None silently.
-        result = STORE.signup(
-            email=info.email,
-            trial_credit_microdollars=settings.signup_trial_credit_microdollars,
-        )
-        if result is not None:
-            user_id = result.user.id
-            pending_reveal_raw_key = result.raw_key
+        if delegated_signup:
+            # An app-originated signup receives no promotional credit and no
+            # management API key. The app gets an inference-only key after
+            # explicit consent, and the user can fund the workspace in that
+            # same consent flow. Direct TrustedRouter signups keep the normal
+            # starter-credit and one-time management-key experience below.
+            user = STORE.ensure_user(
+                info.email,
+                email=info.email,
+                trial_credit_microdollars=0,
+            )
+            workspace = STORE.list_workspaces_for_user(user.id)[0]
+            user_id = user.id
             record_signup_attribution(
                 request,
-                workspace_id=result.workspace.id,
+                workspace_id=workspace.id,
                 signup_provider=provider.slug,
             )
         else:
-            concurrent = STORE.find_user_by_email(info.email)
-            if concurrent is None:
-                raise api_error(
-                    500,
-                    "Could not create or find user account; please retry sign-in",
-                    ErrorType.INTERNAL_ERROR,
+            # signup() returns None only on a TOCTOU race; fall back to a
+            # fresh lookup, surface a real 500 if even that fails so we
+            # don't deref None silently.
+            result = STORE.signup(
+                email=info.email,
+                trial_credit_microdollars=settings.signup_trial_credit_microdollars,
+            )
+            if result is not None:
+                user_id = result.user.id
+                pending_reveal_raw_key = result.raw_key
+                record_signup_attribution(
+                    request,
+                    workspace_id=result.workspace.id,
+                    signup_provider=provider.slug,
                 )
-            user_id = concurrent.id
+            else:
+                concurrent = STORE.find_user_by_email(info.email)
+                if concurrent is None:
+                    raise api_error(
+                        500,
+                        "Could not create or find user account; please retry sign-in",
+                        ErrorType.INTERNAL_ERROR,
+                    )
+                user_id = concurrent.id
     else:
         user_id = existing_user.id
     STORE.mark_user_email_verified(user_id)
@@ -213,9 +239,7 @@ async def _handle_callback(
         state="active",
     )
 
-    target = _next_target(request) or (
-        "/console/welcome?first=1" if first_time else "/console/api-keys"
-    )
+    target = next_target or ("/console/welcome?first=1" if first_time else "/console/api-keys")
     response = RedirectResponse(url=target, status_code=302)
     set_session_cookie(response, raw_token, settings)
     _clear_state_and_next_cookies(response, settings)
@@ -237,8 +261,7 @@ async def _handle_callback(
 
 def _enabled(provider: OAuthProvider, settings: Settings, domain: str) -> bool:
     return bool(
-        _client_id(provider, settings, domain)
-        and _client_secret(provider, settings, domain)
+        _client_id(provider, settings, domain) and _client_secret(provider, settings, domain)
     )
 
 
@@ -420,6 +443,23 @@ def _set_next_cookie(response: Response, next_path: str | None, settings: Settin
 
 def _next_target(request: Request) -> str | None:
     return _safe_next_path(request.cookies.get(OAUTH_NEXT_COOKIE))
+
+
+def _is_credit_delegation_target(value: str | None) -> bool:
+    """Identify an app-originated delegated-key flow without trusting hosts.
+
+    The target has already passed `_safe_next_path`; requiring the exact auth
+    route plus a callback URL prevents an unrelated `next=/auth/...` link from
+    changing signup-credit behavior.
+    """
+    safe = _safe_next_path(value)
+    if safe is None:
+        return False
+    parsed = urlsplit(safe)
+    if parsed.path not in {"/auth", "/v1/auth"}:
+        return False
+    params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    return bool(params.get("callback_url"))
 
 
 def _clear_state_and_next_cookies(response: Response, settings: Settings) -> None:

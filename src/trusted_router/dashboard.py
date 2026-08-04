@@ -1119,14 +1119,15 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         title="Sign in with TrustedRouter — Let Your Users Bring Their Own AI",
         description=(
             "Add a sign-in button and your users bring their own TrustedRouter "
-            "account — instant access to hundreds of models, billed to them, "
-            "through an attested no-log gateway. Integrate in minutes with the "
+            "account, fund it in the consent flow, and choose a per-app spend "
+            "cap. Access hundreds of models through an attested no-log gateway "
+            "with the "
             "Python, TypeScript, or Swift SDK."
         ),
         faq_items=(
             (
                 "Do users need to copy API keys?",
-                "No. Third-party apps can use TrustedRouter delegated auth so end users approve access and pay with their own credits.",
+                "No. Third-party apps use TrustedRouter delegated auth so users sign in, fund their account if needed, choose the app limit, and approve access.",
             ),
             (
                 "Does delegated auth expose prompt content to the app?",

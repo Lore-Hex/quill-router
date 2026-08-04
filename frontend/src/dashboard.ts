@@ -36,6 +36,13 @@ function applySigninTarget(): void {
     url.searchParams.set("next", target);
     link.href = `${url.pathname}${url.search}`;
   });
+  if (target.startsWith("/auth?") || target.startsWith("/v1/auth?")) {
+    const creditNote = document.getElementById("signinCreditNote");
+    if (creditNote) {
+      creditNote.textContent =
+        "Accounts created for this app start at $0. After sign in, add credits and choose the maximum this app may spend.";
+    }
+  }
 }
 
 function moneyFromMicrodollars(value: unknown): string {

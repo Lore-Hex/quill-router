@@ -16,7 +16,7 @@ app (public client)                         TrustedRouter
   │  1. make PKCE pair (verifier, challenge)
   │  2. open browser → GET /auth?callback_url=…&code_challenge=…
   │ ───────────────────────────────────────────────────────────▶ consent
-  │                                          (user signs in + approves)
+  │                              (sign in, fund, choose cap, approve)
   │  3. ◀── redirect: callback_url?code=…&user_id=…&state=…
   │  4. POST /auth/keys {code, code_verifier}  (no auth header)
   │ ───────────────────────────────────────────────────────────▶
@@ -29,18 +29,46 @@ use `key` for /v1/chat/completions etc. — billed to the signed-in user.
 ```
 
 Because of PKCE, intercepting the redirect `code` is useless without the
-`code_verifier` the app kept — so native/SPA apps need **no client secret**.
+`code_verifier` the app kept, so native and SPA apps need **no client secret**.
+
+## Account creation, funding, and the app limit
+
+The browser flow handles first-time TrustedRouter users without sending them
+through the general console onboarding:
+
+1. The user signs in with Google, GitHub, or MetaMask.
+2. A new account created from this delegated flow starts with **$0 in credit**.
+   It does not receive the normal $0.10 direct-signup credit and does not mint
+   an extra management API key.
+3. The consent screen offers **$5**, **$20** (selected by default), or **$100**
+   in credits. Stripe saves the card to the user's TrustedRouter account for
+   faster future top ups and optional auto refill. The user can remove it from
+   the Credits page.
+4. The user reviews and edits the maximum spend for this app. If the app
+   requested `limit=5&usage_limit_type=monthly`, the form starts at $5 per
+   month, but the user remains in control.
+5. Approval creates one inference-only key. The app cannot manage billing,
+   workspaces, provider keys, or other API keys.
+
+Existing users see their current available balance. Funding is optional when
+that balance is already sufficient. A user may also approve at $0 when they
+intend to use BYOK, but prepaid model calls will fail until credits arrive.
 
 ## Endpoints
 
-Base URL: `https://api.quillrouter.com/v1` (a.k.a. `https://api.trustedrouter.com/v1`).
+OAuth control base: `https://trustedrouter.com/v1`.
+
+Inference base for the delegated key: `https://api.quillrouter.com/v1`
+(also available as `https://api.trustedrouter.com/v1`). The browser sign-in,
+consent, billing, and code exchange stay on the control plane. Prompt traffic
+uses the attested API plane.
 
 ### `GET /auth` — authorize + consent (browser)
 Query params (only `callback_url` is required):
 
 | param | meaning |
 |---|---|
-| `callback_url` | where TR redirects after approval. **Must be `https://`** (or `http://localhost:3000` / `127.0.0.1:3000` for local dev). Ports limited to 443 or 3000. Carry your CSRF `state` *inside* this URL's query. |
+| `callback_url` | where TR redirects after approval. Use `https://`, a native custom scheme with PKCE S256, or `http://localhost:3000` / `127.0.0.1:3000` for a loopback client. Web ports are limited to 443 or 3000. Carry your CSRF `state` *inside* this URL's query. |
 | `code_challenge` | base64url(SHA-256(`code_verifier`)), padding stripped |
 | `code_challenge_method` | `S256` (default) or `plain` |
 | `key_label` | label shown on the issued key (defaults to the callback host) |
@@ -48,9 +76,9 @@ Query params (only `callback_url` is required):
 | `usage_limit_type` | `daily` \| `weekly` \| `monthly` (resets the cap) |
 | `expires_at` | optional ISO-8601 expiry for the issued key |
 
-If the user isn't signed in, `/auth` serves a sign-in page (Google / GitHub /
-wallet); after sign-in they see the consent screen and approve, which redirects
-to `callback_url?code=…&user_id=…` (+ your embedded `state`).
+If the user isn't signed in, `/auth` serves a sign-in page. After sign-in they
+can add credits, edit the app limit, and approve. TrustedRouter then redirects
+to `callback_url?code=…&user_id=…` plus your embedded `state`.
 
 ### `POST /auth/keys` — exchange code → key (+ identity)
 Public client — **send no `Authorization` header.**
@@ -80,7 +108,19 @@ console session).
 
 ## SDK usage
 
-All three SDKs implement the same flow.
+All three official TrustedRouter SDKs have first-class Sign in with
+TrustedRouter support. You do not need to implement PKCE, state validation, URL
+construction, or token exchange from scratch:
+
+- [Python SDK](https://github.com/Lore-Hex/trusted-router-py):
+  `create_oauth_authorization`, `exchange_oauth_key`, and `fetch_userinfo`
+- [TypeScript SDK](https://github.com/Lore-Hex/trusted-router-js):
+  `BrowserOAuthFlow` and the lower-level OAuth client methods
+- [Swift SDK](https://github.com/jperla/trusted-router-swift):
+  `TrustedRouterOAuth`, `oauthAuthorizeURL`, and `exchangeOAuthKey`
+
+Each SDK implements the same wire protocol and returns the delegated key plus
+the signed-in TrustedRouter identity.
 
 ### Python (`trustedrouter`)
 ```python
@@ -141,16 +181,24 @@ to catch the `?code=…`, then exchange it. (Port 3000 is allowlisted by the
 backend for exactly this.)
 
 ## Consumers
+- **[SlopNazi](https://slopnazi.com/editor)** uses the flow for its full,
+  context-aware writing editor. It requests a $5 monthly cap, then exchanges
+  the code server-side for a delegated inference key.
 - **Lore web** signs in with this flow and uses the delegated key for game
   generation.
 - **Lore games (macOS, QuillUI)** uses the Swift SDK loopback flow.
 
 ## Security notes
-- PKCE `S256` is mandatory for public clients; never send the `code_verifier`
-  in the authorize URL, only in the exchange.
+- PKCE `S256` is required for native custom-scheme callbacks and recommended
+  for every public client. The `plain` method exists only for wire
+  compatibility with older clients. Never send the `code_verifier` in the
+  authorize URL, only in the exchange.
 - Always generate a random `state`, embed it in `callback_url`, and verify it on
   the callback (the SDK flow helpers do this).
-- `callback_url` must be HTTPS (or loopback for desktop); credentials in the URL
-  are rejected.
+- `callback_url` must be HTTPS, a PKCE-protected native custom scheme, or the
+  supported loopback URL; credentials and unsafe schemes are rejected.
 - Issued keys are inference-only (never management) and honor the optional
-  `limit` / `usage_limit_type` / `expires_at` you request — scope them tightly.
+  `limit` / `usage_limit_type` / `expires_at` the user approves. Request a
+  conservative default and let the user make the final choice.
+- Never put the delegated key in a URL, browser analytics, logs, or client-side
+  durable storage. A server-backed app should exchange and store it server-side.

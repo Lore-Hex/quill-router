@@ -66,6 +66,10 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
         "<loc>https://trustedrouter.com/blog/how-confidential-computing-protects-ai-prompts</loc>"
         in core.text
     )
+    assert (
+        "<loc>https://trustedrouter.com/blog/sign-in-with-trustedrouter-slopnazi</loc>"
+        in core.text
+    )
     assert "<loc>https://trustedrouter.com/docs/synth</loc>" in core.text
     assert "<loc>https://trustedrouter.com/docs/fusion</loc>" not in core.text
     assert "<loc>https://trustedrouter.com/fusion</loc>" not in core.text
@@ -440,6 +444,26 @@ def test_blog_index_shows_scannable_post_images(client: TestClient) -> None:
     assert 'alt="Synth is two jobs, and no model wins both visual summary"' in response.text
     assert 'href="/blog/fusion-is-two-jobs"' in response.text
     assert response.text.count('class="blog-thumb"') >= 10
+
+
+def test_sign_in_with_trustedrouter_launch_post_documents_live_flow(
+    client: TestClient,
+) -> None:
+    response = client.get("/blog/sign-in-with-trustedrouter-slopnazi")
+
+    assert response.status_code == 200
+    assert "Sign in with TrustedRouter" in response.text
+    assert "https://slopnazi.com/editor" in response.text
+    assert "$5 monthly limit" in response.text
+    assert "starts at exactly <strong>$0</strong>" in response.text
+    assert "$5, $20, or $100" in response.text
+    assert "keeps no prompt or output logs, always" in response.text
+    assert "docs/sign-in-with-trustedrouter.md" in response.text
+    assert "https://github.com/Lore-Hex/trusted-router-py" in response.text
+    assert "https://github.com/Lore-Hex/trusted-router-js" in response.text
+    assert "https://github.com/jperla/trusted-router-swift" in response.text
+    payload = _json_ld(response.text)
+    assert "sign-in-with-trustedrouter-slopnazi" in json.dumps(payload)
 
 
 def test_confidential_computing_blog_explains_and_verifies_the_boundary(

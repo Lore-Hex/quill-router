@@ -22,6 +22,8 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/careers": "Work on attested AI routing",
         "/blog": "TrustedRouter blog",
         "/blog/fusion-evals-open-source": "New SOTA: TrustedRouter Synth beats Fable and Frontier",
+        "/blog/sign-in-with-trustedrouter-slopnazi": "Sign in with TrustedRouter",
+        "/sign-in-with-trustedrouter": "SlopNazi lets each writer bring their own AI.",
         "/security": "No prompt or output logs",
         "/eu": "Use the EU gateway and an EU-focused model alias.",
         # SEO landing pages — each targets a high-intent buyer query.

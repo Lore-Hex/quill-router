@@ -125,6 +125,40 @@ test("console redirects unauthenticated users and auto-opens sign-in", async ({ 
   await expect(page.locator("#signinModal")).toBeVisible();
 });
 
+test("delegated sign-in explains zero-credit onboarding", async ({ page }) => {
+  const target = encodeURIComponent(
+    "/auth?callback_url=https%3A%2F%2Fslopnazi.com%2Feditor&key_label=SlopNazi&limit=5&usage_limit_type=monthly",
+  );
+  await page.goto(`/?reason=signin&next=${target}`);
+
+  await expect(page.locator("#signinModal")).toBeVisible();
+  await expect(page.locator("#signinCreditNote")).toContainText(
+    "Accounts created for this app start at $0",
+  );
+  await expect(page.locator('a[data-provider="google"]')).toHaveAttribute(
+    "href",
+    /auth\/google\/login\?next=/,
+  );
+});
+
+test("delegated consent exposes funding and an editable app cap", async ({ page }) => {
+  await page.setExtraHTTPHeaders({ "x-trustedrouter-user": "oauth-browser@example.com" });
+  await page.goto(
+    "/auth?callback_url=https%3A%2F%2Fslopnazi.com%2Feditor&key_label=SlopNazi&limit=5&usage_limit_type=monthly",
+  );
+
+  await expect(page.getByRole("heading", { name: "Authorize SlopNazi" })).toBeVisible();
+  await expect(page.getByText("$0.00 available")).toBeVisible();
+  await expect(page.getByText("This account starts at $0")).toBeVisible();
+  await expect(page.getByRole("radio", { name: "$20" })).toBeChecked();
+  await expect(page.getByLabel("Maximum spend (USD)")).toHaveValue("5");
+  await expect(page.getByLabel("Limit resets")).toHaveValue("monthly");
+  await expect(page.getByRole("button", { name: "Authorize SlopNazi" })).toBeVisible();
+  await expect(page.getByText("card is saved", { exact: false })).toBeVisible();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(overflow).toBeLessThanOrEqual(2);
+});
+
 test("homepage and console redirect are usable on mobile width", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");

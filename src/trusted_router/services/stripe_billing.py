@@ -89,6 +89,8 @@ def create_checkout_session(
                 # card-only because bank debits settle asynchronously.
                 session_args["payment_intent_data"] = {"metadata": payment_metadata}
             else:
+                if body.payment_method == "card":
+                    session_args["payment_method_types"] = ["card"]
                 session_args["payment_intent_data"] = {
                     "setup_future_usage": "off_session",
                     "metadata": payment_metadata,
