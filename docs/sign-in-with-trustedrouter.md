@@ -38,8 +38,7 @@ through the general console onboarding:
 
 1. The user signs in with Google, GitHub, or MetaMask.
 2. A new account created from this delegated flow starts with **$0 in credit**.
-   It does not receive the normal $0.10 direct-signup credit and does not mint
-   an extra management API key.
+   It does not mint an extra management API key.
 3. The consent screen offers **$5**, **$20** (selected by default), or **$100**
    in credits. Stripe saves the card to the user's TrustedRouter account for
    faster future top ups and optional auto refill. The user can remove it from

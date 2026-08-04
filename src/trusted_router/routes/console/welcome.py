@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, Response
 
 from trusted_router.auth import SettingsDep
-from trusted_router.routes.console._shared import ConsoleDep, money, render
+from trusted_router.routes.console._shared import ConsoleDep, render
 from trusted_router.routes.oauth import PENDING_REVEAL_COOKIE
 from trusted_router.typed_balance import live_credit_summary
 
@@ -45,10 +45,8 @@ def register(app: FastAPI) -> None:
             page_subtitle="Save your API key — it won't be shown again.",
             revealed_key=revealed_key,
             workspace_name=ctx.workspace.name,
-            # `trial_credit` is the formatted display value; the matching raw
-            # amount lets the template distinguish starter-credit accounts
-            # from accounts configured with the grant disabled.
-            trial_credit=money(trial_microdollars),
+            # The raw amount selects the appropriate next step without
+            # advertising the account-creation grant.
             trial_credit_microdollars=trial_microdollars,
         ))
         if clear_pending_reveal:
