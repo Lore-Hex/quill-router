@@ -2757,12 +2757,23 @@ class PostgresStore:
 
             # 2. Key-limit hold: release, and roll the windows by actual spend.
             #    Reuses the same lazy-window rules as settle_key_limit.
+            #
+            #    Released under the AUTHORIZE-time type, not the selected one.
+            #    They differ on a mixed Credits/BYOK authorization (the hold
+            #    is Credits-typed whenever any credit candidate existed, but
+            #    the enclave may select a BYOK endpoint), and passing the
+            #    selected type made _release_key_hold_tx's early-return skip
+            #    the release entirely on include_byok=false keys — reserved
+            #    stranded forever, the key's cap shrinking with every mixed
+            #    request that landed on BYOK. Only the WINDOW contribution
+            #    keys off what was actually selected.
             self._release_key_hold_tx(
                 conn,
                 authorization.key_hash,
                 authorization.estimated_microdollars,
-                usage_type=selected_usage_type,
+                usage_type=authorization.usage_type,
                 window_amount=booked,
+                window_is_byok=_is_byok(selected_usage_type),
             )
 
             # 3. Lifetime key usage. settle_key_limit deliberately does NOT
