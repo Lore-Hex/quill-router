@@ -705,8 +705,19 @@ def test_blank_configuration_is_not_an_error() -> None:
     assert parse_gateway_region_targets("   ") == ()
 
 
-def _deploy_script_region_targets() -> str:
-    """The GATEWAY_REGION_TARGETS default the deploy script really ships.
+#: Every cloud that pins per-region gateway probes. One entry per control
+#: plane; the AWS and Azure scripts each own their own cloud's names, and the
+#: components module owns the union.
+REGION_TARGET_DEPLOY_SCRIPTS = (
+    "scripts/deploy/aws_eu_control_plane.sh",
+    "scripts/deploy/azure_control_plane.sh",
+)
+
+
+def _deploy_script_region_targets(
+    script_path: str = "scripts/deploy/aws_eu_control_plane.sh",
+) -> str:
+    """The GATEWAY_REGION_TARGETS default a deploy script really ships.
 
     Read out of the script rather than restated here. The previous version of
     this test asserted the two hostnames appeared SOMEWHERE in the file and
@@ -714,11 +725,17 @@ def _deploy_script_region_targets() -> str:
     claim: transposing the two hostnames in the script left every test green
     while the deployment published Ireland's health under Paris's name.
     """
-    script = Path(__file__).resolve().parents[1] / "scripts/deploy/aws_eu_control_plane.sh"
+    script = Path(__file__).resolve().parents[1] / script_path
     text = script.read_text()
     # The shell variable must still be the one wired into the setting, or the
-    # default below is dead text that configures nothing.
-    assert '"TR_SYNTHETIC_GATEWAY_REGION_TARGETS": "${GATEWAY_REGION_TARGETS}"' in text
+    # default below is dead text that configures nothing. Two spellings,
+    # because the clouds take env differently: App Runner is handed a JSON
+    # document, Container Apps a KEY=VALUE list.
+    wired = (
+        '"TR_SYNTHETIC_GATEWAY_REGION_TARGETS": "${GATEWAY_REGION_TARGETS}"' in text
+        or '"TR_SYNTHETIC_GATEWAY_REGION_TARGETS=${GATEWAY_REGION_TARGETS}"' in text
+    )
+    assert wired, f"{script_path} does not wire GATEWAY_REGION_TARGETS into the setting"
     match = re.search(
         r'^GATEWAY_REGION_TARGETS="\$\{GATEWAY_REGION_TARGETS:-([^}]*)\}"$',
         text,
@@ -747,10 +764,24 @@ def test_deploy_script_names_are_exactly_the_published_components() -> None:
 
     A configured name with no component is a probe whose samples appear on
     no public row at all — the enclave would be measured and the result
-    thrown away, which looks identical to not measuring it.
+    thrown away, which looks identical to not measuring it. A component with
+    no configured name is the mirror failure: a public row nothing can ever
+    populate.
+
+    The union is across CLOUDS. Each control plane configures only its own
+    cloud's endpoints (an AWS plane cannot reach an Azure container group),
+    so the assertion has to gather every deploy script rather than assume
+    one — which is exactly what it assumed while AWS was the only peer.
     """
-    entries = parse_gateway_region_targets(_deploy_script_region_targets())
-    assert {name for name, _ in entries} == set(GATEWAY_REGION_TARGET_NAMES)
+    configured: set[str] = set()
+    for script in REGION_TARGET_DEPLOY_SCRIPTS:
+        entries = parse_gateway_region_targets(_deploy_script_region_targets(script))
+        names = {name for name, _ in entries}
+        assert names, f"{script} configures no region targets"
+        overlap = configured & names
+        assert not overlap, f"{script} reuses target name(s) {overlap} from another cloud"
+        configured |= names
+    assert configured == set(GATEWAY_REGION_TARGET_NAMES)
 
 
 def test_a_name_that_contradicts_its_endpoints_region_is_rejected() -> None:
