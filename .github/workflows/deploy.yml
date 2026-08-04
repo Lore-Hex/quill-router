@@ -245,8 +245,85 @@ jobs:
           SPANNER_DATABASE_ID: trusted-router
         run: scripts/deploy/migrate_operational_analytics_outbox.sh
 
+  sync-runtime-secrets:
+    # Keep the small set of GitHub-managed runtime credentials current while
+    # the image build and schema verification run. Provider keys and private
+    # prompt files are uploaded by operators, not by this keyless runner, so
+    # running the full secrets.sh sweep here only repeated IAM/describe calls.
+    needs: [gate-on-ci]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Sync required SES credentials
+        env:
+          TR_AWS_ACCESS_KEY_ID: ${{ secrets.TR_AWS_ACCESS_KEY_ID }}
+          TR_AWS_SECRET_ACCESS_KEY: ${{ secrets.TR_AWS_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TR_AWS_ACCESS_KEY_ID:-}" ] || [ -z "${TR_AWS_SECRET_ACCESS_KEY:-}" ]; then
+            echo "TR_AWS_ACCESS_KEY_ID and TR_AWS_SECRET_ACCESS_KEY are required" >&2
+            exit 1
+          fi
+          source scripts/deploy/_lib.sh
+          ensure_secret_value \
+            "trustedrouter-aws-access-key-id" \
+            "${TR_AWS_ACCESS_KEY_ID}"
+          ensure_secret_value \
+            "trustedrouter-aws-secret-access-key" \
+            "${TR_AWS_SECRET_ACCESS_KEY}"
+      - name: Push provider analytics reader credential
+        env:
+          TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD: ${{ secrets.TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD }}
+        run: |
+          if [ -z "${TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD:-}" ]; then
+            echo "TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD is required" >&2
+            exit 1
+          fi
+          source scripts/deploy/_lib.sh
+          ensure_secret_value \
+            "trustedrouter-clickhouse-provider-read-password" \
+            "$TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD"
+
+  confirm-current-main:
+    # A newer push can arrive while this run is building. Concurrency keeps
+    # mutations serialized, but without this gate the obsolete image would
+    # still spend ~30 minutes rolling through production before the newer run.
+    # Exit cleanly before the first production mutation and let the queued
+    # current-main run deploy instead.
+    needs: [build-image, migrate-schema, sync-runtime-secrets]
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.current.outputs.proceed }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Confirm this push is still current main
+        id: current
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "manual dispatch: deploying requested revision ${GITHUB_SHA}"
+            exit 0
+          fi
+          latest_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [ "${latest_sha}" = "${GITHUB_SHA}" ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "${GITHUB_SHA} is still current main"
+          else
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping superseded deploy ${GITHUB_SHA}; current main is ${latest_sha}."
+          fi
+
   deploy:
-    needs: [gate-on-ci, build-image, migrate-schema]
+    needs: [build-image, migrate-schema, sync-runtime-secrets, confirm-current-main]
+    if: ${{ needs.confirm-current-main.outputs.proceed == 'true' }}
     runs-on: ubuntu-latest
     env:
       PROJECT_ID: quill-cloud-proxy
@@ -269,49 +346,11 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Push secrets to Secret Manager
-        # secrets.sh is idempotent — only uploads when the local key file
-        # has a value the GHA runner doesn't (it doesn't), so this is a
-        # no-op for the runner. Left in for symmetry with local deploys.
-        run: bash scripts/deploy/secrets.sh
-        continue-on-error: true   # secrets are managed locally; runner has none
-
-      - name: Sync required SES credentials
-        env:
-          TR_AWS_ACCESS_KEY_ID: ${{ secrets.TR_AWS_ACCESS_KEY_ID }}
-          TR_AWS_SECRET_ACCESS_KEY: ${{ secrets.TR_AWS_SECRET_ACCESS_KEY }}
-        run: |
-          set -euo pipefail
-          if [ -z "${TR_AWS_ACCESS_KEY_ID:-}" ] || [ -z "${TR_AWS_SECRET_ACCESS_KEY:-}" ]; then
-            echo "TR_AWS_ACCESS_KEY_ID and TR_AWS_SECRET_ACCESS_KEY are required" >&2
-            exit 1
-          fi
-          source scripts/deploy/_lib.sh
-          ensure_secret_value \
-            "trustedrouter-aws-access-key-id" \
-            "${TR_AWS_ACCESS_KEY_ID}"
-          ensure_secret_value \
-            "trustedrouter-aws-secret-access-key" \
-            "${TR_AWS_SECRET_ACCESS_KEY}"
-
-      - name: Push provider analytics reader credential
-        env:
-          TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD: ${{ secrets.TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD }}
-        run: |
-          if [ -z "${TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD:-}" ]; then
-            echo "TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD is required" >&2
-            exit 1
-          fi
-          source scripts/deploy/_lib.sh
-          ensure_secret_value \
-            "trustedrouter-clickhouse-provider-read-password" \
-            "$TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD"
-
       # Staged regional deploy. Deploy us-central1 first, gate on a
       # 3-min single-region synthetic watch; only proceed to the
-      # secondary warm regions if us-central1 stays up. A bad change
-      # reaches at most one region at a time: europe-west4 and us-east4
-      # roll sequentially, each with independent staged traffic and rollback.
+      # secondary warm regions if us-central1 stays up. Once the image has
+      # passed that primary-region gate, europe-west4 and us-east4 roll in
+      # parallel with independent staged traffic, canaries, and rollback.
       #
       # Hotfix mode (workflow_dispatch input `hotfix: true`): the
       # watchdogs skip baseline + use --skip-baseline so a sick prod
@@ -379,6 +418,9 @@ jobs:
           IMAGE_TAG: ${{ needs.build-image.outputs.sha }}
           TR_DEPLOY_TARGET_REGIONS: us-central1
           TR_DEPLOY_NO_TRAFFIC: "1"
+          # Global LB topology is shared by every region. Reconcile it exactly
+          # once here; concurrent secondary rollouts must not race on it.
+          TR_DEPLOY_RECONCILE_LB: "1"
         run: bash scripts/deploy/rollout.sh
 
       - name: Resolve us-central1 new revision
@@ -424,13 +466,14 @@ jobs:
           echo "europe-west4 NEVER received the bad image; safe."
           exit 1
 
-      - name: Roll secondary warm regions sequentially (europe-west4, then us-east4)
+      - name: Roll secondary warm regions in parallel
         env:
           IMAGE_TAG: ${{ needs.build-image.outputs.sha }}
           PREV_EU: ${{ steps.prev.outputs.europe_west4_revision }}
           PREV_US_EAST4: ${{ steps.prev.outputs.us_east4_revision }}
           WD_EXTRA: ${{ steps.wd_args.outputs.extra }}
           TR_WATCHDOG_SLO_CLASS: control_plane
+          TR_DEPLOY_RECONCILE_LB: "0"
         run: |
           set -euo pipefail
 
@@ -512,16 +555,36 @@ jobs:
             fi
           }
 
+          # The image has already passed the full us-central1 ramp and canary.
+          # These regions share no mutable Cloud Run resources; each child
+          # retains its own traffic ramp, watchdog, and region-local rollback.
           regions=(europe-west4 us-east4)
+          log_dir="$(mktemp -d)"
+          pids=()
           for region in "${regions[@]}"; do
-            echo "::group::${region} sequential rollout"
-            if ! deploy_secondary "${region}"; then
-              echo "::endgroup::"
-              echo "::error::${region} rollout failed; no later warm region was touched."
-              exit 1
-            fi
-            echo "::endgroup::"
+            echo "starting independent rollout for ${region}"
+            (deploy_secondary "${region}") >"${log_dir}/${region}.log" 2>&1 &
+            pids+=("$!")
           done
+
+          failed=0
+          for idx in "${!regions[@]}"; do
+            region="${regions[$idx]}"
+            if wait "${pids[$idx]}"; then
+              echo "::group::${region} rollout"
+              cat "${log_dir}/${region}.log"
+              echo "::endgroup::"
+            else
+              failed=1
+              echo "::group::${region} failed rollout"
+              cat "${log_dir}/${region}.log"
+              echo "::endgroup::"
+              echo "::error::${region} rollout failed and was rolled back independently."
+            fi
+          done
+          if [ "${failed}" -ne 0 ]; then
+            exit 1
+          fi
 
       - name: Deploy cold regions (no canary, scale-to-zero)
         # Stage 3.5 cold region: southamerica-east1. min-instances=0
@@ -534,6 +597,7 @@ jobs:
         # in TR_CONTROL_PLANE_REGIONS but not TR_WARM_REGIONS.
         env:
           TR_DEPLOY_TARGET_REGIONS: southamerica-east1
+          TR_DEPLOY_RECONCILE_LB: "0"
         run: bash scripts/deploy/rollout.sh
 
       - name: Deploy synthetic monitor Cloud Run Job
@@ -555,8 +619,8 @@ jobs:
         run: bash scripts/deploy/synthetic.sh
 
       # No cross-region "final watchdog" step. Each region's health is
-      # gated by its own per-region canary above (us-central1, then
-      # europe-west4, then us-east4, each with its own 3-min
+      # gated by its own per-region canary above (us-central1 first,
+      # then europe-west4 and us-east4 in parallel, each with its own 3-min
       # watchdog AFTER the staged_traffic 10/50/100 ramp). The prior cross-
       # region watchdog at this point caused recurring spurious
       # rollbacks: by the time it ran, earlier regions had finished

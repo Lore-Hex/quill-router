@@ -630,7 +630,9 @@ attach_region_to_lb() {
   fi
 }
 
-if gc compute backend-services describe "$LB_BACKEND_SERVICE" --global >/dev/null 2>&1; then
+if [ "${TR_DEPLOY_RECONCILE_LB:-1}" != "1" ]; then
+  log "skipping shared load-balancer reconciliation for this regional rollout"
+elif gc compute backend-services describe "$LB_BACKEND_SERVICE" --global >/dev/null 2>&1; then
   log "wiring Serverless NEGs to ${LB_BACKEND_SERVICE}"
   # Attach every control-plane region, not just this deploy's TARGETS, so the
   # LB always reflects the full intended public-site region set. Idempotent:
@@ -732,4 +734,6 @@ YAML
   fi
 }
 
-ensure_http_redirect_lb
+if [ "${TR_DEPLOY_RECONCILE_LB:-1}" = "1" ]; then
+  ensure_http_redirect_lb
+fi

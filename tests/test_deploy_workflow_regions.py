@@ -32,20 +32,54 @@ def test_prod_smoke_checks_each_control_plane_region_directly() -> None:
     assert '[ "${retired_secret_count}" != "0" ]' in workflow
 
 
-def test_warm_secondary_regions_roll_sequentially() -> None:
+def test_warm_secondary_regions_roll_in_parallel_after_primary_canary() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
-    start = workflow.index(
-        "- name: Roll secondary warm regions sequentially (europe-west4, then us-east4)"
-    )
+    primary_canary = workflow.index("- name: Canary gate — watch us-central1 only")
+    start = workflow.index("- name: Roll secondary warm regions in parallel")
     end = workflow.index("- name: Deploy cold regions", start)
     rollout = workflow[start:end]
 
+    assert primary_canary < start
     assert "regions=(europe-west4 us-east4)" in rollout
     assert 'for region in "${regions[@]}"; do' in rollout
-    assert 'deploy_secondary "${region}"' in rollout
+    assert '(deploy_secondary "${region}")' in rollout
     assert 'if ! TR_DEPLOY_TARGET_REGIONS="${region}"' in rollout
     assert 'if ! bash scripts/deploy/staged_traffic.sh \\' in rollout
     assert 'active_traffic="$(gcloud run services describe' in rollout
     assert '[ "${active_traffic}" != "1" ]' in rollout
-    assert "pids=(" not in rollout
-    assert " &" not in rollout
+    assert "pids=()" in rollout
+    assert 'pids+=("$!")' in rollout
+    assert 'if wait "${pids[$idx]}"; then' in rollout
+    assert 'rollback_region "${region}"' in rollout
+    assert 'TR_DEPLOY_RECONCILE_LB: "0"' in rollout
+
+
+def test_superseded_push_stops_before_production_mutation() -> None:
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    confirm = workflow.index("confirm-current-main:")
+    deploy = workflow.index("\n  deploy:", confirm)
+    mutation = workflow.index("- name: Capture pre-deploy revisions", deploy)
+
+    assert confirm < deploy < mutation
+    assert 'git/ref/heads/main" --jq' in workflow[confirm:deploy]
+    assert 'echo "proceed=false" >> "$GITHUB_OUTPUT"' in workflow[confirm:deploy]
+    assert "if: ${{ needs.confirm-current-main.outputs.proceed == 'true' }}" in workflow
+
+
+def test_runtime_secret_sync_is_parallel_and_full_operator_sweep_is_not_run() -> None:
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    sync = workflow.index("sync-runtime-secrets:")
+    confirm = workflow.index("confirm-current-main:", sync)
+    section = workflow[sync:confirm]
+
+    assert "needs: [gate-on-ci]" in section
+    assert "trustedrouter-aws-access-key-id" in section
+    assert "trustedrouter-clickhouse-provider-read-password" in section
+    assert "run: bash scripts/deploy/secrets.sh" not in workflow
+
+
+def test_shared_load_balancer_is_reconciled_once_per_workflow() -> None:
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+
+    assert workflow.count('TR_DEPLOY_RECONCILE_LB: "1"') == 1
+    assert workflow.count('TR_DEPLOY_RECONCILE_LB: "0"') == 2
