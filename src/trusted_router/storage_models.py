@@ -130,6 +130,13 @@ class Workspace:
     # already-authorized requests is NOT blocked — only new work is.
     billing_paused: bool = False
     billing_pause_reason: str = ""
+    # Non-empty marks a SHADOW of a home-plane workspace, materialized locally
+    # so a federated key can resolve (see federated_workspace_from_record). It
+    # is not a workspace anyone created here: it has no owner, no member row,
+    # and no entitlements beyond what the home plane's allow-list serves. A
+    # later reconciliation needs to tell shadows from locally-issued
+    # workspaces, and a boolean would not say WHICH home to reconcile against.
+    federated_home: str = ""
 
 
 @dataclass
@@ -1156,6 +1163,93 @@ class RateLimitHit:
     retry_after_seconds: int
 
 
+@dataclass
+class CreditTransfer:
+    """One cross-plane credit movement, as seen by the SOURCE plane.
+
+    The escrow record itself: while `state` is ESCROWED this row IS the value
+    (it was debited from the workspace's spendable balance in the transaction
+    that wrote it). See `trusted_router.credit_transfer` for the state machine,
+    which plane holds the value in each state, and the conservation invariant.
+    """
+
+    id: str
+    workspace_id: str
+    amount_microdollars: int
+    #: Free-text label for the destination plane, e.g. its base URL. AUDIT
+    #: ONLY — never used for authorization, and never trusted from the wire.
+    destination: str
+    state: str
+    created_at: str = field(default_factory=iso_now)
+    resolved_at: str | None = None
+
+
+#: A shadow workspace's display name. The home plane's allow-list does NOT
+#: serve workspace names, so a real-looking one would be fabricated: a second
+#: copy of a field nobody sent, free to drift, and easy for an operator to
+#: mistake for the customer's actual workspace name.
+FEDERATED_WORKSPACE_NAME = "federated"
+
+#: Reason text shown when the shadow is paused. The home plane serves the
+#: pause BIT, not a reason string; this makes the origin of the pause obvious
+#: rather than implying a local operator paused it.
+FEDERATED_WORKSPACE_PAUSE_REASON = "billing is paused on the home plane"
+
+
+def federated_workspace_from_record(record: dict[str, Any]) -> Workspace:
+    """Build the minimal local SHADOW of a home-plane workspace.
+
+    Without this, every federated request 403s: `_authorize_gateway_sync` (and
+    the validate / resolve-custom-model gates beside it) read
+    `STORE.get_workspace(api_key.workspace_id)` and reject a missing one before
+    credits are ever consulted.
+
+    A shadow is a SECOND COPY of somebody else's record, so every field carried
+    is a field that can drift. Only two things are carried, and only because
+    something on this plane actually reads them:
+
+      * `id` — every workspace-scoped read on the authorize path keys on it,
+        and it is the join key back to the home plane for reconciliation.
+      * `billing_paused` — the single workspace field the home plane's
+        allow-list serves (`workspace_billing_paused`), and the only one
+        `_authorize_gateway_sync` reads, via `assert_workspace_billing_active`.
+        It is a RESTRICTION, not an entitlement: copying it can only ever
+        refuse work. KNOWN DRIFT: nothing refreshes a federated record today
+        (it is written on a cache MISS only), so an unpause on the home plane
+        does not reach here until the key record is re-federated. Refusing to
+        serve is the safe side of that staleness; the unsafe side — a pause
+        that fails to arrive — is why a refresh path is still owed.
+
+    Everything else is deliberately NOT carried:
+
+      * `owner_user_id` is EMPTY. This plane has no user directory, so any
+        value would either be invented or, worse, point at an unrelated local
+        user and hand them a stranger's workspace.
+      * No `Member` row is written. A shadow must never appear in a local
+        console listing (`list_workspaces_for_user` reads members), because
+        nobody here is a member of it.
+      * `content_storage_enabled` stays False. It is an ENTITLEMENT the home
+        plane does not serve; defaulting it off means a federated workspace's
+        request content is never stored here, which is the fail-safe default.
+      * No credits, of any kind. That is the whole point — see
+        `trusted_router.credit_transfer`.
+    """
+    paused = bool(record.get("workspace_billing_paused", False))
+    return Workspace(
+        id=str(record.get("workspace_id") or ""),
+        name=FEDERATED_WORKSPACE_NAME,
+        owner_user_id="",
+        deleted=False,
+        content_storage_enabled=False,
+        billing_paused=paused,
+        billing_pause_reason=FEDERATED_WORKSPACE_PAUSE_REASON if paused else "",
+        # Same marker convention as ApiKey.federated_home: the home record's
+        # revision when it sent one, otherwise a constant. Non-empty is what
+        # makes this distinguishable from a locally-issued workspace.
+        federated_home=str(record.get("revision") or "") or "federated",
+    )
+
+
 def federated_api_key_from_record(record: dict[str, Any]) -> ApiKey:
     """Build a local ApiKey from a home plane's federated record.
 
@@ -1169,6 +1263,22 @@ def federated_api_key_from_record(record: dict[str, Any]) -> ApiKey:
       * usage/byok counters start at ZERO and no credits come across.
         Identity is an assertion and copies safely; a balance is a
         quantity under a conservation law and copying it mints money.
+
+    KNOWN CONSEQUENCE of that second absence, recorded because it reads as an
+    oversight otherwise: the LIMITS copy but the counters do not, so a key
+    capped at $10/day is capped at $10/day *per plane*. Home plus two AWS
+    regions is $30/day, and `limit_microdollars` multiplies the same way. That
+    cap is exactly the field a customer sets to bound a leak, so the
+    multiplication is worth stating plainly.
+
+    It is accepted rather than fixed because the alternative is worse: keeping
+    a shared counter accurate across planes means a synchronous cross-plane
+    read on every authorize, which is the coupling this whole design exists to
+    remove, and federating the counters instead would federate a quantity —
+    the thing the conservation law forbids. Total spend on a peer plane stays
+    bounded by the credits explicitly TRANSFERRED to it, so this widens blast
+    radius without breaking conservation. Per-plane caps should be sized with
+    that in mind.
     """
     return ApiKey(
         hash=str(record.get("key_hash") or ""),

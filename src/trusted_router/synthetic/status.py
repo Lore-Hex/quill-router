@@ -6,6 +6,7 @@ from collections import defaultdict
 from dataclasses import replace
 from typing import Any
 
+from trusted_router.config import Settings, get_settings
 from trusted_router.storage_models import (
     FUTURE_SAMPLE_SKEW_SECONDS,
     SyntheticProbeSample,
@@ -15,9 +16,15 @@ from trusted_router.storage_models import (
 )
 from trusted_router.synthetic.components import (
     COMPONENT_DEFINITIONS,
+    COMPONENT_PROBE_TARGETS,
+    GATEWAY_REGION_TARGET_NAMES,
+    REGIONAL_GATEWAY_PROBES,
     SLO_DEFINITIONS,
+    UNCATEGORIZED_COMPONENT,
+    applicable_component_definitions,
     component_name,
     component_probe_types,
+    published_gateway_region_components,
     rollup_slo_class_ids,
     sample_component_ids,
     sample_slo_class_ids,
@@ -63,6 +70,7 @@ def status_snapshot(
     *,
     rollups: list[SyntheticRollup] | None = None,
     now: dt.datetime | None = None,
+    settings: Settings | None = None,
 ) -> dict[str, Any]:
     # `now` defaults to wall-clock so production callers don't need to
     # pass it; tests inject a fixed timestamp so daily-rollup bucketing
@@ -71,13 +79,33 @@ def status_snapshot(
     # depending on whether it's morning vs. late-night UTC).
     if now is None:
         now = utcnow()
+    # `settings` scopes which components this deployment publishes at all.
+    # Defaulting to the running deployment's own configuration is the point:
+    # a caller that forgets to pass it must not silently fall back to
+    # advertising another cloud's regions.
+    if settings is None:
+        settings = get_settings()
     precomputed_rollups = rollups or []
     ordered = sorted(samples, key=lambda sample: sample.created_at, reverse=True)
     freshness = _monitor_freshness(ordered, now=now)
     router_core_samples = [
         sample for sample in ordered if ROUTER_CORE_SLO_ID in sample_slo_class_ids(sample)
     ]
-    current = _current_status(router_core_samples, now=now)
+    gateway_region_components = published_gateway_region_components(settings)
+    # `current.checks` is the MACHINE-readable surface, not a second copy of
+    # the components table: quill-cloud-proxy's watchdog decides per-region
+    # rollback from checks[].target_region, and its deploy gate waits on the
+    # same array. Restricting it to router_core (canonical-only) meant a
+    # region pinned probe could be flat down and no automation would ever see
+    # an eu-west-1 row at all — the gate would sit at "waiting" forever
+    # instead of "down", and nobody would be paged. The SLO windows below
+    # stay canonical-only on purpose: they measure the address customers
+    # resolve, and mixing in diagnostic per-region probes would triple the
+    # denominator of a published SLO.
+    current = _current_status(
+        router_core_samples + _gateway_region_samples(ordered, settings=settings),
+        now=now,
+    )
     router_core_rollups = [
         rollup
         for rollup in precomputed_rollups
@@ -105,7 +133,7 @@ def status_snapshot(
         router_core_samples
     )
     monthly = _monthly_history(router_core_rollups)
-    components = _components(ordered, now=now, rollups=precomputed_rollups)
+    components = _components(ordered, now=now, rollups=precomputed_rollups, settings=settings)
     slo_classes = _slo_classes(ordered, precomputed_rollups, now=now)
     slo_history = {
         str(definition["id"]): _slo_long_term_history(
@@ -116,7 +144,24 @@ def status_snapshot(
         for definition in SLO_DEFINITIONS
     }
     router_core_status = str(slo_classes.get(ROUTER_CORE_SLO_ID, {}).get("status") or "unknown")
-    overall_status = router_core_status
+    # A dead region behind an anycast record must not read "All Systems
+    # Operational". router_core measures the hostname customers resolve,
+    # which Global Accelerator keeps answering from the SURVIVING region, so
+    # the pinned per-region rows are the only evidence that half the fleet is
+    # gone. Without this the banner contradicted the table directly beneath
+    # it. `_worse_status` treats "unknown" as no-opinion and the tuple is
+    # empty on every deployment that configures no pinned endpoints, so this
+    # is a byte-identical no-op on GCP.
+    overall_status = _worse_status(
+        router_core_status,
+        _aggregate_component_statuses(
+            [
+                str(row["status"])
+                for row in components
+                if str(row["id"]) in gateway_region_components
+            ]
+        ),
+    )
     return {
         "generated_at": iso_now(),
         "overall_status": overall_status,
@@ -216,6 +261,25 @@ def _headline_metrics(samples: list[SyntheticProbeSample], *, now: dt.datetime) 
     }
 
 
+def _gateway_region_samples(
+    samples: list[SyntheticProbeSample],
+    *,
+    settings: Settings,
+) -> list[SyntheticProbeSample]:
+    """Gateway samples from the pinned per-region targets this cloud publishes."""
+    published = {
+        COMPONENT_PROBE_TARGETS[component_id]
+        for component_id in published_gateway_region_components(settings)
+    }
+    if not published:
+        return []
+    return [
+        sample
+        for sample in samples
+        if sample.target in published and sample.probe_type in REGIONAL_GATEWAY_PROBES
+    ]
+
+
 def _gateway_latency_values(
     samples: list[SyntheticProbeSample],
     *,
@@ -227,6 +291,16 @@ def _gateway_latency_values(
     rows = []
     for sample in samples:
         if sample.probe_type != "tls_health" or sample.status != "up":
+            continue
+        # The headline "gateway overhead" numbers describe the path customers
+        # take. A pinned per-region probe deliberately BYPASSES Global
+        # Accelerator by dialling one load balancer directly, so its latency
+        # describes a path nobody is served on: pooling it dropped the
+        # published in-region p50 from ~30 ms to ~12 ms on deploy with no
+        # change whatsoever in what customers experience. Asking for that
+        # target by name still returns it — this only excludes it from the
+        # unscoped in-region/global aggregates.
+        if target is None and sample.target in GATEWAY_REGION_TARGET_NAMES:
             continue
         if sample.latency_milliseconds is None or _parse_time(sample.created_at) < cutoff:
             continue
@@ -735,11 +809,15 @@ def _components(
     samples: list[SyntheticProbeSample],
     *,
     now: dt.datetime,
+    settings: Settings,
     rollups: list[SyntheticRollup] | None = None,
 ) -> list[dict[str, Any]]:
     rows = []
     precomputed_rollups = rollups or []
-    for definition in COMPONENT_DEFINITIONS:
+    # Only what THIS deployment can measure. Iterating the full catalogue
+    # here is what made the AWS EU status page advertise GCP's regional
+    # gateways as permanently "unknown".
+    for definition in applicable_component_definitions(settings):
         component_id = str(definition["id"])
         component_samples = [
             sample for sample in samples if component_id in sample_component_ids(sample)
@@ -1052,6 +1130,12 @@ def _target_label(target: str) -> str:
         "us-central1": "US Central direct",
         "us-east4": "US East direct",
         "europe-west4": "EU direct",
+        # Per-region AWS targets: same hostname as "canonical", pinned to
+        # one region's load balancer (which fronts that region's enclave
+        # fleet — see COMPONENT_DEFINITIONS on why this does not say
+        # "enclave").
+        "eu-west-1": "Ireland gateway direct",
+        "eu-west-3": "Paris gateway direct",
         "control-plane": "Control plane",
     }.get(target, target.replace("-", " ").title())
 
@@ -1350,6 +1434,16 @@ def _recent_events(
         reverse=True,
     )
     for rollup in recent_rollups:
+        # Apply the SAME publishability rule the raw-sample loop above uses.
+        # The two loops render into one public list, so disagreeing about
+        # what belongs there is the defect: component-less diagnostics
+        # (gateway_cold_path / gateway_reused_path) were skipped as raw
+        # samples but then reappeared an hour later as their rollup, drawn
+        # as "Uncategorized — Major outage" with an internal error slug.
+        # The underlying sample and rollup are still recorded and still red;
+        # only the unlabelled public row is suppressed.
+        if rollup.component == UNCATEGORIZED_COMPONENT and not rollup_slo_class_ids(rollup):
+            continue
         counts = _rollup_status_counts(rollup)
         failure_count = sum(
             count for status, count in counts.items() if status != "up"

@@ -237,6 +237,27 @@ class TestHealthReachability:
         ],
     )
     def test_reachability(self, status: int, body: bytes, expected: bool) -> None:
-        from trusted_router.synthetic.probes import _health_status_reachable
+        from trusted_router.synthetic.probes import SyntheticTarget, _warm_path_reachable
 
-        assert _health_status_reachable(status, body) is expected
+        target = SyntheticTarget("canonical", "https://api.trustedrouter.com/v1")
+        headers = {"content-type": "application/json"}
+        assert _warm_path_reachable(target, status, headers, body) is expected
+
+    @pytest.mark.parametrize(
+        ("status", "body", "expected"),
+        [
+            (200, b'{"status":"ok"}', True),
+            # Reachable-but-rejected must NOT license the reuse verdict:
+            # reuse is only measurable on a request the gateway served.
+            (401, b'{"error":{"message":"Invalid API key","status":401}}', False),
+            (500, b"boom", False),
+        ],
+    )
+    def test_served_does_not_tolerate_a_rejected_request(
+        self, status: int, body: bytes, expected: bool
+    ) -> None:
+        from trusted_router.synthetic.probes import SyntheticTarget, _warm_path_served
+
+        target = SyntheticTarget("canonical", "https://api.trustedrouter.com/v1")
+        headers = {"content-type": "application/json"}
+        assert _warm_path_served(target, status, headers, body) is expected

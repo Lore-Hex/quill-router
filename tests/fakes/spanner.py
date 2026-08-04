@@ -155,6 +155,16 @@ class FakeSpannerDatabase:
         # this key and _try_commit validates it: an enqueue that lands between
         # the in-txn zero-count and the claim commit aborts the claim.
         self.settle_outbox_auth_versions: dict[str, int] = {}
+        # Per-KIND version for tr_entities, the entity-table analogue of
+        # settle_outbox_auth_versions above. A paged PK-prefix scan
+        # ("WHERE kind=@kind AND id>@after") is a RANGE read whose result
+        # depends on rows that are absent as much as on rows that are present,
+        # and per-row versions cannot represent "no row was there". Without
+        # this, `list_open_credit_transfers` — a read-WRITE transaction that
+        # DELETEs the stale queue rows it scans — would commit happily even
+        # though a concurrent commit changed the range under it, where real
+        # Spanner would abort it.
+        self.entity_kind_versions: dict[str, int] = {}
         self._global_version = 0
         self._commit_lock = threading.Lock()
         self._ready_barrier = ready_barrier
@@ -204,6 +214,12 @@ class FakeSpannerDatabase:
                     # count / sibling predicates): any commit touching the range
                     # since the read aborts this transaction.
                     current_version = self.settle_outbox_auth_versions.get(key[1], 0)
+                elif isinstance(key, tuple) and len(key) == 2 and key[0] == "entity_kind":
+                    # Paged range read over one kind's tr_entities rows: any
+                    # commit touching that kind since the read aborts this
+                    # transaction, so a scan-then-DELETE cannot act on a range
+                    # that moved under it.
+                    current_version = self.entity_kind_versions.get(key[1], 0)
                 elif isinstance(key, tuple) and len(key) == 2 and key[0] == "gateway_auth":
                     current_version = self.gateway_authorization_versions.get(
                         key[1],
@@ -220,9 +236,11 @@ class FakeSpannerDatabase:
                 if op[0] == "upsert":
                     _, _table, kind, entity_id, body = op
                     self.rows[(kind, entity_id)] = _Row(body=body, version=new_version)
+                    self.entity_kind_versions[kind] = new_version
                 elif op[0] == "delete":
                     _, _table, kind, entity_id = op
                     self.rows.pop((kind, entity_id), None)
+                    self.entity_kind_versions[kind] = new_version
                 elif op[0] == "upsert_typed":
                     _, table, columns, value_tuple = op
                     _apply_upsert_typed(
@@ -277,9 +295,15 @@ class FakeSpannerDatabase:
                 elif op[0] == "insert_entity_dml":  # DML INSERT into tr_entities
                     _, kind, entity_id, body = op
                     self.rows[(kind, entity_id)] = _Row(body=body, version=new_version)
+                    self.entity_kind_versions[kind] = new_version
                 elif op[0] == "update_entity_dml":  # DML UPDATE tr_entities body
                     _, kind, entity_id, body = op
                     self.rows[(kind, entity_id)] = _Row(body=body, version=new_version)
+                    self.entity_kind_versions[kind] = new_version
+                elif op[0] == "delete_entity_dml":  # DML DELETE from tr_entities
+                    _, kind, entity_id = op
+                    self.rows.pop((kind, entity_id), None)
+                    self.entity_kind_versions[kind] = new_version
             return True
 
     def snapshot(self, *, multi_use: bool = False, **_kwargs: Any) -> _FakeSnapshot:
@@ -450,6 +474,10 @@ class _FakeTransaction:
         p = params or {}
         if "UPDATE tr_credit_balance SET total_credits = total_credits + @amount" in sql:
             _require_pred(sql, "WHERE workspace_id=@ws AND shard=@shard", "credit-top-up")
+            # Tracked by storage_gcp_credit_shard_admin / storage_gcp_counters;
+            # dropping it silently stops stamping the column this fake then
+            # happily reproduces from p["now"].
+            _require_pred(sql, "source_updated_at=@now", "credit-top-up")
             pk = (p["ws"], p["shard"])
             rec = self._typed_current("tr_credit_balance", pk)
             if rec is None:
@@ -857,6 +885,32 @@ class _FakeTransaction:
                     return 0  # no such row
             self.pending_writes.append(("update_entity_dml", p["kind"], p["id"], p["body"]))
             return 1
+        if sql.startswith("DELETE FROM tr_entities"):
+            entity_key = (p["kind"], p["id"])
+            # Read-your-writes inside the txn, else committed state — the same
+            # ordering the UPDATE branch above uses.
+            present: bool | None = None
+            for op in reversed(self.pending_writes):
+                if op[0] in ("insert_entity_dml", "update_entity_dml") and (
+                    (op[1], op[2]) == entity_key
+                ):
+                    present = True
+                    break
+                if op[0] == "delete_entity_dml" and (op[1], op[2]) == entity_key:
+                    present = False
+                    break
+            if present is None:
+                # The delete's predicate reads the row, so the row joins the
+                # read set: a concurrent commit that inserts or rewrites it
+                # since this read must abort us rather than let a stale "it
+                # wasn't there" stand.
+                if entity_key not in self.read_versions:
+                    self.read_versions[entity_key] = (
+                        self.db.rows[entity_key].version if entity_key in self.db.rows else 0
+                    )
+                present = entity_key in self.db.rows
+            self.pending_writes.append(("delete_entity_dml", p["kind"], p["id"]))
+            return 1 if present else 0
         if sql.startswith("INSERT INTO tr_settle_outbox"):
             pk = (p["authorization_id"], p["intent_kind"])
             if pk in self.db.settle_outbox:
@@ -1068,9 +1122,14 @@ class _FakeBatch:
                 if op[0] == "upsert":
                     _, _table, kind, entity_id, body = op
                     self.db.rows[(kind, entity_id)] = _Row(body=body, version=new_version)
+                    # A batch commit is as visible to a concurrent range scan as
+                    # a transactional one, so it must move the per-kind version
+                    # too — otherwise a scanning transaction misses it entirely.
+                    self.db.entity_kind_versions[kind] = new_version
                 elif op[0] == "delete":
                     _, _table, kind, entity_id = op
                     self.db.rows.pop((kind, entity_id), None)
+                    self.db.entity_kind_versions[kind] = new_version
                 elif op[0] == "upsert_typed":
                     _, table, columns, value_tuple = op
                     _apply_upsert_typed(
@@ -1111,7 +1170,7 @@ def _require_pred(sql: str, needle: str, what: str) -> None:
     predicate typo/drop FAILS a test instead of the fake silently enforcing the
     intended behavior in Python (codex #113 finding 1 / design MF6)."""
     if needle not in sql:
-        raise AssertionError(f"tr_settle_outbox {what} query missing predicate: {needle!r}")
+        raise AssertionError(f"{what} query missing load-bearing predicate: {needle!r}")
 
 
 def _utc_datetime(value: Any) -> dt.datetime:
@@ -1672,8 +1731,22 @@ def _execute_sql(
         if f"FROM {typed_table}" in sql:
             cols = [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
             items = list(db.typed.get(typed_table, {}).items())
+            pk_col = "workspace_id" if typed_table == "tr_credit_balance" else "key_hash"
+            if "shard_count" in params:
+                # A full sharded read of one tenant: the credit-escrow headroom
+                # read, and tr_key_limit's reshard read on the same shape. The
+                # clauses below are re-implemented in Python only IF present in
+                # the SQL, so a dropped clause would silently become a no-op
+                # instead of a failure. Losing the pk bound returns EVERY
+                # tenant's shard rows keyed by shard number — the escrow would
+                # then plan against another workspace's balance; losing the
+                # shard bound or the ordering breaks the completeness check
+                # that makes an incomplete shard set fail closed.
+                what = f"{typed_table}-sharded-read"
+                _require_pred(sql, f"WHERE {pk_col}=@pk", what)
+                _require_pred(sql, "shard>=0 AND shard<@shard_count", what)
+                _require_pred(sql, "ORDER BY shard", what)
             if "@pk" in sql and "pk" in params:
-                pk_col = "workspace_id" if typed_table == "tr_credit_balance" else "key_hash"
                 items = [(pk, rec) for pk, rec in items if rec.get(pk_col) == params["pk"]]
                 if "shard=0" in sql.replace(" ", ""):
                     items = [(pk, rec) for pk, rec in items if rec.get("shard", 0) == 0]
@@ -1691,6 +1764,40 @@ def _execute_sql(
             ]
             recs = [rec for rec in recs if rec is not None]
             return [[rec.get(c) for c in cols] for rec in recs]
+    if "AND id>@after" in sql:
+        # Paged PK-prefix scan of one kind (the credit-transfer recovery
+        # queue). Reads committed rows plus this transaction's own pending
+        # entity DML, so a queue row deleted earlier in the SAME transaction
+        # does not reappear in a later page.
+        #
+        # SQL-SENSITIVE. Losing `kind=@kind` turns this into a scan of the
+        # WHOLE entity table, which in production is a read-write range lock
+        # over ~14.8M rows; losing `ORDER BY id` makes the `after_id` cursor
+        # meaningless, because Spanner guarantees no order without it, and the
+        # recovery walk then skips escrowed transfers forever — the exact
+        # failure paging was added to prevent.
+        _require_pred(sql, "kind=@kind", "credit-transfer-queue-scan")
+        _require_pred(sql, "ORDER BY id", "credit-transfer-queue-scan")
+        after = str(params.get("after", ""))
+        visible = {eid: r.body for (k, eid), r in db.rows.items() if k == kind}
+        if txn is not None:
+            # RANGE read: record the per-kind version so a concurrent commit
+            # touching this kind aborts us, exactly as the outbox range reads
+            # above do. The scan drives DELETEs, so acting on a stale range
+            # would delete against state this transaction never saw.
+            range_key = ("entity_kind", kind)
+            if range_key not in txn.read_versions:
+                txn.read_versions[range_key] = db.entity_kind_versions.get(kind, 0)
+            for op in txn.pending_writes:
+                if op[0] in ("insert_entity_dml", "update_entity_dml") and op[1] == kind:
+                    visible[op[2]] = op[3]
+                elif op[0] == "delete_entity_dml" and op[1] == kind:
+                    visible.pop(op[2], None)
+        rows = sorted((eid, body) for eid, body in visible.items() if eid > after)
+        if "LIMIT @limit" in sql:
+            rows = rows[: int(params["limit"])]
+        cols = [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
+        return [[(eid if c == "id" else body) for c in cols] for eid, body in rows]
     if "AND id=@id" in sql:
         entity_id = params["id"]
         if txn is not None:
@@ -1842,6 +1949,14 @@ def make_fake_store(
     store.request_record_write_mode = request_record_write_mode
     store._generation_records_enabled = generation_records_enabled
     store._bigtable_writes_enabled = bigtable_writes_enabled
+    # `object.__new__` skips __init__, so every attribute the real constructor
+    # sets has to be set here too. These two drive the analytics READ path
+    # (_analytics_read); without them any read-side test AttributeErrors
+    # instead of exercising the store. Defaults mirror the real signature.
+    store._bigtable_enabled = True
+    store._analytics_read_mode = "bigtable"
+    store._analytics_dual_read_grace_seconds = 0
+    store._operational_analytics = None
     from trusted_router.storage_gcp_credit_shards import CreditShardCountCache
 
     store._credit_shard_counts = CreditShardCountCache()

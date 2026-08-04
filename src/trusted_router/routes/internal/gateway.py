@@ -10,6 +10,7 @@ returns already_settled=True without double-charging.
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
 import logging
@@ -75,6 +76,7 @@ from trusted_router.schemas import (
     GatewayValidateRequest,
 )
 from trusted_router.security import lookup_hash_api_key
+from trusted_router.services import federation
 from trusted_router.services.broadcast import (
     drain_broadcast_queue,
     enqueue_metadata_broadcast,
@@ -457,7 +459,7 @@ def _authorize_gateway_sync(
             window_limits=window_limits or None,
         )
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
-            raise api_error(402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS)
+            raise _insufficient_credits_error(workspace)
         if outcome.startswith(AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED):
             _, _, window = outcome.partition(":")
             window = window or "daily"
@@ -520,9 +522,7 @@ def _authorize_gateway_sync(
                 credit_reservation_id = credit_reservation.id
             except ValueError as exc:
                 STORE.refund_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
-                raise api_error(
-                    402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS
-                ) from exc
+                raise _insufficient_credits_error(workspace) from exc
 
         authorization = STORE.create_gateway_authorization(
             workspace_id=workspace.id,
@@ -878,6 +878,45 @@ def _gateway_authorize_response(
     }
 
 
+def _insufficient_credits_error(workspace: Any) -> Exception:
+    """402, but say WHICH plane the money is on when that is the real answer.
+
+    A federated workspace is a SHADOW of one on the home plane, and credits
+    never federate — they seed at zero here and only an explicit transfer moves
+    them (trusted_router.credit_transfer). So a bare "Insufficient credits"
+    would be actively misleading: it tells a customer who has a healthy balance
+    on the home plane to go top up, and it tells an operator nothing about the
+    actual fix, which is to run a transfer.
+
+    Deliberately NOT auto-transferring on demand. Three reasons, any one of
+    which is disqualifying:
+
+      * A leaked key would become a drain on the whole workspace balance, not
+        just this plane's. Auto-transfer turns "spend up to the key's limit
+        here" into "pull the home balance across a jurisdiction boundary and
+        then spend it", and it re-arms itself on every subsequent request.
+      * It reintroduces the coupling federation exists to remove: the first
+        request on a cold key would block on a synchronous home-plane call
+        that MOVES MONEY. If the home plane goes away mid-transfer, an
+        inference request is holding an escrow it has no durable place to
+        resolve.
+      * Moving funds across planes is an audited action, not a cache fill.
+
+    The message stays true whether the customer never transferred or
+    transferred and then spent it, because both have the same fix.
+    """
+    if getattr(workspace, "federated_home", ""):
+        return api_error(
+            402,
+            "No spendable credits on this plane. This workspace is federated: "
+            "credits do not federate with identity and must be transferred to "
+            "this plane explicitly. A balance on the home plane is not "
+            "spendable here.",
+            ErrorType.CREDITS_NOT_ON_THIS_PLANE,
+        )
+    return api_error(402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS)
+
+
 def _api_key_for_gateway_lookup(
     *,
     api_key_hash: str | None,
@@ -892,41 +931,75 @@ def _api_key_for_gateway_lookup(
     raw-bearer path, which verifies secret_hash — material a federated
     record deliberately does not carry. Same lookup, different trust
     decision; they must not share a code path.
+
+    A LOCALLY ISSUED key is authoritative and returned as-is. A FEDERATED
+    one is a cached copy of somebody else's record and is age-checked
+    first — see `_federated_key_still_valid`.
     """
+    api_key = None
     if api_key_hash:
         api_key = STORE.get_key_by_hash(api_key_hash)
-        if api_key is not None:
-            return api_key
-    if not api_key_lookup_hash:
-        return None
-    api_key = STORE.get_key_by_lookup_hash(api_key_lookup_hash)
-    if api_key is not None:
+    if api_key is None and api_key_lookup_hash:
+        api_key = STORE.get_key_by_lookup_hash(api_key_lookup_hash)
+    if api_key is not None and not getattr(api_key, "federated_home", ""):
         return api_key
-    return _federate_api_key(api_key_lookup_hash)
+    if not api_key_lookup_hash:
+        # Nothing to re-resolve against. A federated record reached only by
+        # key hash cannot be refreshed, so it is served as-is; the lookup-hash
+        # path (which every enclave request uses) does the age check.
+        return api_key
+    return _federated_key_still_valid(api_key, api_key_lookup_hash)
 
 
-def _federate_api_key(lookup_hash: str) -> Any | None:
-    """Resolve an unknown key from the home plane, once, and cache locally.
+def _federated_key_still_valid(cached: Any | None, lookup_hash: str) -> Any | None:
+    """Serve a federated key only while it is young enough to trust.
 
-    Returns None when federation is not configured or the home plane
-    genuinely does not know the key — both mean "no such key" and the
-    caller's existing 401 is correct.
+    This is the ENTIRE revocation mechanism for a peer plane. Nothing pushes a
+    revocation across: `upsert_federated_api_key` runs on a cache MISS, so
+    without an age check a key the customer deleted at home keeps authorizing
+    here forever, spending whatever credits were transferred to this plane, and
+    the only remedy is a manual per-region row delete. The same applies to the
+    `workspace_billing_paused` bit the shadow workspace carries — a pause that
+    never arrives cannot quiesce anything.
 
-    Raises through FederationUnavailable when the home plane is
-    unreachable: that must become 503 + Retry-After, never 401. Telling a
-    paying customer their key is invalid because OUR upstream is down
-    costs them a key rotation and a support ticket over our outage.
+    Three bands, and the middle one is the whole reason this is not just "call
+    home every time":
+
+      * Younger than the SOFT TTL: served from the local database. No
+        cross-plane call, which is the availability property being bought.
+      * Between the soft and hard TTLs: re-resolved, but a home plane that
+        cannot answer does NOT fail the request — the cached record still
+        serves. An outage at home must not become an outage here.
+      * Past the HARD TTL: refused unless home answers. At some age
+        "probably still valid" stops being good enough for a credential.
+
+    A home plane that answers "no such key" REVOKES immediately in every band:
+    that is a verdict, not an outage. The negative cache in
+    services/federation.py bounds how often a revoked key can ask.
     """
     settings = get_settings()
     home = getattr(settings, "federation_home_base_url", "") or ""
     token = getattr(settings, "federation_home_token", "") or ""
     if not home or not token:
-        return None
+        # Federation is off. There is nothing to refresh against, so expiring
+        # the record would take the plane down over a config change without
+        # making any revoked key one bit less usable.
+        return cached
+
+    age = _federated_record_age_seconds(cached)
+    if cached is not None and age < federation.SOFT_TTL_SECONDS:
+        return cached
 
     client = _federation_client(home, token)
     try:
         record = client.resolve(lookup_hash)
     except FederationUnavailable as exc:
+        if cached is not None and age < federation.HARD_TTL_SECONDS:
+            logger.warning(
+                "serving a stale federated key (age %ds): home plane unavailable",
+                int(age),
+            )
+            return cached
         raise api_error(
             503,
             "Key directory is temporarily unavailable; retry shortly",
@@ -934,10 +1007,36 @@ def _federate_api_key(lookup_hash: str) -> Any | None:
             headers={"Retry-After": "5"},
         ) from exc
     if record is None:
+        # Home genuinely does not know it: never issued, or REVOKED. Either
+        # way this plane must stop serving it, cached copy or not.
         return None
+    return STORE.upsert_federated_api_key(record)
 
-    stored = STORE.upsert_federated_api_key(record)
-    return stored
+
+def _federated_record_age_seconds(api_key: Any | None) -> float:
+    """Seconds since this shadow was written, or "infinitely old".
+
+    `created_at` is stamped by `federated_api_key_from_record` on every write,
+    so for a federated record it means "when this plane last heard from home",
+    and a successful refresh resets it.
+
+    An unparseable or missing stamp counts as hard-expired rather than fresh.
+    A record whose age cannot be established is exactly the one that must not
+    be trusted indefinitely, and the failure is loud (a refresh, or a 503)
+    instead of silent.
+    """
+    if api_key is None:
+        return float("inf")
+    raw = str(getattr(api_key, "created_at", "") or "")
+    if not raw:
+        return float("inf")
+    try:
+        stamped = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return float("inf")
+    if stamped.tzinfo is None:
+        stamped = stamped.replace(tzinfo=dt.UTC)
+    return max(0.0, (dt.datetime.now(dt.UTC) - stamped).total_seconds())
 
 
 @lru_cache(maxsize=4)

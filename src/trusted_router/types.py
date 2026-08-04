@@ -48,6 +48,12 @@ class ErrorType(StrEnum):
     KEY_LIMIT_EXCEEDED = "key_limit_exceeded"
     KEY_WINDOW_LIMIT_EXCEEDED = "key_window_limit_exceeded"
     INSUFFICIENT_CREDITS = "insufficient_credits"
+    # A FEDERATED workspace with no spendable balance on THIS plane. Distinct
+    # from insufficient_credits because the customer is very likely not out of
+    # money — their credits are on the home plane and have not been
+    # transferred. Telling them "insufficient credits" would send them to top
+    # up an account that already has a balance.
+    CREDITS_NOT_ON_THIS_PLANE = "credits_not_on_this_plane"
     MODEL_NOT_SUPPORTED = "model_not_supported"
     PROVIDER_AUTH_ERROR = "provider_auth_error"
     PROVIDER_ERROR = "provider_error"

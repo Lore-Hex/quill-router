@@ -168,5 +168,9 @@ def test_settings_and_create_store_pass_iam_configuration(
         "dsn": "postgresql://admin@cluster.example/postgres",
         "postgres_iam_auth": "aws-dsql",
         "postgres_iam_region": "us-east-2",
+        # Absent from the SimpleNamespace above, so this pins the *default*:
+        # the operational-analytics outbox stays off unless a deployment turns
+        # it on, exactly like the Spanner path.
+        "operational_analytics_outbox_enabled": False,
         "schema_applied": True,
     }

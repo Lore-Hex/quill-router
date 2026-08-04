@@ -10,7 +10,6 @@ import dataclasses
 import datetime as dt
 import hashlib
 import json
-import re
 import secrets
 import uuid
 from collections.abc import Callable
@@ -20,7 +19,18 @@ from typing import Any, Never, TypeVar, cast
 import psycopg
 from psycopg_pool import ConnectionPool
 
+from trusted_router import credit_transfer
+from trusted_router.credit_transfer import (
+    CreditTransferConflict,
+    validate_amount,
+    validate_outcome,
+    validate_transfer_id,
+)
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
+from trusted_router.postgres_dsn import (
+    aws_dsql_connection_details,
+    dsql_token_is_admin,
+)
 from trusted_router.security import (
     hash_api_key,
     key_label,
@@ -31,9 +41,9 @@ from trusted_router.security import (
     verify_api_key,
 )
 from trusted_router.spend_windows import KeyWindowLimitExceeded, window_floors
+from trusted_router.storage_codec import json_body
 from trusted_router.storage_errors import StoreConflict, StoreUnavailable
 from trusted_router.storage_gcp_codec import (
-    json_body,
     member_id,
     normalize_email,
     workspace_key_id,
@@ -47,6 +57,7 @@ from trusted_router.storage_models import (
     BroadcastDestination,
     ByokProviderConfig,
     CreditAccount,
+    CreditTransfer,
     CustomModel,
     EmailSendBlock,
     EncryptedSecretEnvelope,
@@ -69,10 +80,14 @@ from trusted_router.storage_models import (
     _is_byok,
     _is_expired,
     federated_api_key_from_record,
+    federated_workspace_from_record,
     iso_now,
     normalize_provider_access_role,
     normalize_provider_access_slug,
     utcnow,
+)
+from trusted_router.storage_postgres_operational_analytics_outbox import (
+    PostgresOperationalAnalyticsOutbox,
 )
 from trusted_router.synthetic.rollups import (
     RAW_SYNTHETIC_RETENTION_DAYS,
@@ -86,10 +101,6 @@ from trusted_router.types import UsageType
 T = TypeVar("T")
 
 _AWS_DSQL_IAM_AUTH = "aws-dsql"
-_AWS_DSQL_HOST_RE = re.compile(
-    r"^[^.]+\.dsql\.(?P<region>[a-z0-9-]+)\.on\.aws$",
-    re.IGNORECASE,
-)
 
 
 class _IamTokenConnectionPool(ConnectionPool):
@@ -129,38 +140,35 @@ def _aws_dsql_connection_details(
     *,
     region_override: str = "",
 ) -> tuple[str, str]:
-    params = psycopg.conninfo.conninfo_to_dict(dsn)
-    hostname = str(params.get("host") or "").rstrip(".")
-    if not hostname:
-        raise ValueError("AWS DSQL IAM auth requires a hostname in TR_POSTGRES_DSN")
-    if params.get("password"):
-        raise ValueError(
-            "TR_POSTGRES_DSN must not contain a password when TR_POSTGRES_IAM_AUTH=aws-dsql"
-        )
-
-    region = region_override.strip()
-    if not region:
-        match = _AWS_DSQL_HOST_RE.fullmatch(hostname)
-        if match is None:
-            raise ValueError(
-                "Could not infer the AWS region from TR_POSTGRES_DSN host "
-                f"{hostname!r}; set TR_POSTGRES_IAM_REGION"
-            )
-        region = match.group("region")
-    return hostname, region
+    # Thin alias kept for callers/tests; the parser itself is shared with the
+    # ClickHouse drain so the two cannot disagree about what a DSN means.
+    return aws_dsql_connection_details(dsn, region_override=region_override)
 
 
-def _aws_dsql_token_provider(hostname: str, region: str) -> Callable[[], str]:
+def _aws_dsql_token_provider(
+    hostname: str,
+    region: str,
+    *,
+    admin: bool = True,
+) -> Callable[[], str]:
     # Infrastructure SDK imports stay inside the selected adapter path so
     # ordinary Postgres deployments do not import or initialize boto3.
     import boto3
 
     client = boto3.client("dsql", region_name=region)
+    # DSQL mints a token per role. The control plane IS the system of record and
+    # connects as `admin`; anything connecting as a lesser role (the analytics
+    # drain) must get the non-admin token or authentication fails.
+    mint = (
+        client.generate_db_connect_admin_auth_token
+        if admin
+        else client.generate_db_connect_auth_token
+    )
 
     def generate_token() -> str:
         return cast(
             str,
-            client.generate_db_connect_admin_auth_token(
+            mint(
                 Hostname=hostname,
                 Region=region,
                 ExpiresIn=900,
@@ -176,6 +184,23 @@ _GATEWAY_FINALIZATION_KIND = "gateway_authorization_finalization"
 _RESERVATION_KIND = "reservation"
 _RESERVATION_IDEMPOTENCY_KIND = "reservation_idempotency"
 _RESERVATION_FINALIZATION_KIND = "reservation_finalization"
+# Cross-plane credit transfer (see trusted_router.credit_transfer).
+_CREDIT_TRANSFER_KIND = "credit_transfer"
+# Bounded recovery queue: written at escrow, DELETED at resolution, so the
+# "which transfers are still unresolved?" scan is a PK-prefix range that
+# shrinks to empty in steady state. Same reasoning as the analytics outbox,
+# which deletes what it has delivered rather than advancing a cursor over a
+# table that grows forever.
+_CREDIT_TRANSFER_OPEN_KIND = "credit_transfer_open"
+# DESTINATION side. Insert-once; the row IS the verdict and is never rewritten.
+_CREDIT_TRANSFER_CLAIM_KIND = "credit_transfer_claim"
+# SOURCE side. Insert-once; the row IS the authority to apply a verdict's
+# balance change, exactly once. Without it the refund on RETURNED is decided by
+# a read-then-write over the transfer row, and two callers that both read
+# ESCROWED (an operator cancel racing the recovery pass) both refund — the one
+# transition in this design that was not guarded by an insert-once row, and the
+# only place the module's own conservation claim was false.
+_CREDIT_TRANSFER_RESOLUTION_KIND = "credit_transfer_resolution"
 
 
 def _split_sql_statements(schema: str) -> list[str]:
@@ -209,6 +234,7 @@ class PostgresStore:
         transaction_attempts: int = 8,
         postgres_iam_auth: str = "",
         postgres_iam_region: str = "",
+        operational_analytics_outbox_enabled: bool = False,
     ) -> None:
         if not dsn:
             raise ValueError("Postgres DSN is required")
@@ -229,7 +255,11 @@ class PostgresStore:
             )
             self._pool = _IamTokenConnectionPool(
                 conninfo=dsn,
-                token_provider=_aws_dsql_token_provider(hostname, region),
+                token_provider=_aws_dsql_token_provider(
+                    hostname,
+                    region,
+                    admin=dsql_token_is_admin(dsn),
+                ),
                 min_size=pool_min_size,
                 max_size=pool_max_size,
                 open=True,
@@ -239,6 +269,15 @@ class PostgresStore:
                 "Unsupported TR_POSTGRES_IAM_AUTH value "
                 f"{postgres_iam_auth!r}; expected 'aws-dsql' or empty"
             )
+        # Durable ClickHouse hand-off for tenant activity and synthetic status.
+        # Off by default and gated on the same config flag as the Spanner path
+        # (`operational_analytics_outbox_enabled`), so enabling delivery is one
+        # decision made in one place rather than per-cloud.
+        self._operational_analytics_outbox = (
+            PostgresOperationalAnalyticsOutbox(self._run_transaction)
+            if operational_analytics_outbox_enabled
+            else None
+        )
 
     def close(self) -> None:
         """Close the connection pool."""
@@ -1173,13 +1212,26 @@ class PostgresStore:
         key material) and NO credits — a federated key seeds at ZERO local
         balance, because copying a balance mints money. Spending on this
         plane requires an explicit transfer.
+
+        The shadow workspace is written in the SAME transaction as the key.
+        A key without its workspace 403s on every request (the authorize path
+        reads the workspace before it reads credits), so the two must commit
+        together or not at all — a half-written pair would be a permanently
+        broken key that looks successfully federated.
         """
         key = federated_api_key_from_record(record)
+        workspace = federated_workspace_from_record(record)
 
         def upsert(conn: Any) -> ApiKey:
+            self._materialize_federated_workspace_tx(conn, workspace)
             self._write_entity_tx(conn, "api_key", key.hash, key)
+            # The reader (get_key_by_lookup_hash) indexes this by "key_id",
+            # matching create_key. Writing "key_hash" here made the FIRST
+            # federated request work — _federate_api_key returns the record
+            # directly — and every request after it raise KeyError, which is
+            # exactly the shape a naive smoke test passes.
             self._write_entity_tx(
-                conn, "api_key_lookup", key.lookup_hash, {"key_hash": key.hash}
+                conn, "api_key_lookup", key.lookup_hash, {"key_id": key.hash}
             )
             # A typed key-limit row is MANDATORY: the typed authorize path
             # fail-closes with KEY_MISSING when a key has a JSON entity but
@@ -1212,6 +1264,40 @@ class PostgresStore:
             return key
 
         return self._run_transaction(upsert)
+
+    def _materialize_federated_workspace_tx(self, conn: Any, workspace: Workspace) -> None:
+        """Write (or refresh) the shadow workspace a federated key needs.
+
+        Two guards, both of which protect money or a real tenant:
+
+        * A pre-existing NON-federated workspace with this id is a directory
+          COLLISION. Overwriting it would replace a real tenant's workspace
+          with an ownerless shadow, so this raises loudly instead. Refusing to
+          federate one key is recoverable; silently destroying a workspace is
+          not.
+        * The credit-balance row is inserted ON CONFLICT DO NOTHING, at ZERO.
+          Re-federating a key must never reset a balance that a completed
+          credit transfer already funded. An upsert here would silently delete
+          transferred money on the next cache miss.
+        """
+        if not workspace.id:
+            raise ValueError("federated record carries no workspace_id")
+        existing = self._read_entity_tx(conn, "workspace", workspace.id, Workspace)
+        if existing is not None and not existing.federated_home:
+            raise StoreConflict(
+                f"workspace {workspace.id} exists locally and is not federated; "
+                "refusing to overwrite it with a federated shadow"
+            )
+        self._write_entity_tx(conn, "workspace", workspace.id, workspace)
+        conn.execute(
+            "INSERT INTO tr_credit_balance "
+            "(workspace_id, shard, total_credits, total_usage, reserved, "
+            " source_updated_at, updated_at) "
+            "VALUES (%s, 0, 0, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+            "ON CONFLICT (workspace_id, shard) DO NOTHING",
+            (workspace.id,),
+            prepare=False,
+        )
 
     def get_key_by_lookup_hash(self, lookup_hash: str) -> ApiKey | None:
         lookup = self._read_entity("api_key_lookup", lookup_hash, dict)
@@ -1857,6 +1943,326 @@ class PostgresStore:
 
         self._run_transaction(finalize)
 
+    # --- Cross-plane credit transfer ---------------------------------------
+    #
+    # See trusted_router.credit_transfer for the state machine, which plane
+    # holds the value in each state, and the conservation invariant. Every
+    # transition below pairs an INSERT-ONCE row with the balance change it
+    # authorizes, in ONE transaction, so a retry re-runs an insert that loses
+    # and therefore moves nothing.
+
+    def open_credit_transfer(
+        self,
+        *,
+        transfer_id: str,
+        workspace_id: str,
+        amount_microdollars: int,
+        destination: str,
+    ) -> CreditTransfer:
+        """SOURCE side: debit into escrow. Value becomes held by THIS plane.
+
+        Idempotent on `transfer_id`: a redelivered open returns the existing
+        record and debits nothing. Raises ValueError("insufficient credits")
+        when the workspace cannot cover the amount — a CONDITIONAL debit, never
+        a blind decrement, so two concurrent transfers cannot overdraw between
+        a read and a write.
+        """
+        transfer_id = validate_transfer_id(transfer_id)
+        amount = validate_amount(amount_microdollars)
+        transfer = CreditTransfer(
+            id=transfer_id,
+            workspace_id=workspace_id,
+            amount_microdollars=amount,
+            destination=str(destination or ""),
+            state=credit_transfer.ESCROWED,
+        )
+
+        def open_transfer(conn: Any) -> CreditTransfer:
+            # Insert-once FIRST: if this loses, the debit below must not run.
+            won = self._insert_entity_once_tx(
+                conn, _CREDIT_TRANSFER_KIND, transfer_id, transfer
+            )
+            if not won:
+                existing = self._read_entity_tx(
+                    conn, _CREDIT_TRANSFER_KIND, transfer_id, CreditTransfer
+                )
+                if existing is None:
+                    raise RuntimeError("credit transfer row disappeared after conflict")
+                # Idempotency is keyed on the id, but the id alone does not
+                # identify the AGREEMENT. Returning a transfer escrowed for
+                # destination A to a caller holding a client for destination B
+                # lets push/cancel ask the WRONG plane for a verdict on value
+                # this plane is holding for someone else — and a REJECTED
+                # tombstone written by B releases the escrow while A may have
+                # already accepted. That is a double-spend, not a retry.
+                #
+                # recover_credit_transfers already skips on this exact
+                # mismatch; the check belongs here too, where every caller
+                # passes through.
+                #
+                # The workspace and amount are checked for the same reason. An
+                # operator funding workspace B with an id already spent on
+                # workspace A would otherwise be handed A's record and told
+                # "delivered" — a 200 for a transfer that moved nothing for B,
+                # and no field in the reply to notice it by.
+                credit_transfer.require_matching_transfer(
+                    transfer_id,
+                    existing,
+                    workspace_id=workspace_id,
+                    amount_microdollars=amount,
+                    destination=destination,
+                )
+                return existing
+            self._write_entity_tx(
+                conn,
+                _CREDIT_TRANSFER_OPEN_KIND,
+                transfer_id,
+                {"transfer_id": transfer_id},
+            )
+            cursor = conn.execute(
+                "UPDATE tr_credit_balance "
+                "SET total_credits = total_credits - %s, updated_at = CURRENT_TIMESTAMP "
+                "WHERE workspace_id = %s AND shard = 0 "
+                "AND total_credits - total_usage - reserved >= %s",
+                (amount, workspace_id, amount),
+            )
+            if cursor.rowcount != 1:
+                # Rolls the whole transaction back, including the insert-once
+                # row, so the same transfer id stays usable after the customer
+                # tops up. A refused transfer must leave no trace.
+                raise ValueError("insufficient credits")
+            return transfer
+
+        return self._run_transaction(open_transfer)
+
+    def get_credit_transfer(self, transfer_id: str) -> CreditTransfer | None:
+        return self._read_entity(_CREDIT_TRANSFER_KIND, transfer_id, CreditTransfer)
+
+    def list_open_credit_transfers(
+        self, limit: int = 100, *, after_id: str = ""
+    ) -> list[CreditTransfer]:
+        """Transfers still in ESCROWED — the recovery queue.
+
+        Bounded PK-prefix scan of the open index, which the resolve path
+        deletes from. A transfer appears here exactly while its fate is
+        unknown, which is precisely what a recovery pass must ask the
+        destination about.
+
+        PAGED, because not every row leaves the queue by being resolved. A
+        transfer escrowed for a DIFFERENT destination is skipped on every pass
+        and stays in the index; once `limit` of those sort ahead of the live
+        escrows, an unpaged "first N" would return nothing but skips forever
+        and silently stop recovering anything else. `after_id` lets the driver
+        walk past them.
+        """
+        bounded = max(1, min(int(limit), 500))
+        cursor_id = str(after_id or "")
+
+        def read(conn: Any) -> list[CreditTransfer]:
+            rows = conn.execute(
+                "SELECT id FROM tr_entities WHERE kind = %s AND id > %s "
+                "ORDER BY id LIMIT %s",
+                (_CREDIT_TRANSFER_OPEN_KIND, cursor_id, bounded),
+            ).fetchall()
+            transfers = []
+            for row in rows:
+                entity_id = str(row[0])
+                transfer = self._read_entity_tx(
+                    conn, _CREDIT_TRANSFER_KIND, entity_id, CreditTransfer
+                )
+                if transfer is not None and transfer.state == credit_transfer.ESCROWED:
+                    transfers.append(transfer)
+                    continue
+                # An index row whose transfer is resolved (or absent) is
+                # garbage: resolve deletes both in one transaction, so this
+                # only exists after a partial repair. Dropping it here keeps
+                # "a row in the index means an escrowed transfer is returned"
+                # true, which is what lets the driver page on the last
+                # RETURNED id without a filtered-out row stalling the walk.
+                self._delete_entity_tx(conn, _CREDIT_TRANSFER_OPEN_KIND, entity_id)
+            return transfers
+
+        return self._run_transaction(read)
+
+    def resolve_credit_transfer(self, *, transfer_id: str, outcome: str) -> CreditTransfer:
+        """SOURCE side: record the DESTINATION's verdict, and only that.
+
+        ACCEPTED -> DELIVERED: value is now held by the destination; the source
+        balance is untouched (it was debited at escrow).
+        REJECTED -> RETURNED: the escrowed amount is credited back here, in the
+        same transaction that records the state, so it cannot be returned
+        twice.
+
+        This plane never invents a verdict. A repeat of the SAME verdict is a
+        no-op; a DISAGREEING one raises CreditTransferConflict rather than
+        applying a second balance change.
+
+        THE GUARD IS THE INSERT-ONCE ROW, not the state read. Reading the
+        transfer and branching on `state` in Python decides on a snapshot: two
+        transactions that both read ESCROWED — an operator cancel racing the
+        recovery pass, which the recovery docstring explicitly says is safe —
+        would both fall through and both run the refund. The read is still
+        taken FOR UPDATE so the ordinary case serializes on the row, but
+        correctness rests on the insert, which is the same mechanism
+        `open_credit_transfer` and `claim_credit_transfer` already use and the
+        one this transition was missing.
+        """
+        transfer_id = validate_transfer_id(transfer_id)
+        outcome = validate_outcome(outcome)
+        target_state = credit_transfer.STATE_FOR_OUTCOME[outcome]
+
+        def resolve(conn: Any) -> CreditTransfer:
+            existing = self._read_entity_tx(
+                conn, _CREDIT_TRANSFER_KIND, transfer_id, CreditTransfer, for_update=True
+            )
+            if existing is None:
+                raise KeyError(transfer_id)
+            if existing.state != credit_transfer.ESCROWED:
+                if existing.state != target_state:
+                    raise CreditTransferConflict(
+                        f"transfer {transfer_id} is {existing.state}; "
+                        f"cannot re-resolve it as {target_state}"
+                    )
+                return existing
+            resolved = dataclasses.replace(
+                existing, state=target_state, resolved_at=iso_now()
+            )
+            # Insert-once FIRST, exactly as at escrow: if this loses, the
+            # balance change below must not run. The loser learns the winner's
+            # verdict instead of applying a second one.
+            won = self._insert_entity_once_tx(
+                conn,
+                _CREDIT_TRANSFER_RESOLUTION_KIND,
+                transfer_id,
+                {
+                    "outcome": outcome,
+                    "workspace_id": existing.workspace_id,
+                    "amount_microdollars": existing.amount_microdollars,
+                    "resolved_at": resolved.resolved_at,
+                },
+            )
+            if not won:
+                recorded = self._read_entity_tx(
+                    conn, _CREDIT_TRANSFER_RESOLUTION_KIND, transfer_id, dict
+                )
+                if recorded is None:
+                    raise RuntimeError("credit transfer resolution disappeared")
+                decided = str(recorded["outcome"])
+                if decided != outcome:
+                    raise CreditTransferConflict(
+                        f"transfer {transfer_id} was already resolved as "
+                        f"{decided}; cannot re-resolve it as {outcome}"
+                    )
+                # Same verdict, already applied by the winner. The transfer row
+                # this transaction read was stale; report the settled shape
+                # without touching a balance.
+                return dataclasses.replace(
+                    existing,
+                    state=credit_transfer.STATE_FOR_OUTCOME[decided],
+                    resolved_at=str(recorded.get("resolved_at") or "") or None,
+                )
+            self._write_entity_tx(conn, _CREDIT_TRANSFER_KIND, transfer_id, resolved)
+            # Leaves the recovery queue only now: while this row exists the
+            # fate is unknown and a recovery pass must keep asking.
+            self._delete_entity_tx(conn, _CREDIT_TRANSFER_OPEN_KIND, transfer_id)
+            if outcome == credit_transfer.REJECTED:
+                cursor = conn.execute(
+                    "UPDATE tr_credit_balance "
+                    "SET total_credits = total_credits + %s, "
+                    "updated_at = CURRENT_TIMESTAMP "
+                    "WHERE workspace_id = %s AND shard = 0",
+                    (existing.amount_microdollars, existing.workspace_id),
+                )
+                if cursor.rowcount != 1:
+                    raise RuntimeError(
+                        "missing authoritative tr_credit_balance for "
+                        f"workspace {existing.workspace_id}"
+                    )
+            return resolved
+
+        return self._run_transaction(resolve)
+
+    def claim_credit_transfer(
+        self,
+        *,
+        transfer_id: str,
+        workspace_id: str,
+        amount_microdollars: int,
+        source: str,
+        accept: bool,
+    ) -> str:
+        """DESTINATION side: decide a transfer's fate, exactly once.
+
+        Returns the DECIDED outcome, which may differ from `accept` — the
+        first writer wins and every later caller learns that verdict instead
+        of overriding it. That single insert-once row is what makes a
+        duplicate delivery credit once, and what makes an accept that races a
+        cancel resolve one way for both planes.
+
+        On ACCEPTED the local balance is credited in the same transaction as
+        the row, so the row existing and the money existing are the same fact.
+        """
+        transfer_id = validate_transfer_id(transfer_id)
+        amount = validate_amount(amount_microdollars)
+        requested = credit_transfer.ACCEPTED if accept else credit_transfer.REJECTED
+
+        def claim(conn: Any) -> str:
+            won = self._insert_entity_once_tx(
+                conn,
+                _CREDIT_TRANSFER_CLAIM_KIND,
+                transfer_id,
+                {
+                    "outcome": requested,
+                    "workspace_id": workspace_id,
+                    "amount_microdollars": amount,
+                    "source": str(source or ""),
+                    "created_at": iso_now(),
+                },
+            )
+            if not won:
+                recorded = self._read_entity_tx(
+                    conn, _CREDIT_TRANSFER_CLAIM_KIND, transfer_id, dict
+                )
+                if recorded is None:
+                    raise RuntimeError("credit transfer claim disappeared after conflict")
+                # The recorded verdict answers for the (workspace, amount) it
+                # was written with, and for NO other. Replaying it blindly is
+                # how a second source plane gets "accepted" for free: it
+                # debited, nothing here was credited, and both planes report
+                # success. Two AWS regions pushing an operator-chosen id like
+                # "topup-2026-08" is enough to reach it. Refuse instead — the
+                # source treats a non-200 as unknown and keeps the value
+                # escrowed, which is recoverable; a false "accepted" is not.
+                credit_transfer.require_matching_transfer(
+                    transfer_id,
+                    recorded,
+                    workspace_id=workspace_id,
+                    amount_microdollars=amount,
+                    source=str(source or ""),
+                )
+                return str(recorded["outcome"])
+            if requested == credit_transfer.REJECTED:
+                return credit_transfer.REJECTED
+            cursor = conn.execute(
+                "UPDATE tr_credit_balance "
+                "SET total_credits = total_credits + %s, "
+                "source_updated_at = CURRENT_TIMESTAMP, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE workspace_id = %s AND shard = 0",
+                (amount, workspace_id),
+            )
+            if cursor.rowcount != 1:
+                # No balance row means no such workspace here. Rolling back
+                # discards the claim row too, so the source can retry once the
+                # workspace has been federated rather than being told the
+                # transfer was accepted by a plane that never credited it.
+                raise ValueError(
+                    f"no credit balance for workspace {workspace_id} on this plane"
+                )
+            return credit_transfer.ACCEPTED
+
+        return self._run_transaction(claim)
+
     def update_auto_refill_settings(
         self,
         workspace_id: str,
@@ -2104,9 +2510,16 @@ class PostgresStore:
                     prepare=False,
                 )
 
-            # 4. Generation metadata, when the caller supplied one.
+            # 4. Generation metadata, when the caller supplied one, plus the
+            #    ClickHouse delivery intent for it. The outbox row rides the
+            #    SAME transaction as the money and the generation record, so
+            #    the activity stream cannot disagree with the ledger: either
+            #    both commit or neither does. ClickHouse is never in this
+            #    transaction — only the durable intent to deliver to it.
             if generation is not None:
                 self._write_entity_tx(conn, "generation", generation.id, generation)
+                if self._operational_analytics_outbox is not None:
+                    self._operational_analytics_outbox.enqueue_activity_tx(conn, generation)
 
             # 5. Mark settled.
             authorization.settled = True
@@ -2188,6 +2601,14 @@ class PostgresStore:
                 index_probe_type=sample.probe_type,
                 index_monitor_region=sample.monitor_region,
             )
+            # Delivery intent commits with the sample. The Spanner path
+            # enqueues best-effort in a SEPARATE transaction and logs when
+            # that fails, because its sample write is not one transaction;
+            # here the whole record IS one transaction, so the stronger
+            # guarantee is free and a probe can never be recorded without
+            # its status event.
+            if self._operational_analytics_outbox is not None:
+                self._operational_analytics_outbox.enqueue_synthetic_tx(conn, sample)
             for period, component in sample_rollup_ids(sample):
                 update = new_rollup_for_sample(
                     sample,

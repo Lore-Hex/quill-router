@@ -11,6 +11,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any, TypeVar
 
+from trusted_router import storage_gcp_credit_transfer as spanner_credit_transfer
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.operational_analytics import (
     OperationalAnalyticsClient,
@@ -24,6 +25,7 @@ from trusted_router.storage import (
     BroadcastDestination,
     ByokProviderConfig,
     CreditAccount,
+    CreditTransfer,
     CustomModel,
     EmailSendBlock,
     EncryptedSecretEnvelope,
@@ -72,7 +74,7 @@ from trusted_router.storage_gcp_codec import (
 from trusted_router.storage_gcp_codec import (
     normalize_email as _normalize_email,
 )
-from trusted_router.storage_gcp_counter_dml import insert_entity_dml_at
+from trusted_router.storage_gcp_counter_dml import credit_credit_shard, insert_entity_dml_at
 from trusted_router.storage_gcp_counters import (
     CREDIT_BALANCE_COLUMNS,
     CREDIT_BALANCE_TABLE,
@@ -905,6 +907,80 @@ class SpannerBigtableStore:
             "GCP is the federation home plane; it does not import federated keys"
         )
 
+    # --- Cross-plane credit transfer ---------------------------------------
+    #
+    # See trusted_router.storage_gcp_credit_transfer for the implementation and
+    # the two ways it necessarily differs from the Postgres one: the escrow
+    # debit is a conditional PLAN over the sharded balance (Spanner has no
+    # single authoritative row to decrement), and the refund's serialization is
+    # re-derived from the insert-once row plus Spanner's read-set validation
+    # rather than copied from `SELECT ... FOR UPDATE`, which Spanner does not
+    # have. `tests/conformance/test_store_semantics.py` holds this store to the
+    # SAME assertions as Postgres via the `spanner-fake` backend.
+
+    def open_credit_transfer(
+        self,
+        *,
+        transfer_id: str,
+        workspace_id: str,
+        amount_microdollars: int,
+        destination: str,
+    ) -> CreditTransfer:
+        return spanner_credit_transfer.open_credit_transfer(
+            database=self._database,
+            param_types=self._param_types,
+            read_entity_tx=self._read_entity_tx,
+            transfer_id=transfer_id,
+            workspace_id=workspace_id,
+            amount_microdollars=amount_microdollars,
+            destination=destination,
+        )
+
+    def get_credit_transfer(self, transfer_id: str) -> CreditTransfer | None:
+        return spanner_credit_transfer.get_credit_transfer(
+            read_entity=self._read_entity, transfer_id=transfer_id
+        )
+
+    def list_open_credit_transfers(
+        self, limit: int = 100, *, after_id: str = ""
+    ) -> list[CreditTransfer]:
+        return spanner_credit_transfer.list_open_credit_transfers(
+            database=self._database,
+            param_types=self._param_types,
+            read_entity_tx=self._read_entity_tx,
+            limit=limit,
+            after_id=after_id,
+        )
+
+    def resolve_credit_transfer(self, *, transfer_id: str, outcome: str) -> CreditTransfer:
+        return spanner_credit_transfer.resolve_credit_transfer(
+            database=self._database,
+            param_types=self._param_types,
+            read_entity_tx=self._read_entity_tx,
+            transfer_id=transfer_id,
+            outcome=outcome,
+        )
+
+    def claim_credit_transfer(
+        self,
+        *,
+        transfer_id: str,
+        workspace_id: str,
+        amount_microdollars: int,
+        source: str,
+        accept: bool,
+    ) -> str:
+        return spanner_credit_transfer.claim_credit_transfer(
+            database=self._database,
+            param_types=self._param_types,
+            read_entity_tx=self._read_entity_tx,
+            transfer_id=transfer_id,
+            workspace_id=workspace_id,
+            amount_microdollars=amount_microdollars,
+            source=source,
+            accept=accept,
+        )
+
     def get_key_by_lookup_hash(self, lookup_hash: str) -> ApiKey | None:
         return self.api_keys.get_by_lookup_hash(lookup_hash)
 
@@ -1161,23 +1237,8 @@ class SpannerBigtableStore:
             pt = self._param_types
 
             for shard, shard_delta in enumerate(shard_deltas):
-                updated = transaction.execute_update(
-                    "UPDATE tr_credit_balance "
-                    "SET total_credits = total_credits + @amount, "
-                    "source_updated_at=@now, updated_at=@now "
-                    "WHERE workspace_id=@ws AND shard=@shard",
-                    params={
-                        "amount": shard_delta,
-                        "now": now,
-                        "ws": workspace_id,
-                        "shard": shard,
-                    },
-                    param_types={
-                        "amount": pt.INT64,
-                        "now": pt.TIMESTAMP,
-                        "ws": pt.STRING,
-                        "shard": pt.INT64,
-                    },
+                updated = credit_credit_shard(
+                    transaction, pt, workspace_id, shard_delta, shard=shard, now=now
                 )
                 if updated != 0:
                     continue

@@ -132,3 +132,40 @@ ALTER TABLE tr_key_limit ADD COLUMN IF NOT EXISTS week_start TIMESTAMPTZ;
 ALTER TABLE tr_key_limit ADD COLUMN IF NOT EXISTS month_usage BIGINT;
 ALTER TABLE tr_key_limit ALTER COLUMN month_usage SET DEFAULT 0;
 ALTER TABLE tr_key_limit ADD COLUMN IF NOT EXISTS month_start TIMESTAMPTZ;
+
+-- Durable hand-off to ClickHouse for tenant activity and synthetic status.
+-- Rows are written in the SAME transaction as the settle/probe they describe,
+-- so an event is delivered if and only if the write it describes committed.
+--
+-- The PRIMARY KEY is the event identity, NOT a timestamp. Spanner's outbox
+-- orders by PENDING_COMMIT_TIMESTAMP(); Postgres has no equivalent, and a
+-- now()-based cursor is unsafe here — a transaction that starts earlier can
+-- commit later, so a drain checkpointing on max(enqueued_at) would silently
+-- skip rows that appeared behind its cursor. The drain therefore deletes what
+-- it has written rather than advancing a cursor, and this key is what makes
+-- both the enqueue and that delete idempotent: an enqueue retried after an
+-- OCC abort (SQLSTATE 40001) collides with itself instead of duplicating.
+--
+-- enqueued_at is NOT merely observability, despite only feeding the drain-lag
+-- metric here. The drain forwards it as ClickHouse's `ingest_version`, which is
+-- the ReplacingMergeTree version column that collapses a redelivered row onto
+-- its original. That works only because the value is *stored* and therefore
+-- identical on every redelivery. Never recompute it per delivery (a per-
+-- statement now(), a backfill rewrite): two versions of one event stop
+-- deduplicating and the duplicate becomes permanent.
+CREATE TABLE IF NOT EXISTS tr_operational_analytics_outbox (
+    shard BIGINT NOT NULL,
+    event_kind TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    enqueued_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (shard, event_kind, event_id)
+);
+
+-- Serves the drain's lag metric (ORDER BY enqueued_at LIMIT 1) as an index seek.
+-- Without it that metric is a full table scan on every poll, which is worst
+-- exactly when a backlog has made it expensive and most worth reading. The
+-- batch SELECT deliberately does NOT order on this column — it orders on the
+-- primary key prefix so its LIMIT is a bounded range scan.
+CREATE INDEX IF NOT EXISTS tr_operational_analytics_outbox_enqueued_at_idx
+    ON tr_operational_analytics_outbox (enqueued_at);

@@ -1829,7 +1829,11 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
     # latency come from a small live sample window, while 24h/48h/monthly
     # history comes from compact rollups precomputed when the monitor writes
     # each sample. Do not scan raw 48h/day Bigtable rows on page load.
-    payload = status_snapshot(_status_samples(hours=1), rollups=_status_rollups("snapshot"))
+    payload = status_snapshot(
+        _status_samples(hours=1),
+        rollups=_status_rollups("snapshot"),
+        settings=settings,
+    )
     if settings.environment != "test":
         _STATUS_CACHE = (now, payload)
     return payload

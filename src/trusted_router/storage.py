@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import threading
 import uuid
 from typing import Any, cast
 
+from trusted_router import credit_transfer
 from trusted_router.analytics_sink import AnalyticsSink, NullAnalyticsSink
+from trusted_router.credit_transfer import (
+    CreditTransferConflict,
+    validate_amount,
+    validate_outcome,
+    validate_transfer_id,
+)
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.storage_attribution import InMemoryAcquisitionAttribution
 from trusted_router.storage_auth_sessions import InMemoryAuthSessions
@@ -13,6 +21,7 @@ from trusted_router.storage_broadcast import InMemoryBroadcastDestinations
 from trusted_router.storage_byok import InMemoryByok
 from trusted_router.storage_custom_models import InMemoryCustomModels
 from trusted_router.storage_email_blocks import InMemoryEmailBlocks
+from trusted_router.storage_errors import StoreConflict
 from trusted_router.storage_generations import InMemoryGenerations
 from trusted_router.storage_keys import InMemoryApiKeys
 from trusted_router.storage_models import (
@@ -24,6 +33,7 @@ from trusted_router.storage_models import (
     ByokProviderConfig,
     CreditAccount,
     CreditMoney,
+    CreditTransfer,
     CustomModel,
     EmailSendBlock,
     EncryptedSecretEnvelope,
@@ -44,6 +54,7 @@ from trusted_router.storage_models import (
     WalletChallenge,
     Workspace,
     federated_api_key_from_record,
+    federated_workspace_from_record,
     iso_now,
     normalize_provider_access_role,
     normalize_provider_access_slug,
@@ -76,6 +87,12 @@ class InMemoryStore:
         self.credits: dict[str, CreditAccount] = {}
         self.credit_money: dict[str, CreditMoney] = {}
         self.stripe_events: set[str] = set()
+        # Cross-plane credit transfer (trusted_router.credit_transfer).
+        # `credit_transfers` is this plane as the SOURCE (escrow records);
+        # `credit_transfer_claims` is this plane as the DESTINATION (the
+        # insert-once verdict per transfer id). One store can be both.
+        self.credit_transfers: dict[str, CreditTransfer] = {}
+        self.credit_transfer_claims: dict[str, dict[str, Any]] = {}
         # Composed feature stores. Each owns its own state and is importable
         # on its own. Keeps storage.py focused on identity + credit ledger;
         # spend control / BYOK / OAuth codes / auth sessions / generations /
@@ -113,6 +130,8 @@ class InMemoryStore:
             self.credits.clear()
             self.credit_money.clear()
             self.stripe_events.clear()
+            self.credit_transfers.clear()
+            self.credit_transfer_claims.clear()
             self.api_keys.reset()
             self.acquisition_store.reset()
             self.generation_store.reset()
@@ -522,10 +541,39 @@ class InMemoryStore:
         holds home-issued key material) and NO credits — a federated key
         seeds at ZERO local balance, because copying a balance mints money.
         Spending on this plane requires an explicit transfer.
+
+        The shadow workspace is materialized under the SAME lock as the key.
+        A key without its workspace 403s on every request (the authorize path
+        reads the workspace before it reads credits), so the pair must appear
+        together — the InMemory twin of the Postgres single transaction.
         """
         key = federated_api_key_from_record(record)
-        self.api_keys.keys[key.hash] = key
-        return key
+        workspace = federated_workspace_from_record(record)
+        with self._lock:
+            if not workspace.id:
+                raise ValueError("federated record carries no workspace_id")
+            existing = self.workspaces.get(workspace.id)
+            if existing is not None and not existing.federated_home:
+                # Directory collision: a real local workspace already owns
+                # this id. Overwriting it would replace a tenant with an
+                # ownerless shadow. See the Postgres twin for the reasoning.
+                raise StoreConflict(
+                    f"workspace {workspace.id} exists locally and is not federated; "
+                    "refusing to overwrite it with a federated shadow"
+                )
+            self.workspaces[workspace.id] = workspace
+            # setdefault, NOT assignment: re-federating a key must never reset
+            # a balance a completed credit transfer already funded.
+            self.credits.setdefault(workspace.id, CreditAccount(workspace_id=workspace.id))
+            self.credit_money.setdefault(workspace.id, CreditMoney())
+            # BOTH the entity and its lookup index. Writing only `keys` made
+            # the first federated request work (the resolve returns the record
+            # directly) and every one after it miss — the same defect the
+            # Postgres backend had, because I wrote both by hand instead of
+            # going through one shared helper.
+            self.api_keys.keys[key.hash] = key
+            self.api_keys.key_ids_by_lookup_hash[key.lookup_hash] = key.hash
+            return key
 
     def get_key_by_lookup_hash(self, lookup_hash: str) -> ApiKey | None:
         return self.api_keys.get_by_lookup_hash(lookup_hash)
@@ -895,6 +943,169 @@ class InMemoryStore:
 
     def refund(self, reservation_id: str) -> None:
         self.api_keys.refund(reservation_id)
+
+    # --- Cross-plane credit transfer ---------------------------------------
+    #
+    # The InMemory twin of the Postgres implementation. See
+    # trusted_router.credit_transfer for the state machine, which plane holds
+    # the value in each state, and the conservation invariant. `self._lock` is
+    # this backend's transaction: every insert-once check and the balance
+    # change it authorizes happen inside ONE acquisition, so a concurrent
+    # caller can never observe (or act on) a half-applied transition.
+
+    def open_credit_transfer(
+        self,
+        *,
+        transfer_id: str,
+        workspace_id: str,
+        amount_microdollars: int,
+        destination: str,
+    ) -> CreditTransfer:
+        """SOURCE side: debit into escrow. Value becomes held by THIS plane."""
+        transfer_id = validate_transfer_id(transfer_id)
+        amount = validate_amount(amount_microdollars)
+        with self._lock:
+            existing = self.credit_transfers.get(transfer_id)
+            if existing is not None:
+                # Redelivered open: return the first one, debit nothing.
+                # But only to a caller naming the SAME move — an id is not an
+                # agreement. A different destination lets two planes rule on
+                # one escrow; a different workspace or amount reports somebody
+                # else's completed transfer as this caller's.
+                credit_transfer.require_matching_transfer(
+                    transfer_id,
+                    existing,
+                    workspace_id=workspace_id,
+                    amount_microdollars=amount,
+                    destination=destination,
+                )
+                return existing
+            money = self.credit_money.get(workspace_id)
+            available = (
+                0
+                if money is None
+                else money.total_credits_microdollars
+                - money.total_usage_microdollars
+                - money.reserved_microdollars
+            )
+            if money is None or amount > available:
+                # Nothing was written yet, so the transfer id stays usable
+                # after a top-up — a refused transfer leaves no trace.
+                raise ValueError("insufficient credits")
+            money.total_credits_microdollars -= amount
+            transfer = CreditTransfer(
+                id=transfer_id,
+                workspace_id=workspace_id,
+                amount_microdollars=amount,
+                destination=str(destination or ""),
+                state=credit_transfer.ESCROWED,
+            )
+            self.credit_transfers[transfer_id] = transfer
+            return transfer
+
+    def get_credit_transfer(self, transfer_id: str) -> CreditTransfer | None:
+        with self._lock:
+            return self.credit_transfers.get(transfer_id)
+
+    def list_open_credit_transfers(
+        self, limit: int = 100, *, after_id: str = ""
+    ) -> list[CreditTransfer]:
+        """Transfers still in ESCROWED — the recovery queue, paged by id."""
+        bounded = max(1, min(int(limit), 500))
+        cursor_id = str(after_id or "")
+        with self._lock:
+            return [
+                transfer
+                for transfer in sorted(self.credit_transfers.values(), key=lambda t: t.id)
+                if transfer.state == credit_transfer.ESCROWED and transfer.id > cursor_id
+            ][:bounded]
+
+    def resolve_credit_transfer(self, *, transfer_id: str, outcome: str) -> CreditTransfer:
+        """SOURCE side: record the DESTINATION's verdict, and only that."""
+        transfer_id = validate_transfer_id(transfer_id)
+        outcome = validate_outcome(outcome)
+        target_state = credit_transfer.STATE_FOR_OUTCOME[outcome]
+        with self._lock:
+            existing = self.credit_transfers.get(transfer_id)
+            if existing is None:
+                raise KeyError(transfer_id)
+            if existing.state != credit_transfer.ESCROWED:
+                if existing.state != target_state:
+                    raise CreditTransferConflict(
+                        f"transfer {transfer_id} is {existing.state}; "
+                        f"cannot re-resolve it as {target_state}"
+                    )
+                return existing
+            # Look the balance up BEFORE recording the state. The Postgres twin
+            # gets this for free — a rowcount != 1 rolls the whole transaction
+            # back — but a dict store has no rollback, so writing the state
+            # first and then raising leaves the transfer RETURNED with nothing
+            # returned. That is value destroyed in the store the conservation
+            # tests assert against, i.e. a place a real bug could hide.
+            money = (
+                self.credit_money.get(existing.workspace_id)
+                if outcome == credit_transfer.REJECTED
+                else None
+            )
+            if outcome == credit_transfer.REJECTED and money is None:
+                raise RuntimeError(
+                    f"missing credit money for workspace {existing.workspace_id}"
+                )
+            resolved = dataclasses.replace(
+                existing, state=target_state, resolved_at=iso_now()
+            )
+            self.credit_transfers[transfer_id] = resolved
+            if money is not None:
+                money.total_credits_microdollars += existing.amount_microdollars
+            return resolved
+
+    def claim_credit_transfer(
+        self,
+        *,
+        transfer_id: str,
+        workspace_id: str,
+        amount_microdollars: int,
+        source: str,
+        accept: bool,
+    ) -> str:
+        """DESTINATION side: decide a transfer's fate, exactly once."""
+        transfer_id = validate_transfer_id(transfer_id)
+        amount = validate_amount(amount_microdollars)
+        requested = credit_transfer.ACCEPTED if accept else credit_transfer.REJECTED
+        with self._lock:
+            recorded = self.credit_transfer_claims.get(transfer_id)
+            if recorded is not None:
+                # First writer won; every later caller learns that verdict —
+                # but only a caller asking about the SAME move. The recorded
+                # verdict says nothing about a different (workspace, amount),
+                # and replaying it hands a second source plane "accepted" for
+                # free: it debited, nothing here was credited.
+                credit_transfer.require_matching_transfer(
+                    transfer_id,
+                    recorded,
+                    workspace_id=workspace_id,
+                    amount_microdollars=amount,
+                    source=str(source or ""),
+                )
+                return str(recorded["outcome"])
+            if requested == credit_transfer.ACCEPTED:
+                money = self.credit_money.get(workspace_id)
+                if money is None:
+                    # No workspace here yet: write no claim, so the source can
+                    # retry once it is federated rather than being told a
+                    # plane accepted value it never credited.
+                    raise ValueError(
+                        f"no credit balance for workspace {workspace_id} on this plane"
+                    )
+                money.total_credits_microdollars += amount
+            self.credit_transfer_claims[transfer_id] = {
+                "outcome": requested,
+                "workspace_id": workspace_id,
+                "amount_microdollars": amount,
+                "source": str(source or ""),
+                "created_at": iso_now(),
+            }
+            return requested
 
     def create_gateway_authorization(
         self,
@@ -1413,6 +1624,9 @@ def create_store(settings: Any) -> Store:
             dsn,
             postgres_iam_auth=str(getattr(settings, "postgres_iam_auth", "") or ""),
             postgres_iam_region=str(getattr(settings, "postgres_iam_region", "") or ""),
+            operational_analytics_outbox_enabled=bool(
+                getattr(settings, "operational_analytics_outbox_enabled", False)
+            ),
         )
         store.apply_schema()
         return store

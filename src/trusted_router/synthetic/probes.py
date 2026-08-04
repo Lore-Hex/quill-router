@@ -16,14 +16,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import cbor2
 import httpx
 from cryptography import x509
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-from trusted_router.config import Settings
+from trusted_router.config import Settings, parse_gateway_region_targets
 from trusted_router.provider_reliability import model_deadlines
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.security import lookup_hash_api_key
@@ -83,6 +83,36 @@ class SyntheticTarget:
     # measurement reports pcr0_mismatch. None = binding-only, so a fresh
     # deployment isn't permanently red before the pin is configured.
     expected_pcr0: str | None = None
+    # TCP endpoint that serves api_base_url for THIS target. When set, probes
+    # dial this host but keep SNI and the Host header derived from
+    # api_base_url, so the request is byte-identical to a canonical one and
+    # the enclave's TEE-minted cert (whose ONLY SAN is the canonical
+    # hostname) still validates as itself.
+    #
+    # This is the only way to reach one specific enclave behind an anycast
+    # record: api-aws.trustedrouter.com resolves to AWS Global Accelerator,
+    # which picks a region for us, so an unpinned probe cannot tell "both
+    # enclaves healthy" from "one enclave dead". Same trick as
+    # tools/verify-attestation.py --api-host X --connect-ip Y.
+    #
+    # None = resolve api_base_url normally (every pre-existing target).
+    connect_host: str | None = None
+    # Whether this target runs the probes that spend money and provider
+    # quota (the chat/responses pong pair). Per-region targets exist to
+    # answer "is THIS region attesting and serving TLS", which the free
+    # probes answer completely; duplicating paid inference per region per
+    # minute would multiply synthetic spend for samples that map to no
+    # public component.
+    #
+    # LOAD-BEARING FOR CREDENTIALS, not only for cost. The paid probes are
+    # the only ones that send the monitor's live API key, and an attested
+    # target's TLS context is deliberately CERT_NONE (see
+    # _attested_ssl_context). Sending a real key to an endpoint named by an
+    # environment variable over a connection with no certificate
+    # verification is not a trade anyone should be able to make by flipping
+    # one flag, so _run_target_synthetic_probes ALSO refuses credentials to
+    # any pinned target regardless of what this field says.
+    paid_probes: bool = True
 
 
 def _attested_ssl_context() -> ssl.SSLContext:
@@ -98,24 +128,91 @@ def _attested_ssl_context() -> ssl.SSLContext:
     return context
 
 
-def configured_targets(settings: Settings) -> list[SyntheticTarget]:
-    targets = [
+def _connect_host_request(
+    target: SyntheticTarget, url: str
+) -> tuple[str, dict[str, str], dict[str, Any]]:
+    """Rewrite a URL so the connection lands on ``target.connect_host``.
+
+    Returns ``(request_url, extra_headers, extensions)``. The TCP/TLS
+    connection goes to connect_host, while SNI (``sni_hostname`` extension)
+    and the ``Host`` header keep naming the api_base_url hostname — which is
+    what makes the enclave's single-SAN certificate validate and what makes
+    the enclave route the request as it would any client request.
+
+    Scope: ONLY the api_base_url origin is redirected. A control-plane URL or
+    a signed asset URL that a probe happens to fetch through the same client
+    keeps resolving normally — connect_host pins one gateway, not every host
+    a probe touches.
+
+    No connect_host (every pre-existing target) returns the URL untouched
+    with no headers and no extensions, so the request is byte-identical to
+    what it was before this function existed.
+    """
+    if not target.connect_host:
+        return url, {}, {}
+    parsed = urlsplit(url)
+    api_host = urlsplit(target.api_base_url).hostname
+    if not parsed.hostname or not api_host or parsed.hostname.casefold() != api_host.casefold():
+        return url, {}, {}
+    netloc = target.connect_host if not parsed.port else f"{target.connect_host}:{parsed.port}"
+    request_url = urlunsplit(
+        (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
+    )
+    return request_url, {"Host": parsed.netloc}, {"sni_hostname": parsed.hostname}
+
+
+def _gateway_region_targets(
+    settings: Settings, canonical: SyntheticTarget
+) -> list[SyntheticTarget]:
+    """Extra targets that probe ONE enclave each behind the shared hostname.
+
+    Configuration-driven (TR_SYNTHETIC_GATEWAY_REGION_TARGETS), never a
+    per-cloud hardcoded list: unset means a deployment gets exactly the
+    targets it got before this existed. Each entry inherits the canonical
+    target's api_base_url, attestation flag and PCR0 pin — it is the SAME
+    gateway identity, reached at a specific endpoint — and takes the entry
+    name as both its target name and its target region, which is what binds
+    it to its own public status component.
+    """
+    return [
         SyntheticTarget(
-            "canonical",
+            name,
             settings.api_base_url,
-            choose_region(settings),
-            control_plane_url=settings.synthetic_control_plane_health_url,
-            attested=settings.synthetic_canonical_attested,
-            expected_pcr0=settings.attestation_expected_pcr0,
+            name,
+            attested=canonical.attested,
+            expected_pcr0=canonical.expected_pcr0,
+            connect_host=connect_host,
+            paid_probes=False,
+        )
+        for name, connect_host in parse_gateway_region_targets(
+            settings.synthetic_gateway_region_targets
         )
     ]
+
+
+def configured_targets(settings: Settings) -> list[SyntheticTarget]:
+    canonical = SyntheticTarget(
+        "canonical",
+        settings.api_base_url,
+        choose_region(settings),
+        control_plane_url=settings.synthetic_control_plane_health_url,
+        attested=settings.synthetic_canonical_attested,
+        expected_pcr0=settings.attestation_expected_pcr0,
+    )
+    # Canonical stays FIRST: the GCP loop below de-duplicates by api_base_url
+    # and must find the canonical target, not a per-enclave sibling that
+    # shares the same hostname.
+    targets = [canonical, *_gateway_region_targets(settings, canonical)]
     if not settings.synthetic_regional_probes_enabled:
         # Standalone single-gateway deployment: the per-region alias and
         # Cloud Run URL templates below are GCP topology and would
         # fabricate targets that do not exist (verified live: with
         # TR_REGIONS=eu-west-3 the loop appends
         # api-eu-west-3.quillrouter.com + a nonexistent *.run.app URL,
-        # both permanently down). One gateway, one target.
+        # both permanently down). One hostname, one canonical target — plus
+        # whatever per-enclave endpoints are explicitly configured above,
+        # which are real addresses of that same hostname rather than
+        # hostnames derived from a template.
         return targets
     for region in region_payload(settings):
         name = str(region["id"])
@@ -217,7 +314,14 @@ async def _run_target_synthetic_probes(
     # This separate probe pins the control-plane signal per region.
     if target.control_plane_url:
         probes.append(control_plane_health_probe(client, target, monitor_region=monitor_region))
-    if api_key:
+    # Two independent conditions, deliberately. `paid_probes` is the cost
+    # decision; `connect_host` is the credential decision. A pinned target's
+    # endpoint comes from configuration and is dialled with CA verification
+    # off (attested targets serve a TEE-minted self-signed cert), so the
+    # monitor's live API key must never travel there — a typo, or anyone who
+    # can influence that env var, would otherwise harvest a billable key
+    # once a minute with no certificate check standing in the way.
+    if api_key and target.paid_probes and not target.connect_host:
         probes.extend(
             [
                 _run_billing_probe(
@@ -269,9 +373,10 @@ async def tls_health_probe(
     monitor_region: str,
 ) -> SyntheticProbeSample:
     url = _root_url(target.api_base_url, "/health")
+    request_url, headers, extensions = _connect_host_request(target, url)
     started = time.perf_counter()
     try:
-        response = await client.get(url)
+        response = await client.get(request_url, headers=headers, extensions=extensions)
         latency_ms = _elapsed_ms(started)
         ok = response.status_code == 200 and _health_ok(response)
         # The attested gateway currently protects every route except
@@ -314,9 +419,14 @@ async def gateway_latency_phase_probes(
     This probe is diagnostic, not an uptime signal. It uses an HTTP/1.1-only
     connection so DNS, TCP, TLS, and application processing can be timed
     independently without relying on private httpx/httpcore trace APIs.
+
+    Both requests go to the route THIS gateway keeps warm for real traffic
+    (see _warm_path_request_path), so the reuse check exercises the same
+    socket behaviour paying customers depend on instead of a route the
+    gateway hangs up on.
     """
 
-    url = _root_url(target.api_base_url, "/health")
+    url = _root_url(target.api_base_url, _warm_path_request_path(target))
     parsed = urlsplit(url)
     host = parsed.hostname
     if parsed.scheme != "https" or not host:
@@ -330,6 +440,10 @@ async def gateway_latency_phase_probes(
     path = parsed.path or "/"
     if parsed.query:
         path = f"{path}?{parsed.query}"
+    # Resolve/connect to the pinned endpoint when the target has one, but
+    # keep `host` for SNI (server_hostname below) and for the Host header
+    # (_health_http11_request) — the enclave cert's only SAN is that name.
+    connect_host = target.connect_host or host
 
     writer: asyncio.StreamWriter | None = None
     raw_socket: socket.socket | None = None
@@ -338,7 +452,7 @@ async def gateway_latency_phase_probes(
         loop = asyncio.get_running_loop()
         dns_started = time.perf_counter()
         addresses = await asyncio.wait_for(
-            loop.getaddrinfo(host, port, type=socket.SOCK_STREAM),
+            loop.getaddrinfo(connect_host, port, type=socket.SOCK_STREAM),
             timeout=_remaining_probe_seconds(started, timeout_seconds),
         )
         dns_ms = _elapsed_ms(dns_started)
@@ -382,16 +496,23 @@ async def gateway_latency_phase_probes(
             ssl_object.selected_alpn_protocol() if ssl_object is not None else None
         ) or "http/1.1"
 
+        max_body_bytes = _warm_path_max_body_bytes(target)
         first_started = time.perf_counter()
         first_status, first_headers, first_body, first_ttfb = await _health_http11_request(
             reader,
             stream_writer,
             host=host,
             path=path,
+            max_body_bytes=max_body_bytes,
             timeout_seconds=_remaining_probe_seconds(started, timeout_seconds),
         )
         first_total_ms = _elapsed_ms(started)
-        first_ok = _health_status_reachable(first_status, first_body)
+        # SERVED vs merely REACHABLE is the whole discriminator here. A
+        # rejected credential still proves DNS/TCP/TLS/first-byte completed,
+        # which is all the cold path claims — but it is NOT a request the
+        # gateway agreed to handle, so it can never license a reuse verdict.
+        first_served = _warm_path_served(target, first_status, first_headers, first_body)
+        first_ok = _warm_path_reachable(target, first_status, first_headers, first_body)
         cold = _sample(
             "gateway_cold_path",
             target,
@@ -411,7 +532,9 @@ async def gateway_latency_phase_probes(
         )
 
         reusable = first_headers.get("connection", "").casefold() != "close"
-        if not reusable or not first_ok:
+        if not first_ok:
+            # The first request never completed cleanly, so there is nothing
+            # to reuse. Report the request failure rather than blaming reuse.
             return [
                 cold,
                 _sample(
@@ -423,6 +546,52 @@ async def gateway_latency_phase_probes(
                     latency_milliseconds=_elapsed_ms(first_started),
                     connection_reused=False,
                     protocol=negotiated_protocol,
+                    http_status=first_status,
+                    error_type="bad_health_response",
+                ),
+            ]
+        if not first_served:
+            # The gateway REJECTED the request rather than serving it, so we
+            # never exercised the warm path at all. Calling that a reuse
+            # failure would be a false red; calling it a success would be a
+            # false green. Emit an explicit not-measurable sample instead.
+            #
+            # Both probe paths are anonymous today (measured live), so this
+            # is a future-proofing branch, not a routine state: it fires only
+            # if a gateway starts demanding credentials on /health or
+            # /attestation.
+            return [
+                cold,
+                _sample(
+                    "gateway_reused_path",
+                    target,
+                    monitor_region,
+                    url,
+                    status="unknown",
+                    latency_milliseconds=None,
+                    connection_reused=False,
+                    protocol=negotiated_protocol,
+                    http_status=first_status,
+                    error_type="reuse_not_measurable_request_rejected",
+                ),
+            ]
+        if not reusable:
+            # `Connection: close` on a request the gateway SERVED is a real
+            # reuse failure. This is the branch that must stay able to go
+            # red: tolerating the close header here would make the check
+            # green forever and hide a genuine regression.
+            return [
+                cold,
+                _sample(
+                    "gateway_reused_path",
+                    target,
+                    monitor_region,
+                    url,
+                    status="down",
+                    latency_milliseconds=_elapsed_ms(first_started),
+                    connection_reused=False,
+                    protocol=negotiated_protocol,
+                    http_status=first_status,
                     error_type="connection_not_reusable",
                 ),
             ]
@@ -434,11 +603,16 @@ async def gateway_latency_phase_probes(
                 stream_writer,
                 host=host,
                 path=path,
+                max_body_bytes=max_body_bytes,
                 timeout_seconds=_remaining_probe_seconds(started, timeout_seconds),
             )
         )
         second_total_ms = _elapsed_ms(reused_started)
-        second_ok = _health_status_reachable(second_status, second_body)
+        # SERVED, not merely reachable: the reused request must be one the
+        # gateway actually handled. Accepting a rejection here would report
+        # `up` for a request the gateway refused — success without having
+        # measured the thing.
+        second_ok = _warm_path_served(target, second_status, second_headers, second_body)
         return [
             cold,
             _sample(
@@ -482,11 +656,12 @@ async def _health_http11_request(
     host: str,
     path: str,
     timeout_seconds: float,
+    max_body_bytes: int = 4096,
 ) -> tuple[int, dict[str, str], bytes, int]:
     request = (
         f"GET {path} HTTP/1.1\r\n"
         f"Host: {host}\r\n"
-        "Accept: application/json\r\n"
+        "Accept: */*\r\n"
         "User-Agent: TrustedRouter-Synthetic/1\r\n"
         "Connection: keep-alive\r\n\r\n"
     ).encode("ascii")
@@ -519,7 +694,7 @@ async def _health_http11_request(
             raise ValueError("invalid HTTP header")
         headers[name.strip().casefold()] = value.strip()
     content_length = int(headers.get("content-length", "0"))
-    if content_length < 0 or content_length > 4096:
+    if content_length < 0 or content_length > max_body_bytes:
         raise ValueError("invalid health response length")
     body = await asyncio.wait_for(
         reader.readexactly(content_length),
@@ -606,9 +781,15 @@ async def control_plane_health_probe(
             error_type="missing_control_plane_url",
         )
     url = _root_url(target.control_plane_url, "/health")
+    # Passed through the same helper as every other probe so no connection
+    # path is left unpinned by accident. It is a no-op unless the control
+    # plane is served by the api_base_url host itself, because a control
+    # plane is its own address — pinning it to a gateway endpoint would
+    # measure the wrong service.
+    request_url, headers, extensions = _connect_host_request(target, url)
     started = time.perf_counter()
     try:
-        response = await client.get(url)
+        response = await client.get(request_url, headers=headers, extensions=extensions)
         latency_ms = _elapsed_ms(started)
         ok = response.status_code == 200 and _health_ok(response)
         return _sample(
@@ -642,6 +823,11 @@ async def attestation_nonce_probe(
 ) -> SyntheticProbeSample:
     nonce = secrets.token_hex(16)
     url = _root_url(target.api_base_url, f"/attestation?nonce={nonce}")
+    # The connect_host pin belongs here MORE than anywhere else: a per-enclave
+    # component whose TLS probe is pinned but whose attestation probe follows
+    # anycast would look measured and would not be — it could report a dead
+    # enclave's neighbour as proof that the dead one is attesting.
+    request_url, headers, extensions = _connect_host_request(target, url)
     started = time.perf_counter()
     try:
         if target.attested:
@@ -649,12 +835,14 @@ async def attestation_nonce_probe(
             # peer certificate: for an attested target the document must
             # bind THE cert served on THIS connection, otherwise a relay
             # could front a healthy enclave with its own TLS.
-            async with client.stream("GET", url) as response:
+            async with client.stream(
+                "GET", request_url, headers=headers, extensions=extensions
+            ) as response:
                 body = await response.aread()
                 status_code = response.status_code
                 peer_cert_der = _response_peer_cert_der(response)
         else:
-            response = await client.get(url)
+            response = await client.get(request_url, headers=headers, extensions=extensions)
             body = response.content
             status_code = response.status_code
             peer_cert_der = None
@@ -665,6 +853,16 @@ async def attestation_nonce_probe(
             peer_cert_der=peer_cert_der,
             expected_pcr0=target.expected_pcr0,
         )
+        if target.attested and peer_cert_der is None:
+            # _response_peer_cert_der's own contract: None means "binding
+            # unverifiable", and for an attested target that is a failure,
+            # not a pass. _attestation_evidence has to skip the binding check
+            # when peer_cert_der is None because non-attested targets pass
+            # None legitimately, so the attested case is enforced here. An
+            # attested target is dialled with CERT_NONE; without the binding
+            # check nothing at all distinguishes the enclave from a relay
+            # replaying a healthy enclave's document.
+            evidence = {**evidence, "error_type": "cert_binding_unverifiable"}
         ok = status_code == 200 and evidence["nonce_ok"] and evidence["error_type"] is None
         return _sample(
             "attestation_nonce",
@@ -680,12 +878,22 @@ async def attestation_nonce_probe(
             source_commit=_evidence_str(evidence, "source_commit"),
         )
     except httpx.HTTPError as exc:
+        # UNREACHABLE, not untrustworthy. A transport failure here means no
+        # gateway answered — the same event tls_health reports as "down" —
+        # and calling it trust_degraded had two concrete costs: the public
+        # summary read "Trust Verification Degraded: inference may still
+        # work" during a total region outage, and quill-cloud-proxy's
+        # watchdog, whose severity map is up/degraded/down, silently DROPPED
+        # the check, so an unreachable region could not trigger a rollback.
+        # Trust verdicts stay trust_degraded: a document that fails the
+        # nonce, cert-binding or PCR0 check is answered by a live gateway
+        # and is a genuinely different failure.
         return _sample(
             "attestation_nonce",
             target,
             monitor_region,
             url,
-            status="trust_degraded",
+            status="down",
             latency_milliseconds=_elapsed_ms(started),
             error_type=exc.__class__.__name__,
         )
@@ -741,9 +949,15 @@ async def openai_chat_pong_probe(
         "temperature": 0,
         "metadata": {"trustedrouter_synthetic": "true"},
     }
+    request_url, connect_headers, extensions = _connect_host_request(target, url)
     started = time.perf_counter()
     try:
-        response = await client.post(url, json=body, headers=_auth_headers(api_key))
+        response = await client.post(
+            request_url,
+            json=body,
+            headers={**_auth_headers(api_key), **connect_headers},
+            extensions=extensions,
+        )
         latency_ms = _elapsed_ms(started)
         text = _chat_text(response)
         ok = response.status_code == 200 and _pong_matches(text)
@@ -795,9 +1009,15 @@ async def responses_pong_probe(
         "temperature": 0,
         "metadata": {"trustedrouter_synthetic": "true"},
     }
+    request_url, connect_headers, extensions = _connect_host_request(target, url)
     started = time.perf_counter()
     try:
-        response = await client.post(url, json=body, headers=_auth_headers(api_key))
+        response = await client.post(
+            request_url,
+            json=body,
+            headers={**_auth_headers(api_key), **connect_headers},
+            extensions=extensions,
+        )
         latency_ms = _elapsed_ms(started)
         text = _responses_text(response)
         ok = response.status_code == 200 and _pong_matches(text)
@@ -849,9 +1069,15 @@ async def image_generation_probe(
             "probe": "image_generation",
         },
     }
+    request_url, connect_headers, extensions = _connect_host_request(target, url)
     started = time.perf_counter()
     try:
-        response = await client.post(url, json=body, headers=_auth_headers(api_key))
+        response = await client.post(
+            request_url,
+            json=body,
+            headers={**_auth_headers(api_key), **connect_headers},
+            extensions=extensions,
+        )
         latency_ms = _elapsed_ms(started)
         payload = _json_object(response)
         valid_image = response.status_code == 200 and _has_valid_generated_image(payload)
@@ -928,7 +1154,13 @@ async def video_generation_probe(
     started = time.perf_counter()
     try:
         async with asyncio.timeout(total_timeout_seconds):
-            response = await client.post(url, json=body, headers=headers)
+            request_url, connect_headers, extensions = _connect_host_request(target, url)
+            response = await client.post(
+                request_url,
+                json=body,
+                headers={**headers, **connect_headers},
+                extensions=extensions,
+            )
             payload = _json_object(response)
             if response.status_code not in {200, 202}:
                 return _video_sample(
@@ -964,10 +1196,17 @@ async def video_generation_probe(
             if not isinstance(polling_url, str) or not polling_url:
                 polling_url = f"/v1/videos/{job_id}"
             polling_url = _root_url(target.api_base_url, polling_url)
+            poll_request_url, poll_connect_headers, poll_extensions = _connect_host_request(
+                target, polling_url
+            )
             while status_payload.get("status") not in {"completed", "failed"}:
                 if poll_interval_seconds:
                     await asyncio.sleep(poll_interval_seconds)
-                status_response = await client.get(polling_url, headers=_auth_headers(api_key))
+                status_response = await client.get(
+                    poll_request_url,
+                    headers={**_auth_headers(api_key), **poll_connect_headers},
+                    extensions=poll_extensions,
+                )
                 status_payload = _json_object(status_response)
                 if status_response.status_code != 200:
                     return _video_sample(
@@ -1012,6 +1251,7 @@ async def video_generation_probe(
                     client,
                     _root_url(target.api_base_url, content_url),
                     api_key=api_key,
+                    target=target,
                 )
             return _video_sample(
                 target,
@@ -1062,10 +1302,20 @@ async def _validate_video_content(
     content_url: str,
     *,
     api_key: str,
+    target: SyntheticTarget,
 ) -> bool:
     total = 0
     prefix = bytearray()
-    async with client.stream("GET", content_url, headers=_auth_headers(api_key)) as response:
+    # A completed job's content URL can be an absolute off-gateway URL, which
+    # _connect_host_request leaves alone; only a URL on the gateway's own host
+    # is pinned to this target's endpoint.
+    request_url, connect_headers, extensions = _connect_host_request(target, content_url)
+    async with client.stream(
+        "GET",
+        request_url,
+        headers={**_auth_headers(api_key), **connect_headers},
+        extensions=extensions,
+    ) as response:
         if response.status_code != 200:
             await response.aread()
             return False
@@ -2290,22 +2540,88 @@ def _health_ok(response: httpx.Response) -> bool:
         return False
 
 
-def _health_status_reachable(status: int, body: bytes) -> bool:
-    """Did /health prove the request path is alive?
+def _warm_path_request_path(target: SyntheticTarget) -> str:
+    """The route THIS gateway keeps warm for real traffic.
 
-    These latency-phase probes measure DNS/TCP/TLS/first-byte — they are
-    diagnostic timing, not an authorization signal. A 401 "Invalid API
-    key" still proves every one of those phases completed, so it counts
-    as reachable, matching what tls_health_probe already does.
+    Measured live with curl --http1.1 and a two-request raw socket
+    (2026-08-01):
 
-    Not cosmetic: the AWS Nitro gateway protects every route except
-    /attestation and answers /health with 401, while the GCP gateway
-    answers 200. Without this, tls_health reported `up` and the two
-    latency probes reported `down` for the SAME 401 on the SAME URL —
-    a permanent false red on the EU status page.
+      api.trustedrouter.com      /health                200 keep-alive
+      api-us-central1…           /health                200 keep-alive
+      api-aws.trustedrouter.com  /health   (no key)     401 Connection: close
+      api-aws.trustedrouter.com  /health   (any bearer) 404 Connection: close
+      api-aws.trustedrouter.com  /attestation           200 keep-alive
+
+    So on the attested gateway /health can NEVER measure reuse: TLS
+    terminates inside the enclave, which protects every route but
+    /attestation and hangs up on everything it does not serve. A key does
+    not help — /health is not a route there at all, so an authenticated
+    request gets 404 + close, which would have turned the cold path red too.
+
+    /attestation is not a workaround for that, it is the real warm path:
+    G6 session binding REQUIRES a pinned client to send its prompt on the
+    same TLS session whose exporter was attested, so attest-then-reuse is
+    exactly the sequence every AWS client performs (and the sequence
+    tools/verify-attestation.py already exercises).
+
+    Derived from target.attested — the same configuration flag that selects
+    the attested-cert TLS context — so no per-cloud list is hardcoded and
+    GCP keeps probing /health untouched.
     """
-    if status == 200 and body == b'{"status":"ok"}':
+    return "/attestation" if target.attested else "/health"
+
+
+def _warm_path_max_body_bytes(target: SyntheticTarget) -> int:
+    # A Nitro attestation document is ~4.6 KB (4648 bytes measured live) and
+    # grows with the embedded cert chain, so the 4 KB /health bound would
+    # reject it as a malformed response and report a phantom ValueError.
+    return 65536 if target.attested else 4096
+
+
+def _warm_path_served(
+    target: SyntheticTarget, status: int, headers: dict[str, str], body: bytes
+) -> bool:
+    """Did the gateway SERVE this request, rather than reject or misroute it?
+
+    This is the reuse verdict's licence. It deliberately does NOT tolerate
+    a rejected credential: reuse may only be called `up` on a request the
+    gateway actually handled.
+    """
+    if target.attested:
+        content_type = headers.get("content-type", "").casefold()
+        return (
+            status == 200 and content_type.startswith("application/cbor") and bool(body)
+        )
+    return status == 200 and body == b'{"status":"ok"}'
+
+
+def _warm_path_reachable(
+    target: SyntheticTarget, status: int, headers: dict[str, str], body: bytes
+) -> bool:
+    """Did the request path complete end to end? (the COLD path's signal)
+
+    The latency-phase probes measure DNS/TCP/TLS/first-byte — diagnostic
+    timing, not authorization. A 401 "Invalid API key" still proves every
+    one of those phases completed, so it counts as reachable, matching what
+    tls_health_probe does. Without that tolerance tls_health reported `up`
+    and the two latency probes reported `down` for the SAME 401 on the SAME
+    URL — a permanent false red on the EU status page.
+
+    Scope note: the tolerance is reachability-only. The reuse verdict uses
+    _warm_path_served, which does NOT tolerate a rejection — otherwise the
+    probe would report `up` for a request the gateway refused to handle.
+    """
+    if _warm_path_served(target, status, headers, body):
         return True
+    return _health_rejected_api_key(status, body)
+
+
+def _health_rejected_api_key(status: int, body: bytes) -> bool:
+    """Did the gateway reject the credential rather than serve the request?
+
+    This is the discriminator for the connection-reuse check: reuse is only
+    measurable on a request the gateway actually accepted.
+    """
     if status != 401:
         return False
     try:
