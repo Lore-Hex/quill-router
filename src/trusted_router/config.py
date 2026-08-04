@@ -734,9 +734,9 @@ class Settings(BaseSettings):
         # quietly hand every peer holding the directory secret the power to
         # debit arbitrary workspaces up to the clamp. Reuse fails startup.
         if settlement_tokens:
-            other_credentials = {
-                name: value
-                for name, value in (
+            other_credentials: dict[str, str] = {
+                cred_name: cred_value
+                for cred_name, cred_value in (
                     ("TR_FEDERATION_PEER_TOKEN", self.federation_peer_token),
                     ("TR_FEDERATION_HOME_TOKEN", self.federation_home_token),
                     ("TR_FEDERATION_CREDIT_INBOUND_TOKEN", self.federation_credit_inbound_token),
@@ -744,14 +744,14 @@ class Settings(BaseSettings):
                     ("TR_FEDERATION_SETTLEMENT_HOME_TOKEN", self.federation_settlement_home_token),
                     ("TR_INTERNAL_GATEWAY_TOKEN", self.internal_gateway_token or ""),
                 )
-                if value
+                if cred_value
             }
             for token in settlement_tokens:
-                for name, value in other_credentials.items():
-                    if token == value:
+                for cred_name, cred_value in other_credentials.items():
+                    if token == cred_value:
                         raise ValueError(
                             "TR_FEDERATION_SETTLEMENT_INBOUND_TOKENS reuses the value "
-                            f"of {name}; a settlement token must be a dedicated "
+                            f"of {cred_name}; a settlement token must be a dedicated "
                             "secret — reuse would let a directory or gateway "
                             "credential debit workspaces"
                         )
