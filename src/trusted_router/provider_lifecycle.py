@@ -16,6 +16,7 @@ BASETEN_JULY_2026_RETIREMENT_AT = datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
 TINFOIL_KIMI_K26_RETIREMENT_AT = datetime(2026, 8, 3, 0, 0, tzinfo=UTC)
 PARASAIL_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
 FRIENDLI_QWEN3_235B_RETIREMENT_AT = datetime(2026, 8, 5, 0, 0, tzinfo=UTC)
+FRIENDLI_K_EXAONE_236B_RETIREMENT_AT = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
 CRUSOE_NEMOTRON_3_ULTRA_RETIREMENT_AT = datetime(2026, 7, 28, 18, 0, tzinfo=UTC)
 
 
@@ -112,6 +113,15 @@ _RETIREMENTS = (
         model_ids=frozenset({"qwen/qwen3-235b-a22b-2507"}),
         upstream_ids=frozenset({"Qwen/Qwen3-235B-A22B-Instruct-2507"}),
         effective_at=FRIENDLI_QWEN3_235B_RETIREMENT_AT,
+    ),
+    # Friendli announced that K-EXAONE-236B-A23B retires from its serverless
+    # Model API at 2026-08-20 00:00 UTC. Dedicated endpoints are unaffected;
+    # TrustedRouter uses Friendli's serverless endpoint.
+    _Retirement(
+        provider="friendli",
+        model_ids=frozenset({"lgai-exaone/k-exaone-236b-a23b"}),
+        upstream_ids=frozenset({"LGAI-EXAONE/K-EXAONE-236B-A23B"}),
+        effective_at=FRIENDLI_K_EXAONE_236B_RETIREMENT_AT,
     ),
     # Together announced that its serverless MiniMax M2.7 route retires on
     # 2026-07-27 and named MiniMax M3 as the replacement. The announcement did
