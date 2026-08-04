@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 import pytest
-from google.api_core.exceptions import Aborted
+from google.api_core.exceptions import Aborted, DeadlineExceeded, ServiceUnavailable
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
@@ -38,6 +38,37 @@ async def test_gateway_authorize_aborted_returns_retryable_503(
         raise Aborted("deadlock")
 
     monkeypatch.setattr(InMemoryStore, "get_workspace", raise_aborted)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.post(
+            "/v1/internal/gateway/authorize",
+            json={
+                "api_key_hash": key.hash,
+                "model": "anthropic/claude-haiku-4.5",
+                "estimated_input_tokens": 100,
+                "max_output_tokens": 100,
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "1"
+    assert response.json()["error"]["type"] == "service_unavailable"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_type", [DeadlineExceeded, ServiceUnavailable])
+async def test_gateway_authorize_storage_outage_returns_retryable_503(
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[Exception],
+) -> None:
+    app = create_app(_settings(), init_observability=False)
+    key = _seed_key()
+
+    def raise_transient(_self: Any, _workspace_id: str) -> Any:
+        raise error_type("spanner unavailable")
+
+    monkeypatch.setattr(InMemoryStore, "get_workspace", raise_transient)
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as ac:

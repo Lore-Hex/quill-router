@@ -103,6 +103,10 @@ def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
     from google.cloud import bigtable, spanner
 
     spanner_calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "trusted_router.storage_gcp.configure_spanner_rpc_deadlines",
+        lambda _database: None,
+    )
 
     class FakeSpannerClient:
         def __init__(self, **kwargs: Any) -> None:

@@ -98,6 +98,7 @@ from trusted_router.storage import (
 )
 from trusted_router.storage_custom_models import is_custom_model_id, normalize_custom_model_id
 from trusted_router.storage_errors import DeferredSettlementCapReached, StoreConflict
+from trusted_router.storage_gcp_io import spanner_rpc_budget
 from trusted_router.storage_models import (
     SettleOutboxRow,
     TypedFinalizeResult,
@@ -107,6 +108,7 @@ from trusted_router.types import ErrorType, UsageType
 
 logger = logging.getLogger(__name__)
 REQUEST_METADATA_VERSION = 1
+_BILLING_PATH_SPANNER_BUDGET_SECONDS = 25.0
 _SETTLE_REPAIR_FIELDS = frozenset(
     {
         "authorization_id",
@@ -170,6 +172,7 @@ async def authorize_gateway(
     return await run_in_threadpool(_authorize_gateway_sync, request, body, settings)
 
 
+@spanner_rpc_budget(_BILLING_PATH_SPANNER_BUDGET_SECONDS)
 def _authorize_gateway_sync(
     request: Request,
     body: GatewayAuthorizeRequest,
@@ -1256,6 +1259,7 @@ def _is_web_search_restricted_provider(provider: Any) -> bool:
     )
 
 
+@spanner_rpc_budget(_BILLING_PATH_SPANNER_BUDGET_SECONDS)
 def _settle_gateway_authorization(
     body: GatewaySettleRequest,
     *,

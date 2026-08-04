@@ -57,7 +57,10 @@ from trusted_router.storage import (
     configure_store,
     create_store,
 )
-from trusted_router.storage_errors import conflict_store_error_types
+from trusted_router.storage_errors import (
+    conflict_store_error_types,
+    transient_store_error_types,
+)
 from trusted_router.types import ErrorType
 
 
@@ -192,6 +195,22 @@ def create_app(
     # mapping so this module never imports a cloud SDK.
     for conflict_type in conflict_store_error_types():
         app.add_exception_handler(conflict_type, aborted_exception_handler)
+
+    async def unavailable_exception_handler(
+        _request: Request, _exc: Exception
+    ) -> Response:
+        response = error_response(
+            503,
+            "Persistent storage is temporarily unavailable; retry.",
+            ErrorType.SERVICE_UNAVAILABLE,
+        )
+        response.headers["Retry-After"] = "1"
+        return response
+
+    conflict_types = set(conflict_store_error_types())
+    for transient_type in transient_store_error_types():
+        if transient_type not in conflict_types:
+            app.add_exception_handler(transient_type, unavailable_exception_handler)
 
     register_public_routes(app, settings)
     api = _make_api_router(settings)
