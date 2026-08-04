@@ -119,6 +119,28 @@ def test_public_pages_never_weaken_content_handling_to_a_default(
             assert claim not in rendered, f"{path} contains weak claim {claim!r}"
 
 
+def test_signup_grant_amount_is_not_advertised(client: TestClient) -> None:
+    for path in [
+        "/",
+        "/pricing",
+        "/sign-in-with-trustedrouter",
+        "/blog/sign-in-with-trustedrouter-slopnazi",
+    ]:
+        response = client.get(path)
+        assert response.status_code == 200, f"{path} returned {response.status_code}"
+        rendered = response.text.lower()
+        assert "$0.10" not in rendered
+        assert "ten cents" not in rendered
+
+    for path in [
+        Path("docs/sign-in-with-trustedrouter.md"),
+        Path("src/trusted_router/templates/console/welcome.html"),
+    ]:
+        source = path.read_text().lower()
+        assert "$0.10" not in source
+        assert "ten cents" not in source
+
+
 def test_revenue_pages_support_link_checkers(client: TestClient) -> None:
     paths = [
         "/compare/openrouter",
