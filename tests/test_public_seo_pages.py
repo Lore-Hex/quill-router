@@ -732,7 +732,7 @@ def test_provider_detail_page_links_served_models(client: TestClient) -> None:
     response = client.get("/providers/minimax")
 
     assert response.status_code == 200
-    assert "<title>MiniMax Models | TrustedRouter</title>" in response.text
+    assert "<title>MiniMax Models and API Routes | TrustedRouter</title>" in response.text
     assert "MiniMax M3" in response.text
     assert 'href="https://aiiq.org/models/minimax-m3/"' in response.text
     assert "IQ 109" in response.text

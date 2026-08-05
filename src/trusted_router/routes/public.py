@@ -1671,7 +1671,10 @@ def _status_history_page_html(
         site_url=site_url,
         title=title,
         heading=heading,
-        description="Visual rollups from metadata synthetic checks.",
+        description=(
+            "Explore TrustedRouter uptime history from metadata-only synthetic checks, with visual "
+            "rollups for gateway health, attestation, SDK requests, billing, fallback, and regions."
+        ),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
         static_version=settings.release,
@@ -1975,7 +1978,10 @@ def _status_page_html(settings: Settings, *, host: str) -> str:
         site_url=site_url,
         title="Status | TrustedRouter",
         heading="TrustedRouter Status",
-        description="Regional uptime, attestation, SDK, billing, and fallback checks.",
+        description=(
+            "Check TrustedRouter availability across regions with live gateway, attestation, SDK, "
+            "billing, provider fallback, latency, incident history, and router-core uptime signals."
+        ),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
         static_version=settings.release,
