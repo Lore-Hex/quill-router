@@ -2,7 +2,7 @@
   "_about": "Provider-native DigitalOcean Gradient AI serverless catalog. Availability comes from /v1/models and rates from DigitalOcean's official pricing documentation.",
   "provider": "digitalocean",
   "source": "https://inference.do-ai.run/v1/models",
-  "generated_at": "2026-08-04T22:16:37Z",
+  "generated_at": "2026-08-05T01:55:34Z",
   "price_scale": "microdollars_per_million",
   "model_count": 23,
   "models": [
@@ -65,8 +65,8 @@
       "status": 1,
       "id": "deepseek/deepseek-v4-flash",
       "upstream_id": "deepseek-4-flash",
-      "context_length": 262144,
-      "max_output_tokens": 52429,
+      "context_length": 1048576,
+      "max_output_tokens": 384000,
       "input_token_price_per_m": 112000,
       "output_token_price_per_m": 224000,
       "cached_input_token_price_per_m": 28000

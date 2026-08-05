@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for FriendliAI serverless Model API routes. Verified against https://api.friendli.ai/serverless/v1/models on 2026-06-22.",
   "provider": "friendli",
   "source": "https://api.friendli.ai/serverless/v1/models",
-  "generated_at": "2026-08-04T22:16:37Z",
+  "generated_at": "2026-08-05T01:55:34Z",
   "model_count": 9,
   "models": [
     {
@@ -82,7 +82,8 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "missing_since": "2026-08-05"
     },
     {
       "id": "lgai-exaone/k-exaone-236b-a23b",
