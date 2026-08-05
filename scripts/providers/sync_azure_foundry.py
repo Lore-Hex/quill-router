@@ -423,7 +423,7 @@ def canary(candidate: DeploymentCandidate, *, account_key: str) -> None:
             f"{OPENAI_BASE_URL}/chat/completions",
             headers={"api-key": account_key},
             json=request,
-            timeout=120,
+            timeout=CANARY_TIMEOUT,
         ) as response:
             response.raise_for_status()
             text = _stream_text(response.iter_lines(), protocol="openai")

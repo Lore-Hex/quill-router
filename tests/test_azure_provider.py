@@ -12,6 +12,7 @@ from scripts.providers.sync_azure_foundry import (
     AzureManagementClient,
     DeploymentCandidate,
     _stream_text,
+    canary,
     canary_with_retries,
     select_deployment_candidates,
     write_manifest,
@@ -300,6 +301,47 @@ def test_azure_canary_does_not_retry_no_first_byte_timeout(
     with pytest.raises(httpx.ReadTimeout):
         canary_with_retries(candidate, account_key="test")
     assert attempts == 1
+
+
+def test_azure_openai_canary_uses_bounded_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = DeploymentCandidate(
+        canonical_id="deepseek/deepseek-v4-flash",
+        native_name="DeepSeek-V4-Flash",
+        version="1",
+        model_format="DeepSeek",
+        deployment_name="deepseek-v4-flash",
+        sku="GlobalStandard",
+        capacity=1,
+        is_default_version=True,
+    )
+    seen_timeout: httpx.Timeout | None = None
+
+    class FakeStream:
+        def __enter__(self) -> FakeStream:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_lines(self) -> list[str]:
+            return ['data: {"choices":[{"delta":{"content":"PONG"}}]}']
+
+    def fake_stream(*_args: object, **kwargs: object) -> FakeStream:
+        nonlocal seen_timeout
+        value = kwargs.get("timeout")
+        assert isinstance(value, httpx.Timeout)
+        seen_timeout = value
+        return FakeStream()
+
+    monkeypatch.setattr(sync.httpx, "stream", fake_stream)
+
+    canary(candidate, account_key="test")
+    assert seen_timeout is sync.CANARY_TIMEOUT
 
 
 def test_azure_manifest_registers_prepaid_only_gateway_routes() -> None:
