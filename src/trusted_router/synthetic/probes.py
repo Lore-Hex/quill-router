@@ -2782,10 +2782,27 @@ def _attestation_evidence(
             nonce_ok = nonce_hex in {str(item) for item in nonces}
         else:
             nonce_ok = False
+        if not nonce_ok:
+            # AZURE. Both GCP and MAA answer with a JWT, so the branch is
+            # shared — but MAA does NOT carry the caller nonce as a top-level
+            # `eat_nonce`/`nonces` claim. It echoes the enclave's runtime data
+            # under `x-ms-runtime`, and the nonce lives inside that. Without
+            # this the Azure enclave attests perfectly (the standalone
+            # verifier passes every binding) while the status page publishes
+            # a permanent trust_degraded/nonce_missing — a healthy cloud
+            # reported as untrustworthy, which is the exact failure this
+            # probe exists to prevent.
+            runtime_nonce = _maa_runtime_nonce(payload)
+            if runtime_nonce is not None:
+                nonce_ok = runtime_nonce.lower() == nonce_hex.lower()
         return {
             "nonce_ok": nonce_ok,
             "error_type": None if nonce_ok else "nonce_missing",
-            "attestation_digest": _claim(payload, "image_digest", "submods.container.image_digest"),
+            "attestation_digest": _claim(payload, "image_digest", "submods.container.image_digest")
+            # Azure's measurement is the CCE policy hash in SEV-SNP HOST_DATA,
+            # not an image digest — report it in the same field so the status
+            # page has something to show per cloud.
+            or _claim(payload, "x-ms-sevsnpvm-hostdata"),
             "source_commit": _claim(payload, "source_commit", "submods.container.source_commit"),
         }
     aws = _decode_aws_attestation_payload(body)
@@ -2882,6 +2899,65 @@ def _decode_aws_attestation_payload(body: bytes) -> dict[Any, Any] | None:
     except Exception:
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def _maa_runtime_nonce(payload: dict[str, Any]) -> str | None:
+    """The caller nonce Azure's MAA echoes inside its runtime-data claim.
+
+    MAA hands the enclave's runtime data back under `x-ms-runtime` in one of
+    two shapes, and both are real: a base64 STRING (the producer's exact
+    bytes, echoed opaquely) or a parsed OBJECT. The object form may nest the
+    caller's fields under a wrapper key, so it is searched recursively rather
+    than by a fixed path — a fixed path that guesses wrong reads as
+    "no nonce", i.e. an untrustworthy enclave, which is the worst available
+    misreport.
+
+    Returns the nonce hex if found, else None. Deliberately does NOT verify
+    the MAA signature, hostdata, or issuer: that is the deploy gate's job in
+    quill-cloud-proxy's verify-attestation.py. This answers only "did the
+    enclave echo MY nonce", the same question the GCP and Nitro branches ask.
+    """
+    import base64 as _b64
+    import json as _json
+
+    def _search(node: Any, depth: int = 0) -> str | None:
+        if depth > 6:
+            return None
+        if isinstance(node, dict):
+            for key in ("nonce", "caller_nonce", "callerNonce"):
+                value = node.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            for value in node.values():
+                found = _search(value, depth + 1)
+                if found is not None:
+                    return found
+        elif isinstance(node, list):
+            for value in node:
+                found = _search(value, depth + 1)
+                if found is not None:
+                    return found
+        return None
+
+    for claim_name in ("x-ms-runtime", "x-ms-runtime-data"):
+        claim = payload.get(claim_name)
+        if isinstance(claim, str) and claim.strip():
+            raw = claim.strip()
+            try:
+                decoded = _b64.b64decode(raw + "=" * (-len(raw) % 4), validate=False)
+                found = _search(_json.loads(decoded.decode("utf-8")))
+            except Exception:  # noqa: S112 - a claim we cannot parse is simply
+                # not the one carrying the nonce; try the next claim name. The
+                # caller turns "no nonce found" into trust_degraded, so the
+                # failure is already reported loudly at the right altitude.
+                continue
+            if found is not None:
+                return found
+        elif isinstance(claim, dict):
+            found = _search(claim)
+            if found is not None:
+                return found
+    return None
 
 
 def _decode_jwt_payload(token: str) -> dict[str, Any]:

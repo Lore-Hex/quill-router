@@ -133,6 +133,43 @@ def create_app(
 
             threading.Thread(target=loop, name="home-settlement", daemon=True).start()
 
+    # In-process synthetic monitor. See the settings docstring for why the
+    # trigger lives here rather than in each cloud's own scheduler.
+    if settings.synthetic_scheduler_interval_seconds > 0:
+
+        @app.on_event("startup")
+        async def _start_synthetic_loop() -> None:  # pragma: no cover - thread wiring
+            import asyncio as _asyncio
+            import logging as _logging
+            import random as _random
+
+            from trusted_router.routes.internal.synthetic import run_synthetic_pass
+
+            interval = max(60, settings.synthetic_scheduler_interval_seconds)
+            log = _logging.getLogger(__name__)
+
+            async def loop() -> None:
+                # Jitter the FIRST tick only: several replicas starting from
+                # one deploy would otherwise probe in lockstep forever, and
+                # simultaneous passes multiply the inference spend without
+                # improving coverage.
+                await _asyncio.sleep(_random.uniform(5, min(60, interval)))  # noqa: S311
+                while True:
+                    try:
+                        await run_synthetic_pass(
+                            settings,
+                            rotation_count=settings.synthetic_scheduler_rotation_count,
+                        )
+                    except Exception:
+                        # A failed pass must never kill the loop: the status
+                        # page going permanently stale is a worse outcome than
+                        # one bad sample, and staleness is exactly the failure
+                        # that hides an outage.
+                        log.exception("synthetic pass failed")
+                    await _asyncio.sleep(interval)
+
+            _asyncio.create_task(loop())  # noqa: RUF006 - lifetime is the process
+
     register_http_middleware(app, settings)
 
     @app.exception_handler(StarletteHTTPException)

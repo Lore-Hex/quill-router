@@ -564,6 +564,33 @@ class Settings(BaseSettings):
     # cert served on its own connection. Leave False wherever the
     # canonical gateway has a CA-issued cert (GCP).
     synthetic_canonical_attested: bool = False
+    # In-process synthetic monitor. Every cloud schedules the monitor
+    # differently — GCP has Cloud Scheduler driving a Cloud Run Job, AWS has an
+    # EventBridge rule calling /internal/synthetic/run — and Azure Container
+    # Apps has no equivalent that survives the CLI's argument handling. A
+    # per-cloud scheduler is also one more thing that can silently stop: an
+    # EventBridge connection whose stored token went stale flipped to
+    # DEAUTHORIZED and the status page just went quiet, with the app healthy
+    # and the rule ENABLED.
+    #
+    # Running the pass in the serving process makes the monitor arrive with the
+    # deployment, on every cloud, with nothing extra to provision. AWS already
+    # accepts this shape (its rule just calls the app), so this is the same
+    # model with the trigger moved inside.
+    #
+    # 0 = disabled (the default, so GCP/AWS keep their existing schedulers and
+    # nothing double-runs).
+    # MUST stay comfortably under the status page's staleness threshold
+    # (monitor_freshness.stale_after_seconds, 300s). An interval EQUAL to the
+    # threshold guarantees intermittent "Monitor Data Stale" banners: a pass
+    # takes 10-17s, so the newest sample is always older than the interval by
+    # the time the next one lands. 0 = disabled.
+    synthetic_scheduler_interval_seconds: int = 0
+    # Completions per pass. This IS real inference and it costs real money;
+    # it is also the only thing that puts model/provider rows on the
+    # leaderboard, because a model with no sample shows no verdict at all —
+    # not green, not red, absent. Matches the AWS EventBridge rule's value.
+    synthetic_scheduler_rotation_count: int = 8
     # Pin the enclave's PCR0 (EIF measurement). Set at deploy time from
     # the same value tools/deploy-aws-nitro.sh pins, so the probe turns
     # trust_degraded (pcr0_mismatch) if the serving enclave ever differs

@@ -32,6 +32,93 @@ from trusted_router.synthetic.route_health import (
 from trusted_router.types import ErrorType
 
 
+async def _run_and_record(settings: Settings, body: dict[str, Any]) -> dict[str, Any]:
+    monitor_region = _optional_str(body.get("monitor_region"))
+    # Which control plane the billing probes (authorize+settle) hit.
+    # Precedence: request body > settings > canonical GCP plane. The
+    # settings tier exists because the hardcoded fallback is a
+    # wrong-cloud trap for standalone deployments: the EU service
+    # probing https://trustedrouter.com would record the US plane's
+    # health under an EU monitor region.
+    control_plane_base_url = str(
+        body.get("control_plane_base_url")
+        or settings.synthetic_control_plane_base_url
+        or "https://trustedrouter.com"
+    )
+    samples = await run_synthetic_once(settings, monitor_region=monitor_region)
+    if settings.synthetic_monitor_api_key and settings.internal_gateway_token:
+        timeout = httpx.Timeout(settings.synthetic_monitor_timeout_seconds)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            samples.extend(
+                await gateway_billing_probe(
+                    client,
+                    control_plane_base_url=control_plane_base_url,
+                    monitor_region=monitor_region
+                    or settings.synthetic_monitor_region
+                    or settings.primary_region,
+                    api_key=settings.synthetic_monitor_api_key,
+                    internal_token=settings.internal_gateway_token,
+                    model=settings.synthetic_monitor_model,
+                )
+            )
+            samples.extend(
+                await gateway_fallback_probe(
+                    client,
+                    control_plane_base_url=control_plane_base_url,
+                    monitor_region=monitor_region
+                    or settings.synthetic_monitor_region
+                    or settings.primary_region,
+                    api_key=settings.synthetic_monitor_api_key,
+                    internal_token=settings.internal_gateway_token,
+                    model=settings.synthetic_monitor_model,
+                )
+            )
+    benchmark_recorded = 0
+    rotation_count = _rotation_count(body)
+    if rotation_count and settings.synthetic_monitor_api_key:
+        # Provider/model rotation through the gateway — REAL inference,
+        # same pool mechanics as the GCP monitor CLI. Exposed via this
+        # route because standalone deployments (EU) have no monitor
+        # pool: their once-a-minute cadence is an EventBridge rule
+        # whose Input JSON sets rotation_count (and optionally
+        # rotation_models to pin a family, e.g. the DSv4 ids).
+        benchmark_samples = await rotation_pass(
+            settings=settings,
+            monitor_region=monitor_region
+            or settings.synthetic_monitor_region
+            or settings.primary_region,
+            api_key=settings.synthetic_monitor_api_key,
+            timeout=httpx.Timeout(settings.synthetic_monitor_timeout_seconds),
+            count=rotation_count,
+            rng=random.Random(),  # noqa: S311 - picks which model to probe, not cryptographic
+            models=_rotation_models(body),
+        )
+        await run_in_threadpool(_record_benchmark_samples, benchmark_samples)
+        benchmark_recorded = len(benchmark_samples)
+    await run_in_threadpool(_record_probe_samples, samples)
+    return {
+        "data": {
+            "recorded": len(samples),
+            "benchmark_recorded": benchmark_recorded,
+            "samples": [s.public_dict() for s in samples],
+        }
+    }
+
+
+
+async def run_synthetic_pass(
+    settings: Settings, *, rotation_count: int = 0
+) -> dict[str, Any]:
+    """One synthetic pass, for callers that are not an HTTP request.
+
+    The in-process scheduler (main.py) uses this so a cloud without its own
+    scheduler still gets a monitor. Same code path as the route, so the two
+    cannot drift into measuring different things.
+    """
+    return await _run_and_record(
+        settings, {"rotation_count": rotation_count} if rotation_count else {}
+    )
+
 def register(router: APIRouter) -> None:
     @router.get("/internal/synthetic/health")
     async def synthetic_health(request: Request, settings: SettingsDep) -> dict[str, Any]:
@@ -103,79 +190,6 @@ def register(router: APIRouter) -> None:
             response.status_code = 202
             return {"data": {"scheduled": True}}
         return await _run_and_record(settings, body)
-
-    async def _run_and_record(settings: Settings, body: dict[str, Any]) -> dict[str, Any]:
-        monitor_region = _optional_str(body.get("monitor_region"))
-        # Which control plane the billing probes (authorize+settle) hit.
-        # Precedence: request body > settings > canonical GCP plane. The
-        # settings tier exists because the hardcoded fallback is a
-        # wrong-cloud trap for standalone deployments: the EU service
-        # probing https://trustedrouter.com would record the US plane's
-        # health under an EU monitor region.
-        control_plane_base_url = str(
-            body.get("control_plane_base_url")
-            or settings.synthetic_control_plane_base_url
-            or "https://trustedrouter.com"
-        )
-        samples = await run_synthetic_once(settings, monitor_region=monitor_region)
-        if settings.synthetic_monitor_api_key and settings.internal_gateway_token:
-            timeout = httpx.Timeout(settings.synthetic_monitor_timeout_seconds)
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                samples.extend(
-                    await gateway_billing_probe(
-                        client,
-                        control_plane_base_url=control_plane_base_url,
-                        monitor_region=monitor_region
-                        or settings.synthetic_monitor_region
-                        or settings.primary_region,
-                        api_key=settings.synthetic_monitor_api_key,
-                        internal_token=settings.internal_gateway_token,
-                        model=settings.synthetic_monitor_model,
-                    )
-                )
-                samples.extend(
-                    await gateway_fallback_probe(
-                        client,
-                        control_plane_base_url=control_plane_base_url,
-                        monitor_region=monitor_region
-                        or settings.synthetic_monitor_region
-                        or settings.primary_region,
-                        api_key=settings.synthetic_monitor_api_key,
-                        internal_token=settings.internal_gateway_token,
-                        model=settings.synthetic_monitor_model,
-                    )
-                )
-        benchmark_recorded = 0
-        rotation_count = _rotation_count(body)
-        if rotation_count and settings.synthetic_monitor_api_key:
-            # Provider/model rotation through the gateway — REAL inference,
-            # same pool mechanics as the GCP monitor CLI. Exposed via this
-            # route because standalone deployments (EU) have no monitor
-            # pool: their once-a-minute cadence is an EventBridge rule
-            # whose Input JSON sets rotation_count (and optionally
-            # rotation_models to pin a family, e.g. the DSv4 ids).
-            benchmark_samples = await rotation_pass(
-                settings=settings,
-                monitor_region=monitor_region
-                or settings.synthetic_monitor_region
-                or settings.primary_region,
-                api_key=settings.synthetic_monitor_api_key,
-                timeout=httpx.Timeout(settings.synthetic_monitor_timeout_seconds),
-                count=rotation_count,
-                rng=random.Random(),  # noqa: S311 - picks which model to probe, not cryptographic
-                models=_rotation_models(body),
-            )
-            await run_in_threadpool(_record_benchmark_samples, benchmark_samples)
-            benchmark_recorded = len(benchmark_samples)
-        await run_in_threadpool(_record_probe_samples, samples)
-        return {
-            "data": {
-                "recorded": len(samples),
-                "benchmark_recorded": benchmark_recorded,
-                "samples": [s.public_dict() for s in samples],
-            }
-        }
-
 
 def _record_probe_samples(samples: list[SyntheticProbeSample]) -> None:
     for sample in samples:

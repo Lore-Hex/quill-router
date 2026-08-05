@@ -122,3 +122,74 @@ class TestUnsupported:
     def test_truncated_cbor_is_unsupported(self) -> None:
         evidence = _attestation_evidence(_cose_sign1(_aws_payload())[:20], NONCE)
         assert evidence["error_type"] == "unsupported_attestation_format"
+
+
+# ---------------------------------------------------------------------------
+# Azure / MAA
+# ---------------------------------------------------------------------------
+
+
+def _maa_jwt(runtime_claim: object, claim_name: str = "x-ms-runtime") -> bytes:
+    """A MAA-shaped JWT: the caller nonce lives in the runtime-data claim.
+
+    Deliberately carries NO eat_nonce/nonces claim — that is the whole point.
+    MAA does not echo the caller nonce as a top-level claim the way GCP's
+    Confidential Space token does, so a probe that only looks there reports a
+    perfectly healthy Azure enclave as trust_degraded/nonce_missing.
+    """
+    header = base64.urlsafe_b64encode(b'{"alg":"RS256"}').rstrip(b"=")
+    payload = base64.urlsafe_b64encode(
+        json.dumps(
+            {
+                "iss": "https://trquilluaen.uaen.attest.azure.net",
+                "x-ms-attestation-type": "sevsnpvm",
+                "x-ms-sevsnpvm-hostdata": "1d3429b3eaaf66b1",
+                claim_name: runtime_claim,
+            }
+        ).encode()
+    ).rstrip(b"=")
+    return header + b"." + payload + b".sig"
+
+
+class TestAzureMaaNonce:
+    def test_nonce_in_a_base64_string_runtime_claim(self) -> None:
+        """MAA echoes the producer's exact bytes as an opaque base64 string."""
+        runtime = base64.b64encode(
+            json.dumps({"nonce": NONCE, "leaf_fp": "aa", "channel_binding": "bb"}).encode()
+        ).decode()
+        evidence = _attestation_evidence(_maa_jwt(runtime), NONCE)
+        assert evidence["nonce_ok"] is True
+        assert evidence["error_type"] is None
+
+    def test_nonce_in_a_parsed_object_runtime_claim(self) -> None:
+        """MAA parsed the claim, so the bytes are gone and it arrives as JSON."""
+        evidence = _attestation_evidence(
+            _maa_jwt({"nonce": NONCE, "leaf_fp": "aa"}), NONCE
+        )
+        assert evidence["nonce_ok"] is True
+        assert evidence["error_type"] is None
+
+    def test_nonce_nested_under_a_wrapper_key(self) -> None:
+        """MAA is documented to nest caller data under a wrapper; which one is
+        not guaranteed, so the search is recursive rather than a fixed path."""
+        evidence = _attestation_evidence(
+            _maa_jwt({"client-payload": {"nonce": NONCE}}), NONCE
+        )
+        assert evidence["nonce_ok"] is True
+
+    def test_wrong_nonce_still_fails(self) -> None:
+        """The relaxation must not become 'any MAA token passes'."""
+        evidence = _attestation_evidence(_maa_jwt({"nonce": "ff" * 16}), NONCE)
+        assert evidence["nonce_ok"] is False
+        assert evidence["error_type"] == "nonce_missing"
+
+    def test_absent_nonce_still_fails(self) -> None:
+        evidence = _attestation_evidence(_maa_jwt({"leaf_fp": "aa"}), NONCE)
+        assert evidence["nonce_ok"] is False
+        assert evidence["error_type"] == "nonce_missing"
+
+    def test_hostdata_is_reported_as_the_measurement(self) -> None:
+        """Azure's measurement is the CCE policy hash in HOST_DATA, not an
+        image digest — the status page needs something to show per cloud."""
+        evidence = _attestation_evidence(_maa_jwt({"nonce": NONCE}), NONCE)
+        assert evidence["attestation_digest"] == "1d3429b3eaaf66b1"
