@@ -3,9 +3,8 @@
   "provider": "azure",
   "source": "https://management.azure.com/providers/Microsoft.CognitiveServices/locations/eastus2/models",
   "pricing_source": "https://prices.azure.com/api/retail/prices?$filter=serviceName%20eq%20%27Foundry%20Models%27%20and%20armRegionName%20eq%20%27eastus2%27",
-  "generated_at": "2026-08-05T15:40:36Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 26,
+  "model_count": 25,
   "models": [
     {
       "id": "cohere/command-a",
@@ -269,32 +268,6 @@
       "status": 1,
       "routable": true,
       "azure_model_name": "Phi-4-mini-reasoning",
-      "azure_model_version": "1",
-      "azure_model_format": "Microsoft",
-      "azure_deployment_sku": "GlobalStandard"
-    },
-    {
-      "id": "microsoft/phi-4-multimodal-instruct",
-      "upstream_id": "phi-4-multimodal-instruct",
-      "display_name": "Phi-4-multimodal-instruct",
-      "title": "Phi-4-multimodal-instruct",
-      "model_type": "chat",
-      "endpoints": [
-        "chat/completions"
-      ],
-      "input_modalities": [
-        "text",
-        "image",
-        "audio"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "input_token_price_per_m": 80000,
-      "output_token_price_per_m": 320000,
-      "status": 1,
-      "routable": true,
-      "azure_model_name": "Phi-4-multimodal-instruct",
       "azure_model_version": "1",
       "azure_model_format": "Microsoft",
       "azure_deployment_sku": "GlobalStandard"
@@ -641,5 +614,6 @@
       "azure_deployment_sku": "GlobalStandard",
       "cached_input_token_price_per_m": 200000
     }
-  ]
+  ],
+  "generated_at": "2026-08-05T15:58:05Z"
 }

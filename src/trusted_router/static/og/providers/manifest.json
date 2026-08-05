@@ -28,10 +28,10 @@
   },
   "azure": {
     "card_version": 2,
-    "model_count": 26,
+    "model_count": 25,
     "name": "Microsoft Azure AI Foundry",
     "privacy": "Policy documented",
-    "route_count": 26,
+    "route_count": 25,
     "route_mode": "Prepaid",
     "slug": "azure"
   },
