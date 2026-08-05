@@ -127,10 +127,10 @@
   },
   "friendli": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 6,
     "name": "FriendliAI",
     "privacy": "Policy documented",
-    "route_count": 14,
+    "route_count": 12,
     "route_mode": "Prepaid + BYOK",
     "slug": "friendli"
   },
