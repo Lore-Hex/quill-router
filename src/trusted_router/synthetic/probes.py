@@ -2821,7 +2821,7 @@ def _attestation_evidence(
             error = "nonce_missing"
         elif peer_cert_der is not None and not _aws_cert_binding_ok(aws, peer_cert_der):
             error = "cert_binding_mismatch"
-        elif expected_pcr0 and (pcr0_hex or "").lower() != expected_pcr0.lower():
+        elif expected_pcr0 and not _pcr0_pin_matches(pcr0_hex, expected_pcr0):
             error = "pcr0_mismatch"
         return {
             "nonce_ok": nonce_ok,
@@ -2835,6 +2835,34 @@ def _attestation_evidence(
         "attestation_digest": None,
         "source_commit": None,
     }
+
+
+def _pcr0_pin_matches(pcr0_hex: str | None, expected_pcr0: str) -> bool:
+    """Is the measured PCR0 one of the pinned values?
+
+    Comma-separated SET, matching how the Azure hostdata pin already works
+    (tools/verify-attestation.py check_maa_hostdata_pin).
+
+    This was an equality check, which made changing PCR0 impossible without
+    turning the status page red: a rolling EIF replacement legitimately spans
+    the published measurement and the incoming one, and under equality one of
+    the two always mismatches. Worse, the natural workaround — setting the pin
+    to "old,new" — failed BOTH under equality, because neither value equals the
+    literal joined string. So an operator running the obvious bind-window
+    procedure would have reported every instance as pcr0_mismatch.
+
+    That matters beyond the dashboard: reconcile-enclave-dns.py health-gates
+    DNS membership on attestation, so a fleet-wide false mismatch can drain
+    healthy instances out of DNS.
+    """
+    allowed = {
+        value.strip().lower().removeprefix("0x")
+        for value in expected_pcr0.split(",")
+        if value.strip()
+    }
+    if not allowed:
+        return True
+    return (pcr0_hex or "").lower() in allowed
 
 
 def _aws_cert_binding_ok(payload: dict[Any, Any], peer_cert_der: bytes) -> bool:
