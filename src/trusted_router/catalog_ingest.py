@@ -135,6 +135,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "wafer",
         "engy",
         "zero-g",
+        "azure",
     }
 )
 
@@ -750,6 +751,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "tinfoil",
         "xiaomi",
         "alibaba",
+        "azure",
         "meta",
     ):
         path = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"

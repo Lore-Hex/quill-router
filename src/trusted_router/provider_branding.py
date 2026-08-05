@@ -19,6 +19,7 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "alibaba": ProviderBrand("https://www.alibabacloud.com/"),
     "anthropic": ProviderBrand("https://www.anthropic.com/"),
     "atlas-cloud": ProviderBrand("https://www.atlascloud.ai/"),
+    "azure": ProviderBrand("https://azure.microsoft.com/en-us/products/ai-foundry/"),
     "baseten": ProviderBrand("https://www.baseten.co/"),
     "cerebras": ProviderBrand("https://www.cerebras.ai/"),
     "chutes": ProviderBrand("https://chutes.ai/"),
