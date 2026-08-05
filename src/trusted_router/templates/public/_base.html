@@ -1,6 +1,8 @@
 <!doctype html>
 <html lang="en">
 <head>
+  {% set meta_title = title|seo_title %}
+  {% set meta_description = description|seo_meta_description %}
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script>
@@ -12,15 +14,15 @@
       } catch (e) { /* Dark remains the default when storage is unavailable. */ }
     })();
   </script>
-  <title>{{ title }}</title>
-  <meta name="description" content="{{ description }}">
+  <title>{{ meta_title }}</title>
+  <meta name="description" content="{{ meta_description }}">
   {% include "_favicon.html" %}
   {% if robots_meta %}<meta name="robots" content="{{ robots_meta }}">{% endif %}
   <link rel="canonical" href="{{ site_url }}">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="TrustedRouter">
-  <meta property="og:title" content="{{ title }}">
-  <meta property="og:description" content="{{ description }}">
+  <meta property="og:title" content="{{ meta_title }}">
+  <meta property="og:description" content="{{ meta_description }}">
   <meta property="og:url" content="{{ site_url }}">
   <meta property="og:image" content="{{ og_image|default('https://trustedrouter.com/og.png') }}">
   <meta property="og:image:type" content="image/png">
@@ -29,8 +31,8 @@
   <meta property="og:image:alt" content="{{ og_image_alt|default('TrustedRouter, end-to-end encrypted AI routing') }}">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:site" content="@jperla">
-  <meta name="twitter:title" content="{{ title }}">
-  <meta name="twitter:description" content="{{ description }}">
+  <meta name="twitter:title" content="{{ meta_title }}">
+  <meta name="twitter:description" content="{{ meta_description }}">
   <meta name="twitter:image" content="{{ og_image|default('https://trustedrouter.com/og.png') }}">
   <meta name="twitter:image:alt" content="{{ og_image_alt|default('TrustedRouter, end-to-end encrypted AI routing') }}">
   <link rel="alternate" type="text/plain" href="/docs/llms.txt" title="TrustedRouter LLM docs">

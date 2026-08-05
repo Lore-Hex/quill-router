@@ -1,6 +1,8 @@
 <!doctype html>
 <html lang="en">
 <head>
+  {% set meta_title = og_title|seo_title %}
+  {% set meta_description = og_description|seo_meta_description %}
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script>
@@ -12,14 +14,14 @@
       } catch (e) { /* Dark remains the default when storage is unavailable. */ }
     })();
   </script>
-  <title>{{ og_title }}</title>
-  <meta name="description" content="{{ og_description }}">
+  <title>{{ meta_title }}</title>
+  <meta name="description" content="{{ meta_description }}">
   {% include "_favicon.html" %}
   <link rel="canonical" href="{{ canonical_site_url }}">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="{{ brand_name }}">
-  <meta property="og:title" content="{{ og_title }}">
-  <meta property="og:description" content="{{ og_description }}">
+  <meta property="og:title" content="{{ meta_title }}">
+  <meta property="og:description" content="{{ meta_description }}">
   <meta property="og:url" content="{{ site_url }}">
   <meta property="og:image" content="{{ og_image }}">
   <meta property="og:image:type" content="image/png">
@@ -27,8 +29,8 @@
   <meta property="og:image:height" content="{{ og_image_height }}">
   <meta property="og:image:alt" content="{{ brand_name }}, end-to-end encrypted AI routing">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="{{ og_title }}">
-  <meta name="twitter:description" content="{{ og_description }}">
+  <meta name="twitter:title" content="{{ meta_title }}">
+  <meta name="twitter:description" content="{{ meta_description }}">
   <meta name="twitter:image" content="{{ og_image }}">
   <meta name="twitter:image:alt" content="{{ brand_name }}, end-to-end encrypted AI routing">
   <link rel="alternate" type="text/plain" href="/docs/llms.txt" title="{{ brand_name }} LLM docs">
@@ -229,7 +231,7 @@ response = client.chat.completions.create(
         </div>
         <div class="region-map-card" aria-label="{{ brand_name }} regional footprint">
           <div class="region-map-visual">
-            <img src="/static/world-map.svg?v={{ static_version }}" alt="" loading="lazy">
+            <img src="/static/world-map.svg?v={{ static_version }}" alt="TrustedRouter regional routing map" loading="lazy">
             <svg viewBox="0 0 1000 500" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
               {% for region in map_regions %}
               <g class="region-dot {% if region.primary %}primary{% endif %} {% if region.serving %}live{% else %}edge{% endif %}" transform="translate({{ '%.1f'|format(region.x) }} {{ '%.1f'|format(region.y) }})">

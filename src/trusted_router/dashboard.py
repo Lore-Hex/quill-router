@@ -71,6 +71,12 @@ from trusted_router.provider_contract import (
 )
 from trusted_router.regions import configured_regions, region_map_payload
 from trusted_router.seo_catalog import seo_catalog_evidence
+from trusted_router.seo_meta import (
+    SEO_TITLE_MAX_LENGTH,
+    seo_meta_description,
+    seo_title,
+    truncate_seo_text,
+)
 from trusted_router.storage_models import BedrockGroupBuyPledge
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -882,25 +888,34 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "compare/openrouter": PublicPage(
         template="public/compare_openrouter.html",
         title="TrustedRouter Compared With OpenRouter",
-        description="Keep the same API shape and add a verifiable prompt path.",
+        description=(
+            "Compare TrustedRouter and OpenRouter across API compatibility, model access, "
+            "provider routing, privacy controls, pricing, and verifiable gateway attestation."
+        ),
     ),
     "compare/vercel-ai-gateway": PublicPage(
         template="public/compare_vercel_ai_gateway.html",
         title="TrustedRouter And Vercel AI Gateway",
         description=(
-            "Vercel AI Gateway is a strong developer gateway. "
-            "TrustedRouter adds an open source attested prompt path."
+            "Compare TrustedRouter and Vercel AI Gateway across model routing, SDK support, "
+            "observability, privacy controls, failover, and verifiable gateway attestation."
         ),
     ),
     "compare/litellm": PublicPage(
         template="public/compare_litellm.html",
         title="TrustedRouter And LiteLLM",
-        description="Use LiteLLM when you want to run the router yourself. Use TrustedRouter when you want hosted attestation.",
+        description=(
+            "Compare TrustedRouter and LiteLLM for hosted or self-managed model routing, "
+            "provider failover, privacy controls, observability, and verifiable attestation."
+        ),
     ),
     "docs/migrate-from-openrouter": PublicPage(
         template="public/migrate_from_openrouter.html",
         title="Migrate From OpenRouter",
-        description="Change base_url, keep OpenAI compatible clients, and verify the hosted gateway.",
+        description=(
+            "Change base_url to migrate from OpenRouter while keeping OpenAI-compatible clients, "
+            "model routing, streaming, provider controls, and live gateway verification."
+        ),
     ),
     "docs/tagging": PublicPage(
         template="public/tagging.html",
@@ -938,7 +953,10 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "docs/agent-setup": PublicPage(
         template="public/agent_setup.html",
         title="Agent Setup For TrustedRouter",
-        description="Base URLs, env vars, smoke tests, and model aliases for coding agents.",
+        description=(
+            "Configure coding agents for TrustedRouter with the API base URL, environment "
+            "variables, model aliases, privacy routes, quick smoke tests, and migration notes."
+        ),
     ),
     "docs/mcp": PublicPage(
         template="public/mcp.html",
@@ -951,7 +969,10 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "docs/evals": PublicPage(
         template="public/evals.html",
         title="TrustedRouter Evals Guide",
-        description="Run model, provider, privacy, latency, and cost evals through one OpenAI compatible API.",
+        description=(
+            "Run repeatable model evaluations through one OpenAI-compatible API and compare "
+            "providers, privacy posture, latency, reliability, token usage, quality, and cost."
+        ),
     ),
     "docs/synth": PublicPage(
         template="public/fusion.html",
@@ -975,8 +996,8 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         og_card="eu.png",
         title="EU LLM Gateway",
         description=(
-            "EU-focused LLM routing through the Europe West attested gateway, "
-            "with European and privacy-forward provider choices."
+            "Route AI workloads through TrustedRouter's attested European gateway with "
+            "EU-focused model providers, privacy controls, regional failover, and usage billing."
         ),
     ),
     "trustedos": PublicPage(
@@ -1031,7 +1052,10 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "security": PublicPage(
         template="public/security.html",
         title="Security",
-        description="What is logged, what is not logged, and where prompt traffic belongs.",
+        description=(
+            "Review TrustedRouter security boundaries, confidential compute, live attestation, "
+            "prompt handling, metadata logs, API key storage, provider trust, and incident controls."
+        ),
     ),
     # SEO landing pages — top-level slugs target high-intent buyer
     # queries. Each one is a self-contained sales surface: H2 above the
@@ -1043,8 +1067,8 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         og_card="openrouter-alternative.png",
         title="OpenRouter Alternative — TrustedRouter",
         description=(
-            "An open-source, hardware-attested OpenRouter alternative. "
-            "Same OpenAI-compatible API, verifiable prompt path, no logs."
+            "Use an OpenAI-compatible OpenRouter alternative with hundreds of models, provider "
+            "failover, zero-retention routes, open source code, and a verifiable attested prompt path."
         ),
     ),
     "private-llm-api": PublicPage(
@@ -1089,8 +1113,8 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         og_card="litellm-alternative.png",
         title="LiteLLM Alternative — Self-Host and Verify It",
         description=(
-            "A LiteLLM alternative that's self-hostable AND verifiable. "
-            "Hardware-attested gateway proves the no-logging guarantee."
+            "Use a hosted or self-managed LiteLLM alternative with provider failover, privacy "
+            "routing, OpenAI-compatible APIs, open source code, and verifiable hardware attestation."
         ),
     ),
     "portkey-alternative": PublicPage(
@@ -1107,8 +1131,8 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         og_card="confidential-computing-llm.png",
         title="Confidential Computing for LLMs — TrustedRouter",
         description=(
-            "Run LLM inference behind hardware attestation across every provider. "
-            "GCP Confidential Space, with remote attestation."
+            "Run LLM routing through confidential computing with GCP Confidential Space, "
+            "open source gateway code, remote attestation, protected TLS keys, and no prompt logs."
         ),
     ),
     "tinfoil-alternative": PublicPage(
@@ -1293,16 +1317,16 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         template="public/resources.html",
         title="Resources",
         description=(
-            "Guides, comparisons, privacy references, model APIs, benchmarks, and "
-            "integration pages for building with TrustedRouter."
+            "Guides, comparisons, privacy references, API quickstarts, model benchmarks, SDKs, "
+            "migration instructions, and integration pages for building with TrustedRouter."
         ),
     ),
     "careers": PublicPage(
         template="public/careers.html",
         title="Work on TrustedRouter",
         description=(
-            "Work on attested AI routing, open model orchestration, evals, and "
-            "infrastructure developers can verify."
+            "Work on attested AI routing, open model orchestration, provider reliability, "
+            "evaluations, billing, and infrastructure that developers and customers can verify."
         ),
     ),
 }
@@ -1325,6 +1349,28 @@ def _format_uptime(value: float | None, decimals: int = 4) -> str:
     return f"{value:.{decimals}f}%"
 
 
+def _seo_model_name(model: Model) -> str:
+    prefix = f"{model.provider}: "
+    if model.name.lower().startswith(prefix.lower()):
+        return model.name[len(prefix) :]
+    return model.name
+
+
+def _seo_comparison_title(left: Model, right: Model) -> str:
+    left_name = _seo_model_name(left)
+    right_name = _seo_model_name(right)
+    base = f"{left_name} vs {right_name}"
+    if len(f"{base} | TrustedRouter") <= SEO_TITLE_MAX_LENGTH:
+        return f"{base} | TrustedRouter"
+    if len(base) <= SEO_TITLE_MAX_LENGTH:
+        return base
+    name_budget = (SEO_TITLE_MAX_LENGTH - len(" vs ")) // 2
+    return (
+        f"{truncate_seo_text(left_name, name_budget)} vs "
+        f"{truncate_seo_text(right_name, name_budget)}"
+    )
+
+
 @lru_cache(maxsize=1)
 def _env() -> Environment:
     env = Environment(
@@ -1333,6 +1379,8 @@ def _env() -> Environment:
         keep_trailing_newline=True,
     )
     env.filters["uptime_pct"] = _format_uptime
+    env.filters["seo_title"] = seo_title
+    env.filters["seo_meta_description"] = seo_meta_description
     env.globals["provider_logo_url"] = provider_logo_url
     return env
 
@@ -1748,8 +1796,8 @@ def public_blog_index_html(settings: Settings) -> str:
             title="Blog | TrustedRouter",
             heading="TrustedRouter blog",
             description=(
-                "Engineering notes on attested AI routing, Synth evals, provider privacy, "
-                "and open source model routing."
+                "Read TrustedRouter engineering notes on attested AI routing, model evaluations, "
+                "provider privacy, confidential compute, reliability, and open source infrastructure."
             ),
             posts=_blog_index_posts(settings),
             json_ld_blob=_blog_index_json_ld(settings),
@@ -1796,7 +1844,8 @@ def public_legal_html(settings: Settings) -> str:
             title="Legal And Procurement Packet | TrustedRouter",
             heading="Legal and procurement packet",
             description=(
-                "Read-only procurement packet for legal teams reviewing TrustedRouter for sensitive work."
+                "Review TrustedRouter's legal and procurement packet, operating entity, DPA, BAA, "
+                "subprocessors, security controls, and compliance readiness for sensitive workloads."
             ),
             packet=packet,
             entity=legal_entity(settings),
@@ -1818,7 +1867,8 @@ def public_privacy_html(settings: Settings) -> str:
             title="Privacy Policy | TrustedRouter",
             heading="Privacy policy",
             description=(
-                "How Lore Hex Corp collects, uses, shares, and protects information when you use TrustedRouter."
+                "Read how Lore Hex Corp collects, uses, shares, retains, and protects account, billing, "
+                "usage, and technical information when you use TrustedRouter services."
             ),
             entity=legal_entity(settings),
             google_enabled=settings.google_oauth_enabled,
@@ -1837,7 +1887,10 @@ def public_terms_html(settings: Settings) -> str:
             site_url=f"https://{settings.trusted_domain}/terms",
             title="Terms of Service | TrustedRouter",
             heading="Terms of service",
-            description="Terms governing access to and use of TrustedRouter services.",
+            description=(
+                "Review the terms governing access to TrustedRouter services, accounts, API usage, "
+                "billing, acceptable use, intellectual property, warranties, and service limitations."
+            ),
             entity=legal_entity(settings),
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
@@ -1855,7 +1908,10 @@ def public_support_html(settings: Settings) -> str:
             site_url=f"https://{settings.trusted_domain}/support",
             title="Support | TrustedRouter",
             heading="TrustedRouter support",
-            description="Get product, account, billing, plugin, and security support.",
+            description=(
+                "Contact TrustedRouter for product, account, API, billing, provider, integration, "
+                "privacy, plugin, security, incident, and responsible disclosure support."
+            ),
             entity=legal_entity(settings),
             support_email=settings.support_email,
             google_enabled=settings.google_oauth_enabled,
@@ -1956,7 +2012,8 @@ def public_baa_html(settings: Settings) -> str:
             title="BAA Draft | TrustedRouter",
             heading="Business Associate Agreement draft",
             description=(
-                "Draft BAA terms for HIPAA review. PHI workloads require a signed BAA and route restrictions."
+                "Review TrustedRouter's draft Business Associate Agreement for HIPAA workloads, "
+                "including safeguards, breach duties, subcontractors, termination, and route restrictions."
             ),
             entity=legal_entity(settings),
             google_enabled=settings.google_oauth_enabled,
@@ -1977,7 +2034,8 @@ def public_soc2_readiness_html(settings: Settings) -> str:
             title="SOC 2 Readiness | TrustedRouter",
             heading="SOC 2 readiness",
             description=(
-                "SOC 2 Type I readiness package for auditor and procurement review. No SOC 2 report has been obtained yet."
+                "Review TrustedRouter's SOC 2 Type I readiness package, control ownership, evidence, "
+                "policies, risks, and auditor preparation. No SOC 2 report has been obtained yet."
             ),
             entity=legal_entity(settings),
             packet=packet,
@@ -1999,7 +2057,8 @@ def public_hipaa_readiness_html(settings: Settings) -> str:
             title="HIPAA Readiness | TrustedRouter",
             heading="HIPAA readiness",
             description=(
-                "HIPAA readiness package for covered-entity and business-associate review. PHI requires a signed BAA."
+                "Review TrustedRouter's HIPAA readiness package, administrative and technical safeguards, "
+                "risk analysis, incident duties, and BAA requirements before sending PHI."
             ),
             entity=legal_entity(settings),
             packet=packet,
@@ -2019,7 +2078,10 @@ def public_subprocessors_html(settings: Settings) -> str:
             site_url=f"https://{settings.trusted_domain}/legal/subprocessors",
             title="Subprocessors | TrustedRouter",
             heading="Subprocessors",
-            description=("Platform vendors and downstream model providers used by TrustedRouter."),
+            description=(
+                "Review platform vendors and downstream model providers used by TrustedRouter, "
+                "including purpose, data categories, location, retention posture, and policy sources."
+            ),
             entity=legal_entity(settings),
             subprocessors=subprocessor_packet(),
             provider_subprocessors=provider_subprocessor_rows(),
@@ -2076,7 +2138,10 @@ def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
             site_url=f"https://{settings.trusted_domain}/models",
             title="Models | TrustedRouter",
             heading="Models",
-            description="Hundreds of models with provider routes, prices, status, and policy notes.",
+            description=(
+                "Browse hundreds of AI models with current provider routes, token pricing, "
+                "privacy policies, regional availability, measured performance, and API support."
+            ),
             models=models,
             active_filter=normalized_filter,
             model_filters=[
@@ -2110,7 +2175,8 @@ def public_benchmarks_html(settings: Settings) -> str:
             title="Benchmarks | TrustedRouter",
             heading="Benchmarks",
             description=(
-                "Model benchmark entry points, route measurements, and independent sources."
+                "Review AI model benchmark scores, cited evaluation sources, provider route "
+                "measurements, and current performance evidence across the TrustedRouter catalog."
             ),
             page_kind="benchmarks",
             models=_seo_model_rows(test_mode=test_mode),
@@ -2219,7 +2285,8 @@ def public_rankings_html(settings: Settings) -> str:
             title="Model Rankings | TrustedRouter",
             heading="Model Rankings",
             description=(
-                "Rank models by route count, provider diversity, price, and policy posture."
+                "Rank AI models by provider diversity, route availability, token pricing, privacy "
+                "posture, context length, and measured performance on TrustedRouter."
             ),
             page_kind="rankings",
             models=_seo_model_rows(test_mode=test_mode),
@@ -2272,7 +2339,8 @@ def public_chat_html(
             title="Chat | TrustedRouter",
             heading="Chat",
             description=(
-                "Try any model and compare up to four at once. Zero tokens spent until you sign in."
+                "Try supported AI models through TrustedRouter and compare up to four responses at "
+                "once with visible providers, privacy routes, streaming output, and exact usage costs."
             ),
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
@@ -2294,7 +2362,8 @@ def public_fusion_html(settings: Settings) -> str:
             title="Synth | TrustedRouter",
             heading="Synth",
             description=(
-                "Try trustedrouter/synth with a model panel, fallback judges, and a final synthesizer."
+                "Run trustedrouter/synth with a configurable model panel, judge and final synthesizer, "
+                "provider fallback, streaming output, usage accounting, and attested request handling."
             ),
             og_image=_og_image_url(settings, "synth.png"),
             og_image_alt="TrustedRouter Synth compares a model panel and returns one answer",
@@ -2316,7 +2385,8 @@ def public_providers_html(settings: Settings) -> str:
             title="Providers | TrustedRouter",
             heading="Providers",
             description=(
-                "Provider transparency for model compute, retention, confidential compute, and encrypted routes."
+                "Compare AI providers by available models, token pricing, retention policies, "
+                "regional coverage, confidential compute, encrypted routes, and measured performance."
             ),
             providers=providers,
             json_ld_blob=_json_ld_graph(
@@ -2351,10 +2421,11 @@ def public_provider_detail_html(settings: Settings, provider_slug: str) -> str |
         .render(
             api_base_url=settings.api_base_url,
             site_url=f"https://{settings.trusted_domain}/providers/{provider.slug}",
-            title=f"{provider.name} Models | TrustedRouter",
+            title=f"{provider.name} Models and API Routes | TrustedRouter",
             heading=provider.name,
             description=(
-                f"{provider.name} models on TrustedRouter with prices, routes, policy notes, and source links."
+                f"Explore {provider.name} models on TrustedRouter with current routes, token pricing, "
+                "policy sources, privacy posture, regional availability, and API support."
             ),
             og_image=_absolute_url(settings, provider_og_image_url(provider.slug)),
             og_image_alt=f"{provider.name} models and routes on TrustedRouter",
@@ -2409,10 +2480,11 @@ def public_provider_performance_html(settings: Settings, provider_slug: str) -> 
                 else f"https://{settings.trusted_domain}/providers/{provider.slug}"
             ),
             robots_meta=None if indexable else "noindex,follow",
-            title=f"{provider.name} Performance | TrustedRouter",
+            title=f"{provider.name} Speed, Uptime and Throughput | TrustedRouter",
             heading=f"{provider.name} performance",
             description=(
-                f"Measured TTFT, TTFB, effective throughput, uptime, and sampled model routes for {provider.name}."
+                f"Review measured TTFT, TTFB, effective throughput, uptime, and sampled model routes "
+                f"for {provider.name} on TrustedRouter using metadata-only production probes."
             ),
             og_image=_absolute_url(settings, provider_og_image_url(provider.slug)),
             og_image_alt=f"{provider.name} route performance on TrustedRouter",
@@ -2459,6 +2531,7 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     if model is None:
         return None
     test_mode = settings.environment == "test"
+    seo_name = _seo_model_name(model)
     site_url = f"https://{settings.trusted_domain}/models/{model_id}"
     return (
         _env()
@@ -2466,9 +2539,12 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
         .render(
             api_base_url=settings.api_base_url,
             site_url=site_url,
-            title=f"{model.name} | TrustedRouter",
+            title=f"{seo_name} API, Pricing and Providers | TrustedRouter",
             heading=model.name,
-            description=f"All providers serving {model.name} via TrustedRouter.",
+            description=(
+                f"Compare every TrustedRouter route for {seo_name}, including token pricing, context "
+                "limits, privacy policy, regional availability, measured uptime, and API support."
+            ),
             model=_model_detail_view(model, test_mode=test_mode),
             # Service/Offer JSON-LD. The page sells API access to a hosted
             # routing service, not a retail product with customer ratings.
@@ -2487,6 +2563,8 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
     if pair is None:
         return None
     left, right = pair
+    left_name = _seo_model_name(left)
+    right_name = _seo_model_name(right)
     test_mode = settings.environment == "test"
     site_path = canonical_model_comparison_path(left.id, right.id)
     assert site_path is not None
@@ -2496,11 +2574,11 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
         .render(
             api_base_url=settings.api_base_url,
             site_url=f"https://{settings.trusted_domain}{site_path}",
-            title=f"{left.name} vs {right.name} | TrustedRouter",
+            title=_seo_comparison_title(left, right),
             heading=f"{left.name} vs {right.name}",
             description=(
-                f"Compare {left.name} and {right.name} by providers, context, price, "
-                "and TrustedRouter route support."
+                f"Compare {left_name} and {right_name} across token pricing, context windows, "
+                "provider availability, privacy options, route diversity, and measured performance."
             ),
             left=_model_detail_view(
                 left,
@@ -2609,6 +2687,7 @@ def public_model_section_html(settings: Settings, model_id: str, section: str) -
     section_path = f"/models/{model_id}/{section}"
     section_url = f"https://{settings.trusted_domain}{section_path}"
     label = MODEL_SEO_SECTION_LABELS[section]
+    seo_name = _seo_model_name(model)
     measured = measured_for_model(model.id, test_mode=settings.environment == "test")
     section_indexable = _model_section_indexable(model, section, measured)
     return (
@@ -2618,7 +2697,7 @@ def public_model_section_html(settings: Settings, model_id: str, section: str) -
             api_base_url=settings.api_base_url,
             site_url=section_url if section_indexable else base_model_url,
             robots_meta=None if section_indexable else "noindex,follow",
-            title=f"{model.name} {label} | TrustedRouter",
+            title=f"{seo_name} {label} | TrustedRouter",
             heading=f"{model.name} {label}",
             description=_model_section_description(model, section),
             model=_model_detail_view(model, active_section=section, test_mode=test_mode),
@@ -3454,20 +3533,39 @@ def _model_section_links(
 
 
 def _model_section_description(model: Model, section: str) -> str:
+    name = _seo_model_name(model)
     label = MODEL_SEO_SECTION_LABELS[section].lower()
     if section == "benchmarks":
-        return f"Benchmark and measurement links for {model.name}, with TrustedRouter route data first."
+        return (
+            f"Review independent benchmark scores and TrustedRouter route measurements for {name}, "
+            "with cited sources and links to current evaluation results."
+        )
     if section == "providers":
-        return f"Every provider endpoint TrustedRouter can route for {model.name}."
+        return (
+            f"See every provider route serving {name} on TrustedRouter, with current availability, "
+            "regional coverage, privacy posture, token pricing, and provider details."
+        )
     if section == "performance":
-        return f"TrustedRouter performance signals and provider route posture for {model.name}."
+        return (
+            f"Compare measured TTFT, TTFB, throughput, uptime, and route health for {name} across "
+            "TrustedRouter providers using metadata-only production probes."
+        )
     if section == "pricing":
-        return f"Prompt and completion pricing for every {model.name} route."
+        return (
+            f"Compare prompt and completion token prices for every {name} route on TrustedRouter, "
+            "including provider-specific rates and prepaid or BYOK availability."
+        )
     if section == "uptime":
-        return f"Uptime and status entry points for {model.name} routes."
+        return (
+            f"Review uptime, current status, provider diversity, and regional route health for {name} "
+            "on TrustedRouter using continuously collected metadata-only measurements."
+        )
     if section == "api":
-        return f"OpenAI compatible quickstart for {model.name} on TrustedRouter."
-    return f"{model.name} {label} on TrustedRouter."
+        return (
+            f"Use the OpenAI-compatible API quickstart for {name} on TrustedRouter, with model IDs, "
+            "streaming examples, authentication, fallback behavior, and SDK configuration."
+        )
+    return f"Review {name} {label}, provider routes, pricing, privacy, and API support on TrustedRouter."
 
 
 def _model_section_indexable(

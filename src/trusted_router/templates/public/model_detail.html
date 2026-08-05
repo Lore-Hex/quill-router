@@ -9,7 +9,7 @@
       {% if model.open_weights %}<span class="pill good">open weights</span>{% endif %}
       {% if model.us_provider_available %}<span class="pill">US providers</span>{% endif %}
       {% if model.eu_focused_provider_available %}<span class="pill">EU-focused</span>{% endif %}
-      <a class="pill provider-chip" href="/providers/{{ model.publisher_slug }}"><img class="provider-logo" src="{{ provider_logo_url(model.publisher_slug) }}" alt="" width="22" height="22"><span>{{ model.provider }}</span></a>
+      <a class="pill provider-chip" href="/providers/{{ model.publisher_slug }}"><img class="provider-logo" src="{{ provider_logo_url(model.publisher_slug) }}" alt="{{ model.provider }} logo" aria-hidden="true" width="22" height="22"><span>{{ model.provider }}</span></a>
     </div>
   </div>
   <div class="panel-body">
@@ -56,7 +56,7 @@
           {% else %}
           <div class="provider-chip-list">
             {% for provider in model.providers %}
-            <a class="pill provider-chip" href="/providers/{{ provider.slug }}" title="{{ provider.slug }}"><img class="provider-logo" src="{{ provider.logo_url }}" alt="" width="22" height="22" loading="lazy" decoding="async"><span>{{ provider.name }}</span></a>
+            <a class="pill provider-chip" href="/providers/{{ provider.slug }}" title="{{ provider.slug }}"><img class="provider-logo" src="{{ provider.logo_url }}" alt="{{ provider.name }} logo" aria-hidden="true" width="22" height="22" loading="lazy" decoding="async"><span>{{ provider.name }}</span></a>
             {% endfor %}
           </div>
           {% endif %}

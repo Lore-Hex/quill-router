@@ -1489,8 +1489,8 @@ The model already knows the truth. Whether you hear it depends on whose server y
         slug="attestation-is-all-you-need",
         title="Attestation is all you need",
         description=(
-            "For AI routing, trust should be something an agent can verify, not "
-            "only a policy page a human reads after the fact."
+            "For AI routing, trust should be something an agent can verify. Learn how source code, "
+            "image digests, remote attestation, and live evidence protect the prompt path."
         ),
         published_date="2026-06-14",
         source_label="Joseph Perla original",
