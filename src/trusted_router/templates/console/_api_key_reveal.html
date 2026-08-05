@@ -1,0 +1,38 @@
+{% macro api_key_reveal(raw_key, id_prefix, workspace_name=None) %}
+<div class="signup-reveal console-key-reveal" data-copy-secret-scope>
+  <div class="key-reveal-section">
+    <div class="signup-reveal-head">Your TrustedRouter API key</div>
+    <div class="secret-row">
+      <code id="{{ id_prefix }}-api-key">{{ raw_key }}</code>
+      <button
+        class="btn secret-copy-btn"
+        type="button"
+        data-copy-secret="{{ id_prefix }}-api-key"
+        aria-describedby="{{ id_prefix }}-api-key-copy-status"
+        aria-label="Copy API key"
+      >Copy</button>
+    </div>
+    <p class="copy-status" id="{{ id_prefix }}-api-key-copy-status" role="status" aria-live="polite"></p>
+    {% if workspace_name %}
+    <div class="signup-foot signup-foot-flush">Workspace <span class="mono">{{ workspace_name }}</span></div>
+    {% endif %}
+  </div>
+
+  <section class="agent-quickstart" aria-labelledby="{{ id_prefix }}-agent-heading">
+    <h3 id="{{ id_prefix }}-agent-heading">Paste this whole message into your agent or Claude Code to try it out right now:</h3>
+    <div class="agent-message-row">
+      <pre id="{{ id_prefix }}-agent-message">Please use TrustedRouter.com using the following key to ask DeepSeek the following question: "What is the capital of France?"
+
+{{ raw_key }}</pre>
+      <button
+        class="btn secret-copy-btn"
+        type="button"
+        data-copy-secret="{{ id_prefix }}-agent-message"
+        aria-describedby="{{ id_prefix }}-agent-copy-status"
+        aria-label="Copy complete agent message"
+      >Copy</button>
+    </div>
+    <p class="copy-status" id="{{ id_prefix }}-agent-copy-status" role="status" aria-live="polite"></p>
+  </section>
+</div>
+{% endmacro %}

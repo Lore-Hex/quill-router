@@ -1,4 +1,5 @@
 {% extends "console/_layout.html" %}
+{% from "console/_api_key_reveal.html" import api_key_reveal %}
 {% block body %}
 {% macro create_key_form() %}
 <form class="form" method="post" action="/console/api-keys">
@@ -23,13 +24,7 @@
 <section class="panel">
   <div class="panel-head"><h2>Save this key. It will not be shown again</h2><span class="pill warn">one time reveal</span></div>
   <div class="panel-body">
-    <div class="signup-reveal" data-copy-secret-scope>
-      <div class="secret-row">
-        <code id="created-api-key">{{ created_key }}</code>
-        <button class="btn secret-copy-btn" type="button" data-copy-secret="created-api-key" aria-describedby="created-api-key-copy-status">Copy</button>
-      </div>
-      <p class="copy-status" id="created-api-key-copy-status" role="status" aria-live="polite"></p>
-    </div>
+    {{ api_key_reveal(created_key, "created") }}
   </div>
 </section>
 {% endif %}

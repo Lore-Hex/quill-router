@@ -848,10 +848,19 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
 
     resp = client.get("/console/welcome?first=1", follow_redirects=False)
     assert resp.status_code == 200
-    assert fake_raw_key in resp.text, (
+    assert resp.text.count(fake_raw_key) == 2, (
         "expected the raw API key from tr_pending_reveal to be rendered "
-        "in the welcome page; instead got the 'already displayed' fallback"
+        "by itself and in the agent quickstart message"
     )
+    agent_message = (
+        "Please use TrustedRouter.com using the following key to ask DeepSeek "
+        'the following question: "What is the capital of France?"'
+        f"\n\n{fake_raw_key}"
+    )
+    assert 'data-copy-secret="welcome-api-key"' in resp.text
+    assert 'data-copy-secret="welcome-agent-message"' in resp.text
+    assert f'<pre id="welcome-agent-message">{agent_message}</pre>' in resp.text
+    assert "Paste this whole message into your agent or Claude Code" in resp.text
     assert "already been displayed" not in resp.text
     # One-shot: cookie must be cleared on the response so a refresh
     # doesn't re-reveal the key.
@@ -882,6 +891,7 @@ def test_console_welcome_without_first_query_does_not_read_pending_reveal(
     # The page renders the fallback message; the cookie is left for a
     # later legitimate `?first=1` request to consume.
     assert fake_raw_key not in resp.text
+    assert 'id="welcome-agent-message"' not in resp.text
     assert "already been displayed" in resp.text
     # Cookie not cleared — the response should NOT include a delete-cookie
     # header for tr_pending_reveal.
@@ -904,8 +914,16 @@ def test_console_create_api_key_form_shows_raw_key_once(
     assert "console-created" in resp.text
     match = re.search(r"sk-tr-v1-[A-Za-z0-9_-]+", resp.text)
     assert match is not None
-    assert resp.text.count(match.group(0)) == 1
+    assert resp.text.count(match.group(0)) == 2
+    agent_message = (
+        "Please use TrustedRouter.com using the following key to ask DeepSeek "
+        'the following question: "What is the capital of France?"'
+        f"\n\n{match.group(0)}"
+    )
     assert 'data-copy-secret="created-api-key"' in resp.text
+    assert 'data-copy-secret="created-agent-message"' in resp.text
+    assert f'<pre id="created-agent-message">{agent_message}</pre>' in resp.text
+    assert "Paste this whole message into your agent or Claude Code" in resp.text
     assert "Copied to clipboard." not in resp.text
     workspace_id = next(iter(STORE.workspaces))
     keys = STORE.list_keys(workspace_id)
