@@ -12,6 +12,7 @@ def test_batch_docs_publish_drop_in_contract(client: TestClient) -> None:
     assert "/v1/messages" in response.text
     assert "/v1/embeddings" in response.text
     assert "Keep endpoint and model before requests" in response.text
+    assert '"max_tokens": 64' in response.text
     assert "Use the provider's real Batch API" in response.text
     assert "published 50% discount" in response.text
     assert "50,000 requests per batch" in response.text
