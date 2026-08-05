@@ -423,6 +423,10 @@ class GatewayAuthorization:
     custom_model_id: str | None = None
     custom_model_revision: int | None = None
     additional_cost_reservation_microdollars: int = 0
+    # Frozen at authorization time. Settlement must never infer this from a
+    # caller-supplied route_type because native provider Batch APIs retain
+    # plaintext content and receive discounted billing.
+    native_batch_eligible: bool = False
     # The settlement DECISION, made at authorize and stored — settle must not
     # re-derive it from key state, which can change between authorize and
     # settle. "local" books against the plane's own balance (every

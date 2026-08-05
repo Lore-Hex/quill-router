@@ -2890,6 +2890,7 @@ class PostgresStore:
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         additional_cost_reservation_microdollars: int = 0,
+        native_batch_eligible: bool = False,
         settlement: str = "local",
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
@@ -2934,6 +2935,7 @@ class PostgresStore:
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
             additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
+            native_batch_eligible=native_batch_eligible,
             settlement=settlement,
             expires_at=expires_at,
         )

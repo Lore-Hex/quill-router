@@ -110,7 +110,7 @@ logger = logging.getLogger(__name__)
 REQUEST_METADATA_VERSION = 1
 _BILLING_PATH_SPANNER_BUDGET_SECONDS = 25.0
 _NATIVE_BATCH_ROUTE_PREFIX = "batch.native."
-_NATIVE_BATCH_DISCOUNT_BPS = {
+_NATIVE_BATCH_BILLED_FRACTION_BPS = {
     "openai": 5_000,
     "parasail": 5_000,
 }
@@ -355,6 +355,20 @@ def _authorize_gateway_sync(
         for _candidate_model, candidate_endpoint in endpoint_candidates
     )
     reservation_usage_type = UsageType.CREDITS if has_credit_candidate else UsageType.BYOK
+    broadcast_destinations = [
+        payload
+        for destination in STORE.list_broadcast_destinations(workspace.id)
+        if (payload := gateway_destination_payload(destination)) is not None
+    ]
+    native_batch_eligible = _native_batch_eligibility(
+        route_type=body.route_type,
+        retention_allowed=native_retention_allowed,
+        model_usage_type=model_usage_type,
+        custom_model=custom_model,
+        broadcast_destinations=broadcast_destinations,
+        requested_model_id=requested_model_id,
+        endpoint=endpoint,
+    )
     fingerprint_body = dict(body_dict)
     if is_video_request:
         # Provider quotes can change between retries. The enclave supplies a
@@ -390,11 +404,6 @@ def _authorize_gateway_sync(
             if existing_usage_type.is_byok()
             else None
         )
-        broadcast_destinations = [
-            payload
-            for destination in STORE.list_broadcast_destinations(workspace.id)
-            if (payload := gateway_destination_payload(destination)) is not None
-        ]
         return _gateway_authorize_response(
             authorization=existing_authorization,
             workspace_id=workspace.id,
@@ -413,8 +422,6 @@ def _authorize_gateway_sync(
             endpoint_candidates=existing_candidates,
             idempotent_replay=True,
             custom_model=custom_model,
-            route_type=body.route_type,
-            native_retention_allowed=native_retention_allowed,
         )
 
     existing_authorization = STORE.get_gateway_authorization_by_idempotency_key(
@@ -488,6 +495,7 @@ def _authorize_gateway_sync(
             custom_model_id=custom_model.id if custom_model else None,
             custom_model_revision=custom_model.revision if custom_model else None,
             additional_cost_reservation_microdollars=additional_cost_reservation,
+            native_batch_eligible=native_batch_eligible,
             expires_at=expires_at,
             window_limits=window_limits or None,
         )
@@ -545,7 +553,16 @@ def _authorize_gateway_sync(
             ) from exc
 
         settlement = "local"
-        authorization_expires_at: str | None = None
+        authorization_expires_at = (
+            (
+                dt.datetime.now(dt.UTC)
+                + dt.timedelta(seconds=_authorization_ttl_seconds(body.route_type))
+            )
+            .isoformat()
+            .replace("+00:00", "Z")
+            if _is_native_batch_route(body.route_type)
+            else None
+        )
         if has_credit_candidate:
             try:
                 credit_reservation = STORE.reserve(
@@ -598,6 +615,7 @@ def _authorize_gateway_sync(
             custom_model_id=custom_model.id if custom_model else None,
             custom_model_revision=custom_model.revision if custom_model else None,
             additional_cost_reservation_microdollars=additional_cost_reservation,
+            native_batch_eligible=native_batch_eligible,
             settlement=settlement,
             expires_at=authorization_expires_at,
             # The outstanding increment rides the SAME transaction that
@@ -642,11 +660,6 @@ def _authorize_gateway_sync(
     byok_config = (
         _get_byok_provider(workspace.id, endpoint.provider) if model_usage_type.is_byok() else None
     )
-    broadcast_destinations = [
-        payload
-        for destination in STORE.list_broadcast_destinations(workspace.id)
-        if (payload := gateway_destination_payload(destination)) is not None
-    ]
     return _gateway_authorize_response(
         authorization=authorization,
         workspace_id=workspace.id,
@@ -665,8 +678,6 @@ def _authorize_gateway_sync(
         endpoint_candidates=endpoint_candidates,
         idempotent_replay=idempotent_replay,
         custom_model=custom_model,
-        route_type=body.route_type,
-        native_retention_allowed=native_retention_allowed,
     )
 
 
@@ -981,21 +992,7 @@ def _gateway_authorize_response(
     endpoint_candidates: list[tuple[Model, ModelEndpoint]],
     idempotent_replay: bool,
     custom_model: Any | None,
-    route_type: str | None,
-    native_retention_allowed: bool,
 ) -> dict[str, Any]:
-    # Provider-native Batch stores prompt/output content under the selected
-    # provider's Batch retention policy. The enclave requires this explicit
-    # control-plane decision in addition to its own request-body privacy gate.
-    native_batch_eligible = (
-        _is_native_batch_route(route_type)
-        and native_retention_allowed
-        and model_usage_type == UsageType.CREDITS
-        and custom_model is None
-        and not broadcast_destinations
-        and not requested_model_id.strip().lower().startswith("trustedrouter/")
-        and endpoint.provider.strip().lower() in _NATIVE_BATCH_DISCOUNT_BPS
-    )
     return {
         "data": {
             "authorization_id": authorization.id,
@@ -1021,7 +1018,7 @@ def _gateway_authorize_response(
                 authorization.additional_cost_reservation_microdollars
             ),
             "request_metadata_version": REQUEST_METADATA_VERSION,
-            "native_batch_eligible": native_batch_eligible,
+            "native_batch_eligible": authorization.native_batch_eligible,
             "tags": dict(authorization.tags),
             "custom_model": None
             if custom_model is None
@@ -1406,13 +1403,13 @@ def _settle_gateway_authorization(
             route_type=body.route_type,
             provider=selected_endpoint.provider,
             idempotency_key=authorization.idempotency_key,
+            native_batch_eligible=authorization.native_batch_eligible,
+            selected_usage_type=UsageType.for_endpoint(selected_endpoint),
         )
     else:
-        # Refunds do not book provider cost. They still enforce the
-        # authorization's native/non-native route binding, but must not require
-        # the primary endpoint to be the native provider selected later by the
-        # batch worker.
-        _require_native_batch_route_binding(body.route_type, authorization.idempotency_key)
+        # A refund books zero and releases the frozen hold. Never require a
+        # route marker from a generic abort path; the authorization id is the
+        # durable authority and refusing a refund can strand funds for 26h.
         actual_cost = 0
     operator_cost = (
         _endpoint_cost_microdollars(
@@ -2001,6 +1998,28 @@ def _is_native_batch_route(route_type: str | None) -> bool:
     return (route_type or "").strip().lower().startswith(_NATIVE_BATCH_ROUTE_PREFIX)
 
 
+def _native_batch_eligibility(
+    *,
+    route_type: str | None,
+    retention_allowed: bool,
+    model_usage_type: UsageType,
+    custom_model: Any | None,
+    broadcast_destinations: list[dict[str, Any]],
+    requested_model_id: str,
+    endpoint: ModelEndpoint,
+) -> bool:
+    """Freeze the provider-retention and discount decision at authorization."""
+    return (
+        _is_native_batch_route(route_type)
+        and retention_allowed
+        and model_usage_type == UsageType.CREDITS
+        and custom_model is None
+        and not broadcast_destinations
+        and not requested_model_id.strip().lower().startswith("trustedrouter/")
+        and endpoint.provider.strip().lower() in _NATIVE_BATCH_BILLED_FRACTION_BPS
+    )
+
+
 def _native_batch_request_allows_retention(body: dict[str, Any], settings: Settings) -> bool:
     """Fail closed on privacy/routing metadata visible to the control plane.
 
@@ -2080,6 +2099,8 @@ def _native_batch_cost_or_error(
     route_type: str | None,
     provider: str,
     idempotency_key: str | None = None,
+    native_batch_eligible: bool = False,
+    selected_usage_type: UsageType = UsageType.CREDITS,
 ) -> int:
     if not _is_native_batch_route(route_type):
         if _is_native_batch_idempotency_key(idempotency_key):
@@ -2090,8 +2111,20 @@ def _native_batch_cost_or_error(
             )
         return cost_microdollars
     _require_native_batch_route_binding(route_type, idempotency_key)
-    discount_bps = _NATIVE_BATCH_DISCOUNT_BPS.get(provider.strip().lower())
-    if discount_bps is None:
+    if not native_batch_eligible:
+        raise api_error(
+            400,
+            "authorization is not eligible for native Batch settlement",
+            ErrorType.BAD_REQUEST,
+        )
+    if selected_usage_type != UsageType.CREDITS:
+        raise api_error(
+            400,
+            "native Batch settlement requires a prepaid provider route",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
+    billed_fraction_bps = _NATIVE_BATCH_BILLED_FRACTION_BPS.get(provider.strip().lower())
+    if billed_fraction_bps is None:
         raise api_error(
             400,
             "selected provider does not support TrustedRouter native Batch settlement",
@@ -2101,7 +2134,7 @@ def _native_batch_cost_or_error(
         return 0
     # Round upward so a positive billable request never disappears below the
     # integer microdollar ledger's minimum unit.
-    return max(1, (cost_microdollars * discount_bps + 9_999) // 10_000)
+    return max(1, (cost_microdollars * billed_fraction_bps + 9_999) // 10_000)
 
 
 def _endpoint_cost_microdollars(

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from trusted_router.catalog import endpoint_for_id
@@ -7,6 +11,7 @@ from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.routes.internal import gateway as gateway_routes
 from trusted_router.storage import STORE
+from trusted_router.types import UsageType
 
 
 def _client_and_key() -> tuple[TestClient, dict]:
@@ -21,7 +26,7 @@ def _client_and_key() -> tuple[TestClient, dict]:
 
 
 def test_native_batch_discount_is_integer_exact_and_never_rounds_positive_to_zero() -> None:
-    assert gateway_routes._NATIVE_BATCH_DISCOUNT_BPS == {
+    assert gateway_routes._NATIVE_BATCH_BILLED_FRACTION_BPS == {
         "openai": 5_000,
         "parasail": 5_000,
     }
@@ -38,6 +43,7 @@ def test_native_batch_discount_is_integer_exact_and_never_rounds_positive_to_zer
             route_type="batch.native.chat.completions",
             provider="openai",
             idempotency_key="tr-native-batch:test:0",
+            native_batch_eligible=True,
         )
         == 1
     )
@@ -47,9 +53,19 @@ def test_native_batch_discount_is_integer_exact_and_never_rounds_positive_to_zer
             route_type="batch.native.embeddings",
             provider="parasail",
             idempotency_key="tr-native-batch:test:0",
+            native_batch_eligible=True,
         )
         == 5
     )
+    with pytest.raises(HTTPException, match="requires a prepaid provider route"):
+        gateway_routes._native_batch_cost_or_error(
+            9,
+            route_type="batch.native.chat.completions",
+            provider="openai",
+            idempotency_key="tr-native-batch:test:0",
+            native_batch_eligible=True,
+            selected_usage_type=UsageType.BYOK,
+        )
 
 
 def test_native_batch_authorization_outlives_provider_completion_window() -> None:
@@ -78,6 +94,7 @@ def test_native_batch_authorization_replays_across_region_and_estimator_drift() 
         },
     )
     assert first.status_code == 200, first.text
+    assert first.json()["data"]["native_batch_eligible"] is True
 
     replay = client.post(
         "/v1/internal/gateway/authorize",
@@ -91,6 +108,7 @@ def test_native_batch_authorization_replays_across_region_and_estimator_drift() 
     assert replay.status_code == 200, replay.text
     assert replay.json()["data"]["authorization_id"] == first.json()["data"]["authorization_id"]
     assert replay.json()["data"]["idempotent_replay"] is True
+    assert replay.json()["data"]["native_batch_eligible"] is True
 
 
 def test_native_batch_retention_policy_fails_closed() -> None:
@@ -144,6 +162,9 @@ def test_native_batch_settlement_charges_half_and_replay_returns_same_cost() -> 
     assert authorize.status_code == 200, authorize.text
     auth = authorize.json()["data"]
     assert auth["native_batch_eligible"] is True
+    stored = STORE.get_gateway_authorization(auth["authorization_id"])
+    assert stored is not None and stored.expires_at is not None
+    assert datetime.fromisoformat(stored.expires_at.replace("Z", "+00:00")) > datetime.now(UTC)
     endpoint = endpoint_for_id(auth["endpoint_id"])
     assert endpoint is not None and endpoint.provider == "openai"
     full_cost = gateway_routes._endpoint_cost_microdollars(endpoint, 800, 200)
@@ -226,6 +247,42 @@ def test_native_batch_settlement_rejects_provider_without_verified_discount() ->
     assert authorization is not None and not authorization.settled
 
 
+def test_native_batch_settlement_rejects_authorization_that_failed_retention_gate() -> None:
+    client, key = _client_and_key()
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": "openai/gpt-5.5",
+            "estimated_input_tokens": 10,
+            "max_output_tokens": 10,
+            "provider": {"only": ["openai"], "usage": "credits"},
+            "store": False,
+            "route_type": "batch.native.chat.completions",
+            "idempotency_key": "tr-native-batch:test-retention-blocked:0",
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    auth = authorize.json()["data"]
+    assert auth["native_batch_eligible"] is False
+
+    settled = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": auth["authorization_id"],
+            "actual_input_tokens": 10,
+            "actual_output_tokens": 10,
+            "selected_model": auth["model"],
+            "selected_endpoint": auth["endpoint_id"],
+            "route_type": "batch.native.chat.completions",
+            "elapsed_seconds": 0.001,
+        },
+    )
+    assert settled.status_code == 400, settled.text
+    authorization = STORE.get_gateway_authorization(auth["authorization_id"])
+    assert authorization is not None and not authorization.settled
+
+
 def test_native_batch_refund_replay_releases_hold_once() -> None:
     client, key = _client_and_key()
     authorize = client.post(
@@ -247,7 +304,6 @@ def test_native_batch_refund_replay_releases_hold_once() -> None:
         "error_status": 503,
         "error_type": "native_batch_fallback",
         "elapsed_seconds": 0.001,
-        "route_type": "batch.native.chat.completions",
     }
     first = client.post("/v1/internal/gateway/refund", json=refund_body)
     assert first.status_code == 200, first.text
