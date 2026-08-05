@@ -3506,8 +3506,54 @@
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 6000000,
       "cached_input_token_price_per_m": 250000
+    },
+    {
+      "display_name": "GPT 5.6 Luna",
+      "title": "openai/gpt-5.6-luna-az",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.6-luna-az",
+      "upstream_id": "openai/gpt-5.6-luna-az",
+      "context_length": 1050000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 6000000,
+      "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "GPT 5.6 Terra",
+      "title": "openai/gpt-5.6-terra-az",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.6-terra-az",
+      "upstream_id": "openai/gpt-5.6-terra-az",
+      "context_length": 1050000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 2500000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 250000
     }
   ],
-  "generated_at": "2026-08-05T10:38:01Z",
-  "model_count": 128
+  "generated_at": "2026-08-05T12:55:53Z",
+  "model_count": 130
 }
