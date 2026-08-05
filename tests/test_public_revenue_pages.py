@@ -21,6 +21,12 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/resources": "Guides, comparisons, privacy references",
         "/careers": "Work on attested AI routing",
         "/blog": "TrustedRouter blog",
+        "/blog/they-are-still-training-on-your-data": (
+            "They Are Still Training on Your Data"
+        ),
+        "/blog/no-log-is-a-promise-attestation-is-proof": (
+            "No Log Is a Promise. Attestation Is Proof."
+        ),
         "/blog/fusion-evals-open-source": "New SOTA: TrustedRouter Synth beats Fable and Frontier",
         "/blog/sign-in-with-trustedrouter": "Sign in with TrustedRouter",
         "/sign-in-with-trustedrouter": "A complete user-funded AI flow.",
@@ -152,6 +158,8 @@ def test_revenue_pages_support_link_checkers(client: TestClient) -> None:
         "/docs/synth",
         "/synth",
         "/blog",
+        "/blog/they-are-still-training-on-your-data",
+        "/blog/no-log-is-a-promise-attestation-is-proof",
         "/blog/fusion-evals-open-source",
         "/security",
         "/eu",
@@ -162,6 +170,20 @@ def test_revenue_pages_support_link_checkers(client: TestClient) -> None:
         assert client.head(path).status_code == 200
         slash_response = client.get(f"{path}/", follow_redirects=False)
         assert slash_response.status_code == 200
+
+
+def test_blog_has_no_phd_hiring_banner(client: TestClient) -> None:
+    for path in [
+        "/blog",
+        "/blog/they-are-still-training-on-your-data",
+        "/blog/no-log-is-a-promise-attestation-is-proof",
+        "/blog/sign-in-with-trustedrouter",
+    ]:
+        response = client.get(path)
+        assert response.status_code == 200
+        assert "hiring-banner" not in response.text
+        assert "PhD researchers" not in response.text
+        assert "We're hiring" not in response.text
 
 
 def test_public_pricing_matches_five_percent_billing_policy(client: TestClient) -> None:
