@@ -49,6 +49,7 @@ from trusted_router.storage_errors import (
     StoreUnavailable,
 )
 from trusted_router.storage_gcp_codec import (
+    byok_id,
     member_id,
     normalize_email,
     workspace_key_id,
@@ -97,6 +98,12 @@ from trusted_router.storage_models import (
 from trusted_router.storage_postgres_group_buy import PostgresBedrockGroupBuy
 from trusted_router.storage_postgres_operational_analytics_outbox import (
     PostgresOperationalAnalyticsOutbox,
+)
+from trusted_router.storage_video_jobs import (
+    VIDEO_CONTENT_RETENTION_SECONDS,
+    VIDEO_SUBMISSION_TIMEOUT_SECONDS,
+    _is_due,
+    _iso_after_seconds,
 )
 from trusted_router.synthetic.rollups import (
     RAW_SYNTHETIC_RETENTION_DAYS,
@@ -232,6 +239,19 @@ def _split_sql_statements(schema: str) -> list[str]:
     """
     without_comments = "\n".join(line.split("--", 1)[0] for line in schema.splitlines())
     return [stmt.strip() for stmt in without_comments.split(";") if stmt.strip()]
+
+
+def _video_due_id(job: VideoJob) -> str:
+    """Ordering key for the video due-index: `<next_poll_at>#<job_id>`.
+
+    Lexicographic order over this string is chronological order over
+    next_poll_at (ISO-8601, fixed width, Z-suffixed), which is what lets
+    `ORDER BY id LIMIT n` in claim_video_jobs walk the queue in due order and
+    stop at the first entry that is not yet due.  Matches
+    storage_gcp_video_jobs._due_id; the two indexes never share a database, so
+    they only have to be internally consistent.
+    """
+    return f"{job.next_poll_at}#{job.id}"
 
 
 class PostgresStore:
@@ -453,6 +473,19 @@ class PostgresStore:
             return result
 
         return self._run_transaction(operation)
+
+    @staticmethod
+    def _like_prefix(prefix: str) -> str:
+        """Turn an id prefix into a LIKE pattern that cannot act as a wildcard.
+
+        Secondary-index ids are `<owner>#<rest>`, and owner ids routinely
+        contain `_`.  In LIKE, `_` matches ANY single character, so the
+        natural-looking `id LIKE 'ws_abc#%'` also matches `wsXabc#...` — one
+        tenant's prefix scan can return another tenant's rows.  Escaping is a
+        correctness requirement here, not hygiene.
+        """
+        escaped = prefix.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+        return f"{escaped}%"
 
     def _write_entity_tx(
         self,
@@ -1915,7 +1948,18 @@ class PostgresStore:
         workspace_id: str,
         provider: str,
     ) -> ByokProviderConfig | None:
-        self._not_implemented("get_byok_provider")
+        # Gateway-reachable (routes/internal/gateway.py `_get_byok_provider`),
+        # so this MUST return rather than raise: a NotImplementedError here
+        # 500s the whole authorize.
+        #
+        # A peer plane has no writer for this kind yet — upsert_byok_provider
+        # is still unimplemented — so in practice this misses and the caller
+        # drops BYOK endpoints from the candidate set.  That is the safe
+        # direction (nothing is billed against a key we could not find), but
+        # BYOK models stay unavailable on a peer until these configs are
+        # replicated.  Kind and id match the GCP writer (storage_gcp_byok.py)
+        # so replication drops straight in.
+        return self._read_entity("byok", byok_id(workspace_id, provider), ByokProviderConfig)
 
     def delete_byok_provider(
         self,
@@ -1943,7 +1987,13 @@ class PostgresStore:
         self._not_implemented("list_custom_models_for_user")
 
     def get_custom_model(self, model_id: str) -> CustomModel | None:
-        self._not_implemented("get_custom_model")
+        # Gateway-reachable (gateway.py:223 authorize, :707
+        # resolve-custom-model).  A miss yields a clean 404 "Custom model not
+        # found" instead of a 500.  Both callers already apply
+        # normalize_custom_model_id and the GCP writer stores under the
+        # normalized id, so this deliberately does not normalize again — a
+        # second pass would mask a caller that forgot.
+        return self._read_entity("custom_model", model_id, CustomModel)
 
     def update_custom_model(
         self,
@@ -1981,7 +2031,48 @@ class PostgresStore:
         self._not_implemented("create_broadcast_destination")
 
     def list_broadcast_destinations(self, workspace_id: str) -> list[BroadcastDestination]:
-        self._not_implemented("list_broadcast_destinations")
+        # Gateway-reachable at TWO points inside authorize (gateway.py:368 on
+        # the idempotent-replay branch, :616 on the main path).  :616 runs
+        # AFTER reserve_key_limit / reserve / create_gateway_authorization have
+        # committed, so raising here would strand a credit reservation on every
+        # single request.  This must return a value, never raise.
+        #
+        # Written as a real query against the same two kinds the GCP writer
+        # uses (storage_gcp_broadcast.py) rather than a bare `return []`, so
+        # replicating these rows to a peer needs no change here.  Until then a
+        # peer has no rows and gets [].
+        def read(conn: Any) -> list[BroadcastDestination]:
+            rows = conn.execute(
+                "SELECT body FROM tr_entities "
+                "WHERE kind = 'broadcast_destination_by_workspace' "
+                "AND id LIKE %s ESCAPE '\\' "
+                "ORDER BY id",
+                (self._like_prefix(f"{workspace_id}#"),),
+            ).fetchall()
+            destinations: list[BroadcastDestination] = []
+            for row in rows:
+                raw = row[0]
+                pointer = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                destination_id = str(pointer.get("destination_id") or "")
+                if not destination_id:
+                    continue
+                destination = self._read_entity_tx(
+                    conn, "broadcast_destination", destination_id, BroadcastDestination
+                )
+                if destination is None:
+                    # Index row and entity are two separate writes, so a torn
+                    # write leaves a dangling pointer.  Skip it: a half-written
+                    # destination must not 500 an authorize that has already
+                    # escrowed credits.
+                    continue
+                if getattr(destination, "workspace_id", workspace_id) != workspace_id:
+                    # Defence in depth against a mis-keyed index row — never
+                    # hand one workspace another workspace's destination.
+                    continue
+                destinations.append(destination)
+            return destinations
+
+        return self._run_transaction(read)
 
     def get_broadcast_destination(
         self,
@@ -2039,13 +2130,47 @@ class PostgresStore:
     # Asynchronous video jobs -----------------------------------------------
 
     def prepare_video_job(self, job: VideoJob) -> tuple[VideoJob, bool]:
-        self._not_implemented("prepare_video_job")
+        # Mirrors SpannerVideoJobs.prepare. Idempotent on BOTH keys: an
+        # authorization that already has a job returns that job, and so does a
+        # replayed job id. Returning (job, False) rather than creating a second
+        # row is what stops one authorization submitting twice to a provider.
+        def txn(conn: Any) -> tuple[VideoJob, bool]:
+            pointer = self._read_entity_tx(
+                conn, "video_job_by_authorization", job.authorization_id, dict, for_update=True
+            )
+            if pointer is not None:
+                existing = self._read_entity_tx(
+                    conn, "video_job", str(pointer.get("job_id", "")), VideoJob
+                )
+                if existing is not None:
+                    return existing, False
+            existing = self._read_entity_tx(conn, "video_job", job.id, VideoJob, for_update=True)
+            if existing is not None:
+                return existing, False
+            job.next_poll_at = _iso_after_seconds(VIDEO_SUBMISSION_TIMEOUT_SECONDS)
+            self._write_entity_tx(conn, "video_job", job.id, job)
+            self._write_entity_tx(
+                conn, "video_job_by_authorization", job.authorization_id, {"job_id": job.id}
+            )
+            self._write_entity_tx(
+                conn,
+                "video_job_due",
+                _video_due_id(job),
+                {"job_id": job.id, "next_poll_at": job.next_poll_at},
+            )
+            return job, True
+
+        return self._run_transaction(txn)
 
     def get_video_job(self, job_id: str) -> VideoJob | None:
-        self._not_implemented("get_video_job")
+        return self._read_entity("video_job", job_id, VideoJob)
 
     def get_video_job_for_key(self, job_id: str, key_hash: str) -> VideoJob | None:
-        self._not_implemented("get_video_job_for_key")
+        # The key_hash check is the tenant boundary for the public video
+        # endpoints: without it any caller who guesses a job id could read
+        # another workspace's job.
+        job = self.get_video_job(job_id)
+        return job if job is not None and job.key_hash == key_hash else None
 
     def mark_video_job_queued(
         self,
@@ -2058,7 +2183,43 @@ class PostgresStore:
         quoted_microdollars: int,
         poll_after_seconds: int,
     ) -> VideoJob | None:
-        self._not_implemented("mark_video_job_queued")
+        def txn(conn: Any) -> VideoJob | None:
+            job = self._read_entity_tx(conn, "video_job", job_id, VideoJob, for_update=True)
+            if job is None:
+                return None
+            if job.provider_job_id and job.provider_job_id != provider_job_id:
+                raise ValueError("video job was already queued with a different provider id")
+            if job.provider_job_id and (
+                job.provider != provider
+                or job.endpoint_id != endpoint_id
+                or job.provider_model != provider_model
+                or job.quoted_microdollars != quoted_microdollars
+            ):
+                raise ValueError("video job was already queued with different route metadata")
+            old_due = _video_due_id(job)
+            job.provider_job_id = provider_job_id
+            job.provider = provider
+            job.endpoint_id = endpoint_id
+            job.provider_model = provider_model
+            job.quoted_microdollars = quoted_microdollars
+            if job.status == "submitting":
+                job.status = "pending"
+            job.next_poll_at = _iso_after_seconds(poll_after_seconds)
+            job.updated_at = iso_now()
+            self._write_entity_tx(conn, "video_job", job.id, job)
+            # Delete BEFORE writing the new pointer: when next_poll_at is
+            # unchanged both ids are equal, and deleting second would remove
+            # the row we just wrote and drop the job out of the queue forever.
+            self._delete_entity_tx(conn, "video_job_due", old_due)
+            self._write_entity_tx(
+                conn,
+                "video_job_due",
+                _video_due_id(job),
+                {"job_id": job.id, "next_poll_at": job.next_poll_at},
+            )
+            return job
+
+        return self._run_transaction(txn)
 
     def claim_video_jobs(
         self,
@@ -2067,7 +2228,42 @@ class PostgresStore:
         limit: int,
         lease_seconds: int,
     ) -> list[VideoJob]:
-        self._not_implemented("claim_video_jobs")
+        # Lease claim. Correctness requirement: two pollers must never claim
+        # the same job, or the provider is polled twice and a completion can be
+        # billed twice. Each candidate is locked FOR UPDATE and re-checked with
+        # the shared _is_due predicate INSIDE the transaction, so the loser of a
+        # race observes the winner's lease and skips.
+        now = iso_now()
+        lease_until = _iso_after_seconds(lease_seconds)
+
+        claimed: list[VideoJob] = []
+        for pointer in self._list_entities(
+            "video_job_due", dict, limit=max(limit * 10, limit)
+        ):
+            if len(claimed) >= limit:
+                break
+            # Ids sort as "<next_poll_at>#<job_id>", so the scan is in due
+            # order and the first not-yet-due entry ends it.
+            if str(pointer.get("next_poll_at", "")) > now:
+                break
+            candidate_id = str(pointer.get("job_id", ""))
+            if not candidate_id:
+                continue
+
+            def claim(conn: Any, *, job_id: str = candidate_id) -> VideoJob | None:
+                job = self._read_entity_tx(conn, "video_job", job_id, VideoJob, for_update=True)
+                if job is None or not _is_due(job, now):
+                    return None
+                job.lease_owner = lease_owner
+                job.leased_until = lease_until
+                job.updated_at = now
+                self._write_entity_tx(conn, "video_job", job.id, job)
+                return job
+
+            job = self._run_transaction(claim)
+            if job is not None:
+                claimed.append(job)
+        return claimed
 
     def update_video_job(
         self,
@@ -2080,10 +2276,72 @@ class PostgresStore:
         error: str | None = None,
         poll_after_seconds: int = 5,
     ) -> VideoJob | None:
-        self._not_implemented("update_video_job")
+        def txn(conn: Any) -> VideoJob | None:
+            job = self._read_entity_tx(conn, "video_job", job_id, VideoJob, for_update=True)
+            if job is None:
+                return None
+            if lease_owner is not None and job.lease_owner not in {None, lease_owner}:
+                # Someone else holds the lease; report state, change nothing.
+                return job
+            if job.status in {"completed", "failed"}:
+                # Terminal state is immutable except for repairing a missing
+                # generation link after concurrent regional settlement. This is
+                # monotonic and leaves polling/cleanup indexes unchanged.
+                if (
+                    job.status == "completed"
+                    and status == "completed"
+                    and generation_id
+                    and not job.generation_id
+                ):
+                    job.generation_id = generation_id
+                    job.updated_at = iso_now()
+                    self._write_entity_tx(conn, "video_job", job.id, job)
+                return job
+            old_due = _video_due_id(job)
+            job.status = status
+            job.provider_status = provider_status
+            if generation_id:
+                job.generation_id = generation_id
+            job.last_error = error[:500] if error else None
+            job.attempts += 1
+            job.lease_owner = None
+            job.leased_until = None
+            job.updated_at = iso_now()
+            if status in {"pending", "in_progress"}:
+                job.next_poll_at = _iso_after_seconds(poll_after_seconds)
+            elif status == "completed" and job.cleaned_at is None:
+                if job.content_expires_at is None:
+                    job.content_expires_at = _iso_after_seconds(VIDEO_CONTENT_RETENTION_SECONDS)
+                job.next_poll_at = job.content_expires_at
+            self._write_entity_tx(conn, "video_job", job.id, job)
+            self._delete_entity_tx(conn, "video_job_due", old_due)
+            if status in {"pending", "in_progress", "completed"} and job.cleaned_at is None:
+                self._write_entity_tx(
+                    conn,
+                    "video_job_due",
+                    _video_due_id(job),
+                    {"job_id": job.id, "next_poll_at": job.next_poll_at},
+                )
+            return job
+
+        return self._run_transaction(txn)
 
     def mark_video_job_cleaned(self, job_id: str) -> VideoJob | None:
-        self._not_implemented("mark_video_job_cleaned")
+        def txn(conn: Any) -> VideoJob | None:
+            job = self._read_entity_tx(conn, "video_job", job_id, VideoJob, for_update=True)
+            if job is None:
+                return None
+            if job.cleaned_at is None:
+                old_due = _video_due_id(job)
+                job.cleaned_at = iso_now()
+                job.updated_at = job.cleaned_at
+                job.lease_owner = None
+                job.leased_until = None
+                self._write_entity_tx(conn, "video_job", job.id, job)
+                self._delete_entity_tx(conn, "video_job_due", old_due)
+            return job
+
+        return self._run_transaction(txn)
 
     # Credit ledger ----------------------------------------------------------
 
@@ -3331,7 +3589,11 @@ class PostgresStore:
         return self._run_transaction(list_rollups)
 
     def get_generation(self, generation_id: str) -> Generation | None:
-        self._not_implemented("get_generation")
+        # Gateway-reachable (gateway.py:1285) on the settle REPLAY path,
+        # where it decides whether a stable generation_id may be echoed back.
+        # A miss simply omits the field, which is the documented behaviour
+        # when no generation exists for the authorization.
+        return self._read_entity("generation", generation_id, Generation)
 
     def activity(
         self,
