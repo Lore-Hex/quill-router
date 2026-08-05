@@ -32,9 +32,13 @@ import pytest
 from trusted_router.storage_models import VideoJob
 from trusted_router.store_protocol import Store
 
-from .conftest import BACKENDS
-
-pytestmark = pytest.mark.parametrize("store", list(BACKENDS), indirect=True)
+# NOTE: do NOT re-parametrize `store` here. conftest already parametrizes it
+# over _BACKEND_PARAMS, and those params carry the `xdist_group` marks that
+# serialize DDL for the server-backed backends. A local
+# `pytest.mark.parametrize("store", list(BACKENDS), indirect=True)` overrides
+# them with bare names, the marks are lost, and the Spanner PG emulator then
+# rejects concurrent schema changes across xdist workers with
+# "Schema change operation rejected ... already in progress".
 
 
 def _job(workspace_id: str, unique: str, *, suffix: str = "") -> VideoJob:
