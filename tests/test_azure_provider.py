@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -13,6 +14,7 @@ from scripts.providers.sync_azure_foundry import (
     _stream_text,
     canary_with_retries,
     select_deployment_candidates,
+    write_manifest,
 )
 from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
 
@@ -316,3 +318,49 @@ def test_azure_manifest_registers_prepaid_only_gateway_routes() -> None:
         assert endpoint.prompt_price_microdollars_per_million_tokens > 0
         assert endpoint.completion_price_microdollars_per_million_tokens > 0
         assert f"{model_id}@azure/byok" not in MODEL_ENDPOINTS
+
+
+def test_azure_sync_leaves_unchanged_manifest_byte_identical(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "azure.json"
+    rows = [
+        {
+            "id": "deepseek/deepseek-v4-flash",
+            "upstream_id": "deepseek-v4-flash",
+            "input_token_price_per_m": 190_000,
+            "output_token_price_per_m": 510_000,
+        }
+    ]
+    existing = {
+        "_about": (
+            "Azure AI Foundry deployments verified for this TrustedRouter subscription. "
+            "The automatic sync publishes only synchronous chat deployments with "
+            "remaining quota, exact pricing, and a successful direct PONG canary."
+        ),
+        "provider": "azure",
+        "source": (
+            "https://management.azure.com/providers/Microsoft.CognitiveServices/"
+            "locations/eastus2/models"
+        ),
+        "pricing_source": sync.PRICING_URL,
+        "generated_at": "2026-01-01T00:00:00Z",
+        "price_scale": "microdollars_per_million",
+        "model_count": 1,
+        "models": rows,
+    }
+    manifest_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+    before = manifest_path.read_bytes()
+    monkeypatch.setattr(sync, "MANIFEST_PATH", manifest_path)
+
+    assert write_manifest(rows) is False
+    assert manifest_path.read_bytes() == before
+
+
+def test_azure_secret_uploader_is_managed() -> None:
+    root = azure.MANIFEST_PATH.parents[4]
+    secrets_script = (root / "scripts/deploy/secrets.sh").read_text(encoding="utf-8")
+
+    assert '"AZURE_API_KEY"' in secrets_script
+    assert '"trustedrouter-azure-api-key"' in secrets_script
