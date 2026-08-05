@@ -116,6 +116,7 @@ PROVIDER_SLUGS = [
     "morph",
     "atlas_cloud",
     "streamlake",
+    "scaleway",
     "neurometric",
     "engy",
     # 0G Private Computer publishes exact per-route prices and trust metadata
