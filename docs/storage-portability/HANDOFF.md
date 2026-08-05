@@ -1,6 +1,6 @@
 # HANDOFF — multi-cloud + ClickHouse analytics
 
-**Last updated 2026-07-31.** Written for an agent taking this over cold. Read
+**Last updated 2026-08-05.** Written for an agent taking this over cold. Read
 [`multi-cloud-separation.md`](multi-cloud-separation.md) and
 [`analytics-ingestion.md`](analytics-ingestion.md) for the *why*; this document is the *where
 we are and what is next*.
@@ -37,8 +37,9 @@ operational wide-column store and was never a columnar warehouse.
 | Provider portal read cutover | **Live** through private regional load balancer |
 | Immutable Parquet archive | **Live**, verified daily revisions in GCS, seven-year retention |
 | Hour/day/month rollups | **Live**, parity-gated atomic partition replacement |
-| AWS deployment | **Not started** |
-| Azure deployment | **Not started** |
+| AWS deployment | **Serving and attesting** — Nitro enclave + Fargate control plane |
+| Azure deployment | **Serving and attesting** — SEV-SNP/MAA enclave + Container App control plane |
+| Per-cloud *control-plane* independence | **Not yet** — all three enclaves still dial GCP fail-closed (§4.5) |
 
 ### The single most useful result
 
@@ -61,6 +62,41 @@ the "different money code per backend" risk — there is one implementation.
 ---
 
 ## 3. What is running in production right now
+
+### 3.1 Three clouds, all serving and all attesting
+
+Verified live 2026-08-05, each with a negative control (a deliberately wrong measurement must
+fail, or the check proves nothing):
+
+| | gateway | TEE + evidence | measurement | control plane |
+|---|---|---|---|---|
+| GCP | `api.trustedrouter.com` | Confidential Space, Google-signed OIDC JWT | `image_digest sha256:873c2a37…` — matches the trust page | `trustedrouter.com`, 451 models |
+| AWS | `api-aws.trustedrouter.com` | Nitro, COSE_Sign1 → `aws-nitro-root.pem` in-repo | PCR0 | `aws.trustedrouter.com` → Global Accelerator `tr-eu-control-plane` → NLB → Fargate `tr-cp-euw1`/`tr-cp-euw3`, 448 models |
+| Azure | `api-azure.trustedrouter.com` | SEV-SNP via MAA `trquilluaen.uaen.attest.azure.net` | `hostdata 1d3429b3eaaf66b1…` | `azure.trustedrouter.com`, 451 models |
+
+Reproduce (Azure needs both pins; the hostdata must be derived **independently** of the token,
+or you are just checking the token against itself):
+
+```bash
+python3 tools/verify-attestation.py --api-host api.trustedrouter.com
+python3 tools/verify-attestation.py --api-host api-aws.trustedrouter.com --attested-cert-only
+HD=$(az container show --name quill-enclave-uaenorth --resource-group TR-TEE-DUBAI \
+      --query confidentialComputeProperties.ccePolicy -o tsv | base64 -d | shasum -a 256 | cut -d' ' -f1)
+python3 tools/verify-attestation.py --api-host api-azure.trustedrouter.com \
+  --expected-maa-issuer https://trquilluaen.uaen.attest.azure.net --expected-hostdata "$HD"
+```
+
+**The 448-vs-451 model drift is real**, not rounding: the AWS control plane is behind. Reconcile
+before making it authoritative for its own traffic.
+
+**Certificates differ by design.** AWS mints a self-signed cert *inside* the TEE
+(`O=Quill Cloud (attested enclave)`) and clients verify by attestation — no CA in the trust
+path at all. GCP and Azure use ACME/Let's Encrypt for browser friendliness, which is why §4.6
+item 3 only affects those two.
+
+**L4 passthrough is mandatory.** Global Accelerator and NLB never terminate TLS. Anything that
+does — Azure Front Door, an ALB, a CDN — **voids attestation**, because the enclave mints the
+leaf inside the TEE and the attestation document binds that exact leaf.
 
 ### ClickHouse cluster
 
@@ -109,7 +145,13 @@ registry, bootstrap) only. **Do not build application data flow on it.**
 
 ---
 
-## 4. Next tasks, in order
+## 4. Next tasks
+
+**Priority order is now 4.6 → 4.5 → 4.1 → the analytics items.** This section was written when
+the clouds did not exist yet, so 4.1–4.4 are listed first for historical continuity; they are
+no longer what is blocking. Read **4.5 and 4.6 first** — everything else raises a per-cloud
+number, while 4.5 is the term that currently caps AWS and Azure at GCP's availability no matter
+how many regions get added.
 
 ### 4.1 Clean up Spanner before adding clouds — issue #334
 
@@ -147,29 +189,81 @@ aggregation. `clickhouse/prove_leaderboard.py` exists as a starting point.
 It reports drift and **exits 1**, so the systemd unit reports failure hourly with no repair
 path. Wire the backfill in as remediation, or make the exit code meaningful and alert on it.
 
-### 4.5 AWS deployment
+### 4.5 THE ONE THAT MATTERS NOW: every enclave still dials GCP, fail-closed
 
-`PostgresStore` on **Aurora DSQL**, its own database, its own credits. Prior AWS tooling exists
-in `quill-cloud-proxy/tools/` (`deploy-aws-control-plane.sh`, `deploy-aws-nitro.sh`,
-`sync-secrets-to-aws.sh`) but **the AWS account is currently empty** — everything was torn
-down. Also note `scripts/entrypoint.sh` had its cross-cloud unwrap path deleted at some point,
-so the old task definition's `GCP_SA_KEY_KMS_WRAPPED` was consumed by nothing: "AWS worked
-before" is not true as-built.
+All three clouds serve and attest (§3.1). Independence does **not** follow, because every
+enclave — GCP, AWS *and* Azure — sets `TR_CONTROL_PLANE_BASE_URL=https://trustedrouter.com`
+(`deploy-gcp-mig.sh:162`, `deploy-aws-nitro.sh:808`, `deploy-azure-aci.sh:199`) and
+authorization is fail-closed by design (`main.go:631` — `AuthorizeWithRoute` error → write
+error → return). Fail-closed is **correct**: serving an unauthorized request is free inference
+and a lost usage record. The defect is *where the authorizer lives*.
 
-First real milestone: run `tests/conformance/` against a live DSQL cluster. Watch for DSQL's
-optimistic concurrency (every abort is `40001`) and its DDL restrictions.
+So today **AWS's and Azure's availability are capped by GCP's control plane**, and no DNS or
+regional arrangement changes that. Client-side SDK failover buys nothing until this is fixed:
+failing over to AWS during a GCP outage just reaches an enclave that dials GCP to authorize.
 
-### 4.6 Azure deployment
+The per-cloud control planes already exist and serve (§3.1). What blocks the flip is that
+**the control-plane address is inside the attestation measurement**:
 
-`PostgresStore` on **Cosmos DB for PostgreSQL (Citus)**, distributed on `workspace_id` — the
-schema is already keyed for it. Subscription is live: `2fc83893-ca6c-48e4-b090-8860fba33d33`,
-tenant `2abe2fae-5c28-491d-af5a-6255b33e534e`. First milestone is again the conformance suite
-against the real cluster; watch whether Citus accepts `INSERT ... ON CONFLICT DO NOTHING` with
-the conflict target on a distributed table (ours puts the distribution column in the conflict
-target, which is the supported case, but confirm rather than assume).
+* **AWS** — the permitted hosts are a *compiled-in* vsock allowlist,
+  `enclave-go/internal/trustedrouter/http_client_aws.go:28`. A Nitro enclave has no network
+  stack; it reaches the outside only through vsock tunnels to the parent, and that list lives
+  in the binary inside the EIF, which is what **PCR0 measures**. The parent half
+  (`write_vsock_unit` + the `vsock-proxy.yaml` address allowlist in `deploy-aws-nitro.sh`) is
+  *not* measured — both halves must move together or the enclave simply cannot dial.
+* **Azure** — `TR_CONTROL_PLANE_BASE_URL` is container env baked into the CCE policy, so it
+  lands in `x-ms-sevsnpvm-hostdata`. Changing it invalidates the Key Vault SKR release policy
+  **and** every `--expected-hostdata` pin. Wrong order → Key Vault 403 at boot → the container
+  group exits. This deadlock has been hit on this project before.
 
-`attestation_azure.go` is an unmerged spike on branch `azure-attestation` in
-`quill-cloud-proxy`, build-tag gated `cloud_azure`, never hardware-verified.
+Money correctness is **already solved**: federation plus deferred settlement (merged) let a
+peer admit spend locally against a conditional-UPDATE cap and forward the debt to the home
+ledger. What remains is a measurement-coordination problem, not an architecture problem.
+
+**Do it once.** Measure a *stable per-cloud* name (`control-aws.` / `control-azure.`) rather
+than a concrete endpoint, so future re-homing inside a cloud is a DNS change with no
+measurement churn. `aws.trustedrouter.com` already resolves to the AWS control plane.
+
+**Bake in backup names in the same rebuild.** `trustedrouter.com` is on Google Cloud DNS;
+`uptimerouter.com` and `allyrouter.com` are on AWS Route 53 (zones `Z00893363GIOMU7Z8647K`,
+`Z09662142UE0IQL51B13V`). An enclave that can only reach a control plane via a
+`trustedrouter.com` name is stranded by a Cloud DNS failure even when the control plane is
+healthy. Because the allowlist is measured, alternates **cannot** be added later without
+another PCR0 rebuild and fleet-wide re-pin.
+
+Note the allowlist only grants *permission* to dial; it does not retry. Ordered failover has
+to be added in the client, and it needs a **per-operation** policy — retrying `authorize`
+elsewhere can double-reserve and retrying `settle` can double-book. Do not ship blanket retry
+on the money path.
+
+### 4.6 Blockers that must land before the flip
+
+1. **`PostgresStore` could not serve `authorize` at all** — PR #452. Eleven gateway-reachable
+   methods still raised `NotImplementedError`; four from `gateway.py`, seven from the video job
+   queue. Both peer planes run `TR_STORAGE_BACKEND=postgres` while every enclave dialled GCP
+   (Spanner), so that path had **never served a real request**. Worse,
+   `list_broadcast_destinations` is called at `gateway.py:616`, *after* `reserve_key_limit`,
+   `STORE.reserve` and `create_gateway_authorization` commit — so every attempt would have
+   stranded a credit reservation with no authorization id to settle or refund against.
+2. **TLS session resumption attests the wrong certificate** — reproduced live on all three GCP
+   replicas. `cert.go` pre-seeds each connection's leaf from a *process-global*, and Go's TLS
+   1.3 server never calls `GetCertificate` on a resumed (PSK) handshake, so the pre-seed
+   survives and becomes the attested leaf. Fails closed at the verifier, and
+   `reconcile-enclave-dns.py` health-gates on that verifier — so a mis-bind can drain a healthy
+   instance out of DNS. **Do not "just delete the pre-seed"**: `GetCertificate` exists only in
+   `NewACME`; `NewSelfSigned` (the AWS path) never calls it, so the pre-seed is that path's
+   only writer and removing it 503s the entire AWS fleet.
+3. **ACME has no fallback** — `NewACME` returns autocert's error and the handshake dies with
+   alert 80. Let's Encrypt is a *hard* availability dependency shared across GCP and Azure, and
+   the DNS-health reconciler amplifies an LE outage into a fleet drain. AWS is immune only
+   because it uses a self-signed attested cert.
+4. **Azure's measurement is published nowhere.** The trust page carries GCP's `image_digest`
+   and AWS's PCR0 but zero Azure hostdata, and the verifier correctly refuses an MAA token
+   without `--expected-hostdata` (MAA will attest *any* caller's hardware, so an unrelated
+   confidential container attesting against the same instance yields a genuine-but-wrong
+   token). Today the only way to obtain the pin is `az container show` against the
+   subscription, which no third party has — so Azure attestation is currently unverifiable
+   from outside.
 
 ### 4.7 Per-cloud status pages
 
@@ -189,6 +283,64 @@ So AWS and Azure simply never schedule the throughput commands. No cross-cloud p
 ---
 
 ## 5. Traps that have already cost real debugging time
+
+**"Configured" is not "working", and this program's green signals lie in a specific way.**
+Both peer control planes returned 200 on `/v1/models` and had green status pages while their
+`authorize` path could not execute a single request. The status probes target
+`api-aws`/`api-azure.trustedrouter.com` — the **enclaves** — and those dial `trustedrouter.com`,
+so every green check was exercising GCP's Spanner store. Before trusting a peer signal, ask
+*which backend did that request actually reach*.
+
+**A conformance suite that skips proves nothing.** `tests/conformance`'s Postgres backend
+`pytest.skip()`s unless `TR_CONFORMANCE_POSTGRES_DSN` is set, so it is normally not running.
+Stand up the real thing — it takes seconds and it is how the eleven unimplemented methods were
+actually verified fixed:
+
+```bash
+docker run -d --rm --name tr-conf-pg -e POSTGRES_PASSWORD=conf -e POSTGRES_DB=trconf -p 55433:5432 postgres:17-alpine
+```
+
+**A method that *exists* is not a method that *works*.** `_not_implemented` satisfies every
+structural Protocol check and every mypy signature test, then raises at runtime. The guard for
+this is now static (`tests/test_store_protocol_conformance.py`) precisely so it runs when the
+behavioural backend is skipped.
+
+**`_` is a LIKE wildcard.** Secondary-index ids are `<owner>#<rest>` and owner ids contain `_`,
+so `id LIKE 'ws_abc#%'` also matches `wsXabc#…` — one tenant's prefix scan returning another
+tenant's rows. Escape the prefix; `storage_postgres.py` has `_like_prefix` for this.
+
+**Delete the old index row before writing the new one.** In the video-job queue, when
+`next_poll_at` is unchanged the old and new due-ids are *equal*, so deleting second removes the
+row just written and the job leaves the queue permanently.
+
+**Attestation questions must be asked about the resumed handshake too.** An 18-probe
+concurrent mixed-SNI test passed and was reported as proof that multi-hostname binding was
+safe. It only ever opened *fresh* connections. On a TLS 1.3 **resumed** session the binding is
+wrong (§4.6 item 2). RFC 9266 channel binding cannot detect it — the exporter is correct on a
+resumed session, so it passes while the leaf is wrong.
+
+**Splitting DNS providers per cloud is arithmetically negative for a subdomain.**
+`api-azure.trustedrouter.com` is a subdomain of a Cloud-DNS-hosted apex, so a resolver must
+traverse Cloud DNS to reach the Azure NS referral: two *serial* dependencies, not two parallel
+ones. Three separate refutations killed this idea; it is recorded here so it is not
+rediscovered as clever.
+
+**Let's Encrypt rate limits key per hostname, not per registered domain.** The duplicate limit
+is per identical identifier set and the failed-validation limit is per account per hostname;
+only the 50/week limit keys on the registered domain and it fires ten times later. A new
+*subdomain* gives exactly the same relief as a new registered domain, for free. And the shared
+ACME cache is not a rate-limit device — it exists to distribute the TLS-ALPN-01 **challenge
+token** across replicas.
+
+**Running the test suite mutates tracked assets.** A full `pytest` leaves
+`src/trusted_router/static/og/providers/{friendli.png,manifest.json}` dirty, which breaks a
+`git rebase` mid-flow and would slip regenerated binaries into an unrelated `git commit -a`.
+Three tests are also red at `HEAD` on a clean checkout
+(`test_friendli_tombstones_second_miss_then_restores_annotations` and the two
+`test_provider_branding` social-card tests) — verified in a detached worktree at `HEAD`, so
+they are not anyone's local mess. The branding tests pass against the *regenerated* assets and
+fail against the *committed* ones, which means local green depends on whether you have run the
+suite before. Fix by making the generator tests write to `tmp_path`.
 
 **`created_at` is not commit order.** The Bigtable row key is derived from *event* time. A row
 committing late sorts behind an already-consumed range and is **missed forever**. This is why
