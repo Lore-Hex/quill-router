@@ -64,6 +64,12 @@ def test_makora_fetches_authenticated_model_pricing_api() -> None:
     assert makora.MODELS_URL == "https://inference.makora.com/v1/models"
 
 
+def test_makora_required_models_follow_august_2026_lineup() -> None:
+    assert "deepseek/deepseek-v4-pro" in makora.RETIRED_MODELS
+    assert "deepseek/deepseek-v4-pro" not in makora.EXPECTED_MODELS
+    assert "moonshotai/kimi-k3" in makora.EXPECTED_MODELS
+
+
 def test_makora_live_api_discovers_and_prices_new_models_without_parser_changes(
     tmp_path: Path,
     monkeypatch,
@@ -123,6 +129,68 @@ def test_makora_live_api_discovers_and_prices_new_models_without_parser_changes(
     assert makora._DISCOVERED_MANIFEST_ROWS["qwen/qwen4-next"][  # noqa: SLF001
         "input_modalities"
     ] == ["text", "image"]
+
+
+def test_makora_live_api_keeps_retired_v4_pro_disabled_and_accepts_launch_updates(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    manifest = tmp_path / "makora.json"
+    manifest.write_text('{"models": []}', encoding="utf-8")
+    monkeypatch.setattr(makora, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(
+        makora,
+        "EXPECTED_MODELS",
+        [
+            "deepseek/deepseek-v4-flash-0731",
+            "moonshotai/kimi-k3",
+        ],
+    )
+    monkeypatch.setenv("MAKORA_API_KEY", "test-key")
+    monkeypatch.setattr(
+        makora,
+        "fetch_json",
+        lambda *_args, **_kwargs: {
+            "data": [
+                {
+                    "id": "deepseek-ai/DeepSeek-V4-Pro",
+                    "pricing": {
+                        "prompt": "0.00000139",
+                        "completion": "0.00000279",
+                    },
+                },
+                {
+                    "id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+                    "pricing": {
+                        "prompt": "0.00000009",
+                        "completion": "0.000000195",
+                    },
+                },
+                {
+                    "id": "moonshotai/Kimi-K3",
+                    "pricing": {
+                        "prompt": "0.00000255",
+                        "completion": "0.00001275",
+                        "input_cache_read": "0.000000255",
+                    },
+                },
+            ]
+        },
+    )
+
+    result = makora.fetch()
+
+    assert "deepseek/deepseek-v4-pro" not in result.prices
+    assert "deepseek/deepseek-v4-pro" not in makora._DISCOVERED_MANIFEST_ROWS  # noqa: SLF001
+    assert result.prices["deepseek/deepseek-v4-flash-0731"] == ModelPrice(
+        90_000,
+        195_000,
+    )
+    assert result.prices["moonshotai/kimi-k3"] == ModelPrice(
+        2_550_000,
+        12_750_000,
+        prompt_cached_micro_per_m=255_000,
+    )
 
 
 def test_makora_parser_extracts_public_lineup_prices() -> None:
