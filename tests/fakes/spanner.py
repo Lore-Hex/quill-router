@@ -1957,6 +1957,7 @@ def make_fake_store(
     from trusted_router.storage_gcp_auth_sessions import SpannerAuthSessions
     from trusted_router.storage_gcp_broadcast import SpannerBroadcastDestinations
     from trusted_router.storage_gcp_byok import SpannerByok
+    from trusted_router.storage_gcp_custom_models import SpannerCustomModels
     from trusted_router.storage_gcp_email_blocks import SpannerEmailBlocks
     from trusted_router.storage_gcp_generations import SpannerGenerations
     from trusted_router.storage_gcp_group_buy import SpannerBedrockGroupBuy
@@ -2026,6 +2027,7 @@ def make_fake_store(
         operational_analytics_outbox=store._operational_analytics_outbox,
     )
     store.byok_store = SpannerByok(io)
+    store.custom_model_store = SpannerCustomModels(io)
     store.broadcast_store = SpannerBroadcastDestinations(io)
     store.video_job_store = SpannerVideoJobs(io)
     store.settle_outbox = SpannerSettleOutbox(store._database, store._param_types)
