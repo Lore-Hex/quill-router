@@ -487,8 +487,8 @@ def manifest_row(candidate: DeploymentCandidate, price: Any) -> dict[str, Any]:
     return row
 
 
-def write_manifest(rows: list[dict[str, Any]]) -> None:
-    payload = {
+def write_manifest(rows: list[dict[str, Any]]) -> bool:
+    stable_payload = {
         "_about": (
             "Azure AI Foundry deployments verified for this TrustedRouter subscription. "
             "The automatic sync publishes only synchronous chat deployments with "
@@ -500,15 +500,26 @@ def write_manifest(rows: list[dict[str, Any]]) -> None:
             "locations/eastus2/models"
         ),
         "pricing_source": PRICING_URL,
-        "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "price_scale": "microdollars_per_million",
         "model_count": len(rows),
         "models": sorted(rows, key=lambda row: str(row["id"])),
+    }
+    if MANIFEST_PATH.exists():
+        existing = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+        if isinstance(existing, dict):
+            existing_without_timestamp = dict(existing)
+            existing_without_timestamp.pop("generated_at", None)
+            if existing_without_timestamp == stable_payload:
+                return False
+    payload = {
+        **stable_payload,
+        "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
     }
     MANIFEST_PATH.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+    return True
 
 
 def _load_json(path: str | None, fetcher: Any) -> list[dict[str, Any]]:
@@ -587,8 +598,9 @@ def main() -> int:
 
     if not healthy_rows:
         raise RuntimeError("Azure sync produced no healthy model routes; manifest unchanged")
-    write_manifest(healthy_rows)
-    print(f"Azure: published {len(healthy_rows)} healthy route(s)")
+    changed = write_manifest(healthy_rows)
+    state = "updated" if changed else "unchanged"
+    print(f"Azure: published {len(healthy_rows)} healthy route(s); manifest {state}")
     if failures:
         print(f"Azure: {len(failures)} model(s) remain dark", file=sys.stderr)
     return 0
