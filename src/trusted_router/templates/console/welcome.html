@@ -1,14 +1,11 @@
 {% extends "console/_layout.html" %}
+{% from "console/_api_key_reveal.html" import api_key_reveal %}
 {% block body %}
 <section class="panel">
   <div class="panel-head"><h2>Save this key. It will not be shown again</h2><span class="pill warn">one time reveal</span></div>
   <div class="panel-body">
     {% if revealed_key %}
-    <div class="signup-reveal">
-      <div class="signup-reveal-head">Your TrustedRouter API key</div>
-      <div class="secret-row"><code>{{ revealed_key }}</code></div>
-      <div class="signup-foot signup-foot-flush">Workspace <span class="mono">{{ workspace_name }}</span></div>
-    </div>
+    {{ api_key_reveal(revealed_key, "welcome", workspace_name) }}
     {% if trial_credit_microdollars > 0 %}
     <p class="microcopy">Your workspace is ready. Try a fast, inexpensive model now.</p>
     {% else %}
