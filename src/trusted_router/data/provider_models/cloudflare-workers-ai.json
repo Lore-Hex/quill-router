@@ -1,7 +1,7 @@
 {
   "provider": "cloudflare-workers-ai",
   "source": "https://api.cloudflare.com/client/v4/accounts/2698c706fd4793c818af14adad4e1a39/ai/models/search?per_page=100",
-  "generated_at": "2026-08-05T07:41:34Z",
+  "generated_at": "2026-08-05T10:38:01Z",
   "price_scale": "microdollars_per_million",
   "model_count": 27,
   "models": [

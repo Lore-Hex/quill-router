@@ -180,11 +180,11 @@
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 940000,
+      "input_token_price_per_m": 750000,
       "output_token_price_per_m": 2900000,
       "cached_input_token_price_per_m": 170000
     }
   ],
-  "generated_at": "2026-08-05T07:41:34Z",
+  "generated_at": "2026-08-05T10:38:01Z",
   "model_count": 4
 }
