@@ -25,6 +25,7 @@ from trusted_router.synthetic.components import (
     component_name,
     component_probe_types,
     published_gateway_region_components,
+    published_machine_region_components,
     rollup_slo_class_ids,
     sample_component_ids,
     sample_slo_class_ids,
@@ -103,7 +104,7 @@ def status_snapshot(
     # resolve, and mixing in diagnostic per-region probes would triple the
     # denominator of a published SLO.
     current = _current_status(
-        router_core_samples + _gateway_region_samples(ordered, settings=settings),
+        router_core_samples + _machine_region_samples(ordered, settings=settings),
         now=now,
     )
     router_core_rollups = [
@@ -261,15 +262,15 @@ def _headline_metrics(samples: list[SyntheticProbeSample], *, now: dt.datetime) 
     }
 
 
-def _gateway_region_samples(
+def _machine_region_samples(
     samples: list[SyntheticProbeSample],
     *,
     settings: Settings,
 ) -> list[SyntheticProbeSample]:
-    """Gateway samples from the pinned per-region targets this cloud publishes."""
+    """Regional gateway samples consumed by deploy and watchdog automation."""
     published = {
         COMPONENT_PROBE_TARGETS[component_id]
-        for component_id in published_gateway_region_components(settings)
+        for component_id in published_machine_region_components(settings)
     }
     if not published:
         return []

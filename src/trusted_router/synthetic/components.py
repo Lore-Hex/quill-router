@@ -202,6 +202,17 @@ COMPONENT_PROBE_TARGETS: dict[str, str] = {
 GATEWAY_REGION_COMPONENT_IDS: frozenset[str] = frozenset(
     {"eu_west_1_gateway", "eu_west_3_gateway", "uaenorth_gateway"}
 )
+# Regional API components also feed deploy automation through
+# status.current.checks. Keep this set separate from
+# GATEWAY_REGION_COMPONENT_IDS: the latter deliberately controls the public
+# overall-status banner for pinned failover gateways, while these GCP rows
+# must remain diagnostic and outside the router-core SLO.
+REGIONAL_API_COMPONENT_IDS: frozenset[str] = frozenset(
+    {"us_central1_regional_api", "us_east4_regional_api", "eu_regional_api"}
+)
+MACHINE_REGION_COMPONENT_IDS: frozenset[str] = (
+    GATEWAY_REGION_COMPONENT_IDS | REGIONAL_API_COMPONENT_IDS
+)
 # Their probe target names, derived from the map above so the two cannot
 # drift apart.
 GATEWAY_REGION_TARGET_NAMES: frozenset[str] = frozenset(
@@ -274,6 +285,17 @@ def published_gateway_region_components(settings: Settings) -> tuple[str, ...]:
         str(definition["id"])
         for definition in COMPONENT_DEFINITIONS
         if str(definition["id"]) in GATEWAY_REGION_COMPONENT_IDS
+        and str(definition["id"]) in published
+    )
+
+
+def published_machine_region_components(settings: Settings) -> tuple[str, ...]:
+    """Regional component ids exposed to deploy and watchdog automation."""
+    published = {str(definition["id"]) for definition in applicable_component_definitions(settings)}
+    return tuple(
+        str(definition["id"])
+        for definition in COMPONENT_DEFINITIONS
+        if str(definition["id"]) in MACHINE_REGION_COMPONENT_IDS
         and str(definition["id"]) in published
     )
 
