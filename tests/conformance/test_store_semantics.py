@@ -75,11 +75,14 @@ def _credit_and_key(
     unique: str,
     amount_microdollars: int,
 ) -> str:
-    assert store.credit_workspace_once(
-        workspace_id,
-        amount_microdollars,
-        f"evt-reservation-{unique}",
-    ) is True
+    assert (
+        store.credit_workspace_once(
+            workspace_id,
+            amount_microdollars,
+            f"evt-reservation-{unique}",
+        )
+        is True
+    )
     _raw_key, key = store.create_api_key(
         workspace_id=workspace_id,
         name=f"reservation-{unique}",
@@ -128,14 +131,10 @@ def test_reserve_then_settle_more_books_full_actual(
 
     # Correct state is credits=100, usage=120, reserved=0: a 20 top-up only
     # reaches zero, and the next microdollar creates exactly one of capacity.
-    assert store.credit_workspace_once(
-        workspace_id, 20, f"evt-overage-zero-{unique}"
-    ) is True
+    assert store.credit_workspace_once(workspace_id, 20, f"evt-overage-zero-{unique}") is True
     with pytest.raises(ValueError, match="insufficient credits"):
         store.reserve(workspace_id, key_hash, 1)
-    assert store.credit_workspace_once(
-        workspace_id, 1, f"evt-overage-positive-{unique}"
-    ) is True
+    assert store.credit_workspace_once(workspace_id, 1, f"evt-overage-positive-{unique}") is True
     _assert_exact_available_capacity(store, workspace_id, key_hash, 1, unique)
 
 
@@ -150,9 +149,7 @@ def test_reserve_then_refund_restores_exact_balance(
     _assert_exact_available_capacity(store, workspace_id, key_hash, 100, unique)
 
 
-def test_settle_is_idempotent(
-    store: Store, workspace_id: str, unique: str
-) -> None:
+def test_settle_is_idempotent(store: Store, workspace_id: str, unique: str) -> None:
     """A replay releases and charges once, even after the first call returned."""
     key_hash = _credit_and_key(store, workspace_id, unique, 100)
     reservation = store.reserve(workspace_id, key_hash, 60)
@@ -163,9 +160,7 @@ def test_settle_is_idempotent(
     _assert_exact_available_capacity(store, workspace_id, key_hash, 80, unique)
 
 
-def test_refund_is_idempotent(
-    store: Store, workspace_id: str, unique: str
-) -> None:
+def test_refund_is_idempotent(store: Store, workspace_id: str, unique: str) -> None:
     """A refund replay releases the recorded hold exactly once."""
     key_hash = _credit_and_key(store, workspace_id, unique, 100)
     reservation = store.reserve(workspace_id, key_hash, 60)
@@ -303,9 +298,7 @@ def test_oauth_authorization_code_is_single_use(store: Store, workspace_id: str)
 # --------------------------------------------------------------------------
 
 
-def test_workspace_is_readable_immediately_after_creation(
-    store: Store, workspace_id: str
-) -> None:
+def test_workspace_is_readable_immediately_after_creation(store: Store, workspace_id: str) -> None:
     """No backend may require a settling delay for its own write.
 
     Route code creates a workspace and immediately reads it back in the same
@@ -316,9 +309,7 @@ def test_workspace_is_readable_immediately_after_creation(
     assert str(fetched.id) == workspace_id
 
 
-def test_api_key_lookups_agree_and_delete_revokes(
-    store: Store, workspace_id: str
-) -> None:
+def test_api_key_lookups_agree_and_delete_revokes(store: Store, workspace_id: str) -> None:
     """Every key lookup path must resolve to the same key, and delete must
     actually revoke it.
 
@@ -462,9 +453,7 @@ def test_synthetic_probe_samples_return_newest_first_and_respect_limit(
     ]
 
 
-def test_synthetic_probe_samples_apply_status_reader_filters(
-    store: Store, unique: str
-) -> None:
+def test_synthetic_probe_samples_apply_status_reader_filters(store: Store, unique: str) -> None:
     """Date and route dimensions must not leak unrelated deployment checks."""
     now = dt.datetime.now(dt.UTC).replace(microsecond=0)
     date = now.date().isoformat()
@@ -521,9 +510,9 @@ def test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option(
     # every row and the assertions saw an empty list. 4,000 hours (~166
     # days) keeps every generated window recent, and uniqueness comes from
     # filtering to this test's own target below, not from the time range.
-    now = dt.datetime.now(dt.UTC).replace(
-        minute=10, second=0, microsecond=0
-    ) - dt.timedelta(hours=3 + int(unique, 16) % 4_000)
+    now = dt.datetime.now(dt.UTC).replace(minute=10, second=0, microsecond=0) - dt.timedelta(
+        hours=3 + int(unique, 16) % 4_000
+    )
     target = f"status-{unique}"
     probe_type = f"probe-{unique}"
     monitor_region = f"monitor-{unique}"
@@ -544,13 +533,9 @@ def test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option(
     # Re-delivery must not increment the aggregate twice.
     store.record_synthetic_probe_sample(samples[-1])
 
-    oldest_start = _iso_utc(
-        (now - dt.timedelta(hours=2)).replace(minute=0)
-    )
+    oldest_start = _iso_utc((now - dt.timedelta(hours=2)).replace(minute=0))
     newest_start = _iso_utc(now.replace(minute=0))
-    middle_start = _iso_utc(
-        (now - dt.timedelta(hours=1)).replace(minute=0)
-    )
+    middle_start = _iso_utc((now - dt.timedelta(hours=1)).replace(minute=0))
     # A persistent conformance database may hold foreign rows in the same
     # hours, so exact-membership assertions go through this test's own
     # target; the limit clause is asserted as a pure cap + newest-first
@@ -648,8 +633,7 @@ def test_key_limit_window_columns_and_index_exist(store: Store, unique: str) -> 
 
     with pool.connection() as conn:
         rows = conn.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name = 'tr_key_limit'"
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'tr_key_limit'"
         ).fetchall()
     columns = {str(row[0]) for row in rows}
 
@@ -702,7 +686,9 @@ def _key_limit_row(store: Store, key_hash: str) -> dict[str, object]:
 
 def test_reserve_key_limit_enforces_lifetime_cap(store: Store, unique: str) -> None:
     kh = f"kl-cap-{unique}"
-    _seed_key_limit(store, kh, limit_micro=100, usage=0, byok_usage=0, reserved=0, include_byok=True)
+    _seed_key_limit(
+        store, kh, limit_micro=100, usage=0, byok_usage=0, reserved=0, include_byok=True
+    )
 
     store.reserve_key_limit(kh, 60, usage_type="Credits")
     assert _key_limit_row(store, kh)["reserved"] == 60
@@ -715,7 +701,9 @@ def test_reserve_key_limit_enforces_lifetime_cap(store: Store, unique: str) -> N
 
 def test_reserve_key_limit_uncapped_is_noop(store: Store, unique: str) -> None:
     kh = f"kl-uncapped-{unique}"
-    _seed_key_limit(store, kh, limit_micro=None, usage=0, byok_usage=0, reserved=0, include_byok=True)
+    _seed_key_limit(
+        store, kh, limit_micro=None, usage=0, byok_usage=0, reserved=0, include_byok=True
+    )
     store.reserve_key_limit(kh, 10_000_000, usage_type="Credits")
     assert _key_limit_row(store, kh)["reserved"] == 0
 
@@ -724,14 +712,18 @@ def test_reserve_key_limit_byok_excluded_is_noop(store: Store, unique: str) -> N
     """A BYOK request against a key that excludes BYOK must not consume the
     key's cap — the customer is paying the provider directly."""
     kh = f"kl-byok-{unique}"
-    _seed_key_limit(store, kh, limit_micro=100, usage=0, byok_usage=0, reserved=0, include_byok=False)
+    _seed_key_limit(
+        store, kh, limit_micro=100, usage=0, byok_usage=0, reserved=0, include_byok=False
+    )
     store.reserve_key_limit(kh, 5_000, usage_type="BYOK")
     assert _key_limit_row(store, kh)["reserved"] == 0
 
 
 def test_reserve_key_limit_counts_byok_when_included(store: Store, unique: str) -> None:
     kh = f"kl-byok-in-{unique}"
-    _seed_key_limit(store, kh, limit_micro=100, usage=0, byok_usage=90, reserved=0, include_byok=True)
+    _seed_key_limit(
+        store, kh, limit_micro=100, usage=0, byok_usage=90, reserved=0, include_byok=True
+    )
     # 90 BYOK already used against a 100 cap leaves 10.
     with pytest.raises(ValueError):
         store.reserve_key_limit(kh, 20, usage_type="Credits")
@@ -747,9 +739,16 @@ def test_reserve_key_limit_window_blocks_before_lifetime(store: Store, unique: s
     kh = f"kl-window-{unique}"
     floors = window_floors(utcnow())
     _seed_key_limit(
-        store, kh,
-        limit_micro=1_000_000, usage=0, byok_usage=0, reserved=0, include_byok=True,
-        day_limit_micro=100, day_usage=95, day_start=floors["daily"],
+        store,
+        kh,
+        limit_micro=1_000_000,
+        usage=0,
+        byok_usage=0,
+        reserved=0,
+        include_byok=True,
+        day_limit_micro=100,
+        day_usage=95,
+        day_start=floors["daily"],
     )
     with pytest.raises(KeyWindowLimitExceeded) as excinfo:
         store.reserve_key_limit(kh, 10, usage_type="Credits")
@@ -769,9 +768,15 @@ def test_stale_window_start_reads_as_zero(store: Store, unique: str) -> None:
     kh = f"kl-stale-{unique}"
     floors = window_floors(utcnow())
     _seed_key_limit(
-        store, kh,
-        limit_micro=1_000_000, usage=0, byok_usage=0, reserved=0, include_byok=True,
-        day_limit_micro=100, day_usage=999_999,
+        store,
+        kh,
+        limit_micro=1_000_000,
+        usage=0,
+        byok_usage=0,
+        reserved=0,
+        include_byok=True,
+        day_limit_micro=100,
+        day_usage=999_999,
         day_start=floors["daily"] - dt.timedelta(days=3),
     )
     store.reserve_key_limit(kh, 50, usage_type="Credits")
@@ -779,7 +784,9 @@ def test_stale_window_start_reads_as_zero(store: Store, unique: str) -> None:
 
 def test_settle_key_limit_releases_hold_and_rolls_window(store: Store, unique: str) -> None:
     kh = f"kl-settle-{unique}"
-    _seed_key_limit(store, kh, limit_micro=1_000, usage=0, byok_usage=0, reserved=0, include_byok=True)
+    _seed_key_limit(
+        store, kh, limit_micro=1_000, usage=0, byok_usage=0, reserved=0, include_byok=True
+    )
     store.reserve_key_limit(kh, 60, usage_type="Credits")
     store.settle_key_limit(kh, 60, 20, usage_type="Credits")
 
@@ -792,7 +799,9 @@ def test_settle_key_limit_releases_hold_and_rolls_window(store: Store, unique: s
 def test_settle_cannot_drive_reserved_negative(store: Store, unique: str) -> None:
     """A duplicate settle must not hand the key free headroom."""
     kh = f"kl-dup-settle-{unique}"
-    _seed_key_limit(store, kh, limit_micro=1_000, usage=0, byok_usage=0, reserved=0, include_byok=True)
+    _seed_key_limit(
+        store, kh, limit_micro=1_000, usage=0, byok_usage=0, reserved=0, include_byok=True
+    )
     store.reserve_key_limit(kh, 50, usage_type="Credits")
     store.settle_key_limit(kh, 50, 10, usage_type="Credits")
     store.settle_key_limit(kh, 50, 10, usage_type="Credits")
@@ -801,7 +810,9 @@ def test_settle_cannot_drive_reserved_negative(store: Store, unique: str) -> Non
 
 def test_refund_key_limit_releases_without_booking_usage(store: Store, unique: str) -> None:
     kh = f"kl-refund-{unique}"
-    _seed_key_limit(store, kh, limit_micro=1_000, usage=0, byok_usage=0, reserved=0, include_byok=True)
+    _seed_key_limit(
+        store, kh, limit_micro=1_000, usage=0, byok_usage=0, reserved=0, include_byok=True
+    )
     store.reserve_key_limit(kh, 60, usage_type="Credits")
     store.refund_key_limit(kh, 60, usage_type="Credits")
 
@@ -823,7 +834,9 @@ def test_key_limit_calls_on_missing_row_are_noops(store: Store, unique: str) -> 
 def test_concurrent_key_limit_reserves_cannot_oversubscribe(store: Store, unique: str) -> None:
     """Two simultaneous full-cap holds: exactly one may win."""
     kh = f"kl-race-{unique}"
-    _seed_key_limit(store, kh, limit_micro=100, usage=0, byok_usage=0, reserved=0, include_byok=True)
+    _seed_key_limit(
+        store, kh, limit_micro=100, usage=0, byok_usage=0, reserved=0, include_byok=True
+    )
     ready = threading.Barrier(3)
     lock = threading.Lock()
     wins: list[int] = []
@@ -891,9 +904,7 @@ def test_gateway_authorization_idempotency_key_dedupes(
     second = _authorize(store, workspace_id, kh, idempotency_key=f"idem-{unique}")
     assert first.id == second.id  # type: ignore[attr-defined]
 
-    found = store.get_gateway_authorization_by_idempotency_key(
-        workspace_id, kh, f"idem-{unique}"
-    )
+    found = store.get_gateway_authorization_by_idempotency_key(workspace_id, kh, f"idem-{unique}")
     assert found is not None and found.id == first.id  # type: ignore[attr-defined]
 
 
@@ -908,12 +919,13 @@ def test_gateway_idempotency_is_scoped_per_key(
     assert a.id != b.id  # type: ignore[attr-defined]
 
 
-def test_unknown_idempotency_key_returns_none(
-    store: Store, workspace_id: str, unique: str
-) -> None:
-    assert store.get_gateway_authorization_by_idempotency_key(
-        workspace_id, f"gw-none-{unique}", f"never-{unique}"
-    ) is None
+def test_unknown_idempotency_key_returns_none(store: Store, workspace_id: str, unique: str) -> None:
+    assert (
+        store.get_gateway_authorization_by_idempotency_key(
+            workspace_id, f"gw-none-{unique}", f"never-{unique}"
+        )
+        is None
+    )
 
 
 def test_finalize_gateway_authorization_is_exactly_once(
@@ -925,43 +937,65 @@ def test_finalize_gateway_authorization_is_exactly_once(
     """
     auth = _authorize(store, workspace_id, f"gw-fin-{unique}")
     first = store.finalize_gateway_authorization(
-        auth.id, success=True, actual_microdollars=40, selected_usage_type="Credits"  # type: ignore[attr-defined]
+        auth.id,
+        success=True,
+        actual_microdollars=40,
+        selected_usage_type="Credits",  # type: ignore[attr-defined]
     )
     second = store.finalize_gateway_authorization(
-        auth.id, success=True, actual_microdollars=40, selected_usage_type="Credits"  # type: ignore[attr-defined]
+        auth.id,
+        success=True,
+        actual_microdollars=40,
+        selected_usage_type="Credits",  # type: ignore[attr-defined]
     )
     assert first is True
     assert second is False, "replayed settle must be a no-op"
 
     settled = store.get_gateway_authorization(auth.id)  # type: ignore[attr-defined]
     assert settled is not None and settled.settled is True
+    assert settled.finalization_outcome == "settled"
+    assert settled.finalized_cost_microdollars == 40
+    assert settled.finalized_usage_type == "Credits"
 
 
-def test_finalize_unknown_authorization_is_false_not_error(
-    store: Store, unique: str
-) -> None:
-    assert store.finalize_gateway_authorization(
-        f"gwauth-missing-{unique}",
-        success=True,
-        actual_microdollars=10,
-        selected_usage_type="Credits",
-    ) is False
+def test_finalize_unknown_authorization_is_false_not_error(store: Store, unique: str) -> None:
+    assert (
+        store.finalize_gateway_authorization(
+            f"gwauth-missing-{unique}",
+            success=True,
+            actual_microdollars=10,
+            selected_usage_type="Credits",
+        )
+        is False
+    )
 
 
 def test_finalize_failure_books_no_usage(store: Store, workspace_id: str, unique: str) -> None:
     """A failed request releases its holds but charges nothing."""
     kh = f"gw-fail-{unique}"
-    _seed_key_limit(store, kh, limit_micro=1_000, usage=0, byok_usage=0, reserved=0, include_byok=True)
+    _seed_key_limit(
+        store, kh, limit_micro=1_000, usage=0, byok_usage=0, reserved=0, include_byok=True
+    )
     auth = _authorize(store, workspace_id, kh, estimated_microdollars=60)
     store.reserve_key_limit(kh, 60, usage_type="Credits")
 
-    assert store.finalize_gateway_authorization(
-        auth.id, success=False, actual_microdollars=0, selected_usage_type="Credits"  # type: ignore[attr-defined]
-    ) is True
+    assert (
+        store.finalize_gateway_authorization(
+            auth.id,
+            success=False,
+            actual_microdollars=0,
+            selected_usage_type="Credits",  # type: ignore[attr-defined]
+        )
+        is True
+    )
 
     row = _key_limit_row(store, kh)
     assert row["reserved"] == 0, "hold released even on failure"
     assert (row["day_usage"] or 0) == 0, "a failed request spent nothing"
+    settled = store.get_gateway_authorization(auth.id)  # type: ignore[attr-defined]
+    assert settled is not None
+    assert settled.finalization_outcome == "refunded"
+    assert settled.finalized_cost_microdollars == 0
 
 
 def test_federated_key_is_resolvable_on_a_LATER_request(store: Store, unique: str) -> None:
@@ -1001,12 +1035,14 @@ def test_federated_key_carries_no_secret_material(store: Store, unique: str) -> 
     """A peer holds no home-issued key material, so the raw-bearer path
     (which verifies secret_hash) can never authenticate a federated key."""
     try:
-        store.upsert_federated_api_key({
-            "lookup_hash": f"lh2-{unique}",
-            "key_hash": f"kh2-{unique}",
-            "workspace_id": f"ws2-{unique}",
-            "name": "federated",
-        })
+        store.upsert_federated_api_key(
+            {
+                "lookup_hash": f"lh2-{unique}",
+                "key_hash": f"kh2-{unique}",
+                "workspace_id": f"ws2-{unique}",
+                "name": "federated",
+            }
+        )
     except NotImplementedError:
         pytest.skip("backend is a federation HOME plane")
 
@@ -1026,12 +1062,14 @@ def test_federating_a_key_materializes_its_workspace(store: Store, unique: str) 
     """
     workspace_id = f"ws3-{unique}"
     try:
-        store.upsert_federated_api_key({
-            "lookup_hash": f"lh3-{unique}",
-            "key_hash": f"kh3-{unique}",
-            "workspace_id": workspace_id,
-            "name": "federated",
-        })
+        store.upsert_federated_api_key(
+            {
+                "lookup_hash": f"lh3-{unique}",
+                "key_hash": f"kh3-{unique}",
+                "workspace_id": workspace_id,
+                "name": "federated",
+            }
+        )
     except NotImplementedError:
         pytest.skip("backend is a federation HOME plane; it does not import keys")
 
@@ -1072,9 +1110,7 @@ def _fund(store: Store, workspace_id: str, unique: str, amount: int) -> None:
     assert store.credit_workspace_once(workspace_id, amount, f"evt-xfer-{unique}") is True
 
 
-def test_opening_a_transfer_debits_the_source(
-    store: Store, workspace_id: str, unique: str
-) -> None:
+def test_opening_a_transfer_debits_the_source(store: Store, workspace_id: str, unique: str) -> None:
     """Escrow must leave the source's SPENDABLE balance immediately.
 
     A backend that recorded the transfer without debiting would let the same
@@ -1183,23 +1219,29 @@ def test_a_rejected_claim_tombstones_the_transfer_id(
     """Once rejected, an id can never credit — that immutability is what makes
     cancellation safe against an in-flight accept."""
     try:
-        assert store.claim_credit_transfer(
+        assert (
+            store.claim_credit_transfer(
+                transfer_id=f"t-tomb-{unique}",
+                workspace_id=workspace_id,
+                amount_microdollars=100,
+                source="home",
+                accept=False,
+            )
+            == "rejected"
+        )
+    except NotImplementedError:
+        pytest.skip("backend does not implement cross-plane credit transfer")
+
+    assert (
+        store.claim_credit_transfer(
             transfer_id=f"t-tomb-{unique}",
             workspace_id=workspace_id,
             amount_microdollars=100,
             source="home",
-            accept=False,
-        ) == "rejected"
-    except NotImplementedError:
-        pytest.skip("backend does not implement cross-plane credit transfer")
-
-    assert store.claim_credit_transfer(
-        transfer_id=f"t-tomb-{unique}",
-        workspace_id=workspace_id,
-        amount_microdollars=100,
-        source="home",
-        accept=True,
-    ) == "rejected"
+            accept=True,
+        )
+        == "rejected"
+    )
     with pytest.raises(ValueError, match="insufficient credits"):
         store.open_credit_transfer(
             transfer_id=f"t-tomb-check-{unique}",
@@ -1209,9 +1251,7 @@ def test_a_rejected_claim_tombstones_the_transfer_id(
         )
 
 
-def test_concurrent_transfers_cannot_overdraw(
-    store: Store, workspace_id: str, unique: str
-) -> None:
+def test_concurrent_transfers_cannot_overdraw(store: Store, workspace_id: str, unique: str) -> None:
     """Real threads, separate pooled connections on a server-backed backend.
 
     Four transfers with DIFFERENT ids each try to move the whole balance, so

@@ -5,7 +5,7 @@
     <span class="eyebrow">DeepSeek API privacy</span>
     <h2>DeepSeek V4 on attested infrastructure: your prompts never reach the model vendor.</h2>
     <p>The worry behind "is the DeepSeek API safe" is specific. api.deepseek.com runs on the vendor's own infrastructure, several US states have restricted it on government devices, and a January 2025 incident exposed plaintext chat logs. The V4 weights themselves are MIT-licensed. The risk lives in where the endpoint runs.</p>
-    <p>TrustedRouter serves deepseek-v4-pro and deepseek-v4-flash through non-Chinese hosting providers inside a hardware-attested confidential-compute gateway. TrustedRouter never logs or stores prompt or output content. Zero-Data-Retention and TEE tiers are available per route. Migration is one line: change base_url, keep your OpenAI SDK.</p>
+    <p>TrustedRouter serves deepseek-v4-pro and deepseek-v4-flash through non-Chinese hosting providers inside a hardware-attested confidential-compute gateway. {{ content_handling_claim }} Zero-Data-Retention and TEE tiers are available per route. Migration is one line: change base_url, keep your OpenAI SDK.</p>
     <p><a class="btn primary" href="/pricing">See DeepSeek pricing</a> <a class="btn" href="/security">Check the attestation</a></p>
   </div>
   <div class="copy-terminal">
@@ -26,7 +26,7 @@ r = client.chat.completions.create(
 <section class="marketing-grid three">
   <div class="marketing-card"><span class="card-label">Hosting</span><h3>Served outside China</h3><p>DeepSeek V4 routes run on non-Chinese hosting providers on attested infrastructure. Prompts do not go to the model vendor. EU-focused routing is available through the <a href="/eu">EU gateway</a>.</p></div>
   <div class="marketing-card"><span class="card-label">Proof</span><h3>Attestation you can run</h3><p>The gateway source is open and the image digest is published. One curl with a nonce returns a JWT signed by the CPU vendor's root key, bound to the live TLS session. Details at <a href="/security">/security</a>.</p></div>
-  <div class="marketing-card"><span class="card-label">Retention</span><h3>No prompt or output logs</h3><p>TrustedRouter never logs or stores prompt or output content. Zero-Data-Retention routes add contractual guarantees; TEE routes keep prompts sealed even from the hosting provider. See <a href="/llm-zero-data-retention">zero data retention</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Retention</span><h3>No prompt or output logs</h3><p>{{ content_handling_claim }} Zero-Data-Retention routes add contractual guarantees; TEE routes keep prompts sealed even from the hosting provider. See <a href="/llm-zero-data-retention">zero data retention</a>.</p></div>
 </section>
 <section class="compare-matrix" aria-label="api.deepseek.com vs TrustedRouter">
   <div class="matrix-row matrix-head"><span></span><strong>api.deepseek.com</strong><strong>TrustedRouter</strong></div>

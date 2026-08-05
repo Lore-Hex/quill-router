@@ -54,7 +54,7 @@ resp = client.chat.completions.create(
   </div>
   <div>
     <p><strong>Prompt body.</strong> Never written to disk. Never shipped to a logging service. The binary doesn't open a write handle to a prompt path. You can grep for this.</p>
-    <p><strong>Output body.</strong> Same. The streamed response goes from upstream provider straight back to you. TR sees it in transit; it never persists.</p>
+    <p><strong>Output body.</strong> Same for synchronous and streaming requests. The response goes from the upstream provider straight back to you and is not persisted. Batch is a separate opt-in encrypted-retention mode.</p>
     <p><strong>Per-request audit trail.</strong> What TR <em>does</em> log: token counts, timestamps, model id, region, billing. No content. The schema is in the open-source code.</p>
     <p><strong>Upstream provider behavior.</strong> Out of TR's control. We publish each provider's known retention and ZDR posture on every model page so you can route deliberately.</p>
   </div>

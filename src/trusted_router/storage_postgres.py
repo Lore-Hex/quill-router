@@ -837,9 +837,7 @@ class PostgresStore:
     ) -> BedrockGroupBuyPledge:
         return self.bedrock_group_buy_store.upsert(pledge)
 
-    def get_bedrock_group_buy_pledge(
-        self, user_id: str
-    ) -> BedrockGroupBuyPledge | None:
+    def get_bedrock_group_buy_pledge(self, user_id: str) -> BedrockGroupBuyPledge | None:
         return self.bedrock_group_buy_store.get(user_id)
 
     def withdraw_bedrock_group_buy_pledge(self, user_id: str) -> bool:
@@ -1340,9 +1338,7 @@ class PostgresStore:
             # federated request work — _federate_api_key returns the record
             # directly — and every request after it raise KeyError, which is
             # exactly the shape a naive smoke test passes.
-            self._write_entity_tx(
-                conn, "api_key_lookup", key.lookup_hash, {"key_id": key.hash}
-            )
+            self._write_entity_tx(conn, "api_key_lookup", key.lookup_hash, {"key_id": key.hash})
             # A typed key-limit row is MANDATORY: the typed authorize path
             # fail-closes with KEY_MISSING when a key has a JSON entity but
             # no typed row, which would 402 every federated user. Limits come
@@ -1670,9 +1666,7 @@ class PostgresStore:
             prepare=False,
         )
 
-    def release_deferred_outstanding(
-        self, workspace_id: str, amount_microdollars: int
-    ) -> None:
+    def release_deferred_outstanding(self, workspace_id: str, amount_microdollars: int) -> None:
         """Hand back an admitted amount (a cap-refused request unwinding)."""
         self._run_transaction(
             lambda conn: self._adjust_deferred_outstanding_tx(
@@ -1789,8 +1783,10 @@ class PostgresStore:
         self, authorization_id: str, *, error: str, retry_in_seconds: int = 60
     ) -> None:
         next_attempt = (
-            dt.datetime.now(dt.UTC) + dt.timedelta(seconds=max(1, int(retry_in_seconds)))
-        ).isoformat().replace("+00:00", "Z")
+            (dt.datetime.now(dt.UTC) + dt.timedelta(seconds=max(1, int(retry_in_seconds))))
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
         self._run_transaction(
             lambda conn: conn.execute(
                 "UPDATE tr_home_settlement_outbox SET"
@@ -1865,8 +1861,7 @@ class PostgresStore:
         """
         floors = window_floors(utcnow())
         row = conn.execute(
-            "SELECT limit_micro, include_byok FROM tr_key_limit"
-            " WHERE key_hash = %s AND shard = 0",
+            "SELECT limit_micro, include_byok FROM tr_key_limit WHERE key_hash = %s AND shard = 0",
             (key_hash,),
             prepare=False,
         ).fetchone()
@@ -1908,12 +1903,21 @@ class PostgresStore:
             " WHERE key_hash = %s AND shard = 0",
             (
                 reserved_microdollars,
-                floors["daily"], window_amount, window_amount,
-                floors["daily"], floors["daily"],
-                floors["weekly"], window_amount, window_amount,
-                floors["weekly"], floors["weekly"],
-                floors["monthly"], window_amount, window_amount,
-                floors["monthly"], floors["monthly"],
+                floors["daily"],
+                window_amount,
+                window_amount,
+                floors["daily"],
+                floors["daily"],
+                floors["weekly"],
+                window_amount,
+                window_amount,
+                floors["weekly"],
+                floors["weekly"],
+                floors["monthly"],
+                window_amount,
+                window_amount,
+                floors["monthly"],
+                floors["monthly"],
                 key_hash,
             ),
             prepare=False,
@@ -2426,9 +2430,7 @@ class PostgresStore:
                         Reservation,
                     )
                     if existing is None:
-                        raise RuntimeError(
-                            "reservation idempotency row disappeared after conflict"
-                        )
+                        raise RuntimeError("reservation idempotency row disappeared after conflict")
                     return existing
 
             inserted = self._insert_entity_once_tx(
@@ -2558,9 +2560,7 @@ class PostgresStore:
 
         def open_transfer(conn: Any) -> CreditTransfer:
             # Insert-once FIRST: if this loses, the debit below must not run.
-            won = self._insert_entity_once_tx(
-                conn, _CREDIT_TRANSFER_KIND, transfer_id, transfer
-            )
+            won = self._insert_entity_once_tx(conn, _CREDIT_TRANSFER_KIND, transfer_id, transfer)
             if not won:
                 existing = self._read_entity_tx(
                     conn, _CREDIT_TRANSFER_KIND, transfer_id, CreditTransfer
@@ -2639,8 +2639,7 @@ class PostgresStore:
 
         def read(conn: Any) -> list[CreditTransfer]:
             rows = conn.execute(
-                "SELECT id FROM tr_entities WHERE kind = %s AND id > %s "
-                "ORDER BY id LIMIT %s",
+                "SELECT id FROM tr_entities WHERE kind = %s AND id > %s ORDER BY id LIMIT %s",
                 (_CREDIT_TRANSFER_OPEN_KIND, cursor_id, bounded),
             ).fetchall()
             transfers = []
@@ -2703,9 +2702,7 @@ class PostgresStore:
                         f"cannot re-resolve it as {target_state}"
                     )
                 return existing
-            resolved = dataclasses.replace(
-                existing, state=target_state, resolved_at=iso_now()
-            )
+            resolved = dataclasses.replace(existing, state=target_state, resolved_at=iso_now())
             # Insert-once FIRST, exactly as at escrow: if this loses, the
             # balance change below must not run. The loser learns the winner's
             # verdict instead of applying a second one.
@@ -2835,9 +2832,7 @@ class PostgresStore:
                 # discards the claim row too, so the source can retry once the
                 # workspace has been federated rather than being told the
                 # transfer was accepted by a plane that never credited it.
-                raise ValueError(
-                    f"no credit balance for workspace {workspace_id} on this plane"
-                )
+                raise ValueError(f"no credit balance for workspace {workspace_id} on this plane")
             return credit_transfer.ACCEPTED
 
         return self._run_transaction(claim)
@@ -2895,6 +2890,7 @@ class PostgresStore:
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         additional_cost_reservation_microdollars: int = 0,
+        native_batch_eligible: bool = False,
         settlement: str = "local",
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
@@ -2939,6 +2935,7 @@ class PostgresStore:
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
             additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
+            native_batch_eligible=native_batch_eligible,
             settlement=settlement,
             expires_at=expires_at,
         )
@@ -2953,9 +2950,7 @@ class PostgresStore:
                     {"authorization_id": authorization.id},
                 )
                 if not won:
-                    pointer = self._read_entity_tx(
-                        conn, _GATEWAY_IDEMPOTENCY_KIND, index_id, dict
-                    )
+                    pointer = self._read_entity_tx(conn, _GATEWAY_IDEMPOTENCY_KIND, index_id, dict)
                     existing_id = str((pointer or {}).get("authorization_id") or "")
                     existing = (
                         self._read_entity_tx(
@@ -3128,7 +3123,12 @@ class PostgresStore:
                     self._write_entity_tx(conn, "generation", generation.id, generation)
                     if self._operational_analytics_outbox is not None:
                         self._operational_analytics_outbox.enqueue_activity_tx(conn, generation)
-                authorization.settled = True
+                authorization.record_finalization(
+                    success=success,
+                    actual_microdollars=actual_microdollars,
+                    selected_usage_type=selected_usage_type,
+                    generation=generation,
+                )
                 # Clearing the expiry is what takes this row out of the
                 # reaper's scan: settled work is no longer reclaimable, and
                 # leaving a past expires_at behind would make every future
@@ -3157,9 +3157,7 @@ class PostgresStore:
                 reservation = self._read_entity_tx(
                     conn, _RESERVATION_KIND, authorization.credit_reservation_id, Reservation
                 )
-                release = (
-                    reservation.amount_microdollars if reservation is not None else 0
-                )
+                release = reservation.amount_microdollars if reservation is not None else 0
                 if reservation is None:
                     log.error(
                         "finalize %s: reservation %s entity is gone; booking "
@@ -3249,7 +3247,12 @@ class PostgresStore:
                     self._operational_analytics_outbox.enqueue_activity_tx(conn, generation)
 
             # 5. Mark settled.
-            authorization.settled = True
+            authorization.record_finalization(
+                success=success,
+                actual_microdollars=actual_microdollars,
+                selected_usage_type=selected_usage_type,
+                generation=generation,
+            )
             self._write_entity_tx(
                 conn, _GATEWAY_AUTHORIZATION_KIND, authorization_id, authorization
             )
@@ -3347,7 +3350,12 @@ class PostgresStore:
                     usage_type=authorization.usage_type,
                     window_amount=0,
                 )
-                authorization.settled = True
+                authorization.record_finalization(
+                    success=False,
+                    actual_microdollars=0,
+                    selected_usage_type=authorization.usage_type,
+                    generation=None,
+                )
                 authorization.expires_at = None
                 self._write_entity_tx(
                     conn,

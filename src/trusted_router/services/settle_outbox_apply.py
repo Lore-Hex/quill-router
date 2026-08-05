@@ -245,7 +245,13 @@ def _apply_typed(
                 _json_body({"generation_id": generation.id}),
             ),
         ]
-    auth_settled = replace(auth, settled=True)
+    auth_settled = replace(auth)
+    auth_settled.record_finalization(
+        success=success,
+        actual_microdollars=row.actual_cost_micro,
+        selected_usage_type=usage_type,
+        generation=generation,
+    )
     try:
         result = typed_store.typed_finalize_gateway(
             reservation_id=auth.credit_reservation_id,

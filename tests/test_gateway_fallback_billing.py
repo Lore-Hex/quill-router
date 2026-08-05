@@ -56,9 +56,7 @@ def test_gateway_authorize_fake_spanner_uses_typed_without_allowlist_settings() 
     )
     configure_store(store)
     settings = Settings(environment="test")
-    client = TestClient(
-        create_app(settings, configure_store_arg=False, init_observability=False)
-    )
+    client = TestClient(create_app(settings, configure_store_arg=False, init_observability=False))
 
     authorize = client.post(
         "/v1/internal/gateway/authorize",
@@ -325,9 +323,7 @@ def test_parasail_liberty_internal_calls_are_customer_cost_zero(
             "estimated_input_tokens": 10_000,
             "max_output_tokens": 2_000,
             "route_type": route_type,
-            "idempotency_key": (
-                f"{PARASAIL_LIBERTY_2_0_IDEMPOTENCY_PREFIX}req:worker:0"
-            ),
+            "idempotency_key": (f"{PARASAIL_LIBERTY_2_0_IDEMPOTENCY_PREFIX}req:worker:0"),
             "provider": {
                 "order": ["parasail"],
                 "allow_fallbacks": True,
@@ -399,9 +395,7 @@ def test_parasail_liberty_billing_markers_fail_closed() -> None:
             "model": "nvidia/nemotron-3-ultra-550b-a55b",
             "estimated_input_tokens": 10,
             "max_output_tokens": 10,
-            "route_type": (
-                f"{PARASAIL_LIBERTY_2_0_INTERNAL_ROUTE_PREFIX}advisor.worker"
-            ),
+            "route_type": (f"{PARASAIL_LIBERTY_2_0_INTERNAL_ROUTE_PREFIX}advisor.worker"),
             "idempotency_key": "req-untrusted-internal-marker",
         },
     )
@@ -457,7 +451,9 @@ def test_gateway_settle_ancient_legacy_reservation_missing_typed_row_is_clean() 
     assert auth.credit_reservation_id not in db.reservations
     configure_store(store)
     client = TestClient(
-        create_app(Settings(environment="test"), configure_store_arg=False, init_observability=False)
+        create_app(
+            Settings(environment="test"), configure_store_arg=False, init_observability=False
+        )
     )
 
     settle = client.post(
@@ -476,6 +472,7 @@ def test_gateway_settle_ancient_legacy_reservation_missing_typed_row_is_clean() 
         "authorization_id": auth.id,
         "settled": False,
         "already_settled": True,
+        "finalization_outcome": "pending",
     }
     assert auth.credit_reservation_id not in db.reservations
 
@@ -577,9 +574,7 @@ def test_gateway_uses_legacy_gemini_envelope_identity_for_ai_studio() -> None:
     assert data["limit_usage_type"] == "BYOK"
     assert data["byok_provider"] == "gemini"
     assert data["byok_secret_ref"] == "env://GEMINI_API_KEY"  # noqa: S105
-    assert {row["provider"] for row in data["route_candidates"]} == {
-        "google-ai-studio"
-    }
+    assert {row["provider"] for row in data["route_candidates"]} == {"google-ai-studio"}
 
 
 def test_gateway_authorize_and_settle_embeddings_model() -> None:
@@ -763,8 +758,7 @@ def test_gateway_missing_byok_primary_uses_prepaid_endpoint() -> None:
     selected_endpoint_id = next(
         item["endpoint_id"]
         for item in auth_data["route_candidates"]
-        if item["model"] == "anthropic/claude-opus-4.7"
-        and item["usage_type"] == "Credits"
+        if item["model"] == "anthropic/claude-opus-4.7" and item["usage_type"] == "Credits"
     )
 
     settle = client.post(

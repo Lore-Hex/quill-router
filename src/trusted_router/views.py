@@ -15,6 +15,7 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from trusted_router.content_handling import CONTENT_HANDLING_CLAIM
 from trusted_router.provider_branding import provider_logo_url
 from trusted_router.seo_meta import seo_meta_description, seo_title
 
@@ -70,6 +71,7 @@ def _env() -> Environment:
     env.filters["seo_title"] = seo_title
     env.filters["seo_meta_description"] = seo_meta_description
     env.globals["provider_logo_url"] = provider_logo_url
+    env.globals["content_handling_claim"] = CONTENT_HANDLING_CLAIM
     return env
 
 

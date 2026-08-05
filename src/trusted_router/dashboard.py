@@ -57,6 +57,7 @@ from trusted_router.content.legal import (
     soc2_readiness_packet,
     subprocessor_packet,
 )
+from trusted_router.content_handling import CONTENT_HANDLING_CLAIM
 from trusted_router.measured import measured_for_model, measured_for_provider
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR, format_money_precise
 from trusted_router.og import OG_DESCRIPTION, OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, OG_TITLE
@@ -183,6 +184,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/docs/migrate-from-openrouter",
     "/docs/tagging",
     "/docs/prompt-caching",
+    "/docs/batch",
     "/docs/web-search",
     "/docs/video",
     "/for-developers",
@@ -356,7 +358,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "How do I verify that prompts stay private?",
-                "Request an attestation from the live gateway: call the attestation endpoint with a nonce and you get back a JWT signed by the CPU vendor's root key. The image digest matches the published open-source artifact, and the attestation binds to the live TLS session, so it cannot be replayed. TrustedRouter never logs or stores prompt or output content. The full procedure is on the security page.",
+                f"Request an attestation from the live gateway: call the attestation endpoint with a nonce and you get back a JWT signed by the CPU vendor's root key. The image digest matches the published open-source artifact, and the attestation binds to the live TLS session, so it cannot be replayed. {CONTENT_HANDLING_CLAIM} The full procedure is on the security page.",
             ),
             (
                 "How does TrustedRouter handle capacity and quotas?",
@@ -367,11 +369,11 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "deepseek-api-privacy": PublicPage(
         template="public/seo_deepseek_api_privacy.html",
         title="DeepSeek V4 API Privacy: Attested, No Data to China",
-        description="Run DeepSeek V4 Pro and V4 Flash on attested, non-Chinese infrastructure. No prompt or output logs or storage, ever. OpenAI-compatible.",
+        description="Run DeepSeek V4 Pro and V4 Flash on attested, non-Chinese infrastructure. No prompt or output logs. Real-time inference is content-stateless. OpenAI-compatible.",
         faq_items=(
             (
                 "Is the DeepSeek API safe to use?",
-                "It depends on which endpoint you call. api.deepseek.com is the vendor's own service, and several US states have restricted it on government devices. TrustedRouter serves the same MIT-licensed V4 weights through non-Chinese hosting providers inside a hardware-attested gateway. Prompts do not go to the model vendor, and TrustedRouter never logs or stores prompt or output content. You can verify the attestation live at any time instead of relying on a policy.",
+                f"It depends on which endpoint you call. api.deepseek.com is the vendor's own service, and several US states have restricted it on government devices. TrustedRouter serves the same MIT-licensed V4 weights through non-Chinese hosting providers inside a hardware-attested gateway. Prompts do not go to the model vendor. {CONTENT_HANDLING_CLAIM} You can verify the attestation live at any time instead of relying on a policy.",
             ),
             (
                 "Does using DeepSeek through TrustedRouter send data to China?",
@@ -398,7 +400,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Do my prompts go to Zhipu or z.ai?",
-                "No. GLM routes on TrustedRouter are served by non-Chinese hosting providers on attested infrastructure, so prompts do not go to the model vendor. Zero-Data-Retention and TEE tiers are available, and on TEE routes even the hosting provider cannot read the prompt. TrustedRouter never logs or stores prompt or output content.",
+                f"No. GLM routes on TrustedRouter are served by non-Chinese hosting providers on attested infrastructure, so prompts do not go to the model vendor. Zero-Data-Retention and TEE tiers are available, and on TEE routes even the hosting provider cannot read the prompt. {CONTENT_HANDLING_CLAIM}",
             ),
             (
                 "Why does GLM answer more questions through TrustedRouter than on the vendor API?",
@@ -421,7 +423,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Does TrustedRouter store my prompts or outputs?",
-                "TrustedRouter never logs or stores prompt or output content. The prompt path runs inside a hardware-attested confidential-compute gateway whose source code is open and whose image digest is published. You can verify this live: call the attestation endpoint with a fresh nonce and you get back a JWT signed by the CPU vendor's root key, bound to your live TLS session so it cannot be replayed. Details are on the security page.",
+                f"{CONTENT_HANDLING_CLAIM} The prompt path runs inside a hardware-attested confidential-compute gateway whose source code is open and whose image digest is published. You can verify this live: call the attestation endpoint with a fresh nonce and you get back a JWT signed by the CPU vendor's root key, bound to your live TLS session so it cannot be replayed. Details are on the security page.",
             ),
             (
                 "Can I keep inference in the EU?",
@@ -471,7 +473,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Do my prompts go to MiniMax when I use this API?",
-                "No. MiniMax M3 routes on TrustedRouter are served by non-Chinese hosting providers on attested infrastructure, and prompts do not go to the model vendor. Zero-Data-Retention and TEE tiers are available, and TrustedRouter never logs or stores prompt or output content. You can verify the gateway yourself: the attestation endpoint returns a JWT signed by the CPU vendor's root key, bound to your live TLS session.",
+                f"No. MiniMax M3 routes on TrustedRouter are served by non-Chinese hosting providers on attested infrastructure, and prompts do not go to the model vendor. Zero-Data-Retention and TEE tiers are available. {CONTENT_HANDLING_CLAIM} You can verify the gateway yourself: the attestation endpoint returns a JWT signed by the CPU vendor's root key, bound to your live TLS session.",
             ),
             (
                 "How do I switch from OpenRouter to TrustedRouter for MiniMax M3?",
@@ -486,7 +488,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         faq_items=(
             (
                 "What is the best LLM router in 2026?",
-                "It depends on what you optimize for. OpenRouter, LiteLLM, Portkey, and Requesty all route one API across many providers, and each has real strengths. TrustedRouter differs on the prompt path: it runs inside a hardware-attested confidential-compute gateway with open source, a published image digest, and a live attestation check. TrustedRouter never logs or stores prompt or output content, and it serves 220+ model routes across 30+ providers.",
+                f"It depends on what you optimize for. OpenRouter, LiteLLM, Portkey, and Requesty all route one API across many providers, and each has real strengths. TrustedRouter differs on the prompt path: it runs inside a hardware-attested confidential-compute gateway with open source, a published image digest, and a live attestation check. {CONTENT_HANDLING_CLAIM} It serves 220+ model routes across 30+ providers.",
             ),
             (
                 "What is the difference between an LLM router and an AI gateway?",
@@ -498,7 +500,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Can an AI gateway be private enough for regulated data?",
-                "TrustedRouter's TEE tier runs prompts end-to-end inside confidential compute, so even the serving provider cannot read them, and the attestation is checkable live and bound to the TLS session. TrustedRouter never logs or stores prompt or output content. For compliance review there is a verifiable architecture plus SOC 2 and HIPAA readiness documentation, a DPA, and a BAA; these are readiness documents rather than certifications, so your team can assess them directly.",
+                f"TrustedRouter's TEE tier runs prompts end-to-end inside confidential compute, so even the serving provider cannot read them, and the attestation is checkable live and bound to the TLS session. {CONTENT_HANDLING_CLAIM} For compliance review there is a verifiable architecture plus SOC 2 and HIPAA readiness documentation, a DPA, and a BAA; these are readiness documents rather than certifications, so your team can assess them directly.",
             ),
         ),
     ),
@@ -517,7 +519,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Does routing through a failover gateway expose my prompts to more parties?",
-                "The prompt path runs inside a hardware-attested confidential-compute gateway. The source is open, the image digest is published, and the attestation binds to the live TLS session, so you can check it rather than take it on faith. TrustedRouter never logs or stores prompt or output content, and each route carries a privacy tier: Open, Zero-Data-Retention, or TEE, where even the serving provider cannot read the prompt.",
+                f"The prompt path runs inside a hardware-attested confidential-compute gateway. The source is open, the image digest is published, and the attestation binds to the live TLS session, so you can check it rather than take it on faith. {CONTENT_HANDLING_CLAIM} Each route carries a privacy tier: Open, Zero-Data-Retention, or TEE, where even the serving provider cannot read the prompt.",
             ),
             (
                 "How do I know the fallback routes are fast enough for production?",
@@ -563,7 +565,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "How does TrustedRouter handle prompt privacy?",
-                "The prompt path runs inside a hardware-attested confidential-compute gateway. The source is open, the image digest is published, and anyone can fetch an attestation JWT signed by the CPU vendor's root key, bound to the live TLS session. TrustedRouter never logs or stores prompt or output content, and routes carry privacy tiers: Open, Zero-Data-Retention, or TEE, where even the serving provider cannot read the prompt.",
+                f"The prompt path runs inside a hardware-attested confidential-compute gateway. The source is open, the image digest is published, and anyone can fetch an attestation JWT signed by the CPU vendor's root key, bound to the live TLS session. {CONTENT_HANDLING_CLAIM} Routes carry privacy tiers: Open, Zero-Data-Retention, or TEE, where even the serving provider cannot read the prompt.",
             ),
             (
                 "Is TrustedRouter SOC 2 or HIPAA certified?",
@@ -586,7 +588,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Does TrustedRouter store our prompts or outputs?",
-                "TrustedRouter never logs or stores prompt or output content. Each route carries a privacy tier: Open runs on any attested provider, Zero-Data-Retention providers contractually keep nothing, and TEE keeps the prompt sealed so even the serving provider cannot read it. The prompt path runs inside a hardware-attested confidential-compute gateway you can verify live.",
+                f"{CONTENT_HANDLING_CLAIM} Each route carries a privacy tier: Open runs on any attested provider, Zero-Data-Retention providers contractually keep nothing, and TEE keeps the prompt sealed so even the serving provider cannot read it. The prompt path runs inside a hardware-attested confidential-compute gateway you can verify live.",
             ),
             (
                 "Do banks have to run LLMs on-prem to protect customer data?",
@@ -601,11 +603,11 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         faq_items=(
             (
                 "Does TrustedRouter store our prompts or client documents?",
-                "TrustedRouter never logs or stores prompt or output content. The prompt path runs inside a hardware-attested confidential-compute gateway whose source is open and whose image digest is published. Your team can verify the running code at any time: the attestation endpoint returns a JWT signed by the CPU vendor's root key, bound to your live TLS session so it cannot be replayed.",
+                f"{CONTENT_HANDLING_CLAIM} The prompt path runs inside a hardware-attested confidential-compute gateway whose source is open and whose image digest is published. Your team can verify the running code at any time: the attestation endpoint returns a JWT signed by the CPU vendor's root key, bound to your live TLS session so it cannot be replayed.",
             ),
             (
                 "Does using an LLM API waive attorney-client privilege?",
-                "That is a legal determination only your counsel can make, and TrustedRouter does not give legal advice. What the platform changes is the factual record the analysis rests on: on TEE routes the operator provably cannot read the prompt, TrustedRouter never logs or stores prompt or output content, and the attestation is checkable rather than promised. That supports a privilege analysis; it does not decide one.",
+                f"That is a legal determination only your counsel can make, and TrustedRouter does not give legal advice. What the platform changes is the factual record the analysis rests on: on TEE routes the serving provider cannot read the prompt, and the attestation is checkable rather than promised. {CONTENT_HANDLING_CLAIM} Batch requires separate approval for privileged work. That supports a privilege analysis; it does not decide one.",
             ),
             (
                 "Is TrustedRouter SOC 2 or HIPAA certified?",
@@ -632,7 +634,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "What is the difference between residency, retention, and access?",
-                "Residency is where inference runs; TrustedRouter's answer is the EU gateway. Retention is what is stored afterward; TrustedRouter never logs or stores prompt or output content, and Zero-Data-Retention routes use providers that contractually keep nothing. Access is who can read traffic while it is processed; the attested TEE gateway answers that with a live, checkable proof instead of a policy. Most residency clauses are really about all three.",
+                f"Residency is where inference runs; TrustedRouter's answer is the EU gateway. Retention is what is stored afterward; {CONTENT_HANDLING_CLAIM} Zero-Data-Retention routes use providers that contractually keep nothing. Access is who can read traffic while it is processed; the attested TEE gateway answers that with a live, checkable proof instead of a policy. Most residency clauses are really about all three.",
             ),
             (
                 "How do I verify the gateway instead of taking TrustedRouter's word?",
@@ -642,12 +644,12 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "no-log-llm-api": PublicPage(
         template="public/seo_no_log_llm_api.html",
-        title="No-Log LLM API: Inference Without Prompt Storage, Verified",
-        description="A no-log LLM API you can verify: no prompt or output logs or storage, ever, with attested TEE routes and 220+ model routes behind one OpenAI-compatible endpoint.",
+        title="No-Log LLM API: Content-Stateless Real-Time Inference",
+        description="A no-log LLM API you can verify: content-stateless real-time inference, explicit encrypted Batch retention, attested TEE routes, and 220+ model routes.",
         faq_items=(
             (
                 "Does TrustedRouter log my prompts?",
-                "TrustedRouter never logs or stores prompt or output content. Usage metadata is separate: token counts and billing records are kept so your account and spend tracking work. On TEE routes, the request path runs inside a hardware-attested confidential-compute gateway with open source and a published image digest, so you can check the no-storage claim yourself. Privacy you can check beats privacy you're promised.",
+                f"{CONTENT_HANDLING_CLAIM} Usage metadata is separate: token counts and billing records are kept so your account and spend tracking work. On TEE routes, the request path runs inside a hardware-attested confidential-compute gateway with open source and a published image digest. Privacy you can check beats privacy you're promised.",
             ),
             (
                 "How do I verify the no-log claim myself?",
@@ -665,7 +667,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "anonymous-llm-api": PublicPage(
         template="public/seo_anonymous_llm_api.html",
-        title="Anonymous LLM API: Pay with Crypto, No KYC, No Prompt Storage",
+        title="Anonymous LLM API: Pay with Crypto, No KYC, No Prompt Logs",
         description="Pay for 220+ LLM routes with crypto: x402 pay-per-request or MetaMask sign-in, no card, no KYC, and attested no-prompt-storage you can verify live.",
         faq_items=(
             (
@@ -674,11 +676,11 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Is TrustedRouter fully anonymous?",
-                "No, and we will not claim it is. Wallet funding means no card and no KYC, but blockchain payments are pseudonymous rather than untraceable. The claim we can back is different in kind: TrustedRouter never logs or stores prompt or output content, the gateway is open source, and a live hardware attestation lets you check that yourself.",
+                f"No, and we will not claim it is. Wallet funding means no card and no KYC, but blockchain payments are pseudonymous rather than untraceable. The claim we can back is different in kind: {CONTENT_HANDLING_CLAIM} The gateway is open source, and a live hardware attestation lets you check that yourself.",
             ),
             (
                 "Does TrustedRouter store my prompts?",
-                "TrustedRouter never logs or stores prompt or output content. The prompt path runs inside a hardware-attested confidential-compute gateway whose source is open and whose image digest is published. You can fetch a live attestation, signed by the CPU vendor's root key and bound to your TLS session, and compare the digest against the published artifact.",
+                f"{CONTENT_HANDLING_CLAIM} The prompt path runs inside a hardware-attested confidential-compute gateway whose source is open and whose image digest is published. You can fetch a live attestation, signed by the CPU vendor's root key and bound to your TLS session, and compare the digest against the published artifact.",
             ),
             (
                 "Which models can I pay for with crypto?",
@@ -701,7 +703,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Is my code private when an agent routes through TrustedRouter?",
-                "TrustedRouter never logs or stores prompt or output content. The prompt path runs inside a hardware-attested confidential-compute gateway whose source is open source, and you can verify the attestation live against a published image digest. Each route also carries a privacy tier: Open, Zero-Data-Retention, or TEE, where even the serving provider cannot read your prompt.",
+                f"{CONTENT_HANDLING_CLAIM} The prompt path runs inside a hardware-attested confidential-compute gateway whose source is open source, and you can verify the attestation live against a published image digest. Each route also carries a privacy tier: Open, Zero-Data-Retention, or TEE, where even the serving provider cannot read your prompt.",
             ),
             (
                 "Can I use DeepSeek, Kimi, or GLM in Cline without sending code to the model vendor?",
@@ -720,7 +722,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Does TrustedRouter log my roleplay chats?",
-                "TrustedRouter never logs or stores prompt or output content. The prompt path runs inside a hardware-attested confidential-compute gateway whose source is open and whose image digest is published. You can request a live attestation, a JWT signed by the CPU vendor's root key and bound to your TLS session, and verify it yourself instead of relying on a policy page. Details are on the security page.",
+                f"{CONTENT_HANDLING_CLAIM} The prompt path runs inside a hardware-attested confidential-compute gateway whose source is open and whose image digest is published. You can request a live attestation, a JWT signed by the CPU vendor's root key and bound to your TLS session, and verify it yourself instead of relying on a policy page. Details are on the security page.",
             ),
             (
                 "Can I pay without creating a traditional account?",
@@ -743,7 +745,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Is TrustedRouter HIPAA compliant like Bedrock's HIPAA-eligible services?",
-                "TrustedRouter does not claim HIPAA or SOC 2 certification. It provides a verifiable architecture plus readiness documentation your compliance team can assess: HIPAA and SOC 2 readiness pages, a DPA, a BAA, and a subprocessor list. The prompt path runs in a hardware-attested confidential-compute gateway, and TrustedRouter never logs or stores prompt or output content. Regulated teams should review the readiness documentation with their own counsel.",
+                f"TrustedRouter does not claim HIPAA or SOC 2 certification. It provides a verifiable architecture plus readiness documentation your compliance team can assess: HIPAA and SOC 2 readiness pages, a DPA, a BAA, and a subprocessor list. The prompt path runs in a hardware-attested confidential-compute gateway. {CONTENT_HANDLING_CLAIM} Regulated teams should review the readiness documentation and must approve Batch separately.",
             ),
             (
                 "How do I verify TrustedRouter's privacy claims before migrating from Bedrock?",
@@ -762,7 +764,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         faq_items=(
             (
                 "Can I use TrustedRouter for HIPAA-regulated documents?",
-                "TrustedRouter does not claim a HIPAA certification, and its regulatory pages are informational rather than legal advice. What it offers is verifiable architecture plus readiness documentation your compliance team can assess: a HIPAA readiness page, a BAA, a DPA, and a subprocessor list. The prompt path runs in a hardware-attested TEE, the attestation is checkable live, and TrustedRouter never logs or stores prompt or output content.",
+                f"TrustedRouter does not claim a HIPAA certification, and its regulatory pages are informational rather than legal advice. What it offers is verifiable architecture plus readiness documentation your compliance team can assess: a HIPAA readiness page, a BAA, a DPA, and a subprocessor list. The prompt path runs in a hardware-attested TEE and the attestation is checkable live. {CONTENT_HANDLING_CLAIM} Batch is excluded from PHI use unless expressly approved in a signed BAA amendment.",
             ),
             (
                 "Does TrustedRouter parse PDFs or run OCR?",
@@ -770,7 +772,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "How do I verify that my documents stay private?",
-                "Fetch a live attestation. A curl to the attestation endpoint with a nonce returns a JWT signed by the CPU vendor's root key, and the image digest in it matches the published open-source gateway build. The attestation binds to the live TLS session, so it cannot be replayed. Beyond that, TrustedRouter never logs or stores prompt or output content, and Zero-Data-Retention and TEE tiers are available per route.",
+                f"Fetch a live attestation. A curl to the attestation endpoint with a nonce returns a JWT signed by the CPU vendor's root key, and the image digest in it matches the published open-source gateway build. The attestation binds to the live TLS session, so it cannot be replayed. {CONTENT_HANDLING_CLAIM} Zero-Data-Retention and TEE tiers are available per route.",
             ),
             (
                 "Which models can I use for document extraction?",
@@ -793,7 +795,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Can I use gpt-oss-120b for HIPAA-sensitive workloads?",
-                "TrustedRouter does not claim HIPAA certification. It offers a verifiable architecture plus readiness documentation your compliance team can assess: a hardware-attested TEE prompt path, no prompt or output logs or storage, and HIPAA readiness, BAA, DPA, and subprocessor pages your reviewers can read directly before making their own determination.",
+                "TrustedRouter does not claim HIPAA certification. It offers a verifiable architecture plus readiness documentation your compliance team can assess: a hardware-attested TEE prompt path, no prompt or output logs, content-stateless real-time inference, and HIPAA readiness, BAA, DPA, and subprocessor pages your reviewers can read directly. Batch requires separate written approval.",
             ),
             (
                 "Do I have to change my code to use TrustedRouter's gpt-oss-120b API?",
@@ -816,7 +818,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Does TrustedRouter store my prompts or outputs?",
-                "TrustedRouter never logs or stores prompt or output content. The prompt path runs inside a hardware-attested confidential-compute gateway whose source is open and whose image digest is published, so you can verify the running code instead of trusting a policy page. Zero-Data-Retention routes add contractual no-retention from the serving provider, and TEE routes keep prompts unreadable even to the provider.",
+                f"{CONTENT_HANDLING_CLAIM} The prompt path runs inside a hardware-attested confidential-compute gateway whose source is open and whose image digest is published, so you can verify the running code instead of trusting a policy page. Zero-Data-Retention routes add contractual no-retention from the serving provider, and TEE routes keep prompts unreadable even to the provider.",
             ),
             (
                 "Can I keep LLM traffic in the EU?",
@@ -843,7 +845,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Is my agent's prompt private when it pays per request?",
-                "The prompt path runs inside a hardware-attested confidential-compute gateway, and TrustedRouter never logs or stores prompt or output content. You can verify this rather than take it on trust: the attestation endpoint returns a JWT signed by the CPU vendor's root key, bound to the live TLS session, with an image digest matching the published open-source build. Routes also carry privacy tiers: Open, Zero-Data-Retention, or end-to-end TEE.",
+                f"The prompt path runs inside a hardware-attested confidential-compute gateway. {CONTENT_HANDLING_CLAIM} You can verify this rather than take it on trust: the attestation endpoint returns a JWT signed by the CPU vendor's root key, bound to the live TLS session, with an image digest matching the published open-source build. Routes also carry privacy tiers: Open, Zero-Data-Retention, or end-to-end TEE.",
             ),
         ),
     ),
@@ -930,7 +932,15 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         title="Prompt Caching For Lower LLM Costs",
         description=(
             "Reuse stable prompt prefixes through provider native caches, inspect cached "
-            "token usage, and preserve TrustedRouter's no prompt storage boundary."
+            "token usage, and preserve the real-time inference content-stateless boundary."
+        ),
+    ),
+    "docs/batch": PublicPage(
+        template="public/batch.html",
+        title="Batch API Quickstart",
+        description=(
+            "Submit OpenRouter-compatible inline batches through the attested "
+            "TrustedRouter gateway and poll encrypted results by batch ID."
         ),
     ),
     "docs/web-search": PublicPage(
@@ -1162,7 +1172,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Does delegated auth expose prompt content to the app?",
-                "The app sends inference requests, but TrustedRouter's hosted gateway never logs or stores prompt or output content.",
+                f"The app sends inference requests through the attested gateway. {CONTENT_HANDLING_CLAIM}",
             ),
         ),
     ),
@@ -1272,7 +1282,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         faq_items=(
             (
                 "Does TrustedRouter store prompts or outputs?",
-                "TrustedRouter never logs or durably stores prompt or output content. Operational metadata includes model, provider, token counts, latency, cost, status, and region. Downstream provider handling remains provider specific and is published on model and provider pages.",
+                f"{CONTENT_HANDLING_CLAIM} Operational metadata includes model, provider, token counts, latency, cost, status, and region. Downstream provider handling remains provider specific and is published on model and provider pages.",
             ),
             (
                 "What does gateway attestation prove?",
@@ -1382,6 +1392,7 @@ def _env() -> Environment:
     env.filters["seo_title"] = seo_title
     env.filters["seo_meta_description"] = seo_meta_description
     env.globals["provider_logo_url"] = provider_logo_url
+    env.globals["content_handling_claim"] = CONTENT_HANDLING_CLAIM
     return env
 
 
@@ -2905,6 +2916,7 @@ def llms_txt(settings: Settings) -> str:
         f"- Synth guide: https://{domain}/docs/synth",
         f"- Responses web search: https://{domain}/docs/web-search",
         f"- Prompt caching: https://{domain}/docs/prompt-caching",
+        f"- Batch API: https://{domain}/docs/batch",
         f"- Video generation: https://{domain}/docs/video",
         f"- Request tagging and cost allocation: https://{domain}/docs/tagging",
         f"- Blog: https://{domain}/blog",
@@ -2952,7 +2964,7 @@ def llms_txt(settings: Settings) -> str:
         ),
         "",
         "## Privacy Boundary",
-        "- TrustedRouter stores metadata and billing records, never prompt or output content.",
+        "- TrustedRouter never logs prompt or output content. Real-time inference is content-stateless; Batch is an explicit encrypted-retention mode with 30-day deletion.",
         "- Provider compute policy is shown separately on provider and model pages.",
         "- Use trustedrouter/zdr for zero-data-retention provider routing.",
         "- Use trustedrouter/e2e or its trustedrouter/confidential alias for end-to-end encrypted provider routes where available.",
@@ -2993,6 +3005,7 @@ def docs_llms_txt(settings: Settings) -> str:
             f"- Synth guide: https://{domain}/docs/synth",
             f"- Responses web search: https://{domain}/docs/web-search",
             f"- Prompt caching: https://{domain}/docs/prompt-caching",
+            f"- Batch API: https://{domain}/docs/batch",
             f"- Video generation: https://{domain}/docs/video",
             f"- OpenRouter alternative: https://{domain}/openrouter-alternative",
             f"- Private LLM API: https://{domain}/private-llm-api",
@@ -3103,6 +3116,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         f"- Synth guide: https://{domain}/docs/synth",
         f"- Responses web search: https://{domain}/docs/web-search",
         f"- Prompt caching: https://{domain}/docs/prompt-caching",
+        f"- Batch API: https://{domain}/docs/batch",
         f"- Video generation: https://{domain}/docs/video",
         f"- Blog: https://{domain}/blog",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
@@ -3141,7 +3155,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- Anthropic Messages preserves content-block cache_control and reports cache_creation_input_tokens plus cache_read_input_tokens.",
         "- Cached reads and cache writes settle using the selected endpoint's cache-aware rates when available.",
         "- Provider caches are provider and route scoped. Fallback can reduce cache hits, while provider.only improves locality at the cost of rollover.",
-        "- TrustedRouter does not create a durable router-side prompt cache or store prompt/output content.",
+        "- TrustedRouter does not create a durable router-side prompt cache. Real-time inference remains content-stateless; Batch retention is separate and explicit.",
         "- prompt_cache_retention is not supported and returns a stable 501 error.",
         "",
         "## Synth",
@@ -3151,7 +3165,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- Common parameters: preset, analysis_models, selection_strategy, judge_models, fallback_judges, final_models, fallback_final_models, max_completion_tokens.",
         "- Strategies: synthesize, synthesize_non_refusals, first_success, first_non_refusal.",
         "- Limits: analysis_models, judge_models, and final_models each accept 1-8 model IDs.",
-        "- Privacy: panel, judge, and final calls run inside the attested gateway. TrustedRouter stores billing and route metadata, never prompt/output content.",
+        "- Privacy: panel, judge, and final calls run inside the attested gateway. TrustedRouter stores billing and route metadata but does not retain Synth prompt/output content.",
         f"- Full guide: https://{domain}/docs/synth",
         "",
         "## Models",

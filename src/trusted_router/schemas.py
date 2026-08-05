@@ -332,6 +332,7 @@ class GatewaySettleRequest(_Lenient):
     # and Gemini prompt counts INCLUDE the cached subset.
     cache_read_input_tokens: int | None = Field(default=None, ge=0)
     cache_creation_input_tokens: int | None = Field(default=None, ge=0)
+    reasoning_tokens: int | None = Field(default=None, ge=0)
     service_tier: str | None = Field(default=None, min_length=1, max_length=20)
     request_id: str | None = None
     finish_reason: str | None = None

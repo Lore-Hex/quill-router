@@ -2,9 +2,17 @@
 
 ## Prompt And Output Data
 
-TrustedRouter does not store prompt or output content. Metadata rows are
-limited to generation ID, workspace, key hash, model, provider, token counts,
-cost, usage type, speed, finish reason, and status.
+TrustedRouter never logs prompt or output content. Ordinary synchronous and
+streaming inference does not retain it. Metadata rows are limited to generation
+ID, workspace, key hash, model, provider, token counts, cost, usage type, speed,
+finish reason, and status.
+
+The opt-in Batch API is a separate retention mode. It temporarily stores
+per-artifact AES-256-GCM ciphertext so work can survive restarts and results can
+be polled. Per-artifact data keys are wrapped with Cloud KMS and artifacts are
+deleted after 30 days. This boundary depends on the deployed GCP KMS and IAM
+policy and is not the same zero-retention property as ordinary inference. See
+`/docs/batch` and `quill-cloud-proxy/docs/design/batch-api.md`.
 
 `GET /generation/content` is present for OpenRouter compatibility, but it
 returns `content_not_stored`.
