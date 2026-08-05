@@ -128,6 +128,42 @@ def test_gcp_status_snapshot_components_are_byte_identical() -> None:
         assert row["description"] == definition["description"]
 
 
+def test_gcp_current_checks_expose_regions_without_blending_router_core_slo() -> None:
+    """Deploy gates see every configured region; public SLO remains canonical."""
+    now = utcnow()
+    samples = [
+        _tls_sample(created_at=_iso(now - dt.timedelta(seconds=10)), target=target)
+        for target in ("canonical", "us-central1", "us-east4", "europe-west4")
+    ]
+
+    snapshot = status_snapshot(samples, now=now, settings=_gcp_settings())
+
+    current = snapshot["current"]
+    assert isinstance(current, dict)
+    checks = current["checks"]
+    assert isinstance(checks, list)
+    assert {row["target"] for row in checks} == {
+        "canonical",
+        "us-central1",
+        "us-east4",
+        "europe-west4",
+    }
+    assert {row["target_region"] for row in checks if row["target"] != "canonical"} == {
+        "us-central1",
+        "us-east4",
+        "europe-west4",
+    }
+
+    # Direct regional diagnostics must not inflate uptime denominators or
+    # burn-rate calculations for the canonical router-core service.
+    windows = snapshot["windows"]
+    assert isinstance(windows, dict)
+    assert windows["5m"]["sample_count"] == 1
+    slo_classes = snapshot["slo_classes"]
+    assert isinstance(slo_classes, dict)
+    assert slo_classes["router_core"]["windows"]["5m"]["sample_count"] == 1
+
+
 def test_aws_eu_does_not_advertise_gcp_regional_gateways() -> None:
     ids = tuple(
         str(definition["id"]) for definition in applicable_component_definitions(_aws_eu_settings())
