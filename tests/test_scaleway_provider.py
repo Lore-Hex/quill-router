@@ -193,6 +193,7 @@ def test_scaleway_catalog_routes_are_prepaid_only_and_eu_focused() -> None:
         for endpoint in endpoints
     )
     assert MODELS["qwen/qwen3-embedding-8b"].supports_embeddings is True
+    assert MODELS["qwen/qwen3-embedding-8b"].byok_available is False
 
 
 def test_scaleway_public_provider_and_model_endpoint_shapes(client: Any) -> None:
