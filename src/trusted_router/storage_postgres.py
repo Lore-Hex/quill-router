@@ -58,6 +58,9 @@ from trusted_router.storage_models import (
     AcquisitionAttribution,
     ApiKey,
     AuthSession,
+    BedrockGroupBuyAggregate,
+    BedrockGroupBuyPledge,
+    BedrockGroupBuyPublicMessage,
     BroadcastDeliveryJob,
     BroadcastDestination,
     ByokProviderConfig,
@@ -91,6 +94,7 @@ from trusted_router.storage_models import (
     normalize_provider_access_slug,
     utcnow,
 )
+from trusted_router.storage_postgres_group_buy import PostgresBedrockGroupBuy
 from trusted_router.storage_postgres_operational_analytics_outbox import (
     PostgresOperationalAnalyticsOutbox,
 )
@@ -288,6 +292,14 @@ class PostgresStore:
             if operational_analytics_outbox_enabled
             else None
         )
+        self.bedrock_group_buy_store = PostgresBedrockGroupBuy(
+            run_transaction=self._run_transaction,
+            read_entity_tx=self._read_entity_tx,
+            write_entity_tx=self._write_entity_tx,
+            delete_entity_tx=self._delete_entity_tx,
+            read_entity=self._read_entity,
+            list_entities=self._list_entities,
+        )
 
     def close(self) -> None:
         """Close the connection pool."""
@@ -412,6 +424,35 @@ class PostgresStore:
 
     def _read_entity(self, kind: str, entity_id: str, cls: type[T]) -> T | None:
         return self._run_transaction(lambda conn: self._read_entity_tx(conn, kind, entity_id, cls))
+
+    def _list_entities(
+        self,
+        kind: str,
+        cls: type[T],
+        *,
+        limit: int | None = None,
+    ) -> list[T]:
+        def operation(conn: Any) -> list[T]:
+            query = "SELECT body FROM tr_entities WHERE kind = %s ORDER BY id"
+            params: tuple[Any, ...] = (kind,)
+            if limit is not None:
+                query += " LIMIT %s"
+                params = (kind, max(0, limit))
+            rows = conn.execute(query, params).fetchall()
+            result: list[T] = []
+            for row in rows:
+                raw = row[0]
+                data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                if cls is dict:
+                    result.append(cast(T, data))
+                    continue
+                if dataclasses.is_dataclass(cls):
+                    known = {field.name for field in dataclasses.fields(cls)}
+                    data = {key: value for key, value in data.items() if key in known}
+                result.append(cls(**data))
+            return result
+
+        return self._run_transaction(operation)
 
     def _write_entity_tx(
         self,
@@ -757,6 +798,32 @@ class PostgresStore:
         occurred_at: str,
     ) -> AcquisitionAttribution | None:
         self._not_implemented("record_acquisition_purchase")
+
+    def upsert_bedrock_group_buy_pledge(
+        self, pledge: BedrockGroupBuyPledge
+    ) -> BedrockGroupBuyPledge:
+        return self.bedrock_group_buy_store.upsert(pledge)
+
+    def get_bedrock_group_buy_pledge(
+        self, user_id: str
+    ) -> BedrockGroupBuyPledge | None:
+        return self.bedrock_group_buy_store.get(user_id)
+
+    def withdraw_bedrock_group_buy_pledge(self, user_id: str) -> bool:
+        return self.bedrock_group_buy_store.withdraw(user_id)
+
+    def bedrock_group_buy_aggregate(self) -> BedrockGroupBuyAggregate:
+        return self.bedrock_group_buy_store.aggregate()
+
+    def list_bedrock_group_buy_public_messages(
+        self, *, limit: int = 50
+    ) -> list[BedrockGroupBuyPublicMessage]:
+        return self.bedrock_group_buy_store.list_public_messages(limit=limit)
+
+    def list_bedrock_group_buy_private_pledges(
+        self, *, limit: int = 1000
+    ) -> list[BedrockGroupBuyPledge]:
+        return self.bedrock_group_buy_store.list_private_pledges(limit=limit)
 
     def create_workspace(
         self,

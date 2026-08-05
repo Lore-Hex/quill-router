@@ -19,6 +19,11 @@ from xml.sax.saxutils import escape as xml_escape
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from trusted_router.ai_iq import ai_iq_for_model
+from trusted_router.bedrock_group_buy import (
+    BEDROCK_GROUP_BUY_SPEND_SOURCES,
+    BedrockGroupBuyPublicSnapshot,
+    formatted_campaign_money,
+)
 from trusted_router.benchmark_scores import scores_for_model
 from trusted_router.catalog import (
     META_MODEL_IDS,
@@ -66,6 +71,7 @@ from trusted_router.provider_contract import (
 )
 from trusted_router.regions import configured_regions, region_map_payload
 from trusted_router.seo_catalog import seo_catalog_evidence
+from trusted_router.storage_models import BedrockGroupBuyPledge
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -131,6 +137,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/privacy",
     "/terms",
     "/support",
+    "/bedrock-group-buy",
     "/legal/dpa",
     "/legal/baa",
     "/legal/soc2-readiness",
@@ -1851,6 +1858,66 @@ def public_support_html(settings: Settings) -> str:
             description="Get product, account, billing, plugin, and security support.",
             entity=legal_entity(settings),
             support_email=settings.support_email,
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
+    )
+
+
+def public_bedrock_group_buy_html(
+    settings: Settings,
+    *,
+    snapshot: BedrockGroupBuyPublicSnapshot,
+    signed_in: bool,
+    pledge: BedrockGroupBuyPledge | None,
+    form_values: Mapping[str, object],
+    notice: str = "",
+    error: str = "",
+    share_after_commit: bool = False,
+) -> str:
+    progress_width = min(snapshot.progress_basis_points, 10_000) / 100
+    return (
+        _env()
+        .get_template("public/bedrock_group_buy.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/bedrock-group-buy",
+            title="The $1M Amazon Bedrock Group Buy | TrustedRouter",
+            heading="Buy Bedrock together. Keep 10%.",
+            description=(
+                "Join founders and teams combining annual Amazon Bedrock commitments "
+                "through TrustedRouter. At $1 million per month, the group negotiates "
+                "as one buyer and every participant shares the savings."
+            ),
+            og_image=(f"https://{settings.trusted_domain}/static/og/bedrock-group-buy.png"),
+            og_image_alt=("TrustedRouter Bedrock Group Buy: $1 million per month and 10% savings"),
+            json_ld_blob=_json_ld_graph(
+                _breadcrumb_node(
+                    settings,
+                    (("Home", "/"), ("Bedrock Group Buy", "/bedrock-group-buy")),
+                ),
+            ),
+            snapshot=snapshot,
+            monthly_minimum=formatted_campaign_money(snapshot.monthly_minimum_microdollars),
+            expected_bedrock=formatted_campaign_money(
+                snapshot.expected_bedrock_monthly_microdollars
+            ),
+            expected_all_llm=formatted_campaign_money(
+                snapshot.expected_all_llm_monthly_microdollars
+            ),
+            annual_minimum=formatted_campaign_money(snapshot.annual_minimum_microdollars),
+            annual_savings=formatted_campaign_money(snapshot.annual_savings_microdollars),
+            goal_remaining=formatted_campaign_money(snapshot.goal_remaining_microdollars),
+            progress_percent=Decimal(snapshot.progress_basis_points) / Decimal(100),
+            progress_width=f"{progress_width:.2f}",
+            signed_in=signed_in,
+            has_pledge=pledge is not None,
+            form_values=form_values,
+            spend_sources=BEDROCK_GROUP_BUY_SPEND_SOURCES,
+            notice=notice,
+            error=error,
+            share_after_commit=share_after_commit,
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
             static_version=_static_version(settings),

@@ -16,6 +16,9 @@ from trusted_router.storage_models import (
     AcquisitionAttribution,
     ApiKey,
     AuthSession,
+    BedrockGroupBuyAggregate,
+    BedrockGroupBuyPledge,
+    BedrockGroupBuyPublicMessage,
     BroadcastDeliveryJob,
     BroadcastDestination,
     ByokProviderConfig,
@@ -89,6 +92,20 @@ class Store(Protocol):
         amount_microdollars: int,
         occurred_at: str,
     ) -> AcquisitionAttribution | None: ...
+    def upsert_bedrock_group_buy_pledge(
+        self, pledge: BedrockGroupBuyPledge
+    ) -> BedrockGroupBuyPledge: ...
+    def get_bedrock_group_buy_pledge(
+        self, user_id: str
+    ) -> BedrockGroupBuyPledge | None: ...
+    def withdraw_bedrock_group_buy_pledge(self, user_id: str) -> bool: ...
+    def bedrock_group_buy_aggregate(self) -> BedrockGroupBuyAggregate: ...
+    def list_bedrock_group_buy_public_messages(
+        self, *, limit: int = ...
+    ) -> list[BedrockGroupBuyPublicMessage]: ...
+    def list_bedrock_group_buy_private_pledges(
+        self, *, limit: int = ...
+    ) -> list[BedrockGroupBuyPledge]: ...
     def create_workspace(
         self,
         owner_user_id: str,

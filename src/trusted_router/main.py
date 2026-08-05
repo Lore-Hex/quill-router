@@ -29,6 +29,7 @@ from trusted_router.middleware import register_http_middleware
 from trusted_router.routes.acquisition import register_acquisition_routes
 from trusted_router.routes.activity import register_activity_routes
 from trusted_router.routes.auth import register_auth_routes
+from trusted_router.routes.bedrock_group_buy import register_bedrock_group_buy_routes
 from trusted_router.routes.billing import register_billing_routes
 from trusted_router.routes.broadcast import register_broadcast_routes
 from trusted_router.routes.byok import register_byok_routes
@@ -213,6 +214,7 @@ def create_app(
             app.add_exception_handler(transient_type, unavailable_exception_handler)
 
     register_public_routes(app, settings)
+    register_bedrock_group_buy_routes(app, settings)
     api = _make_api_router(settings)
     register_oauth_routes(app, api)
     register_console_routes(app)

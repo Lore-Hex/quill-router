@@ -23,11 +23,15 @@ from trusted_router.storage_custom_models import InMemoryCustomModels
 from trusted_router.storage_email_blocks import InMemoryEmailBlocks
 from trusted_router.storage_errors import StoreConflict
 from trusted_router.storage_generations import InMemoryGenerations
+from trusted_router.storage_group_buy import InMemoryBedrockGroupBuy
 from trusted_router.storage_keys import InMemoryApiKeys
 from trusted_router.storage_models import (
     AcquisitionAttribution,
     ApiKey,
     AuthSession,
+    BedrockGroupBuyAggregate,
+    BedrockGroupBuyPledge,
+    BedrockGroupBuyPublicMessage,
     BroadcastDeliveryJob,
     BroadcastDestination,
     ByokProviderConfig,
@@ -108,6 +112,7 @@ class InMemoryStore:
             lock=self._lock,
         )
         self.acquisition_store = InMemoryAcquisitionAttribution(lock=self._lock)
+        self.bedrock_group_buy_store = InMemoryBedrockGroupBuy(lock=self._lock)
         self.generation_store = InMemoryGenerations(
             lock=self._lock,
             add_usage_to_key=self.api_keys.add_usage,
@@ -139,6 +144,7 @@ class InMemoryStore:
             self.credit_transfer_claims.clear()
             self.api_keys.reset()
             self.acquisition_store.reset()
+            self.bedrock_group_buy_store.reset()
             self.generation_store.reset()
             self.synthetic_store.reset()
             self.byok_store.reset()
@@ -280,6 +286,32 @@ class InMemoryStore:
             amount_microdollars=amount_microdollars,
             occurred_at=occurred_at,
         )
+
+    def upsert_bedrock_group_buy_pledge(
+        self, pledge: BedrockGroupBuyPledge
+    ) -> BedrockGroupBuyPledge:
+        return self.bedrock_group_buy_store.upsert(pledge)
+
+    def get_bedrock_group_buy_pledge(
+        self, user_id: str
+    ) -> BedrockGroupBuyPledge | None:
+        return self.bedrock_group_buy_store.get(user_id)
+
+    def withdraw_bedrock_group_buy_pledge(self, user_id: str) -> bool:
+        return self.bedrock_group_buy_store.withdraw(user_id)
+
+    def bedrock_group_buy_aggregate(self) -> BedrockGroupBuyAggregate:
+        return self.bedrock_group_buy_store.aggregate()
+
+    def list_bedrock_group_buy_public_messages(
+        self, *, limit: int = 50
+    ) -> list[BedrockGroupBuyPublicMessage]:
+        return self.bedrock_group_buy_store.list_public_messages(limit=limit)
+
+    def list_bedrock_group_buy_private_pledges(
+        self, *, limit: int = 1000
+    ) -> list[BedrockGroupBuyPledge]:
+        return self.bedrock_group_buy_store.list_private_pledges(limit=limit)
 
     # Auth sessions delegate to storage_auth_sessions.InMemoryAuthSessions.
     def create_auth_session(
