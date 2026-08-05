@@ -55,8 +55,8 @@ def test_friendli_tombstones_second_miss_then_restores_annotations(
                 "meta-llama-3.3-70b-instruct",
             ),
             _manifest_row(
-                "qwen/qwen3-235b-a22b-2507",
-                "Qwen/Qwen3-235B-A22B-Instruct-2507",
+                "lgai-exaone/k-exaone-236b-a23b",
+                "LGAI-EXAONE/K-EXAONE-236B-A23B",
                 _about="curated annotation: keep byte-identical",
                 note={"owner": "catalog", "reason": "manual"},
             ),
@@ -104,7 +104,7 @@ def test_friendli_tombstones_second_miss_then_restores_annotations(
 
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     by_id = {row["id"]: row for row in raw["models"]}
-    missing = by_id["qwen/qwen3-235b-a22b-2507"]
+    missing = by_id["lgai-exaone/k-exaone-236b-a23b"]
     assert missing["missing_since"]
     assert missing.get("routable") is not False
     assert by_id["z-ai/glm-5.2"]["_note"] == "keep me"
@@ -115,21 +115,25 @@ def test_friendli_tombstones_second_miss_then_restores_annotations(
     result = friendli.fetch()
     friendli.write_provider_manifest(result)
     tombstoned_raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-    tombstoned = {row["id"]: row for row in tombstoned_raw["models"]}["qwen/qwen3-235b-a22b-2507"]
+    tombstoned = {row["id"]: row for row in tombstoned_raw["models"]}[
+        "lgai-exaone/k-exaone-236b-a23b"
+    ]
     assert tombstoned["routable"] is False
     assert tombstoned["routable_reason"] == "delisted-upstream"
     assert tombstoned["missing_since"] == missing["missing_since"]
 
     payload["data"].append(
         {
-            "id": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+            "id": "LGAI-EXAONE/K-EXAONE-236B-A23B",
             "pricing": {"input": "0.0000002", "output": "0.0000008"},
         }
     )
     result = friendli.fetch()
     friendli.write_provider_manifest(result)
     restored_raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-    restored = {row["id"]: row for row in restored_raw["models"]}["qwen/qwen3-235b-a22b-2507"]
+    restored = {row["id"]: row for row in restored_raw["models"]}[
+        "lgai-exaone/k-exaone-236b-a23b"
+    ]
     assert restored["routable"] is True
     assert "routable_reason" not in restored
     assert "missing_since" not in restored
