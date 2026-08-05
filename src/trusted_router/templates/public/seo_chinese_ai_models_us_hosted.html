@@ -5,7 +5,7 @@
     <span class="eyebrow">Qwen, GLM, Kimi and DeepSeek without the vendor endpoint</span>
     <h2>Run GLM, Qwen, Kimi, and DeepSeek on US-hosted, attested infrastructure that never forwards a prompt to the model vendor.</h2>
     <p>Your benchmarks already picked these models. GLM-5.2, Qwen 3.5, Kimi K2.7, and DeepSeek V4 Pro all run as routes here, alongside MiniMax M3. Then legal asks where the API traffic goes. A vendor-hosted endpoint sends every prompt to the model vendor's servers, and self-hosting the weights means running your own GPUs.</p>
-    <p>There is a middle path. TrustedRouter serves the same open weights via non-Chinese hosting providers inside a hardware-attested confidential-compute gateway, with Zero-Data-Retention and TEE tiers per route. TrustedRouter never logs or stores prompt or output content. The API is OpenAI-compatible, and <a href="/eu">EU-focused routing</a> is available.</p>
+    <p>There is a middle path. TrustedRouter serves the same open weights via non-Chinese hosting providers inside a hardware-attested confidential-compute gateway, with Zero-Data-Retention and TEE tiers per route. {{ content_handling_claim }} The API is OpenAI-compatible, and <a href="/eu">EU-focused routing</a> is available.</p>
     <p><a class="btn primary" href="/models">Browse the model routes</a> <a class="btn" href="/security">Verify the attestation</a></p>
   </div>
   <div class="copy-terminal">
@@ -34,7 +34,7 @@ reply = client.chat.completions.create(
   <div class="matrix-row matrix-head"><span></span><strong>Vendor-hosted API (z.ai, Moonshot, Alibaba)</strong><strong>TrustedRouter</strong></div>
   <div class="matrix-row"><span>Model access</span><span>Direct from the lab that trained the model</span><span>220+ routes across 30+ providers behind one API</span></div>
   <div class="matrix-row"><span>Where prompts go</span><span>The vendor's own servers</span><span>Non-Chinese attested hosts; prompts never reach the vendor</span></div>
-  <div class="matrix-row"><span>Retention</span><span>Set by each vendor's policy</span><span>TrustedRouter never logs or stores prompt or output content; ZDR routes contractually keep nothing</span></div>
+  <div class="matrix-row"><span>Retention</span><span>Set by each vendor's policy</span><span>Real-time inference is content-stateless; ZDR routes contractually keep nothing; Batch is opt-in encrypted retention</span></div>
   <div class="matrix-row"><span>Verification</span><span>A privacy policy you read and trust</span><span>Live attestation: a CPU-vendor-signed JWT bound to your TLS session</span></div>
   <div class="matrix-row"><span>Sensitive questions</span><span>GLM answered 30 of 60 on our test set</span><span>Same weights answered 60 of 60 through the enclave</span></div>
   <div class="matrix-row"><span>Pricing</span><span>First-party list prices</span><span>Thin markup over provider list prices; see <a href="/pricing">pricing</a></span></div>

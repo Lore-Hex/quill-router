@@ -210,7 +210,7 @@ def trust_html(
       </div>
     </section>
     <section class="grid">
-      <div class="panel"><h2>No Prompt Logs</h2><p>Prompt/output storage is disabled. Generation content endpoint returns a compatible <code>content_not_stored</code> response.</p></div>
+      <div class="panel"><h2>No Prompt Logs</h2><p>Ordinary synchronous and streaming prompt/output storage is disabled. The opt-in Batch API uses separately documented encrypted retention. Generation content endpoint returns a compatible <code>content_not_stored</code> response.</p></div>
       <div class="panel">
         <h2>Hosted Open Source</h2>
         <div class="repo-list">

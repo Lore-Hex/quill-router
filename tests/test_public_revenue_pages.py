@@ -58,7 +58,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/llm-api-for-law-firms": "When the gateway operator provably cannot read the prompt, your privilege analysis starts from different facts.",
         "/llm-data-residency": "Residency pins where inference runs; attestation proves who can read the prompt.",
         "/no-log-llm-api": "No prompt logs, enforced by code you can read and attestation you can check.",
-        "/anonymous-llm-api": "Fund 220+ model routes from a crypto wallet, no card and no KYC, then verify for yourself that prompts are not stored.",
+        "/anonymous-llm-api": "Fund 220+ model routes from a crypto wallet, no card and no KYC, then verify the real-time content-stateless path.",
         "/cline-api-provider": "Your coding agent streams your entire repo through its API provider, so pick one you can verify.",
         "/sillytavern-api": "Point SillyTavern at an API that never logs prompts or outputs and proves what it runs.",
         "/aws-bedrock-alternative": "Keep the privacy you chose Bedrock for, without the quota wall.",

@@ -1,0 +1,167 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Batch API quickstart">
+  <div class="marketing-copy">
+    <span class="eyebrow">Batch API</span>
+    <h2>Submit many requests. Poll one batch.</h2>
+    <p>TrustedRouter implements the OpenRouter inline Batch API shape at <code>/api/beta/batches</code>. Existing integrations can switch the hostname and API key without uploading a JSONL file.</p>
+    <p>Batch items use the same attested authorization, routing, fallback, integer billing, and provider adapters as ordinary inference.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Create and poll</span><span>Python</span></div>
+    <pre><code>import os
+import time
+import requests
+
+root = "{{ api_base_url|replace('/v1', '') }}"
+headers = {
+    "Authorization": f"Bearer {os.environ['TRUSTEDROUTER_API_KEY']}",
+    "Content-Type": "application/json",
+}
+
+# Keep endpoint and model before requests.
+created = requests.post(
+    f"{root}/api/beta/batches",
+    headers=headers,
+    json={
+        "endpoint": "/v1/chat/completions",
+        "model": "deepseek/deepseek-v4-flash",
+        "requests": [
+            {
+                "custom_id": "summary-001",
+                "body": {
+                    "messages": [{
+                        "role": "user",
+                        "content": "Reply exactly PONG",
+                    }],
+                    "max_tokens": 16,
+                },
+            }
+        ],
+    },
+    timeout=30,
+)
+created.raise_for_status()
+batch = created.json()
+
+while batch["status"] not in {
+    "completed", "failed", "expired", "cancelled"
+}:
+    time.sleep(5)
+    response = requests.get(
+        f"{root}/api/beta/batches/{batch['id']}",
+        headers=headers,
+        timeout=30,
+    )
+    response.raise_for_status()
+    batch = response.json()
+
+print(batch["results"])</code></pre>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">Drop-in contract</h2>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
+      <span class="card-label">Create</span>
+      <h3><code>POST /api/beta/batches</code></h3>
+      <p>Returns HTTP 202 with a <code>batch_*</code> ID, status, request counts, completion window, and aggregate usage fields.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Poll</span>
+      <h3><code>GET /api/beta/batches/{id}</code></h3>
+      <p>Poll with the same API key. A completed batch returns results inline in original request order.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Results</span>
+      <h3>Response or error per item</h3>
+      <p>Every result preserves <code>custom_id</code> and has either a response with status, request ID, and body, or a stable error.</p>
+    </div>
+  </div>
+</section>
+
+<section class="marketing-split" style="margin-top:48px">
+  <div class="marketing-copy">
+    <span class="eyebrow">Supported endpoints</span>
+    <h2>One batch format across four APIs.</h2>
+    <ul class="check-list">
+      <li><code>/v1/chat/completions</code></li>
+      <li><code>/v1/responses</code></li>
+      <li><code>/v1/messages</code></li>
+      <li><code>/v1/embeddings</code></li>
+    </ul>
+    <p>Streaming is not available inside a batch. Embedding batches accept text, text arrays, token arrays, and arrays of token arrays. Provider preferences, <code>input_type</code>, and multimodal embedding inputs are rejected before the job is created.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Wire shape</span><span>JSON</span></div>
+    <pre><code>{
+  "endpoint": "/v1/responses",
+  "model": "your/model",
+  "requests": [
+    {
+      "custom_id": "task-001",
+      "body": {
+        "input": "Summarize this text.",
+        "max_output_tokens": 300
+      }
+    }
+  ]
+}</code></pre>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">Execution guarantees</h2>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
+      <h3>Exactly-once settlement</h3>
+      <p>Each item has a deterministic idempotency key. Worker restarts recover encrypted checkpoints instead of rerunning completed requests.</p>
+    </div>
+    <div class="marketing-card">
+      <h3>Regional lease safety</h3>
+      <p>Workers claim jobs with generation-checked leases. Only one region executes an item while another region can recover an abandoned job.</p>
+    </div>
+    <div class="marketing-card">
+      <h3>Partial results</h3>
+      <p>A provider or validation failure is attached to that item. Successful items remain successful and are billed once.</p>
+    </div>
+  </div>
+</section>
+
+<section class="quote-feature" style="margin-top:48px">
+  <div>
+    <span class="eyebrow">Confidential retention</span>
+    <h2>Encrypted job state. No plaintext storage.</h2>
+  </div>
+  <div>
+    <p>Submitting to the Batch API opts into temporary encrypted storage so jobs survive restarts and results can be polled. Prompts and outputs are encrypted inside the attested gateway with a per-artifact key. The raw API key is validated and discarded during submission; it is never persisted, even inside an encrypted artifact.</p>
+    <p>Under the deployed GCP IAM policy, only approved production enclave image digests are granted access to the ciphertext and its Cloud KMS envelope key. The control plane, object storage, logs, billing records, Sentry, and analytics do not receive plaintext batch content. Batch artifacts are automatically deleted after 30 days.</p>
+    <p>This encrypted-retention boundary depends on GCP KMS, Cloud Storage, and the project's IAM administration. It is intentionally stronger than ordinary application-layer storage, but it is not the same zero-retention property as synchronous and streaming inference.</p>
+    <p>Ordinary synchronous and streaming inference remains content-stateless. Strict EU data-residency batch execution is not included in this first beta.</p>
+    <p><a class="btn" href="https://trust.trustedrouter.com">Verify the gateway</a> <a class="btn ghost" href="/security">Read the security boundary</a></p>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">Billing and limits</h2>
+  <div class="marketing-grid two">
+    <div class="marketing-card">
+      <h3>Normal route pricing</h3>
+      <p>Batch items use the selected TrustedRouter route price and the same integer microdollar ledger as live requests. There is no blanket batch discount yet, so code should read returned usage instead of assuming 50% off.</p>
+    </div>
+    <div class="marketing-card">
+      <h3>Current beta limits</h3>
+      <ul class="check-list">
+        <li>24-hour completion window</li>
+        <li>32 MiB create request limit</li>
+        <li>64 MiB response limit per item</li>
+        <li>Unique <code>custom_id</code> values, up to 256 bytes</li>
+        <li>No list, cancel, or file-upload endpoints</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+{% endblock %}

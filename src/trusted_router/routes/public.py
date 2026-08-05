@@ -459,11 +459,7 @@ async def _handle_support_inquiry(settings: Settings, request: Request) -> JSONR
         name=name,
         email=email,
         subject=f"{category_label}: {subject}",
-        message=(
-            f"Request ID: {request_id}\n\n{message}"
-            if request_id
-            else message
-        ),
+        message=(f"Request ID: {request_id}\n\n{message}" if request_id else message),
     )
     try:
         fanout = await fanout_support_message(settings, ops_message)
@@ -488,8 +484,7 @@ async def _handle_support_inquiry(settings: Settings, request: Request) -> JSONR
         )
 
     log.info(
-        "support_inquiry.sent category=%s has_request_id=%s subject_len=%d "
-        "message_len=%d",
+        "support_inquiry.sent category=%s has_request_id=%s subject_len=%d message_len=%d",
         category,
         bool(request_id),
         len(subject),
@@ -664,6 +659,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/docs/prompt-caching")
     async def prompt_caching_docs() -> str:
         return public_page_html(settings, "docs/prompt-caching")
+
+    @public_html_route("/docs/batch")
+    async def batch_docs() -> str:
+        return public_page_html(settings, "docs/batch")
 
     @public_html_route("/docs/web-search")
     async def web_search_docs() -> str:
@@ -1228,9 +1227,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             ttl_seconds=STATUS_RESPONSE_CACHE_SECONDS,
             stale_seconds=STATUS_RESPONSE_STALE_SECONDS,
             background_tasks=background_tasks,
-            build=lambda: _json_body(
-                {"data": _compact_status_json(_status_snapshot(settings))}
-            ),
+            build=lambda: _json_body({"data": _compact_status_json(_status_snapshot(settings))}),
         )
 
     @app.get("/status/history")
@@ -1849,11 +1846,7 @@ def _compact_status_json(snapshot: dict[str, Any]) -> dict[str, Any]:
     for component in snapshot.get("components", []):
         compact_component = dict(component)
         compact_component["history"] = [
-            {
-                key: value
-                for key, value in bucket.items()
-                if key != "latency_breakdown"
-            }
+            {key: value for key, value in bucket.items() if key != "latency_breakdown"}
             for bucket in component.get("history", [])
         ]
         compact_components.append(compact_component)

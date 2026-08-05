@@ -118,8 +118,8 @@ their own policies — each provider's posture is published on the model pages.
 ## Repository layout
 
 This repo implements the control-plane contract: route coverage, auth/key
-management, billing ledger semantics, usage metadata, no prompt/output storage,
-Sentry scrubbers, and provider abstractions. The attested gateway
+management, billing ledger semantics, usage metadata, prompt/output logging
+prohibitions, Sentry scrubbers, and provider abstractions. The attested gateway
 implementation lives in `quill-cloud-proxy`.
 
 Trust boundary: `api.trustedrouter.com` is the attested prompt path and must
@@ -189,7 +189,9 @@ Apache-2.0.
 
 ## Security Defaults
 
-- Prompt and output content are never stored.
+- Prompt and output content is never logged. Ordinary synchronous and streaming
+  inference does not retain it. The opt-in Batch API temporarily retains
+  enclave-encrypted artifacts for up to 30 days.
 - Usage logs contain metadata only.
 - API keys are stored as salted SHA-256 hashes with opaque key IDs.
 - User-submitted BYOK provider keys are stored as envelope-encrypted ciphertext

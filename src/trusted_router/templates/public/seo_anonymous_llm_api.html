@@ -3,9 +3,9 @@
 <section class="marketing-split" aria-label="Anonymous-friendly LLM API with crypto payment">
   <div class="marketing-copy">
     <span class="eyebrow">Anonymous LLM API</span>
-    <h2>Fund 220+ model routes from a crypto wallet, no card and no KYC, then verify for yourself that prompts are not stored.</h2>
+    <h2>Fund 220+ model routes from a crypto wallet, no card and no KYC, then verify the real-time content-stateless path.</h2>
     <p>Most model APIs want a card and an identity before the first token. TrustedRouter works without a credit card: pay for the LLM API with crypto per request via x402, or sign in with Continue with MetaMask, which needs no traditional account. Prepaid Stripe credits and BYOK exist too, for the days you want a receipt.</p>
-    <p>Payment is half the problem. The other half is what happens to your prompts. TrustedRouter never logs or stores prompt or output content, and you can check that claim rather than take it on faith: the prompt path runs inside a hardware-attested confidential-compute gateway, the source is open, and the attestation is checkable live at <a href="/security">/security</a>.</p>
+    <p>Payment is half the problem. The other half is what happens to your prompts. {{ content_handling_claim }} You can check the gateway rather than take that on faith: the prompt path runs inside a hardware-attested confidential-compute gateway, the source is open, and the attestation is checkable live at <a href="/security">/security</a>.</p>
     <p><a class="btn primary" href="/pricing">See per-model pricing</a> <a class="btn" href="/chat">Open the playground</a></p>
   </div>
   <div class="copy-terminal">
@@ -26,6 +26,6 @@
 </section>
 <section class="quote-feature">
   <div><span class="eyebrow">The fine print, stated plainly</span><h2>Crypto payments are pseudonymous. We say so up front.</h2></div>
-  <div><p>Anonymous-friendly is the accurate phrase. A wallet spares you the card and the KYC form, but blockchain payments are pseudonymous, not untraceable, and we will not promise anonymity we cannot deliver. Plenty of services in this space make the bigger claim and ask you to trust it.</p><p>What we can deliver is verifiable: no prompt or output content ever logged or stored by TrustedRouter, Zero-Data-Retention tiers where providers contractually keep nothing, TEE tiers where even the serving provider cannot read your prompt, and an attestation you can fetch live and check against the published image digest. If retention is your main concern, start at <a href="/no-log-llm-api">/no-log-llm-api</a>; for wiring x402 payments into an agent, see <a href="/x402-llm-api">/x402-llm-api</a>.</p></div>
+  <div><p>Anonymous-friendly is the accurate phrase. A wallet spares you the card and the KYC form, but blockchain payments are pseudonymous, not untraceable, and we will not promise anonymity we cannot deliver. Plenty of services in this space make the bigger claim and ask you to trust it.</p><p>What we can deliver is verifiable: no prompt or output logs, content-stateless real-time inference, explicit encrypted Batch retention, Zero-Data-Retention tiers where providers contractually keep nothing, TEE tiers where even the serving provider cannot read your prompt, and an attestation you can fetch live and check against the published image digest. If retention is your main concern, start at <a href="/no-log-llm-api">/no-log-llm-api</a>; for wiring x402 payments into an agent, see <a href="/x402-llm-api">/x402-llm-api</a>.</p></div>
 </section>
 {% endblock %}

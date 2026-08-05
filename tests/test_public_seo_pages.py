@@ -67,10 +67,7 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
         "<loc>https://trustedrouter.com/blog/how-confidential-computing-protects-ai-prompts</loc>"
         in core.text
     )
-    assert (
-        "<loc>https://trustedrouter.com/blog/sign-in-with-trustedrouter</loc>"
-        in core.text
-    )
+    assert "<loc>https://trustedrouter.com/blog/sign-in-with-trustedrouter</loc>" in core.text
     assert "<loc>https://trustedrouter.com/docs/synth</loc>" in core.text
     assert "<loc>https://trustedrouter.com/docs/fusion</loc>" not in core.text
     assert "<loc>https://trustedrouter.com/fusion</loc>" not in core.text
@@ -154,10 +151,7 @@ def test_api_reference_declares_one_query_independent_canonical(
 
     assert response.status_code == 200
     assert response.text.count('rel="canonical"') == 1
-    assert (
-        '<link rel="canonical" href="https://trustedrouter.com/api/reference">'
-        in response.text
-    )
+    assert '<link rel="canonical" href="https://trustedrouter.com/api/reference">' in response.text
 
 
 @pytest.mark.parametrize(
@@ -204,10 +198,7 @@ def test_trust_page_declares_dedicated_trust_host_as_canonical(
         response = client.get(path, headers=headers)
         assert response.status_code == 200
         assert response.text.count('rel="canonical"') == 1
-        assert (
-            '<link rel="canonical" href="https://trust.trustedrouter.com/">'
-            in response.text
-        )
+        assert '<link rel="canonical" href="https://trust.trustedrouter.com/">' in response.text
 
 
 def test_indexnow_key_file_is_public(client: TestClient) -> None:
@@ -510,12 +501,11 @@ def test_confidential_computing_blog_explains_and_verifies_the_boundary(
         "how-confidential-computing-protects-ai-prompts.png"
     )
     assert f'property="og:image" content="{card}"' in response.text
-    assert "how-confidential-computing-protects-ai-prompts" in json.dumps(
-        _json_ld(response.text)
+    assert "how-confidential-computing-protects-ai-prompts" in json.dumps(_json_ld(response.text))
+    assert (
+        client.get("/static/og/blog/how-confidential-computing-protects-ai-prompts.png").status_code
+        == 200
     )
-    assert client.get(
-        "/static/og/blog/how-confidential-computing-protects-ai-prompts.png"
-    ).status_code == 200
 
 
 def test_blog_page_views_emit_axiom_safe_metadata(client: TestClient, caplog) -> None:
@@ -582,7 +572,8 @@ def test_public_privacy_terms_and_support_pages_are_distinct(client: TestClient)
     assert privacy.status_code == 200
     assert "Privacy Policy | TrustedRouter" in privacy.text
     assert "Lore Hex Corp" in privacy.text
-    assert "never logs or stores prompt or output content" in privacy.text
+    assert "never logs prompt or output content" in privacy.text
+    assert "opt-in Batch API" in privacy.text
     assert "We do not use customer prompts or outputs to train our own models" in privacy.text
     assert "/legal/subprocessors" in privacy.text
     assert "security@trustedrouter.com" in privacy.text
@@ -642,7 +633,7 @@ def test_public_legal_dpa_baa_and_subprocessors_are_honest(client: TestClient) -
     assert "Draft DPA" in dpa.text
     assert "Signature required" in dpa.text
     assert "Joseph Perla" in dpa.text
-    assert "No prompt/output storage by TrustedRouter" in dpa.text
+    assert "Real-time inference is content-stateless. Batch is opt-in." in dpa.text
     assert "trustedrouter/zdr" in dpa.text
     assert "written approval" in dpa.text
 
@@ -849,8 +840,7 @@ def test_reversed_model_comparison_redirects_to_stable_canonical(
     canonical = client.get(canonical_path, follow_redirects=False)
     assert canonical.status_code == 200
     assert (
-        f'<link rel="canonical" href="https://trustedrouter.com{canonical_path}">'
-        in canonical.text
+        f'<link rel="canonical" href="https://trustedrouter.com{canonical_path}">' in canonical.text
     )
 
     reversed_page = client.get(
