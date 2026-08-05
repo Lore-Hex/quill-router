@@ -315,9 +315,9 @@ ENV_VARS=(
   "TR_TRUSTED_DOMAIN=trustedrouter.com"
   "TR_TRUSTED_DOMAIN_ALIASES=allyrouter.com,uptimerouter.com"
   "TR_STORAGE_BACKEND=${STORAGE_BACKEND}"
-  # Exactly $0.10 once per newly created email/OAuth account. Wallet-only
+  # Exactly $0.30 once per newly created email/social OAuth account. Wallet-only
   # accounts stay at $0. Keep this explicit so stale env cannot change policy.
-  "TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=100000"
+  "TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=300000"
   "TR_GCP_PROJECT_ID=${PROJECT_ID}"
   "TR_SPANNER_INSTANCE_ID=${SPANNER_INSTANCE_ID}"
   "TR_SPANNER_DATABASE_ID=${SPANNER_DATABASE_ID}"

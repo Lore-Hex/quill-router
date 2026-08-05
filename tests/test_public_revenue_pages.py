@@ -130,6 +130,7 @@ def test_signup_grant_amount_is_not_advertised(client: TestClient) -> None:
         assert response.status_code == 200, f"{path} returned {response.status_code}"
         rendered = response.text.lower()
         assert "$0.10" not in rendered
+        assert "$0.30" not in rendered
         assert "ten cents" not in rendered
 
     for path in [
@@ -138,6 +139,7 @@ def test_signup_grant_amount_is_not_advertised(client: TestClient) -> None:
     ]:
         source = path.read_text().lower()
         assert "$0.10" not in source
+        assert "$0.30" not in source
         assert "ten cents" not in source
 
 
@@ -525,7 +527,8 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
     # animated orbital scene, on the friend-provided modern layout. Assert the
     # new conversion surface rather than the old orbital-scene markup.
     assert "Every model." in response.text  # homepage tagline
-    assert "Provable privacy." in response.text
+    assert "Privacy with proof." in response.text
+    assert "Provable privacy." not in response.text
     assert "ATTESTED GATEWAY" in response.text  # attestation record
     assert "Get API key" in response.text  # primary CTA
     assert "Provider failover" in response.text  # hero proof row

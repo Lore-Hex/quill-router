@@ -146,7 +146,7 @@ twice per week during the first month.
 
 Use at least three independent messages instead of one all-purpose ad:
 
-1. **Every model. Provable privacy.** One OpenAI-compatible API with an
+1. **Every model. Privacy with proof.** One OpenAI-compatible API with an
    attested, open-source prompt path.
 2. **Switch from OpenRouter in one line.** Keep the SDK and change the base
    URL. No prompt or output logs, always.

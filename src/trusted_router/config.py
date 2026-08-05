@@ -256,10 +256,10 @@ class Settings(BaseSettings):
     # from provider analytics so its privacy and cutover can be controlled.
     operational_analytics_outbox_enabled: bool = False
 
-    # Starter credit granted exactly once with a new email/OAuth account's
+    # Starter credit granted exactly once with a new email/social OAuth account's
     # first workspace. Wallet-only and secondary workspaces receive no grant.
-    # $0.10 = 100,000 microdollars.
-    signup_trial_credit_microdollars: int = 100_000
+    # $0.30 = 300,000 microdollars.
+    signup_trial_credit_microdollars: int = 300_000
 
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = 0.05

@@ -364,7 +364,7 @@ def test_signup_endpoint_is_idempotent_and_returns_management_key(client: httpx.
         assert data["key"].startswith("sk-tr-v1-")
         assert data["key_id"].startswith("key_")
         assert data["management"] is True
-        assert data["trial_credit_microdollars"] == 100_000
+        assert data["trial_credit_microdollars"] == 300_000
     else:
         assert first.json()["error"]["type"] == "already_registered"
     # Re-submitting the same email is always 409 — the endpoint is

@@ -34,10 +34,10 @@ def test_guarded_deploy_applies_clickhouse_delivery_schemas_before_rollout() -> 
     assert workflow.index(operational_outbox) < workflow.index(rollout)
 
 
-def test_deploy_pins_ten_cent_signup_credit_policy() -> None:
+def test_deploy_pins_thirty_cent_signup_credit_policy() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
 
-    assert '"TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=100000"' in rollout
+    assert '"TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=300000"' in rollout
 
 
 def test_deploy_removes_only_explicitly_missing_optional_secrets() -> None:

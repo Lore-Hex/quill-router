@@ -206,7 +206,7 @@ async def test_google_callback_creates_session_for_new_user(google_client: TestC
     assert user is not None
     assert user.email_verified is True
     workspace = STORE.list_workspaces_for_user(user.id)[0]
-    assert live_credit_summary(workspace.id)["total_credits"] == 100_000
+    assert live_credit_summary(workspace.id)["total_credits"] == 300_000
 
 
 @pytest.mark.asyncio

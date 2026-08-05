@@ -4,7 +4,7 @@ from pathlib import Path
 
 from trusted_router.config import Settings
 
-OG_TITLE = "TrustedRouter | Every model. Provable privacy."
+OG_TITLE = "TrustedRouter | Every model. Privacy with proof."
 OG_DESCRIPTION = (
     "One OpenAI-compatible API for hundreds of models on attested infrastructure, "
     "with ZDR routes, provider failover, BYOK, and no prompt or output logs."

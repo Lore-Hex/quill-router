@@ -1412,7 +1412,7 @@ def dashboard_html(
     canonical_site_url = f"https://{domain}/"
     site_url = site_url or canonical_site_url
     alternate_brand = brand_name != "TrustedRouter"
-    page_title = f"{brand_name} | Every model. Provable privacy." if alternate_brand else OG_TITLE
+    page_title = f"{brand_name} | Every model. Privacy with proof." if alternate_brand else OG_TITLE
     tr_config = {
         "environment": environment,
         "defaultDevUser": "" if environment == "production" else DEV_USER_FALLBACK,

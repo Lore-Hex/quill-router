@@ -9,7 +9,7 @@
 [![Python SDK](https://img.shields.io/pypi/v/trusted-router-py?label=Python%20SDK&logo=pypi)](https://pypi.org/project/trusted-router-py/)
 [![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
 
-# End-to-end encrypted LLMs. One API. Provable privacy.
+# End-to-end encrypted LLMs. One API. Privacy with proof.
 
 Stop worrying about who can see your prompts. Tell your coding agent to move
 your project over, pick how private you want to be, pick a model, drop in a
