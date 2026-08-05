@@ -457,6 +457,16 @@ def _routing_for_body(
     return ids, prefs
 
 
+def resolved_route_preferences(body: dict[str, Any], settings: Settings) -> RoutePreferences:
+    """Return the authoritative preferences after aliases and suffixes resolve.
+
+    Cross-cutting policy gates must use this instead of reparsing raw provider
+    fields, otherwise shorthand such as ``:zdr`` can diverge from routing.
+    """
+    _, preferences = _routing_for_body(body, settings)
+    return preferences
+
+
 # OpenAI-style dated snapshot suffix, e.g. the "-2025-04-14" in
 # "gpt-4.1-2025-04-14". Anthropic-style undashed dates ("20241022") don't match.
 _DATED_SNAPSHOT_RE = re.compile(r"-\d{4}-\d{2}-\d{2}$")

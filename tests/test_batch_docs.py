@@ -12,7 +12,9 @@ def test_batch_docs_publish_drop_in_contract(client: TestClient) -> None:
     assert "/v1/messages" in response.text
     assert "/v1/embeddings" in response.text
     assert "Keep endpoint and model before requests" in response.text
-    assert "There is no blanket batch discount yet" in response.text
+    assert "Use the provider's real Batch API" in response.text
+    assert "published 50% discount" in response.text
+    assert "50,000 requests per batch" in response.text
 
 
 def test_batch_docs_disclose_encrypted_retention_boundary(client: TestClient) -> None:
@@ -26,6 +28,11 @@ def test_batch_docs_disclose_encrypted_retention_boundary(client: TestClient) ->
         response.text
     )
     assert "not the same zero-retention property" in response.text
+    assert "provider receives and temporarily retains plaintext input for up to 26 hours" in (
+        response.text
+    )
+    assert "provider results for up to 6 hours" in response.text
+    assert "never used for privacy-constrained aliases" in response.text
 
 
 def test_batch_docs_are_discoverable(client: TestClient) -> None:
@@ -57,6 +64,13 @@ def test_public_privacy_and_legal_pages_scope_batch_retention(client: TestClient
     dpa = client.get("/legal/dpa")
     assert "Batch instruction" in dpa.text
     assert "excluded from the default zero-retention commitment" in dpa.text
+    assert "plaintext input for up to 26 hours" in dpa.text
+    assert "provider results for up to 6 hours" in dpa.text
+    assert "blocked for ZDR, E2E/confidential, regional, and BYOK routes" in dpa.text
+
+    subprocessors = client.get("/legal/subprocessors")
+    assert "provider-native Batch may temporarily retain plaintext input" in subprocessors.text
+    assert "provider results for up to 6 hours" in subprocessors.text
 
     baa = client.get("/legal/baa")
     assert "signed BAA amendment" in baa.text

@@ -228,8 +228,7 @@ class SpannerBigtableStore:
                 password=operational_analytics_clickhouse_password,
                 database=operational_analytics_clickhouse_database,
             )
-            if operational_analytics_clickhouse_url
-            and operational_analytics_clickhouse_password
+            if operational_analytics_clickhouse_url and operational_analytics_clickhouse_password
             else None
         )
         self._analytics_parity_log_lock = threading.Lock()
@@ -238,9 +237,7 @@ class SpannerBigtableStore:
             from google.cloud import spanner
             from google.cloud.spanner_v1 import FixedSizePool, param_types
         except ImportError as exc:  # pragma: no cover - exercised in prod image.
-            raise RuntimeError(
-                "Install google-cloud-spanner for persistent GCP storage"
-            ) from exc
+            raise RuntimeError("Install google-cloud-spanner for persistent GCP storage") from exc
 
         # GCP credential bootstrap. On GCP (Cloud Run / GCE) the default ADC
         # chain finds the runtime SA automatically and `credentials=None` is
@@ -426,9 +423,7 @@ class SpannerBigtableStore:
     ) -> BedrockGroupBuyPledge:
         return self.bedrock_group_buy_store.upsert(pledge)
 
-    def get_bedrock_group_buy_pledge(
-        self, user_id: str
-    ) -> BedrockGroupBuyPledge | None:
+    def get_bedrock_group_buy_pledge(self, user_id: str) -> BedrockGroupBuyPledge | None:
         return self.bedrock_group_buy_store.get(user_id)
 
     def withdraw_bedrock_group_buy_pledge(self, user_id: str) -> bool:
@@ -1566,7 +1561,12 @@ class SpannerBigtableStore:
                     _json_body({"generation_id": generation.id}),
                 ),
             ]
-        authorization.settled = True
+        authorization.record_finalization(
+            success=success,
+            actual_microdollars=actual_microdollars,
+            selected_usage_type=actual_usage_type,
+            generation=generation,
+        )
         spanner_start = time.perf_counter()
         result = typed_finalize_atomic(
             self._database,
@@ -1601,9 +1601,7 @@ class SpannerBigtableStore:
             if success and generation is not None:
                 mirror_start = time.perf_counter()
                 if getattr(self, "_operational_analytics_outbox", None) is None:
-                    activity_indexed = self.generation_store.index_after_commit(
-                        generation
-                    )
+                    activity_indexed = self.generation_store.index_after_commit(generation)
                 else:
                     self.generation_store.mirror_after_commit(generation)
                 mirror_ms = (time.perf_counter() - mirror_start) * 1000
@@ -2434,11 +2432,7 @@ class SpannerBigtableStore:
         tag_value: str | None = None,
     ) -> list[Generation]:
         tenant_id = analytics_surrogate("workspace", workspace_id)
-        key_id = (
-            analytics_surrogate("api-key", api_key_hash)
-            if api_key_hash is not None
-            else None
-        )
+        key_id = analytics_surrogate("api-key", api_key_hash) if api_key_hash is not None else None
         rows = self._require_operational_analytics().activity_generations(
             tenant_id=tenant_id,
             key_id=key_id,
@@ -2532,14 +2526,8 @@ class SpannerBigtableStore:
         min_created_at: str | None,
     ) -> dict[str, Any]:
         tenant_id = analytics_surrogate("workspace", workspace_id)
-        key_id = (
-            analytics_surrogate("api-key", api_key_hash)
-            if api_key_hash is not None
-            else None
-        )
-        end_exclusive = (
-            dt.date.fromisoformat(end_day) + dt.timedelta(days=1)
-        ).isoformat()
+        key_id = analytics_surrogate("api-key", api_key_hash) if api_key_hash is not None else None
+        end_exclusive = (dt.date.fromisoformat(end_day) + dt.timedelta(days=1)).isoformat()
         rows = self._require_operational_analytics().activity_generations(
             tenant_id=tenant_id,
             key_id=key_id,

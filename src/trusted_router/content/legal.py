@@ -278,7 +278,7 @@ def _provider_subprocessor_row(provider: Provider) -> dict[str, Any]:
         "id": provider.slug,
         "name": provider.name,
         "purpose": "Downstream model inference provider when a workspace selects this provider, this model, or an alias that routes to this provider.",
-        "data_access": "Prompt/output content in transit only for requests routed to this provider; request metadata needed for billing, routing, abuse controls, and support.",
+        "data_access": "For ordinary inference, prompt/output content is processed in transit for requests routed to this provider. Opt-in provider-native Batch may temporarily retain plaintext input for up to 26 hours and provider results for up to 6 hours after availability; request metadata needed for billing, routing, abuse controls, and support may also be processed.",
         "zdr": provider.provider_zero_data_retention,
         "prepaid_zdr": provider.prepaid_zero_data_retention,
         "prepaid_zdr_effective_on": provider.prepaid_zero_data_retention_effective_on,
@@ -309,7 +309,8 @@ def subprocessor_packet() -> dict[str, Any]:
         "routing_note": (
             "Model providers are subprocessors only for traffic routed to them. "
             "Use trustedrouter/zdr, trustedrouter/e2e, or explicit provider allowlists "
-            "for sensitive legal workloads."
+            "for sensitive legal workloads. Provider-native Batch is excluded from "
+            "ZDR, E2E/confidential, regional, and BYOK routes and requires separate approval."
         ),
     }
 

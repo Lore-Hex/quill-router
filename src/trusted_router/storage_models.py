@@ -434,12 +434,60 @@ class GatewayAuthorization:
     # authorize and settle. Local authorizations keep their pre-existing
     # lifecycle untouched.
     expires_at: str | None = None
+    # Durable, content-free replay facts written in the same transaction that
+    # settles or refunds the billing reservation. Bigtable generation mirrors
+    # are deliberately not the source of truth for this outcome: a successful
+    # Spanner commit followed by a failed mirror must never look like a refund.
+    finalization_outcome: str | None = None
+    finalized_cost_microdollars: int | None = None
+    finalized_usage_type: str | None = None
+    finalized_generation_id: str | None = None
+    finalized_model_id: str | None = None
+    finalized_provider: str | None = None
+    finalized_region: str | None = None
+    finalized_input_tokens: int | None = None
+    finalized_output_tokens: int | None = None
+    finalized_reasoning_tokens: int | None = None
+    finalized_cached_input_tokens: int | None = None
 
     def __post_init__(self) -> None:
         # JSON round-trip stores usage_type as a string; coerce so the field
         # is always a UsageType at runtime regardless of construction path.
         if not isinstance(self.usage_type, UsageType):
             self.usage_type = UsageType.coerce(self.usage_type)
+
+    def record_finalization(
+        self,
+        *,
+        success: bool,
+        actual_microdollars: int,
+        selected_usage_type: UsageType | str,
+        generation: Generation | None,
+    ) -> None:
+        """Persist the authoritative replay result beside the billing claim."""
+        usage_type = UsageType.coerce(selected_usage_type)
+        self.settled = True
+        self.finalization_outcome = "settled" if success else "refunded"
+        self.finalized_cost_microdollars = max(0, int(actual_microdollars)) if success else 0
+        self.finalized_usage_type = usage_type.value
+        self.finalized_generation_id = generation.id if generation is not None else None
+        self.finalized_model_id = generation.model if generation is not None else self.model_id
+        self.finalized_provider = (
+            generation.provider if generation is not None and generation.provider else self.provider
+        )
+        self.finalized_region = generation.region if generation is not None else self.region
+        self.finalized_input_tokens = (
+            max(0, int(generation.tokens_prompt)) if generation is not None else 0
+        )
+        self.finalized_output_tokens = (
+            max(0, int(generation.tokens_completion)) if generation is not None else 0
+        )
+        self.finalized_reasoning_tokens = (
+            max(0, int(generation.reasoning_tokens)) if generation is not None else 0
+        )
+        self.finalized_cached_input_tokens = (
+            max(0, int(generation.cached_input_tokens)) if generation is not None else 0
+        )
 
 
 @dataclass(frozen=True)

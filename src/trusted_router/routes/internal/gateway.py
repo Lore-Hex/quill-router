@@ -68,6 +68,7 @@ from trusted_router.routing import (
     chat_route_endpoint_candidates,
     embeddings_route_endpoint_candidates,
     provider_route_preferences,
+    resolved_route_preferences,
     video_route_endpoint_candidates,
 )
 from trusted_router.schemas import (
@@ -102,13 +103,33 @@ from trusted_router.storage_gcp_io import spanner_rpc_budget
 from trusted_router.storage_models import (
     SettleOutboxRow,
     TypedFinalizeResult,
-    generation_id_for_authorization,
 )
 from trusted_router.types import ErrorType, UsageType
 
 logger = logging.getLogger(__name__)
 REQUEST_METADATA_VERSION = 1
 _BILLING_PATH_SPANNER_BUDGET_SECONDS = 25.0
+_NATIVE_BATCH_ROUTE_PREFIX = "batch.native."
+_NATIVE_BATCH_DISCOUNT_BPS = {
+    "openai": 5_000,
+    "parasail": 5_000,
+}
+_NATIVE_BATCH_PROVIDER_FIELDS = frozenset(
+    {
+        "order",
+        "allow_fallbacks",
+        "require_parameters",
+        "data_collection",
+        "min_privacy",
+        "jurisdiction",
+        "usage",
+        "only",
+        "ignore",
+        "quantizations",
+        "sort",
+        "max_price",
+    }
+)
 _SETTLE_REPAIR_FIELDS = frozenset(
     {
         "authorization_id",
@@ -232,6 +253,7 @@ def _authorize_gateway_sync(
         body_dict["custom_model_revision"] = custom_model.revision
         _force_custom_model_credit_routes(body_dict)
     request_idempotency_key = _gateway_idempotency_key(request, body) or str(uuid.uuid4())
+    _require_native_batch_route_binding(body.route_type, request_idempotency_key)
     partner_mode = _partner_billing_mode_or_error(
         requested_model_id=requested_model_id,
         route_type=body.route_type,
@@ -239,6 +261,7 @@ def _authorize_gateway_sync(
     )
     if partner_mode is not None:
         _force_partner_credit_routes(body_dict)
+    native_retention_allowed = _native_batch_request_allows_retention(body_dict, settings)
     # Embedding-only models can't go through the chat resolver (it
     # rejects supports_chat=False). Route them to the embeddings
     # resolver so the attested enclave can authorize + bill an
@@ -350,6 +373,7 @@ def _authorize_gateway_sync(
         workspace_id=workspace.id,
         key_hash=api_key.hash,
         body=fingerprint_body,
+        idempotency_key=request_idempotency_key,
     )
 
     def _replay_response(existing_authorization: Any) -> dict[str, Any]:
@@ -389,6 +413,8 @@ def _authorize_gateway_sync(
             endpoint_candidates=existing_candidates,
             idempotent_replay=True,
             custom_model=custom_model,
+            route_type=body.route_type,
+            native_retention_allowed=native_retention_allowed,
         )
 
     existing_authorization = STORE.get_gateway_authorization_by_idempotency_key(
@@ -428,9 +454,11 @@ def _authorize_gateway_sync(
         from trusted_router.storage_gcp_authorize import AuthorizeOutcome
         from trusted_router.storage_gcp_counters import key_usage_shard_count
 
-        # expires_at = generous execution deadline (> max stream + settle
-        # retry window) so the reaper only reclaims genuinely-abandoned holds.
-        expires_at = _dt.datetime.now(_dt.UTC) + _dt.timedelta(seconds=7200)
+        # Provider-native batches have a 24-hour completion window. Keep their
+        # holds alive for two extra hours so a completion at the deadline can
+        # still settle idempotently; ordinary request reservations remain 2h.
+        reservation_ttl_seconds = _authorization_ttl_seconds(body.route_type)
+        expires_at = _dt.datetime.now(_dt.UTC) + _dt.timedelta(seconds=reservation_ttl_seconds)
         # Per-window key caps (approximate). Omitted entirely for a BYOK
         # request on a key that excludes BYOK from its caps — same rule the
         # lifetime cap applies (authorize_atomic's window_limits contract).
@@ -637,6 +665,8 @@ def _authorize_gateway_sync(
         endpoint_candidates=endpoint_candidates,
         idempotent_replay=idempotent_replay,
         custom_model=custom_model,
+        route_type=body.route_type,
+        native_retention_allowed=native_retention_allowed,
     )
 
 
@@ -830,9 +860,7 @@ def register(router: APIRouter) -> None:
         from trusted_router.services.home_settlement import drain_home_settlements
 
         return {
-            "data": await run_in_threadpool(
-                lambda: drain_home_settlements(settings, limit=limit)
-            )
+            "data": await run_in_threadpool(lambda: drain_home_settlements(settings, limit=limit))
         }
 
     @router.post("/internal/gateway/deferred/reap")
@@ -881,7 +909,11 @@ def _gateway_idempotency_key(request: Request, body: GatewayAuthorizeRequest) ->
 
 
 def _gateway_authorize_fingerprint(
-    *, workspace_id: str, key_hash: str, body: dict[str, Any]
+    *,
+    workspace_id: str,
+    key_hash: str,
+    body: dict[str, Any],
+    idempotency_key: str | None = None,
 ) -> str:
     # Standard idempotency semantics: the key can replay the same logical
     # request, but a caller cannot reuse it for a different request body.
@@ -897,6 +929,14 @@ def _gateway_authorize_fingerprint(
             "idempotency_key",
         }
     }
+    if _is_native_batch_idempotency_key(idempotency_key):
+        # One encrypted Batch object is claimed across regions and rolling
+        # enclave revisions. These fields are gateway estimates or execution
+        # locality, not customer request identity. Keeping them in the hash can
+        # turn a lost authorize response into an unrecoverable cross-region 409
+        # and leave its hold live until TTL.
+        for dynamic_key in {"region", "estimated_input_tokens", "max_output_tokens"}:
+            material.pop(dynamic_key, None)
     material["workspace_id"] = workspace_id
     material["key_hash"] = key_hash
     encoded = json.dumps(material, sort_keys=True, separators=(",", ":"), default=str)
@@ -941,7 +981,21 @@ def _gateway_authorize_response(
     endpoint_candidates: list[tuple[Model, ModelEndpoint]],
     idempotent_replay: bool,
     custom_model: Any | None,
+    route_type: str | None,
+    native_retention_allowed: bool,
 ) -> dict[str, Any]:
+    # Provider-native Batch stores prompt/output content under the selected
+    # provider's Batch retention policy. The enclave requires this explicit
+    # control-plane decision in addition to its own request-body privacy gate.
+    native_batch_eligible = (
+        _is_native_batch_route(route_type)
+        and native_retention_allowed
+        and model_usage_type == UsageType.CREDITS
+        and custom_model is None
+        and not broadcast_destinations
+        and not requested_model_id.strip().lower().startswith("trustedrouter/")
+        and endpoint.provider.strip().lower() in _NATIVE_BATCH_DISCOUNT_BPS
+    )
     return {
         "data": {
             "authorization_id": authorization.id,
@@ -967,6 +1021,7 @@ def _gateway_authorize_response(
                 authorization.additional_cost_reservation_microdollars
             ),
             "request_metadata_version": REQUEST_METADATA_VERSION,
+            "native_batch_eligible": native_batch_eligible,
             "tags": dict(authorization.tags),
             "custom_model": None
             if custom_model is None
@@ -1274,21 +1329,7 @@ def _settle_gateway_authorization(
     if authorization.settled:
         # No timing line for replays: they are ~one point-read and would dominate
         # the latency dataset with noise.
-        data: dict[str, Any] = {
-            "authorization_id": authorization.id,
-            "settled": False,
-            "already_settled": True,
-        }
-        # A provider completion may be observed by two regional video pollers.
-        # The first settle commits billing and the generation; the replay must
-        # return that same stable ID so whichever poller updates the video job
-        # first does not lose the activity link. Do not synthesize an ID after a
-        # refund: only return it when the corresponding generation exists.
-        if success:
-            replay_generation_id = generation_id_for_authorization(authorization.id)
-            if STORE.get_generation(replay_generation_id) is not None:
-                data["generation_id"] = replay_generation_id
-        return {"data": data}
+        return {"data": _already_settled_gateway_data(authorization)}
 
     if body.tags is not None:
         try:
@@ -1359,6 +1400,20 @@ def _settle_gateway_authorization(
             service_tier=service_tier,
         )
     )
+    if success:
+        actual_cost = _native_batch_cost_or_error(
+            actual_cost,
+            route_type=body.route_type,
+            provider=selected_endpoint.provider,
+            idempotency_key=authorization.idempotency_key,
+        )
+    else:
+        # Refunds do not book provider cost. They still enforce the
+        # authorization's native/non-native route binding, but must not require
+        # the primary endpoint to be the native provider selected later by the
+        # batch worker.
+        _require_native_batch_route_binding(body.route_type, authorization.idempotency_key)
+        actual_cost = 0
     operator_cost = (
         _endpoint_cost_microdollars(
             selected_endpoint,
@@ -1532,13 +1587,7 @@ def _settle_gateway_authorization(
         # marking done here would silently swallow a lost charge.
         # No timing line for replays: they would dominate the latency dataset
         # with noise instead of measuring full settle/refund work.
-        return {
-            "data": {
-                "authorization_id": authorization.id,
-                "settled": False,
-                "already_settled": True,
-            }
-        }
+        return {"data": _already_settled_gateway_data(authorization)}
     mark_ms = 0.0
     if settings.settle_outbox_enabled and outbox_enqueued and finalize_result.activity_indexed:
         mark_start = perf_counter()
@@ -1646,6 +1695,7 @@ def _settle_gateway_authorization(
         "data": {
             "authorization_id": authorization.id,
             "settled": True,
+            "finalization_outcome": "settled" if success else "refunded",
             "generation_id": generation_id,
             **money_pair("cost", actual_cost),
             "usage_type": selected_usage_type.value,
@@ -1654,8 +1704,52 @@ def _settle_gateway_authorization(
             "endpoint_id": selected_endpoint.id,
             "provider": generation_provider,
             "region": authorization.region,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "reasoning_tokens": int(body.reasoning_tokens or 0),
+            "cache_read_input_tokens": int(body.cache_read_input_tokens or 0),
         }
     }
+
+
+def _already_settled_gateway_data(authorization: Any) -> dict[str, Any]:
+    """Return the stable winner of a settle/refund race.
+
+    The billing authorization payload is authoritative. Generation/activity
+    mirrors may lag or fail after the Spanner money transaction commits, so
+    their presence must never be used to distinguish a charge from a refund.
+    """
+    authorization = STORE.get_gateway_authorization(authorization.id) or authorization
+    outcome = str(authorization.finalization_outcome or "").strip().lower()
+    data: dict[str, Any] = {
+        "authorization_id": authorization.id,
+        "settled": outcome == "settled",
+        "already_settled": True,
+        "finalization_outcome": outcome or "pending",
+    }
+    if outcome == "refunded":
+        data.update(money_pair("cost", 0))
+        return data
+    if outcome != "settled":
+        # Rolling records without the explicit outcome fail closed. A missing
+        # Bigtable generation cannot be interpreted as a refund.
+        return data
+    if authorization.finalized_generation_id:
+        data["generation_id"] = authorization.finalized_generation_id
+    data.update(money_pair("cost", int(authorization.finalized_cost_microdollars or 0)))
+    if authorization.finalized_usage_type:
+        data["usage_type"] = authorization.finalized_usage_type
+    if authorization.finalized_model_id:
+        data["model"] = authorization.finalized_model_id
+    if authorization.finalized_provider:
+        data["provider"] = authorization.finalized_provider
+    if authorization.finalized_region:
+        data["region"] = authorization.finalized_region
+    data["input_tokens"] = int(authorization.finalized_input_tokens or 0)
+    data["output_tokens"] = int(authorization.finalized_output_tokens or 0)
+    data["reasoning_tokens"] = int(authorization.finalized_reasoning_tokens or 0)
+    data["cache_read_input_tokens"] = int(authorization.finalized_cached_input_tokens or 0)
+    return data
 
 
 def _settle_body_with_safe_attribution(
@@ -1901,6 +1995,113 @@ def _service_tier_endpoint_candidates_or_error(
             ErrorType.MODEL_NOT_SUPPORTED,
         )
     return openai_candidates
+
+
+def _is_native_batch_route(route_type: str | None) -> bool:
+    return (route_type or "").strip().lower().startswith(_NATIVE_BATCH_ROUTE_PREFIX)
+
+
+def _native_batch_request_allows_retention(body: dict[str, Any], settings: Settings) -> bool:
+    """Fail closed on privacy/routing metadata visible to the control plane.
+
+    Provider-native Batch APIs temporarily retain request and result content.
+    The measured enclave separately validates the complete request body with a
+    strict field allowlist before exporting content. This second gate covers
+    the non-content routing state the control plane can independently verify.
+    """
+    if body.get("models"):
+        return False
+    if ":" in str(body.get("model") or ""):
+        # Native Batch retention is an opt-in contract. Keep every shorthand
+        # model variant on the managed path until that suffix is explicitly
+        # audited, even when today's suffix changes only price or throughput.
+        return False
+    if body.get("service_tier"):
+        return False
+    if any(
+        key in body
+        for key in {
+            "zdr",
+            "e2e",
+            "confidential",
+            "data_collection",
+            "min_privacy",
+            "jurisdiction",
+            "store",
+        }
+    ):
+        return False
+    provider = body.get("provider")
+    if provider is not None and (
+        not isinstance(provider, dict)
+        or any(key not in _NATIVE_BATCH_PROVIDER_FIELDS for key in provider)
+    ):
+        return False
+    provider = provider or {}
+    if (
+        str(provider.get("data_collection") or "").strip().lower() == "deny"
+        or bool(str(provider.get("min_privacy") or "").strip())
+        or bool(str(provider.get("jurisdiction") or "").strip())
+        or str(provider.get("usage") or "").strip().lower() == "byok"
+    ):
+        return False
+    preferences = resolved_route_preferences(body, settings)
+    return not (
+        preferences.data_collection == "deny"
+        or preferences.min_privacy_rank > 0
+        or preferences.provider_jurisdiction is not None
+        or preferences.usage_type == "BYOK"
+    )
+
+
+def _is_native_batch_idempotency_key(idempotency_key: str | None) -> bool:
+    return (idempotency_key or "").startswith("tr-native-batch:")
+
+
+def _require_native_batch_route_binding(
+    route_type: str | None,
+    idempotency_key: str | None,
+) -> None:
+    if _is_native_batch_route(route_type) != _is_native_batch_idempotency_key(idempotency_key):
+        raise api_error(
+            400,
+            "native Batch route must use its enclave-generated idempotency key",
+            ErrorType.BAD_REQUEST,
+        )
+
+
+def _authorization_ttl_seconds(route_type: str | None) -> int:
+    return 26 * 60 * 60 if _is_native_batch_route(route_type) else 7200
+
+
+def _native_batch_cost_or_error(
+    cost_microdollars: int,
+    *,
+    route_type: str | None,
+    provider: str,
+    idempotency_key: str | None = None,
+) -> int:
+    if not _is_native_batch_route(route_type):
+        if _is_native_batch_idempotency_key(idempotency_key):
+            raise api_error(
+                400,
+                "native Batch authorization requires native Batch settlement",
+                ErrorType.BAD_REQUEST,
+            )
+        return cost_microdollars
+    _require_native_batch_route_binding(route_type, idempotency_key)
+    discount_bps = _NATIVE_BATCH_DISCOUNT_BPS.get(provider.strip().lower())
+    if discount_bps is None:
+        raise api_error(
+            400,
+            "selected provider does not support TrustedRouter native Batch settlement",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
+    if cost_microdollars <= 0:
+        return 0
+    # Round upward so a positive billable request never disappears below the
+    # integer microdollar ledger's minimum unit.
+    return max(1, (cost_microdollars * discount_bps + 9_999) // 10_000)
 
 
 def _endpoint_cost_microdollars(

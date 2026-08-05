@@ -6,7 +6,7 @@
     <span class="eyebrow">Batch API</span>
     <h2>Submit many requests. Poll one batch.</h2>
     <p>TrustedRouter implements the OpenRouter inline Batch API shape at <code>/api/beta/batches</code>. Existing integrations can switch the hostname and API key without uploading a JSONL file.</p>
-    <p>Batch items use the same attested authorization, routing, fallback, integer billing, and provider adapters as ordinary inference.</p>
+    <p>Batch items use the same attested authorization, routing, fallback, and integer billing as ordinary inference. When native execution is enabled for an eligible direct route, TrustedRouter uses that provider's Batch API and applies its published discount.</p>
   </div>
   <div class="copy-terminal">
     <div class="code-head"><span>Create and poll</span><span>Python</span></div>
@@ -84,6 +84,20 @@ print(batch["results"])</code></pre>
 
 <section class="marketing-split" style="margin-top:48px">
   <div class="marketing-copy">
+    <span class="eyebrow">Native discounts</span>
+    <h2>Use the provider's real Batch API.</h2>
+    <p>When native execution is enabled, eligible direct OpenAI and Parasail chat or embedding jobs are uploaded by the attested gateway to that provider's native asynchronous Batch API. Both currently publish a 50% discount, which TrustedRouter applies with integer microdollar accounting after the provider completes each item.</p>
+    <p>If native submission is unsupported or a native item fails, TrustedRouter releases its native hold and runs that item through the ordinary attested fallback path at the selected fallback route's normal price.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Guardrails</span>
+    <h3>No silent privacy downgrade</h3>
+    <p>Native provider Batch APIs retain prompt and output content. TrustedRouter therefore keeps ZDR, E2E, confidential, EU, BYOK, custom, orchestration, and Broadcast-enabled jobs on the ordinary enclave-managed path.</p>
+  </div>
+</section>
+
+<section class="marketing-split" style="margin-top:48px">
+  <div class="marketing-copy">
     <span class="eyebrow">Supported endpoints</span>
     <h2>One batch format across four APIs.</h2>
     <ul class="check-list">
@@ -138,6 +152,7 @@ print(batch["results"])</code></pre>
   <div>
     <p>Submitting to the Batch API opts into temporary encrypted storage so jobs survive restarts and results can be polled. Prompts and outputs are encrypted inside the attested gateway with a per-artifact key. The raw API key is validated and discarded during submission; it is never persisted, even inside an encrypted artifact.</p>
     <p>Under the deployed GCP IAM policy, only approved production enclave image digests are granted access to the ciphertext and its Cloud KMS envelope key. The control plane, object storage, logs, billing records, Sentry, and analytics do not receive plaintext batch content. Batch artifacts are automatically deleted after 30 days.</p>
+    <p>When an eligible job uses a provider-native Batch API, that provider receives and temporarily retains plaintext input for up to 26 hours and provider results for up to 6 hours after availability. This is why native Batch execution is never used for privacy-constrained aliases or requests.</p>
     <p>This encrypted-retention boundary depends on GCP KMS, Cloud Storage, and the project's IAM administration. It is intentionally stronger than ordinary application-layer storage, but it is not the same zero-retention property as synchronous and streaming inference.</p>
     <p>Ordinary synchronous and streaming inference remains content-stateless. Strict EU data-residency batch execution is not included in this first beta.</p>
     <p><a class="btn" href="https://trust.trustedrouter.com">Verify the gateway</a> <a class="btn ghost" href="/security">Read the security boundary</a></p>
@@ -148,14 +163,15 @@ print(batch["results"])</code></pre>
   <h2 class="section-center">Billing and limits</h2>
   <div class="marketing-grid two">
     <div class="marketing-card">
-      <h3>Normal route pricing</h3>
-      <p>Batch items use the selected TrustedRouter route price and the same integer microdollar ledger as live requests. There is no blanket batch discount yet, so code should read returned usage instead of assuming 50% off.</p>
+      <h3>Native discount eligibility</h3>
+      <p>Eligible OpenAI and Parasail native Batch items receive their published 50% discount when native execution is enabled. Managed fallback and providers without a verified native discount use normal route pricing. Read returned usage instead of assuming every item was discounted.</p>
     </div>
     <div class="marketing-card">
       <h3>Current beta limits</h3>
       <ul class="check-list">
         <li>24-hour completion window</li>
         <li>32 MiB create request limit</li>
+        <li>50,000 requests per batch</li>
         <li>64 MiB response limit per item</li>
         <li>Unique <code>custom_id</code> values, up to 256 bytes</li>
         <li>No list, cancel, or file-upload endpoints</li>

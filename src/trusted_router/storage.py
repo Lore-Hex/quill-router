@@ -292,9 +292,7 @@ class InMemoryStore:
     ) -> BedrockGroupBuyPledge:
         return self.bedrock_group_buy_store.upsert(pledge)
 
-    def get_bedrock_group_buy_pledge(
-        self, user_id: str
-    ) -> BedrockGroupBuyPledge | None:
+    def get_bedrock_group_buy_pledge(self, user_id: str) -> BedrockGroupBuyPledge | None:
         return self.bedrock_group_buy_store.get(user_id)
 
     def withdraw_bedrock_group_buy_pledge(self, user_id: str) -> bool:
@@ -1141,12 +1139,8 @@ class InMemoryStore:
                 else None
             )
             if outcome == credit_transfer.REJECTED and money is None:
-                raise RuntimeError(
-                    f"missing credit money for workspace {existing.workspace_id}"
-                )
-            resolved = dataclasses.replace(
-                existing, state=target_state, resolved_at=iso_now()
-            )
+                raise RuntimeError(f"missing credit money for workspace {existing.workspace_id}")
+            resolved = dataclasses.replace(existing, state=target_state, resolved_at=iso_now())
             self.credit_transfers[transfer_id] = resolved
             if money is not None:
                 money.total_credits_microdollars += existing.amount_microdollars
@@ -1305,7 +1299,12 @@ class InMemoryStore:
                     usage_type=authorization.usage_type,
                 )
 
-            authorization.settled = True
+            authorization.record_finalization(
+                success=success,
+                actual_microdollars=actual_microdollars,
+                selected_usage_type=actual_usage_type,
+                generation=generation,
+            )
             return True
 
     # Generations + activity + benchmarks delegate to storage_generations.
