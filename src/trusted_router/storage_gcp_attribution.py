@@ -3,9 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 from trusted_router.storage_gcp_io import SpannerIO, run_in_transaction_with_retry
-from trusted_router.storage_models import AcquisitionAttribution, iso_now
+from trusted_router.storage_models import (
+    AcquisitionAttribution,
+    ActivationReminderTask,
+    activation_reminder_tasks,
+    iso_now,
+)
 
 _KIND = "acquisition_attribution"
+_REMINDER_KIND = "activation_reminder"
 
 
 class SpannerAcquisitionAttribution:
@@ -23,6 +29,13 @@ class SpannerAcquisitionAttribution:
             if existing is not None:
                 return False
             self._io.write_entity_tx(transaction, _KIND, record.workspace_id, record)
+            for reminder in activation_reminder_tasks(record):
+                self._io.write_entity_tx(
+                    transaction,
+                    _REMINDER_KIND,
+                    reminder.id,
+                    reminder,
+                )
             return True
 
         return run_in_transaction_with_retry(self._io.database, txn)
@@ -85,5 +98,46 @@ class SpannerAcquisitionAttribution:
             record.updated_at = iso_now()
             self._io.write_entity_tx(transaction, _KIND, workspace_id, record)
             return record
+
+        return run_in_transaction_with_retry(self._io.database, txn)
+
+    def list_reminders(self, *, limit: int) -> list[ActivationReminderTask]:
+        return self._io.list_entities(
+            _REMINDER_KIND,
+            cls=ActivationReminderTask,
+            limit=limit,
+        )
+
+    def delete_reminders(self, reminder_ids: list[str]) -> None:
+        if reminder_ids:
+            self._io.delete_entities(_REMINDER_KIND, reminder_ids)
+
+    def claim_reminder(
+        self,
+        workspace_id: str,
+        stage: str,
+        *,
+        occurred_at: str,
+    ) -> tuple[AcquisitionAttribution | None, bool]:
+        milestone = f"activation_reminder_{stage}_sent"
+
+        def txn(transaction: Any) -> tuple[AcquisitionAttribution | None, bool]:
+            record = self._io.read_entity_tx(
+                transaction,
+                _KIND,
+                workspace_id,
+                AcquisitionAttribution,
+            )
+            if record is None:
+                return None, False
+            if (
+                "first_successful_api_call" in record.milestones
+                or milestone in record.milestones
+            ):
+                return record, False
+            record.milestones[milestone] = occurred_at
+            record.updated_at = iso_now()
+            self._io.write_entity_tx(transaction, _KIND, workspace_id, record)
+            return record, True
 
         return run_in_transaction_with_retry(self._io.database, txn)

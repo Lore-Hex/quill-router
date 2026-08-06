@@ -41,13 +41,14 @@ def register(app: FastAPI) -> None:
             settings=settings,
             ctx=ctx,
             active="api-keys",
-            page_title="Welcome",
-            page_subtitle="Save your API key — it won't be shown again.",
+            page_title="Make your first API call",
+            page_subtitle="Save your key, confirm it works, then connect your app.",
             revealed_key=revealed_key,
             workspace_name=ctx.workspace.name,
             # The raw amount selects the appropriate next step without
             # advertising the account-creation grant.
             trial_credit_microdollars=trial_microdollars,
+            can_run_first_call=trial_microdollars > 0,
         ))
         if clear_pending_reveal:
             # Delete cookie with the same path it was set with — otherwise

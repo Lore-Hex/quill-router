@@ -1127,6 +1127,46 @@ class AcquisitionAttribution:
     updated_at: str = field(default_factory=iso_now)
 
 
+ACTIVATION_REMINDER_DELAYS_SECONDS: tuple[tuple[str, int], ...] = (
+    ("10m", 10 * 60),
+    ("24h", 24 * 60 * 60),
+)
+
+
+@dataclass(frozen=True)
+class ActivationReminderTask:
+    """A bounded, sortable activation reminder due for one workspace."""
+
+    id: str
+    workspace_id: str
+    stage: str
+    due_at: str
+    created_at: str = field(default_factory=iso_now)
+
+
+def activation_reminder_tasks(
+    record: AcquisitionAttribution,
+) -> tuple[ActivationReminderTask, ...]:
+    signup_at = dt.datetime.fromisoformat(record.signup_at.replace("Z", "+00:00"))
+    if signup_at.tzinfo is None:
+        signup_at = signup_at.replace(tzinfo=dt.UTC)
+    tasks: list[ActivationReminderTask] = []
+    for stage, delay_seconds in ACTIVATION_REMINDER_DELAYS_SECONDS:
+        due_at = (signup_at + dt.timedelta(seconds=delay_seconds)).isoformat().replace(
+            "+00:00", "Z"
+        )
+        tasks.append(
+            ActivationReminderTask(
+                id=f"{due_at}#{record.workspace_id}#{stage}",
+                workspace_id=record.workspace_id,
+                stage=stage,
+                due_at=due_at,
+                created_at=record.signup_at,
+            )
+        )
+    return tuple(tasks)
+
+
 @dataclass
 class BedrockGroupBuyPledge:
     """Private purchasing commitment for one signed-in user.

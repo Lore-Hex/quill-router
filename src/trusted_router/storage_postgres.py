@@ -57,6 +57,7 @@ from trusted_router.storage_gcp_codec import (
 from trusted_router.storage_models import (
     FUTURE_SAMPLE_SKEW_SECONDS,
     AcquisitionAttribution,
+    ActivationReminderTask,
     ApiKey,
     AuthSession,
     BedrockGroupBuyAggregate,
@@ -831,6 +832,23 @@ class PostgresStore:
         occurred_at: str,
     ) -> AcquisitionAttribution | None:
         self._not_implemented("record_acquisition_purchase")
+
+    def list_activation_reminders(
+        self, *, limit: int = 100
+    ) -> list[ActivationReminderTask]:
+        self._not_implemented("list_activation_reminders")
+
+    def delete_activation_reminders(self, reminder_ids: list[str]) -> None:
+        self._not_implemented("delete_activation_reminders")
+
+    def claim_activation_reminder(
+        self,
+        workspace_id: str,
+        stage: str,
+        *,
+        occurred_at: str,
+    ) -> tuple[AcquisitionAttribution | None, bool]:
+        self._not_implemented("claim_activation_reminder")
 
     def upsert_bedrock_group_buy_pledge(
         self, pledge: BedrockGroupBuyPledge

@@ -400,6 +400,11 @@ class Settings(BaseSettings):
     # Destination for TrustedOS partner-inquiry form submissions (/trustedos).
     # Falls back to ses_from_email when unset so the lead never silently drops.
     partner_inquiry_email: str | None = None
+    # Durable post-signup activation reminders. Zero keeps the in-process
+    # worker disabled in local/test environments. Production runs one bounded
+    # pass per minute; an atomic milestone claim prevents duplicate sends when
+    # several warm regional replicas inspect the same due task.
+    activation_reminder_interval_seconds: int = 0
 
     stablecoin_checkout_enabled: bool = True
     x402_enabled: bool = False

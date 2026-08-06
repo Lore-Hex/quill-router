@@ -14,6 +14,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from trusted_router.storage_models import (
     AcquisitionAttribution,
+    ActivationReminderTask,
     ApiKey,
     AuthSession,
     BedrockGroupBuyAggregate,
@@ -92,6 +93,17 @@ class Store(Protocol):
         amount_microdollars: int,
         occurred_at: str,
     ) -> AcquisitionAttribution | None: ...
+    def list_activation_reminders(
+        self, *, limit: int = ...
+    ) -> list[ActivationReminderTask]: ...
+    def delete_activation_reminders(self, reminder_ids: list[str]) -> None: ...
+    def claim_activation_reminder(
+        self,
+        workspace_id: str,
+        stage: str,
+        *,
+        occurred_at: str,
+    ) -> tuple[AcquisitionAttribution | None, bool]: ...
     def upsert_bedrock_group_buy_pledge(
         self, pledge: BedrockGroupBuyPledge
     ) -> BedrockGroupBuyPledge: ...

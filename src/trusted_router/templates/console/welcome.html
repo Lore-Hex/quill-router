@@ -1,21 +1,167 @@
 {% extends "console/_layout.html" %}
 {% from "console/_api_key_reveal.html" import api_key_reveal %}
 {% block body %}
-<section class="panel">
-  <div class="panel-head"><h2>Save this key. It will not be shown again</h2><span class="pill warn">one time reveal</span></div>
+{% if revealed_key %}
+<div
+  class="activation-flow"
+  data-first-call-flow
+  data-endpoint="/chat-proxy/v1/chat/completions"
+  data-key-source="welcome-api-key"
+>
+  <ol class="activation-progress" aria-label="Account setup progress">
+    <li class="complete"><span>1</span><strong>Account</strong></li>
+    <li class="current"><span>2</span><strong>First call</strong></li>
+    <li><span>3</span><strong>Connect app</strong></li>
+  </ol>
+
+  <section class="panel activation-key-panel">
+    <div class="panel-head">
+      <div>
+        <p class="activation-eyebrow">Your API key</p>
+        <h2>Save it now</h2>
+      </div>
+      <span class="pill warn">one time reveal</span>
+    </div>
+    <div class="panel-body">
+      {{ api_key_reveal(revealed_key, "welcome", workspace_name, False) }}
+      <p class="activation-security-note">This is the only copy on this page. TrustedRouter stores a salted hash, not the raw key.</p>
+    </div>
+  </section>
+
+  <section class="panel activation-test-panel" aria-labelledby="first-call-heading">
+    <div class="panel-head activation-panel-head">
+      <div>
+        <p class="activation-eyebrow">Live gateway check</p>
+        <h2 id="first-call-heading">Run your first API request</h2>
+        <p class="panel-kicker">A real, inexpensive PONG request confirms your key, billing path, provider route, and attested gateway.</p>
+      </div>
+      <span class="activation-step-number" aria-hidden="true">02</span>
+    </div>
+    <div class="panel-body">
+      {% if can_run_first_call %}
+      <div class="activation-primary-action">
+        <button class="btn primary activation-run-button" type="button" data-action="run-first-call">
+          <span data-run-label>Run my first API request</span>
+          <span class="activation-button-arrow" aria-hidden="true">&#8594;</span>
+        </button>
+        <span class="activation-no-card">No card required</span>
+      </div>
+      {% else %}
+      <div class="activation-credit-needed">
+        <div>
+          <strong>Add credits before the live check</strong>
+          <p>Your account is ready. Add a payment method, then return here to run the request.</p>
+        </div>
+        <a class="btn primary" href="/console/credits">Add credits</a>
+      </div>
+      {% endif %}
+
+      <div class="activation-call-error" data-call-error role="alert" hidden>
+        <strong data-call-error-title>Request did not complete</strong>
+        <p data-call-error-message></p>
+        <a class="btn" data-call-error-action href="/console/credits" hidden>Add credits</a>
+      </div>
+
+      <div class="activation-call-result" data-call-result role="status" aria-live="polite" hidden>
+        <div class="activation-result-head">
+          <div>
+            <span class="activation-success-mark" aria-hidden="true">&#10003;</span>
+            <div><strong>Production request passed</strong><p>Your key is ready to use.</p></div>
+          </div>
+          <code data-result-output>PONG</code>
+        </div>
+        <dl class="activation-result-grid">
+          <div><dt>Model</dt><dd data-result-model>trustedrouter/cheap</dd></div>
+          <div><dt>Provider</dt><dd data-result-provider>Selected automatically</dd></div>
+          <div><dt>Latency</dt><dd data-result-latency>--</dd></div>
+          <div><dt>Exact cost</dt><dd data-result-cost>$0.000000</dd></div>
+        </dl>
+        <div class="activation-result-actions" data-success-actions>
+          <a class="btn primary" href="#connect-your-app">Connect your app</a>
+          <a class="btn" href="/console/credits">Add credits for production</a>
+          <a class="activation-trust-link" href="https://trust.trustedrouter.com" target="_blank" rel="noopener">Verify the running gateway</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel activation-setup-panel" id="connect-your-app" aria-labelledby="connect-heading">
+    <div class="panel-head activation-panel-head">
+      <div>
+        <p class="activation-eyebrow">Use the same key anywhere</p>
+        <h2 id="connect-heading">Connect your app</h2>
+        <p class="panel-kicker">Choose one setup. Copying inserts your one-time key automatically.</p>
+      </div>
+      <span class="activation-step-number" aria-hidden="true">03</span>
+    </div>
+    <div class="panel-body">
+      <div class="activation-tabs" role="tablist" aria-label="Setup method">
+        <button class="activation-tab" id="setup-agent-tab" type="button" role="tab" aria-selected="true" aria-controls="setup-agent" data-setup-tab="setup-agent">Claude Code / Codex</button>
+        <button class="activation-tab" id="setup-python-tab" type="button" role="tab" aria-selected="false" aria-controls="setup-python" tabindex="-1" data-setup-tab="setup-python">Python</button>
+        <button class="activation-tab" id="setup-js-tab" type="button" role="tab" aria-selected="false" aria-controls="setup-js" tabindex="-1" data-setup-tab="setup-js">JavaScript</button>
+        <button class="activation-tab" id="setup-curl-tab" type="button" role="tab" aria-selected="false" aria-controls="setup-curl" tabindex="-1" data-setup-tab="setup-curl">curl</button>
+      </div>
+
+      <div class="activation-code-panel" id="setup-agent" role="tabpanel" aria-labelledby="setup-agent-tab" data-setup-panel>
+        <div class="activation-code-head"><strong>Paste this whole message into Claude Code or Codex</strong><button class="btn" type="button" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key" aria-describedby="welcome-agent-copy-status">Copy prompt</button></div>
+        <pre id="welcome-agent-message" data-copy-lines><span>Please use TrustedRouter.com using the following key to ask DeepSeek the following question: "What is the capital of France?"</span><span>YOUR_TRUSTEDROUTER_API_KEY</span></pre>
+        <p class="copy-status" id="welcome-agent-copy-status" role="status" aria-live="polite"></p>
+      </div>
+
+      <div class="activation-code-panel" id="setup-python" role="tabpanel" aria-labelledby="setup-python-tab" data-setup-panel hidden>
+        <div class="activation-code-head"><strong>OpenAI Python SDK</strong><button class="btn" type="button" data-copy-template-target="welcome-python-code" data-secret-source="welcome-api-key" aria-describedby="welcome-python-copy-status">Copy code</button></div>
+        <pre id="welcome-python-code">from openai import OpenAI
+
+client = OpenAI(
+    api_key="YOUR_TRUSTEDROUTER_API_KEY",
+    base_url="{{ api_base_url }}",
+)
+
+response = client.chat.completions.create(
+    model="trustedrouter/cheap",
+    messages=[{"role": "user", "content": "Reply with exactly PONG."}],
+)
+print(response.choices[0].message.content)</pre>
+        <p class="copy-status" id="welcome-python-copy-status" role="status" aria-live="polite"></p>
+      </div>
+
+      <div class="activation-code-panel" id="setup-js" role="tabpanel" aria-labelledby="setup-js-tab" data-setup-panel hidden>
+        <div class="activation-code-head"><strong>OpenAI JavaScript SDK</strong><button class="btn" type="button" data-copy-template-target="welcome-js-code" data-secret-source="welcome-api-key" aria-describedby="welcome-js-copy-status">Copy code</button></div>
+        <pre id="welcome-js-code">import OpenAI from "openai";
+
+const client = new OpenAI({
+  apiKey: "YOUR_TRUSTEDROUTER_API_KEY",
+  baseURL: "{{ api_base_url }}",
+});
+
+const response = await client.chat.completions.create({
+  model: "trustedrouter/cheap",
+  messages: [{ role: "user", content: "Reply with exactly PONG." }],
+});
+console.log(response.choices[0].message.content);</pre>
+        <p class="copy-status" id="welcome-js-copy-status" role="status" aria-live="polite"></p>
+      </div>
+
+      <div class="activation-code-panel" id="setup-curl" role="tabpanel" aria-labelledby="setup-curl-tab" data-setup-panel hidden>
+        <div class="activation-code-head"><strong>curl</strong><button class="btn" type="button" data-copy-template-target="welcome-curl-code" data-secret-source="welcome-api-key" aria-describedby="welcome-curl-copy-status">Copy command</button></div>
+        <pre id="welcome-curl-code">curl {{ api_base_url }}/chat/completions \
+  -H "Authorization: Bearer YOUR_TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"trustedrouter/cheap","messages":[{"role":"user","content":"Reply with exactly PONG."}]}'</pre>
+        <p class="copy-status" id="welcome-curl-copy-status" role="status" aria-live="polite"></p>
+      </div>
+
+      <div class="activation-console-link"><a href="/console/api-keys">Continue to API keys</a></div>
+    </div>
+  </section>
+</div>
+{% else %}
+<section class="panel activation-expired-panel">
+  <div class="panel-head"><h2>This key has already been displayed</h2></div>
   <div class="panel-body">
-    {% if revealed_key %}
-    {{ api_key_reveal(revealed_key, "welcome", workspace_name) }}
-    {% if trial_credit_microdollars > 0 %}
-    <p class="microcopy">Your workspace is ready. Try a fast, inexpensive model now.</p>
-    {% else %}
-    <p class="microcopy">Add a card on the <a href="/console/credits">Credits</a> page to start routing — prepaid, you pay only for what you use. No charge to add it; Stripe just verifies the card.</p>
-    {% endif %}
-    <p>Use this key in the OpenAI SDK by setting <code>base_url={{ api_base_url }}</code>.</p>
-    {% else %}
-    <p>This key has already been displayed. Generate a new one from <a href="/console/api-keys">API Keys</a>.</p>
-    {% endif %}
-    <a class="btn primary" href="/console/api-keys">Continue to console</a>
+    <p>For security, a raw key can only be shown once. Create a new key to continue setup.</p>
+    <a class="btn primary" href="/console/api-keys#new-api-key">Create a new API key</a>
   </div>
 </section>
+{% endif %}
 {% endblock %}

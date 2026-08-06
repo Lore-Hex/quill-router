@@ -27,6 +27,7 @@ from trusted_router.storage_group_buy import InMemoryBedrockGroupBuy
 from trusted_router.storage_keys import InMemoryApiKeys
 from trusted_router.storage_models import (
     AcquisitionAttribution,
+    ActivationReminderTask,
     ApiKey,
     AuthSession,
     BedrockGroupBuyAggregate,
@@ -284,6 +285,27 @@ class InMemoryStore:
         return self.acquisition_store.record_purchase(
             workspace_id,
             amount_microdollars=amount_microdollars,
+            occurred_at=occurred_at,
+        )
+
+    def list_activation_reminders(
+        self, *, limit: int = 100
+    ) -> list[ActivationReminderTask]:
+        return self.acquisition_store.list_reminders(limit=limit)
+
+    def delete_activation_reminders(self, reminder_ids: list[str]) -> None:
+        self.acquisition_store.delete_reminders(reminder_ids)
+
+    def claim_activation_reminder(
+        self,
+        workspace_id: str,
+        stage: str,
+        *,
+        occurred_at: str,
+    ) -> tuple[AcquisitionAttribution | None, bool]:
+        return self.acquisition_store.claim_reminder(
+            workspace_id,
+            stage,
             occurred_at=occurred_at,
         )
 
