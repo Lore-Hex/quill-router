@@ -101,7 +101,7 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
     ),
     BlogPost(
         slug="no-log-is-a-promise-attestation-is-proof",
-        title="No Log Is a Promise. Attestation Is Proof.",
+        title="ZDR is a vague promise. Attestation is precise proof",
         description=(
             "Most AI routers ask you to trust a data policy. TrustedRouter puts public TLS "
             "and prompt handling inside a measured open source workload you can verify."
@@ -117,8 +117,8 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="An encrypted request reaches an attested TrustedRouter gateway before a route-specific model provider">
 <rect width="1200" height="630" fill="#0b1118"/>
 <text x="64" y="68" font-size="21" font-weight="700" fill="#7be0b1">TrustedRouter</text>
-<text x="64" y="145" font-size="50" font-weight="750" fill="#f8fafc">No log is a promise.</text>
-<text x="64" y="202" font-size="50" font-weight="750" fill="#f8fafc">Attestation is proof.</text>
+<text x="64" y="145" font-size="46" font-weight="750" fill="#f8fafc">ZDR is a vague promise.</text>
+<text x="64" y="202" font-size="46" font-weight="750" fill="#f8fafc">Attestation is precise proof.</text>
 <text x="64" y="248" font-size="20" fill="#a9bfd5">Verify the workload before your prompt crosses the trust boundary.</text>
 
 <rect x="64" y="315" width="240" height="150" rx="8" fill="#101c28" stroke="#35506b" stroke-width="2"/>

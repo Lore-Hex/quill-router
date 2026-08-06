@@ -25,7 +25,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
             "They Are Still Training on Your Data"
         ),
         "/blog/no-log-is-a-promise-attestation-is-proof": (
-            "No Log Is a Promise. Attestation Is Proof."
+            "ZDR is a vague promise. Attestation is precise proof"
         ),
         "/blog/fusion-evals-open-source": "New SOTA: TrustedRouter Synth beats Fable and Frontier",
         "/blog/sign-in-with-trustedrouter": "Sign in with TrustedRouter",
