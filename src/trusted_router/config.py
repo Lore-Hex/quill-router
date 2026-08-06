@@ -261,6 +261,13 @@ class Settings(BaseSettings):
     # $0.30 = 300,000 microdollars.
     signup_trial_credit_microdollars: int = 300_000
 
+    # Plain-email `POST /v1/signup` (no OAuth) is a credit-farming vector: an
+    # open endpoint that mints a management key + trial credit for ANY email,
+    # including disposable addresses. Closed by default. Google/GitHub/wallet
+    # signup is unaffected — those create users via STORE.signup in the OAuth
+    # callback, not this route. Set TR_EMAIL_SIGNUP_ENABLED=true to reopen.
+    email_signup_enabled: bool = False
+
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = 0.05
     sentry_local_enabled: bool = False
