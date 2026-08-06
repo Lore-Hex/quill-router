@@ -879,7 +879,10 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
     )
     assert 'data-copy-secret="welcome-api-key"' in resp.text
     assert 'data-copy-secret="welcome-agent-message"' in resp.text
-    assert f'<pre id="welcome-agent-message">{agent_message}</pre>' in resp.text
+    assert 'id="welcome-agent-message" data-copy-lines' in resp.text
+    assert 'class="agent-message-key">' + fake_raw_key + "</code>" in resp.text
+    assert '<pre id="welcome-agent-message"' not in resp.text
+    assert agent_message.split("\n\n", 1)[0] in resp.text
     assert "Paste this whole message into your agent or Claude Code" in resp.text
     assert "already been displayed" not in resp.text
     # One-shot: cookie must be cleared on the response so a refresh
@@ -893,6 +896,15 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
         or "Max-Age=0" in set_cookie
         or "max-age=0" in set_cookie
     ), f"expected tr_pending_reveal cookie to be cleared; got {set_cookie!r}"
+
+
+def test_console_specific_styles_load_after_shared_charter_styles() -> None:
+    layout = (
+        Path(__file__).resolve().parents[1]
+        / "src/trusted_router/templates/console/_layout.html"
+    ).read_text(encoding="utf-8")
+
+    assert layout.index("/static/charter.css") < layout.index("/static/console.css")
 
 
 def test_console_welcome_without_first_query_does_not_read_pending_reveal(
@@ -942,7 +954,10 @@ def test_console_create_api_key_form_shows_raw_key_once(
     )
     assert 'data-copy-secret="created-api-key"' in resp.text
     assert 'data-copy-secret="created-agent-message"' in resp.text
-    assert f'<pre id="created-agent-message">{agent_message}</pre>' in resp.text
+    assert 'id="created-agent-message" data-copy-lines' in resp.text
+    assert 'class="agent-message-key">' + match.group(0) + "</code>" in resp.text
+    assert '<pre id="created-agent-message"' not in resp.text
+    assert agent_message.split("\n\n", 1)[0] in resp.text
     assert "Paste this whole message into your agent or Claude Code" in resp.text
     assert "Copied to clipboard." not in resp.text
     workspace_id = next(iter(STORE.workspaces))
