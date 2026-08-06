@@ -39,7 +39,7 @@ operational wide-column store and was never a columnar warehouse.
 | Hour/day/month rollups | **Live**, parity-gated atomic partition replacement |
 | AWS deployment | **Serving and attesting** — Nitro enclave + Fargate control plane |
 | Azure deployment | **Serving and attesting** — SEV-SNP/MAA enclave + Container App control plane |
-| Per-cloud *control-plane* independence — AWS | **Code merged** (qcp#111): AWS dials its own plane first, falls back only on a dial failure. **Needs an EIF rebuild + PCR0 re-pin to take effect** (§4.5) |
+| Per-cloud *control-plane* independence — AWS | **LIVE 2026-08-06.** All 4 enclaves rolled to `aws-release-20260806-ownplane`, PCR0 `aef48a4539…`, dialling `aws.trustedrouter.com` first with the canonical plane as a dial-failure fallback. Status `up`, single measurement, 0 errors (§4.5) |
 | Per-cloud *control-plane* independence — Azure | **Not yet.** Client machinery is inherited; the base-URL flip lives on the azure branch and changes HOST_DATA (§4.5) |
 | Postgres can serve `authorize` | **Fixed**, router#452 — 11 gateway-reachable methods used to raise (§4.6) |
 
@@ -99,6 +99,31 @@ item 3 only affects those two.
 **L4 passthrough is mandatory.** Global Accelerator and NLB never terminate TLS. Anything that
 does — Azure Front Door, an ALB, a CDN — **voids attestation**, because the enclave mints the
 leaf inside the TEE and the attestation document binds that exact leaf.
+
+### 3.2 AWS topology — WHAT RUNS WHERE (this did not exist anywhere, and cost hours)
+
+Four separate things, three of which look like each other. Assuming any one of
+them is "the AWS deployment" is how a whole night gets spent.
+
+| what | where | role |
+|---|---|---|
+| `quill-enclave-asg` | eu-west-1 ×2, eu-west-3 ×2 | the Nitro **enclaves**. Launch template `quill-enclave-lt`, user-data pulls a PINNED dated image tag and runs `nitro-cli build-enclave` **at boot** |
+| `tr-cp-euw1` / `tr-cp-euw3` | ECS Fargate, cluster `tr-cp` | the **API** control plane, behind Global Accelerator `tr-eu-control-plane` → NLB |
+| **`tr-eu`** | **App Runner, eu-west-3** | **runs the SYNTHETIC PROBES.** EventBridge rule `tr-eu-synthetic-1min` (rate 1 minute) → API destination → `/internal/synthetic/run` |
+| `tr-eu-standby` | App Runner, eu-west-1 | idle standby |
+
+**`tr-eu` is NOT orphaned.** It was assessed as "orphaned, serving nothing,
+delete it" earlier on 2026-08-05 because nothing in DNS or the repo referenced
+it. Deleting it would have silently stopped every AWS synthetic sample. The
+reference is an EventBridge API destination, which no code search finds.
+
+**A PCR0 re-pin therefore has THREE surfaces, not one**: both Fargate task
+definitions AND the App Runner service. Updating only the Fargate pair leaves
+the probes pinned to the old measurement and the status page red, with the
+config looking correct everywhere you think to check.
+
+`scripts/deploy/aws_eu_control_plane.sh` deploys to **App Runner** and is stale
+with respect to the Fargate API plane. Do not assume it is the deploy path.
 
 ### ClickHouse cluster
 
@@ -191,55 +216,42 @@ aggregation. `clickhouse/prove_leaderboard.py` exists as a starting point.
 It reports drift and **exits 1**, so the systemd unit reports failure hourly with no repair
 path. Wire the backfill in as remediation, or make the exit code meaningful and alert on it.
 
-### 4.5 Control-plane independence — AWS code merged, Azure still to do
+### 4.5 Control-plane independence — AWS DONE, Azure next
 
-**The problem.** Every enclave dialled `https://trustedrouter.com` and failed CLOSED if it was
-unreachable: authorization is on the request path (`main.go:631`), so an error there ends the
-request. Each cloud's availability was therefore the PRODUCT of its own uptime and the
-canonical plane's — adding AWS regions could not raise AWS above whatever GCP was doing.
-Fail-closed is right in itself (serving unauthorized inference is free inference and a lost
-usage record); the defect was *where the authorizer lived*.
+**AWS is independent as of 2026-08-06.** All four enclaves run
+`aws-release-20260806-ownplane` (PCR0 `aef48a453944b35a6cdf472c51a704c1cce185feba75e54538f62f9a0ec54243a1a55fb2c4bddde23b4ea0d0e5e855e1`),
+launched from `quill-enclave-lt` v15 (eu-west-1) / v2 (eu-west-3), with:
 
-**What shipped (quill-cloud-proxy#111).** Two halves:
+```
+QUILL_TR_CONTROL_PLANE_BASE_URL=https://aws.trustedrouter.com/v1,https://trustedrouter.com/v1
+write_vsock_unit 8048 aws.trustedrouter.com      # + the vsock-proxy.yaml address entry
+```
 
-* `TR_CONTROL_PLANE_BASE_URL` is now an ORDERED, comma-separated list. AWS deploys as
-  `https://aws.trustedrouter.com/v1,https://trustedrouter.com/v1`, so a normal AWS request
-  never touches another cloud. The parent passes the value through verbatim
-  (`quill_parent/config.py` treats it as an opaque string), so no parent change was needed,
-  and a single value behaves exactly as before.
-* On a **dial failure** the client moves to the next endpoint instead of erroring.
+so a normal AWS request never touches another cloud, and the canonical plane is
+reached only when the AWS one cannot be **dialled**. `aws.trustedrouter.com` is
+in the compiled `trControlPlaneTunnels`, so it is inside PCR0 — both planes were
+added at once precisely so no future re-home needs another re-pin.
 
-**The safety rule, because this is the part to not get wrong.** These planes have SEPARATE
-databases and the idempotency key does not travel between them, so re-sending `authorize` can
-escrow twice and `settle` can bill twice. Failover is permitted ONLY when the request provably
-reached no server. `net/http` runs `DialContext` before writing a single request byte, so a
-dial error cannot have produced a reservation; everything after is ambiguous — notably a
-connection dropped mid-response, where the server HAS processed the request and only the
-answer was lost.
+**Why only a dial failure may fail over.** The planes have SEPARATE databases and
+the idempotency key does not travel, so re-sending `authorize` can escrow twice
+and `settle` can bill twice. `net/http` runs `DialContext` before writing a byte,
+so a dial error proves the request reached no server; everything after — notably
+a connection dropped mid-response — is ambiguous and must NOT fail over. See
+`enclave-go/internal/trustedrouter/endpoints.go`.
 
-Classifying by error SHAPE was rejected: on AWS the dialer is a vsock dial whose failures are
-plain syscall errors, not `*net.OpError`, so a shape check would miss the most likely real
-failure — the parent's vsock-proxy being down. The dialer is wrapped instead
-(`markDialFailures`) and its errors tagged. See `enclave-go/internal/trustedrouter/endpoints.go`.
+**How the release is done now:** `tools/release-aws-enclave.sh` (build, pinned
+ARGs, refuses a dirty tree) then `docs/runbook-aws-enclave-release.md` for the
+roll. Build tags are `cloud_aws,llm_multi`, established from evidence — the
+parent proxies 47 provider tunnels a Bedrock-only enclave could not dial — and
+now covered by CI.
 
-**NOT DONE — merging #111 is not the same as the routing being live.** `aws.trustedrouter.com`
-joined `trControlPlaneTunnels`, which is compiled into the binary, inside the EIF, and
-therefore MEASURED BY PCR0. AWS needs an **EIF rebuild and a fleet-wide PCR0 re-pin** before
-any of this takes effect. Both planes are deliberately in the allowlist even though only one
-is primary: adding a host later costs another rebuild + re-pin, so the expensive measured part
-was done once and generously, and the preference ORDER stays ordinary config.
-
-**Azure still to do.** It inherits the client machinery (it builds under `!cloud_aws`), but
-`tools/deploy-azure-aci.sh` lives on the `azure-attestation` branch, and its
-`TR_CONTROL_PLANE_BASE_URL` is measured into the CCE policy → HOST_DATA. Flipping it means
-regenerating the policy, rebinding the Key Vault SKR release policy, and rotating every
-`--expected-hostdata` pin — publishing the incoming value into the accepted set BEFORE
-cutover, or you recreate the attestation-verifier rollout deadlock. Gated on §4.6 item 4.
-
-**Still true after all of this:** a request that reaches the fallback is being served by
-another cloud's plane. That is strictly better than failing, but it is not independence — it
-is a floor. Independence is the FIRST entry being healthy, which is what the per-cloud status
-pages should be measuring.
+**Azure is next and is NOT the same shape.** It inherits the client machinery
+(builds under `!cloud_aws`), but `TR_CONTROL_PLANE_BASE_URL` is measured into
+the CCE policy → HOST_DATA, so flipping it means regenerating the policy,
+rebinding the Key Vault SKR release policy, and publishing the incoming hostdata
+into the accepted set BEFORE cutover. The Azure hostdata pin is already a set;
+PCR0 only became one on 2026-08-06 (qcp#112 / router#459). Blocked on §4.6 item 4
+and the azure branch merging.
 
 ### 4.6 Blockers, and where each one now stands
 
@@ -361,6 +373,22 @@ only the 50/week limit keys on the registered domain and it fires ten times late
 *subdomain* gives exactly the same relief as a new registered domain, for free. And the shared
 ACME cache is not a rate-limit device — it exists to distribute the TLS-ALPN-01 **challenge
 token** across replicas.
+
+**A change is not deployed until the CODE THAT READS IT is deployed.** The PCR0
+pin was widened to `old,new` on both Fargate task definitions, verified in the
+task definition, and the status page stayed red — because those tasks ran an
+image built three days before the fix that makes the pin a SET. Under the old
+equality comparison `"old,new"` matches NEITHER value. Config was checked;
+the code reading it was not. Then the same mistake again one layer out: the
+probes do not run on the Fargate plane at all, they run on the `tr-eu` App
+Runner service (§3.2), which had to be updated separately. **Before changing a
+setting, confirm which artifact reads it and when that artifact was built.**
+
+**A component with no code or DNS reference can still be load-bearing.** `tr-eu`
+was assessed as orphaned and proposed for deletion; it is the synthetic probe
+runner, reached only through an EventBridge API destination. Grep finds nothing.
+Check EventBridge rules, API destinations and schedules before calling anything
+unused.
 
 **A test can be green for the wrong reason, and the money tests are where that bites.**
 The failover safety test in `enclave-go/internal/trustedrouter/endpoints_test.go` originally
