@@ -1,4 +1,4 @@
-{% macro api_key_reveal(raw_key, id_prefix, workspace_name=None) %}
+{% macro api_key_reveal(raw_key, id_prefix, workspace_name=None, show_agent=True) %}
 <div class="signup-reveal console-key-reveal" data-copy-secret-scope>
   <div class="key-reveal-section">
     <div class="signup-reveal-head">Your TrustedRouter API key</div>
@@ -18,22 +18,25 @@
     {% endif %}
   </div>
 
+  {% if show_agent %}
   <section class="agent-quickstart" aria-labelledby="{{ id_prefix }}-agent-heading">
     <h3 id="{{ id_prefix }}-agent-heading">Paste this whole message into your agent or Claude Code to try it out right now:</h3>
     <div class="agent-message-row">
       <div class="agent-message" id="{{ id_prefix }}-agent-message" data-copy-lines>
         <div>Please use TrustedRouter.com using the following key to ask DeepSeek the following question: "What is the capital of France?"</div>
-        <div><code class="agent-message-key">{{ raw_key }}</code></div>
+        <div><code class="agent-message-key">YOUR_TRUSTEDROUTER_API_KEY</code></div>
       </div>
       <button
         class="btn secret-copy-btn"
         type="button"
-        data-copy-secret="{{ id_prefix }}-agent-message"
+        data-copy-template-target="{{ id_prefix }}-agent-message"
+        data-secret-source="{{ id_prefix }}-api-key"
         aria-describedby="{{ id_prefix }}-agent-copy-status"
         aria-label="Copy complete agent message"
       >Copy</button>
     </div>
     <p class="copy-status" id="{{ id_prefix }}-agent-copy-status" role="status" aria-live="polite"></p>
   </section>
+  {% endif %}
 </div>
 {% endmacro %}

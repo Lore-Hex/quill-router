@@ -11,7 +11,12 @@ from trusted_router.acquisition import log_browser_funnel_event
 class MarketingEventRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    event: Literal["landing_engaged", "sign_in_opened"]
+    event: Literal[
+        "landing_engaged",
+        "sign_in_opened",
+        "first_call_started",
+        "first_call_failed",
+    ]
 
 
 def register_acquisition_routes(router: APIRouter) -> None:

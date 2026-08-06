@@ -133,6 +133,36 @@ def create_app(
 
             threading.Thread(target=loop, name="home-settlement", daemon=True).start()
 
+    if settings.activation_reminder_interval_seconds > 0:
+
+        @app.on_event("startup")
+        async def _start_activation_reminder_loop() -> None:  # pragma: no cover - thread wiring
+            import asyncio as _asyncio
+            import logging as _logging
+            import random as _random
+
+            from trusted_router.services.activation_reminders import (
+                run_activation_reminder_pass,
+            )
+
+            interval = max(30, settings.activation_reminder_interval_seconds)
+            log = _logging.getLogger(__name__)
+
+            async def loop() -> None:
+                await _asyncio.sleep(_random.uniform(5, min(30, interval)))  # noqa: S311
+                while True:
+                    try:
+                        await _asyncio.to_thread(
+                            run_activation_reminder_pass,
+                            settings,
+                            limit=200,
+                        )
+                    except Exception:
+                        log.exception("activation reminder pass failed")
+                    await _asyncio.sleep(interval)
+
+            _asyncio.create_task(loop())  # noqa: RUF006 - lifetime is the process
+
     # In-process synthetic monitor. See the settings docstring for why the
     # trigger lives here rather than in each cloud's own scheduler.
     if settings.synthetic_scheduler_interval_seconds > 0:

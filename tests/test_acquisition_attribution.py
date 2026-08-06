@@ -341,6 +341,16 @@ def test_unknown_browser_funnel_event_is_rejected(client: TestClient) -> None:
     assert response.status_code == 400
 
 
+@pytest.mark.parametrize("event", ["first_call_started", "first_call_failed"])
+def test_first_call_browser_events_are_accepted_without_payload(
+    client: TestClient,
+    event: str,
+) -> None:
+    _campaign_landing(client)
+    response = client.post("/analytics/events", json={"event": event})
+    assert response.status_code == 204
+
+
 def test_successful_usage_milestones_are_once_only(
     client: TestClient,
     caplog: pytest.LogCaptureFixture,

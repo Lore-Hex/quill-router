@@ -868,22 +868,23 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
 
     resp = client.get("/console/welcome?first=1", follow_redirects=False)
     assert resp.status_code == 200
-    assert resp.text.count(fake_raw_key) == 2, (
-        "expected the raw API key from tr_pending_reveal to be rendered "
-        "by itself and in the agent quickstart message"
-    )
-    agent_message = (
-        "Please use TrustedRouter.com using the following key to ask DeepSeek "
-        'the following question: "What is the capital of France?"'
-        f"\n\n{fake_raw_key}"
+    assert resp.text.count(fake_raw_key) == 1, (
+        "the raw API key must have exactly one DOM copy; setup copy buttons "
+        "inject it only when the user clicks"
     )
     assert 'data-copy-secret="welcome-api-key"' in resp.text
-    assert 'data-copy-secret="welcome-agent-message"' in resp.text
+    assert 'data-copy-template-target="welcome-agent-message"' in resp.text
+    assert 'data-secret-source="welcome-api-key"' in resp.text
     assert 'id="welcome-agent-message" data-copy-lines' in resp.text
-    assert 'class="agent-message-key">' + fake_raw_key + "</code>" in resp.text
-    assert '<pre id="welcome-agent-message"' not in resp.text
-    assert agent_message.split("\n\n", 1)[0] in resp.text
-    assert "Paste this whole message into your agent or Claude Code" in resp.text
+    assert "YOUR_TRUSTEDROUTER_API_KEY" in resp.text
+    assert '<pre id="welcome-agent-message"' in resp.text
+    assert "Run my first API request" in resp.text
+    assert 'data-endpoint="/chat-proxy/v1/chat/completions"' in resp.text
+    assert "Claude Code / Codex" in resp.text
+    assert "Python" in resp.text
+    assert "JavaScript" in resp.text
+    assert "curl" in resp.text
+    assert "https://trust.trustedrouter.com" in resp.text
     assert "already been displayed" not in resp.text
     # One-shot: cookie must be cleared on the response so a refresh
     # doesn't re-reveal the key.
@@ -946,24 +947,36 @@ def test_console_create_api_key_form_shows_raw_key_once(
     assert "console-created" in resp.text
     match = re.search(r"sk-tr-v1-[A-Za-z0-9_-]+", resp.text)
     assert match is not None
-    assert resp.text.count(match.group(0)) == 2
-    agent_message = (
-        "Please use TrustedRouter.com using the following key to ask DeepSeek "
-        'the following question: "What is the capital of France?"'
-        f"\n\n{match.group(0)}"
-    )
+    assert resp.text.count(match.group(0)) == 1
     assert 'data-copy-secret="created-api-key"' in resp.text
-    assert 'data-copy-secret="created-agent-message"' in resp.text
+    assert 'data-copy-template-target="created-agent-message"' in resp.text
+    assert 'data-secret-source="created-api-key"' in resp.text
     assert 'id="created-agent-message" data-copy-lines' in resp.text
-    assert 'class="agent-message-key">' + match.group(0) + "</code>" in resp.text
     assert '<pre id="created-agent-message"' not in resp.text
-    assert agent_message.split("\n\n", 1)[0] in resp.text
+    assert "YOUR_TRUSTEDROUTER_API_KEY" in resp.text
     assert "Paste this whole message into your agent or Claude Code" in resp.text
     assert "Copied to clipboard." not in resp.text
     workspace_id = next(iter(STORE.workspaces))
     keys = STORE.list_keys(workspace_id)
     assert len(keys) == 1
     assert keys[0].limit_microdollars == 1
+
+
+def test_console_welcome_without_credits_routes_to_funding(
+    console_session: tuple[TestClient, str],
+) -> None:
+    client, _ = console_session
+    workspace = next(iter(STORE.workspaces.values()))
+    STORE.credit_money[workspace.id].total_credits_microdollars = 0
+    fake_raw_key = "sk-tr-v1-zero-credit-reveal"  # noqa: S105 - test fixture
+    client.cookies.set("tr_pending_reveal", fake_raw_key)
+
+    response = client.get("/console/welcome?first=1")
+
+    assert response.status_code == 200
+    assert "Add credits before the live check" in response.text
+    assert 'href="/console/credits"' in response.text
+    assert 'data-action="run-first-call"' not in response.text
 
 
 def test_console_create_api_key_uses_decimal_money_and_rejects_invalid_limit(
