@@ -4,21 +4,21 @@
 <section class="marketing-split" aria-label="OpenRouter alternative">
   <div class="marketing-copy">
     <span class="eyebrow">OpenRouter alternative</span>
-    <h2>An OpenRouter alternative built around verifiable privacy.</h2>
-    <p>TrustedRouter is OpenAI-compatible, supports the same model catalog, and adds two things OpenRouter does not: hardware-attested execution and full open-source code.</p>
-    <p>You change one URL. Your existing code keeps working.</p>
-    <p>
-      <a class="btn primary" href="/chat">Try side-by-side</a>
-      <a class="btn" href="/compare/openrouter">Detailed comparison</a>
-    </p>
+    <h2>Switch from OpenRouter in one base URL.</h2>
+    <p>Keep your OpenAI SDK and model IDs. Change one URL to route through an open-source, hardware-attested gateway that never stores prompts or outputs.</p>
+    <p><button class="btn primary" type="button" data-action="open-signin">Create my API key</button></p>
+    <p class="microcopy">No card required. <a href="/compare/openrouter">Read the detailed comparison.</a></p>
   </div>
   <div class="copy-terminal">
     <div class="code-head"><span>One line</span><span>OpenAI SDK</span></div>
-    <pre><code>client = OpenAI(
+    <pre><code>import os
+from openai import OpenAI
+
+client = OpenAI(
     base_url="{{ api_base_url }}",
-    api_key="sk-tr-v1-..."
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
 )
-# Same model IDs. Same SDK. Same code.</code></pre>
+# Keep the SDK. Change one URL.</code></pre>
   </div>
 </section>
 
@@ -78,6 +78,17 @@
     <p><strong>Audited routing.</strong> Build-vs-buy decisions where the security review team needs to read the routing code.</p>
     <p><strong>Self-hosters.</strong> Run TrustedRouter inside your own VPC and keep attestation working — your image hash is your image hash.</p>
   </div>
+</section>
+
+<section class="cta-band" aria-label="Switch from OpenRouter">
+  <div>
+    <strong>Keep your SDK. Change one URL.</strong>
+    <span>Create a key and run your existing integration through TrustedRouter.</span>
+  </div>
+  <div class="cta-band-actions">
+    <button class="btn primary" type="button" data-action="open-signin">Create my API key</button>
+  </div>
+  <span class="microcopy">No card required.</span>
 </section>
 
 {% endblock %}

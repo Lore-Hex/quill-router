@@ -138,6 +138,25 @@ function trackEngagedLanding() {
         }
     }, 1500);
 }
+async function copyCode(button) {
+    const targetId = button.dataset.copyTarget;
+    const target = targetId ? document.getElementById(targetId) : null;
+    const text = target?.textContent?.trim();
+    if (!text || !navigator.clipboard || !window.isSecureContext)
+        return;
+    const original = button.textContent || "Copy";
+    try {
+        await navigator.clipboard.writeText(text);
+        button.textContent = "Copied";
+        button.setAttribute("aria-live", "polite");
+    }
+    catch {
+        button.textContent = "Copy failed";
+    }
+    window.setTimeout(() => {
+        button.textContent = original;
+    }, 1600);
+}
 function setSigninError(message) {
     const el = document.getElementById("signinError");
     if (!el)
@@ -271,6 +290,12 @@ function init() {
             event.preventDefault();
             trackFunnelEvent("sign_in_opened");
             openSigninModal();
+            return;
+        }
+        const copyButton = target.closest('[data-action="copy-code"]');
+        if (copyButton) {
+            event.preventDefault();
+            void copyCode(copyButton);
             return;
         }
         const metamask = target.closest('[data-action="metamask-signin"]');

@@ -35,7 +35,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         # SEO landing pages — each targets a high-intent buyer query.
         # The marker is a load-bearing headline from the page so a
         # silent template breakage gets caught here.
-        "/openrouter-alternative": "An OpenRouter alternative built around verifiable privacy.",
+        "/openrouter-alternative": "Switch from OpenRouter in one base URL.",
         "/private-llm-api": 'A private LLM API where "private" means cryptographically verified.',
         "/hipaa-llm-api": "The LLM API whose privacy posture is verifiable",
         "/llm-zero-data-retention": "Zero data retention as a verifiable property",
@@ -207,6 +207,28 @@ def test_public_pricing_matches_five_percent_billing_policy(client: TestClient) 
     assert llms.status_code == 200
     assert "Text and embedding prepaid pricing is provider cost + 5%" in llms.text
     assert "Video generation is the direct provider quote + 20%" in llms.text
+
+
+def test_paid_search_landing_pages_drive_a_runnable_first_call(
+    client: TestClient,
+) -> None:
+    openai_page = client.get("/openai-compatible-llm-api")
+    assert openai_page.status_code == 200
+    assert "Keep the SDK. Change the base URL." in openai_page.text
+    assert "import os" in openai_page.text
+    assert 'model="trustedrouter/cheap"' in openai_page.text
+    assert 'data-action="copy-code"' in openai_page.text
+    assert openai_page.text.count("Create my API key") == 2
+    assert "No card required." in openai_page.text
+    assert '<a class="btn primary" href="/docs">' not in openai_page.text
+
+    migration_page = client.get("/openrouter-alternative")
+    assert migration_page.status_code == 200
+    assert "Switch from OpenRouter in one base URL." in migration_page.text
+    assert "import os" in migration_page.text
+    assert migration_page.text.count("Create my API key") == 2
+    assert "No card required." in migration_page.text
+    assert '<a class="btn primary" href="/chat">' not in migration_page.text
 
 
 def test_agent_discovery_surfaces_model_advisor_skill(client: TestClient) -> None:

@@ -121,6 +121,8 @@ h1 { margin:16px 0 12px; font-size:48px; line-height:1.04; letter-spacing:0; max
 .term { color:var(--rust); font-weight:750; }
 .code-card { background:var(--code-bg); color:var(--code-ink); border:1px solid var(--code-line); border-radius:8px; overflow:hidden; box-shadow:0 10px 30px var(--shadow); }
 .code-head { display:flex; align-items:center; justify-content:space-between; padding:11px 13px; border-bottom:1px solid var(--code-line); color:var(--code-muted); font-size:12px; }
+.code-copy { appearance:none; border:0; background:transparent; color:#b8c6d2; font:inherit; cursor:pointer; padding:3px 5px; }
+.code-copy:hover, .code-copy:focus-visible { color:#fff; }
 pre { margin:0; padding:16px; overflow:auto; font-size:13px; line-height:1.5; }
 code, .mono { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .router-scene-shell { min-height:720px; align-self:stretch; display:flex; align-items:center; justify-content:center; position:relative; overflow:visible; z-index:5; }
