@@ -970,6 +970,33 @@ def test_first_body_image_picks_first_in_document_order() -> None:
 
 
 def test_blog_post_og_image_uses_first_image_else_default(client: TestClient) -> None:
+    training = client.get("/blog/they-are-still-training-on-your-data")
+    training_card = (
+        "https://trustedrouter.com/static/og/blog/"
+        "they-are-still-training-on-your-data.png"
+    )
+    assert f'property="og:image" content="{training_card}"' in training.text
+    assert f'name="twitter:image" content="{training_card}"' in training.text
+    assert client.get(
+        "/static/og/blog/they-are-still-training-on-your-data.png"
+    ).status_code == 200
+
+    privacy = client.get("/blog/no-log-is-a-promise-attestation-is-proof")
+    privacy_card = (
+        "https://trustedrouter.com/static/og/blog/"
+        "no-log-is-a-promise-attestation-is-proof.png"
+    )
+    assert f'property="og:image" content="{privacy_card}"' in privacy.text
+    assert f'name="twitter:image" content="{privacy_card}"' in privacy.text
+    assert client.get(
+        "/static/og/blog/no-log-is-a-promise-attestation-is-proof.png"
+    ).status_code == 200
+
+    sign_in = client.get("/blog/sign-in-with-trustedrouter")
+    sign_in_card = "https://trustedrouter.com/static/og/sign-in-with-trustedrouter.png"
+    assert f'property="og:image" content="{sign_in_card}"' in sign_in.text
+    assert f'name="twitter:image" content="{sign_in_card}"' in sign_in.text
+
     socrates = client.get("/blog/socrates-1.1-terminal-bench-hard-72")
     socrates_card = (
         "https://trustedrouter.com/static/og/blog/socrates-1.1-terminal-bench-hard-72.png"

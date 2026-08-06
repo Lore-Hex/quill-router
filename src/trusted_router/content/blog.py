@@ -30,6 +30,145 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="they-are-still-training-on-your-data",
+        title="They Are Still Training on Your Data",
+        description=(
+            "The AI industry is running out of public text. Synthetic data conditioned on "
+            "real customer traffic gives it a way to keep the useful parts after deleting the original."
+        ),
+        published_date="2026-08-05",
+        source_label="Generative Data Refinement paper",
+        source_url="https://arxiv.org/abs/2509.08653",
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="A real customer prompt is refined into synthetic data and added to a model training set">
+<rect width="1200" height="630" fill="#0b1118"/>
+<text x="64" y="68" font-size="21" font-weight="700" fill="#7be0b1">TrustedRouter</text>
+<text x="64" y="144" font-size="50" font-weight="750" fill="#f8fafc">They are still training</text>
+<text x="64" y="201" font-size="50" font-weight="750" fill="#f8fafc">on your data.</text>
+<text x="64" y="246" font-size="20" fill="#a9bfd5">Delete the original. Keep a synthetic derivative with the useful parts.</text>
+
+<rect x="64" y="316" width="250" height="150" rx="8" fill="#101c28" stroke="#35506b" stroke-width="2"/>
+<text x="189" y="356" text-anchor="middle" font-size="14" font-weight="700" fill="#a9bfd5">REAL CUSTOMER DATA</text>
+<text x="189" y="404" text-anchor="middle" font-size="25" font-weight="700" fill="#f8fafc">Prompt + response</text>
+<text x="189" y="437" text-anchor="middle" font-size="16" fill="#a9bfd5">Private and diverse</text>
+
+<line x1="314" y1="391" x2="405" y2="391" stroke="#7be0b1" stroke-width="4"/>
+<path d="M405 391 L385 379 L385 403 Z" fill="#7be0b1"/>
+
+<rect x="420" y="296" width="330" height="190" rx="8" fill="#12271f" stroke="#39b983" stroke-width="3"/>
+<text x="585" y="338" text-anchor="middle" font-size="14" font-weight="700" fill="#7be0b1">GENERATIVE REFINEMENT</text>
+<text x="585" y="382" text-anchor="middle" font-size="25" font-weight="700" fill="#f8fafc">Remove identity and risk</text>
+<text x="585" y="418" text-anchor="middle" font-size="17" fill="#b9d9ca">Preserve meaning and diversity</text>
+<text x="585" y="449" text-anchor="middle" font-size="17" fill="#b9d9ca">Call the output synthetic</text>
+
+<line x1="750" y1="391" x2="841" y2="391" stroke="#d2a85a" stroke-width="4"/>
+<path d="M841 391 L821 379 L821 403 Z" fill="#d2a85a"/>
+
+<rect x="856" y="316" width="280" height="150" rx="8" fill="#201d17" stroke="#6e5c39" stroke-width="2"/>
+<text x="996" y="356" text-anchor="middle" font-size="14" font-weight="700" fill="#e7c983">TRAINING DATA</text>
+<text x="996" y="404" text-anchor="middle" font-size="25" font-weight="700" fill="#f8fafc">Synthetic derivative</text>
+<text x="996" y="437" text-anchor="middle" font-size="16" fill="#cfc2a5">Reusable across training runs</text>
+
+<rect x="64" y="526" width="1072" height="58" rx="8" fill="#111d28" stroke="#26394b"/>
+<text x="92" y="562" font-size="18" fill="#d9e5ef">The raw row is gone. The information it contributed remains.</text>
+<text x="1136" y="612" text-anchor="end" font-size="18" font-weight="700" fill="#7be0b1">TrustedRouter.com</text>
+</svg>
+</figure>
+
+<p>The AI industry's dirty little secret is that it is still training on your data. Your prompts are better than another scrape of Reddit. They contain current code, private documents, expert corrections, tool traces, purchase decisions, failed attempts, and the answer you finally accepted. A closed router sees all of it across every model. That may be the most valuable dataset in AI.</p>
+
+<p>A <a href="https://arxiv.org/abs/2509.08653">Google DeepMind paper</a> explains how to turn private or otherwise unusable data into training data. The paper starts with the data shortage. Training datasets are growing faster than new text appears on the public web. Far more text exists in messages, private code, company documents, and other user-generated content. Companies have avoided much of it because it contains personal information, copyrighted material, and toxic content.</p>
+
+<p>The method is called Generative Data Refinement. Give a model one real example and ask it to rewrite the dangerous parts while preserving the useful information. The result is called grounded synthetic data. It keeps the diversity of the real dataset because every synthetic example begins with a real one.</p>
+
+<p>This works. The researchers tested more than 20,000 sentences across 108 kinds of personal information. Their approach reached mean recall of 0.99 and precision of 0.80 on that benchmark. They ran it across 1.2 million lines of code from 479 repositories. They also cleaned 100,000 toxic messages and trained a model on the result. The trained model learned facts from the original messages after the toxic wording was gone.</p>
+
+<p>Now read the usual promise again: <em>we do not train on your data.</em> Which data? The exact row you sent may disappear. A synthetic rewrite conditioned on that row can live forever. The training job consumes the rewrite, so the company says the model trained on synthetic data. Your real prompt supplied the facts, structure, vocabulary, and diversity that made the synthetic example valuable.</p>
+
+<p>Zero data retention can have the same hole. A server receives the raw prompt, runs the refinement step, writes the derivative somewhere else, and deletes the raw bytes. A strong contract can ban that. It needs to cover derivatives, de-identified content, model improvement, product improvement, research, and disclosures to partners. The three letters ZDR do not tell you whether it does.</p>
+
+<p>Some router terms make the data business visible. <a href="https://openrouter.ai/terms">OpenRouter's terms</a> say that users who opt into prompt logging grant a license that includes selling anonymized user content. A separate section grants a perpetual license to prepare derivative works of anonymized inputs for rankings. OpenRouter also <a href="https://openrouter.ai/data">says it does not sell prompt data</a>. All of those sentences can be true at once. <a href="https://vercel.com/legal/privacy-notice">Vercel's privacy notice</a> says de-identified AI product information from Hobby and Pro users may be disclosed to AI partners for product development and model training, subject to user preferences. The contract calls the information anonymized or de-identified before it changes hands.</p>
+
+<p>I cannot tell you that every closed router runs this exact pipeline. You cannot tell either. The source is closed, the production binary is hidden, and the prompt arrives in plaintext. A privacy page describes the company's current rules for itself. It gives your computer nothing to verify.</p>
+
+<p>TrustedRouter removed this business model from the router. Public TLS terminates inside an attested open source workload. The control plane never receives prompt or output bodies. The published gateway code does not build or persist a synthetic training corpus, and the <a href="https://trust.trustedrouter.com">live attestation</a> lets a client check which gateway image is handling the request. A different binary produces a different measurement.</p>
+
+<p>The upstream model provider is a separate boundary. <a href="/models/trustedrouter/zdr"><span class="mono">trustedrouter/zdr</span></a> selects providers with a tracked zero-retention posture. <a href="/models/trustedrouter/e2e"><span class="mono">trustedrouter/e2e</span></a> requires eligible confidential provider compute and provider-side encryption. The <a href="/providers">provider directory</a> publishes each claim and leaves unknown providers marked unknown. A normal provider route can still expose the prompt to that provider, so choose the privacy floor your data requires.</p>
+
+<p>Deleting your row is easy. Giving up the information inside it is expensive. The AI industry found a way to keep the second while promising the first.</p>
+""",
+    ),
+    BlogPost(
+        slug="no-log-is-a-promise-attestation-is-proof",
+        title="No Log Is a Promise. Attestation Is Proof.",
+        description=(
+            "Most AI routers ask you to trust a data policy. TrustedRouter puts public TLS "
+            "and prompt handling inside a measured open source workload you can verify."
+        ),
+        published_date="2026-08-05",
+        source_label="Google Confidential Space documentation",
+        source_url=(
+            "https://docs.cloud.google.com/confidential-computing/confidential-space/"
+            "docs/confidential-space-overview"
+        ),
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="An encrypted request reaches an attested TrustedRouter gateway before a route-specific model provider">
+<rect width="1200" height="630" fill="#0b1118"/>
+<text x="64" y="68" font-size="21" font-weight="700" fill="#7be0b1">TrustedRouter</text>
+<text x="64" y="145" font-size="50" font-weight="750" fill="#f8fafc">No log is a promise.</text>
+<text x="64" y="202" font-size="50" font-weight="750" fill="#f8fafc">Attestation is proof.</text>
+<text x="64" y="248" font-size="20" fill="#a9bfd5">Verify the workload before your prompt crosses the trust boundary.</text>
+
+<rect x="64" y="315" width="240" height="150" rx="8" fill="#101c28" stroke="#35506b" stroke-width="2"/>
+<text x="184" y="355" text-anchor="middle" font-size="14" font-weight="700" fill="#a9bfd5">YOUR APP</text>
+<text x="184" y="402" text-anchor="middle" font-size="25" font-weight="700" fill="#f8fafc">Encrypted request</text>
+<text x="184" y="434" text-anchor="middle" font-size="16" fill="#a9bfd5">Normal public TLS</text>
+
+<line x1="304" y1="390" x2="406" y2="390" stroke="#7be0b1" stroke-width="4"/>
+<path d="M406 390 L386 378 L386 402 Z" fill="#7be0b1"/>
+
+<rect x="420" y="295" width="350" height="190" rx="8" fill="#12271f" stroke="#39b983" stroke-width="3"/>
+<text x="595" y="337" text-anchor="middle" font-size="14" font-weight="700" fill="#7be0b1">ATTESTED GATEWAY</text>
+<text x="595" y="382" text-anchor="middle" font-size="27" font-weight="700" fill="#f8fafc">TLS ends inside the TEE</text>
+<text x="595" y="418" text-anchor="middle" font-size="17" fill="#b9d9ca">Measured open source workload</text>
+<text x="595" y="448" text-anchor="middle" font-size="17" fill="#b9d9ca">No prompt or output storage</text>
+
+<line x1="770" y1="390" x2="872" y2="390" stroke="#d2a85a" stroke-width="4"/>
+<path d="M872 390 L852 378 L852 402 Z" fill="#d2a85a"/>
+
+<rect x="886" y="315" width="250" height="150" rx="8" fill="#201d17" stroke="#6e5c39" stroke-width="2"/>
+<text x="1011" y="355" text-anchor="middle" font-size="14" font-weight="700" fill="#e7c983">MODEL PROVIDER</text>
+<text x="1011" y="402" text-anchor="middle" font-size="24" font-weight="700" fill="#f8fafc">Route-specific trust</text>
+<text x="1011" y="434" text-anchor="middle" font-size="16" fill="#cfc2a5">Open, ZDR, or E2E</text>
+
+<rect x="64" y="525" width="1072" height="58" rx="8" fill="#111d28" stroke="#26394b"/>
+<text x="92" y="561" font-size="18" fill="#d9e5ef">Router proof and provider posture are separate. TrustedRouter publishes both.</text>
+<text x="1136" y="611" text-anchor="end" font-size="18" font-weight="700" fill="#7be0b1">TrustedRouter.com</text>
+</svg>
+</figure>
+
+<p>Every AI router says it protects your data. Of course it does. Nobody puts "our employees can read your prompts" on the homepage. The useful question is what the running machine can do with your prompt right now, and a privacy policy cannot answer it.</p>
+
+<p>A normal gateway terminates TLS in an ordinary application process. That process reads your prompt, chooses a provider, and sends it along. The company may keep logging turned off. You still have to trust every administrator, every configuration change, every analytics library, and every deploy. Zero retention limits what the company promises to keep. It gives the machine full access first.</p>
+
+<p>Open source helps, but there is an obvious hole. You can read a repository while the hosted service runs a different binary. How do you prove that the code on GitHub is the code holding the TLS key? Usually, you cannot.</p>
+
+<p>I built TrustedRouter to close that hole. Public TLS for <span class="mono">api.trustedrouter.com</span> terminates inside a measured GCP Confidential Space workload. The private key stays inside that workload. The separate control plane handles accounts, credits, and request metadata. It never receives prompt or output bodies, and the gateway has no prompt storage path.</p>
+
+<p><a href="https://docs.cloud.google.com/confidential-computing/confidential-space/docs/confidential-space-overview">Google describes Confidential Space</a> as a trusted execution environment that keeps data from the workload operator and produces attestation evidence identifying the workload. The product name is boring. The evidence is useful. It lets your computer check the issuer, audience, image digest, and certificate binding before it sends a prompt.</p>
+
+<p>The live <a href="https://trust.trustedrouter.com">TrustedRouter trust page</a> publishes the gateway repository, source commit, image reference, image digest, attestation issuer, and audience. A client can request fresh evidence, bind it to the TLS certificate with a nonce, and compare the measured image with the published release. If any of those values fail, the client should stop. There is no ordinary server waiting behind it as a convenient privacy downgrade.</p>
+
+<p>But the model provider still gets the prompt, right? Yes. The router and the model provider are two separate trust boundaries, and pretending otherwise would make the attestation worthless. The <a href="/providers">provider directory</a> publishes the upstream posture for every route and leaves unknown providers marked unknown. <a href="/models/trustedrouter/zdr"><span class="mono">trustedrouter/zdr</span></a> requires a tracked zero-retention provider. <a href="/models/trustedrouter/e2e"><span class="mono">trustedrouter/e2e</span></a> requires eligible confidential provider compute and provider-side encryption. Both fail closed when a qualifying route is unavailable.</p>
+
+<p>Could another router add this? Yes, after moving certificate custody and plaintext request handling into a trusted execution environment, separating billing from the prompt path, removing content from telemetry, publishing source-to-image evidence, verifying fresh attestation, and giving up the ordinary fallback server. That is a rebuild, which is why a checkbox saying "ZDR" proves so little.</p>
+
+<p>A privacy policy tells you what a company says. Attestation tells your computer which code has your prompt.</p>
+""",
+    ),
+    BlogPost(
         slug="sign-in-with-trustedrouter",
         title="Sign in with TrustedRouter",
         description=(
@@ -39,6 +178,7 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
         published_date="2026-08-03",
         source_label=None,
         source_url=None,
+        og_image="/static/og/sign-in-with-trustedrouter.png",
         body_html="""
 <figure style="margin:0 0 32px">
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="Sign in with TrustedRouter user funded AI authorization flow">
