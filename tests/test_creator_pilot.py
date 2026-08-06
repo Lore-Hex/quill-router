@@ -33,13 +33,20 @@ def test_creator_quickstart_is_public_and_campaign_attributed(
     )
 
     assert response.status_code == 200
-    assert "Try TrustedRouter in 60 Seconds" in response.text
+    assert "Test hundreds of AI models without rewriting your app." in response.text
+    assert response.text.count("Create my test key") == 3
     assert 'base_url="https://api.trustedrouter.com/v1"' in response.text
-    assert "max_tokens=128" in response.text
+    assert "trustedrouter/fast" in response.text
+    assert "trustedrouter/cheap" in response.text
+    assert "trustedrouter/zdr" in response.text
+    assert "max_tokens=256" in response.text
+    assert "No subscription. No card required." in response.text
+    assert "Text models cost the provider price plus 5%." in response.text
+    assert "Privacy with proof" in response.text
     assert "https://trust.trustedrouter.com" in response.text
     assert "https://status.trustedrouter.com" in response.text
-    assert 'href="/v1/models"' in response.text
-    assert "does not make every downstream provider end-to-end encrypted" in response.text
+    assert 'href="/models"' in response.text
+    assert "Downstream retention, training, jurisdiction" in response.text
 
     encoded = client.cookies.get(ATTRIBUTION_COOKIE_NAME)
     context = decode_attribution_cookie(encoded, client.app.state.settings)
