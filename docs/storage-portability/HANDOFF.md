@@ -40,7 +40,7 @@ operational wide-column store and was never a columnar warehouse.
 | AWS deployment | **Serving and attesting** — Nitro enclave + Fargate control plane |
 | Azure deployment | **Serving and attesting** — SEV-SNP/MAA enclave + Container App control plane |
 | Per-cloud *control-plane* independence — AWS | **LIVE 2026-08-06.** All 4 enclaves rolled to `aws-release-20260806-ownplane`, PCR0 `aef48a4539…`, dialling `aws.trustedrouter.com` first with the canonical plane as a dial-failure fallback. Status `up`, single measurement, 0 errors (§4.5) |
-| Per-cloud *control-plane* independence — Azure | **Not yet.** Client machinery is inherited; the base-URL flip lives on the azure branch and changes HOST_DATA (§4.5) |
+| Per-cloud *control-plane* independence — Azure | **LIVE 2026-08-06** (uaenorth). Enclave rebuilt from main, `TR_CONTROL_PLANE_BASE_URL=azure.trustedrouter.com/v1,trustedrouter.com/v1`, HOST_DATA `1936719d7398e9ad…`, attestation verified. Second region (southeastasia) pending (§4.5b) |
 | Postgres can serve `authorize` | **Fixed**, router#452 — 11 gateway-reachable methods used to raise (§4.6) |
 
 ### The single most useful result
@@ -253,6 +253,82 @@ into the accepted set BEFORE cutover. The Azure hostdata pin is already a set;
 PCR0 only became one on 2026-08-06 (qcp#112 / router#459). Blocked on §4.6 item 4
 and the azure branch merging.
 
+### 4.5b Azure — what the cutover actually cost, and how to repeat it
+
+Azure is now on its own control plane in **uaenorth**, verified end to end. Two
+failures happened on the way and both are worth keeping.
+
+**The enclave branch could not be rebased, and did not need to be.** The
+`azure-attestation` branch was 136 commits behind and its one structural change
+extracts 486 lines of secret resolution out of `bootstrap_gcp.go`. Redoing that
+against a `bootstrap_gcp.go` that had gained 17 providers risks an enclave that
+boots green and 401s on whichever provider was dropped. Instead (qcp#115): start
+from main, take the 21 Azure-only files verbatim, scope `secrets.go` to
+`cloud_azure`, and leave GCP's loader untouched. The duplicated provider list is
+guarded by `provider_parity_test.go` rather than trusted.
+
+**FOUR tables must agree**, and each was found by the NEXT one's test firing:
+
+```
+enclave-go/internal/bootstrap/bootstrap_gcp.go   59 provider secrets (GCP)
+enclave-go/internal/bootstrap/secrets.go         59 provider secrets (Azure)
+tools/azure-seal-bundle.py                       the sealer's binding table
+tools/deploy-azure-aci.sh                        env defaults + name list + exports
+```
+
+**FAILURE 1 — this took Azure down.** `QUILL_<X>_SECRET` does **not** hold a
+secret value. It holds the NAME of an entry in the sealed Key Vault bundle.
+`resolveSecretConfig` skips a binding whose env is `""`, but a name that is SET
+and ABSENT from the bundle is fatal:
+
+```
+bootstrap/azure: alibaba key: no entry "trustedrouter-alibaba-api-key"
+in the bundle (bundle has 40 entries: ...)
+```
+
+Plausible-looking defaults were added for 17 providers whose secrets are not in
+the bundle. The enclave refused to boot, correctly. They now default to EMPTY.
+**Never name a bundle entry before the secret is in the bundle.**
+
+**FAILURE 2 — a broken verifier accusing a healthy enclave.** qcp#115 omitted
+`tools/verify-attestation.py`, so main's verifier had no `--expected-hostdata`.
+`deploy-azure-aci.sh`'s verify phase calls exactly that flag, so every deploy
+ended in `[FAIL] attestation verification FAILED` while the enclave was
+attesting fine. Fixed in qcp#116. When a verify step fails, confirm the VERIFIER
+can run before believing what it says about the target.
+
+**What went right:** the bind window worked exactly as designed —
+`release-policy.json pinning 2 hostdata value(s)`, old and new — and
+`POST /key/release` returned 200 throughout, so SKR never disagreed with the
+measurement. Every failure was in secret naming or tooling, never in attestation.
+
+**To repeat (uaenorth, ~15 min):**
+
+```bash
+export TR_CONTROL_PLANE_BASE_URL="https://azure.trustedrouter.com/v1,https://trustedrouter.com/v1"
+export QUILL_AZURE_BUNDLE_VERSION=<pin it; unset follows "current" and allows silent rollback>
+export REUSE_IMAGE=1            # skip the ACR build when only env changed
+bash tools/deploy-azure-aci.sh --apply all
+```
+
+Then verify — the hostdata must be derived from live ARM, never read out of the
+token you are checking:
+
+```bash
+HD=$(az container show --name quill-enclave-uaenorth --resource-group TR-TEE-DUBAI \
+      --query confidentialComputeProperties.ccePolicy -o tsv | base64 -d | shasum -a 256 | cut -d' ' -f1)
+python3 tools/verify-attestation.py --api-host api-azure.trustedrouter.com \
+  --expected-maa-issuer https://trquilluaen.uaen.attest.azure.net --expected-hostdata "$HD"
+```
+
+**Second region.** Confidential ACI validates in **southeastasia**, northeurope,
+eastus2, switzerlandnorth and swedencentral; **westeurope is blocked by policy**
+on this subscription. southeastasia is the chosen second region — with the
+gateway in UAE North and GCP/AWS in US/EU, Singapore adds real geographic spread
+rather than a second European site. Confirm a region with an ARM
+`deployment group validate` of the real template (rename the resource, drop
+`outputs`) rather than trusting a docs list.
+
 ### 4.6 Blockers, and where each one now stands
 
 1. **Postgres could not serve `authorize` at all — FIXED (router#452).** Eleven
@@ -373,6 +449,19 @@ only the 50/week limit keys on the registered domain and it fires ten times late
 *subdomain* gives exactly the same relief as a new registered domain, for free. And the shared
 ACME cache is not a rate-limit device — it exists to distribute the TLS-ALPN-01 **challenge
 token** across replicas.
+
+**An env var may name a THING rather than hold a value.** `QUILL_<X>_SECRET` on
+Azure holds the NAME of an entry in the sealed Key Vault bundle, not a secret.
+Giving it a plausible default for a secret that is not in the bundle took Azure
+down — the enclave refused to boot, correctly. Blank means "not configured and
+skipped"; a name that is set and absent is fatal. Check what a variable
+identifies before inventing a value for it.
+
+**A failing verify step may be the VERIFIER, not the target.** Every Azure
+deploy reported `[FAIL] attestation verification FAILED` while the enclave was
+attesting perfectly: main's verifier was missing the `--expected-hostdata` flag
+the deploy script passes it. Before believing a negative result, confirm the
+tool that produced it can run at all.
 
 **A change is not deployed until the CODE THAT READS IT is deployed.** The PCR0
 pin was widened to `old,new` on both Fargate task definitions, verified in the
