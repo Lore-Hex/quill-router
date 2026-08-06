@@ -21,9 +21,10 @@
   <section class="agent-quickstart" aria-labelledby="{{ id_prefix }}-agent-heading">
     <h3 id="{{ id_prefix }}-agent-heading">Paste this whole message into your agent or Claude Code to try it out right now:</h3>
     <div class="agent-message-row">
-      <pre id="{{ id_prefix }}-agent-message">Please use TrustedRouter.com using the following key to ask DeepSeek the following question: "What is the capital of France?"
-
-{{ raw_key }}</pre>
+      <div class="agent-message" id="{{ id_prefix }}-agent-message" data-copy-lines>
+        <div>Please use TrustedRouter.com using the following key to ask DeepSeek the following question: "What is the capital of France?"</div>
+        <div><code class="agent-message-key">{{ raw_key }}</code></div>
+      </div>
       <button
         class="btn secret-copy-btn"
         type="button"

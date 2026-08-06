@@ -125,6 +125,102 @@ test("console redirects unauthenticated users and auto-opens sign-in", async ({ 
   await expect(page.locator("#signinModal")).toBeVisible();
 });
 
+test("new API key quickstart stays inside its reveal panel", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (value) => { window.__copiedAgentMessage = value; },
+        readText: async () => window.__copiedAgentMessage || "",
+      },
+    });
+  });
+  await page.route("**/console/api-keys", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: `<!doctype html>
+        <html lang="en">
+          <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <link rel="stylesheet" href="/static/dashboard.css">
+            <link rel="stylesheet" href="/static/charter.css">
+            <link rel="stylesheet" href="/static/console.css">
+            <script defer src="/static/console.js"></script>
+          </head>
+          <body class="console">
+            <div class="console-shell">
+              <aside class="console-sidebar"></aside>
+              <main class="console-main">
+                <div class="console-page-body">
+                  <section class="panel">
+                    <div class="panel-body">
+                      <div class="signup-reveal console-key-reveal">
+                        <section class="agent-quickstart">
+                          <h3>Paste this whole message into your agent or Claude Code to try it out right now:</h3>
+                          <div class="agent-message-row">
+                            <div class="agent-message" id="layout-agent-message" data-copy-lines>
+                              <div>Please use TrustedRouter.com using the following key to ask DeepSeek the following question: "What is the capital of France?"</div>
+                              <div><code class="agent-message-key">sk-tr-v1-layout-regression-key</code></div>
+                            </div>
+                            <button class="btn secret-copy-btn" type="button" data-copy-secret="layout-agent-message" aria-label="Copy complete agent message">Copy</button>
+                          </div>
+                        </section>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </main>
+            </div>
+          </body>
+        </html>`,
+    });
+  });
+  await page.goto("/console/api-keys");
+
+  const reveal = page.locator(".console-key-reveal");
+  const heading = reveal.locator(".agent-quickstart h3");
+  const message = reveal.locator(".agent-message");
+  await expect(heading).toBeVisible();
+  await expect(message).toContainText("What is the capital of France?");
+
+  const assertContained = async () => {
+    const layout = await reveal.evaluate((element) => {
+      const headingElement = element.querySelector(".agent-quickstart h3");
+      const messageElement = element.querySelector(".agent-message");
+      const bounds = element.getBoundingClientRect();
+      return {
+        pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
+        headingOverflow: headingElement.scrollWidth - headingElement.clientWidth,
+        messageOverflow: messageElement.scrollWidth - messageElement.clientWidth,
+        headingRight: headingElement.getBoundingClientRect().right - bounds.right,
+        messageRight: messageElement.getBoundingClientRect().right - bounds.right,
+      };
+    });
+    expect(layout.pageOverflow).toBeLessThanOrEqual(2);
+    expect(layout.headingOverflow).toBeLessThanOrEqual(1);
+    expect(layout.messageOverflow).toBeLessThanOrEqual(1);
+    expect(layout.headingRight).toBeLessThanOrEqual(1);
+    expect(layout.messageRight).toBeLessThanOrEqual(1);
+  };
+
+  await assertContained();
+  await page.setViewportSize({ width: 820, height: 900 });
+  await assertContained();
+  // A rolling multi-region deploy can briefly pair new HTML with an older
+  // console stylesheet. The message must still use normal HTML wrapping.
+  await page.evaluate(() => document.querySelector('link[href="/static/console.css"]').remove());
+  await assertContained();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await assertContained();
+  const copyButton = reveal.getByRole("button", { name: "Copy complete agent message" });
+  await expect(copyButton).toBeVisible();
+  await copyButton.click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(
+    'Please use TrustedRouter.com using the following key to ask DeepSeek the following question: "What is the capital of France?"\n\nsk-tr-v1-layout-regression-key',
+  );
+});
+
 test("delegated sign-in explains zero-credit onboarding", async ({ page }) => {
   const target = encodeURIComponent(
     "/auth?callback_url=https%3A%2F%2Fslopnazi.com%2Feditor&key_label=SlopNazi&limit=5&usage_limit_type=monthly",

@@ -37,6 +37,15 @@ function setCopyStatus(button, message, isError) {
   }
 }
 
+function copyTargetText(target) {
+  if (target.hasAttribute("data-copy-lines")) {
+    return Array.from(target.children, (line) => line.textContent.trim())
+      .join("\n\n")
+      .trim();
+  }
+  return target.textContent.trim();
+}
+
 // ── Theme toggle ────────────────────────────────────────────────────
 // Mirrors the marketing chrome (static/dashboard.js). Dark is the default
 // (no data-theme attribute); a stored "light" preference is applied as
@@ -121,7 +130,7 @@ function initConsole() {
     event.preventDefault();
     const secretId = button.getAttribute("data-copy-secret");
     const secret = secretId ? document.getElementById(secretId) : null;
-    const value = secret ? secret.textContent.trim() : "";
+    const value = secret ? copyTargetText(secret) : "";
     if (!value) {
       setCopyStatus(button, "No key to copy.", true);
       return;
