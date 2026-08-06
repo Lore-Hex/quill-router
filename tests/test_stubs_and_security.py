@@ -309,9 +309,23 @@ def test_signup_validates_email(client: TestClient) -> None:
     assert resp.json()["error"]["type"] == "bad_request"
 
 
+def test_email_signup_closed_when_flag_off(test_settings: Settings) -> None:
+    # Default posture in prod: plain-email signup is closed to stop
+    # credit-farming via disposable addresses. Google/GitHub/wallet unaffected.
+    closed = test_settings.model_copy(update={"email_signup_enabled": False})
+    closed_client = TestClient(create_app(closed, init_observability=False))
+    resp = closed_client.post("/v1/signup", json={"email": "farm@gonebox.email"})
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["error"]["type"] == "forbidden"
+
+
 def test_signup_credit_can_be_disabled_explicitly() -> None:
     app = create_app(
-        Settings(environment="test", signup_trial_credit_microdollars=0),
+        Settings(
+            environment="test",
+            signup_trial_credit_microdollars=0,
+            email_signup_enabled=True,
+        ),
         init_observability=False,
     )
     with TestClient(app) as zero_credit_client:

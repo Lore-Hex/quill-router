@@ -92,6 +92,7 @@ def test_settings() -> Settings:
         github_client_id=None,
         github_client_secret=None,
         github_oauth_redirect_url=None,
+        email_signup_enabled=True,
     )
 
 

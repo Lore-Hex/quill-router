@@ -344,35 +344,17 @@ def test_http_redirects_to_https(client: httpx.Client) -> None:
     assert location.startswith("https://trustedrouter.com")
 
 
-def test_signup_endpoint_is_idempotent_and_returns_management_key(client: httpx.Client) -> None:
-    """The unauthenticated /v1/signup endpoint mints one-time keys.
-    Verifying it stays online catches deploys that accidentally gated it
-    behind auth (which would block all new signups). Uses a single
-    stable smoke email so the prod signup table doesn't grow by one
-    junk row per /30min smoke run; example.com is a reserved
-    documentation domain (pydantic's email-validator rejects .local /
-    .invalid / .test). On the first-ever smoke run the row gets
-    created and the success-shape is validated; every subsequent run
-    asserts the 409 already_registered path, which is what the
-    idempotency check exercised before."""
-    email = "smoke@example.com"
-    first = client.post("/v1/signup", json={"email": email})
-    assert first.status_code in {201, 409}, first.text
-    if first.status_code == 201:
-        data = first.json()["data"]
-        assert data["email"] == email
-        assert data["key"].startswith("sk-tr-v1-")
-        assert data["key_id"].startswith("key_")
-        assert data["management"] is True
-        assert data["trial_credit_microdollars"] == 300_000
-    else:
-        assert first.json()["error"]["type"] == "already_registered"
-    # Re-submitting the same email is always 409 — the endpoint is
-    # idempotent against the registered set, regardless of which arm
-    # above ran.
-    repeat = client.post("/v1/signup", json={"email": email})
-    assert repeat.status_code == 409, repeat.text
-    assert repeat.json()["error"]["type"] == "already_registered"
+def test_plain_email_signup_is_closed(client: httpx.Client) -> None:
+    """Plain-email /v1/signup is closed in prod (TR_EMAIL_SIGNUP_ENABLED
+    is false) to stop credit-farming via disposable addresses — it was
+    an open endpoint minting a management key + $0.30 trial credit for
+    any email. Real signups go through Google, GitHub, or a wallet.
+    Smoke-verify the abuse endpoint stays closed; a deploy that reopens
+    it (flips the flag on) trips this. The request is rejected before any
+    row is written, so it leaves no state in prod."""
+    resp = client.post("/v1/signup", json={"email": "smoke@example.com"})
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["error"]["type"] == "forbidden"
 
 
 def test_health_endpoint_under_v1_prefix(client: httpx.Client) -> None:
