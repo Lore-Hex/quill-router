@@ -450,6 +450,19 @@ only the 50/week limit keys on the registered domain and it fires ten times late
 ACME cache is not a rate-limit device — it exists to distribute the TLS-ALPN-01 **challenge
 token** across replicas.
 
+**An env var may name a THING rather than hold a value.** `QUILL_<X>_SECRET` on
+Azure holds the NAME of an entry in the sealed Key Vault bundle, not a secret.
+Giving it a plausible default for a secret that is not in the bundle took Azure
+down — the enclave refused to boot, correctly. Blank means "not configured and
+skipped"; a name that is set and absent is fatal. Check what a variable
+identifies before inventing a value for it.
+
+**A failing verify step may be the VERIFIER, not the target.** Every Azure
+deploy reported `[FAIL] attestation verification FAILED` while the enclave was
+attesting perfectly: main's verifier was missing the `--expected-hostdata` flag
+the deploy script passes it. Before believing a negative result, confirm the
+tool that produced it can run at all.
+
 **A change is not deployed until the CODE THAT READS IT is deployed.** The PCR0
 pin was widened to `old,new` on both Fargate task definitions, verified in the
 task definition, and the status page stayed red — because those tasks ran an
