@@ -1077,8 +1077,8 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         og_card="openrouter-alternative.png",
         title="OpenRouter Alternative — TrustedRouter",
         description=(
-            "Use an OpenAI-compatible OpenRouter alternative with hundreds of models, provider "
-            "failover, zero-retention routes, open source code, and a verifiable attested prompt path."
+            "Keep the OpenAI SDK and change one base URL. Route the same model IDs "
+            "through an open-source, hardware-attested gateway with no prompt or output logs."
         ),
     ),
     "private-llm-api": PublicPage(
@@ -1181,8 +1181,8 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         og_card="openai-compatible-llm-api.png",
         title="OpenAI-Compatible LLM API Router",
         description=(
-            "Use the OpenAI SDK with one base_url change, then route to hundreds "
-            "of models with failover, BYOK, ZDR options, and measured provider latency."
+            "Keep the OpenAI SDK. Change base_url once and call hundreds of models "
+            "through one API. Create a key and make the first request without a card."
         ),
         faq_items=(
             (

@@ -45,6 +45,27 @@ test("homepage opens sign-in modal and handles missing MetaMask", async ({ page 
   await expect(page.locator("#signinError")).toContainText("MetaMask is not installed");
 });
 
+test("paid search quickstart copies runnable code and opens key creation", async ({
+  context,
+  page,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.goto("/openai-compatible-llm-api");
+
+  const sample = page.locator("#openai-first-call");
+  await expect(sample).toContainText("import os");
+  await expect(sample).toContainText('model="trustedrouter/cheap"');
+
+  await page.getByRole("button", { name: "Copy", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Copied", exact: true })).toBeVisible();
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied).toContain("import os");
+  expect(copied).toContain('model="trustedrouter/cheap"');
+
+  await page.getByRole("button", { name: "Create my API key" }).first().click();
+  await expect(page.locator("#signinModal")).toBeVisible();
+});
+
 test("wallet sign-in completes without email gate", async ({ page }) => {
   const address = "0x1111111111111111111111111111111111111111";
   let emailRequests = 0;
