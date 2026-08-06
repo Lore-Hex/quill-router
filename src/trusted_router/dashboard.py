@@ -1274,12 +1274,21 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "for-developers": PublicPage(
         template="public/for_developers.html",
-        title="Try TrustedRouter in 60 Seconds",
+        title="Test Hundreds of AI Models With One API",
         description=(
-            "Run one OpenAI-compatible request, inspect the live model catalog, "
-            "and verify the attested gateway before moving real traffic."
+            "Keep your OpenAI client, change one base URL, and compare open and "
+            "frontier models on your own prompts with measured pricing, automatic "
+            "fallback, and privacy with proof."
         ),
         faq_items=(
+            (
+                "Will my existing OpenAI integration work?",
+                "In most applications, yes. Keep the OpenAI SDK and request shape, replace the base URL, and use a TrustedRouter model ID. The migration guide documents the compatibility surface and the few differences by provider.",
+            ),
+            (
+                "Which model should I try first?",
+                "Use trustedrouter/auto for general routing, trustedrouter/fast when latency matters, trustedrouter/cheap when cost matters, or trustedrouter/zdr when zero data retention is required. Then compare the same real prompt across routes before choosing production defaults.",
+            ),
             (
                 "Does TrustedRouter store prompts or outputs?",
                 f"{CONTENT_HANDLING_CLAIM} Operational metadata includes model, provider, token counts, latency, cost, status, and region. Downstream provider handling remains provider specific and is published on model and provider pages.",
