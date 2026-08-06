@@ -1101,3 +1101,63 @@ def test_pinned_probes_do_not_move_the_published_gateway_latency() -> None:
     ):
         assert with_pinned[key] == without[key], key
     assert with_pinned["in_region_gateway_overhead_p50_milliseconds"] == 30
+
+
+# ---------------------------------------------------------------------------
+# PCR0 pin is a SET, so a measurement can be changed at all
+# ---------------------------------------------------------------------------
+
+
+def test_pcr0_pin_accepts_both_measurements_during_a_rolling_repin() -> None:
+    """A rolling EIF replacement legitimately spans two measurements.
+
+    This is what unblocks pointing AWS at its own control plane: that hostname
+    list is compiled into the enclave binary, inside the EIF, so changing it
+    changes PCR0 — and rolling to the new image means a window where both the
+    published and the incoming measurement are serving.
+    """
+    from trusted_router.synthetic.probes import _pcr0_pin_matches
+
+    old = "2c12e222" + "0" * 88
+    new = "aa" * 48
+    both = f"{old},{new}"
+
+    assert _pcr0_pin_matches(old, both)
+    assert _pcr0_pin_matches(new, both)
+    assert not _pcr0_pin_matches("bb" * 48, both), "a third measurement must still mismatch"
+
+
+def test_pcr0_pin_single_value_behaviour_is_unchanged() -> None:
+    from trusted_router.synthetic.probes import _pcr0_pin_matches
+
+    pinned = "2c12e222" + "0" * 88
+    assert _pcr0_pin_matches(pinned, pinned)
+    assert not _pcr0_pin_matches("aa" * 48, pinned)
+
+
+def test_pcr0_pin_tolerates_operator_formatting() -> None:
+    """Pins are pasted by hand from trust pages and CI logs."""
+    from trusted_router.synthetic.probes import _pcr0_pin_matches
+
+    pinned = "2c12e222" + "0" * 88
+    assert _pcr0_pin_matches(pinned, f"  0X{pinned.upper()} ,  ")
+
+
+def test_pcr0_pin_with_no_usable_value_does_not_report_mismatch() -> None:
+    """An empty pin means "not asserting a measurement", not "accept nothing".
+
+    Reporting mismatch here would be worse than useless: reconcile-enclave-dns.py
+    health-gates DNS membership on attestation, so a fleet-wide false mismatch
+    drains healthy instances out of DNS.
+    """
+    from trusted_router.synthetic.probes import _pcr0_pin_matches
+
+    assert _pcr0_pin_matches("aa" * 48, "  ,  ")
+
+
+def test_a_missing_measurement_never_satisfies_a_pin() -> None:
+    """Fail closed: no PCR0 in the document must not pass a pinned check."""
+    from trusted_router.synthetic.probes import _pcr0_pin_matches
+
+    assert not _pcr0_pin_matches(None, "aa" * 48)
+    assert not _pcr0_pin_matches("", "aa" * 48)
