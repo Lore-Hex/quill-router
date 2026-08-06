@@ -66,7 +66,9 @@ STATUS_HOST="${STATUS_HOST:-https://azure.trustedrouter.com}"
 # so one dead region cannot hide behind a shared name. The NAME is what binds
 # this endpoint to its public status component in synthetic/components.py —
 # renaming one without the other silently unpublishes it.
-GATEWAY_REGION_TARGETS="${GATEWAY_REGION_TARGETS:-uaenorth=quill-enclave-uaenorth.uaenorth.azurecontainer.io}"
+# Both Azure enclave regions. A region missing here is not probed at all, and
+# its component silently reports nothing rather than reporting down.
+GATEWAY_REGION_TARGETS="${GATEWAY_REGION_TARGETS:-uaenorth=quill-enclave-uaenorth.uaenorth.azurecontainer.io,southeastasia=quill-enclave-southeastasia.southeastasia.azurecontainer.io}"
 
 # Secrets resolved from the operator's own files, exactly like every other
 # cloud (quill-cloud-proxy tools/quill_secret_sources.py). No cloud reads

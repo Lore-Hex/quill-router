@@ -145,6 +145,15 @@ COMPONENT_DEFINITIONS: tuple[dict[str, str], ...] = (
         ),
     },
     {
+        "id": "southeastasia_gateway",
+        "name": "Southeast Asia Gateway (Singapore)",
+        "description": (
+            "Azure confidential container addressed directly: publicly-trusted "
+            "TLS minted inside the TEE and SEV-SNP attestation through MAA "
+            "from a healthy Southeast Asia enclave behind it."
+        ),
+    },
+    {
         "id": "attestation",
         "name": "Attestation",
         "description": "Nonce and digest verification for public attested gateways.",
@@ -184,6 +193,7 @@ COMPONENT_PROBE_TARGETS: dict[str, str] = {
     # (scripts/deploy/azure_control_plane.sh). Absent everywhere else, which is
     # what keeps this row off the AWS and GCP status pages.
     "uaenorth_gateway": "uaenorth",
+    "southeastasia_gateway": "southeastasia",
     "attestation": "canonical",
     "billing_settlement": CONTROL_PLANE_TARGET,
     "provider_fallback": CONTROL_PLANE_TARGET,
@@ -200,7 +210,12 @@ COMPONENT_PROBE_TARGETS: dict[str, str] = {
 #   * the overall headline must INCLUDE them, or "All Systems Operational"
 #     sits directly above a red region row.
 GATEWAY_REGION_COMPONENT_IDS: frozenset[str] = frozenset(
-    {"eu_west_1_gateway", "eu_west_3_gateway", "uaenorth_gateway"}
+    {
+        "eu_west_1_gateway",
+        "eu_west_3_gateway",
+        "uaenorth_gateway",
+        "southeastasia_gateway",
+    }
 )
 # Regional API components also feed deploy automation through
 # status.current.checks. Keep this set separate from
@@ -318,6 +333,8 @@ def sample_component_ids(sample: SyntheticProbeSample) -> list[str]:
         ids.append("eu_west_3_gateway")
     if sample.target == "uaenorth" and sample.probe_type in REGIONAL_GATEWAY_PROBES:
         ids.append("uaenorth_gateway")
+    if sample.target == "southeastasia" and sample.probe_type in REGIONAL_GATEWAY_PROBES:
+        ids.append("southeastasia_gateway")
     # "Attestation" is a SHARED, service-wide row that predates the pinned
     # targets, and it is scoped to the addresses customers actually resolve.
     # Folding the pinned per-region probes in here averaged a public number
