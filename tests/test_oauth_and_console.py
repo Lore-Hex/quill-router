@@ -868,16 +868,20 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
 
     resp = client.get("/console/welcome?first=1", follow_redirects=False)
     assert resp.status_code == 200
-    assert resp.text.count(fake_raw_key) == 1, (
-        "the raw API key must have exactly one DOM copy; setup copy buttons "
-        "inject it only when the user clicks"
+    assert resp.text.count(fake_raw_key) == 2, (
+        "the raw API key must appear in the direct reveal and the visible "
+        "Claude Code / Codex message"
     )
     assert 'data-copy-secret="welcome-api-key"' in resp.text
     assert 'data-copy-template-target="welcome-agent-message"' in resp.text
     assert 'data-secret-source="welcome-api-key"' in resp.text
     assert 'id="welcome-agent-message" data-copy-lines' in resp.text
-    assert "YOUR_TRUSTEDROUTER_API_KEY" in resp.text
-    assert '<pre id="welcome-agent-message"' in resp.text
+    agent_message = re.search(
+        r'<pre id="welcome-agent-message".*?</pre>', resp.text, re.DOTALL
+    )
+    assert agent_message is not None
+    assert fake_raw_key in agent_message.group(0)
+    assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
     assert "Run my first API request" in resp.text
     assert 'data-endpoint="/chat-proxy/v1/chat/completions"' in resp.text
     assert "Claude Code / Codex" in resp.text
@@ -934,7 +938,7 @@ def test_console_welcome_without_first_query_does_not_read_pending_reveal(
     )
 
 
-def test_console_create_api_key_form_shows_raw_key_once(
+def test_console_create_api_key_form_repeats_raw_key_in_agent_message(
     console_session: tuple[TestClient, str],
 ) -> None:
     client, _ = console_session
@@ -947,13 +951,20 @@ def test_console_create_api_key_form_shows_raw_key_once(
     assert "console-created" in resp.text
     match = re.search(r"sk-tr-v1-[A-Za-z0-9_-]+", resp.text)
     assert match is not None
-    assert resp.text.count(match.group(0)) == 1
+    assert resp.text.count(match.group(0)) == 2
     assert 'data-copy-secret="created-api-key"' in resp.text
     assert 'data-copy-template-target="created-agent-message"' in resp.text
     assert 'data-secret-source="created-api-key"' in resp.text
     assert 'id="created-agent-message" data-copy-lines' in resp.text
     assert '<pre id="created-agent-message"' not in resp.text
-    assert "YOUR_TRUSTEDROUTER_API_KEY" in resp.text
+    agent_message = re.search(
+        r'<div class="agent-message" id="created-agent-message".*?</div>\s*</div>',
+        resp.text,
+        re.DOTALL,
+    )
+    assert agent_message is not None
+    assert match.group(0) in agent_message.group(0)
+    assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
     assert "Paste this whole message into your agent or Claude Code" in resp.text
     assert "Copied to clipboard." not in resp.text
     workspace_id = next(iter(STORE.workspaces))

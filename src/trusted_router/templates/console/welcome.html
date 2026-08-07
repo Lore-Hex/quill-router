@@ -104,7 +104,7 @@
 
       <div class="activation-code-panel" id="setup-agent" role="tabpanel" aria-labelledby="setup-agent-tab" data-setup-panel>
         <div class="activation-code-head"><strong>Paste this whole message into Claude Code or Codex</strong><button class="btn" type="button" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key" aria-describedby="welcome-agent-copy-status">Copy prompt</button></div>
-        <pre id="welcome-agent-message" data-copy-lines><span>Please use TrustedRouter.com using the following key to ask DeepSeek the following question: "What is the capital of France?"</span><span>YOUR_TRUSTEDROUTER_API_KEY</span></pre>
+        <pre id="welcome-agent-message" data-copy-lines><span>Please use TrustedRouter.com using the following key to ask DeepSeek the following question: "What is the capital of France?"</span><span>{{ revealed_key }}</span></pre>
         <p class="copy-status" id="welcome-agent-copy-status" role="status" aria-live="polite"></p>
       </div>
 
