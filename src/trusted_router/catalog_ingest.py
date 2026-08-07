@@ -130,6 +130,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "kimi",
         "novita",
         "phala",
+        "scaleway",
         "telnyx",
         "together",
         "wafer",
@@ -742,6 +743,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "morph",
         "atlas-cloud",
         "streamlake",
+        "scaleway",
         "neurometric",
         "engy",
         "zero-g",
@@ -915,7 +917,8 @@ def _embedding_models() -> dict[str, Model]:
     """
     models: dict[str, Model] = {}
     for spec in _EMBEDDING_SPECS:
-        if spec["provider"] not in PROVIDERS:
+        provider = PROVIDERS.get(spec["provider"])
+        if provider is None:
             continue
         manifest_cost = _embedding_manifest_cost(spec)
         if manifest_cost is None:
@@ -932,8 +935,8 @@ def _embedding_models() -> dict[str, Model]:
             supports_chat=False,
             supports_messages=False,
             supports_embeddings=True,
-            prepaid_available=True,
-            byok_available=True,
+            prepaid_available=provider.supports_prepaid,
+            byok_available=provider.supports_byok,
             prompt_price_microdollars_per_million_tokens=prompt_price,
             completion_price_microdollars_per_million_tokens=0,
             published_prompt_price_microdollars_per_million_tokens=published_price,
