@@ -28,7 +28,7 @@ test("Claude Code landing turns the ten-second promise into the real signup flow
   await page.goto("/vibe-coders");
 
   await expect(
-    page.getByRole("heading", { name: "Cut your coding agent bill in 10 seconds." }),
+    page.getByRole("heading", { name: "Cut your AI bill in 10 seconds." }),
   ).toBeVisible();
   await expect(page.getByText("The 10-second flow")).toBeVisible();
   await expect(page.getByText("Copy one short message", { exact: true })).toBeVisible();
