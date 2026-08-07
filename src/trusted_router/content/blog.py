@@ -30,6 +30,145 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="achieving-99999-uptime-as-a-startup",
+        title="Achieving 99.999% Uptime as a Startup",
+        description=(
+            "A router that is down is worse than no router at all. So we built TrustedRouter on three "
+            "separate clouds, each one independently engineered for three to four nines, each with its own "
+            "database, control plane and deploy. Here is the architecture."
+        ),
+        published_date="2026-08-07",
+        source_label="Live status",
+        source_url="https://trustedrouter.com/status",
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="Three independent clouds combining to five nines of availability">
+<rect width="1200" height="630" fill="#0b1118"/>
+<text x="64" y="68" font-size="21" font-weight="700" fill="#7be0b1">TrustedRouter</text>
+<text x="64" y="152" font-size="54" font-weight="750" fill="#f8fafc">99.999% uptime,</text>
+<text x="64" y="214" font-size="54" font-weight="750" fill="#f8fafc">as a startup.</text>
+<text x="64" y="258" font-size="20" fill="#a9bfd5">Three clouds. Three databases. Three control planes. One API.</text>
+
+<g>
+<rect x="64" y="330" width="330" height="176" rx="10" fill="#101c28" stroke="#35506b" stroke-width="2"/>
+<text x="96" y="374" font-size="19" font-weight="700" fill="#7be0b1">GCP</text>
+<text x="96" y="410" font-size="16" fill="#a9bfd5">Confidential Space</text>
+<text x="96" y="438" font-size="16" fill="#a9bfd5">Spanner, multi-region</text>
+<text x="96" y="480" font-size="30" font-weight="750" fill="#f8fafc">99.99%+</text>
+
+<rect x="435" y="330" width="330" height="176" rx="10" fill="#101c28" stroke="#35506b" stroke-width="2"/>
+<text x="467" y="374" font-size="19" font-weight="700" fill="#7be0b1">AWS</text>
+<text x="467" y="410" font-size="16" fill="#a9bfd5">Nitro Enclaves</text>
+<text x="467" y="438" font-size="16" fill="#a9bfd5">Postgres</text>
+<text x="467" y="480" font-size="30" font-weight="750" fill="#f8fafc">99.99%+</text>
+
+<rect x="806" y="330" width="330" height="176" rx="10" fill="#101c28" stroke="#35506b" stroke-width="2"/>
+<text x="838" y="374" font-size="19" font-weight="700" fill="#7be0b1">Azure</text>
+<text x="838" y="410" font-size="16" fill="#a9bfd5">SEV-SNP + MAA</text>
+<text x="838" y="438" font-size="16" fill="#a9bfd5">Postgres</text>
+<text x="838" y="480" font-size="30" font-weight="750" fill="#f8fafc">99.99%+</text>
+</g>
+<text x="64" y="566" font-size="19" fill="#7be0b1">Independent failure domains multiply.</text>
+</svg>
+</figure>
+
+<p>A router that is down is worse than no router at all. If you wrote your code against us and we
+disappear for an afternoon, we are the outage you were trying to route around. So the
+availability target for TrustedRouter was set before almost anything else: we want to be up more
+than any single cloud we run on, more than any individual model provider, and more than the coding
+agents and gateways that people are already routing through. Five nines is 26 minutes of downtime
+in a year. You cannot get there by being careful. You get there by never having one of anything.</p>
+
+<p>The arithmetic is what makes it possible for a small team. Take three clouds, engineer each one
+to somewhere between three and four nines on its own, and put them behind one API. Three nines is
+about eight hours of downtime a year, which is an ordinary, achievable number for a well-run
+deployment on managed infrastructure. Four nines is 52 minutes. If those three deployments fail
+independently, the chance that all three are down at the same moment is the product of three small
+numbers, and the product is very small. Two independent deployments at four nines each already
+clears five nines with room to spare. That is why we run on three clouds instead of
+picking the best one and buying bigger machines.</p>
+
+<p>GCP is our primary. The database there is Cloud Spanner in a multi-region configuration, which
+carries a
+<a href="https://cloud.google.com/spanner/sla" target="_blank" rel="noopener">99.999% availability SLA</a>
+— five minutes a year — because every node is backed by replicas spread across at least three
+regions, and losing a region is a normal event that Spanner is designed to absorb rather than an
+incident. We over-provision it. A database is the one component you cannot shard your way out of
+during an outage, so it is the one component where we buy the strongest guarantee on the market and
+then leave headroom on top of it.</p>
+
+<p>The routers themselves are stateless. Every request can be served by any instance, so an instance
+is disposable and the health of one has nothing to do with the health of the next. They run in
+managed instance groups that autoscale with load, in several locations on three continents, so a
+regional failure removes capacity rather than removing the service. Analytics runs on ClickHouse,
+and each cloud has its own — the analytics backend in one cloud has no ability to take down, slow
+down, or block a request in another. When we say the clouds are independent we mean the boring
+version of independence: separate databases, separate control planes, separate credentials,
+separate deploys.</p>
+
+<p>Every one of those routers runs inside a trusted execution environment. This is the part that
+makes our infrastructure unusual, and it is worth being concrete about what it costs us. We ship a
+machine image whose measurement we publish, the hardware attests to that measurement, and you can
+<a href="/blog/attestation-is-all-you-need">check the measurement yourself</a> before you send us a
+single token. We wrote about how that works in
+<a href="/blog/how-confidential-computing-protects-ai-prompts">confidential computing for AI prompts</a>
+and about why
+<a href="/blog/no-log-is-a-promise-attestation-is-proof">a no-log policy is a promise and attestation is proof</a>.
+The consequence for operations is that nobody can SSH into a production machine. There is no shell to log into, for the
+on-call engineer at 3am or for an attacker who steals my laptop. The image is what
+it is, and if you want to change it you build a new one, publish its measurement, and roll it.</p>
+
+<p>That constraint deletes entire categories of failure. A stolen SSH key is not a threat model we
+have. Neither is a debugging session that accidentally writes to production, or an operator reading
+prompts out of a log, or a compromised bastion host, or an insider with root. Those are among the
+most common ways that companies actually get breached, and they are unavailable to us and to anyone
+attacking us. The price is that every operational fix has to be a code change that survives review
+and ships as a measured artifact. That is slower on any given Tuesday. It is also why our failure
+modes are narrow enough to enumerate.</p>
+
+<p>AWS and Azure run the same service against the same interface. Both use Postgres rather than
+Spanner, behind one storage abstraction that is exercised by the same conformance suite regardless
+of which backend is underneath, so there is one implementation of the money path rather than three.
+On AWS the enclaves are Nitro Enclaves, measured by PCR0. On Azure they are SEV-SNP confidential
+containers, measured by a CCE policy hash that the hardware reports as HOST_DATA and that Microsoft
+Azure Attestation signs. Different vendors, different attestation formats, different root of trust,
+same
+<a href="/blog/one-api-all-llms-provably-private">API and same guarantee</a>.
+Each cloud has its own control plane, so a cloud can answer questions about its own health when the
+other two are unreachable.</p>
+
+<p>The obvious objection is the serious one: multiplying probabilities only works when failures are
+independent, and in practice they usually are not. Two clouds go down together because they share a
+DNS provider, or a TLS certificate authority, or a config change that a single engineer pushed to
+all three on a Friday. Correlated failure is what actually kills multi-cloud architectures, and
+believing your own arithmetic is how you end up surprised. So the work is removing the things they share. Each cloud has its own database, its own credentials, its
+own control plane, and its own deploy. We stagger rollouts so that a bad image reaches one cloud and
+is caught by the other two still serving the old one. We are steadily removing shared dependencies
+as we find them, and we find them by looking for them rather than by waiting for an incident.</p>
+
+<p>We are a router. Being neutral about which model you use is worth very little if we are not there
+when you call. The point of building it this way is that when your favorite provider has a bad day,
+or your gateway has a bad day, or an entire cloud has a bad day, the thing in front of them is still
+answering.</p>
+
+<h2>The caveat</h2>
+
+<p>Five nines is a measurement, and we have not measured it yet. Nobody can claim five nines from an
+architecture diagram. It takes months and probably years of continuous, instrumented operation
+to demonstrate that kind of consistency, because 26 minutes a year is a number you can only earn by
+not spending it. What this post describes is the design: the decisions we made so that no single
+failure — one machine, one region, one database, one cloud — takes the service down, and so that the
+independent pieces multiply instead of add.</p>
+
+<p>Things will still leak in. There are always shared dependencies you have not found yet, and a bug
+in code that runs everywhere does not care how many clouds you bought. Our bet is that isolating the
+clouds from each other and staggering what we ship to them keeps those failures from landing on all
+three at once. We publish
+<a href="/status">live status</a> for each cloud separately, so you can watch us earn the number
+instead of taking our word for it.</p>
+""",
+    ),
+    BlogPost(
         slug="they-are-still-training-on-your-data",
         title="They Are Still Training on Your Data",
         description=(
