@@ -12,8 +12,8 @@ conditions:
     conditionThreshold:
       filter: 'resource.type = "spanner_instance" AND resource.labels.instance_id = "trusted-router-nam6" AND metric.type = "spanner.googleapis.com/instance/cpu/utilization_by_priority" AND metric.labels.priority = "high"'
       aggregations:
-        - alignmentPeriod: 300s
-          perSeriesAligner: ALIGN_MAX
+        - alignmentPeriod: 60s
+          perSeriesAligner: ALIGN_MEAN
           crossSeriesReducer: REDUCE_MAX
       comparison: COMPARISON_GT
       thresholdValue: 0.45

@@ -26,6 +26,18 @@ def test_every_spanner_alert_reduces_cross_series_fanout() -> None:
         display_names.add(display_name)
 
 
+def test_high_priority_cpu_alert_requires_five_minutes_of_sustained_load() -> None:
+    policy = (DEPLOY / "spanner-alerts" / "high-priority-cpu.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "alignmentPeriod: 60s" in policy
+    assert "perSeriesAligner: ALIGN_MEAN" in policy
+    assert "thresholdValue: 0.45" in policy
+    assert "duration: 300s" in policy
+    assert "ALIGN_MAX" not in policy
+
+
 def test_backup_copy_workflow_is_deterministic_and_idempotent() -> None:
     workflow = (DEPLOY / "spanner_backup_copy_workflow.yaml").read_text(
         encoding="utf-8"
