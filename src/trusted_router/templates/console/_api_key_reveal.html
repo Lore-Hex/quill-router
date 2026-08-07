@@ -1,6 +1,7 @@
-{% macro claude_code_prompt(raw_key) -%}
-<span class="agent-prompt-line">Set up this project so my next Claude Code session uses TrustedRouter with a lower-cost default model. Keep this current session working while you prepare the change.</span>
-<span class="agent-prompt-line">Use ANTHROPIC_BASE_URL=https://api.trustedrouter.com, ANTHROPIC_AUTH_TOKEN with the key below, ANTHROPIC_MODEL=trustedrouter/cheap, and ANTHROPIC_SMALL_FAST_MODEL=trustedrouter/cheap. Put the configuration in .claude/settings.local.json. If that file already exists, preserve every other setting. Verify the file is ignored by git, run a tiny PONG request through TrustedRouter, and tell me when to restart Claude Code. Do not print, commit, or copy the key anywhere else.</span>
+{% macro agent_chat_prompt(raw_key) -%}
+<span class="agent-prompt-line">This message is designed to be pasted into a new Claude Code, Codex, or other agent chat.</span>
+<span class="agent-prompt-line">Please use TrustedRouter.com using the following key to ask DeepSeek the following question: "What is the capital of France?"</span>
+<span class="agent-prompt-line">Make the request through https://api.trustedrouter.com/v1 with streaming enabled (stream=true). Show each text delta in this chat as it arrives instead of buffering the full answer. Do not change this agent's model, provider, settings, or project files. Do not save, print, commit, or reveal the key.</span>
 <span class="agent-prompt-line">TrustedRouter API key: {{ raw_key }}</span>
 {%- endmacro %}
 
@@ -26,10 +27,10 @@
 
   {% if show_agent %}
   <section class="agent-quickstart" aria-labelledby="{{ id_prefix }}-agent-heading">
-    <h3 id="{{ id_prefix }}-agent-heading">Paste this whole message into your agent or Claude Code to try it out right now:</h3>
+    <h3 id="{{ id_prefix }}-agent-heading">Open a new Claude Code, Codex, or agent chat. Then paste this whole message:</h3>
     <div class="agent-message-row">
       <div class="agent-message" id="{{ id_prefix }}-agent-message" data-copy-lines>
-        {{ claude_code_prompt(raw_key) }}
+        {{ agent_chat_prompt(raw_key) }}
       </div>
       <button
         class="btn secret-copy-btn"

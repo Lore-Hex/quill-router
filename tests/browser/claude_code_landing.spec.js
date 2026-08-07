@@ -32,6 +32,10 @@ test("Claude Code landing turns the ten-second promise into the real signup flow
   await expect(
     page.getByRole("heading", { name: "Every model. In seconds." }),
   ).toBeVisible();
+  await expect(page.getByText("No installation. No settings changed.")).toBeVisible();
+  await expect(page.locator("body")).toContainText("stream=true");
+  await expect(page.locator("body")).not.toContainText("settings.local.json");
+  await expect(page.locator("body")).not.toContainText("restart Claude Code");
   await expect(page.getByText("your complete key is inserted", { exact: true })).toBeVisible();
   await expect(page.locator("body")).not.toContainText("YOUR_TRUSTEDROUTER_API_KEY");
   await expect(page.locator(".cc-primary-cta")).toHaveCount(3);
