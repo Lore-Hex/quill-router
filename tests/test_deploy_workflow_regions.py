@@ -66,7 +66,7 @@ def test_superseded_push_stops_before_production_mutation() -> None:
     assert "if: ${{ needs.confirm-current-main.outputs.proceed == 'true' }}" in workflow
 
 
-def test_runtime_secret_sync_is_parallel_and_full_operator_sweep_is_not_run() -> None:
+def test_runtime_secret_validation_is_parallel_and_does_not_restore_stale_ses_keys() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     sync = workflow.index("sync-runtime-secrets:")
     confirm = workflow.index("confirm-current-main:", sync)
@@ -74,6 +74,9 @@ def test_runtime_secret_sync_is_parallel_and_full_operator_sweep_is_not_run() ->
 
     assert "needs: [gate-on-ci]" in section
     assert "trustedrouter-aws-access-key-id" in section
+    assert "gcloud secrets versions access latest" in section
+    assert "secrets.TR_AWS_ACCESS_KEY_ID" not in section
+    assert "secrets.TR_AWS_SECRET_ACCESS_KEY" not in section
     assert "trustedrouter-clickhouse-provider-read-password" in section
     assert "run: bash scripts/deploy/secrets.sh" not in workflow
 

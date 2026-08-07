@@ -246,10 +246,10 @@ jobs:
         run: scripts/deploy/migrate_operational_analytics_outbox.sh
 
   sync-runtime-secrets:
-    # Keep the small set of GitHub-managed runtime credentials current while
-    # the image build and schema verification run. Provider keys and private
-    # prompt files are uploaded by operators, not by this keyless runner, so
-    # running the full secrets.sh sweep here only repeated IAM/describe calls.
+    # Validate the small set of runtime credentials while the image build and
+    # schema verification run. SES credentials are rotated directly in GCP
+    # Secret Manager; deploys must never copy a stale long-lived key back from
+    # GitHub Actions and silently undo an incident-response rotation.
     needs: [gate-on-ci]
     runs-on: ubuntu-latest
     steps:
@@ -260,23 +260,16 @@ jobs:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@v2
-      - name: Sync required SES credentials
-        env:
-          TR_AWS_ACCESS_KEY_ID: ${{ secrets.TR_AWS_ACCESS_KEY_ID }}
-          TR_AWS_SECRET_ACCESS_KEY: ${{ secrets.TR_AWS_SECRET_ACCESS_KEY }}
+      - name: Validate required SES credentials
         run: |
           set -euo pipefail
-          if [ -z "${TR_AWS_ACCESS_KEY_ID:-}" ] || [ -z "${TR_AWS_SECRET_ACCESS_KEY:-}" ]; then
-            echo "TR_AWS_ACCESS_KEY_ID and TR_AWS_SECRET_ACCESS_KEY are required" >&2
-            exit 1
-          fi
-          source scripts/deploy/_lib.sh
-          ensure_secret_value \
-            "trustedrouter-aws-access-key-id" \
-            "${TR_AWS_ACCESS_KEY_ID}"
-          ensure_secret_value \
-            "trustedrouter-aws-secret-access-key" \
-            "${TR_AWS_SECRET_ACCESS_KEY}"
+          for secret in \
+            trustedrouter-aws-access-key-id \
+            trustedrouter-aws-secret-access-key; do
+            gcloud secrets versions access latest \
+              --project=quill-cloud-proxy \
+              --secret="${secret}" >/dev/null
+          done
       - name: Push provider analytics reader credential
         env:
           TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD: ${{ secrets.TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD }}
