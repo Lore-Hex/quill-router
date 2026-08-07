@@ -3,7 +3,7 @@
 (function () {
   const CONFIG = window.__TR_FUSION__ || {};
   const API_BASE = CONFIG.apiBaseUrl || "/chat-proxy/v1";
-  const CATALOG_BASE = CONFIG.catalogBaseUrl || "/v1";
+  const CATALOG_BASE = CONFIG.catalogBaseUrl || "https://api.trustedrouter.com/v1";
   const ISSUE_KEY_PATH = CONFIG.issueKeyPath || "/internal/chat/issue-browser-key";
   const AUTH_SESSION_PATH = CONFIG.authSessionPath || "/auth/session";
   const KEY_COOKIE = CONFIG.keyCookieName || "tr_chat_key";

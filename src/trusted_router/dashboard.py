@@ -83,6 +83,7 @@ from trusted_router.storage_models import BedrockGroupBuyPledge
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 DEV_USER_FALLBACK = "alpha@trustedrouter.local"
+PUBLIC_MODELS_URL = "https://api.trustedrouter.com/v1/models"
 MODEL_SEO_SECTIONS: tuple[str, ...] = (
     "benchmarks",
     "providers",
@@ -2392,6 +2393,7 @@ def public_chat_html(
             # provider response headers are visible without any CORS
             # expose-headers work, so "via {provider}" lights up.
             api_base_url="/chat-proxy/v1",
+            catalog_base_url="https://api.trustedrouter.com/v1",
             site_url=f"https://{settings.trusted_domain}/chat",
             title="Chat | TrustedRouter",
             heading="Chat",
@@ -2415,6 +2417,7 @@ def public_fusion_html(settings: Settings) -> str:
         .get_template("public/fusion_playground.html")
         .render(
             api_base_url="/chat-proxy/v1",
+            catalog_base_url="https://api.trustedrouter.com/v1",
             site_url=f"https://{settings.trusted_domain}/synth",
             title="Synth | TrustedRouter",
             heading="Synth",
@@ -2972,7 +2975,7 @@ def llms_txt(settings: Settings) -> str:
         "## API",
         "- OpenAI compatible base URL: https://api.trustedrouter.com/v1",
         "- EU regional base URL: https://api-europe-west4.quillrouter.com/v1",
-        f"- Canonical live model catalog (public, no API key): https://{domain}/v1/models",
+        f"- Canonical live model catalog (public, no API key): {PUBLIC_MODELS_URL}",
         (
             "- Read the live model catalog before naming current model IDs, prices, "
             "context windows, or provider availability. This concise llms.txt is a "
@@ -3066,7 +3069,7 @@ def docs_llms_txt(settings: Settings) -> str:
             f"- SOC 2 readiness: https://{domain}/legal/soc2-readiness",
             f"- HIPAA readiness: https://{domain}/legal/hipaa-readiness",
             f"- Model catalog: https://{domain}/models",
-            f"- Canonical live model API (public, no API key): https://{domain}/v1/models",
+            f"- Canonical live model API (public, no API key): {PUBLIC_MODELS_URL}",
             f"- Provider transparency: https://{domain}/providers",
             f"- Provider marketplace: https://{domain}/providers/marketplace",
             f"- EU routing: https://{domain}/eu",
@@ -3076,7 +3079,7 @@ def docs_llms_txt(settings: Settings) -> str:
             "",
             "Use https://api.trustedrouter.com/v1 as the OpenAI compatible API base URL.",
             (
-                f"Fetch https://{domain}/v1/models before recommending a current model. "
+                f"Fetch {PUBLIC_MODELS_URL} before recommending a current model. "
                 "This compact document is not an exhaustive model list."
             ),
             (
@@ -3146,7 +3149,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "## Canonical URLs",
         f"- Homepage: https://{domain}/",
         "- API base: https://api.trustedrouter.com/v1",
-        f"- Live model catalog (public, no API key): https://{domain}/v1/models",
+        f"- Live model catalog (public, no API key): {PUBLIC_MODELS_URL}",
         "- EU regional API base: https://api-europe-west4.quillrouter.com/v1",
         "- Trust: https://trust.trustedrouter.com/",
         f"- Legal/procurement packet: https://{domain}/legal",

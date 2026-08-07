@@ -58,6 +58,7 @@ def test_chat_page_renders_without_auth() -> None:
     assert "/auth/session" in body
     assert "/internal/chat/issue-browser-key" in body
     assert "tr_chat_key" in body  # keyCookieName
+    assert 'catalogBaseUrl: "https://api.trustedrouter.com/v1"' in body
 
     # Static assets are referenced
     assert "/static/model_catalog.js" in body
@@ -122,6 +123,13 @@ def test_chat_page_render_does_not_require_models_list() -> None:
     # `<option>` or `<li data-model-id>` elements; assert this stays
     # minimal.)
     assert resp.text.count("data-model-id") == 0
+
+
+def test_chat_catalog_uses_the_canonical_api_hostname() -> None:
+    js = Path("src/trusted_router/static/chat.js").read_text()
+
+    assert '"https://api.trustedrouter.com/v1"' in js
+    assert 'CHAT_CONFIG.catalogBaseUrl' in js
 
 
 def test_chat_js_supports_model_query_param() -> None:

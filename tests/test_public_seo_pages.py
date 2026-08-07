@@ -154,6 +154,15 @@ def test_api_reference_declares_one_query_independent_canonical(
     assert '<link rel="canonical" href="https://trustedrouter.com/api/reference">' in response.text
 
 
+def test_models_reference_executes_against_canonical_api_host(
+    client: TestClient,
+) -> None:
+    operation = client.get("/openapi.json").json()["paths"]["/v1/models"]["get"]
+
+    assert operation["servers"] == [{"url": "https://api.trustedrouter.com"}]
+    assert "No API key is required" in operation["description"]
+
+
 @pytest.mark.parametrize(
     ("host", "brand"),
     (
@@ -243,7 +252,7 @@ def test_llms_text_files_are_public_and_do_not_leak_secret_material(
     assert "lower-cost open-weight models" in root_llms.text
     assert "trustedrouter/e2e" in root_llms.text
     assert "trustedrouter/confidential" in root_llms.text
-    assert "https://trustedrouter.com/v1/models" in root_llms.text
+    assert "https://api.trustedrouter.com/v1/models" in root_llms.text
     assert "not an exhaustive model list" in root_llms.text
 
     catalog = client.get("/v1/models")
