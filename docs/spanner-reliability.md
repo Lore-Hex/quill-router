@@ -61,9 +61,8 @@ they never inspect or export prompts or outputs.
 
 Keep high-priority CPU below 45% in every multi-region replica. Confirm whether
 the load is user traffic or system work before scaling. Scaling adds headroom
-but does not repair transaction contention. The alert evaluates one-minute
-means and opens only after five consecutive minutes above the threshold in at
-least one replica. A brief spike remains visible in metrics but does not page.
+but does not repair transaction contention. The alert intentionally uses the
+maximum observed CPU so short high-priority spikes remain actionable.
 
 Operational reports must read request, generation, token, provider, model,
 latency, and error analytics from ClickHouse. Do not aggregate or full-scan raw
