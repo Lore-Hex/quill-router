@@ -721,6 +721,13 @@ tbody tr:hover {
   word-break: break-word;
 }
 
+.agent-prompt-line {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .public-hero,
 .marketing-hero {
   display: grid;

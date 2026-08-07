@@ -1,0 +1,121 @@
+{% extends "public/_base.html" %}
+
+{% block head_extra %}
+<link rel="preload" href="/static/claude-code-hero.png" as="image" type="image/png" fetchpriority="high">
+<link rel="stylesheet" href="/static/claude-code.css?v={{ static_version|default('local') }}">
+{% endblock %}
+
+{% block hero %}
+<section class="cc-hero" aria-labelledby="cc-hero-title">
+  <div class="cc-hero-inner">
+    <div class="cc-hero-copy">
+      <div class="kicker">For vibe coders</div>
+      <h1 id="cc-hero-title">Cut your Claude Code token bill in 10 seconds.</h1>
+      <p class="cc-hero-lead">Paste one message. Claude Code connects your next session to lower-cost models through TrustedRouter. Keep the interface, tools, permissions, and workflow you already know.</p>
+      <div class="hero-actions">
+        <button class="btn primary cc-primary-cta" type="button" data-action="open-signin">Create my paste-ready key</button>
+        <a class="btn ghost" href="#ten-second-flow">See the 10-second flow <span aria-hidden="true">&#8595;</span></a>
+      </div>
+      <p class="cc-hero-note">No subscription. Your complete key is inserted into the message after signup.</p>
+    </div>
+    <div class="cc-hero-proof" aria-label="TrustedRouter setup facts">
+      <span>Hundreds of models</span>
+      <span>Provider price plus 5%</span>
+      <span>No subscription</span>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block body %}
+<section class="cc-proof-band" aria-label="What stays the same">
+  <div><strong>Keep Claude Code</strong><span>Same terminal, tools, permissions, and project context.</span></div>
+  <div><strong>Choose the model</strong><span>Use a cheap route for routine work and a smarter route when it matters.</span></div>
+  <div><strong>See exact cost</strong><span>Every completed request records integer-priced usage metadata.</span></div>
+  <div><strong>Keep content private</strong><span>No prompt or output logs, always.</span></div>
+</section>
+
+<section class="cc-section cc-flow" id="ten-second-flow" aria-labelledby="cc-flow-title">
+  <div class="cc-section-heading">
+    <span class="eyebrow">One message</span>
+    <h2 id="cc-flow-title">Claude Code does the setup.</h2>
+    <p>The old way starts with docs, environment variables, and a model catalog. This starts with one instruction your agent can execute.</p>
+  </div>
+  <ol class="cc-steps">
+    <li>
+      <span class="cc-step-number">01</span>
+      <div><h3>Create your key</h3><p>Sign in and get a one-time key reveal. No SDK setup comes first.</p></div>
+    </li>
+    <li>
+      <span class="cc-step-number">02</span>
+      <div><h3>Copy one complete message</h3><p>The real message contains your full key, gateway URL, low-cost model, safety instructions, and smoke test.</p></div>
+    </li>
+    <li>
+      <span class="cc-step-number">03</span>
+      <div><h3>Paste, then restart</h3><p>Claude Code prepares project-local settings, verifies the route, and tells you when your cheaper next session is ready.</p></div>
+    </li>
+  </ol>
+</section>
+
+<section class="cc-section cc-paste-section" aria-labelledby="cc-paste-title">
+  <div class="cc-paste-copy">
+    <span class="eyebrow">What you paste</span>
+    <h2 id="cc-paste-title">No placeholders. No scavenger hunt.</h2>
+    <p>After signup, TrustedRouter builds this message with your complete key already inside it. You copy the whole thing once.</p>
+    <p>Claude Code uses its documented LLM gateway settings. It preserves existing project settings, keeps the key out of committed files, and verifies the new route before asking you to restart.</p>
+    <div class="hero-actions">
+      <button class="btn primary cc-primary-cta" type="button" data-action="open-signin">Create my paste-ready key</button>
+      <a class="btn ghost" href="https://docs.anthropic.com/en/docs/claude-code/llm-gateway" target="_blank" rel="noopener">Anthropic gateway docs <span aria-hidden="true">&#8599;</span></a>
+    </div>
+  </div>
+  <div class="cc-prompt-tool" aria-label="Preview of the paste-ready Claude Code message">
+    <div class="cc-prompt-head"><span>CLAUDE CODE</span><span>ONE PASTE SETUP</span></div>
+    <div class="cc-prompt-body">
+      <p>Set up this project so my next Claude Code session uses TrustedRouter with a lower-cost default model.</p>
+      <dl>
+        <div><dt>Gateway</dt><dd>api.trustedrouter.com</dd></div>
+        <div><dt>Main model</dt><dd>trustedrouter/cheap</dd></div>
+        <div><dt>Fast model</dt><dd>trustedrouter/cheap</dd></div>
+        <div><dt>API key</dt><dd><span class="cc-key-inserted">your complete key is inserted</span></dd></div>
+      </dl>
+      <p class="cc-prompt-command"><span aria-hidden="true">&#8250;</span> Preserve settings. Keep secrets out of git. Run PONG. Tell me when to restart.</p>
+      <div class="cc-prompt-result"><span class="cc-live-dot" aria-hidden="true"></span><strong>READY</strong><span>Cheaper route verified</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="cc-section cc-model-section" aria-labelledby="cc-model-title">
+  <div class="cc-section-heading">
+    <span class="eyebrow">Get a superpower</span>
+    <h2 id="cc-model-title">Every model. In seconds.</h2>
+    <p>One key can route work across hundreds of open and frontier models. A routine rename and a hard architecture review do not need the same model. Change one model name, not your setup.</p>
+  </div>
+  <div class="cc-route-list" role="list">
+    <a href="/models/trustedrouter/cheap" role="listitem"><code>trustedrouter/cheap</code><span>Low-cost default for routine coding turns.</span><strong>START HERE</strong></a>
+    <a href="/models/trustedrouter/fast" role="listitem"><code>trustedrouter/fast</code><span>Prioritize first-token latency and throughput.</span><strong>GO FASTER</strong></a>
+    <a href="/models/trustedrouter/zdr" role="listitem"><code>trustedrouter/zdr</code><span>Require a zero-data-retention provider route.</span><strong>MORE PRIVATE</strong></a>
+    <a href="/models" role="listitem"><code>hundreds more</code><span>Pin an exact open or frontier model at any time.</span><strong>BROWSE</strong></a>
+  </div>
+</section>
+
+<section class="cc-section cc-moment" aria-labelledby="cc-moment-title">
+  <div class="cc-moment-mark" aria-hidden="true">10s</div>
+  <div>
+    <span class="eyebrow">The whole product moment</span>
+    <h2 id="cc-moment-title">Paste. Watch it connect. Smile.</h2>
+    <p>We watched a developer do exactly this. One message went into Claude Code, a cheaper model answered through the same workflow, and the setup disappeared as a problem. That reaction is the page.</p>
+  </div>
+</section>
+
+<section class="cc-final" aria-label="Create a paste-ready TrustedRouter key">
+  <div>
+    <span class="eyebrow">Your next Claude Code session</span>
+    <h2>Spend less on routine work.</h2>
+    <p>One complete message. One restart. Hundreds of models when you need them.</p>
+  </div>
+  <div class="cc-final-action">
+    <button class="btn primary cc-primary-cta" type="button" data-action="open-signin">Create my paste-ready key</button>
+    <span>No subscription. Remove the project settings whenever you want.</span>
+  </div>
+</section>
+{% endblock %}

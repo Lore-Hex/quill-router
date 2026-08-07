@@ -1,3 +1,9 @@
+{% macro claude_code_prompt(raw_key) -%}
+<span class="agent-prompt-line">Set up this project so my next Claude Code session uses TrustedRouter with a lower-cost default model. Keep this current session working while you prepare the change.</span>
+<span class="agent-prompt-line">Use ANTHROPIC_BASE_URL=https://api.trustedrouter.com, ANTHROPIC_AUTH_TOKEN with the key below, ANTHROPIC_MODEL=trustedrouter/cheap, and ANTHROPIC_SMALL_FAST_MODEL=trustedrouter/cheap. Put the configuration in .claude/settings.local.json. If that file already exists, preserve every other setting. Verify the file is ignored by git, run a tiny PONG request through TrustedRouter, and tell me when to restart Claude Code. Do not print, commit, or copy the key anywhere else.</span>
+<span class="agent-prompt-line">TrustedRouter API key: {{ raw_key }}</span>
+{%- endmacro %}
+
 {% macro api_key_reveal(raw_key, id_prefix, workspace_name=None, show_agent=True) %}
 <div class="signup-reveal console-key-reveal" data-copy-secret-scope>
   <div class="key-reveal-section">
@@ -23,8 +29,7 @@
     <h3 id="{{ id_prefix }}-agent-heading">Paste this whole message into your agent or Claude Code to try it out right now:</h3>
     <div class="agent-message-row">
       <div class="agent-message" id="{{ id_prefix }}-agent-message" data-copy-lines>
-        <div>Please use TrustedRouter.com using the following key to ask DeepSeek the following question: "What is the capital of France?"</div>
-        <div><code class="agent-message-key">{{ raw_key }}</code></div>
+        {{ claude_code_prompt(raw_key) }}
       </div>
       <button
         class="btn secret-copy-btn"

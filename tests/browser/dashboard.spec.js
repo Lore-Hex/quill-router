@@ -181,8 +181,9 @@ test("new API key quickstart stays inside its reveal panel", async ({ page }) =>
                           <h3>Paste this whole message into your agent or Claude Code to try it out right now:</h3>
                           <div class="agent-message-row">
                             <div class="agent-message" id="layout-agent-message" data-copy-lines>
-                              <div>Please use TrustedRouter.com using the following key to ask DeepSeek the following question: "What is the capital of France?"</div>
-                              <div><code class="agent-message-key">sk-tr-v1-layout-regression-key</code></div>
+                            <span class="agent-prompt-line">Set up this project so my next Claude Code session uses TrustedRouter with a lower-cost default model.</span>
+                            <span class="agent-prompt-line">Use ANTHROPIC_BASE_URL=https://api.trustedrouter.com and ANTHROPIC_MODEL=trustedrouter/cheap. Preserve existing settings and keep the key out of git.</span>
+                            <span class="agent-prompt-line">TrustedRouter API key: sk-tr-v1-layout-regression-key</span>
                             </div>
                             <button class="btn secret-copy-btn" type="button" data-copy-secret="layout-agent-message" aria-label="Copy complete agent message">Copy</button>
                           </div>
@@ -203,7 +204,7 @@ test("new API key quickstart stays inside its reveal panel", async ({ page }) =>
   const heading = reveal.locator(".agent-quickstart h3");
   const message = reveal.locator(".agent-message");
   await expect(heading).toBeVisible();
-  await expect(message).toContainText("What is the capital of France?");
+  await expect(message).toContainText("ANTHROPIC_MODEL=trustedrouter/cheap");
 
   const assertContained = async () => {
     const layout = await reveal.evaluate((element) => {
@@ -237,9 +238,10 @@ test("new API key quickstart stays inside its reveal panel", async ({ page }) =>
   const copyButton = reveal.getByRole("button", { name: "Copy complete agent message" });
   await expect(copyButton).toBeVisible();
   await copyButton.click();
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(
-    'Please use TrustedRouter.com using the following key to ask DeepSeek the following question: "What is the capital of France?"\n\nsk-tr-v1-layout-regression-key',
-  );
+  const copiedAgentMessage = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copiedAgentMessage).toContain("ANTHROPIC_BASE_URL=https://api.trustedrouter.com");
+  expect(copiedAgentMessage).toContain("ANTHROPIC_MODEL=trustedrouter/cheap");
+  expect(copiedAgentMessage).toContain("sk-tr-v1-layout-regression-key");
 });
 
 test("first-call activation runs live request and copies Claude Code setup", async ({ page }) => {
