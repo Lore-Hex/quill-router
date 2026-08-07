@@ -16,14 +16,13 @@ import hashlib
 import logging
 import re
 from dataclasses import dataclass
-from typing import Literal
 
 from trusted_router.config import Settings
+from trusted_router.email_profiles import SenderProfile
 from trusted_router.storage import STORE
 
 log = logging.getLogger(__name__)
 
-SenderProfile = Literal["default", "alerts"]
 _SES_TAG_VALUE_RE = re.compile(r"[^A-Za-z0-9_-]+")
 
 
@@ -32,10 +31,10 @@ class EmailMessage:
     to: str
     subject: str
     text_body: str
+    mail_class: str
+    sender_profile: SenderProfile
     html_body: str | None = None
     reply_to: str | None = None
-    mail_class: str = "transactional"
-    sender_profile: SenderProfile = "default"
     acquisition_source: str | None = None
     acquisition_medium: str | None = None
     acquisition_campaign: str | None = None
@@ -141,18 +140,48 @@ class EmailService:
 def _sender_for_message(
     settings: Settings,
     message: EmailMessage,
-) -> tuple[str, str, str | None] | None:
+) -> tuple[str, str, str] | None:
+    if message.sender_profile == "auth":
+        return _configured_sender(
+            settings.ses_auth_from_name,
+            settings.ses_auth_from_email,
+            settings.ses_auth_configuration_set,
+        )
+    if message.sender_profile == "onboarding":
+        return _configured_sender(
+            settings.ses_onboarding_from_name,
+            settings.ses_onboarding_from_email,
+            settings.ses_onboarding_configuration_set,
+        )
     if message.sender_profile == "alerts":
-        if not settings.ses_alert_from_email or not settings.ses_alert_configuration_set:
-            return None
-        return (
+        return _configured_sender(
             settings.ses_alert_from_name,
             settings.ses_alert_from_email,
             settings.ses_alert_configuration_set,
         )
-    if message.sender_profile != "default" or not settings.ses_from_email:
+    if message.sender_profile == "support":
+        return _configured_sender(
+            settings.ses_support_from_name,
+            settings.ses_support_from_email,
+            settings.ses_support_configuration_set,
+        )
+    if message.sender_profile == "partners":
+        return _configured_sender(
+            settings.ses_partner_from_name,
+            settings.ses_partner_from_email,
+            settings.ses_partner_configuration_set,
+        )
+    return None
+
+
+def _configured_sender(
+    from_name: str,
+    from_email: str | None,
+    configuration_set: str | None,
+) -> tuple[str, str, str] | None:
+    if not from_email or not configuration_set:
         return None
-    return settings.ses_from_name, settings.ses_from_email, settings.ses_configuration_set
+    return from_name, from_email, configuration_set
 
 
 def _recipient_fingerprint(email: str) -> str:
@@ -208,6 +237,7 @@ def build_verification_email(
         text_body=text,
         html_body=html,
         mail_class="email_verification",
+        sender_profile="auth",
         acquisition_source=acquisition_source,
         acquisition_medium=acquisition_medium,
         acquisition_campaign=acquisition_campaign,

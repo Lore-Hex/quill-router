@@ -337,6 +337,7 @@ async def _handle_trustedos_inquiry(settings: Settings, request: Request) -> JSO
                 subject=subject,
                 text_body=text_body,
                 mail_class="partner_inquiry",
+                sender_profile="partners",
             )
         )
     except Exception:  # noqa: BLE001 - never surface mailer errors to the form
@@ -424,6 +425,7 @@ async def _handle_support_inquiry(settings: Settings, request: Request) -> JSONR
         subject=f"TrustedRouter support: {category_label}: {subject}",
         text_body=text_body,
         mail_class="support_inquiry",
+        sender_profile="support",
     )
     try:
         sent = await run_in_threadpool(

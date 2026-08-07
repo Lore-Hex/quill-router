@@ -14,6 +14,14 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
+from trusted_router.email_profiles import EMAIL_SENDER_PROFILE_BY_NAME
+
+_SES_AUTH_PROFILE = EMAIL_SENDER_PROFILE_BY_NAME["auth"]
+_SES_ONBOARDING_PROFILE = EMAIL_SENDER_PROFILE_BY_NAME["onboarding"]
+_SES_ALERT_PROFILE = EMAIL_SENDER_PROFILE_BY_NAME["alerts"]
+_SES_SUPPORT_PROFILE = EMAIL_SENDER_PROFILE_BY_NAME["support"]
+_SES_PARTNER_PROFILE = EMAIL_SENDER_PROFILE_BY_NAME["partners"]
+
 # Target names the synthetic monitor already assigns itself. A configured
 # entry reusing one would quietly merge two different measurements into one
 # status component, so it is rejected instead.
@@ -418,20 +426,36 @@ class Settings(BaseSettings):
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None
     aws_region: str = "us-east-1"
+    # Legacy root-domain sender settings are retained for rollback only. New
+    # code must select one of the purpose-specific profiles below; the runtime
+    # IAM policy does not permit unclassified root-domain sends.
     ses_from_email: str | None = None
     ses_from_name: str = "TrustedRouter"
-    # Configuration set used on every SendEmail call so SES emits bounce +
-    # complaint events to our SNS topic (subscribed at /internal/ses/notifications).
     ses_configuration_set: str | None = "trustedrouter-default"
-    # Operational alerts use a dedicated authenticated subdomain and
-    # configuration set. This keeps their mailbox-domain reputation and
-    # telemetry distinct from sign-in and support mail. EmailService refuses
-    # to fall back to the default sender for an alert-profile message.
-    ses_alert_from_email: str | None = "alerts@alerts.trustedrouter.com"
-    ses_alert_from_name: str = "TrustedRouter Alerts"
-    ses_alert_configuration_set: str | None = "trustedrouter-alerts"
+    # Authentication mail is isolated from every reminder and form surface so
+    # an abused or low-quality source cannot damage account-access delivery.
+    ses_auth_from_email: str | None = _SES_AUTH_PROFILE.from_email
+    ses_auth_from_name: str = _SES_AUTH_PROFILE.from_name
+    ses_auth_configuration_set: str | None = _SES_AUTH_PROFILE.configuration_set
+    # Post-signup activation reminders have their own reputation lane because
+    # they are the only mail sent without a fresh user action.
+    ses_onboarding_from_email: str | None = _SES_ONBOARDING_PROFILE.from_email
+    ses_onboarding_from_name: str = _SES_ONBOARDING_PROFILE.from_name
+    ses_onboarding_configuration_set: str | None = _SES_ONBOARDING_PROFILE.configuration_set
+    # Operational alerts remain isolated from authentication and reminders.
+    ses_alert_from_email: str | None = _SES_ALERT_PROFILE.from_email
+    ses_alert_from_name: str = _SES_ALERT_PROFILE.from_name
+    ses_alert_configuration_set: str | None = _SES_ALERT_PROFILE.configuration_set
+    # Public support and partner forms are independent abuse boundaries. Their
+    # senders can be disabled without affecting auth, onboarding, or alerts.
+    ses_support_from_email: str | None = _SES_SUPPORT_PROFILE.from_email
+    ses_support_from_name: str = _SES_SUPPORT_PROFILE.from_name
+    ses_support_configuration_set: str | None = _SES_SUPPORT_PROFILE.configuration_set
+    ses_partner_from_email: str | None = _SES_PARTNER_PROFILE.from_email
+    ses_partner_from_name: str = _SES_PARTNER_PROFILE.from_name
+    ses_partner_configuration_set: str | None = _SES_PARTNER_PROFILE.configuration_set
     # Destination for TrustedOS partner-inquiry form submissions (/trustedos).
-    # Falls back to ses_from_email when unset so the lead never silently drops.
+    # This is the internal recipient; the outward sender is the partners lane.
     partner_inquiry_email: str | None = None
     # Durable post-signup activation reminders. Zero keeps the in-process
     # worker disabled in local/test environments. Production runs one bounded
@@ -898,8 +922,20 @@ class Settings(BaseSettings):
             missing.append("TR_AWS_ACCESS_KEY_ID")
         if not self.aws_secret_access_key:
             missing.append("TR_AWS_SECRET_ACCESS_KEY")
-        if not self.ses_from_email:
-            missing.append("TR_SES_FROM_EMAIL")
+        for field_name in (
+            "ses_auth_from_email",
+            "ses_auth_configuration_set",
+            "ses_onboarding_from_email",
+            "ses_onboarding_configuration_set",
+            "ses_alert_from_email",
+            "ses_alert_configuration_set",
+            "ses_support_from_email",
+            "ses_support_configuration_set",
+            "ses_partner_from_email",
+            "ses_partner_configuration_set",
+        ):
+            if not getattr(self, field_name):
+                missing.append(f"TR_{field_name.upper()}")
         if self.bootstrap_management_key:
             missing.append("unset TR_BOOTSTRAP_MANAGEMENT_KEY")
         if self.storage_backend == "memory":
@@ -1069,7 +1105,7 @@ class Settings(BaseSettings):
 
     @property
     def ses_enabled(self) -> bool:
-        return bool(self.aws_access_key_id and self.aws_secret_access_key and self.ses_from_email)
+        return bool(self.aws_access_key_id and self.aws_secret_access_key)
 
 
 def _parse_oauth_alias_credentials(
@@ -1117,9 +1153,22 @@ _LOCAL_KEY_FALLBACKS: tuple[str, ...] = (
     "aws_region",
     "ses_from_email",
     "ses_from_name",
+    "ses_configuration_set",
+    "ses_auth_from_email",
+    "ses_auth_from_name",
+    "ses_auth_configuration_set",
+    "ses_onboarding_from_email",
+    "ses_onboarding_from_name",
+    "ses_onboarding_configuration_set",
     "ses_alert_from_email",
     "ses_alert_from_name",
     "ses_alert_configuration_set",
+    "ses_support_from_email",
+    "ses_support_from_name",
+    "ses_support_configuration_set",
+    "ses_partner_from_email",
+    "ses_partner_from_name",
+    "ses_partner_configuration_set",
     "internal_gateway_token",
     "stripe_webhook_secret",
     "stripe_secret_key",

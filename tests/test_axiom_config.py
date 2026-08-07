@@ -367,6 +367,8 @@ def test_trustedos_inquiry_log_ships_lengths_not_free_text(
     assert response.status_code == 200
     assert sent_messages
     assert message_body in sent_messages[0].text_body
+    assert sent_messages[0].mail_class == "partner_inquiry"
+    assert sent_messages[0].sender_profile == "partners"
     received_records = [
         record
         for record in caplog.records

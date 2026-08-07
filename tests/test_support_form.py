@@ -69,6 +69,8 @@ def test_support_submission_sends_to_help_with_reply_to(
     message = sent_messages[0]
     assert message.to == "help@trustedrouter.com"
     assert message.reply_to == "ada@example.com"
+    assert message.mail_class == "support_inquiry"
+    assert message.sender_profile == "support"
     assert message.subject == (
         "TrustedRouter support: API and routing: Streaming request failed"
     )
