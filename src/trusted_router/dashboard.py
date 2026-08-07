@@ -187,6 +187,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/docs/batch",
     "/docs/web-search",
     "/docs/video",
+    "/claude-code",
     "/for-developers",
     "/llms.txt",
     "/docs/llms.txt",
@@ -1270,6 +1271,42 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "Point any OpenAI-compatible SDK at TrustedRouter with one base_url "
             "change. Guides, Python / TypeScript / Swift SDKs, and the "
             "OpenAI-compatible API reference."
+        ),
+    ),
+    "claude-code": PublicPage(
+        template="public/claude_code.html",
+        og_card="claude-code.png",
+        title="Cut Your Claude Code Token Bill in 10 Seconds",
+        description=(
+            "Paste one complete message into Claude Code. TrustedRouter connects "
+            "your next session to hundreds of lower-cost models without changing "
+            "the interface, tools, or workflow you already use."
+        ),
+        faq_items=(
+            (
+                "Does this replace Claude Code?",
+                "No. You keep Claude Code, its tools, permissions, and project context. The setup changes the model gateway and default model used by your next project session.",
+            ),
+            (
+                "Does the change affect my current session?",
+                "The pasted message prepares project-local settings and runs a small verification call. Restart Claude Code when it tells you the setup is ready. Your current session stays available while it works.",
+            ),
+            (
+                "Which model does the quick setup use?",
+                "It starts with trustedrouter/cheap, a low-cost paid route pool. You can replace it with trustedrouter/fast, trustedrouter/zdr, a named model, or any other compatible route later.",
+            ),
+            (
+                "Will every task cost less?",
+                "Savings depend on the model, prompt, output length, caching, and workload. The point is choice: routine work can use a cheaper model while difficult work can still use a frontier model. TrustedRouter records exact token and cost metadata for each request.",
+            ),
+            (
+                "Does TrustedRouter save my prompts or outputs?",
+                f"{CONTENT_HANDLING_CLAIM} Operational metadata includes model, provider, token counts, latency, cost, status, and region.",
+            ),
+            (
+                "Can I switch back?",
+                "Yes. Remove the TrustedRouter environment entries from the project-local Claude Code settings file, or ask Claude Code to revert the setup. Your global Claude account configuration is not overwritten.",
+            ),
         ),
     ),
     "for-developers": PublicPage(

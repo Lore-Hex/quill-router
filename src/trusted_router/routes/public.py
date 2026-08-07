@@ -898,6 +898,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def docs_hub() -> str:
         return public_page_html(settings, "docs")
 
+    @public_html_route("/claude-code")
+    async def claude_code() -> str:
+        return public_page_html(settings, "claude-code")
+
+    @app.get("/vibe-coders", include_in_schema=False)
+    async def vibe_coders_redirect() -> RedirectResponse:
+        return RedirectResponse(url="/claude-code", status_code=301)
+
     @public_html_route("/for-developers")
     async def for_developers() -> str:
         return public_page_html(settings, "for-developers")
