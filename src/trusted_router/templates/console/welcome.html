@@ -24,7 +24,7 @@
     </div>
     <div class="panel-body">
       {{ api_key_reveal(revealed_key, "welcome", workspace_name, False) }}
-      <p class="activation-security-note">This is the only copy on this page. TrustedRouter stores a salted hash, not the raw key.</p>
+      <p class="activation-security-note">This one-time reveal contains the complete key. TrustedRouter stores its salted hash.</p>
     </div>
   </section>
 
@@ -44,7 +44,7 @@
           <span data-run-label>Run my first API request</span>
           <span class="activation-button-arrow" aria-hidden="true">&#8594;</span>
         </button>
-        <span class="activation-no-card">No card required</span>
+        <span class="activation-no-card">Ready to run</span>
       </div>
       {% else %}
       <div class="activation-credit-needed">
@@ -103,7 +103,7 @@
       </div>
 
       <div class="activation-code-panel" id="setup-agent" role="tabpanel" aria-labelledby="setup-agent-tab" data-setup-panel>
-        <div class="activation-code-head"><strong>Paste into a new Claude Code, Codex, or agent chat</strong><button class="btn" type="button" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key" aria-describedby="welcome-agent-copy-status">Copy prompt</button></div>
+        <div class="activation-code-head"><strong>Just paste one short message into a new agent chat</strong><button class="btn" type="button" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key" aria-describedby="welcome-agent-copy-status">Copy message</button></div>
         <pre id="welcome-agent-message" data-copy-lines>{{ agent_chat_prompt(revealed_key) }}</pre>
         <p class="copy-status" id="welcome-agent-copy-status" role="status" aria-live="polite"></p>
       </div>

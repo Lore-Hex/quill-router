@@ -178,12 +178,12 @@ test("new API key quickstart stays inside its reveal panel", async ({ page }) =>
                     <div class="panel-body">
                       <div class="signup-reveal console-key-reveal">
                         <section class="agent-quickstart">
-                          <h3>Open a new Claude Code, Codex, or agent chat. Then paste this whole message:</h3>
+                          <h3>Just paste this short message into a new Claude Code, Codex, or agent chat:</h3>
                           <div class="agent-message-row">
                             <div class="agent-message" id="layout-agent-message" data-copy-lines>
-                            <span class="agent-prompt-line">This message is designed to be pasted into a new Claude Code, Codex, or other agent chat.</span>
-                            <span class="agent-prompt-line">Please use TrustedRouter.com using the following key to ask DeepSeek a question.</span>
-                            <span class="agent-prompt-line">Make the request with streaming enabled (stream=true). Show each text delta in this chat as it arrives. Do not change this agent's settings.</span>
+                            <span class="agent-prompt-line">Paste this short message into a new Claude Code, Codex, or other agent chat.</span>
+                            <span class="agent-prompt-line">Use TrustedRouter with the key below to ask DeepSeek a question.</span>
+                            <span class="agent-prompt-line">Call https://api.trustedrouter.com/v1 and stream the answer into this chat as it arrives. Keep this agent's settings exactly as they are. Keep the key private and ephemeral. Use it in memory for this request, then discard it.</span>
                             <span class="agent-prompt-line">TrustedRouter API key: sk-tr-v1-layout-regression-key</span>
                             </div>
                             <button class="btn secret-copy-btn" type="button" data-copy-secret="layout-agent-message" aria-label="Copy complete agent message">Copy</button>
@@ -205,8 +205,8 @@ test("new API key quickstart stays inside its reveal panel", async ({ page }) =>
   const heading = reveal.locator(".agent-quickstart h3");
   const message = reveal.locator(".agent-message");
   await expect(heading).toBeVisible();
-  await expect(message).toContainText("stream=true");
-  await expect(message).toContainText("Do not change this agent's settings");
+  await expect(message).toContainText("stream the answer into this chat as it arrives");
+  await expect(message).toContainText("Keep this agent's settings exactly as they are");
 
   const assertContained = async () => {
     const layout = await reveal.evaluate((element) => {
@@ -242,8 +242,9 @@ test("new API key quickstart stays inside its reveal panel", async ({ page }) =>
   await copyButton.click();
   const copiedAgentMessage = await page.evaluate(() => navigator.clipboard.readText());
   expect(copiedAgentMessage).toContain("new Claude Code, Codex, or other agent chat");
-  expect(copiedAgentMessage).toContain("stream=true");
-  expect(copiedAgentMessage).toContain("Show each text delta in this chat as it arrives");
+  expect(copiedAgentMessage).toContain("stream the answer into this chat as it arrives");
+  expect(copiedAgentMessage).toContain("Use it in memory for this request, then discard it");
+  expect(copiedAgentMessage).not.toContain("stream=true");
   expect(copiedAgentMessage).not.toContain("ANTHROPIC_BASE_URL");
   expect(copiedAgentMessage).toContain("sk-tr-v1-layout-regression-key");
 });
@@ -308,7 +309,7 @@ test("first-call activation runs live request and copies agent chat prompt", asy
               <div class="activation-call-error" data-call-error hidden><strong data-call-error-title></strong><p data-call-error-message></p><a data-call-error-action hidden></a></div>
               <div class="activation-call-result" data-call-result hidden><div class="activation-result-head"><div><span class="activation-success-mark">&#10003;</span><div><strong>Production request passed</strong><p>Your key is ready.</p></div></div><code data-result-output></code></div><dl class="activation-result-grid"><div><dt>Model</dt><dd data-result-model></dd></div><div><dt>Provider</dt><dd data-result-provider></dd></div><div><dt>Latency</dt><dd data-result-latency></dd></div><div><dt>Exact cost</dt><dd data-result-cost></dd></div></dl><div data-success-actions></div></div>
             </div></section>
-            <section class="panel activation-setup-panel"><div class="panel-body"><div class="activation-tabs" role="tablist"><button class="activation-tab" role="tab" aria-selected="true" data-setup-tab="setup-agent">Claude Code / Codex / agent</button><button class="activation-tab" role="tab" aria-selected="false" data-setup-tab="setup-python">Python</button></div><div class="activation-code-panel" id="setup-agent" data-setup-panel><div class="activation-code-head"><strong>Paste into a new agent chat</strong><button class="btn" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key">Copy prompt</button></div><pre id="welcome-agent-message" data-copy-lines><span>This message is designed to be pasted into a new Claude Code, Codex, or other agent chat.</span><span>Please use TrustedRouter.com to ask DeepSeek a question.</span><span>Make the request with streaming enabled (stream=true). Show each text delta in this chat as it arrives. Do not change this agent's settings.</span><span>TrustedRouter API key: ${apiKey}</span></pre></div><div class="activation-code-panel" id="setup-python" data-setup-panel hidden><pre>Python setup</pre></div></div></section>
+            <section class="panel activation-setup-panel"><div class="panel-body"><div class="activation-tabs" role="tablist"><button class="activation-tab" role="tab" aria-selected="true" data-setup-tab="setup-agent">Claude Code / Codex / agent</button><button class="activation-tab" role="tab" aria-selected="false" data-setup-tab="setup-python">Python</button></div><div class="activation-code-panel" id="setup-agent" data-setup-panel><div class="activation-code-head"><strong>Just paste one short message into a new agent chat</strong><button class="btn" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key">Copy message</button></div><pre id="welcome-agent-message" data-copy-lines><span>Paste this short message into a new Claude Code, Codex, or other agent chat.</span><span>Use TrustedRouter with the key below to ask DeepSeek a question.</span><span>Call https://api.trustedrouter.com/v1 and stream the answer into this chat as it arrives. Keep this agent's settings exactly as they are. Keep the key private and ephemeral. Use it in memory for this request, then discard it.</span><span>TrustedRouter API key: ${apiKey}</span></pre></div><div class="activation-code-panel" id="setup-python" data-setup-panel hidden><pre>Python setup</pre></div></div></section>
           </div>
         </div></main></body></html>`,
     });
@@ -330,9 +331,9 @@ test("first-call activation runs live request and copies agent chat prompt", asy
   await expect(page.locator("[data-result-cost]")).toHaveText("$0.000017");
   await expect.poll(() => analytics).toContain("first_call_started");
 
-  await page.getByRole("button", { name: "Copy prompt" }).click();
+  await page.getByRole("button", { name: "Copy message" }).click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(
-    `This message is designed to be pasted into a new Claude Code, Codex, or other agent chat.\n\nPlease use TrustedRouter.com to ask DeepSeek a question.\n\nMake the request with streaming enabled (stream=true). Show each text delta in this chat as it arrives. Do not change this agent's settings.\n\nTrustedRouter API key: ${apiKey}`,
+    `Paste this short message into a new Claude Code, Codex, or other agent chat.\n\nUse TrustedRouter with the key below to ask DeepSeek a question.\n\nCall https://api.trustedrouter.com/v1 and stream the answer into this chat as it arrives. Keep this agent's settings exactly as they are. Keep the key private and ephemeral. Use it in memory for this request, then discard it.\n\nTrustedRouter API key: ${apiKey}`,
   );
   await page.getByRole("tab", { name: "Python" }).click();
   await expect(page.locator("#setup-python")).toBeVisible();
