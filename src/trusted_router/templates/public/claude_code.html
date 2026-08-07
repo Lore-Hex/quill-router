@@ -10,53 +10,26 @@
   <div class="cc-hero-inner">
     <div class="cc-hero-copy">
       <div class="kicker">For vibe coders</div>
-      <h1 id="cc-hero-title">Cut your Claude Code token bill in 10 seconds.</h1>
-      <p class="cc-hero-lead">Just paste one short message into a new Claude Code, Codex, or agent chat. Your agent calls a lower-cost model through TrustedRouter and streams the answer back into the same chat. Your current session stays exactly as it is.</p>
-      <div class="hero-actions">
-        <button class="btn primary cc-primary-cta" type="button" data-action="open-signin">Create my paste-ready key</button>
-        <a class="btn ghost" href="#ten-second-flow">See the 10-second flow <span aria-hidden="true">&#8595;</span></a>
+      <h1 id="cc-hero-title">Cut your coding agent bill in 10 seconds.</h1>
+      <p class="cc-hero-lead">Just paste one short message into a new Claude Code, Codex, or agent chat. Your agent calls DeepSeek through TrustedRouter and streams the answer into the same chat.</p>
+      <div class="cc-hero-flow" aria-labelledby="cc-hero-flow-title">
+        <span class="cc-hero-flow-label" id="cc-hero-flow-title">The 10-second flow</span>
+        <ol>
+          <li><span>01</span><strong>Create your key</strong></li>
+          <li><span>02</span><strong>Copy one short message</strong></li>
+          <li><span>03</span><strong>Paste into a new agent chat</strong></li>
+        </ol>
       </div>
-      <p class="cc-hero-note">Pay only for usage. Your complete key is inserted into the message after signup.</p>
-    </div>
-    <div class="cc-hero-proof" aria-label="TrustedRouter setup facts">
-      <span>Hundreds of models</span>
-      <span>Provider price plus 5%</span>
-      <span>Usage-based pricing</span>
+      <div class="hero-actions">
+        <button class="btn primary cc-primary-cta" type="button" data-action="open-signin">Get my one-paste message</button>
+      </div>
+      <p class="cc-hero-note">Sign in once. Your complete key arrives inside the message, ready to paste.</p>
     </div>
   </div>
 </section>
 {% endblock %}
 
 {% block body %}
-<section class="cc-proof-band" aria-label="What stays the same">
-  <div><strong>Keep your agent</strong><span>Same chat, tools, permissions, model, and project context.</span></div>
-  <div><strong>Delegate one task</strong><span>Call another model while your agent keeps its current configuration.</span></div>
-  <div><strong>Watch it stream</strong><span>The answer appears in your chat as the model generates it.</span></div>
-  <div><strong>See exact cost</strong><span>Every completed request records integer-priced usage metadata.</span></div>
-</section>
-
-<section class="cc-section cc-flow" id="ten-second-flow" aria-labelledby="cc-flow-title">
-  <div class="cc-section-heading">
-    <span class="eyebrow">One message</span>
-    <h2 id="cc-flow-title">Your agent makes the call.</h2>
-    <p>Everything happens inside the chat. Your active model, settings, files, and workflow stay exactly as they are while the agent streams one TrustedRouter response.</p>
-  </div>
-  <ol class="cc-steps">
-    <li>
-      <span class="cc-step-number">01</span>
-      <div><h3>Create your key</h3><p>Sign in and get a short message with your complete key ready to paste.</p></div>
-    </li>
-    <li>
-      <span class="cc-step-number">02</span>
-      <div><h3>Open a new agent chat</h3><p>Use Claude Code, Codex, or the agent you already prefer. Its model and settings stay exactly as they are.</p></div>
-    </li>
-    <li>
-      <span class="cc-step-number">03</span>
-      <div><h3>Paste and watch it stream</h3><p>Your agent calls DeepSeek through TrustedRouter and writes the answer into the same chat as it arrives.</p></div>
-    </li>
-  </ol>
-</section>
-
 <section class="cc-section cc-paste-section" aria-labelledby="cc-paste-title">
   <div class="cc-paste-copy">
     <span class="eyebrow">What you paste</span>
@@ -64,7 +37,7 @@
     <p>After signup, TrustedRouter builds a short message with your complete key already inside it. Copy it once and watch the answer appear.</p>
     <p>The message keeps your agent's current model, provider, settings, and project files exactly as they are. Your agent streams one TrustedRouter response directly into the chat.</p>
     <div class="hero-actions">
-      <button class="btn primary cc-primary-cta" type="button" data-action="open-signin">Create my paste-ready key</button>
+      <button class="btn primary cc-primary-cta" type="button" data-action="open-signin">Get my one-paste message</button>
       <a class="btn ghost" href="/models">Browse models <span aria-hidden="true">&#8594;</span></a>
     </div>
   </div>
@@ -114,7 +87,7 @@
     <p>One short message. Instant streaming. Hundreds of models when you need them.</p>
   </div>
   <div class="cc-final-action">
-    <button class="btn primary cc-primary-cta" type="button" data-action="open-signin">Create my paste-ready key</button>
+    <button class="btn primary cc-primary-cta" type="button" data-action="open-signin">Get my one-paste message</button>
     <span>Same agent. Same settings. Extra models.</span>
   </div>
 </section>

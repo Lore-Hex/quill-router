@@ -187,7 +187,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/docs/batch",
     "/docs/web-search",
     "/docs/video",
-    "/claude-code",
+    "/vibe-coders",
     "/for-developers",
     "/llms.txt",
     "/docs/llms.txt",
@@ -1273,14 +1273,14 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "OpenAI-compatible API reference."
         ),
     ),
-    "claude-code": PublicPage(
+    "vibe-coders": PublicPage(
         template="public/claude_code.html",
         og_card="claude-code.png",
-        title="Cut Your Claude Code Token Bill in 10 Seconds",
+        title="Vibe Coders: Cut AI Coding Costs in 10 Seconds",
         description=(
             "Just paste one short message into a new Claude Code, Codex, or agent chat. "
-            "Your agent calls a lower-cost model and streams the answer back while "
-            "its current model, settings, tools, and workflow stay exactly as they are."
+            "Your agent calls DeepSeek through TrustedRouter and streams the answer "
+            "into the same chat while its current setup stays exactly as it is."
         ),
         faq_items=(
             (
