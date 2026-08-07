@@ -1161,3 +1161,77 @@ def test_a_missing_measurement_never_satisfies_a_pin() -> None:
 
     assert not _pcr0_pin_matches(None, "aa" * 48)
     assert not _pcr0_pin_matches("", "aa" * 48)
+
+
+# ---------------------------------------------------------------------------
+# A regional gateway component must be wired in EVERY place, or it lies
+# ---------------------------------------------------------------------------
+
+
+def test_every_regional_gateway_component_is_fully_wired() -> None:
+    """Adding a region touches four independent places, and missing any one
+    produces a DIFFERENT flavour of wrong — none of which is a loud failure:
+
+      1. COMPONENTS            — absent: the region has no row at all
+      2. COMPONENT_PROBE_TARGETS — absent: the row exists but is never scoped
+                                   to a probe target, so it renders empty
+      3. GATEWAY_REGION_COMPONENT_IDS — absent: the row can be red while the
+                                   headline still says All Systems Operational
+      4. sample_component_ids — absent: samples never attribute to the row,
+                                   so it sits permanently blank and a dead
+                                   region looks like a quiet one
+
+    The last is the dangerous one: a region that is never probed reports
+    nothing, and nothing renders as "no incidents" rather than as "unknown".
+    """
+    import inspect
+
+    from trusted_router.synthetic import components as mod
+
+    declared = {c["id"] for c in mod.COMPONENT_DEFINITIONS}
+    attribution_src = inspect.getsource(mod.sample_component_ids)
+
+    regional = {cid for cid in declared if cid.endswith("_gateway")}
+    assert regional, "no *_gateway components found — did the naming change?"
+
+    missing: list[str] = []
+    for cid in sorted(regional):
+        if cid not in mod.COMPONENT_PROBE_TARGETS:
+            missing.append(f"{cid}: no COMPONENT_PROBE_TARGETS entry (row renders empty)")
+        if cid not in mod.GATEWAY_REGION_COMPONENT_IDS:
+            missing.append(f"{cid}: not in GATEWAY_REGION_COMPONENT_IDS (can be red under a green headline)")
+        if f'"{cid}"' not in attribution_src:
+            missing.append(f"{cid}: sample_component_ids never attributes to it (permanently blank)")
+
+    assert not missing, "regional gateway components are half-wired:\n  " + "\n  ".join(missing)
+
+
+def test_azure_deploy_probes_every_azure_gateway_component() -> None:
+    """The component list and the deploy script's probe targets must agree.
+
+    A component whose region is absent from TR_SYNTHETIC_GATEWAY_REGION_TARGETS
+    is never probed, so it reports nothing — and on a status page nothing looks
+    like health, not like absence.
+    """
+    import re
+    from pathlib import Path
+
+    from trusted_router.synthetic import components as mod
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "deploy" / "azure_control_plane.sh"
+    text = script.read_text()
+    match = re.search(r'GATEWAY_REGION_TARGETS="\$\{GATEWAY_REGION_TARGETS:-([^}]*)\}"', text)
+    assert match, "could not parse GATEWAY_REGION_TARGETS out of azure_control_plane.sh"
+    probed = {chunk.split("=", 1)[0].strip() for chunk in match.group(1).split(",") if "=" in chunk}
+
+    azure_regions = {
+        mod.COMPONENT_PROBE_TARGETS[c["id"]]
+        for c in mod.COMPONENT_DEFINITIONS
+        if c["id"].endswith("_gateway") and c["id"] in mod.COMPONENT_PROBE_TARGETS
+        and mod.COMPONENT_PROBE_TARGETS[c["id"]] in {"uaenorth", "southeastasia"}
+    }
+    unprobed = sorted(azure_regions - probed)
+    assert not unprobed, (
+        f"Azure gateway component(s) for {unprobed} exist but the deploy script never probes them, "
+        "so they report nothing and nothing reads as healthy"
+    )

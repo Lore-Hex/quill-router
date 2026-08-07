@@ -398,6 +398,96 @@ Two things to check before trusting any green:
 
 So AWS and Azure simply never schedule the throughput commands. No cross-cloud pipe.
 
+### 4.8 Azure region two (southeastasia) — BLOCKED on four IAM grants
+
+Everything except the grants is done and merged-or-in-review.
+
+**Provisioned and Ready:** resource group `TR-TEE-SEA` (southeastasia), MAA instance
+`trquillsea` → `https://trquillsea.sasia.attest.azure.net`, managed identity
+`tr-skr-identity` (principal `e8193e32-34ba-4a22-8159-7db7a0687874`).
+
+**The block.** The identity has *no role assignments*. `az role assignment create` is refused
+by this session's permission classifier — correctly, it is an IAM grant — so a human must run
+the four commands in `tools/bootstrap-azure-region.sh`'s plan output. Until then the deploy
+dies at its prerequisite check, which is the intended behaviour.
+
+**Shared vs regional.** Vault `trquillkv`, wrapping key `tr-bootstrap-wrap` and registry
+`trquillacr` are **shared** across regions; the resource group, MAA instance, identity and
+container group are **regional**. The honest cost: the vault lives in UAE North, so a UAE
+North vault outage blocks a **cold start** in every region. It does not touch a running
+enclave, which holds its unsealed secrets in memory. The alternative — per-region keys —
+means per-region bundle re-sealing, and a bundle that drifts between regions is a provider
+that 401s *in one region only*. Wrong trade.
+
+**Region availability**, confirmed against ARM `deployment group validate` rather than docs:
+confidential ACI is supported in southeastasia, northeurope, eastus2, switzerlandnorth and
+swedencentral on this subscription. **westeurope is blocked by policy.**
+
+**What region two exposed in one-region code** (qcp #120):
+
+* `bound_hostdata` read hostdata from *every* authority's clause. The key is shared, so at two
+  regions `bind` computes its baseline from the other region's measurement.
+* Nothing ever reported an **open bind window**. `bind` widens the pin to {old, new} and
+  `narrow` closes it; a deploy that dies at `verify` leaves it open *by design*, so rollback
+  stays possible — and then nobody runs `narrow`. **UAE North was in this state**, from a
+  deploy that failed at verify weeks earlier. A retired measurement kept the right to unseal
+  every current provider credential. The new `audit` phase found it on its first run against
+  production; `narrow-live` closed it.
+* `narrow` can only narrow to what the *local workspace* built — useless for the case that
+  actually leaves windows open (a deploy that failed weeks ago into a temp directory since
+  deleted). Hence `narrow-live`, which narrows to what is running *after proving it attests*.
+
+### 4.9 Azure and four nines — where it actually stands
+
+**Azure is not at four nines, and the gap is structural, not a matter of waiting for samples.**
+Four nines is 52 minutes a year *total*. Here is each term, honestly.
+
+| | status |
+|---|---|
+| two regions, each attesting to its own MAA | **done** — uaenorth + southeastasia |
+| auto-recovery from a container fault | **done** — `restartPolicy: OnFailure` |
+| automatic failover *between* the two regions | **MISSING** — this is the blocker |
+| auto-recovery from group-level loss | **MISSING** |
+| shared-fate on Let's Encrypt (#56) | **MISSING** — caps availability regardless of region count |
+| enough samples to *demonstrate* a number | **no** — needs ~a week at 1/min |
+
+**`restartPolicy: Never` was the single largest term** and is now fixed. Anything that exited
+the process once — a panic, an OOM, a transient upstream stall — left the group in `Succeeded`
+forever, serving nothing, until a human noticed. One such event spends the entire annual
+budget before anyone has read the page.
+
+**Why two regions do not currently compose.** Each has its own hostname
+(`api-azure` / `api-azure-sea`), so a client pointed at one gets nothing when that region dies.
+Two regions with no failover is two independent single points of failure, not redundancy.
+
+**The mechanism to fix it already exists** and is how GCP runs many enclaves behind one name:
+`enclavetls.NewACME` takes a shared `autocert.Cache`, and `NewGCSCache`
+(`QUILL_ACME_CACHE_GCS_BUCKET`, bucket `gs://quill-acme-cache`) lets every replica answer the
+same TLS-ALPN-01 challenge and serve the same cert — which is what makes a multi-IP A record
+work at all. Its HTTP transport is behind `!cloud_aws`, so **it already ships in Azure
+builds**. The increment is:
+
+1. give both Azure regions GCS access — this is the first real use for the cross-cloud
+   identity federation described in §"Keyless cross-cloud identity (provisioned, currently
+   unused)"
+2. set `QUILL_API_HOST` in both regions to include a shared name as well as the per-region one
+3. publish an A record set over both regional IPs, with membership gated on attestation
+   (extend `tools/reconcile-enclave-dns.py`, which today only enumerates a GCP fleet)
+
+DNS is L4, so this does not terminate TLS and attestation stays intact. **Do not reach for
+Front Door or any L7 product here** — it would void attestation.
+
+**Do not claim a nines number from the probe data yet.** Four nines means one failure in
+10,000; at one sample a minute that is seven days of clean data before the number means
+anything. Until then the honest statement is architectural, not measured.
+
+**Run `audit` against every region before believing a green dashboard.** It is read-only:
+
+```
+LOCATION=<region> RESOURCE_GROUP=<rg> MAA_ENDPOINT=<region MAA host> \
+  ./tools/deploy-azure-aci.sh audit
+```
+
 ---
 
 ## 5. Traps that have already cost real debugging time
