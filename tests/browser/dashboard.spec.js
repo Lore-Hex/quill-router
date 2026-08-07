@@ -178,11 +178,12 @@ test("new API key quickstart stays inside its reveal panel", async ({ page }) =>
                     <div class="panel-body">
                       <div class="signup-reveal console-key-reveal">
                         <section class="agent-quickstart">
-                          <h3>Paste this whole message into your agent or Claude Code to try it out right now:</h3>
+                          <h3>Open a new Claude Code, Codex, or agent chat. Then paste this whole message:</h3>
                           <div class="agent-message-row">
                             <div class="agent-message" id="layout-agent-message" data-copy-lines>
-                            <span class="agent-prompt-line">Set up this project so my next Claude Code session uses TrustedRouter with a lower-cost default model.</span>
-                            <span class="agent-prompt-line">Use ANTHROPIC_BASE_URL=https://api.trustedrouter.com and ANTHROPIC_MODEL=trustedrouter/cheap. Preserve existing settings and keep the key out of git.</span>
+                            <span class="agent-prompt-line">This message is designed to be pasted into a new Claude Code, Codex, or other agent chat.</span>
+                            <span class="agent-prompt-line">Please use TrustedRouter.com using the following key to ask DeepSeek a question.</span>
+                            <span class="agent-prompt-line">Make the request with streaming enabled (stream=true). Show each text delta in this chat as it arrives. Do not change this agent's settings.</span>
                             <span class="agent-prompt-line">TrustedRouter API key: sk-tr-v1-layout-regression-key</span>
                             </div>
                             <button class="btn secret-copy-btn" type="button" data-copy-secret="layout-agent-message" aria-label="Copy complete agent message">Copy</button>
@@ -204,7 +205,8 @@ test("new API key quickstart stays inside its reveal panel", async ({ page }) =>
   const heading = reveal.locator(".agent-quickstart h3");
   const message = reveal.locator(".agent-message");
   await expect(heading).toBeVisible();
-  await expect(message).toContainText("ANTHROPIC_MODEL=trustedrouter/cheap");
+  await expect(message).toContainText("stream=true");
+  await expect(message).toContainText("Do not change this agent's settings");
 
   const assertContained = async () => {
     const layout = await reveal.evaluate((element) => {
@@ -239,12 +241,14 @@ test("new API key quickstart stays inside its reveal panel", async ({ page }) =>
   await expect(copyButton).toBeVisible();
   await copyButton.click();
   const copiedAgentMessage = await page.evaluate(() => navigator.clipboard.readText());
-  expect(copiedAgentMessage).toContain("ANTHROPIC_BASE_URL=https://api.trustedrouter.com");
-  expect(copiedAgentMessage).toContain("ANTHROPIC_MODEL=trustedrouter/cheap");
+  expect(copiedAgentMessage).toContain("new Claude Code, Codex, or other agent chat");
+  expect(copiedAgentMessage).toContain("stream=true");
+  expect(copiedAgentMessage).toContain("Show each text delta in this chat as it arrives");
+  expect(copiedAgentMessage).not.toContain("ANTHROPIC_BASE_URL");
   expect(copiedAgentMessage).toContain("sk-tr-v1-layout-regression-key");
 });
 
-test("first-call activation runs live request and copies Claude Code setup", async ({ page }) => {
+test("first-call activation runs live request and copies agent chat prompt", async ({ page }) => {
   const apiKey = "sk-tr-v1-browser-activation-key";
   const analytics = [];
   await page.addInitScript(() => {
@@ -304,7 +308,7 @@ test("first-call activation runs live request and copies Claude Code setup", asy
               <div class="activation-call-error" data-call-error hidden><strong data-call-error-title></strong><p data-call-error-message></p><a data-call-error-action hidden></a></div>
               <div class="activation-call-result" data-call-result hidden><div class="activation-result-head"><div><span class="activation-success-mark">&#10003;</span><div><strong>Production request passed</strong><p>Your key is ready.</p></div></div><code data-result-output></code></div><dl class="activation-result-grid"><div><dt>Model</dt><dd data-result-model></dd></div><div><dt>Provider</dt><dd data-result-provider></dd></div><div><dt>Latency</dt><dd data-result-latency></dd></div><div><dt>Exact cost</dt><dd data-result-cost></dd></div></dl><div data-success-actions></div></div>
             </div></section>
-            <section class="panel activation-setup-panel"><div class="panel-body"><div class="activation-tabs" role="tablist"><button class="activation-tab" role="tab" aria-selected="true" data-setup-tab="setup-agent">Claude Code / Codex</button><button class="activation-tab" role="tab" aria-selected="false" data-setup-tab="setup-python">Python</button></div><div class="activation-code-panel" id="setup-agent" data-setup-panel><div class="activation-code-head"><strong>Paste this whole message</strong><button class="btn" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key">Copy prompt</button></div><pre id="welcome-agent-message" data-copy-lines><span>Please use TrustedRouter.com to ask DeepSeek a question.</span><span>${apiKey}</span></pre></div><div class="activation-code-panel" id="setup-python" data-setup-panel hidden><pre>Python setup</pre></div></div></section>
+            <section class="panel activation-setup-panel"><div class="panel-body"><div class="activation-tabs" role="tablist"><button class="activation-tab" role="tab" aria-selected="true" data-setup-tab="setup-agent">Claude Code / Codex / agent</button><button class="activation-tab" role="tab" aria-selected="false" data-setup-tab="setup-python">Python</button></div><div class="activation-code-panel" id="setup-agent" data-setup-panel><div class="activation-code-head"><strong>Paste into a new agent chat</strong><button class="btn" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key">Copy prompt</button></div><pre id="welcome-agent-message" data-copy-lines><span>This message is designed to be pasted into a new Claude Code, Codex, or other agent chat.</span><span>Please use TrustedRouter.com to ask DeepSeek a question.</span><span>Make the request with streaming enabled (stream=true). Show each text delta in this chat as it arrives. Do not change this agent's settings.</span><span>TrustedRouter API key: ${apiKey}</span></pre></div><div class="activation-code-panel" id="setup-python" data-setup-panel hidden><pre>Python setup</pre></div></div></section>
           </div>
         </div></main></body></html>`,
     });
@@ -328,7 +332,7 @@ test("first-call activation runs live request and copies Claude Code setup", asy
 
   await page.getByRole("button", { name: "Copy prompt" }).click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(
-    `Please use TrustedRouter.com to ask DeepSeek a question.\n\n${apiKey}`,
+    `This message is designed to be pasted into a new Claude Code, Codex, or other agent chat.\n\nPlease use TrustedRouter.com to ask DeepSeek a question.\n\nMake the request with streaming enabled (stream=true). Show each text delta in this chat as it arrives. Do not change this agent's settings.\n\nTrustedRouter API key: ${apiKey}`,
   );
   await page.getByRole("tab", { name: "Python" }).click();
   await expect(page.locator("#setup-python")).toBeVisible();

@@ -1,5 +1,5 @@
 {% extends "console/_layout.html" %}
-{% from "console/_api_key_reveal.html" import api_key_reveal, claude_code_prompt %}
+{% from "console/_api_key_reveal.html" import agent_chat_prompt, api_key_reveal %}
 {% block body %}
 {% if revealed_key %}
 <div
@@ -96,15 +96,15 @@
     </div>
     <div class="panel-body">
       <div class="activation-tabs" role="tablist" aria-label="Setup method">
-        <button class="activation-tab" id="setup-agent-tab" type="button" role="tab" aria-selected="true" aria-controls="setup-agent" data-setup-tab="setup-agent">Claude Code / Codex</button>
+        <button class="activation-tab" id="setup-agent-tab" type="button" role="tab" aria-selected="true" aria-controls="setup-agent" data-setup-tab="setup-agent">Claude Code / Codex / agent</button>
         <button class="activation-tab" id="setup-python-tab" type="button" role="tab" aria-selected="false" aria-controls="setup-python" tabindex="-1" data-setup-tab="setup-python">Python</button>
         <button class="activation-tab" id="setup-js-tab" type="button" role="tab" aria-selected="false" aria-controls="setup-js" tabindex="-1" data-setup-tab="setup-js">JavaScript</button>
         <button class="activation-tab" id="setup-curl-tab" type="button" role="tab" aria-selected="false" aria-controls="setup-curl" tabindex="-1" data-setup-tab="setup-curl">curl</button>
       </div>
 
       <div class="activation-code-panel" id="setup-agent" role="tabpanel" aria-labelledby="setup-agent-tab" data-setup-panel>
-        <div class="activation-code-head"><strong>Paste this whole message into Claude Code or Codex</strong><button class="btn" type="button" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key" aria-describedby="welcome-agent-copy-status">Copy prompt</button></div>
-        <pre id="welcome-agent-message" data-copy-lines>{{ claude_code_prompt(revealed_key) }}</pre>
+        <div class="activation-code-head"><strong>Paste into a new Claude Code, Codex, or agent chat</strong><button class="btn" type="button" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key" aria-describedby="welcome-agent-copy-status">Copy prompt</button></div>
+        <pre id="welcome-agent-message" data-copy-lines>{{ agent_chat_prompt(revealed_key) }}</pre>
         <p class="copy-status" id="welcome-agent-copy-status" role="status" aria-live="polite"></p>
       </div>
 

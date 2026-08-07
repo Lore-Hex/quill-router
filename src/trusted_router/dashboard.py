@@ -1278,22 +1278,22 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         og_card="claude-code.png",
         title="Cut Your Claude Code Token Bill in 10 Seconds",
         description=(
-            "Paste one complete message into Claude Code. TrustedRouter connects "
-            "your next session to hundreds of lower-cost models without changing "
-            "the interface, tools, or workflow you already use."
+            "Paste one complete message into a new Claude Code, Codex, or agent chat. "
+            "Your agent calls a lower-cost model and streams the answer back without "
+            "changing its model, settings, tools, or workflow."
         ),
         faq_items=(
             (
                 "Does this replace Claude Code?",
-                "No. You keep Claude Code, its tools, permissions, and project context. The setup changes the model gateway and default model used by your next project session.",
+                "No. Claude Code, Codex, or your preferred agent remains the host. The pasted message asks it to make one streaming API call through TrustedRouter. It does not replace the host model or change the agent's settings.",
             ),
             (
                 "Does the change affect my current session?",
-                "The pasted message prepares project-local settings and runs a small verification call. Restart Claude Code when it tells you the setup is ready. Your current session stays available while it works.",
+                "There is no configuration change. Open a new agent chat, paste the message, and watch the TrustedRouter response stream into that chat. No files are edited and no restart is required.",
             ),
             (
                 "Which model does the quick setup use?",
-                "It starts with trustedrouter/cheap, a low-cost paid route pool. You can replace it with trustedrouter/fast, trustedrouter/zdr, a named model, or any other compatible route later.",
+                "The first message asks DeepSeek a tiny question so you can see the flow work. For later requests, tell the agent to call trustedrouter/cheap, trustedrouter/fast, trustedrouter/zdr, or any named model in the catalog.",
             ),
             (
                 "Will every task cost less?",
@@ -1305,7 +1305,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Can I switch back?",
-                "Yes. Remove the TrustedRouter environment entries from the project-local Claude Code settings file, or ask Claude Code to revert the setup. Your global Claude account configuration is not overwritten.",
+                "There is nothing to switch back. Stop asking the agent to make TrustedRouter calls, close the chat, or revoke the one-time key. The agent's original model and configuration were never changed.",
             ),
         ),
     ),

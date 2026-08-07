@@ -965,7 +965,9 @@ def test_console_create_api_key_form_repeats_raw_key_in_agent_message(
     assert agent_message is not None
     assert match.group(0) in agent_message.group(0)
     assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
-    assert "Paste this whole message into your agent or Claude Code" in resp.text
+    assert "Open a new Claude Code, Codex, or agent chat" in resp.text
+    assert "streaming enabled (stream=true)" in resp.text
+    assert "Do not change this agent's model, provider, settings, or project files" in resp.text
     assert "Copied to clipboard." not in resp.text
     workspace_id = next(iter(STORE.workspaces))
     keys = STORE.list_keys(workspace_id)
