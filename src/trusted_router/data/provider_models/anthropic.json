@@ -293,8 +293,8 @@
     }
   ],
   "provider": "anthropic",
-  "source": "https://www.anthropic.com/pricing",
-  "generated_at": "2026-08-05T12:55:53Z",
+  "source": "https://api.anthropic.com/v1/models?limit=1000",
+  "generated_at": "2026-08-07T17:18:37Z",
   "price_scale": "microdollars_per_million",
   "model_count": 10
 }
