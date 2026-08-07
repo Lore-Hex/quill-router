@@ -125,9 +125,7 @@ def test_novita_discovery_ignores_internal_aliases_but_catches_public_families()
     assert check_price_coverage._novita_model_id("gt-4p") is None
     assert check_price_coverage._novita_model_id("gpt-image-2-oai") is None
     assert check_price_coverage._novita_model_id("Kimi-K3") == "moonshotai/kimi-k3"
-    assert check_price_coverage._novita_model_id("vendor/Future-Text-1") == (
-        "vendor/future-text-1"
-    )
+    assert check_price_coverage._novita_model_id("vendor/Future-Text-1") == ("vendor/future-text-1")
 
 
 def test_provider_glm_required_gate_targets_current_flagships() -> None:
@@ -301,6 +299,13 @@ def test_inactive_provider_rows_do_not_trigger_model_discovery() -> None:
     )
     assert not check_price_coverage._active_discovery_row(
         {
+            "model": "zai-org/GLM-5.2-FP8-Lora",
+            "type": "serverless",
+            "state": "STOPPED",
+        }
+    )
+    assert not check_price_coverage._active_discovery_row(
+        {
             "id": "vendor/image-only",
             "status": 1,
             "endpoints": ["chat/completions"],
@@ -339,6 +344,27 @@ def test_provider_glm_discovery_warns_on_unpublished_route(monkeypatch, tmp_path
         "novita: live GLM current model API lists unpublished model(s) z-ai/glm-5.2" in warning
         for warning in warnings
     )
+
+
+def test_together_glm_discovery_uses_serverless_models_and_collapses_deployment_aliases() -> None:
+    together_urls = [
+        url
+        for slug, url, _env_names in check_price_coverage._GLM_DISCOVERABLE_PROVIDER_APIS
+        if slug == "together"
+    ]
+
+    assert together_urls == ["https://api.together.xyz/v1/endpoints?type=serverless"]
+    assert check_price_coverage._provider_glm_model_ids(
+        {
+            "data": [
+                {
+                    "model": "zai-org/GLM-5.2-FP8-Lora",
+                    "type": "serverless",
+                    "state": "STARTED",
+                }
+            ]
+        }
+    ) == {"z-ai/glm-5.2"}
 
 
 def test_provider_glm_discovery_keeps_legacy_variants_visibility_only(

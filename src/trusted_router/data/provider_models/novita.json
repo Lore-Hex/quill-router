@@ -3,8 +3,8 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-08-05T12:55:53Z",
-  "model_count": 140,
+  "generated_at": "2026-08-07T16:34:35Z",
+  "model_count": 141,
   "models": [
     {
       "id": "Sao10K/L3-8B-Stheno-v3.2",
@@ -1072,7 +1072,7 @@
         "chat/completions",
         "completions"
       ],
-      "status": 1,
+      "status": 4,
       "upstream_id": "meta-llama/llama-3.2-3b-instruct"
     },
     {
@@ -1080,8 +1080,8 @@
       "display_name": "Llama 3.3 70B Instruct",
       "title": "meta-llama/llama-3.3-70b-instruct",
       "created": 1733560109,
-      "context_length": 6000,
-      "max_output_tokens": 120000,
+      "context_length": 12288,
+      "max_output_tokens": 12288,
       "input_token_price_per_m": 1350,
       "output_token_price_per_m": 4000,
       "model_type": "chat",
@@ -1566,7 +1566,8 @@
       ],
       "endpoints": [
         "chat/completions",
-        "anthropic"
+        "anthropic",
+        "responses"
       ],
       "status": 1,
       "upstream_id": "moonshotai/kimi-k3"
@@ -3836,8 +3837,9 @@
       "created": 1784701806,
       "context_length": 262144,
       "max_output_tokens": 32768,
-      "input_token_price_per_m": 0,
-      "output_token_price_per_m": 0
+      "input_token_price_per_m": 600,
+      "output_token_price_per_m": 1800,
+      "cached_input_token_price_per_m": 120
     },
     {
       "id": "mindai/macaron-v1-venti",
@@ -3865,8 +3867,9 @@
       "created": 1784605406,
       "context_length": 1048576,
       "max_output_tokens": 131072,
-      "input_token_price_per_m": 0,
-      "output_token_price_per_m": 0
+      "input_token_price_per_m": 15000,
+      "output_token_price_per_m": 45000,
+      "cached_input_token_price_per_m": 3000
     },
     {
       "id": "mindai/macaron-v1-tall",
@@ -3959,6 +3962,33 @@
       "input_token_price_per_m": 20000,
       "output_token_price_per_m": 60000,
       "cached_input_token_price_per_m": 2500
+    },
+    {
+      "id": "inclusionai/ling-3.0-tiny",
+      "upstream_id": "inclusionai/ling-3.0-tiny",
+      "display_name": "Ling 3.0 Tiny",
+      "title": "inclusionai/ling-3.0-tiny",
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling",
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "created": 1785941340,
+      "context_length": 262144,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
     }
   ]
 }

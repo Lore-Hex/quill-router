@@ -548,12 +548,20 @@ def test_trust_page_and_release_files_are_published(trust_client: httpx.Client) 
     page = trust_client.get("/")
     release = trust_client.get("/trust/gcp-release.json")
     digest = trust_client.get("/trust/image-digest-gcp.txt")
+    accepted_digests = trust_client.get(
+        "/trust/accepted-image-digests-gcp.txt"
+    )
     image = trust_client.get("/trust/image-reference-gcp.txt")
+    accepted_images = trust_client.get(
+        "/trust/accepted-image-references-gcp.txt"
+    )
 
     assert page.status_code == 200, page.text
     assert release.status_code == 200, release.text
     assert digest.status_code == 200, digest.text
+    assert accepted_digests.status_code == 200, accepted_digests.text
     assert image.status_code == 200, image.text
+    assert accepted_images.status_code == 200, accepted_images.text
     body = page.text
     for repo in [
         "Lore-Hex/quill-router",
@@ -569,3 +577,9 @@ def test_trust_page_and_release_files_are_published(trust_client: httpx.Client) 
     assert data["source_repositories"]["control_plane"].endswith("/quill-router")
     assert digest.text.strip() == data["image_digest"]
     assert image.text.strip() == data["image_reference"]
+    assert accepted_digests.text.strip().split(",") == data["accepted_image_digests"]
+    assert accepted_images.text.strip().split(",") == data[
+        "accepted_image_references"
+    ]
+    assert data["image_digest"] in data["accepted_image_digests"]
+    assert data["image_reference"] in data["accepted_image_references"]

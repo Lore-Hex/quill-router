@@ -30,6 +30,10 @@ from scripts.pricing.model_ids import (
     canonicalize_native_model_id,
     canonicalize_unqualified_model_id,
 )
+from scripts.pricing.video_sources import (
+    VIDEO_PRICE_PROVIDER_SLUGS,
+    audit_video_price_sources,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 PROVIDERS_DIR = ROOT / "scripts" / "pricing" / "providers"
@@ -379,7 +383,7 @@ _GLM_DISCOVERABLE_PROVIDER_APIS: tuple[tuple[str, str, tuple[str, ...]], ...] = 
     ),
     (
         "together",
-        "https://api.together.xyz/v1/models",
+        "https://api.together.xyz/v1/endpoints?type=serverless",
         ("TOGETHER_API_KEY",),
     ),
     (
@@ -546,6 +550,15 @@ def _active_discovery_row(row: dict[str, Any]) -> bool:
         "deprecated",
     }:
         return False
+    state = row.get("state")
+    if isinstance(state, str) and state.casefold() in {
+        "disabled",
+        "failed",
+        "inactive",
+        "offline",
+        "stopped",
+    }:
+        return False
     endpoints = row.get("endpoints")
     if isinstance(endpoints, list) and endpoints:
         normalized = {str(value).casefold() for value in endpoints}
@@ -610,14 +623,16 @@ def _normalize_glm_model_id(native_id: str) -> str | None:
     # Parasail, not a distinct public/billable model in their manifests.
     # Preserve semantic variants (for example -fast and -nvfp4), which can
     # have different routing and prices.
-    slug = re.sub(r"-fp8(?:-block)?$", "", slug)
+    slug = re.sub(r"-fp8(?:-block|-lora)?$", "", slug)
     return f"z-ai/{slug}"
 
 
 def _provider_glm_model_ids(payload: Any) -> set[str]:
     discovered: set[str] = set()
     for row in _json_model_rows(payload):
-        for key in ("id", "name", "title"):
+        if not _active_discovery_row(row):
+            continue
+        for key in ("id", "name", "title", "model"):
             raw_id = row.get(key)
             if not isinstance(raw_id, str):
                 continue
@@ -788,7 +803,17 @@ def _run_audit(
     info: list[str] = []
     hard_fail_warnings: list[str] = []
 
+    if check_model_discovery:
+        video_prices = audit_video_price_sources(fetch_text)
+        warnings.extend(video_prices.warnings)
+        info.extend(video_prices.info)
+        hard_fail_warnings.extend(video_prices.hard_failures)
+
     for slug in sorted(GATEWAY_PREPAID_PROVIDER_SLUGS):
+        if slug in VIDEO_PRICE_PROVIDER_SLUGS:
+            if not check_model_discovery:
+                info.append(f"{slug}: official fixed-cost video price gate (network skipped) ✓")
+            continue
         if slug in scrapers:
             info.append(f"{slug}: live scraper ✓")
             continue
