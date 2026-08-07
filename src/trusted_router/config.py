@@ -5,7 +5,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from pydantic import model_validator
 from pydantic_settings import (
@@ -18,9 +18,7 @@ from pydantic_settings import (
 # entry reusing one would quietly merge two different measurements into one
 # status component, so it is rejected instead.
 _RESERVED_SYNTHETIC_TARGET_NAMES = frozenset({"canonical", "control-plane"})
-_GATEWAY_REGION_TARGET_NAME_CHARACTERS = set(
-    "abcdefghijklmnopqrstuvwxyz0123456789-_."
-)
+_GATEWAY_REGION_TARGET_NAME_CHARACTERS = set("abcdefghijklmnopqrstuvwxyz0123456789-_.")
 _GATEWAY_REGION_CONNECT_HOST_CHARACTERS = set("abcdefghijklmnopqrstuvwxyz0123456789-.")
 # An entry name that LOOKS like a cloud region ("eu-west-1", or the zonal
 # "eu-west-1a") is published to the world as that region's health, so it has
@@ -97,12 +95,37 @@ def parse_settlement_inbound_tokens(raw: str) -> dict[str, str]:
     return by_token
 
 
-def parse_gateway_region_targets(raw: str) -> tuple[tuple[str, str], ...]:
-    """Parse ``TR_SYNTHETIC_GATEWAY_REGION_TARGETS`` into ``(name, host)`` pairs.
+class GatewayRegionTarget(NamedTuple):
+    """One region's probe endpoint.
 
-    Format: ``name=connect_host,name=connect_host``. Blank/unset yields an
-    empty tuple — the single-canonical-target behaviour every deployment had
-    before this setting existed.
+    ``public_host`` is the name the probe puts in SNI and Host. It is empty for
+    the normal case — every replica serving one shared public name, which is
+    how GCP and AWS are built — and the probe then uses the canonical
+    ``api_base_url``.
+
+    It exists because Azure is NOT built that way yet. Each Azure region serves
+    its own hostname (``api-azure`` / ``api-azure-sea``) because the shared
+    ACME cache is disabled there, so probing southeastasia with the canonical
+    SNI asks it for a certificate it does not hold: the handshake fails and a
+    perfectly healthy region reports DOWN. A status page that cries wolf is not
+    a safer failure than one that stays quiet — it is a page nobody reads.
+
+    When the shared cache lands and both Azure regions serve one name, this
+    field simply goes unset again and the canonical path takes over.
+    """
+
+    name: str
+    connect_host: str
+    public_host: str = ""
+
+
+def parse_gateway_region_targets(raw: str) -> tuple[GatewayRegionTarget, ...]:
+    """Parse ``TR_SYNTHETIC_GATEWAY_REGION_TARGETS`` into region targets.
+
+    Format: ``name=connect_host`` or ``name=connect_host@public_host``,
+    comma-separated. Blank/unset yields an empty tuple — the
+    single-canonical-target behaviour every deployment had before this setting
+    existed.
 
     Every malformed entry RAISES. Skipping one would publish a status page
     that silently stops measuring an enclave: the component would vanish (its
@@ -111,17 +134,19 @@ def parse_gateway_region_targets(raw: str) -> tuple[tuple[str, str], ...]:
     """
     if not raw.strip():
         return ()
-    entries: list[tuple[str, str]] = []
+    entries: list[GatewayRegionTarget] = []
     seen: set[str] = set()
     for chunk in raw.split(","):
         entry = chunk.strip()
-        name, separator, connect_host = entry.partition("=")
+        name, separator, endpoint = entry.partition("=")
         name = name.strip().casefold()
-        connect_host = connect_host.strip().casefold().rstrip(".")
+        connect_host, _, public_host = endpoint.strip().casefold().partition("@")
+        connect_host = connect_host.strip().rstrip(".")
+        public_host = public_host.strip().rstrip(".")
         if not separator or not name or not connect_host:
             raise ValueError(
                 "TR_SYNTHETIC_GATEWAY_REGION_TARGETS entries must be "
-                f"'name=connect_host'; got {entry!r}"
+                f"'name=connect_host' or 'name=connect_host@public_host'; got {entry!r}"
             )
         if not set(name) <= _GATEWAY_REGION_TARGET_NAME_CHARACTERS:
             raise ValueError(
@@ -129,13 +154,9 @@ def parse_gateway_region_targets(raw: str) -> tuple[tuple[str, str], ...]:
                 f"letters, digits, '-', '_' and '.'; got {name!r}"
             )
         if name in _RESERVED_SYNTHETIC_TARGET_NAMES:
-            raise ValueError(
-                f"TR_SYNTHETIC_GATEWAY_REGION_TARGETS name {name!r} is reserved"
-            )
+            raise ValueError(f"TR_SYNTHETIC_GATEWAY_REGION_TARGETS name {name!r} is reserved")
         if name in seen:
-            raise ValueError(
-                f"TR_SYNTHETIC_GATEWAY_REGION_TARGETS name {name!r} is duplicated"
-            )
+            raise ValueError(f"TR_SYNTHETIC_GATEWAY_REGION_TARGETS name {name!r} is duplicated")
         # A bare hostname or IP literal only: a scheme, port, or path here
         # would be silently dropped by the connect path (it dials host:443 of
         # the canonical URL), i.e. a probe measuring something other than what
@@ -144,6 +165,18 @@ def parse_gateway_region_targets(raw: str) -> tuple[tuple[str, str], ...]:
             raise ValueError(
                 "TR_SYNTHETIC_GATEWAY_REGION_TARGETS connect host must be a bare "
                 f"hostname or IPv4 literal; got {connect_host!r}"
+            )
+        # An empty public host means "@" was written with nothing after it,
+        # which reads as an override and silently is not one.
+        if "@" in endpoint and not public_host:
+            raise ValueError(
+                "TR_SYNTHETIC_GATEWAY_REGION_TARGETS public host after '@' must not "
+                f"be empty; got {entry!r}"
+            )
+        if public_host and not set(public_host) <= _GATEWAY_REGION_CONNECT_HOST_CHARACTERS:
+            raise ValueError(
+                "TR_SYNTHETIC_GATEWAY_REGION_TARGETS public host must be a bare "
+                f"hostname; got {public_host!r}"
             )
         # THE name/endpoint binding, cross-checked. Everything downstream —
         # the target name, its target_region, its public status component —
@@ -165,7 +198,7 @@ def parse_gateway_region_targets(raw: str) -> tuple[tuple[str, str], ...]:
                 "name is what the public status page calls this endpoint"
             )
         seen.add(name)
-        entries.append((name, connect_host))
+        entries.append(GatewayRegionTarget(name, connect_host, public_host))
     return tuple(entries)
 
 
@@ -712,9 +745,7 @@ class Settings(BaseSettings):
             if value < 0:
                 raise ValueError(f"{name} cannot be negative")
         if self.request_record_write_mode not in {"legacy", "typed"}:
-            raise ValueError(
-                "TR_REQUEST_RECORD_WRITE_MODE must be 'legacy' or 'typed'"
-            )
+            raise ValueError("TR_REQUEST_RECORD_WRITE_MODE must be 'legacy' or 'typed'")
         if self.analytics_read_mode not in {
             "bigtable",
             "dual",
@@ -722,23 +753,17 @@ class Settings(BaseSettings):
             "clickhouse-only",
         }:
             raise ValueError(
-                "TR_ANALYTICS_READ_MODE must be bigtable, dual, clickhouse, "
-                "or clickhouse-only"
+                "TR_ANALYTICS_READ_MODE must be bigtable, dual, clickhouse, or clickhouse-only"
             )
         if self.analytics_dual_read_grace_seconds < 0:
             raise ValueError("TR_ANALYTICS_DUAL_READ_GRACE_SECONDS cannot be negative")
         if not 5 <= self.regional_quota_lease_ttl_seconds <= 300:
-            raise ValueError(
-                "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS must be between 5 and 300"
-            )
+            raise ValueError("TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS must be between 5 and 300")
         if self.regional_quota_lease_max_microdollars <= 0:
-            raise ValueError(
-                "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS must be positive"
-            )
+            raise ValueError("TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS must be positive")
         if not 1 <= self.regional_quota_lease_max_available_basis_points <= 5_000:
             raise ValueError(
-                "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS must be "
-                "between 1 and 5000"
+                "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS must be between 1 and 5000"
             )
         if self.regional_quota_leases_enabled:
             if environment not in {"local", "test"}:
@@ -795,9 +820,7 @@ class Settings(BaseSettings):
                             "credential debit workspaces"
                         )
         if not 0.1 <= self.ops_chat_webhook_timeout_seconds <= 10.0:
-            raise ValueError(
-                "TR_OPS_CHAT_WEBHOOK_TIMEOUT_SECONDS must be between 0.1 and 10"
-            )
+            raise ValueError("TR_OPS_CHAT_WEBHOOK_TIMEOUT_SECONDS must be between 0.1 and 10")
         ops_chat_urls = tuple(
             dict.fromkeys(
                 value.strip().rstrip("/")
@@ -813,9 +836,7 @@ class Settings(BaseSettings):
         if environment == "production" and any(
             not url.startswith("https://") for url in ops_chat_urls
         ):
-            raise ValueError(
-                "TR_OPS_CHAT_WEBHOOK_URLS must contain only HTTPS URLs in production"
-            )
+            raise ValueError("TR_OPS_CHAT_WEBHOOK_URLS must contain only HTTPS URLs in production")
         if self.x402_allow_mock_payments and environment not in {"local", "test"}:
             raise ValueError("TR_X402_ALLOW_MOCK_PAYMENTS is only allowed in local/test")
         if self.adyen_environment not in {"test", "live"}:
@@ -852,9 +873,7 @@ class Settings(BaseSettings):
             if self.adyen_environment == "live" and not self.adyen_live_endpoint_prefix:
                 missing_adyen.append("TR_ADYEN_LIVE_ENDPOINT_PREFIX")
             if missing_adyen:
-                raise ValueError(
-                    "TR_ADYEN_ENABLED requires " + ", ".join(missing_adyen)
-                )
+                raise ValueError("TR_ADYEN_ENABLED requires " + ", ".join(missing_adyen))
         if (
             self.x402_enabled
             and environment not in {"local", "test"}
@@ -915,20 +934,16 @@ class Settings(BaseSettings):
             if not self.operational_analytics_clickhouse_password:
                 missing.append("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD")
         if self.request_record_write_mode == "typed" and not self.settle_outbox_enabled:
-            missing.append(
-                "TR_SETTLE_OUTBOX_ENABLED=true when "
-                "TR_REQUEST_RECORD_WRITE_MODE=typed"
-            )
+            missing.append("TR_SETTLE_OUTBOX_ENABLED=true when TR_REQUEST_RECORD_WRITE_MODE=typed")
         if not self.byok_kms_key_name:
             missing.append("TR_BYOK_KMS_KEY_NAME")
         if not self.trust_gcp_release_url:
-            self.trust_gcp_release_url = (
-                "https://trust.trustedrouter.com/trust/gcp-release.json"
-            )
+            self.trust_gcp_release_url = "https://trust.trustedrouter.com/trust/gcp-release.json"
         elif not self.trust_gcp_release_url.startswith("https://"):
             missing.append("TR_TRUST_GCP_RELEASE_URL=https://...")
         invalid_release_fallbacks = [
-            url for url in self.trust_gcp_release_fallback_url_list
+            url
+            for url in self.trust_gcp_release_fallback_url_list
             if not url.startswith("https://")
         ]
         if invalid_release_fallbacks:
@@ -937,9 +952,13 @@ class Settings(BaseSettings):
         # enforce that no provider is half-configured: a client_id without
         # the matching client_secret would cause silent runtime failures.
         if bool(self.google_client_id) != bool(self.google_client_secret):
-            missing.append("TR_GOOGLE_CLIENT_ID and TR_GOOGLE_CLIENT_SECRET must both be set or both unset")
+            missing.append(
+                "TR_GOOGLE_CLIENT_ID and TR_GOOGLE_CLIENT_SECRET must both be set or both unset"
+            )
         if bool(self.github_client_id) != bool(self.github_client_secret):
-            missing.append("TR_GITHUB_CLIENT_ID and TR_GITHUB_CLIENT_SECRET must both be set or both unset")
+            missing.append(
+                "TR_GITHUB_CLIENT_ID and TR_GITHUB_CLIENT_SECRET must both be set or both unset"
+            )
         configured_aliases = {
             value.strip().lower().rstrip(".")
             for value in self.trusted_domain_aliases.split(",")
@@ -965,9 +984,7 @@ class Settings(BaseSettings):
                     + ", ".join(unknown_oauth_aliases)
                 )
             if canonical_enabled:
-                missing_oauth_aliases = sorted(
-                    configured_aliases - set(alias_credentials)
-                )
+                missing_oauth_aliases = sorted(configured_aliases - set(alias_credentials))
                 if missing_oauth_aliases:
                     missing.append(
                         f"{setting_name} is missing configured domain(s): "
@@ -1039,9 +1056,7 @@ class Settings(BaseSettings):
     @property
     def adyen_webhook_ready(self) -> bool:
         return bool(
-            self.adyen_hmac_key
-            and self.adyen_reference_key
-            and self.adyen_merchant_account
+            self.adyen_hmac_key and self.adyen_reference_key and self.adyen_merchant_account
         )
 
     @property

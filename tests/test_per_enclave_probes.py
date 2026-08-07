@@ -42,7 +42,11 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from cryptography.x509.oid import NameOID
 
-from trusted_router.config import Settings, parse_gateway_region_targets
+from trusted_router.config import (
+    GatewayRegionTarget,
+    Settings,
+    parse_gateway_region_targets,
+)
 from trusted_router.storage_models import SyntheticProbeSample, utcnow
 from trusted_router.synthetic.components import (
     GATEWAY_REGION_TARGET_NAMES,
@@ -53,6 +57,7 @@ from trusted_router.synthetic.probes import (
     SyntheticTarget,
     _attested_ssl_context,
     _connect_host_request,
+    _region_api_base_url,
     attestation_nonce_probe,
     configured_targets,
     gateway_latency_phase_probes,
@@ -94,9 +99,7 @@ def _write_enclave_cert(directory: Path) -> tuple[Path, Path, bytes]:
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - dt.timedelta(minutes=5))
         .not_valid_after(now + dt.timedelta(days=1))
-        .add_extension(
-            x509.SubjectAlternativeName([x509.DNSName(API_HOST)]), critical=False
-        )
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName(API_HOST)]), critical=False)
         .sign(key, hashes.SHA256())
     )
     cert_path = directory / "enclave-cert.pem"
@@ -162,9 +165,7 @@ class _FakeEnclave:
         self._server.close()
         await self._server.wait_closed()
 
-    async def _handle(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
+    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             while True:
                 request_line = await reader.readline()
@@ -200,9 +201,9 @@ class _FakeEnclave:
     def _respond(self, path: str) -> tuple[int, bytes, str]:
         if path.startswith("/attestation"):
             _, _, query = path.partition("?")
-            nonce = dict(
-                part.split("=", 1) for part in query.split("&") if "=" in part
-            ).get("nonce", "")
+            nonce = dict(part.split("=", 1) for part in query.split("&") if "=" in part).get(
+                "nonce", ""
+            )
             return 200, _attestation_document(self._cert_der, nonce), "application/cbor"
         # The live enclave protects every route but /attestation.
         return 401, INVALID_KEY_BODY, "application/json"
@@ -317,9 +318,7 @@ async def test_every_probe_that_opens_a_connection_is_pinned(
     async with httpx.AsyncClient(verify=_attested_ssl_context(), timeout=10.0) as client:
         await tls_health_probe(client, target, monitor_region="eu-west-3")
         await attestation_nonce_probe(client, target, monitor_region="eu-west-3")
-    await gateway_latency_phase_probes(
-        target, monitor_region="eu-west-3", timeout_seconds=10.0
-    )
+    await gateway_latency_phase_probes(target, monitor_region="eu-west-3", timeout_seconds=10.0)
 
     # Every TLS handshake the enclave saw presented the canonical name (two
     # handshakes: httpx pools the health + attestation requests onto one
@@ -329,9 +328,7 @@ async def test_every_probe_that_opens_a_connection_is_pinned(
     # ...and every request really arrived: /health once, /attestation from
     # the attestation probe plus the latency probe's cold+reused pair.
     assert enclave.requested_paths[0] == "/health"
-    assert sum(
-        1 for path in enclave.requested_paths if path.startswith("/attestation")
-    ) == 3
+    assert sum(1 for path in enclave.requested_paths if path.startswith("/attestation")) == 3
 
 
 async def test_a_pinned_target_is_never_sent_the_monitor_api_key(
@@ -414,7 +411,7 @@ async def test_a_pinned_target_is_never_sent_the_monitor_api_key(
 async def test_attested_target_fails_when_the_cert_binding_is_unverifiable(
     enclave: _FakeEnclave,
 ) -> None:
-    """"Binding unverifiable" is a failure for an attested target, not a pass.
+    """ "Binding unverifiable" is a failure for an attested target, not a pass.
 
     _response_peer_cert_der documents exactly this, and the evidence helper
     cannot enforce it (non-attested targets legitimately pass None), so the
@@ -580,9 +577,7 @@ def test_unset_configuration_is_exactly_todays_target_list() -> None:
 
 
 def test_configured_entries_become_pinned_targets() -> None:
-    targets = configured_targets(
-        _aws_settings(synthetic_gateway_region_targets=REGION_TARGETS)
-    )
+    targets = configured_targets(_aws_settings(synthetic_gateway_region_targets=REGION_TARGETS))
 
     assert [target.name for target in targets] == ["canonical", "eu-west-1", "eu-west-3"]
     canonical, ireland, paris = targets
@@ -641,9 +636,7 @@ async def test_a_pass_runs_health_and_trust_per_enclave_and_pays_once(
         return []
 
     monkeypatch.setattr(probe_module, "tls_health_probe", fake_probe("tls_health"))
-    monkeypatch.setattr(
-        probe_module, "attestation_nonce_probe", fake_probe("attestation_nonce")
-    )
+    monkeypatch.setattr(probe_module, "attestation_nonce_probe", fake_probe("attestation_nonce"))
     monkeypatch.setattr(probe_module, "gateway_latency_phase_probes", no_phase_probes)
     monkeypatch.setattr(
         probe_module, "control_plane_health_probe", fake_probe("control_plane_health")
@@ -754,8 +747,8 @@ def test_deploy_script_value_parses_to_the_two_regions() -> None:
     differ only in a 16-hex-char middle segment.
     """
     assert parse_gateway_region_targets(_deploy_script_region_targets()) == (
-        ("eu-west-1", IRELAND_NLB),
-        ("eu-west-3", PARIS_NLB),
+        GatewayRegionTarget("eu-west-1", IRELAND_NLB),
+        GatewayRegionTarget("eu-west-3", PARIS_NLB),
     )
 
 
@@ -776,7 +769,7 @@ def test_deploy_script_names_are_exactly_the_published_components() -> None:
     configured: set[str] = set()
     for script in REGION_TARGET_DEPLOY_SCRIPTS:
         entries = parse_gateway_region_targets(_deploy_script_region_targets(script))
-        names = {name for name, _ in entries}
+        names = {entry.name for entry in entries}
         assert names, f"{script} configures no region targets"
         overlap = configured & names
         assert not overlap, f"{script} reuses target name(s) {overlap} from another cloud"
@@ -796,10 +789,12 @@ def test_a_name_that_contradicts_its_endpoints_region_is_rejected() -> None:
     # Per-AZ zonal NLB names are the supported way to get finer granularity,
     # so an AZ-suffixed name for the same region still parses.
     assert parse_gateway_region_targets(f"eu-west-1a=eu-west-1a.{IRELAND_NLB}") == (
-        ("eu-west-1a", f"eu-west-1a.{IRELAND_NLB}"),
+        GatewayRegionTarget("eu-west-1a", f"eu-west-1a.{IRELAND_NLB}"),
     )
     # A name that is not region-shaped has nothing to contradict.
-    assert parse_gateway_region_targets(f"ireland={IRELAND_NLB}") == (("ireland", IRELAND_NLB),)
+    assert parse_gateway_region_targets(f"ireland={IRELAND_NLB}") == (
+        GatewayRegionTarget("ireland", IRELAND_NLB),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -810,9 +805,7 @@ REGION_COMPONENT_IDS = ("eu_west_1_gateway", "eu_west_3_gateway")
 
 
 def _published_ids(settings: Settings) -> tuple[str, ...]:
-    return tuple(
-        str(definition["id"]) for definition in applicable_component_definitions(settings)
-    )
+    return tuple(str(definition["id"]) for definition in applicable_component_definitions(settings))
 
 
 def test_configured_aws_publishes_a_component_per_region() -> None:
@@ -922,16 +915,19 @@ def test_a_dead_region_does_not_degrade_the_shared_attestation_row() -> None:
         created_at = _iso(now, minutes * 60 + 10)
         for probe_type in ("tls_health", "attestation_nonce"):
             samples.append(
-                _sample(target="canonical", probe_type=probe_type, status="up",
-                        created_at=created_at)
+                _sample(
+                    target="canonical", probe_type=probe_type, status="up", created_at=created_at
+                )
             )
             samples.append(
-                _sample(target="eu-west-3", probe_type=probe_type, status="up",
-                        created_at=created_at)
+                _sample(
+                    target="eu-west-3", probe_type=probe_type, status="up", created_at=created_at
+                )
             )
             samples.append(
-                _sample(target="eu-west-1", probe_type=probe_type, status="down",
-                        created_at=created_at)
+                _sample(
+                    target="eu-west-1", probe_type=probe_type, status="down", created_at=created_at
+                )
             )
 
     snapshot = status_snapshot(
@@ -1074,13 +1070,23 @@ def test_pinned_probes_do_not_move_the_published_gateway_latency() -> None:
     """
     now = utcnow()
     canonical = [
-        _sample(target="canonical", probe_type="tls_health", status="up",
-                created_at=_iso(now, 10 + index), latency=30)
+        _sample(
+            target="canonical",
+            probe_type="tls_health",
+            status="up",
+            created_at=_iso(now, 10 + index),
+            latency=30,
+        )
         for index in range(4)
     ]
     pinned = [
-        _sample(target=target, probe_type="tls_health", status="up",
-                created_at=_iso(now, 10 + index), latency=latency)
+        _sample(
+            target=target,
+            probe_type="tls_health",
+            status="up",
+            created_at=_iso(now, 10 + index),
+            latency=latency,
+        )
         for index in range(4)
         for target, latency in (("eu-west-3", 12), ("eu-west-1", 45))
     ]
@@ -1199,9 +1205,13 @@ def test_every_regional_gateway_component_is_fully_wired() -> None:
         if cid not in mod.COMPONENT_PROBE_TARGETS:
             missing.append(f"{cid}: no COMPONENT_PROBE_TARGETS entry (row renders empty)")
         if cid not in mod.GATEWAY_REGION_COMPONENT_IDS:
-            missing.append(f"{cid}: not in GATEWAY_REGION_COMPONENT_IDS (can be red under a green headline)")
+            missing.append(
+                f"{cid}: not in GATEWAY_REGION_COMPONENT_IDS (can be red under a green headline)"
+            )
         if f'"{cid}"' not in attribution_src:
-            missing.append(f"{cid}: sample_component_ids never attributes to it (permanently blank)")
+            missing.append(
+                f"{cid}: sample_component_ids never attributes to it (permanently blank)"
+            )
 
     assert not missing, "regional gateway components are half-wired:\n  " + "\n  ".join(missing)
 
@@ -1227,7 +1237,8 @@ def test_azure_deploy_probes_every_azure_gateway_component() -> None:
     azure_regions = {
         mod.COMPONENT_PROBE_TARGETS[c["id"]]
         for c in mod.COMPONENT_DEFINITIONS
-        if c["id"].endswith("_gateway") and c["id"] in mod.COMPONENT_PROBE_TARGETS
+        if c["id"].endswith("_gateway")
+        and c["id"] in mod.COMPONENT_PROBE_TARGETS
         and mod.COMPONENT_PROBE_TARGETS[c["id"]] in {"uaenorth", "southeastasia"}
     }
     unprobed = sorted(azure_regions - probed)
@@ -1235,3 +1246,117 @@ def test_azure_deploy_probes_every_azure_gateway_component() -> None:
         f"Azure gateway component(s) for {unprobed} exist but the deploy script never probes them, "
         "so they report nothing and nothing reads as healthy"
     )
+
+
+# ---------------------------------------------------------------------------
+# Per-region PUBLIC hostnames — the false-alarm defect
+# ---------------------------------------------------------------------------
+# Every regional target used to inherit the canonical api_base_url, so SNI and
+# Host were always the shared public name. That is correct wherever every
+# replica serves one name (GCP, AWS) and WRONG on Azure, whose two regions
+# serve api-azure and api-azure-sea because the shared ACME cache is disabled
+# there. Probing southeastasia with the canonical SNI asks it for a certificate
+# it does not hold: the handshake fails and a healthy region publishes as DOWN.
+#
+# Reproduced live 2026-08-07 — southeastasia was serving 200 on its own name
+# while the status page called it down.
+
+
+def test_no_override_leaves_the_canonical_url_untouched() -> None:
+    """The shared-name case must behave exactly as it did before this existed."""
+    assert (
+        _region_api_base_url("https://api.trustedrouter.com/v1", "")
+        == "https://api.trustedrouter.com/v1"
+    )
+
+
+def test_an_override_swaps_only_the_host() -> None:
+    """Scheme, port and path are part of the endpoint, not the identity.
+
+    Dropping the path would probe the site root instead of /v1 and call that
+    the gateway's health.
+    """
+    assert (
+        _region_api_base_url(
+            "https://api-azure.trustedrouter.com/v1", "api-azure-sea.trustedrouter.com"
+        )
+        == "https://api-azure-sea.trustedrouter.com/v1"
+    )
+    assert (
+        _region_api_base_url("https://api.example.com:8443/v1", "sea.example.com")
+        == "https://sea.example.com:8443/v1"
+    )
+
+
+def test_azure_southeastasia_is_probed_at_its_own_public_name() -> None:
+    """The deploy script must carry the override, not just the connect host.
+
+    Without it the probe is a false alarm generator, and a status page that
+    cries wolf is not a safer failure than one that stays quiet — it is a page
+    nobody reads.
+    """
+    entries = parse_gateway_region_targets(
+        _deploy_script_region_targets("scripts/deploy/azure_control_plane.sh")
+    )
+    by_name = {entry.name: entry for entry in entries}
+    assert "southeastasia" in by_name, "southeastasia is not configured at all"
+    assert by_name["southeastasia"].public_host == "api-azure-sea.trustedrouter.com"
+    # uaenorth IS the canonical name, so it must NOT carry an override —
+    # one would be a second place to keep the same hostname in sync.
+    assert by_name["uaenorth"].public_host == ""
+
+
+def test_every_azure_region_target_resolves_to_a_distinct_public_name() -> None:
+    """Two regions sharing a public name here would be a copy-paste that makes
+    one region's probe silently measure the other's endpoint."""
+    entries = parse_gateway_region_targets(
+        _deploy_script_region_targets("scripts/deploy/azure_control_plane.sh")
+    )
+    canonical = "https://api-azure.trustedrouter.com/v1"
+    urls = [_region_api_base_url(canonical, entry.public_host) for entry in entries]
+    assert len(set(urls)) == len(urls), f"two Azure regions probe the same name: {urls}"
+
+
+def test_an_empty_public_host_after_the_separator_is_rejected() -> None:
+    """`region=host@` reads as an override and silently is not one."""
+    with pytest.raises(ValueError, match="public host after '@' must not"):
+        parse_gateway_region_targets("southeastasia=host.example.com@")
+
+
+def test_the_probe_actually_uses_the_override() -> None:
+    """The wiring, not the pieces.
+
+    _region_api_base_url can be perfect and the deploy script can carry the
+    right @override, and the defect still exists if configured_targets does not
+    put the two together — which is exactly how it shipped: every regional
+    target inherited settings.api_base_url unconditionally.
+
+    So this asserts the SNI the probe will really present, per region.
+    """
+    targets = {
+        target.name: target
+        for target in configured_targets(
+            Settings(
+                environment="test",
+                sentry_dsn=None,
+                api_base_url="https://api-azure.trustedrouter.com/v1",
+                synthetic_regional_probes_enabled=False,
+                synthetic_gateway_region_targets=(
+                    "uaenorth=quill-enclave-uaenorth.uaenorth.azurecontainer.io,"
+                    "southeastasia=quill-enclave-southeastasia.southeastasia.azurecontainer.io"
+                    "@api-azure-sea.trustedrouter.com"
+                ),
+            )
+        )
+    }
+
+    assert targets["southeastasia"].api_base_url == (
+        "https://api-azure-sea.trustedrouter.com/v1"
+    ), "southeastasia is probed with a certificate name it does not hold"
+    # ...while still DIALLING its own region, or one dead region could hide
+    # behind whatever DNS happens to return for the shared name.
+    assert targets["southeastasia"].connect_host == (
+        "quill-enclave-southeastasia.southeastasia.azurecontainer.io"
+    )
+    # uaenorth has no override and must keep the canonical name.
+    assert targets["uaenorth"].api_base_url == "https://api-azure.trustedrouter.com/v1"
