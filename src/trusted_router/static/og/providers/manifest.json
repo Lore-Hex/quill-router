@@ -73,10 +73,10 @@
   },
   "crusoe": {
     "card_version": 2,
-    "model_count": 14,
+    "model_count": 13,
     "name": "Crusoe",
     "privacy": "Policy documented",
-    "route_count": 28,
+    "route_count": 26,
     "route_mode": "Prepaid + BYOK",
     "slug": "crusoe"
   },
