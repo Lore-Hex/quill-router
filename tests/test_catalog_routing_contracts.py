@@ -693,7 +693,7 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
     ], "provider-scoped AI Studio retirement must preserve healthy routes"
 
 
-def test_anthropic_opus_41_drops_prepaid_but_keeps_byok_until_retirement() -> None:
+def test_anthropic_opus_41_is_never_prepaid_during_retirement_transition() -> None:
     endpoints = [
         endpoint
         for endpoint in endpoints_for_model("anthropic/claude-opus-4.1")
@@ -701,7 +701,13 @@ def test_anthropic_opus_41_drops_prepaid_but_keeps_byok_until_retirement() -> No
     ]
 
     assert not [endpoint for endpoint in endpoints if endpoint.usage_type == "Credits"]
-    assert [endpoint for endpoint in endpoints if endpoint.usage_type == "BYOK"]
+    # Anthropic retired Opus 4.1 on 2026-08-05. A committed snapshot from
+    # before retirement may retain its BYOK route until the next successful
+    # hourly refresh; a fresh provider catalog may remove the route entirely.
+    # Either state is safe, but it must never regain a prepaid operator route.
+    assert not endpoints or [
+        endpoint for endpoint in endpoints if endpoint.usage_type == "BYOK"
+    ]
 
 
 def test_synth_alias_is_cataloged_but_not_silent_auto_route() -> None:
@@ -1671,6 +1677,7 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
         "xiaomi/mimo-v2.5-pro": "mimo-v2.5-pro",
         "xiaomi/mimo-v2.5-pro-ultraspeed": "mimo-v2.5-pro-ultraspeed",
     }
+    xiaomi_credits = {}
     for model_id, upstream in expected.items():
         model = MODELS.get(model_id)
         assert model is not None, f"{model_id} missing from catalog"
@@ -1684,26 +1691,32 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
         ]
         assert credits, f"{model_id} has no xiaomi prepaid endpoint"
         assert {endpoint.upstream_id for endpoint in credits} == {upstream}
+        xiaomi_credits[model_id] = credits[0]
 
     pro = MODELS["xiaomi/mimo-v2.5-pro"]
     # Xiaomi documents this as a 1M context window. Live catalogs use both the
     # binary 1,048,576 value and a rounded 1,050,000 value, so guard the public
     # capability rather than freezing one representation.
     assert 1_000_000 <= pro.context_length <= 1_050_000
-    assert pro.prompt_price_microdollars_per_million_tokens == 456_750
-    assert pro.completion_price_microdollars_per_million_tokens == 913_500
+    pro_xiaomi = xiaomi_credits["xiaomi/mimo-v2.5-pro"]
+    assert pro_xiaomi.prompt_price_microdollars_per_million_tokens == 456_750
+    assert pro_xiaomi.completion_price_microdollars_per_million_tokens == 913_500
+    # The model headline is the cheapest healthy route across every provider,
+    # so a reseller may legitimately undercut Xiaomi's first-party endpoint.
+    assert pro.prompt_price_microdollars_per_million_tokens <= 456_750
+    assert pro.completion_price_microdollars_per_million_tokens <= 913_500
 
     # UltraSpeed is the 1T-param speed-serving tier with its own ¥9/¥18
     # ($1.305/$2.61) cost, marked up by the manifest loader (cost x 1.05,
     # $0.01/M floor). Guard the exact prices so a regen can't silently
     # collapse them onto the regular v2.5-pro numbers.
-    ultraspeed = MODELS["xiaomi/mimo-v2.5-pro-ultraspeed"]
-    assert ultraspeed.prompt_price_microdollars_per_million_tokens == 1_370_250
-    assert ultraspeed.completion_price_microdollars_per_million_tokens == 2_740_500
+    ultraspeed_xiaomi = xiaomi_credits["xiaomi/mimo-v2.5-pro-ultraspeed"]
+    assert ultraspeed_xiaomi.prompt_price_microdollars_per_million_tokens == 1_370_250
+    assert ultraspeed_xiaomi.completion_price_microdollars_per_million_tokens == 2_740_500
     # ...and that it is genuinely a distinct row from regular v2.5-pro.
     assert (
-        ultraspeed.completion_price_microdollars_per_million_tokens
-        != pro.completion_price_microdollars_per_million_tokens
+        ultraspeed_xiaomi.completion_price_microdollars_per_million_tokens
+        != pro_xiaomi.completion_price_microdollars_per_million_tokens
     )
 
 

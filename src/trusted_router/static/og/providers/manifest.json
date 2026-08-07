@@ -10,10 +10,10 @@
   },
   "anthropic": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 11,
     "name": "Anthropic",
     "privacy": "Policy documented",
-    "route_count": 23,
+    "route_count": 22,
     "route_mode": "Prepaid + BYOK",
     "slug": "anthropic"
   },
@@ -82,10 +82,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 50,
+    "model_count": 51,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 99,
+    "route_count": 101,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -127,10 +127,10 @@
   },
   "friendli": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 7,
     "name": "FriendliAI",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 14,
     "route_mode": "Prepaid + BYOK",
     "slug": "friendli"
   },
@@ -370,10 +370,10 @@
   },
   "together": {
     "card_version": 2,
-    "model_count": 18,
+    "model_count": 19,
     "name": "Together",
     "privacy": "Zero retention",
-    "route_count": 36,
+    "route_count": 38,
     "route_mode": "Prepaid + BYOK",
     "slug": "together"
   },

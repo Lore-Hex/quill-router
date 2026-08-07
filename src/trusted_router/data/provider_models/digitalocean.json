@@ -2,7 +2,7 @@
   "_about": "Provider-native DigitalOcean Gradient AI serverless catalog. Availability comes from /v1/models and rates from DigitalOcean's official pricing documentation.",
   "provider": "digitalocean",
   "source": "https://inference.do-ai.run/v1/models",
-  "generated_at": "2026-08-05T12:55:53Z",
+  "generated_at": "2026-08-07T17:18:37Z",
   "price_scale": "microdollars_per_million",
   "model_count": 23,
   "models": [
@@ -45,9 +45,9 @@
       "upstream_id": "deepseek-3.2",
       "context_length": 163840,
       "max_output_tokens": 32768,
-      "input_token_price_per_m": 425000,
-      "output_token_price_per_m": 1360000,
-      "cached_input_token_price_per_m": 150000
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 800000,
+      "cached_input_token_price_per_m": 75000
     },
     {
       "display_name": "DeepSeek V4 Flash",
@@ -67,9 +67,9 @@
       "upstream_id": "deepseek-4-flash",
       "context_length": 1048576,
       "max_output_tokens": 384000,
-      "input_token_price_per_m": 112000,
-      "output_token_price_per_m": 224000,
-      "cached_input_token_price_per_m": 28000
+      "input_token_price_per_m": 84000,
+      "output_token_price_per_m": 168000,
+      "cached_input_token_price_per_m": 17000
     },
     {
       "display_name": "DeepSeek V4 Pro",
@@ -89,9 +89,9 @@
       "upstream_id": "deepseek-v4-pro",
       "context_length": 262144,
       "max_output_tokens": 52429,
-      "input_token_price_per_m": 1392000,
-      "output_token_price_per_m": 2784000,
-      "cached_input_token_price_per_m": 348000
+      "input_token_price_per_m": 870000,
+      "output_token_price_per_m": 1740000,
+      "cached_input_token_price_per_m": 174000
     },
     {
       "display_name": "Gemma 4",
@@ -154,8 +154,8 @@
       "upstream_id": "llama-4-maverick",
       "context_length": 128000,
       "max_output_tokens": 16384,
-      "input_token_price_per_m": 250000,
-      "output_token_price_per_m": 870000
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 696000
     },
     {
       "display_name": "MiniMax M2.5",
@@ -282,8 +282,8 @@
       "upstream_id": "nvidia-nemotron-3-super-120b",
       "context_length": 1000000,
       "max_output_tokens": 32768,
-      "input_token_price_per_m": 210000,
-      "output_token_price_per_m": 455000,
+      "input_token_price_per_m": 165000,
+      "output_token_price_per_m": 358000,
       "cached_input_token_price_per_m": 60000
     },
     {
@@ -389,8 +389,8 @@
       "upstream_id": "qwen3.5-397b-a17b",
       "context_length": 131072,
       "max_output_tokens": 26214,
-      "input_token_price_per_m": 385000,
-      "output_token_price_per_m": 2450000,
+      "input_token_price_per_m": 302000,
+      "output_token_price_per_m": 1925000,
       "cached_input_token_price_per_m": 111000
     },
     {
@@ -436,9 +436,9 @@
       "upstream_id": "mimo-v2.5-pro",
       "context_length": 262144,
       "max_output_tokens": 52429,
-      "input_token_price_per_m": 600000,
-      "output_token_price_per_m": 3000000,
-      "cached_input_token_price_per_m": 160000
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 80000
     },
     {
       "display_name": "GLM 5",
@@ -502,9 +502,9 @@
       "upstream_id": "glm-5.2",
       "context_length": 262144,
       "max_output_tokens": 52429,
-      "input_token_price_per_m": 1050000,
-      "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 210000
+      "input_token_price_per_m": 700000,
+      "output_token_price_per_m": 2200000,
+      "cached_input_token_price_per_m": 120000
     }
   ]
 }

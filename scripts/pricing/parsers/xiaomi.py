@@ -18,8 +18,54 @@ def _section(text: str, title: str) -> str:
     return match.group(1) if match else ""
 
 
-def _overseas_payg_prices(html: str) -> dict[str, dict[str, int]]:
-    """Parse the authoritative USD table from Xiaomi's PAYG page."""
+def _html_overseas_payg_prices(soup: BeautifulSoup) -> dict[str, dict[str, int]]:
+    """Parse the rendered USD table without crossing into the RMB section."""
+    heading = next(
+        (
+            tag
+            for tag in soup.find_all(re.compile(r"^h[1-6]$"))
+            if tag.get_text(" ", strip=True).casefold()
+            == "overseas pricing of the model"
+        ),
+        None,
+    )
+    if heading is None:
+        return {}
+
+    next_section_node = heading.find_next(
+        ["table", "h1", "h2", "h3", "h4", "h5", "h6"]
+    )
+    if next_section_node is None or next_section_node.name != "table":
+        return {}
+    table = next_section_node
+
+    prices: dict[str, dict[str, int]] = {}
+    for row in table.find_all("tr"):
+        cells = row.find_all(["th", "td"])
+        if len(cells) < 4:
+            continue
+        model_match = re.fullmatch(
+            r"mimo-[a-z0-9._-]+",
+            cells[0].get_text(" ", strip=True),
+            flags=re.I,
+        )
+        values = [
+            re.fullmatch(r"\$\s*([0-9.]+)", cell.get_text(" ", strip=True))
+            for cell in cells[1:4]
+        ]
+        if model_match is None or any(value is None for value in values):
+            continue
+        cache, prompt, completion = (value.group(1) for value in values if value)
+        prices[f"xiaomi/{model_match.group(0).casefold()}"] = {
+            "prompt_micro_per_m": _money_to_micro_per_m(prompt),
+            "completion_micro_per_m": _money_to_micro_per_m(completion),
+            "prompt_cached_micro_per_m": _money_to_micro_per_m(cache),
+        }
+    return prices
+
+
+def _markdown_overseas_payg_prices(html: str) -> dict[str, dict[str, int]]:
+    """Parse the authoritative USD table from Markdown source or fixtures."""
     section_match = re.search(
         r"###\s*Overseas Pricing of the Model\s+(.*?)(?=###\s|$)",
         html,
@@ -59,11 +105,13 @@ def _overseas_payg_prices(html: str) -> dict[str, dict[str, int]]:
 
 
 def parse(html: str) -> dict[str, dict[str, int]]:
-    # The current official page publishes a Markdown table. Keep the
-    # card parser below as a compatibility fallback for older captures and
-    # for UltraSpeed if Xiaomi republishes its standalone PAYG card.
-    prices = _overseas_payg_prices(html)
     soup = BeautifulSoup(html, "html.parser")
+    # Xiaomi now serves rendered HTML while older captures expose the source
+    # Markdown. Parse the section boundary in either representation so the
+    # preceding domestic RMB table can never be mistaken for USD pricing.
+    prices = _html_overseas_payg_prices(soup) or _markdown_overseas_payg_prices(html)
+    # Keep the card parser as a compatibility fallback for older captures and
+    # for UltraSpeed if Xiaomi republishes its standalone PAYG card.
     for heading in soup.find_all("h4"):
         title = heading.get_text(" ", strip=True)
         if not re.fullmatch(r"MiMo-[A-Za-z0-9._-]+", title, flags=re.I):

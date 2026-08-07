@@ -3,9 +3,9 @@
   "provider": "alibaba",
   "source": "https://ws-el6e4bpnggpx7g88.eu-central-1.maas.aliyuncs.com/compatible-mode/v1/models",
   "price_source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
-  "generated_at": "2026-08-05T12:55:53Z",
+  "generated_at": "2026-08-07T17:18:37Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 77,
+  "model_count": 79,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -2250,10 +2250,38 @@
       "endpoints": [
         "chat/completions"
       ],
-      "created": 1785721726,
+      "created": 1786098232,
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-08-03"
+    },
+    {
+      "id": "qwen/qwen-image-3.0",
+      "upstream_id": "qwen-image-3.0",
+      "display_name": "Qwen Image 3.0",
+      "title": "qwen-image-3.0",
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "created": 1786007541,
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-08-07"
+    },
+    {
+      "id": "qwen/qwen-image-3.0-pro",
+      "upstream_id": "qwen-image-3.0-pro",
+      "display_name": "Qwen Image 3.0 Pro",
+      "title": "qwen-image-3.0-pro",
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "created": 1786069263,
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-08-07"
     }
   ]
 }
