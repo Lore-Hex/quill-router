@@ -481,6 +481,59 @@ Front Door or any L7 product here** — it would void attestation.
 10,000; at one sample a minute that is seven days of clean data before the number means
 anything. Until then the honest statement is architectural, not measured.
 
+### 4.10 The Let's Encrypt problem is a MISSING CACHE, not a CA problem — and it is one fix away from the failover work
+
+**uaenorth is down as of 2026-08-07 00:00 UTC and cannot recover before 03:46 UTC.** The
+enclave is healthy — Running, 0 restarts, attesting internally — but has no TLS certificate:
+
+```
+enclavetls.acme_get_certificate_failed sni="api-azure.trustedrouter.com"
+  err=429 urn:ietf:params:acme:error:rateLimited: too many certificates (5) already issued
+  for this exact set of identifiers in the last 168h0m0s, retry after 2026-08-07 03:46:03 UTC
+```
+
+**Root cause, one line above it in the same log:**
+
+```
+bootstrap/azure bootstrap: no "tr-cross-cloud-sa-key" entry in the bundle:
+  shared ACME cache and BYOK unwrap are DISABLED
+```
+
+**Azure has no shared ACME cache, so every deploy issues a NEW certificate.** Let's Encrypt
+allows 5 per exact identifier set per 168h. Three rolls in one day exhausted it. This is not
+about buying a certificate and not about Let's Encrypt being unreliable — the deploy is
+spending a scarce resource it should not be touching at all, because a redeploy should
+*reuse* the cert, not mint one.
+
+**One fix, three payoffs.** Seal `tr-cross-cloud-sa-key` into the Azure bundle (the deploy
+already passes `SA_KEY_ENTRY`; bundle version `867e5261…` simply lacks the entry) and set
+`QUILL_ACME_CACHE_GCS_BUCKET`:
+
+1. redeploys stop burning issuances — the rate limit stops being reachable
+2. it is the **prerequisite for §4.9's region failover**: a multi-IP A record only works
+   because every replica can answer the same TLS-ALPN-01 challenge from a shared cache
+3. it is the first real use of the cross-cloud identity federation that has been provisioned
+   and unused
+
+**#56 (no ACME fallback) is still separate and still real** — `QUILL_ACME_DIRECTORY_URL` is
+already an env knob, so a second CA is a config change plus EAB credentials. But note the
+ordering: the cache fix removes the *self-inflicted* rate-limit outage, which is the one that
+has actually happened. #56 covers the LE-outage case, which has not.
+
+**Current uaenorth state, deliberately left as-is:** the new measurement
+`dd260d452768f807…` is deployed and authorized; the bind window is still OPEN with the retired
+`1936719d7398e9ad…`. That is the designed-safe state — `narrow` must not run until `verify`
+proves the workload, and `verify` needs TLS. After 03:46 UTC:
+
+```
+LOCATION=uaenorth RESOURCE_GROUP=tr-tee-dubai \
+  MAA_ENDPOINT=trquilluaen.uaen.attest.azure.net API_HOST=api-azure.trustedrouter.com \
+  ./tools/deploy-azure-aci.sh --apply verify narrow
+```
+
+**Do not redeploy uaenorth again before then** — each attempt burns the next issuance the
+moment the window reopens. southeastasia is unaffected and serving.
+
 **Run `audit` against every region before believing a green dashboard.** It is read-only:
 
 ```
