@@ -24,7 +24,7 @@
     <div class="agent-message-row">
       <div class="agent-message" id="{{ id_prefix }}-agent-message" data-copy-lines>
         <div>Please use TrustedRouter.com using the following key to ask DeepSeek the following question: "What is the capital of France?"</div>
-        <div><code class="agent-message-key">YOUR_TRUSTEDROUTER_API_KEY</code></div>
+        <div><code class="agent-message-key">{{ raw_key }}</code></div>
       </div>
       <button
         class="btn secret-copy-btn"

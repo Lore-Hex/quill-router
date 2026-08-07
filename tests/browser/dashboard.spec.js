@@ -302,7 +302,7 @@ test("first-call activation runs live request and copies Claude Code setup", asy
               <div class="activation-call-error" data-call-error hidden><strong data-call-error-title></strong><p data-call-error-message></p><a data-call-error-action hidden></a></div>
               <div class="activation-call-result" data-call-result hidden><div class="activation-result-head"><div><span class="activation-success-mark">&#10003;</span><div><strong>Production request passed</strong><p>Your key is ready.</p></div></div><code data-result-output></code></div><dl class="activation-result-grid"><div><dt>Model</dt><dd data-result-model></dd></div><div><dt>Provider</dt><dd data-result-provider></dd></div><div><dt>Latency</dt><dd data-result-latency></dd></div><div><dt>Exact cost</dt><dd data-result-cost></dd></div></dl><div data-success-actions></div></div>
             </div></section>
-            <section class="panel activation-setup-panel"><div class="panel-body"><div class="activation-tabs" role="tablist"><button class="activation-tab" role="tab" aria-selected="true" data-setup-tab="setup-agent">Claude Code / Codex</button><button class="activation-tab" role="tab" aria-selected="false" data-setup-tab="setup-python">Python</button></div><div class="activation-code-panel" id="setup-agent" data-setup-panel><div class="activation-code-head"><strong>Paste this whole message</strong><button class="btn" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key">Copy prompt</button></div><pre id="welcome-agent-message" data-copy-lines><span>Please use TrustedRouter.com to ask DeepSeek a question.</span><span>YOUR_TRUSTEDROUTER_API_KEY</span></pre></div><div class="activation-code-panel" id="setup-python" data-setup-panel hidden><pre>Python setup</pre></div></div></section>
+            <section class="panel activation-setup-panel"><div class="panel-body"><div class="activation-tabs" role="tablist"><button class="activation-tab" role="tab" aria-selected="true" data-setup-tab="setup-agent">Claude Code / Codex</button><button class="activation-tab" role="tab" aria-selected="false" data-setup-tab="setup-python">Python</button></div><div class="activation-code-panel" id="setup-agent" data-setup-panel><div class="activation-code-head"><strong>Paste this whole message</strong><button class="btn" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key">Copy prompt</button></div><pre id="welcome-agent-message" data-copy-lines><span>Please use TrustedRouter.com to ask DeepSeek a question.</span><span>${apiKey}</span></pre></div><div class="activation-code-panel" id="setup-python" data-setup-panel hidden><pre>Python setup</pre></div></div></section>
           </div>
         </div></main></body></html>`,
     });
@@ -313,7 +313,7 @@ test("first-call activation runs live request and copies Claude Code setup", asy
     (secret) => document.body.innerHTML.split(secret).length - 1,
     apiKey,
   );
-  expect(rawCopies).toBe(1);
+  expect(rawCopies).toBe(2);
 
   await page.getByRole("button", { name: "Run my first API request" }).click();
   await expect(page.getByText("Production request passed")).toBeVisible();
