@@ -155,9 +155,7 @@ def _connect_host_request(
     if not parsed.hostname or not api_host or parsed.hostname.casefold() != api_host.casefold():
         return url, {}, {}
     netloc = target.connect_host if not parsed.port else f"{target.connect_host}:{parsed.port}"
-    request_url = urlunsplit(
-        (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
-    )
+    request_url = urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
     return request_url, {"Host": parsed.netloc}, {"sni_hostname": parsed.hostname}
 
 
@@ -176,18 +174,37 @@ def _gateway_region_targets(
     """
     return [
         SyntheticTarget(
-            name,
-            settings.api_base_url,
-            name,
+            entry.name,
+            _region_api_base_url(settings.api_base_url, entry.public_host),
+            entry.name,
             attested=canonical.attested,
             expected_pcr0=canonical.expected_pcr0,
-            connect_host=connect_host,
+            connect_host=entry.connect_host,
             paid_probes=False,
         )
-        for name, connect_host in parse_gateway_region_targets(
-            settings.synthetic_gateway_region_targets
-        )
+        for entry in parse_gateway_region_targets(settings.synthetic_gateway_region_targets)
     ]
+
+
+def _region_api_base_url(canonical_url: str, public_host: str) -> str:
+    """Swap in a region's own public hostname, keeping scheme/port/path.
+
+    Empty ``public_host`` — the normal case — returns the canonical URL
+    unchanged, so deployments whose replicas all serve one shared name behave
+    exactly as before.
+
+    Azure needs the override because its two regions serve DIFFERENT public
+    names (``api-azure`` / ``api-azure-sea``); the shared ACME cache that would
+    let both hold one certificate is disabled there. Probing southeastasia with
+    the canonical SNI asks it for a certificate it does not have, the handshake
+    fails, and a healthy region is published as DOWN. That false alarm is not a
+    safe failure — it is how a status page stops being believed.
+    """
+    if not public_host:
+        return canonical_url
+    parsed = urlsplit(canonical_url)
+    netloc = public_host if parsed.port is None else f"{public_host}:{parsed.port}"
+    return urlunsplit(parsed._replace(netloc=netloc))
 
 
 def configured_targets(settings: Settings) -> list[SyntheticTarget]:
@@ -597,15 +614,13 @@ async def gateway_latency_phase_probes(
             ]
 
         reused_started = time.perf_counter()
-        second_status, second_headers, second_body, second_ttfb = (
-            await _health_http11_request(
-                reader,
-                stream_writer,
-                host=host,
-                path=path,
-                max_body_bytes=max_body_bytes,
-                timeout_seconds=_remaining_probe_seconds(started, timeout_seconds),
-            )
+        second_status, second_headers, second_body, second_ttfb = await _health_http11_request(
+            reader,
+            stream_writer,
+            host=host,
+            path=path,
+            max_body_bytes=max_body_bytes,
+            timeout_seconds=_remaining_probe_seconds(started, timeout_seconds),
         )
         second_total_ms = _elapsed_ms(reused_started)
         # SERVED, not merely reachable: the reused request must be one the
@@ -2589,9 +2604,7 @@ def _warm_path_served(
     """
     if target.attested:
         content_type = headers.get("content-type", "").casefold()
-        return (
-            status == 200 and content_type.startswith("application/cbor") and bool(body)
-        )
+        return status == 200 and content_type.startswith("application/cbor") and bool(body)
     return status == 200 and body == b'{"status":"ok"}'
 
 
