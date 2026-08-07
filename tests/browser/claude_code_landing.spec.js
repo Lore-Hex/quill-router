@@ -3,13 +3,14 @@ const { expect, test } = require("@playwright/test");
 async function layoutReport(page) {
   return page.evaluate(() => {
     const hero = document.querySelector(".cc-hero").getBoundingClientRect();
-    const proof = document.querySelector(".cc-proof-band").getBoundingClientRect();
+    const flow = document.querySelector(".cc-hero-flow").getBoundingClientRect();
     const primaryButtons = Array.from(document.querySelectorAll(".cc-primary-cta"));
     const prompt = document.querySelector(".cc-prompt-tool").getBoundingClientRect();
     return {
       overflow: document.documentElement.scrollWidth - window.innerWidth,
       heroBottom: hero.bottom,
-      proofTop: proof.top,
+      flowTop: flow.top,
+      flowBottom: flow.bottom,
       viewportHeight: window.innerHeight,
       promptRight: prompt.right,
       buttonsInsideViewport: primaryButtons.every((button) => {
@@ -24,11 +25,14 @@ test("Claude Code landing turns the ten-second promise into the real signup flow
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto("/claude-code");
+  await page.goto("/vibe-coders");
 
   await expect(
-    page.getByRole("heading", { name: "Cut your Claude Code token bill in 10 seconds." }),
+    page.getByRole("heading", { name: "Cut your coding agent bill in 10 seconds." }),
   ).toBeVisible();
+  await expect(page.getByText("The 10-second flow")).toBeVisible();
+  await expect(page.getByText("Copy one short message", { exact: true })).toBeVisible();
+  await expect(page.getByText("Paste into a new agent chat", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Every model. In seconds." }),
   ).toBeVisible();
@@ -46,7 +50,8 @@ test("Claude Code landing turns the ten-second promise into the real signup flow
 
   const desktop = await layoutReport(page);
   expect(desktop.overflow).toBeLessThanOrEqual(2);
-  expect(desktop.proofTop).toBeLessThan(desktop.viewportHeight);
+  expect(desktop.flowTop).toBeLessThan(desktop.viewportHeight);
+  expect(desktop.flowBottom).toBeLessThanOrEqual(desktop.heroBottom + 1);
   expect(desktop.buttonsInsideViewport).toBeTruthy();
 
   await page.locator(".cc-primary-cta").first().click();
@@ -60,11 +65,12 @@ test("Claude Code landing remains readable on phone and narrow tablet", async ({
     { width: 390, height: 844 },
   ]) {
     await page.setViewportSize(viewport);
-    await page.goto("/claude-code");
+    await page.goto("/vibe-coders");
 
     const report = await layoutReport(page);
     expect(report.overflow).toBeLessThanOrEqual(2);
-    expect(report.proofTop).toBeLessThan(report.viewportHeight);
+    expect(report.flowTop).toBeLessThan(report.viewportHeight);
+    expect(report.flowBottom).toBeLessThanOrEqual(report.heroBottom + 1);
     expect(report.promptRight).toBeLessThanOrEqual(viewport.width + 1);
     expect(report.buttonsInsideViewport).toBeTruthy();
     await expect(page.locator(".cc-prompt-tool")).toBeVisible();
