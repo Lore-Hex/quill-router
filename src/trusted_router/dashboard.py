@@ -1278,34 +1278,34 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         og_card="claude-code.png",
         title="Cut Your Claude Code Token Bill in 10 Seconds",
         description=(
-            "Paste one complete message into a new Claude Code, Codex, or agent chat. "
-            "Your agent calls a lower-cost model and streams the answer back without "
-            "changing its model, settings, tools, or workflow."
+            "Just paste one short message into a new Claude Code, Codex, or agent chat. "
+            "Your agent calls a lower-cost model and streams the answer back while "
+            "its current model, settings, tools, and workflow stay exactly as they are."
         ),
         faq_items=(
             (
-                "Does this replace Claude Code?",
-                "No. Claude Code, Codex, or your preferred agent remains the host. The pasted message asks it to make one streaming API call through TrustedRouter. It does not replace the host model or change the agent's settings.",
+                "What stays in control?",
+                "Claude Code, Codex, or your preferred agent remains the host with its current model, tools, permissions, project context, and settings. The pasted message asks it to make one streaming API call through TrustedRouter.",
             ),
             (
-                "Does the change affect my current session?",
-                "There is no configuration change. Open a new agent chat, paste the message, and watch the TrustedRouter response stream into that chat. No files are edited and no restart is required.",
+                "What happens in my agent session?",
+                "Open a new agent chat, paste the message, and watch the TrustedRouter response stream into that chat. Your active model, files, settings, and workflow stay exactly as they are.",
             ),
             (
                 "Which model does the quick setup use?",
                 "The first message asks DeepSeek a tiny question so you can see the flow work. For later requests, tell the agent to call trustedrouter/cheap, trustedrouter/fast, trustedrouter/zdr, or any named model in the catalog.",
             ),
             (
-                "Will every task cost less?",
+                "How should I think about savings?",
                 "Savings depend on the model, prompt, output length, caching, and workload. The point is choice: routine work can use a cheaper model while difficult work can still use a frontier model. TrustedRouter records exact token and cost metadata for each request.",
             ),
             (
-                "Does TrustedRouter save my prompts or outputs?",
-                f"{CONTENT_HANDLING_CLAIM} Operational metadata includes model, provider, token counts, latency, cost, status, and region.",
+                "How is content handled?",
+                "TrustedRouter handles prompt and output content inside the attested gateway's volatile memory for the duration of each request. Operational metadata includes model, provider, token counts, latency, cost, status, and region.",
             ),
             (
-                "Can I switch back?",
-                "There is nothing to switch back. Stop asking the agent to make TrustedRouter calls, close the chat, or revoke the one-time key. The agent's original model and configuration were never changed.",
+                "How can I choose when to use this flow?",
+                "Start a new agent chat whenever another model fits the task. The one-time key can be revoked at any time, and the agent's original model and configuration stay constant throughout.",
             ),
         ),
     ),

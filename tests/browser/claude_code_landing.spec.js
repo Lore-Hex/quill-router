@@ -32,8 +32,8 @@ test("Claude Code landing turns the ten-second promise into the real signup flow
   await expect(
     page.getByRole("heading", { name: "Every model. In seconds." }),
   ).toBeVisible();
-  await expect(page.getByText("No installation. No settings changed.")).toBeVisible();
-  await expect(page.locator("body")).toContainText("stream=true");
+  await expect(page.getByText("Same agent. Same settings. Extra models.")).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("stream=true");
   await expect(page.locator("body")).not.toContainText("settings.local.json");
   await expect(page.locator("body")).not.toContainText("restart Claude Code");
   await expect(page.getByText("your complete key is inserted", { exact: true })).toBeVisible();
@@ -68,6 +68,6 @@ test("Claude Code landing remains readable on phone and narrow tablet", async ({
     expect(report.promptRight).toBeLessThanOrEqual(viewport.width + 1);
     expect(report.buttonsInsideViewport).toBeTruthy();
     await expect(page.locator(".cc-prompt-tool")).toBeVisible();
-    await expect(page.getByText("No placeholders. No scavenger hunt.")).toBeVisible();
+    await expect(page.getByText("Just paste one short message.")).toBeVisible();
   }
 });

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from fastapi.testclient import TestClient
 
 from trusted_router.storage import STORE
@@ -12,17 +14,22 @@ def test_claude_code_landing_is_a_single_action_funnel(client: TestClient) -> No
     assert "Cut your Claude Code token bill in 10 seconds." in response.text
     assert response.text.count("Create my paste-ready key") == 3
     assert "Your agent makes the call." in response.text
-    assert "No placeholders. No scavenger hunt." in response.text
+    assert "Just paste one short message." in response.text
     assert "your complete key is inserted" in response.text
-    assert "No installation. No settings changed." in response.text
-    assert "stream=true" in response.text
+    assert "Same agent. Same settings. Extra models." in response.text
+    assert "stream=true" not in response.text
     assert "trustedrouter/cheap" in response.text
     assert "Every model. In seconds." in response.text
-    assert "Will every task cost less?" in response.text
+    assert "How should I think about savings?" in response.text
     assert 'rel="canonical" href="https://trustedrouter.com/claude-code"' in response.text
     assert 'property="og:image" content="https://trustedrouter.com/static/og/claude-code.png"' in response.text
     assert "YOUR_TRUSTEDROUTER_API_KEY" not in response.text
     assert "sk-tr-v1-..." not in response.text
+    assert re.search(
+        r"\b(?:no|not|never|without|nothing|don't|doesn't|cannot|can't)\b",
+        response.text,
+        re.IGNORECASE,
+    ) is None
 
 
 def test_claude_code_landing_is_indexed_and_vibe_alias_is_canonical(
@@ -57,10 +64,11 @@ def test_api_key_reveal_builds_a_streaming_agent_chat_message_without_reconfigur
 
     assert response.status_code == 200
     assert "new Claude Code, Codex, or other agent chat" in response.text
-    assert "Please use TrustedRouter.com using the following key to ask DeepSeek" in response.text
-    assert "streaming enabled (stream=true)" in response.text
-    assert "Show each text delta in this chat as it arrives" in response.text
-    assert "Do not change this agent's model, provider, settings, or project files" in response.text
+    assert "Use TrustedRouter with the key below to ask DeepSeek" in response.text
+    assert "stream the answer into this chat as it arrives" in response.text
+    assert "Keep this agent's model, provider, settings, and project files exactly as they are" in response.text
+    assert "Use it in memory for this request, then discard it" in response.text
+    assert "stream=true" not in response.text
     assert "ANTHROPIC_BASE_URL" not in response.text
     assert ".claude/settings.local.json" not in response.text
     assert "restart Claude Code" not in response.text
