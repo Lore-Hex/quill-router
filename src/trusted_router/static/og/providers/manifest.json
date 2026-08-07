@@ -262,10 +262,10 @@
   },
   "nebius": {
     "card_version": 2,
-    "model_count": 28,
+    "model_count": 29,
     "name": "Nebius Token Factory",
     "privacy": "Zero retention",
-    "route_count": 54,
+    "route_count": 56,
     "route_mode": "Prepaid + BYOK",
     "slug": "nebius"
   },
