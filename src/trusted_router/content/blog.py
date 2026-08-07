@@ -151,6 +151,30 @@ when you call. The point of building it this way is that when your favorite prov
 or your gateway has a bad day, or an entire cloud has a bad day, the thing in front of them is still
 answering.</p>
 
+<p>The failure everybody forgets is the domain name. You can run three clouds perfectly and still
+go dark because one DNS zone stopped answering, or a registrar locked a name, or a resolver
+somewhere is handing out a stale record. It sits above the entire architecture, it is a single point
+of failure, and buying more servers does nothing about it. So we run three domains that are exact
+aliases of each other: <span class="mono">trustedrouter.com</span>,
+<span class="mono">allyrouter.com</span> and <span class="mono">uptimerouter.com</span>. Same API,
+same keys, same attestation, same enclaves behind them. They are served by different DNS providers —
+trustedrouter.com out of Google Cloud DNS, the other two out of Route 53 — so a provider-level DNS
+failure takes one name offline and leaves the other two answering.</p>
+
+<p>Three names only help if the thing calling us knows to try the second one, so our SDKs do it for
+you. We ship them in six languages — Python, TypeScript, Go, Rust, Java and Swift — and they fall
+back from one router domain to the next on their own. Your code keeps calling the same method. The
+SDK moves to <span class="mono">allyrouter.com</span> when <span class="mono">trustedrouter.com</span>
+stops answering, and the request lands on the same attested enclaves it would have hit anyway,
+because the names are aliases rather than separate deployments.</p>
+
+<p>It is a router in front of the router. We already route your request across model providers so
+that one provider having a bad day is somebody else's problem; the SDK routes across our own entry
+points so that we having a bad day is also somebody else's problem. The AI infrastructure layer has
+been held to a pretty low bar on this. Gateways go down, and everything behind them goes down with
+them, and the answer has usually been a status page and an apology. We would rather you never find
+out.</p>
+
 <h2>The caveat</h2>
 
 <p>Five nines is a measurement, and we have not measured it yet. Nobody can claim five nines from an
