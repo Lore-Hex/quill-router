@@ -364,7 +364,8 @@
   }
 
   .cc-hero-inner {
-    padding: 44px 20px 34px;
+    padding: 36px 20px 32px;
+    justify-content: flex-start;
   }
 
   .cc-hero-copy {
@@ -418,7 +419,7 @@
 
 @media (max-width: 520px) {
   .cc-hero {
-    min-height: 700px;
+    min-height: 650px;
     background-image: none;
   }
 
