@@ -316,6 +316,63 @@ def test_console_pages_all_redirect_unauthenticated_to_signin(client: httpx.Clie
         assert location in {"/?reason=signin", "/console/api-keys"}, f"{path}: location={location}"
 
 
+def test_stripe_webhook_rejects_invalid_signature(client: httpx.Client) -> None:
+    """A garbage Stripe-Signature must 400. If this ever returns 200 the
+    endpoint has stopped verifying signatures (e.g. the webhook secret
+    went empty in the deploy env) and anyone can forge credit grants."""
+    response = client.post(
+        "/v1/internal/stripe/webhook",
+        content=b'{"id":"evt_smoke_bad_sig","object":"event","type":"trustedrouter.smoke"}',
+        headers={
+            "Content-Type": "application/json",
+            "Stripe-Signature": "t=1,v1=deadbeef",
+        },
+    )
+    assert response.status_code == 400, response.text
+
+
+def test_stripe_webhook_accepts_validly_signed_event(client: httpx.Client) -> None:
+    """A correctly signed no-op event must 200. This is the drift guard
+    for the 2026-06-07 outage: a stale signing secret was uploaded to
+    Secret Manager, every real Stripe delivery 400'd for three days, and
+    a customer's $100 purchase sat uncredited until manual replay. The
+    event type below matches no handler branch, so the endpoint just
+    verifies the signature and returns {"ignored": true} — no state is
+    touched. The payload must carry "object":"event" because Stripe's
+    construct_event builds a stripe.Event and rejects shapes that lack
+    it (a bare {id,type} 400s regardless of signature). Requires
+    TR_STRIPE_WEBHOOK_SECRET in the env (the GHA workflow injects it
+    from repo secrets); skipped when absent so local runs without prod
+    credentials still pass."""
+    secret = os.environ.get("TR_STRIPE_WEBHOOK_SECRET", "")
+    if not secret:
+        pytest.skip("TR_STRIPE_WEBHOOK_SECRET not set")
+    import hashlib
+    import hmac
+    import time
+
+    payload = b'{"id":"evt_smoke_sig_check","object":"event","type":"trustedrouter.smoke"}'
+    timestamp = int(time.time())
+    signature = hmac.new(
+        secret.encode(), f"{timestamp}.".encode() + payload, hashlib.sha256
+    ).hexdigest()
+    response = client.post(
+        "/v1/internal/stripe/webhook",
+        content=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Stripe-Signature": f"t={timestamp},v1={signature}",
+        },
+    )
+    assert response.status_code == 200, (
+        f"signed webhook rejected ({response.status_code}): the deployed "
+        f"TR_STRIPE_WEBHOOK_SECRET no longer matches the live Stripe "
+        f"endpoint's signing secret. Real deliveries are failing too — "
+        f"customer payments are NOT being credited. {response.text[:200]}"
+    )
+    assert response.json()["data"]["event_id"] == "evt_smoke_sig_check"
+
+
 def test_security_headers_include_hsts(client: httpx.Client) -> None:
     """HSTS is the second line of defense after the LB's HTTP→HTTPS
     redirect. If a future deploy strips the middleware, browsers will
