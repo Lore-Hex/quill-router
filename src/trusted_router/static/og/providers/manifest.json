@@ -73,19 +73,19 @@
   },
   "crusoe": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 14,
     "name": "Crusoe",
     "privacy": "Policy documented",
-    "route_count": 26,
+    "route_count": 28,
     "route_mode": "Prepaid + BYOK",
     "slug": "crusoe"
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 51,
+    "model_count": 52,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 101,
+    "route_count": 103,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
