@@ -24910,9 +24910,9 @@
           "tr_provider_slug": "digitalocean",
           "context_length": 1048576,
           "pricing": {
-            "prompt": "0.0000007",
-            "completion": "0.0000022",
-            "input_cache_read": "0.00000012"
+            "prompt": "0.0000014",
+            "completion": "0.0000044",
+            "input_cache_read": "0.00000021"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],

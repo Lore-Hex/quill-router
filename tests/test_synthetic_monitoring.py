@@ -2630,8 +2630,11 @@ def test_synthetic_deploy_targets_public_api_domain() -> None:
     assert '"TR_SYNTHETIC_THROUGHPUT_ONLY=true"' in body
     assert '"TR_SYNTHETIC_THROUGHPUT_ONLY=false"' in body
     assert '"TR_SYNTHETIC_THROUGHPUT_ENABLED=false"' in body
-    assert 'scheduler_name="${job_name}-every-five-minutes"' in body
-    assert 'legacy_scheduler_name="${job_name}-every-minute"' in body
+    assert 'scheduler_name="${job_name}-every-three-minutes"' in body
+    assert '"${job_name}-every-minute"' in body
+    assert '"${job_name}-every-five-minutes"' in body
+    assert '"TR_SYNTHETIC_ROTATION_PER_PASS=2"' in body
+    assert '"*/3 * * * *"' in body
     assert '"*/5 * * * *"' in body
     assert 'throughput_scheduler_name="${throughput_job_name}-every-five-minutes"' in body
     assert '"TR_SYNTHETIC_THROUGHPUT_INTERVAL_SECONDS=300"' in body
