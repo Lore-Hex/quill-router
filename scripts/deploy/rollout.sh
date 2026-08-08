@@ -309,7 +309,7 @@ fi
 
 ENV_VARS=(
   "TR_ENVIRONMENT=production"
-  "TR_RELEASE=$(git rev-parse --short HEAD 2>/dev/null || echo local)"
+  "TR_RELEASE=${TR_DEPLOY_RELEASE_ID:-$(git rev-parse --short HEAD 2>/dev/null || echo local)}"
   "TR_ENABLE_LIVE_PROVIDERS=false"
   "TR_API_BASE_URL=https://api.trustedrouter.com/v1"
   "TR_TRUSTED_DOMAIN=trustedrouter.com"

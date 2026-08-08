@@ -82,6 +82,7 @@ def test_rollout_preserves_dual_read_mode_and_uses_distinct_reader_secret() -> N
 
 def test_cutover_requires_soak_logs_queue_replica_and_positive_parity() -> None:
     script = (ROOT / "scripts/deploy/clickhouse_analytics_cutover.sh").read_text()
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
     assert "604800" in script
     assert "analytics_dual_read_mismatch" in script
     assert "tr_operational_analytics_outbox" in script
@@ -95,6 +96,14 @@ def test_cutover_requires_soak_logs_queue_replica_and_positive_parity() -> None:
     assert "refusing to deploy with the read-only operations identity" in script
     assert "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE" in script
     assert "TR_ANALYTICS_READ_MODE=clickhouse" in script
+    assert 'region_image="$(read_image "$region")"' in script
+    assert "latestCreatedRevisionName == $active[0]" in script
+    assert "latestReadyRevisionName == $active[0]" in script
+    assert "value(status.imageDigest)" in script
+    assert "does not match the live release selected for cutover" in script
+    assert 'IMAGE="$live_image"' in script
+    assert 'TR_DEPLOY_RELEASE_ID="$live_release"' in script
+    assert "TR_DEPLOY_RELEASE_ID:-" in rollout
 
 
 def test_operational_parity_worker_has_a_bounded_runtime() -> None:
