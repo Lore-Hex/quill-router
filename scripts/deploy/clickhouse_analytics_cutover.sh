@@ -12,6 +12,7 @@ ZONES=(us-central1-a us-central1-b us-central1-c)
 MIN_SOAK_SECONDS="${TR_ANALYTICS_MIN_SOAK_SECONDS:-604800}"
 MAX_OUTBOX_ROWS="${TR_ANALYTICS_MAX_OUTBOX_ROWS:-1000}"
 MAX_OUTBOX_AGE_SECONDS="${TR_ANALYTICS_MAX_OUTBOX_AGE_SECONDS:-60}"
+DEPLOY_CREDENTIAL_FILE="${TR_ANALYTICS_DEPLOY_CREDENTIAL_FILE:-}"
 APPLY=0
 
 if [ "${1:-}" = "--apply" ]; then
@@ -119,6 +120,34 @@ if [ "$APPLY" -eq 0 ]; then
   log "gate passed: would deploy ClickHouse-primary reads to every region"
   exit 0
 fi
+
+if [ -z "$DEPLOY_CREDENTIAL_FILE" ] || [ ! -r "$DEPLOY_CREDENTIAL_FILE" ]; then
+  echo "TR_ANALYTICS_DEPLOY_CREDENTIAL_FILE must name a readable deployment credential" >&2
+  exit 1
+fi
+deploy_principal="$(python3 - "$DEPLOY_CREDENTIAL_FILE" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+try:
+    payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except (OSError, ValueError):
+    print("")
+else:
+    print(payload.get("client_email", ""))
+PY
+)"
+if [ -z "$deploy_principal" ]; then
+  echo "deployment credential does not identify a service-account principal" >&2
+  exit 1
+fi
+if [[ "$deploy_principal" == tr-ops-local@* ]]; then
+  echo "refusing to deploy with the read-only operations identity" >&2
+  exit 1
+fi
+export CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE="$DEPLOY_CREDENTIAL_FILE"
+log "all read-only gates passed; switching rollout identity to ${deploy_principal}"
 
 TR_ANALYTICS_READ_MODE=clickhouse \
 TR_ANALYTICS_DUAL_READ_STARTED_AT="$started_at" \
