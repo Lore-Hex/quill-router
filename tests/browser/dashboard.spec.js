@@ -181,8 +181,7 @@ test("new API key quickstart stays inside its reveal panel", async ({ page }) =>
                           <h3>Paste this short message into a Claude Code, Codex, or your favorite agent chat.</h3>
                           <div class="agent-message-row">
                             <div class="agent-message" id="layout-agent-message" data-copy-lines>
-                            <span class="agent-prompt-line">Use TrustedRouter with the key below to ask DeepSeek a question.</span>
-                            <span class="agent-prompt-line">Call https://api.trustedrouter.com/v1 and stream the answer into this chat as it arrives.</span>
+                            <span class="agent-prompt-line">Use TrustedRouter.com with the key below to ask DeepSeek: "What is the capital of France?" and stream the answer into this chat as it arrives.</span>
                             <span class="agent-prompt-line">TrustedRouter API key: sk-tr-v1-layout-regression-key</span>
                             </div>
                             <button class="btn secret-copy-btn" type="button" data-copy-secret="layout-agent-message" aria-label="Copy complete agent message">Copy</button>
@@ -310,7 +309,7 @@ test("first-call activation runs live request and copies agent chat prompt", asy
               <div class="activation-call-error" data-call-error hidden><strong data-call-error-title></strong><p data-call-error-message></p><a data-call-error-action hidden></a></div>
               <div class="activation-call-result" data-call-result hidden><div class="activation-result-head"><div><span class="activation-success-mark">&#10003;</span><div><strong>Production request passed</strong><p>Your key is ready.</p></div></div><code data-result-output></code></div><dl class="activation-result-grid"><div><dt>Model</dt><dd data-result-model></dd></div><div><dt>Provider</dt><dd data-result-provider></dd></div><div><dt>Latency</dt><dd data-result-latency></dd></div><div><dt>Exact cost</dt><dd data-result-cost></dd></div></dl><div data-success-actions></div></div>
             </div></section>
-            <section class="panel activation-setup-panel"><div class="panel-body"><div class="activation-tabs" role="tablist"><button class="activation-tab" role="tab" aria-selected="true" data-setup-tab="setup-agent">Claude Code / Codex / agent</button><button class="activation-tab" role="tab" aria-selected="false" data-setup-tab="setup-python">Python</button></div><div class="activation-code-panel" id="setup-agent" data-setup-panel><div class="activation-code-head"><strong>Paste this short message into a Claude Code, Codex, or your favorite agent chat.</strong><button class="btn" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key">Copy message</button></div><pre id="welcome-agent-message" data-copy-lines><span>Use TrustedRouter with the key below to ask DeepSeek a question.</span><span>Call https://api.trustedrouter.com/v1 and stream the answer into this chat as it arrives.</span><span>TrustedRouter API key: ${apiKey}</span></pre></div><div class="activation-code-panel" id="setup-python" data-setup-panel hidden><pre>Python setup</pre></div></div></section>
+            <section class="panel activation-setup-panel"><div class="panel-body"><div class="activation-tabs" role="tablist"><button class="activation-tab" role="tab" aria-selected="true" data-setup-tab="setup-agent">Claude Code / Codex / agent</button><button class="activation-tab" role="tab" aria-selected="false" data-setup-tab="setup-python">Python</button></div><div class="activation-code-panel" id="setup-agent" data-setup-panel><div class="activation-code-head"><strong>Paste this short message into a Claude Code, Codex, or your favorite agent chat.</strong><button class="btn" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key">Copy message</button></div><pre id="welcome-agent-message" data-copy-lines><span>Use TrustedRouter.com with the key below to ask DeepSeek: "What is the capital of France?" and stream the answer into this chat as it arrives.</span><span>TrustedRouter API key: ${apiKey}</span></pre></div><div class="activation-code-panel" id="setup-python" data-setup-panel hidden><pre>Python setup</pre></div></div></section>
           </div>
         </div></main></body></html>`,
     });
@@ -334,7 +333,7 @@ test("first-call activation runs live request and copies agent chat prompt", asy
 
   await page.getByRole("button", { name: "Copy message" }).click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(
-    `Use TrustedRouter with the key below to ask DeepSeek a question.\n\nCall https://api.trustedrouter.com/v1 and stream the answer into this chat as it arrives.\n\nTrustedRouter API key: ${apiKey}`,
+    `Use TrustedRouter.com with the key below to ask DeepSeek: "What is the capital of France?" and stream the answer into this chat as it arrives.\n\nTrustedRouter API key: ${apiKey}`,
   );
   await page.getByRole("tab", { name: "Python" }).click();
   await expect(page.locator("#setup-python")).toBeVisible();
