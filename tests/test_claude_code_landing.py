@@ -70,7 +70,12 @@ def test_api_key_reveal_builds_a_streaming_agent_chat_message_without_reconfigur
         "Paste this short message into a Claude Code, Codex, or your favorite agent chat."
         in response.text
     )
-    assert "Use TrustedRouter with the key below to ask DeepSeek" in response.text
+    assert (
+        'Use TrustedRouter.com with the key below to ask DeepSeek: "What is the capital '
+        'of France?" and stream the answer into this chat as it arrives.'
+        in response.text
+    )
+    assert "Call https://api.trustedrouter.com/v1" not in response.text
     assert "stream the answer into this chat as it arrives" in response.text
     assert "Keep this agent's model" not in response.text
     assert "Use it in memory for this request" not in response.text

@@ -1,6 +1,5 @@
 {% macro agent_chat_prompt(raw_key) -%}
-<span class="agent-prompt-line">Use TrustedRouter with the key below to ask DeepSeek: "What is the capital of France?"</span>
-<span class="agent-prompt-line">Call https://api.trustedrouter.com/v1 and stream the answer into this chat as it arrives.</span>
+<span class="agent-prompt-line">Use TrustedRouter.com with the key below to ask DeepSeek: "What is the capital of France?" and stream the answer into this chat as it arrives.</span>
 <span class="agent-prompt-line">TrustedRouter API key: {{ raw_key }}</span>
 {%- endmacro %}
 
