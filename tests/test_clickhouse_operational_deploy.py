@@ -85,8 +85,15 @@ def test_cutover_requires_soak_logs_queue_replica_and_positive_parity() -> None:
     assert "604800" in script
     assert "analytics_dual_read_mismatch" in script
     assert "tr_operational_analytics_outbox" in script
+    assert "TR_ANALYTICS_MAX_OUTBOX_ROWS" in script
+    assert "TR_ANALYTICS_MAX_OUTBOX_AGE_SECONDS" in script
+    assert "oldest_age_seconds" in script
     assert "system.replicas" in script
     assert "operational-parity.jsonl" in script
+    assert "verify_operational_parity_history.py" in script
+    assert "TR_ANALYTICS_DEPLOY_CREDENTIAL_FILE" in script
+    assert "refusing to deploy with the read-only operations identity" in script
+    assert "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE" in script
     assert "TR_ANALYTICS_READ_MODE=clickhouse" in script
 
 

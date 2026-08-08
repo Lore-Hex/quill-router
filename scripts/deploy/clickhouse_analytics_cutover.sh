@@ -10,6 +10,9 @@ source "${SCRIPT_DIR}/_lib.sh"
 NAMES=(tr-clickhouse-1 tr-clickhouse-2 tr-clickhouse-3)
 ZONES=(us-central1-a us-central1-b us-central1-c)
 MIN_SOAK_SECONDS="${TR_ANALYTICS_MIN_SOAK_SECONDS:-604800}"
+MAX_OUTBOX_ROWS="${TR_ANALYTICS_MAX_OUTBOX_ROWS:-1000}"
+MAX_OUTBOX_AGE_SECONDS="${TR_ANALYTICS_MAX_OUTBOX_AGE_SECONDS:-60}"
+DEPLOY_CREDENTIAL_FILE="${TR_ANALYTICS_DEPLOY_CREDENTIAL_FILE:-}"
 APPLY=0
 
 if [ "${1:-}" = "--apply" ]; then
@@ -70,49 +73,35 @@ parity_history="$(gc compute ssh tr-clickhouse-1 \
 parity_file="$(mktemp "${TMPDIR:-/tmp}/tr-operational-parity.XXXXXX.jsonl")"
 trap 'rm -f "$parity_file"' EXIT
 printf '%s\n' "$parity_history" >"$parity_file"
-python3 - "$started_at" "$MIN_SOAK_SECONDS" "$parity_file" <<'PY'
-import datetime as dt
-import json
-import math
-from pathlib import Path
-import sys
-
-started = dt.datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00"))
-minimum = int(sys.argv[2])
-now = dt.datetime.now(dt.UTC)
-rows = []
-for line in Path(sys.argv[3]).read_text().splitlines():
-    try:
-        row = json.loads(line)
-        checked = dt.datetime.fromisoformat(row["checked_at"].replace("Z", "+00:00"))
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-        continue
-    if checked >= started:
-        rows.append((checked, row))
-required = max(1, math.floor(minimum / 3600))
-if len(rows) < required:
-    raise SystemExit(f"only {len(rows)} parity samples; require at least {required}")
-if now - max(checked for checked, _ in rows) > dt.timedelta(hours=1):
-    raise SystemExit("latest operational parity sample is stale")
-for _, row in rows:
-    if not row.get("ok"):
-        raise SystemExit("operational parity history contains a failed check")
-for surface in ("benchmark", "activity", "synthetic", "rollup"):
-    if not any(row.get("surfaces", {}).get(surface, {}).get("sampled", 0) > 0 for _, row in rows):
-        raise SystemExit(f"no positive parity evidence for {surface}")
-PY
+python3 "${SCRIPT_DIR}/verify_operational_parity_history.py" \
+  "$parity_file" \
+  --started-at "$started_at" \
+  --minimum-seconds "$MIN_SOAK_SECONDS"
 unset parity_history
 rm -f "$parity_file"
 trap - EXIT
 
-outbox_count="$(gc spanner databases execute-sql "$SPANNER_DATABASE_ID" \
+outbox_status="$(gc spanner databases execute-sql "$SPANNER_DATABASE_ID" \
   --instance="$SPANNER_INSTANCE_ID" \
-  --sql='SELECT COUNT(*) FROM tr_operational_analytics_outbox' \
+  --sql='SELECT COUNT(*) AS row_count,
+                COALESCE(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MIN(commit_ts), SECOND), 0)
+                  AS oldest_age_seconds
+         FROM tr_operational_analytics_outbox' \
   --format='value(rows[0])')"
-if [ "${outbox_count:-0}" != "0" ]; then
-  echo "operational analytics outbox is not drained: ${outbox_count} rows" >&2
+IFS=';' read -r outbox_count outbox_age_seconds <<<"$outbox_status"
+if ! [[ "${outbox_count:-}" =~ ^[0-9]+$ && "${outbox_age_seconds:-}" =~ ^[0-9]+$ ]]; then
+  echo "operational analytics outbox returned invalid status: ${outbox_status}" >&2
   exit 1
 fi
+if [ "$outbox_count" -gt "$MAX_OUTBOX_ROWS" ]; then
+  echo "operational analytics outbox is too deep: ${outbox_count} rows" >&2
+  exit 1
+fi
+if [ "$outbox_age_seconds" -gt "$MAX_OUTBOX_AGE_SECONDS" ]; then
+  echo "operational analytics outbox is lagging: oldest row is ${outbox_age_seconds}s" >&2
+  exit 1
+fi
+log "operational analytics outbox healthy: ${outbox_count} rows, oldest ${outbox_age_seconds}s"
 
 for index in 0 1 2; do
   health="$(gc compute ssh "${NAMES[$index]}" \
@@ -131,6 +120,34 @@ if [ "$APPLY" -eq 0 ]; then
   log "gate passed: would deploy ClickHouse-primary reads to every region"
   exit 0
 fi
+
+if [ -z "$DEPLOY_CREDENTIAL_FILE" ] || [ ! -r "$DEPLOY_CREDENTIAL_FILE" ]; then
+  echo "TR_ANALYTICS_DEPLOY_CREDENTIAL_FILE must name a readable deployment credential" >&2
+  exit 1
+fi
+deploy_principal="$(python3 - "$DEPLOY_CREDENTIAL_FILE" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+try:
+    payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except (OSError, ValueError):
+    print("")
+else:
+    print(payload.get("client_email", ""))
+PY
+)"
+if [ -z "$deploy_principal" ]; then
+  echo "deployment credential does not identify a service-account principal" >&2
+  exit 1
+fi
+if [[ "$deploy_principal" == tr-ops-local@* ]]; then
+  echo "refusing to deploy with the read-only operations identity" >&2
+  exit 1
+fi
+export CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE="$DEPLOY_CREDENTIAL_FILE"
+log "all read-only gates passed; switching rollout identity to ${deploy_principal}"
 
 TR_ANALYTICS_READ_MODE=clickhouse \
 TR_ANALYTICS_DUAL_READ_STARTED_AT="$started_at" \
