@@ -120,8 +120,11 @@ for monitor_region in "${_REGION_LIST[@]}"; do
   [ -n "$monitor_region" ] || continue
   regional_ingest_base="https://${SERVICE}-${PROJECT_NUMBER}.${monitor_region}.run.app"
   job_name="trusted-router-synthetic-${monitor_region//[^a-zA-Z0-9-]/-}"
-  scheduler_name="${job_name}-every-five-minutes"
-  legacy_scheduler_name="${job_name}-every-minute"
+  scheduler_name="${job_name}-every-three-minutes"
+  legacy_scheduler_names=(
+    "${job_name}-every-minute"
+    "${job_name}-every-five-minutes"
+  )
   env_vars=(
     "${BASE_ENV_VARS[@]}"
     "TR_SYNTHETIC_MONITOR_REGION=${monitor_region}"
@@ -136,7 +139,10 @@ for monitor_region in "${_REGION_LIST[@]}"; do
     # Short random provider/model probes feed uptime and TTFT. Sustained
     # throughput is deliberately disabled in these health jobs.
     "TR_SYNTHETIC_ROTATION_ENABLED=true"
-    "TR_SYNTHETIC_ROTATION_PER_PASS=4"
+    # The three-minute cadence keeps regional health inside the five-minute
+    # freshness contract despite Cloud Run startup latency. Two rotations per
+    # pass keeps provider probe volume close to the old 4-per-5-minute rate.
+    "TR_SYNTHETIC_ROTATION_PER_PASS=2"
     "TR_SYNTHETIC_THROUGHPUT_ENABLED=false"
     "TR_SYNTHETIC_THROUGHPUT_ONLY=false"
   )
@@ -162,16 +168,18 @@ for monitor_region in "${_REGION_LIST[@]}"; do
   # probe latency balloons from ~2s to ~12s, blowing past task-
   # timeout. 2 CPU / 1Gi keeps the concurrent regional probes bounded.
 
-  upsert_scheduler "$scheduler_name" "$job_name" "$monitor_region" "*/5 * * * *"
-  if gc scheduler jobs describe \
-    "$legacy_scheduler_name" \
-    --location "$monitor_region" >/dev/null 2>&1; then
-    log "deleting legacy synthetic scheduler ${legacy_scheduler_name}"
-    gc scheduler jobs delete \
+  upsert_scheduler "$scheduler_name" "$job_name" "$monitor_region" "*/3 * * * *"
+  for legacy_scheduler_name in "${legacy_scheduler_names[@]}"; do
+    if gc scheduler jobs describe \
       "$legacy_scheduler_name" \
-      --location "$monitor_region" \
-      --quiet >/dev/null
-  fi
+      --location "$monitor_region" >/dev/null 2>&1; then
+      log "deleting legacy synthetic scheduler ${legacy_scheduler_name}"
+      gc scheduler jobs delete \
+        "$legacy_scheduler_name" \
+        --location "$monitor_region" \
+        --quiet >/dev/null
+    fi
+  done
   monitor_index=$((monitor_index + 1))
 done
 

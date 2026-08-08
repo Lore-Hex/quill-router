@@ -502,9 +502,9 @@
       "upstream_id": "glm-5.2",
       "context_length": 262144,
       "max_output_tokens": 52429,
-      "input_token_price_per_m": 700000,
-      "output_token_price_per_m": 2200000,
-      "cached_input_token_price_per_m": 120000
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 210000
     }
   ]
 }

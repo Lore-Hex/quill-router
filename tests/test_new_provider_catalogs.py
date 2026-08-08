@@ -15,7 +15,7 @@ from trusted_router.catalog import (
 def test_digitalocean_official_pricing_uses_integer_microdollars() -> None:
     markdown = """
 | DeepSeek | [DeepSeek V4 Flash](https://example.test) | Input/output tokens | $0.112 per 1M tokens<br>$0.224 per 1M tokens<br>Prompt caching $0.028 per 1M tokens |
-| Z.AI | [GLM-5.2](https://example.test) | Input/output tokens | $1.05 per 1M tokens<br>$4.40 per 1M tokens<br>Prompt caching $0.21 per 1M tokens |
+| Z.AI | [GLM-5.2](https://example.test) | Input/output tokens | $1.40 per 1M tokens<br>$4.40 per 1M tokens<br>Prompt caching $0.21 per 1M tokens |
 """
 
     prices = digitalocean._official_prices(markdown)
@@ -26,7 +26,7 @@ def test_digitalocean_official_pricing_uses_integer_microdollars() -> None:
         prompt_cached_micro_per_m=28_000,
     )
     assert prices["z-ai/glm-5.2"] == ModelPrice(
-        prompt_micro_per_m=1_050_000,
+        prompt_micro_per_m=1_400_000,
         completion_micro_per_m=4_400_000,
         prompt_cached_micro_per_m=210_000,
     )
@@ -167,3 +167,6 @@ def test_digitalocean_manifest_preserves_exact_upstream_ids() -> None:
 
     assert rows["deepseek/deepseek-v4-flash"]["upstream_id"] == "deepseek-4-flash"
     assert rows["z-ai/glm-5.2"]["upstream_id"] == "glm-5.2"
+    assert rows["z-ai/glm-5.2"]["input_token_price_per_m"] == 1_400_000
+    assert rows["z-ai/glm-5.2"]["output_token_price_per_m"] == 4_400_000
+    assert rows["z-ai/glm-5.2"]["cached_input_token_price_per_m"] == 210_000

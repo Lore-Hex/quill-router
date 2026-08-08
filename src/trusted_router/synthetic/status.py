@@ -33,10 +33,10 @@ from trusted_router.synthetic.components import (
 from trusted_router.synthetic.rollups import merge_rollups, new_rollup_for_sample
 
 CURRENT_SAMPLE_TTL_SECONDS = 5 * 60
-# Regional monitor jobs run on a five-minute cadence. Treating a sample as
-# failed at exactly one cadence boundary makes normal scheduler jitter look
-# like an outage. One missed/late cycle is degraded; only two missed cycles
-# plus a small scheduling allowance are a silent-probe failure.
+# Regional monitor jobs run every three minutes so normal Cloud Run startup
+# latency remains inside this five-minute freshness contract. A sample that
+# crosses the contract is degraded; only two missed freshness windows plus a
+# small scheduling allowance are a silent-probe failure.
 SILENT_PROBE_TTL_SECONDS = (2 * CURRENT_SAMPLE_TTL_SECONDS) + 60
 IMAGE_GENERATION_SAMPLE_TTL_SECONDS = 7 * 60 * 60
 STATUS_HISTORY_HOURS = 48
@@ -375,10 +375,9 @@ def _sample_effective_status(
 
     Too OLD depends on whether the monitor is otherwise alive:
 
-      * monitor_reporting=True and one cadence late -> "degraded". Regional
-        jobs run every five minutes and routinely cross that boundary by a
-        few seconds. The status stays visible without turning scheduler
-        jitter into a deploy rollback.
+      * monitor_reporting=True and past the freshness contract -> "degraded".
+        Regional jobs run every three minutes, leaving room for Cloud Run
+        startup latency before this five-minute boundary.
 
       * monitor_reporting=True and two cadences late -> "down". This probe
         stopped emitting while its siblings kept going. That is the
