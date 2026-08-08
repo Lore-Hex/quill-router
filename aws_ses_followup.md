@@ -1,5 +1,11 @@
 # AWS SES Sandbox-Exit Reply
 
+> Historical artifact: this was the sandbox-exit description submitted before
+> purpose-specific sender lanes and bounded onboarding reminders were added.
+> Current production behavior is documented in
+> `docs/runbooks/ses-reputation.md`; do not use this file as an operations
+> runbook.
+
 **Don't send blindly — review and paste into the AWS Support case yourself.** Trim or expand any section so it reflects exactly what you've shipped.
 
 ---

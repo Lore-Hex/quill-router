@@ -856,15 +856,27 @@ def test_production_config_requires_ses_delivery_credentials() -> None:
         Settings(**values)
     with pytest.raises(ValidationError, match="TR_AWS_SECRET_ACCESS_KEY"):
         Settings(**{**values, "aws_access_key_id": "access-key"})
-    with pytest.raises(ValidationError, match="TR_SES_FROM_EMAIL"):
-        Settings(
-            **{
-                **values,
-                "aws_access_key_id": "access-key",
-                "aws_secret_access_key": "secret-key",
-                "ses_from_email": None,
-            }
-        )
+    for field_name in (
+        "ses_auth_from_email",
+        "ses_auth_configuration_set",
+        "ses_onboarding_from_email",
+        "ses_onboarding_configuration_set",
+        "ses_alert_from_email",
+        "ses_alert_configuration_set",
+        "ses_support_from_email",
+        "ses_support_configuration_set",
+        "ses_partner_from_email",
+        "ses_partner_configuration_set",
+    ):
+        with pytest.raises(ValidationError, match=f"TR_{field_name.upper()}"):
+            Settings(
+                **{
+                    **values,
+                    "aws_access_key_id": "access-key",
+                    "aws_secret_access_key": "secret-key",
+                    field_name: None,
+                }
+            )
 
 
 def test_production_spanner_clickhouse_config_is_explicit_and_bigtable_free() -> None:

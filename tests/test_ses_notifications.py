@@ -23,7 +23,12 @@ from cryptography.x509.oid import NameOID
 from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
-from trusted_router.services.email import EmailMessage, EmailService, build_verification_email
+from trusted_router.services.email import (
+    EmailMessage,
+    EmailService,
+    SenderProfile,
+    build_verification_email,
+)
 from trusted_router.sns_verify import SnsVerificationError, verify_sns_message
 from trusted_router.storage import STORE
 
@@ -221,6 +226,8 @@ def test_email_service_skips_blocked_recipient() -> None:
             to="blocked@example.com",
             subject="Welcome",
             text_body="Click to verify",
+            mail_class="email_verification",
+            sender_profile="auth",
         )
     )
     assert sent is False
@@ -239,6 +246,8 @@ def test_email_service_fallback_logs_body_length_not_body(caplog: pytest.LogCapt
                 to="user@example.com",
                 subject=subject,
                 text_body=body,
+                mail_class="email_verification",
+                sender_profile="auth",
             )
         )
 
@@ -251,7 +260,7 @@ def test_email_service_fallback_logs_body_length_not_body(caplog: pytest.LogCapt
     ]
     fingerprint = hashlib.sha256(b"user@example.com").hexdigest()[:16]
     assert fallback_logs == [
-        f"email_send.fallback recipient={fingerprint} class=transactional "
+        f"email_send.fallback recipient={fingerprint} class=email_verification "
         f"subject_len={len(subject)} body_len={len(body)}"
     ]
     assert "user@example.com" not in fallback_logs[0]
@@ -283,8 +292,9 @@ def test_email_service_sends_expected_ses_payload(monkeypatch) -> None:
             aws_access_key_id="AKIA_TEST",
             aws_secret_access_key="secret",  # noqa: S106 - test fixture secret.
             aws_region="us-west-2",
-            ses_from_email="noreply@example.com",
-            ses_from_name="TrustedRouter Test",
+            ses_auth_from_email="accounts@auth.example.com",
+            ses_auth_from_name="TrustedRouter Test",
+            ses_auth_configuration_set="example-auth",
         )
     )
 
@@ -303,17 +313,17 @@ def test_email_service_sends_expected_ses_payload(monkeypatch) -> None:
     # name, the recipient in the To line, the right subject, and the message
     # body to actually carry the verification link. Don't lock in the literal
     # boto3 kwarg shape — that would re-fail every time AWS adds a parameter.
-    assert call["Source"] == "TrustedRouter Test <noreply@example.com>"
+    assert call["Source"] == "TrustedRouter Test <accounts@auth.example.com>"
     assert call["Destination"]["ToAddresses"] == ["user@example.com"]
     assert call["Message"]["Subject"]["Data"] == "Confirm your TrustedRouter Test account"
     assert "https://trustedrouter.com/auth/verify-email?token=tok" in call["Message"]["Body"]["Text"]["Data"]
     assert "Confirm my email" in call["Message"]["Body"]["Html"]["Data"]
     # Routes the send through the configuration set so SES emits bounce +
     # complaint events to the SNS topic our /internal/ses/notifications owns.
-    assert call.get("ConfigurationSetName") == "trustedrouter-default"
+    assert call.get("ConfigurationSetName") == "example-auth"
     assert {tag["Name"]: tag["Value"] for tag in call["Tags"]} == {
         "mail_class": "email_verification",
-        "sender_profile": "default",
+        "sender_profile": "auth",
     }
 
 
@@ -331,7 +341,6 @@ def test_email_service_uses_dedicated_alert_sender_and_sanitized_tags(monkeypatc
             environment="test",
             aws_access_key_id="AKIA_TEST",
             aws_secret_access_key="secret",  # noqa: S106 - test fixture secret.
-            ses_from_email="noreply@example.com",
             ses_alert_from_email="alerts@alerts.example.com",
             ses_alert_from_name="Example Alerts",
             ses_alert_configuration_set="example-alerts",
@@ -361,6 +370,67 @@ def test_email_service_uses_dedicated_alert_sender_and_sanitized_tags(monkeypatc
     }
 
 
+@pytest.mark.parametrize(
+    ("profile", "expected_source", "expected_configuration_set"),
+    [
+        ("auth", "TrustedRouter Accounts <accounts@auth.trustedrouter.com>", "trustedrouter-auth"),
+        (
+            "onboarding",
+            "TrustedRouter <hello@onboarding.trustedrouter.com>",
+            "trustedrouter-onboarding",
+        ),
+        (
+            "alerts",
+            "TrustedRouter Alerts <alerts@alerts.trustedrouter.com>",
+            "trustedrouter-alerts",
+        ),
+        (
+            "support",
+            "TrustedRouter Support <support@support.trustedrouter.com>",
+            "trustedrouter-support",
+        ),
+        (
+            "partners",
+            "TrustedRouter Partnerships <partners@partners.trustedrouter.com>",
+            "trustedrouter-partners",
+        ),
+    ],
+)
+def test_email_service_routes_every_class_to_its_own_sender_lane(
+    monkeypatch: pytest.MonkeyPatch,
+    profile: SenderProfile,
+    expected_source: str,
+    expected_configuration_set: str,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class FakeSESClient:
+        def send_email(self, **kwargs: Any) -> dict[str, str]:
+            calls.append(kwargs)
+            return {"MessageId": "ses-profile-test"}
+
+    monkeypatch.setattr("boto3.client", lambda *_args, **_kwargs: FakeSESClient())
+    service = EmailService(
+        Settings(
+            environment="test",
+            aws_access_key_id="AKIA_TEST",
+            aws_secret_access_key="secret",  # noqa: S106 - test fixture secret.
+        )
+    )
+
+    assert service.send(
+        EmailMessage(
+            to="recipient@example.com",
+            subject="Transactional message",
+            text_body="Purpose-specific delivery.",
+            mail_class=f"{profile}_test",
+            sender_profile=profile,
+        )
+    )
+    assert calls[0]["Source"] == expected_source
+    assert calls[0]["ConfigurationSetName"] == expected_configuration_set
+
+
 def test_alert_sender_never_falls_back_to_default_identity(monkeypatch) -> None:
     calls: list[dict[str, Any]] = []
 
@@ -374,7 +444,6 @@ def test_alert_sender_never_falls_back_to_default_identity(monkeypatch) -> None:
             environment="test",
             aws_access_key_id="AKIA_TEST",
             aws_secret_access_key="secret",  # noqa: S106 - test fixture secret.
-            ses_from_email="noreply@example.com",
             ses_alert_from_email=None,
         )
     )
@@ -406,7 +475,8 @@ def test_email_service_sets_reply_to_for_support_mail(monkeypatch) -> None:
             environment="test",
             aws_access_key_id="AKIA_TEST",
             aws_secret_access_key="secret",  # noqa: S106 - test fixture secret.
-            ses_from_email="noreply@example.com",
+            ses_support_from_email="support@support.example.com",
+            ses_support_configuration_set="example-support",
         )
     )
 
@@ -416,8 +486,12 @@ def test_email_service_sets_reply_to_for_support_mail(monkeypatch) -> None:
             reply_to="customer@example.com",
             subject="Support request",
             text_body="Please help.",
+            mail_class="support_inquiry",
+            sender_profile="support",
         )
     )
+    assert calls[0]["Source"] == "TrustedRouter Support <support@support.example.com>"
+    assert calls[0]["ConfigurationSetName"] == "example-support"
     assert calls[0]["ReplyToAddresses"] == ["customer@example.com"]
 
 

@@ -9,16 +9,29 @@ above 0.1%.
 
 | Class | Sender profile | Purpose |
 | --- | --- | --- |
-| `email_verification` | `default` | User-requested email verification |
+| `email_verification` | `auth` | User-requested email verification |
+| `activation_10m`, `activation_24h` | `onboarding` | Post-signup activation reminders |
 | `budget_alert` | `alerts` | Workspace spend alert |
-| `support_inquiry` | `default` | First-party support form to the support inbox |
-| `partner_inquiry` | `default` | First-party partner form to the operator inbox |
+| `support_inquiry` | `support` | First-party support form to the support inbox |
+| `partner_inquiry` | `partners` | First-party partner form to the operator inbox |
 
-The `alerts` profile sends as `alerts@alerts.trustedrouter.com` through the
-`trustedrouter-alerts` configuration set. It has Easy DKIM, a custom MAIL FROM
-domain that rejects on MX failure, DMARC quarantine, required TLS, and separate
-reputation metrics. Account-level SES reputation is still shared across sender
-identities in the AWS account.
+Every profile has a dedicated SES identity, configuration set, DKIM keys, and
+custom MAIL FROM domain:
+
+| Profile | Sender | Configuration set |
+| --- | --- | --- |
+| `auth` | `accounts@auth.trustedrouter.com` | `trustedrouter-auth` |
+| `onboarding` | `hello@onboarding.trustedrouter.com` | `trustedrouter-onboarding` |
+| `alerts` | `alerts@alerts.trustedrouter.com` | `trustedrouter-alerts` |
+| `support` | `support@support.trustedrouter.com` | `trustedrouter-support` |
+| `partners` | `partners@partners.trustedrouter.com` | `trustedrouter-partners` |
+
+Each configuration set requires TLS, enables reputation metrics, suppresses
+hard bounces and complaints, and publishes bounce/complaint events to the
+shared verified SNS handler. Each custom MAIL FROM domain rejects on MX
+failure. Account-level SES reputation is still shared across sender identities
+in the AWS account, so this split improves attribution and containment but does
+not create five independent SES reputations.
 
 Every send carries privacy-safe SES message tags for `mail_class`,
 `sender_profile`, `acquisition_source`, `acquisition_medium`, and
@@ -27,18 +40,18 @@ addresses and message content must never be added to logs or metric tags.
 
 ## Immediate response
 
-1. Confirm account and both configuration sets suppress `BOUNCE` and
+1. Confirm the account and all five configuration sets suppress `BOUNCE` and
    `COMPLAINT` recipients.
-2. Keep `trustedrouter-default` and `trustedrouter-alerts` reputation metrics
-   enabled.
+2. Keep every `trustedrouter-{auth,onboarding,alerts,support,partners}`
+   configuration set's reputation metrics enabled.
 3. Do not delete a suppression entry unless the recipient has independently
    confirmed control of the address and requested another send.
 4. Group `email_send.accepted` and `ses_feedback.received` by mail class and
    acquisition source in Axiom. Compare feedback counts to accepted sends for
    the same window.
-5. Pause the offending acquisition source or mail class if it exceeds the
-   recovery thresholds. Authentication and billing behavior must continue even
-   when best-effort alert email is paused.
+5. Pause the offending acquisition source, mail class, or sender profile if it
+   exceeds the recovery thresholds. Authentication must remain available when
+   onboarding or public-form mail is paused.
 
 AWS documents account-level suppression and automated configuration-set
 pausing here:

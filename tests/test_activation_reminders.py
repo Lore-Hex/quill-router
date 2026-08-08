@@ -76,6 +76,7 @@ def test_due_reminder_sends_once_without_key_or_content(
         [message.subject, message.text_body, message.html_body or ""]
     )
     assert message.mail_class == "activation_10m"
+    assert message.sender_profile == "onboarding"
     assert raw_key not in rendered
     assert "prompt" not in rendered.lower()
     assert "output" not in rendered.lower()

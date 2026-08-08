@@ -184,6 +184,7 @@ def build_activation_reminder_email(
         html_body=html_body,
         reply_to=settings.support_email,
         mail_class=f"activation_{stage}",
+        sender_profile="onboarding",
         acquisition_source=touch.get("utm_source"),
         acquisition_medium=touch.get("utm_medium"),
         acquisition_campaign=touch.get("utm_campaign"),
