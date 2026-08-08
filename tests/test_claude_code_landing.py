@@ -66,11 +66,14 @@ def test_api_key_reveal_builds_a_streaming_agent_chat_message_without_reconfigur
     )
 
     assert response.status_code == 200
-    assert "new Claude Code, Codex, or other agent chat" in response.text
+    assert (
+        "Paste this short message into a Claude Code, Codex, or your favorite agent chat."
+        in response.text
+    )
     assert "Use TrustedRouter with the key below to ask DeepSeek" in response.text
     assert "stream the answer into this chat as it arrives" in response.text
-    assert "Keep this agent's model, provider, settings, and project files exactly as they are" in response.text
-    assert "Use it in memory for this request, then discard it" in response.text
+    assert "Keep this agent's model" not in response.text
+    assert "Use it in memory for this request" not in response.text
     assert "stream=true" not in response.text
     assert "ANTHROPIC_BASE_URL" not in response.text
     assert ".claude/settings.local.json" not in response.text

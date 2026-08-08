@@ -965,10 +965,14 @@ def test_console_create_api_key_form_repeats_raw_key_in_agent_message(
     assert agent_message is not None
     assert match.group(0) in agent_message.group(0)
     assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
-    assert "new Claude Code, Codex, or agent chat" in resp.text
+    assert (
+        "Paste this short message into a Claude Code, Codex, or your favorite agent chat."
+        in resp.text
+    )
+    assert "Paste this short message" not in agent_message.group(0)
     assert "stream the answer into this chat as it arrives" in resp.text
-    assert "Keep this agent's model, provider, settings, and project files exactly as they are" in resp.text
-    assert "Use it in memory for this request, then discard it" in resp.text
+    assert "Keep this agent's model" not in resp.text
+    assert "Use it in memory for this request" not in resp.text
     assert "stream=true" not in resp.text
     assert "Copied to clipboard." not in resp.text
     workspace_id = next(iter(STORE.workspaces))
