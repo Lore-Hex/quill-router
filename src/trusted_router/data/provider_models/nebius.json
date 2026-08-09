@@ -1,7 +1,7 @@
 {
   "provider": "nebius",
   "source": "https://api.tokenfactory.nebius.com/v1/models?verbose=true",
-  "generated_at": "2026-08-09T22:33:39Z",
+  "generated_at": "2026-08-09T23:33:38Z",
   "model_count": 40,
   "models": [
     {
