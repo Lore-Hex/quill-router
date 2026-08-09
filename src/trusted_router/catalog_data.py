@@ -1418,34 +1418,40 @@ US_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
     "xai",
 )
 
-# The default `trustedrouter/auto` ladder.
+# The default `trustedrouter/auto` ladder — a PREFERENCE order, not a
+# guarantee. The guarantee lives in routing: a request carrying
+# provider.min_privacy or provider.jurisdiction filters this list BEFORE any
+# provider is contacted, and 400s if nothing qualifies. So an entry that
+# cannot satisfy a given request is never called for that request; it simply
+# is not a candidate.
 #
-# Two properties, both enforced by tests rather than trusted to review:
+# Properties pinned by tests rather than trusted to review:
 #
-#   1. EVERY entry has at least one endpoint that is US-hosted (a provider in
-#      US_FOCUSED_PROVIDER_ORDER) AND clears PRIVACY_TIER_ZERO_RETENTION. The
-#      default route should not quietly be worse on data handling than the
-#      `trustedrouter/zdr` alias a caller could have asked for explicitly.
-#   2. The ladder spans MORE THAN ONE provider, so a single provider outage
-#      cannot take `auto` down. deepseek-v4-flash-0731 currently clears ZDR
-#      only via Together, so without this it would be a single point of
-#      failure for the default route.
+#   1. The LEADING entries are US-hosted and clear PRIVACY_TIER_ZERO_RETENTION,
+#      so the default route is not quietly weaker on data handling than the
+#      `trustedrouter/zdr` alias a caller could have named explicitly.
+#   2. The ladder spans MORE THAN ONE provider. deepseek-v4-flash-0731 clears
+#      ZDR only via Together, so without this the default route would have a
+#      single point of failure.
 #
-# deepseek-v4-flash-0731 leads because it is by far the cheapest model that
-# satisfies both, and `auto` is the route most traffic takes.
+# Order: cheap-and-qualifying first. deepseek-v4-flash-0731, kimi-k3 and
+# glm-5.2 lead because they are inexpensive and all three clear US+ZDR.
 #
-# Anthropic is absent, and that is a consequence of catalog data rather than a
-# judgement: every Anthropic endpoint is currently PRIVACY_TIER_STANDARD, so no
-# Anthropic model can clear a zero-retention floor. If that tier is wrong, fix
-# the endpoint data and Anthropic becomes eligible again automatically.
+# Anthropic sits at the BOTTOM deliberately. Its endpoints are currently
+# PRIVACY_TIER_STANDARD (not yet zero-retention), so it is filtered out of any
+# request that demands ZDR — but it remains a capable last-resort fallback for
+# requests with no privacy floor, and it moves up on its own merits the moment
+# its endpoint tier is raised.
 DEFAULT_AUTO_MODEL_ORDER = [
     "deepseek/deepseek-v4-flash-0731",
+    "moonshotai/kimi-k3",
+    "z-ai/glm-5.2",
     "openai/gpt-4.1-mini",
     "google/gemini-2.5-flash",
     "moonshotai/kimi-k2.6",
     "minimax/minimax-m3",
     "openai/gpt-5.4-mini",
-    "openai/gpt-5.2",
+    "anthropic/claude-sonnet-4.6",
 ]
 
 SYNTH_BUDGET_MODEL_ORDER = (
