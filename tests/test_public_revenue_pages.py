@@ -454,8 +454,14 @@ def test_public_kimi_k3_page_separates_router_attestation_from_provider_e2ee(
     assert "<th>TR router attested</th>" in detail.text
     assert "<th>Attested</th>" not in detail.text
     assert "Provider policy" in detail.text
-    assert "privacy unknown" in detail.text
-    assert "provider E2EE" not in detail.text
+    moonshot_row = re.search(
+        r'<tr>\s*<td><a[^>]+href="/providers/kimi".*?</tr>',
+        detail.text,
+        flags=re.DOTALL,
+    )
+    assert moonshot_row is not None
+    assert "privacy unknown" in moonshot_row.group(0)
+    assert "provider E2EE" not in moonshot_row.group(0)
 
 
 def test_single_provider_model_shows_provider_posture_not_variation(

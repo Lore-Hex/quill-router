@@ -40,7 +40,7 @@ VIDEO_MODELS = {
 NATIVE_VIDEO_PROVIDERS = {
     "lightricks/ltx-2.3": ("ltx",),
     "lightricks/ltx-2.3-fast": ("ltx",),
-    "minimax/hailuo-3": ("minimax", "atlas-cloud"),
+    "minimax/hailuo-3": ("atlas-cloud",),
     "google/veo-3.1": ("google-ai-studio",),
     "google/veo-3.1-fast": ("google-ai-studio",),
     "alibaba/wan-2.7": ("alibaba",),
@@ -148,7 +148,7 @@ def test_video_authorize_and_settle_bill_exact_fixed_microdollars(
     assert authorization is not None
     assert authorization.estimated_microdollars == quote
     assert authorization.additional_cost_reservation_microdollars == quote
-    assert auth["provider"] == "minimax"
+    assert auth["provider"] == "atlas-cloud"
     assert auth["usage_type"] == "Credits"
 
     response = client.post(
@@ -427,7 +427,7 @@ def test_video_job_can_persist_an_authorized_fallback_route_and_exact_charge(
         quote=900_000,
         idempotency_key="video-authorized-fallback",
     )
-    assert auth["provider"] == "minimax"
+    assert auth["provider"] == "atlas-cloud"
     venice = next(
         candidate for candidate in auth["route_candidates"] if candidate["provider"] == "venice"
     )
@@ -437,9 +437,9 @@ def test_video_job_can_persist_an_authorized_fallback_route_and_exact_charge(
             "job_id": "job-authorized-fallback",
             "authorization_id": auth["authorization_id"],
             "model": "minimax/hailuo-3",
-            "provider": "minimax",
+            "provider": "atlas-cloud",
             "endpoint_id": auth["endpoint_id"],
-            "provider_model": "MiniMax-H3",
+            "provider_model": "minimax/h3/text-to-video",
             "quoted_microdollars": 840_000,
             "duration_seconds": 5,
             "resolution": "2K",

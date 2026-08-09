@@ -429,6 +429,54 @@ def test_internal_gateway_authorize_and_settle_records_metadata(
     assert repeat.json()["data"]["generation_id"] == generation_id
 
 
+def test_settlement_over_reservation_emits_bounded_billing_warning(
+    user_headers: dict[str, str],
+    client,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    created = client.post("/v1/keys", headers=user_headers, json={"name": "overrun"}).json()
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": created["data"]["hash"],
+            "model": "anthropic/claude-haiku-4.5",
+            "estimated_input_tokens": 1,
+            "max_output_tokens": 1,
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    authorization_id = authorize.json()["data"]["authorization_id"]
+
+    with caplog.at_level(
+        "WARNING",
+        logger="trusted_router.routes.internal.gateway",
+    ):
+        settle = client.post(
+            "/v1/internal/gateway/settle",
+            json={
+                "authorization_id": authorization_id,
+                "actual_input_tokens": 1,
+                "actual_output_tokens": 1_000,
+                "request_id": "settlement-overrun",
+                "elapsed_seconds": 0.5,
+            },
+        )
+
+    assert settle.status_code == 200, settle.text
+    record = next(
+        record
+        for record in caplog.records
+        if record.msg == "billing.settlement_exceeded_reservation"
+    )
+    context = record.__dict__
+    assert context["authorization_id"] == authorization_id
+    assert context["actual_microdollars"] > context["estimated_microdollars"]
+    assert context["overrun_microdollars"] == (
+        context["actual_microdollars"] - context["estimated_microdollars"]
+    )
+    assert context["output_tokens"] == 1_000
+
+
 def test_web_search_additional_cost_is_reserved_and_settled_exactly_once(
     user_headers: dict[str, str],
     client,

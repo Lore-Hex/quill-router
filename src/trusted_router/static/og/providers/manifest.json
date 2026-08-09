@@ -235,10 +235,10 @@
   },
   "minimax": {
     "card_version": 2,
-    "model_count": 9,
+    "model_count": 8,
     "name": "MiniMax",
     "privacy": "Policy documented",
-    "route_count": 15,
+    "route_count": 14,
     "route_mode": "Prepaid + BYOK",
     "slug": "minimax"
   },
@@ -361,10 +361,10 @@
   },
   "tinfoil": {
     "card_version": 2,
-    "model_count": 4,
+    "model_count": 5,
     "name": "Tinfoil",
     "privacy": "E2EE + confidential",
-    "route_count": 8,
+    "route_count": 10,
     "route_mode": "Prepaid + BYOK",
     "slug": "tinfoil"
   },
