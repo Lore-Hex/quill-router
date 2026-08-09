@@ -344,7 +344,10 @@ ENV_VARS=(
   "TR_SES_ALERT_FROM_EMAIL=alerts@alerts.trustedrouter.com"
   "TR_SES_ALERT_FROM_NAME=TrustedRouter Alerts"
   "TR_SES_ALERT_CONFIGURATION_SET=trustedrouter-alerts"
-  "TR_ACTIVATION_REMINDER_INTERVAL_SECONDS=60"
+  # Reputation brake: keep optional activation nudges off until SES class-level
+  # telemetry has a clean observation window. Login and verification email are
+  # unaffected because they are sent synchronously by their auth routes.
+  "TR_ACTIVATION_REMINDER_INTERVAL_SECONDS=0"
   "TR_SUPPORT_EMAIL=help@trustedrouter.com"
   # Adyen ships dark. Activating checkout is an intentional one-line release
   # after the merchant, HMAC webhook, and test-payment canary are green.

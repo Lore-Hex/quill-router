@@ -1029,7 +1029,6 @@ _NATIVE_VIDEO_UPSTREAM_IDS = {
     "lightricks/ltx-2.3": (("ltx", "ltx-2-3-pro"),),
     "lightricks/ltx-2.3-fast": (("ltx", "ltx-2-3-fast"),),
     "minimax/hailuo-3": (
-        ("minimax", "MiniMax-H3"),
         ("atlas-cloud", "minimax/h3/text-to-video"),
     ),
     "google/veo-3.1": (("google-ai-studio", "veo-3.1-generate-preview"),),

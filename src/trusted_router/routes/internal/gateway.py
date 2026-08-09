@@ -101,7 +101,11 @@ from trusted_router.storage import (
     typed_billing_store,
 )
 from trusted_router.storage_custom_models import is_custom_model_id, normalize_custom_model_id
-from trusted_router.storage_errors import DeferredSettlementCapReached, StoreConflict
+from trusted_router.storage_errors import (
+    DeferredSettlementCapReached,
+    StoreConflict,
+    conflict_store_error_types,
+)
 from trusted_router.storage_gcp_io import spanner_rpc_budget
 from trusted_router.storage_models import (
     SettleOutboxRow,
@@ -478,30 +482,49 @@ def _authorize_gateway_sync(
             if is_byok_request and not api_key.include_byok_in_limit
             else enforced_window_limits(api_key)  # {} in alert mode → never blocks
         )
-        outcome, authorization = _typed_store.authorize_gateway_typed(
-            workspace_id=workspace.id,
-            key_hash=api_key.hash,
-            estimate=estimate,
-            has_credit_candidate=has_credit_candidate,
-            reservation_usage_type=reservation_usage_type,
-            model_id=model.id,
-            provider=endpoint.provider,
-            requested_model_id=requested_model_id,
-            candidate_model_ids=[m.id for m, _e in endpoint_candidates],
-            region=region,
-            endpoint_id=endpoint.id,
-            candidate_endpoint_ids=[e.id for _m, e in endpoint_candidates],
-            idempotency_key=request_idempotency_key,
-            tags=effective_tags,
-            idempotency_fingerprint=request_fingerprint,
-            key_usage_shards=key_usage_shard_count(api_key),
-            custom_model_id=custom_model.id if custom_model else None,
-            custom_model_revision=custom_model.revision if custom_model else None,
-            additional_cost_reservation_microdollars=additional_cost_reservation,
-            native_batch_eligible=native_batch_eligible,
-            expires_at=expires_at,
-            window_limits=window_limits or None,
-        )
+        key_usage_shards = key_usage_shard_count(api_key)
+        try:
+            outcome, authorization = _typed_store.authorize_gateway_typed(
+                workspace_id=workspace.id,
+                key_hash=api_key.hash,
+                estimate=estimate,
+                has_credit_candidate=has_credit_candidate,
+                reservation_usage_type=reservation_usage_type,
+                model_id=model.id,
+                provider=endpoint.provider,
+                requested_model_id=requested_model_id,
+                candidate_model_ids=[m.id for m, _e in endpoint_candidates],
+                region=region,
+                endpoint_id=endpoint.id,
+                candidate_endpoint_ids=[e.id for _m, e in endpoint_candidates],
+                idempotency_key=request_idempotency_key,
+                tags=effective_tags,
+                idempotency_fingerprint=request_fingerprint,
+                key_usage_shards=key_usage_shards,
+                custom_model_id=custom_model.id if custom_model else None,
+                custom_model_revision=custom_model.revision if custom_model else None,
+                additional_cost_reservation_microdollars=additional_cost_reservation,
+                native_batch_eligible=native_batch_eligible,
+                expires_at=expires_at,
+                window_limits=window_limits or None,
+            )
+        except conflict_store_error_types() as exc:
+            # The generic 503 request log cannot identify a tenant hot row.
+            # Emit only safe billing metadata so an operator can reshard the
+            # affected workspace without ever logging a key, prompt, or body.
+            logger.warning(
+                "billing.authorize_contention",
+                extra={
+                    "request_id": getattr(request.state, "request_id", None),
+                    "workspace_id": workspace.id,
+                    "requested_model": requested_model_id,
+                    "estimated_microdollars": estimate,
+                    "candidate_count": len(endpoint_candidates),
+                    "key_usage_shards": key_usage_shards,
+                    "error_class": type(exc).__name__,
+                },
+            )
+            raise
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
             record_free_credit_exhausted_safely(workspace.id)
             raise _insufficient_credits_error(workspace)
@@ -1451,6 +1474,26 @@ def _settle_gateway_authorization(
         actual_cost += additional_cost
     input_tokens = total_input
     selected_usage_type = UsageType.for_endpoint(selected_endpoint)
+    if (
+        success
+        and selected_usage_type == UsageType.CREDITS
+        and actual_cost > authorization.estimated_microdollars
+    ):
+        logger.warning(
+            "billing.settlement_exceeded_reservation",
+            extra={
+                "authorization_id": authorization.id,
+                "workspace_id": authorization.workspace_id,
+                "model": model.id,
+                "provider": selected_endpoint.provider,
+                "estimated_microdollars": authorization.estimated_microdollars,
+                "actual_microdollars": actual_cost,
+                "overrun_microdollars": actual_cost
+                - authorization.estimated_microdollars,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+            },
+        )
     generation_model_id = (
         PARASAIL_LIBERTY_2_0_MODEL_ID if partner_mode == PartnerBillingMode.TOP_LEVEL else model.id
     )
