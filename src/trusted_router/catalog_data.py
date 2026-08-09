@@ -1401,16 +1401,51 @@ EU_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
     "cerebras",
 )
 
+US_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
+    "openai",
+    "google-vertex",
+    "google-ai-studio",
+    "anthropic",
+    "together",
+    "fireworks",
+    "baseten",
+    "groq",
+    "cerebras",
+    "tinfoil",
+    "deepinfra",
+    "amazon-bedrock",
+    "azure",
+    "xai",
+)
+
+# The default `trustedrouter/auto` ladder.
+#
+# Two properties, both enforced by tests rather than trusted to review:
+#
+#   1. EVERY entry has at least one endpoint that is US-hosted (a provider in
+#      US_FOCUSED_PROVIDER_ORDER) AND clears PRIVACY_TIER_ZERO_RETENTION. The
+#      default route should not quietly be worse on data handling than the
+#      `trustedrouter/zdr` alias a caller could have asked for explicitly.
+#   2. The ladder spans MORE THAN ONE provider, so a single provider outage
+#      cannot take `auto` down. deepseek-v4-flash-0731 currently clears ZDR
+#      only via Together, so without this it would be a single point of
+#      failure for the default route.
+#
+# deepseek-v4-flash-0731 leads because it is by far the cheapest model that
+# satisfies both, and `auto` is the route most traffic takes.
+#
+# Anthropic is absent, and that is a consequence of catalog data rather than a
+# judgement: every Anthropic endpoint is currently PRIVACY_TIER_STANDARD, so no
+# Anthropic model can clear a zero-retention floor. If that tier is wrong, fix
+# the endpoint data and Anthropic becomes eligible again automatically.
 DEFAULT_AUTO_MODEL_ORDER = [
-    "anthropic/claude-opus-4.7",
-    "anthropic/claude-sonnet-4.6",
+    "deepseek/deepseek-v4-flash-0731",
     "openai/gpt-4.1-mini",
     "google/gemini-2.5-flash",
-    "deepseek/deepseek-v4-flash",
-    "minimax/minimax-m3",
     "moonshotai/kimi-k2.6",
-    "mistralai/mistral-small-2603",
-    "z-ai/glm-4.6",
+    "minimax/minimax-m3",
+    "openai/gpt-5.4-mini",
+    "openai/gpt-5.2",
 ]
 
 SYNTH_BUDGET_MODEL_ORDER = (
