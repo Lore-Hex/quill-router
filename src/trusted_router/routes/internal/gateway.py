@@ -1953,10 +1953,21 @@ def _requested_service_tier_or_error(service_tier: str | None) -> str | None:
     return normalized
 
 
+# Providers name the ordinary, non-expedited tier differently. Anthropic
+# reports usage.service_tier="standard"; OpenAI reports "default". They mean
+# the same thing and price the same, so both settle as "default".
+#
+# Deliberately NOT aliased: Anthropic "batch" and OpenAI "flex"/"scale" are
+# cheaper tiers, and quietly settling one of those as "default" would overcharge
+# the customer. An unrecognized tier still fails loudly rather than mis-pricing.
+_SERVICE_TIER_SYNONYMS = {"standard": "default"}
+
+
 def _actual_service_tier_or_error(service_tier: str | None) -> str | None:
     if service_tier is None:
         return None
     normalized = service_tier.strip().lower()
+    normalized = _SERVICE_TIER_SYNONYMS.get(normalized, normalized)
     if normalized not in {"default", "priority"}:
         raise api_error(
             400,
