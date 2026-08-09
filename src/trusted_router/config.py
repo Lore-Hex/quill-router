@@ -686,15 +686,21 @@ class Settings(BaseSettings):
     synthetic_status_rollup_retention_months: int = 24
     synthetic_status_us_url: str = "https://status-us.trustedrouter.com/status.json"
     synthetic_status_eu_url: str = "https://status-eu.trustedrouter.com/status.json"
+    # Deliberately empty: the auto ladder lives in exactly one place,
+    # DEFAULT_AUTO_MODEL_ORDER in catalog_data.py, and an empty setting is what
+    # lets that default through in auto_candidate_models().
+    #
+    # This used to hold its own copy of the ladder. Because the setting was
+    # always non-empty it always won, so the "default" in catalog_data.py never
+    # applied to routing and the two silently drifted apart — the copy here
+    # still led with claude-opus-4.7 and named retired model versions. Editing
+    # the documented ladder changed the advertised catalog and nothing else.
+    # Keep this empty; set TR_AUTO_MODEL_ORDER to override at runtime.
+    #
     # IDs follow OpenRouter naming exactly to line up with the ingest
     # snapshot — `moonshotai/...` not `kimi/...`, `mistralai/...` not
     # `mistral/...`, `meta-llama/...` for Cerebras-served Llama, etc.
-    auto_model_order: str = (
-        "anthropic/claude-opus-4.7,anthropic/claude-sonnet-4.6,"
-        "openai/gpt-4.1-mini,google/gemini-2.5-flash,"
-        "deepseek/deepseek-v4-flash,minimax/minimax-m3,moonshotai/kimi-k2.6,"
-        "mistralai/mistral-small-2603,z-ai/glm-4.6"
-    )
+    auto_model_order: str = ""
 
     max_request_body_bytes: int = 4 * 1024 * 1024
 
