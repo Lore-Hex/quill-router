@@ -1401,16 +1401,57 @@ EU_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
     "cerebras",
 )
 
+US_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
+    "openai",
+    "google-vertex",
+    "google-ai-studio",
+    "anthropic",
+    "together",
+    "fireworks",
+    "baseten",
+    "groq",
+    "cerebras",
+    "tinfoil",
+    "deepinfra",
+    "amazon-bedrock",
+    "azure",
+    "xai",
+)
+
+# The default `trustedrouter/auto` ladder — a PREFERENCE order, not a
+# guarantee. The guarantee lives in routing: a request carrying
+# provider.min_privacy or provider.jurisdiction filters this list BEFORE any
+# provider is contacted, and 400s if nothing qualifies. So an entry that
+# cannot satisfy a given request is never called for that request; it simply
+# is not a candidate.
+#
+# Properties pinned by tests rather than trusted to review:
+#
+#   1. The LEADING entries are US-hosted and clear PRIVACY_TIER_ZERO_RETENTION,
+#      so the default route is not quietly weaker on data handling than the
+#      `trustedrouter/zdr` alias a caller could have named explicitly.
+#   2. The ladder spans MORE THAN ONE provider. deepseek-v4-flash-0731 clears
+#      ZDR only via Together, so without this the default route would have a
+#      single point of failure.
+#
+# Order: cheap-and-qualifying first. deepseek-v4-flash-0731, kimi-k3 and
+# glm-5.2 lead because they are inexpensive and all three clear US+ZDR.
+#
+# Anthropic sits at the BOTTOM deliberately. Its endpoints are currently
+# PRIVACY_TIER_STANDARD (not yet zero-retention), so it is filtered out of any
+# request that demands ZDR — but it remains a capable last-resort fallback for
+# requests with no privacy floor, and it moves up on its own merits the moment
+# its endpoint tier is raised.
 DEFAULT_AUTO_MODEL_ORDER = [
-    "anthropic/claude-opus-4.7",
-    "anthropic/claude-sonnet-4.6",
+    "deepseek/deepseek-v4-flash-0731",
+    "moonshotai/kimi-k3",
+    "z-ai/glm-5.2",
     "openai/gpt-4.1-mini",
     "google/gemini-2.5-flash",
-    "deepseek/deepseek-v4-flash",
-    "minimax/minimax-m3",
     "moonshotai/kimi-k2.6",
-    "mistralai/mistral-small-2603",
-    "z-ai/glm-4.6",
+    "minimax/minimax-m3",
+    "openai/gpt-5.4-mini",
+    "anthropic/claude-sonnet-4.6",
 ]
 
 SYNTH_BUDGET_MODEL_ORDER = (
