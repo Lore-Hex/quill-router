@@ -13,6 +13,7 @@ from trusted_router.acquisition import (
     AttributionContext,
     decode_attribution_cookie,
     encode_attribution_cookie,
+    record_free_credit_exhausted_safely,
     record_successful_api_call,
 )
 from trusted_router.config import Settings
@@ -269,6 +270,7 @@ def test_signup_persists_attribution_and_emits_no_raw_click_id(
     assert len(record.first_touch["gclid_fingerprint"]) == 64
     assert record.last_touch["utm_campaign"] == "router_launch"
     assert record.signup_provider == "email"
+    assert record.starter_credit_microdollars == 300_000
     assert set(record.milestones) == {"signup_completed", "api_key_created"}
     assert "acquisition.signup_completed" in caplog.text
     assert "acquisition.api_key_created" in caplog.text
@@ -379,6 +381,97 @@ def test_successful_usage_milestones_are_once_only(
     messages = [item.getMessage() for item in caplog.records]
     assert messages.count("acquisition.first_successful_api_call") == 1
     assert messages.count("acquisition.retained_api_usage_7d") == 1
+
+
+def test_free_credit_exhaustion_uses_typed_usage_and_is_once_only(
+    client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _campaign_landing(client)
+    payload = _signup(client, "starter-exhausted@example.com")
+    workspace_id = str(payload["workspace_id"])
+    starter_credit = int(payload["trial_credit_microdollars"])
+    caplog.set_level(logging.INFO, logger="trusted_router.acquisition")
+
+    STORE.credit_money[workspace_id].total_usage_microdollars = starter_credit - 1
+    assert record_free_credit_exhausted_safely(workspace_id) is False
+
+    STORE.credit_money[workspace_id].total_usage_microdollars = starter_credit
+    assert record_free_credit_exhausted_safely(workspace_id) is True
+    assert record_free_credit_exhausted_safely(workspace_id) is False
+
+    record = STORE.get_acquisition_attribution(workspace_id)
+    assert record is not None
+    assert "free_credit_exhausted" in record.milestones
+    messages = [item.getMessage() for item in caplog.records]
+    assert messages.count("acquisition.free_credit_exhausted") == 1
+    assert str(payload["key"]) not in caplog.text
+
+
+def test_checkout_and_saved_payment_method_milestones_are_once_only(
+    client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _campaign_landing(client)
+    payload = _signup(client, "checkout-funnel@example.com")
+    workspace_id = str(payload["workspace_id"])
+    headers = {"authorization": f"Bearer {payload['key']}"}
+    caplog.set_level(logging.INFO, logger="trusted_router.acquisition")
+
+    for _ in range(2):
+        checkout = client.post(
+            "/v1/billing/checkout",
+            headers=headers,
+            json={"amount": 20},
+        )
+        assert checkout.status_code == 201, checkout.text
+    for _ in range(2):
+        setup = client.post(
+            "/v1/billing/payment-methods/setup",
+            headers=headers,
+        )
+        assert setup.status_code == 201, setup.text
+
+    record = STORE.get_acquisition_attribution(workspace_id)
+    assert record is not None
+    assert "checkout_started" in record.milestones
+    assert "payment_method_saved" in record.milestones
+    messages = [item.getMessage() for item in caplog.records]
+    assert messages.count("acquisition.checkout_started") == 1
+    assert messages.count("acquisition.payment_method_saved") == 1
+    assert str(payload["key"]) not in caplog.text
+
+
+def test_stripe_webhook_records_saved_payment_method_for_attributed_signup(
+    client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _campaign_landing(client)
+    payload = _signup(client, "saved-card-webhook@example.com")
+    workspace_id = str(payload["workspace_id"])
+    event = {
+        "id": "evt_attributed_setup",
+        "type": "setup_intent.succeeded",
+        "data": {
+            "object": {
+                "customer": "cus_attributed",
+                "payment_method": "pm_attributed",
+                "metadata": {"workspace_id": workspace_id},
+            }
+        },
+    }
+    caplog.set_level(logging.INFO, logger="trusted_router.acquisition")
+
+    first = client.post("/v1/internal/stripe/webhook", json=event)
+    second = client.post("/v1/internal/stripe/webhook", json=event)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    record = STORE.get_acquisition_attribution(workspace_id)
+    assert record is not None
+    assert "payment_method_saved" in record.milestones
+    messages = [item.getMessage() for item in caplog.records]
+    assert messages.count("acquisition.payment_method_saved") == 1
 
 
 def test_stripe_purchase_attribution_follows_ledger_idempotency(
@@ -496,6 +589,7 @@ def test_spanner_attribution_adapter_is_atomic_and_persistent() -> None:
         first_touch=touch,
         last_touch=touch,
         signup_provider="google",
+        starter_credit_microdollars=300_000,
         signup_at=now,
     )
 
@@ -505,6 +599,7 @@ def test_spanner_attribution_adapter_is_atomic_and_persistent() -> None:
     assert stored is not None
     assert stored.first_touch["gclid_fingerprint"] == "d" * 64
     assert "gclid" not in stored.first_touch
+    assert stored.starter_credit_microdollars == 300_000
 
     stored, claimed = store.claim_acquisition_milestones(
         original.workspace_id,

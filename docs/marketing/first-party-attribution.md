@@ -46,8 +46,11 @@ Structured metadata-only events are shipped through the existing Axiom logger:
 3. `acquisition.signup_completed`
 4. `acquisition.api_key_created`
 5. `acquisition.first_successful_api_call`
-6. `acquisition.credit_purchase_completed`
-7. `acquisition.retained_api_usage_7d`
+6. `acquisition.free_credit_exhausted`
+7. `acquisition.checkout_started`
+8. `acquisition.payment_method_saved`
+9. `acquisition.credit_purchase_completed`
+10. `acquisition.retained_api_usage_7d`
 
 `public.page_view` is a server-request metric and is deliberately labeled
 `measurement_tier=server_request`. Paid-landing reports should use
@@ -61,6 +64,14 @@ recorded only after the credit ledger's existing idempotency check succeeds.
 The first API call is recorded only after settlement commits. The seven-day
 event is recorded on the first successful settled call at least seven days
 after signup.
+
+`free_credit_exhausted` is claimed only when the authoritative typed ledger
+shows settled prepaid usage at or above the starter grant. The check runs after
+an insufficient-credit authorization or when checkout begins, outside the
+successful inference path. `checkout_started` is claimed after Stripe or PayPal
+successfully creates a checkout session. `payment_method_saved` is claimed only
+after Stripe confirms a reusable payment method. All three are once-per-workspace
+milestones and remain in first-party logs; they are not uploaded to ad platforms.
 
 Attribution writes are failure-isolated. They cannot fail signup, inference,
 settlement, payment acknowledgement, or streaming.

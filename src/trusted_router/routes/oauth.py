@@ -201,6 +201,7 @@ async def _handle_callback(
                 request,
                 workspace_id=workspace.id,
                 signup_provider=provider.slug,
+                starter_credit_microdollars=0,
             )
         else:
             # signup() returns None only on a TOCTOU race; fall back to a
@@ -217,6 +218,7 @@ async def _handle_callback(
                     request,
                     workspace_id=result.workspace.id,
                     signup_provider=provider.slug,
+                    starter_credit_microdollars=result.trial_credit_microdollars,
                 )
             else:
                 concurrent = STORE.find_user_by_email(info.email)

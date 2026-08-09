@@ -129,6 +129,7 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
                 request,
                 workspace_id=workspace.id,
                 signup_provider="metamask",
+                starter_credit_microdollars=0,
             )
 
         raw_token, _ = STORE.create_auth_session(

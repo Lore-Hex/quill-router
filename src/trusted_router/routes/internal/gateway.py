@@ -24,7 +24,10 @@ from typing import Any, cast
 from fastapi import APIRouter, BackgroundTasks, Request
 from starlette.concurrency import run_in_threadpool
 
-from trusted_router.acquisition import record_successful_api_call_safely
+from trusted_router.acquisition import (
+    record_free_credit_exhausted_safely,
+    record_successful_api_call_safely,
+)
 from trusted_router.auth import SettingsDep, is_api_key_expired
 from trusted_router.byok_crypto import byok_cache_key, encrypted_secret_payload
 from trusted_router.catalog import (
@@ -500,6 +503,7 @@ def _authorize_gateway_sync(
             window_limits=window_limits or None,
         )
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
+            record_free_credit_exhausted_safely(workspace.id)
             raise _insufficient_credits_error(workspace)
         if outcome.startswith(AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED):
             _, _, window = outcome.partition(":")

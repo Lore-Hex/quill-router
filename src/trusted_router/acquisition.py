@@ -63,6 +63,13 @@ _TOUCH_FIELDS = frozenset(
     }
 )
 _USAGE_CHECK_CACHE_MAX = 50_000
+_POST_SIGNUP_MILESTONES = frozenset(
+    {
+        "free_credit_exhausted",
+        "checkout_started",
+        "payment_method_saved",
+    }
+)
 _usage_check_after: OrderedDict[str, float] = OrderedDict()
 _usage_check_lock = threading.Lock()
 
@@ -191,6 +198,7 @@ def record_signup_attribution(
     *,
     workspace_id: str,
     signup_provider: str,
+    starter_credit_microdollars: int = 0,
 ) -> None:
     context = request_attribution(request) or _direct_context(request)
     occurred_at = iso_now()
@@ -200,6 +208,7 @@ def record_signup_attribution(
         first_touch=dict(context.first_touch),
         last_touch=dict(context.last_touch),
         signup_provider=signup_provider,
+        starter_credit_microdollars=max(0, starter_credit_microdollars),
         signup_at=occurred_at,
         milestones={
             "signup_completed": occurred_at,
@@ -320,6 +329,108 @@ def record_credit_purchase(
             "purchase_number": record.purchase_count,
         },
     )
+
+
+def record_checkout_started(
+    workspace_id: str,
+    *,
+    amount_microdollars: int,
+    payment_method: str,
+) -> bool:
+    """Record the first successfully-created credit checkout for a workspace."""
+    record_free_credit_exhausted_safely(workspace_id)
+    return _record_post_signup_milestone_safely(
+        workspace_id,
+        "checkout_started",
+        extra={
+            "amount_microdollars": max(0, amount_microdollars),
+            "payment_method": payment_method[:32],
+        },
+    )
+
+
+def record_payment_method_saved(
+    workspace_id: str,
+    *,
+    payment_method: str,
+) -> bool:
+    """Record the first reusable payment method confirmed by the processor."""
+    return _record_post_signup_milestone_safely(
+        workspace_id,
+        "payment_method_saved",
+        extra={"payment_method": payment_method[:32]},
+    )
+
+
+def record_free_credit_exhausted_safely(workspace_id: str) -> bool:
+    """Record when settled prepaid usage has consumed the starter grant.
+
+    The typed credit ledger remains authoritative. This check runs only after
+    an insufficient-credit authorization or when checkout begins, never in the
+    successful inference hot path.
+    """
+    try:
+        record = STORE.get_acquisition_attribution(workspace_id)
+        if (
+            record is None
+            or record.starter_credit_microdollars <= 0
+            or "free_credit_exhausted" in record.milestones
+        ):
+            return False
+        from trusted_router.typed_balance import live_credit_summary
+
+        summary = live_credit_summary(workspace_id)
+        if summary is None:
+            return False
+        if int(summary["total_usage"]) < record.starter_credit_microdollars:
+            return False
+    except Exception as exc:  # noqa: BLE001 - analytics never blocks billing.
+        log.warning(
+            "acquisition.free_credit_check_failed",
+            extra={
+                "workspace_fingerprint": _fingerprint(workspace_id),
+                "error": type(exc).__name__,
+            },
+        )
+        return False
+    return _record_post_signup_milestone_safely(
+        workspace_id,
+        "free_credit_exhausted",
+        extra={
+            "starter_credit_microdollars": record.starter_credit_microdollars,
+        },
+    )
+
+
+def _record_post_signup_milestone_safely(
+    workspace_id: str,
+    milestone: str,
+    *,
+    extra: dict[str, object] | None = None,
+) -> bool:
+    if milestone not in _POST_SIGNUP_MILESTONES:
+        raise ValueError(f"Unsupported acquisition milestone: {milestone}")
+    occurred_at = iso_now()
+    try:
+        record, claimed = STORE.claim_acquisition_milestones(
+            workspace_id,
+            [milestone],
+            occurred_at=occurred_at,
+        )
+    except Exception as exc:  # noqa: BLE001 - analytics never blocks product flows.
+        log.warning(
+            "acquisition.milestone_write_failed",
+            extra={
+                "workspace_fingerprint": _fingerprint(workspace_id),
+                "milestone": milestone,
+                "error": type(exc).__name__,
+            },
+        )
+        return False
+    if record is None or milestone not in claimed:
+        return False
+    _log_conversion(f"acquisition.{milestone}", record, extra=extra)
+    return True
 
 
 def log_browser_funnel_event(request: Request, event: str) -> None:

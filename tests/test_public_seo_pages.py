@@ -73,6 +73,7 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert "<loc>https://trustedrouter.com/fusion</loc>" not in core.text
     assert "<loc>https://trustedrouter.com/compare/models</loc>" in core.text
     assert "<loc>https://trustedrouter.com/resources</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/customers/robot-robot-human</loc>" in core.text
     assert "<loc>https://trustedrouter.com/careers</loc>" in core.text
 
     models = client.get("/sitemap-models.xml")
@@ -903,6 +904,7 @@ def test_resources_directory_links_previous_orphan_pages(client: TestClient) -> 
         "/compare/litellm",
         "/compare/vercel-ai-gateway",
         "/confidential-computing-llm",
+        "/customers/robot-robot-human",
         "/deepseek-api-privacy",
         "/eu-ai-act-llm-compliance",
         "/gdpr-compliant-llm-api",
@@ -930,6 +932,7 @@ def test_resources_directory_links_previous_orphan_pages(client: TestClient) -> 
 
     footer = client.get("/")
     assert 'href="/resources"' in footer.text
+    assert 'href="/customers/robot-robot-human"' in footer.text
     assert 'href="/careers"' in footer.text
 
 
