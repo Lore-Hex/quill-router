@@ -91,6 +91,7 @@ REGIONS = {
     "us-central1": "https://api.trustedrouter.com",
     "europe-west4": "https://api-europe-west4.quillrouter.com",
     "us-east4": "https://api-us-east4.quillrouter.com",
+    "southamerica-east1": "https://api-southamerica-east1.quillrouter.com",
     # Aliases preserved for backward-compat with operator muscle memory.
     "us": "https://api.trustedrouter.com",
     "europe": "https://api-europe-west4.quillrouter.com",

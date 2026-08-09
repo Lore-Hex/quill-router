@@ -318,10 +318,9 @@ The goal is to support OpenRouter-class scale:
 
 The current production deployment does **not** meet that target yet. It runs
 the control plane in four GCP regions behind a global LB with per-region
-Serverless NEGs, with three live attested API regions until additional
-attested regional pools are deployed. Capacity scales horizontally as more
-attested pools come online; correctness, trust, billing, and SDK compatibility
-are in steady-state.
+Serverless NEGs and four live attested API regions. Capacity scales
+horizontally as more attested pools come online; correctness, trust, billing,
+and SDK compatibility are in steady-state.
 
 Request volume depends heavily on average generation size. At 1 trillion
 tokens/day:
@@ -384,17 +383,19 @@ gateway replicas before public traffic is allowed to ramp.
 Multi-region is feasible while preserving the trust boundary, but it has to be
 done carefully:
 
-- Run independent warm attested gateway pools in at least `us-central1`,
-  `us-east4`, and `europe-west4`, then Asia once the first three regions are
-  boring.
+- Run independent warm attested gateway pools in `us-central1`, `us-east4`,
+  `europe-west4`, and `southamerica-east1`, then add Asia after the four-region
+  fleet is operationally boring.
 - Keep TLS private keys inside each regional Confidential Space workload.
-- Move ACME from TLS-ALPN-01 to DNS-01 or another challenge flow that works
-  with multiple regional endpoints for the same hostname. The current
-  TLS-ALPN-01 flow is fine for one region, but a global DNS record can route
-  challenges to the wrong replica.
+- Keep certificate issuance inside the attested workload. Certificates are
+  shared between replicas through the encrypted cache. A first regional
+  hostname is exposed to one node only after every node passes canonical
+  attestation and a settled PONG; it is expanded only after the regional
+  certificate and the same gates pass on every node.
 - Keep regional hostnames such as `api-us-central1.quillrouter.com`,
-  `api-us-east4.quillrouter.com`, and `api-europe-west4.quillrouter.com` for
-  deterministic attestation, smoke tests, and SDK failover.
+  `api-us-east4.quillrouter.com`, `api-europe-west4.quillrouter.com`, and
+  `api-southamerica-east1.quillrouter.com` for deterministic attestation,
+  smoke tests, and SDK failover.
 - Put `api.trustedrouter.com` behind latency/geo DNS or TCP passthrough that does
   not terminate TLS. Cloudflare orange-cloud proxying remains incompatible
   with the prompt-path trust claim.
