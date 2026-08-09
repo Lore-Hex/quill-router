@@ -15,7 +15,7 @@ REGION="${REGION:-us-central1}"
 # /v1/regions which the SDK's region= shortcut resolves against. Adding
 # a region without a backing gateway VM gives callers a TLS-broken
 # `api-<region>.quillrouter.com` and weakens the trust story.
-TR_REGIONS="${TR_REGIONS:-us-central1,us-east4,europe-west4}"
+TR_REGIONS="${TR_REGIONS:-us-central1,us-east4,europe-west4,southamerica-east1}"
 TR_PRIMARY_REGION="${TR_PRIMARY_REGION:-us-central1}"
 # Cloud Run control-plane regions behind trustedrouter.com. This is broader
 # than TR_REGIONS because cold control-plane regions can serve cached public
@@ -25,9 +25,9 @@ TR_CONTROL_PLANE_REGIONS="${TR_CONTROL_PLANE_REGIONS:-us-central1,us-east4,europ
 # (always-on warm capacity). Anything in TR_REGIONS but NOT in
 # TR_WARM_REGIONS gets min_scale=0 (scale-to-zero — ~$0/mo idle, cold-
 # start tax on first request). Defaults to the regions where we run an
-# attested enclave MIG; the LATAM addition stays cold so it can show on
-# the homepage map without paying for always-on Cloud Run.
-TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4}"
+# attested enclave MIG. São Paulo is warm as well so its gateway does not pay
+# a control-plane cold-start penalty on authorization or settlement.
+TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4,southamerica-east1}"
 # Cloud Run memory limit. 2Gi as of 2026-05-10.
 #
 # History of the bloat profile (RSS at idle, then under load):

@@ -1130,6 +1130,7 @@ def _target_label(target: str) -> str:
         "us-central1": "US Central direct",
         "us-east4": "US East direct",
         "europe-west4": "EU direct",
+        "southamerica-east1": "São Paulo direct",
         # Per-region AWS targets: same hostname as "canonical", pinned to
         # one region's load balancer (which fronts that region's enclave
         # fleet — see COMPONENT_DEFINITIONS on why this does not say

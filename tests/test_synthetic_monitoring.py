@@ -347,6 +347,16 @@ def test_gateway_latency_anatomy_distinguishes_global_and_direct_targets() -> No
             latency_milliseconds=10,
             created_at=created_at,
         ),
+        _sample(
+            id="sao-paulo",
+            target="southamerica-east1",
+            target_region="southamerica-east1",
+            monitor_region="us-central1",
+            probe_type="gateway_reused_path",
+            status="up",
+            latency_milliseconds=120,
+            created_at=created_at,
+        ),
     ]
 
     rows = status_snapshot(samples, now=now)["headline_metrics"]["latency_anatomy"]
@@ -355,6 +365,9 @@ def test_gateway_latency_anatomy_distinguishes_global_and_direct_targets() -> No
     assert labels == {
         "canonical": "Global endpoint · us-central1 -> us-central1",
         "us-central1": "US Central direct · us-central1 -> us-central1",
+        "southamerica-east1": (
+            "São Paulo direct · us-central1 -> southamerica-east1"
+        ),
     }
 
 
@@ -2126,7 +2139,7 @@ def test_configured_targets_include_primary_regional_gateway() -> None:
     settings = Settings(
         environment="test",
         api_base_url="https://api.trustedrouter.com/v1",
-        regions="us-central1,us-east4,europe-west4",
+        regions="us-central1,us-east4,europe-west4,southamerica-east1",
         primary_region="us-central1",
     )
 
@@ -2142,6 +2155,9 @@ def test_configured_targets_include_primary_regional_gateway() -> None:
     assert by_name["us-east4"].api_base_url == "https://api-us-east4.quillrouter.com/v1"
     assert by_name["europe-west4"].api_base_url == (
         "https://api-europe-west4.quillrouter.com/v1"
+    )
+    assert by_name["southamerica-east1"].api_base_url == (
+        "https://api-southamerica-east1.quillrouter.com/v1"
     )
 
 
@@ -2172,6 +2188,14 @@ def test_status_components_include_all_warm_regional_gateways() -> None:
             status="up",
             created_at=(now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
         ),
+        _sample(
+            id="syn_sa",
+            target="southamerica-east1",
+            target_region="southamerica-east1",
+            probe_type="tls_health",
+            status="up",
+            created_at=(now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
+        ),
     ]
 
     components = {row["id"]: row for row in status_snapshot(samples, now=now)["components"]}
@@ -2179,6 +2203,7 @@ def test_status_components_include_all_warm_regional_gateways() -> None:
     assert components["us_central1_regional_api"]["status"] == "up"
     assert components["us_east4_regional_api"]["status"] == "up"
     assert components["eu_regional_api"]["status"] == "up"
+    assert components["sa_regional_api"]["status"] == "up"
 
 
 @pytest.mark.asyncio

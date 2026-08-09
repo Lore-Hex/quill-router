@@ -90,6 +90,14 @@ def test_region_map_payload_marks_primary() -> None:
     assert primaries[0]["id"] == settings.primary_region
 
 
+def test_default_region_map_marks_sao_paulo_live() -> None:
+    rendered = region_map_payload(Settings(environment="local"))
+
+    sao_paulo = next(row for row in rendered if row["id"] == "southamerica-east1")
+    assert sao_paulo["city"] == "São Paulo"
+    assert sao_paulo["status_label"] == "live"
+
+
 def test_default_region_map_shows_gcp_region_marketing_footprint() -> None:
     settings = Settings(environment="local", regions="us-central1,europe-west4")
     rendered = region_map_payload(settings)

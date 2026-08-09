@@ -39,6 +39,7 @@ COMPONENT_PROBES: dict[str, set[str]] = {
     "us_central1_regional_api": REGIONAL_GATEWAY_PROBES,
     "us_east4_regional_api": REGIONAL_GATEWAY_PROBES,
     "eu_regional_api": REGIONAL_GATEWAY_PROBES,
+    "sa_regional_api": REGIONAL_GATEWAY_PROBES,
     "eu_west_1_gateway": REGIONAL_GATEWAY_PROBES,
     "eu_west_3_gateway": REGIONAL_GATEWAY_PROBES,
     "attestation": {"attestation_nonce"},
@@ -89,6 +90,11 @@ COMPONENT_DEFINITIONS: tuple[dict[str, str], ...] = (
         "id": "eu_regional_api",
         "name": "EU Regional API",
         "description": "EU attested TLS reachability and trust checks.",
+    },
+    {
+        "id": "sa_regional_api",
+        "name": "South America Regional API",
+        "description": "São Paulo attested TLS reachability and trust checks.",
     },
     # Per-REGION components. Unlike the regional entries above they do not
     # have their own hostname: every AWS EU request goes to one anycast name
@@ -185,6 +191,7 @@ COMPONENT_PROBE_TARGETS: dict[str, str] = {
     "us_central1_regional_api": "us-central1",
     "us_east4_regional_api": "us-east4",
     "eu_regional_api": "europe-west4",
+    "sa_regional_api": "southamerica-east1",
     # These names are the TR_SYNTHETIC_GATEWAY_REGION_TARGETS entry names the
     # AWS EU control plane configures; nothing publishes them anywhere else.
     "eu_west_1_gateway": "eu-west-1",
@@ -223,7 +230,12 @@ GATEWAY_REGION_COMPONENT_IDS: frozenset[str] = frozenset(
 # overall-status banner for pinned failover gateways, while these GCP rows
 # must remain diagnostic and outside the router-core SLO.
 REGIONAL_API_COMPONENT_IDS: frozenset[str] = frozenset(
-    {"us_central1_regional_api", "us_east4_regional_api", "eu_regional_api"}
+    {
+        "us_central1_regional_api",
+        "us_east4_regional_api",
+        "eu_regional_api",
+        "sa_regional_api",
+    }
 )
 MACHINE_REGION_COMPONENT_IDS: frozenset[str] = (
     GATEWAY_REGION_COMPONENT_IDS | REGIONAL_API_COMPONENT_IDS
@@ -264,9 +276,9 @@ def applicable_component_definitions(settings: Settings) -> tuple[dict[str, str]
     """Catalogue components this deployment can produce samples for.
 
     A public status page must only assert things it measures. The AWS EU
-    cloud has no us-central1, us-east4, or europe-west4 anything, so
-    publishing those components there produced three permanent "unknown"
-    rows — which reads as "we are not sure our own service works" and is
+    cloud has no us-central1, us-east4, europe-west4, or southamerica-east1
+    gateway, so publishing those components there would produce permanent
+    "unknown" rows — which reads as "we are not sure our own service works" and is
     worse than not listing them at all. Scope comes from configuration
     (regions + synthetic_regional_probes_enabled), never a per-cloud list.
     """
@@ -327,6 +339,11 @@ def sample_component_ids(sample: SyntheticProbeSample) -> list[str]:
         ids.append("us_east4_regional_api")
     if sample.target == "europe-west4" and sample.probe_type in REGIONAL_GATEWAY_PROBES:
         ids.append("eu_regional_api")
+    if (
+        sample.target == "southamerica-east1"
+        and sample.probe_type in REGIONAL_GATEWAY_PROBES
+    ):
+        ids.append("sa_regional_api")
     if sample.target == "eu-west-1" and sample.probe_type in REGIONAL_GATEWAY_PROBES:
         ids.append("eu_west_1_gateway")
     if sample.target == "eu-west-3" and sample.probe_type in REGIONAL_GATEWAY_PROBES:

@@ -74,9 +74,13 @@ def test_all_attested_control_plane_regions_remain_warm() -> None:
     library = (ROOT / "scripts/deploy/_lib.sh").read_text()
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
 
-    assert 'TR_REGIONS="${TR_REGIONS:-us-central1,us-east4,europe-west4}"' in library
     assert (
-        'TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4}"'
+        'TR_REGIONS="${TR_REGIONS:-us-central1,us-east4,europe-west4,'
+        'southamerica-east1}"' in library
+    )
+    assert (
+        'TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4,'
+        'southamerica-east1}"'
         in library
     )
     assert '--min-instances "$min_instances"' in rollout
