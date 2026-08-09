@@ -7,7 +7,7 @@ from typing import Any
 from tests.fakes.spanner import make_fake_store
 from trusted_router.byok_crypto import decrypt_byok_secret, encrypt_byok_secret
 from trusted_router.config import Settings
-from trusted_router.storage import ApiKey, Generation, ProviderBenchmarkSample
+from trusted_router.storage import ApiKey, CreditAccount, Generation, ProviderBenchmarkSample
 from trusted_router.storage_gcp import SpannerBigtableStore
 from trusted_router.storage_gcp_activity_index import (
     activity_generations as _bt_activity_generations,
@@ -156,6 +156,11 @@ def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
 
 def test_gcp_api_key_lookup_uses_index_and_never_stores_raw_key() -> None:
     store, db, _ = make_fake_store()
+    store._write_entity(
+        "credit",
+        "ws_1",
+        CreditAccount(workspace_id="ws_1"),
+    )
 
     raw, api_key = store.create_api_key(
         workspace_id="ws_1",

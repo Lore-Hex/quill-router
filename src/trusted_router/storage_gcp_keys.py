@@ -62,6 +62,7 @@ class SpannerApiKeys:
         limit_monthly_microdollars: int | None = None,
         budget_alert_only: bool = False,
         tags: dict[str, str] | None = None,
+        usage_shard_count: int = 1,
     ) -> tuple[str, ApiKey]:
         raw = raw_key or new_api_key()
         key_id = new_key_id()
@@ -86,6 +87,7 @@ class SpannerApiKeys:
             limit_monthly_microdollars=limit_monthly_microdollars,
             budget_alert_only=budget_alert_only,
             tags=dict(tags or {}),
+            usage_shard_count=usage_shard_count,
         )
         with self._io.database.batch() as batch:
             self._io.write_entity_batch(batch, "api_key", key.hash, key)

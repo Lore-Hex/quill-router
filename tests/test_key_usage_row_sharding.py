@@ -119,6 +119,53 @@ def test_key_usage_shards_default_and_fail_closed_for_lifetime_caps() -> None:
     )
 
 
+def test_new_uncapped_key_inherits_workspace_credit_shards() -> None:
+    store, database, _ = make_fake_store()
+    workspace_id = "ws-new-key-shards"
+    store._write_entity(
+        "credit",
+        workspace_id,
+        CreditAccount(workspace_id=workspace_id, shard_count=16),
+    )
+
+    _raw, key = store.create_api_key(
+        workspace_id=workspace_id,
+        name="inherits-workspace-scale",
+        creator_user_id=None,
+    )
+
+    assert key.usage_shard_count == 16
+    assert {
+        shard
+        for key_hash, shard in database.typed[KEY_LIMIT_TABLE]
+        if key_hash == key.hash
+    } == set(range(16))
+
+
+def test_new_lifetime_capped_key_remains_single_shard() -> None:
+    store, database, _ = make_fake_store()
+    workspace_id = "ws-new-capped-key"
+    store._write_entity(
+        "credit",
+        workspace_id,
+        CreditAccount(workspace_id=workspace_id, shard_count=16),
+    )
+
+    _raw, key = store.create_api_key(
+        workspace_id=workspace_id,
+        name="exact-cap",
+        creator_user_id=None,
+        limit_microdollars=1_000_000,
+    )
+
+    assert key.usage_shard_count == 1
+    assert {
+        shard
+        for key_hash, shard in database.typed[KEY_LIMIT_TABLE]
+        if key_hash == key.hash
+    } == {0}
+
+
 def test_sharded_key_metadata_update_does_not_clobber_typed_counters() -> None:
     store, database, key = _seed(key_shards=4)
     rows = database.typed[KEY_LIMIT_TABLE]

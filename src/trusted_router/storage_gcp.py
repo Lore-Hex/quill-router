@@ -923,6 +923,16 @@ class SpannerBigtableStore:
         budget_alert_only: bool = False,
         tags: dict[str, str] | None = None,
     ) -> tuple[str, ApiKey]:
+        # Keep new uncapped keys at the workspace's established write scale.
+        # Falling back to one usage row after a workspace has been resharded
+        # recreates a hot key-limit row under otherwise shard-safe traffic.
+        # Exact lifetime limits deliberately remain single-row so authorize
+        # can reserve against the cap atomically.
+        usage_shard_count = (
+            1
+            if limit_microdollars is not None
+            else self._credit_shard_count(workspace_id)
+        )
         return self.api_keys.create(
             workspace_id=workspace_id,
             name=name,
@@ -938,6 +948,7 @@ class SpannerBigtableStore:
             limit_monthly_microdollars=limit_monthly_microdollars,
             budget_alert_only=budget_alert_only,
             tags=tags,
+            usage_shard_count=usage_shard_count,
         )
 
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None:
