@@ -19,6 +19,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/docs/synth": "Run a panel of models inside the attested gateway.",
         "/synth": "Synthesize many models into one perfect frontier answer.",
         "/resources": "Guides, comparisons, privacy references",
+        "/customers/robot-robot-human": "From first call to production-scale legal AI in three weeks.",
         "/careers": "Work on attested AI routing",
         "/blog": "TrustedRouter blog",
         "/blog/they-are-still-training-on-your-data": (
@@ -89,6 +90,22 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         assert 'property="og:title"' in response.text, f"{path} missing og:title"
         assert 'property="og:image"' in response.text, f"{path} missing og:image"
         assert 'name="twitter:card"' in response.text, f"{path} missing twitter:card"
+
+
+def test_rrh_customer_story_scopes_privacy_claims_and_uses_tailored_og(
+    client: TestClient,
+) -> None:
+    response = client.get("/customers/robot-robot-human")
+
+    assert response.status_code == 200
+    assert "Gateway attestation and provider guarantees answer different questions." in response.text
+    assert "TrustedRouter did not inspect prompt or output content." in response.text
+    assert "independently verified E2E routes" in response.text
+    assert "not a single page ever leaving" not in response.text.lower()
+    card = "https://trustedrouter.com/static/og/rrh-case-study.png"
+    assert f'property="og:image" content="{card}"' in response.text
+    assert f'name="twitter:image" content="{card}"' in response.text
+    assert client.get("/static/og/rrh-case-study.png").status_code == 200
 
 
 def test_public_pages_never_weaken_content_handling_to_a_default(

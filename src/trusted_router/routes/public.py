@@ -968,6 +968,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def resources() -> str:
         return public_page_html(settings, "resources")
 
+    @public_html_route("/customers/robot-robot-human")
+    async def customer_robot_robot_human() -> str:
+        return public_page_html(settings, "customers/robot-robot-human")
+
     @public_html_route("/careers")
     async def careers() -> str:
         return public_page_html(settings, "careers")

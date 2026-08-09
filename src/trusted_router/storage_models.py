@@ -1108,9 +1108,10 @@ class SignupResult:
 class AcquisitionAttribution:
     """Privacy-bounded acquisition record for one workspace.
 
-    Click identifiers are retained here so paid conversions can eventually be
-    uploaded to the originating ad platform. They are never copied into logs,
-    public APIs, generation metadata, or the prompt path.
+    Raw click identifiers are converted to keyed, non-reversible fingerprints
+    before this record is created. Neither identifiers nor fingerprints are
+    uploaded to ad platforms or copied into public APIs, generation metadata,
+    or the prompt path.
     """
 
     workspace_id: str
@@ -1118,6 +1119,7 @@ class AcquisitionAttribution:
     first_touch: dict[str, str]
     last_touch: dict[str, str]
     signup_provider: str
+    starter_credit_microdollars: int = 0
     signup_at: str = field(default_factory=iso_now)
     milestones: dict[str, str] = field(default_factory=dict)
     purchase_count: int = 0

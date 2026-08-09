@@ -22,7 +22,10 @@ from typing import Any
 import stripe
 from fastapi import APIRouter, HTTPException, Request
 
-from trusted_router.acquisition import record_credit_purchase
+from trusted_router.acquisition import (
+    record_credit_purchase,
+    record_payment_method_saved,
+)
 from trusted_router.auth import SettingsDep
 from trusted_router.errors import api_error
 from trusted_router.money import MICRODOLLARS_PER_CENT
@@ -172,6 +175,10 @@ def register(router: APIRouter) -> None:
                     customer_id=customer_id,
                     payment_method_id=payment_method,
                 )
+                record_payment_method_saved(
+                    workspace_id,
+                    payment_method="stripe_card",
+                )
                 return {
                     "data": {
                         "setup_saved": True,
@@ -241,6 +248,10 @@ def register(router: APIRouter) -> None:
                         customer_id=str(obj.get("customer") or ""),
                         payment_method_id=payment_method,
                     )
+                    record_payment_method_saved(
+                        workspace_id,
+                        payment_method="stripe_card",
+                    )
                 return {"data": {"credited": credited, "event_id": event_id, "auto_refill": True}}
             if (
                 metadata.get("payment_method") in {None, "auto", "card"}
@@ -254,6 +265,10 @@ def register(router: APIRouter) -> None:
                         workspace_id,
                         customer_id=customer_id,
                         payment_method_id=payment_method,
+                    )
+                    record_payment_method_saved(
+                        workspace_id,
+                        payment_method="stripe_card",
                     )
                     return {
                         "data": {

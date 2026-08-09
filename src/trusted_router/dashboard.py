@@ -175,6 +175,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/docs",
     "/apps",
     "/resources",
+    "/customers/robot-robot-human",
     "/careers",
     "/blog",
     "/docs/agent-setup",
@@ -1375,6 +1376,15 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         description=(
             "Guides, comparisons, privacy references, API quickstarts, model benchmarks, SDKs, "
             "migration instructions, and integration pages for building with TrustedRouter."
+        ),
+    ),
+    "customers/robot-robot-human": PublicPage(
+        template="public/customer_robot_robot_human.html",
+        og_card="rrh-case-study.png",
+        title="Robot, Robot & Human: Production Legal AI in Three Weeks",
+        description=(
+            "How Robot, Robot & Human routed billions of tokens while processing "
+            "170,974 litigation documents through TrustedRouter's attested gateway."
         ),
     ),
     "careers": PublicPage(

@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from trusted_router.acquisition import record_credit_purchase
+from trusted_router.acquisition import record_checkout_started, record_credit_purchase
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.money import (
@@ -52,6 +52,11 @@ def create_paypal_checkout_session(
 
     if not settings.paypal_enabled:
         if settings.environment.lower() in {"local", "test"}:
+            record_checkout_started(
+                workspace_id,
+                amount_microdollars=amount_microdollars,
+                payment_method="paypal",
+            )
             return {
                 "id": f"paypal_mock_{uuid.uuid4().hex}",
                 "url": f"https://{settings.trusted_domain}/billing/mock-paypal-checkout",
@@ -95,6 +100,11 @@ def create_paypal_checkout_session(
     order_id = str(order.get("id") or "")
     if not order_id or not approval_url:
         raise api_error(502, "PayPal did not return an approval URL", ErrorType.INTERNAL_ERROR)
+    record_checkout_started(
+        workspace_id,
+        amount_microdollars=amount_microdollars,
+        payment_method="paypal",
+    )
     return {
         "id": order_id,
         "url": approval_url,

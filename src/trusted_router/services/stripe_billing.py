@@ -5,6 +5,10 @@ from typing import Any, cast
 
 import stripe
 
+from trusted_router.acquisition import (
+    record_checkout_started,
+    record_payment_method_saved,
+)
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.money import dollars_to_cents, money_pair
@@ -103,6 +107,11 @@ def create_checkout_session(
             if ach_requested
             else "stripe"
         )
+        record_checkout_started(
+            workspace_id,
+            amount_microdollars=amount_microdollars,
+            payment_method=payment_method,
+        )
         return {
             "id": session["id"],
             "url": session["url"],
@@ -119,6 +128,11 @@ def create_checkout_session(
         else "mock_ach"
         if ach_requested
         else "mock"
+    )
+    record_checkout_started(
+        workspace_id,
+        amount_microdollars=amount_microdollars,
+        payment_method=payment_method,
     )
     return {
         "id": f"cs_test_{uuid.uuid4().hex}",
@@ -184,6 +198,7 @@ def create_payment_method_session(
         customer_id=mock_customer_id,
         payment_method_id=mock_payment_method_id,
     )
+    record_payment_method_saved(workspace_id, payment_method="stripe_card")
     return {
         "id": f"cs_setup_mock_{uuid.uuid4().hex}",
         "url": f"https://{settings.trusted_domain}/billing/mock-payment-method",
