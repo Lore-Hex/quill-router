@@ -254,6 +254,10 @@ body.console {
   gap: 8px;
   min-width: 0;
   max-width: 100%;
+}
+
+.agent-quickstart + .key-reveal-section {
+  margin-top: 14px;
   padding-top: 14px;
   border-top: 1px solid var(--good-border);
 }
@@ -1095,6 +1099,10 @@ body.console {
 
 .activation-key-panel .console-key-reveal {
   max-width: none;
+}
+
+.activation-onboarding-agent + .console-key-reveal {
+  margin-top: 14px;
 }
 
 .activation-security-note {

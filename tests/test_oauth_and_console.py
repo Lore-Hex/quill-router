@@ -882,9 +882,12 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
     assert agent_message is not None
     assert fake_raw_key in agent_message.group(0)
     assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
+    assert resp.text.index('id="welcome-agent-message"') < resp.text.index(
+        'id="welcome-api-key"'
+    )
     assert "Run my first API request" in resp.text
     assert 'data-endpoint="/chat-proxy/v1/chat/completions"' in resp.text
-    assert "Claude Code / Codex" in resp.text
+    assert "Claude Code, Codex" in resp.text
     assert "Python" in resp.text
     assert "JavaScript" in resp.text
     assert "curl" in resp.text
@@ -970,7 +973,10 @@ def test_console_create_api_key_form_repeats_raw_key_in_agent_message(
         in resp.text
     )
     assert "Paste this short message" not in agent_message.group(0)
-    assert "stream the answer into this chat as it arrives" in resp.text
+    assert resp.text.index('id="created-agent-message"') < resp.text.index(
+        'id="created-api-key"'
+    )
+    assert "stream the answer into this chat as it arrives" not in resp.text
     assert "Keep this agent's model" not in resp.text
     assert "Use it in memory for this request" not in resp.text
     assert "stream=true" not in resp.text
