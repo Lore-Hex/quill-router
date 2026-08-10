@@ -1074,11 +1074,16 @@ for prov, n in sorted(c.items(), key=lambda kv: -kv[1]):
 
 Per-region MIG status (GCP enclave):
 ```bash
-for region in us-central1 europe-west4 us-east4; do
-  short=${region%%-*}
-  echo "=== $region ==="
-  gcloud compute instance-groups managed describe quill-enclave-mig-${short:0:2} \
-    --region=$region --project=quill-cloud-proxy \
+for entry in \
+  us-central1:quill-enclave-mig-us \
+  us-east4:quill-enclave-mig-useast4 \
+  europe-west4:quill-enclave-mig-eu \
+  southamerica-east1:quill-enclave-mig-sa; do
+  region=${entry%%:*}
+  mig=${entry#*:}
+  echo "=== ${region} ==="
+  gcloud compute instance-groups managed describe "${mig}" \
+    --region="${region}" --project=quill-cloud-proxy \
     --format='value(versions[0].instanceTemplate,targetSize,status.isStable)'
 done
 ```
