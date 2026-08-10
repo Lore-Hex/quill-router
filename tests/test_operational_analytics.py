@@ -241,6 +241,25 @@ def test_public_snapshot_reads_newest_revision_across_month_partitions() -> None
     }
 
 
+def test_public_snapshot_uses_a_short_optional_read_timeout(monkeypatch) -> None:
+    client = OperationalAnalyticsClient(
+        base_url="http://clickhouse",
+        user="reader",
+        password="secret",  # noqa: S106 - inert test credential.
+    )
+    observed: dict[str, float] = {}
+
+    def query(_sql, *, params=None, timeout_seconds=20.0):
+        _ = params
+        observed["timeout_seconds"] = timeout_seconds
+        return []
+
+    monkeypatch.setattr(client, "_query", query)
+
+    assert client.public_snapshot("leaderboard") is None
+    assert observed == {"timeout_seconds": 2.0}
+
+
 def _outbox_row() -> OperationalOutboxRow:
     return OperationalOutboxRow(
         shard=2,

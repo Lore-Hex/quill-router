@@ -25,6 +25,7 @@ from trusted_router.types import UsageType
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 T = TypeVar("T")
+PUBLIC_SNAPSHOT_QUERY_TIMEOUT_SECONDS = 2.0
 
 
 def _identifier(value: str, *, label: str) -> str:
@@ -65,13 +66,14 @@ class OperationalAnalyticsClient:
         sql: str,
         *,
         params: dict[str, str | int] | None = None,
+        timeout_seconds: float = 20.0,
     ) -> list[dict[str, Any]]:
         query_params: dict[str, str] = {"database": self._database}
         for key, value in (params or {}).items():
             query_params[f"param_{key}"] = str(value)
         with httpx.Client(
             auth=(self._user, self._password),
-            timeout=httpx.Timeout(20.0),
+            timeout=httpx.Timeout(timeout_seconds),
             transport=self._transport,
         ) as client:
             response = client.post(
@@ -311,6 +313,7 @@ LIMIT 1
 FORMAT JSON
 """,
             params={"name": name},
+            timeout_seconds=PUBLIC_SNAPSHOT_QUERY_TIMEOUT_SECONDS,
         )
         if not rows:
             return None
