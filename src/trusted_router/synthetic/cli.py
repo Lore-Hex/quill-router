@@ -297,9 +297,7 @@ async def _throughput_pass(
         ).completion_seconds,
     )
     target = SyntheticTarget("throughput", settings.api_base_url, monitor_region)
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(effective_timeout_seconds)
-    ) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(effective_timeout_seconds)) as client:
         return [
             await provider_throughput_probe(
                 client,

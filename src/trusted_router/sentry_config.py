@@ -68,11 +68,11 @@ SENSITIVE_STRING_FRAGMENTS: tuple[str, ...] = (
 # the key-name blocklist above wouldn't catch them.
 SENSITIVE_STRING_PREFIXES: tuple[str, ...] = (
     "GOCSPX-",  # Google OAuth client secret
-    "gho_",     # GitHub OAuth-app token
-    "ghp_",     # GitHub personal access token
-    "ghu_",     # GitHub user-to-server token
-    "ghs_",     # GitHub server token
-    "ghr_",     # GitHub refresh token
+    "gho_",  # GitHub OAuth-app token
+    "ghp_",  # GitHub personal access token
+    "ghu_",  # GitHub user-to-server token
+    "ghs_",  # GitHub server token
+    "ghr_",  # GitHub refresh token
 )
 
 
@@ -121,7 +121,9 @@ class _SentryFloodgate:
                 self._fingerprints.clear()
 
             bucket = self._fingerprints.get(fingerprint)
-            is_first_for_fingerprint = bucket is None or now - bucket.window_started >= window_seconds
+            is_first_for_fingerprint = (
+                bucket is None or now - bucket.window_started >= window_seconds
+            )
             if is_first_for_fingerprint:
                 bucket = _FloodBucket(window_started=now)
                 self._fingerprints[fingerprint] = bucket
@@ -249,7 +251,9 @@ def before_send(event: dict[str, Any], hint: dict[str, Any] | None = None) -> di
     return event
 
 
-def before_send_log(event: dict[str, Any], hint: dict[str, Any] | None = None) -> dict[str, Any] | None:
+def before_send_log(
+    event: dict[str, Any], hint: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
     if _is_dropped_noise(event):
         return None
     event = _scrub(event)
@@ -258,7 +262,9 @@ def before_send_log(event: dict[str, Any], hint: dict[str, Any] | None = None) -
     return event
 
 
-def before_breadcrumb(crumb: dict[str, Any], hint: dict[str, Any] | None = None) -> dict[str, Any] | None:
+def before_breadcrumb(
+    crumb: dict[str, Any], hint: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
     if _is_dropped_noise(crumb):
         return None
     return _scrub(crumb)

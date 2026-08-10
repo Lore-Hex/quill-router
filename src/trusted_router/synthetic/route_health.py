@@ -129,9 +129,10 @@ def report_route_health(flags: list[RouteHealthFlag]) -> None:
         return
 
     for flag in flags:
-        latest = " ".join(
-            part for part in (flag.newest_error_type, flag.newest_error_message) if part
-        ) or "unknown error"
+        latest = (
+            " ".join(part for part in (flag.newest_error_type, flag.newest_error_message) if part)
+            or "unknown error"
+        )
         message = (
             f"route-health: {flag.provider}/{flag.model} {flag.failure_rate:.0%} failure "
             f"over {flag.samples} samples (latest: {latest})"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import html
 import json
@@ -117,6 +118,7 @@ from trusted_router.services.trust_release import (
 from trusted_router.storage import STORE
 from trusted_router.storage_custom_models import normalize_custom_model_id
 from trusted_router.storage_models import utcnow
+from trusted_router.synthetic.fleet import fleet_snapshot
 from trusted_router.synthetic.leaderboard import aggregate_leaderboard
 from trusted_router.synthetic.status import history_payload, status_snapshot
 from trusted_router.synthetic.video_leaderboard import aggregate_video_leaderboard
@@ -162,6 +164,11 @@ CHOOSE_CATALOG_CACHE_SECONDS = 300
 CHOOSE_CATALOG_STALE_SECONDS = 86_400
 INDEXNOW_KEY = "360a02e48445d297f9612a4c3fef878b"
 _STATUS_CACHE: tuple[float, dict[str, Any]] | None = None
+# /fleet fans out to every peer's status.json, so its cache TTL is what keeps
+# a page-refresh storm from turning into a cross-cloud fetch storm.
+_FLEET_CACHE: tuple[float, dict[str, Any]] | None = None
+_FLEET_CACHE_LOCK = asyncio.Lock()
+FLEET_SNAPSHOT_CACHE_SECONDS = 30
 _LEADERBOARD_CACHE: tuple[float, dict[str, Any]] | None = None
 _VIDEO_LEADERBOARD_CACHE: tuple[float, dict[str, Any]] | None = None
 _APPS_CACHE: tuple[float, dict[str, Any]] | None = None
@@ -1234,6 +1241,20 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             build=lambda: _json_body({"data": _video_leaderboard_snapshot(settings)}),
         )
 
+    @app.get("/fleet.json")
+    async def fleet_json() -> Response:
+        # Served by EVERY control plane so the fleet view is as multi-cloud
+        # as the service: any healthy deployment can be the command center.
+        return Response(
+            content=_json_body({"data": await _fleet_snapshot_cached(settings)}),
+            media_type="application/json",
+        )
+
+    @public_html_route("/fleet")
+    async def fleet_page(request: Request) -> HTMLResponse:
+        _ = request
+        return HTMLResponse(_fleet_page_html(await _fleet_snapshot_cached(settings)))
+
     @app.get("/status.json")
     async def status_json(background_tasks: BackgroundTasks) -> Response:
         return _cached_public_response(
@@ -1853,6 +1874,122 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
     if settings.environment != "test":
         _STATUS_CACHE = (now, payload)
     return payload
+
+
+async def _fleet_snapshot_cached(settings: Settings) -> dict[str, Any]:
+    global _FLEET_CACHE
+
+    def fresh() -> dict[str, Any] | None:
+        if settings.environment != "test" and _FLEET_CACHE is not None:
+            cached_at, payload = _FLEET_CACHE
+            if time.monotonic() - cached_at < FLEET_SNAPSHOT_CACHE_SECONDS:
+                return payload
+        return None
+
+    cached = fresh()
+    if cached is not None:
+        return cached
+    # Single-flight: /fleet.json is public and its miss path fans out to
+    # every peer cloud, so concurrent misses must coalesce into one rebuild
+    # rather than one cross-cloud fetch storm per request.
+    async with _FLEET_CACHE_LOCK:
+        cached = fresh()
+        if cached is not None:
+            return cached
+        payload = await fleet_snapshot(settings)
+        if settings.environment != "test":
+            _FLEET_CACHE = (time.monotonic(), payload)
+        return payload
+
+
+_FLEET_STATUS_COLORS = {
+    "up": "#2e9e5b",
+    "degraded": "#d99a2b",
+    "routing_degraded": "#d99a2b",
+    "trust_degraded": "#c2542e",
+    "down": "#c43d3d",
+    "unreachable": "#c43d3d",
+    "unknown": "#8a8f98",
+}
+
+
+def _fleet_page_html(snapshot: dict[str, Any]) -> str:
+    """Minimal server-rendered fleet page: one row per deployment, one row
+    per scheduler heartbeat. Deliberately dependency-free and compact — this
+    is the operator's "where do I look next" page, not a second status page.
+    """
+
+    def color(status: str) -> str:
+        return _FLEET_STATUS_COLORS.get(status, "#8a8f98")
+
+    def pill(status: str) -> str:
+        label = html.escape(status.replace("_", " "))
+        return (
+            f'<span style="background:{color(status)};color:#fff;'
+            'border-radius:9px;padding:2px 10px;font-size:13px;">'
+            f"{label}</span>"
+        )
+
+    rows = []
+    for row in snapshot.get("deployments", []):
+        status = str(row.get("overall_status") or "unknown")
+        components = row.get("components") or {}
+        bad = {key: value for key, value in components.items() if value not in ("up", "unknown")}
+        detail = (
+            ", ".join(f"{key}: {value}" for key, value in sorted(bad.items()))
+            if bad
+            else "all components up"
+        )
+        stale = row.get("monitor_stale")
+        monitor = "stale" if stale else ("fresh" if stale is not None else "n/a")
+        rows.append(
+            "<tr>"
+            f'<td><a href="{html.escape(str(row.get("url") or ""))}">'
+            f"{html.escape(str(row.get('name') or ''))}</a></td>"
+            f"<td>{pill(status)}</td>"
+            f"<td>{html.escape(str(row.get('headline') or ''))}</td>"
+            f"<td>{html.escape(monitor)}</td>"
+            f"<td>{html.escape(detail)}</td>"
+            "</tr>"
+        )
+    beats = []
+    for beat in snapshot.get("heartbeats", []):
+        age = beat.get("age_seconds")
+        beats.append(
+            "<tr>"
+            f"<td>{html.escape(str(beat.get('name') or ''))}</td>"
+            f"<td>{pill('down' if beat.get('stale') else 'up')}</td>"
+            f"<td>{html.escape(str(age) + 's' if age is not None else 'unknown')}</td>"
+            f"<td>{html.escape(str(beat.get('last_beat_at') or ''))}</td>"
+            "</tr>"
+        )
+    overall = str(snapshot.get("fleet_overall_status") or "unknown")
+    table_css = "width:100%;border-collapse:collapse;margin:12px 0 28px"
+    cell_css = (
+        "th,td{text-align:left;padding:8px 12px;border-bottom:1px solid #2a2f3a;"
+        "font-size:14px}th{color:#8a8f98;font-weight:600}"
+    )
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>TrustedRouter Fleet</title>
+<style>
+body{{background:#0f1218;color:#e6e9ef;font:15px/1.5 -apple-system,'Segoe UI',sans-serif;
+margin:0;padding:32px;max-width:1080px;margin-inline:auto}}
+a{{color:#7ab7ff;text-decoration:none}} {cell_css}
+h1{{font-size:20px;margin:0 0 4px}} h2{{font-size:16px;color:#8a8f98;margin:28px 0 0}}
+</style></head><body>
+<h1>TrustedRouter Fleet {pill(overall)}</h1>
+<div style="color:#8a8f98;font-size:13px">generated {html.escape(str(snapshot.get("generated_at") or ""))}
+ &middot; served by every control plane &middot; <a href="/fleet.json">fleet.json</a></div>
+<h2>Deployments</h2>
+<table style="{table_css}"><tr><th>deployment</th><th>status</th><th>headline</th>
+<th>monitor</th><th>attention</th></tr>{"".join(rows)}</table>
+<h2>Scheduler heartbeats (this deployment)</h2>
+<table style="{table_css}"><tr><th>job</th><th>liveness</th><th>age</th><th>last beat</th></tr>
+{"".join(beats) or '<tr><td colspan="4">no heartbeats recorded yet</td></tr>'}</table>
+</body></html>"""
 
 
 def _compact_status_json(snapshot: dict[str, Any]) -> dict[str, Any]:

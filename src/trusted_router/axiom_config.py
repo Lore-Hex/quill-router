@@ -26,6 +26,7 @@ Design choices:
   * Skip registration under pytest unless explicitly enabled — same
     pattern as `init_sentry`.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -215,11 +216,28 @@ class _AxiomScrubFilter(logging.Filter):
     # passing them through `_scrub` would needlessly walk them).
     _SKIP_FIELDS = frozenset(
         {
-            "name", "msg", "args", "levelname", "levelno", "pathname",
-            "filename", "module", "exc_info", "exc_text", "stack_info",
-            "lineno", "funcName", "created", "msecs", "relativeCreated",
-            "thread", "threadName", "processName", "process",
-            "taskName", "asctime",
+            "name",
+            "msg",
+            "args",
+            "levelname",
+            "levelno",
+            "pathname",
+            "filename",
+            "module",
+            "exc_info",
+            "exc_text",
+            "stack_info",
+            "lineno",
+            "funcName",
+            "created",
+            "msecs",
+            "relativeCreated",
+            "thread",
+            "threadName",
+            "processName",
+            "process",
+            "taskName",
+            "asctime",
         }
     )
     _MAX_MESSAGE_CHARS = 2_000
@@ -275,13 +293,13 @@ class _AxiomNoiseFilter(logging.Filter):
     uvicorn error logs are unaffected."""
 
     _NOISY_PREFIXES = (
-        "urllib3",             # Sentry transport + assorted HTTP chatter
-        "sentry_sdk",          # the SDK's own internal logging
-        "google",              # spanner/bigtable/auth client libraries
-        "grpc",                # gRPC channel state churn
-        "httpx",               # per-request INFO lines for provider calls
-        "httpcore",            # httpx's transport layer
-        "hpack",               # HTTP/2 header codec debug noise
+        "urllib3",  # Sentry transport + assorted HTTP chatter
+        "sentry_sdk",  # the SDK's own internal logging
+        "google",  # spanner/bigtable/auth client libraries
+        "grpc",  # gRPC channel state churn
+        "httpx",  # per-request INFO lines for provider calls
+        "httpcore",  # httpx's transport layer
+        "hpack",  # HTTP/2 header codec debug noise
     )
 
     def filter(self, record: logging.LogRecord) -> bool:

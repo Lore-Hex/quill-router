@@ -10,6 +10,7 @@ Heavy logic lives elsewhere:
   * `routes/inference.py` — chat/messages/responses/embeddings
   * each `routes/*.py` module owns one feature surface
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -112,6 +113,8 @@ def create_app(
             from trusted_router.storage import STORE
 
             def loop() -> None:
+                from trusted_router.synthetic.fleet import record_heartbeat
+
                 passes = 0
                 while True:
                     time.sleep(random.uniform(20, 45))  # noqa: S311
@@ -119,6 +122,9 @@ def create_app(
                         drain_home_settlements(settings, limit=50)
                     except Exception:
                         _logging.getLogger(__name__).exception("home settlement pass failed")
+                    # Liveness, not success: the heartbeat says the loop is
+                    # running; a failing pass already logs its own exception.
+                    record_heartbeat("scheduler:home-settlement", settings=settings)
                     passes += 1
                     # Reap roughly every tenth pass (~5 min): abandoned
                     # authorizations accumulate on deploy restarts, not
@@ -174,6 +180,7 @@ def create_app(
             import random as _random
 
             from trusted_router.routes.internal.synthetic import run_synthetic_pass
+            from trusted_router.synthetic.fleet import record_heartbeat
 
             interval = max(60, settings.synthetic_scheduler_interval_seconds)
             log = _logging.getLogger(__name__)
@@ -196,6 +203,11 @@ def create_app(
                         # one bad sample, and staleness is exactly the failure
                         # that hides an outage.
                         log.exception("synthetic pass failed")
+                    # Liveness, not success: a dead loop is the failure shape
+                    # this heartbeat exists to expose on /fleet.
+                    await _asyncio.to_thread(
+                        record_heartbeat, "scheduler:synthetic", settings=settings
+                    )
                     await _asyncio.sleep(interval)
 
             _asyncio.create_task(loop())  # noqa: RUF006 - lifetime is the process
@@ -203,9 +215,7 @@ def create_app(
     register_http_middleware(app, settings)
 
     @app.exception_handler(StarletteHTTPException)
-    async def http_exception_handler(
-        request: Request, exc: StarletteHTTPException
-    ) -> Response:
+    async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> Response:
         # Redirect-shaped HTTPExceptions (e.g. console gating raising 302
         # to /?reason=signin) need to stay redirects, not become JSON
         # error envelopes.
@@ -214,9 +224,7 @@ def create_app(
             if location:
                 return RedirectResponse(url=location, status_code=exc.status_code)
         if isinstance(exc.detail, dict) and "error" in exc.detail:
-            return JSONResponse(
-                exc.detail, status_code=exc.status_code, headers=exc.headers
-            )
+            return JSONResponse(exc.detail, status_code=exc.status_code, headers=exc.headers)
         if exc.status_code == 404 and _is_public_html_request(request):
             return HTMLResponse(
                 public_not_found_html(settings, request.url.path),
@@ -237,10 +245,7 @@ def create_app(
         _request: Request, exc: RequestValidationError
     ) -> JSONResponse:
         first = exc.errors()[0] if exc.errors() else {}
-        loc = (
-            ".".join(str(part) for part in first.get("loc", []) if part != "body")
-            or "body"
-        )
+        loc = ".".join(str(part) for part in first.get("loc", []) if part != "body") or "body"
         message = first.get("msg") or "Invalid request body"
         return error_response(400, f"{loc}: {message}", ErrorType.BAD_REQUEST)
 
@@ -264,9 +269,7 @@ def create_app(
     for conflict_type in conflict_store_error_types():
         app.add_exception_handler(conflict_type, aborted_exception_handler)
 
-    async def unavailable_exception_handler(
-        _request: Request, _exc: Exception
-    ) -> Response:
+    async def unavailable_exception_handler(_request: Request, _exc: Exception) -> Response:
         response = error_response(
             503,
             "Persistent storage is temporarily unavailable; retry.",
@@ -318,7 +321,9 @@ def _is_public_html_request(request: Request) -> bool:
         "/webhooks",
         "/.well-known",
     )
-    return not any(path == prefix or path.startswith(f"{prefix}/") for prefix in non_public_prefixes)
+    return not any(
+        path == prefix or path.startswith(f"{prefix}/") for prefix in non_public_prefixes
+    )
 
 
 def _make_api_router(settings: Settings) -> APIRouter:

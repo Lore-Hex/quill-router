@@ -331,10 +331,24 @@ def test_alert_stays_silent_below_threshold(sentry_events: list[str]) -> None:
     assert sentry_events == []
 
 
-def test_alert_does_not_refire_past_threshold(sentry_events: list[str]) -> None:
-    # 4th consecutive failure: the issue already exists; stay silent until
+def test_alert_fires_in_the_two_sample_transition_window(
+    sentry_events: list[str],
+) -> None:
+    # streak == threshold + 1 still fires: with two concurrent writers (GCP's
+    # two monitor regions) the observed streak can jump 2 -> 4, and an exact
+    # == threshold match would suppress the alert forever. The Sentry
+    # fingerprint folds a double fire at 3 and 4 into one issue.
+    store = _StreakStore(["down", "down", "down", "down", "up"])
+    assert alert_on_failure_streak(store, store.rows[0]) is True
+    assert len(sentry_events) == 1
+
+
+def test_alert_does_not_refire_past_the_transition_window(
+    sentry_events: list[str],
+) -> None:
+    # 5th consecutive failure: the issue already exists; stay silent until
     # the probe recovers and a fresh streak forms.
-    store = _StreakStore(["down", "down", "down", "down"])
+    store = _StreakStore(["down", "down", "down", "down", "down"])
     assert alert_on_failure_streak(store, store.rows[0]) is False
     assert sentry_events == []
 

@@ -303,6 +303,18 @@ async def run_synthetic_once(
                     billing_semaphore=limiter,
                 )
             )
+        # Peer policing rides the same pass: every deployment fetches every
+        # deployment's public status.json (itself included) and records a
+        # peer_monitor sample, so a cloud whose monitor silently dies is
+        # caught by its PEERS within three cadences (streak alert), not by a
+        # human opening four status pages. Gated off in tests, which build
+        # Settings(environment="test") and must not touch the network.
+        if settings.synthetic_fleet_peers and settings.environment != "test":
+            from trusted_router.synthetic.fleet import fleet_peer_probes
+
+            probe_tasks.append(
+                fleet_peer_probes(settings, monitor_region=region, client=default_client)
+            )
         target_results = await asyncio.gather(*probe_tasks)
     for target_samples in target_results:
         samples.extend(target_samples)

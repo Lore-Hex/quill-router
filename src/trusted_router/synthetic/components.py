@@ -33,6 +33,13 @@ MONITOR_CONFIGURATION_ERROR_TYPES = frozenset(
         "monitor_workspace_paused",
     }
 )
+# Liveness/ops probe types (synthetic/fleet.py): scheduler heartbeats and
+# cross-cloud peer policing. They ride the synthetic-sample pipeline for
+# storage and streak alerts but are NOT evidence about this deployment's
+# service, so they must stay out of every component, every SLO, and — most
+# importantly — the monitor-freshness clock: a heartbeat from a loop that is
+# not the probe fleet must never make a dead probe fleet look fresh.
+OPS_PROBE_TYPES = frozenset({"heartbeat", "peer_monitor"})
 # Deep end-to-end model calls: a real OpenAI-SDK chat completion and a real
 # Responses round-trip, output-verified. These probes previously fed NO
 # component: they could fail 100% (as they did on AWS and Azure on
