@@ -30,6 +30,94 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="native-swift-harness-no-electron",
+        title="Open Source all native Swift harness (NO Electron!)",
+        description=(
+            "QuillCode is a coding agent written in Swift with a real AppKit UI. "
+            "No Electron, no bundled browser engine, no 400MB app to open a "
+            "text box. 60k lines, 1600 tests, and it is on GitHub."
+        ),
+        published_date="2026-08-10",
+        source_label="Joseph Perla original",
+        source_url="https://www.jperla.com/blog/native-swift-harness-no-electron",
+        body_html="""
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto"><rect width="1200" height="630" fill="#ffffff"/><rect x="0" y="0" width="1200" height="10" fill="#1d9e75"/><text x="60" y="120" font-family="Inter,Arial,sans-serif" font-size="52" font-weight="700" fill="#111827">No Electron</text><text x="60" y="176" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="400" fill="#6b7280">QuillCode: an all-native Swift coding harness</text><text x="60" y="400" font-family="Inter,Arial,sans-serif" font-size="150" font-weight="700" fill="#0f6e56">60k</text><text x="60" y="460" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="500" fill="#374151">lines of Swift, 1600+ tests, 680+ merged PRs</text><text x="60" y="560" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="500" fill="#9ca3af">trustedrouter.com</text></svg>
+<p>The coding agent I use every day is <a href="https://github.com/Lore-Hex/QuillCode">open source</a> now. It is called QuillCode, it is a native Mac app written in Swift, and it runs on my laptop instead of in somebody else's datacenter.</p>
+
+<p>That last part is the whole point. Almost every useful thing I want an agent to do involves my machine. Run the test suite. Open a worktree and try the risky refactor there. Drive a browser and check that the page actually renders. Read the log file that never leaves my disk. An agent living in a web app can do none of that, so it does the one thing it can do — write code into a text box — and hands the hard half back to you. The hard half is the part I wanted help with.</p>
+
+<p>It is also not an Electron app, which I say with some feeling. The current default for shipping a desktop tool is to bundle an entire browser engine so the team can write the interface in the language they already know, and the result is a text box that eats four hundred megabytes of disk and a couple hundred of RAM before it has done anything. Every one of these apps feels the same: a beachball on a window resize, a scroll that is almost but not quite native, a menu bar that is a drawing of a menu bar. QuillCode's interface is Swift and AppKit. It launches immediately, it scrolls the way every other Mac window scrolls, and the file picker is the file picker. That is not nostalgia, it is the difference between a tool you keep open all day and one you quit because it is heavy.</p>
+
+<p>So QuillCode has local tools, real worktrees, computer use, automations, and a plugin system, and it updates itself with verified builds. It is about sixty thousand lines of Swift with sixteen hundred tests behind it and something north of six hundred and eighty merged pull requests. I mention the test count because a coding agent that edits your repo is exactly the kind of software where you want to know somebody was paranoid.</p>
+
+<p>It is backed by <a href="/">TrustedRouter</a>, which means you choose the model instead of inheriting one. That matters more for coding than for chat, because coding is where the gap between models shows up as wasted hours. Sometimes you want the cheap fast one for a rename and the expensive one for the design; I wrote about <a href="/blog/how-to-choose-a-model">how to choose</a> and about the fact that <a href="/blog/the-best-open-models-arent-on-your-leaderboard">the best open models are not on your leaderboard</a>. QuillCode ships with <a href="/blog/socrates-1.1-terminal-bench-hard-72">Socrates 1.1</a> in the recommended list because it scored 72 on Terminal-Bench Hard, and a coding harness should default to something that can actually finish a terminal task.</p>
+
+<p>The obvious objection is that a local agent is a worse agent — no fleet of GPUs behind it, no magic. That gets it backwards. The model still runs remotely; what runs locally is the part that touches your files, and that part should be a program you can read. The frontier is available to me either way. I get <a href="/blog/frontier-smart-cheap-fast-pick-3-open-source">frontier-quality output at open-source prices</a> through the router, and I get to keep the file system access on my side of the wire.</p>
+
+<p>The other objection is privacy, and it is the serious one, because a coding agent reads everything. That is why the prompt path is <a href="/blog/one-api-all-llms-provably-private">verifiable rather than promised</a> and why the gateway <a href="/blog/attestation-is-all-you-need">attests what code is receiving your prompts</a>. If you are going to point an agent at a private repo you should be able to check where the words went.</p>
+
+<p>Everything else I build is open too — the <a href="/blog/open-source-open-source-open-source">router, the evals, the proxy</a>. Take the repo, read the parts you do not trust, and run it against your own key.</p>
+""",
+    ),
+    BlogPost(
+        slug="an-agent-that-hides-the-bill",
+        title="An AI coworker that hides the bill is a bad coworker",
+        description=(
+            "QuillCode puts a live token meter in the top bar and a /confidential "
+            "mode that forgets the conversation but keeps the receipt. Private "
+            "should mean private words, not invisible spending."
+        ),
+        published_date="2026-08-10",
+        source_label="Joseph Perla original",
+        source_url="https://www.jperla.com/blog/an-agent-that-hides-the-bill",
+        body_html="""
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto"><rect width="1200" height="630" fill="#ffffff"/><rect x="0" y="0" width="1200" height="10" fill="#1d9e75"/><text x="60" y="120" font-family="Inter,Arial,sans-serif" font-size="52" font-weight="700" fill="#111827">Show the meter</text><text x="60" y="176" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="400" fill="#6b7280">Budgets and confidential chat in QuillCode</text><text x="60" y="400" font-family="Inter,Arial,sans-serif" font-size="150" font-weight="700" fill="#0f6e56">12</text><text x="60" y="460" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="500" fill="#374151">side doors a private mode has to close</text><text x="60" y="560" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="500" fill="#9ca3af">trustedrouter.com</text></svg>
+<p>If you hire someone and they will not tell you what they spent, you fire them. Agents get a pass on this for no reason I can defend, so QuillCode has a meter in the top bar: tokens used against the limit, what is left, and where the number came from. It updates while the agent works. You can watch a bad prompt get expensive in real time, which is the only feedback loop that ever made me write better prompts.</p>
+
+<p>The interesting bug showed up when I added the private mode. QuillCode has <code>/confidential</code>, which opens a chat that is never written to disk, never appears in the sidebar, carries no workspace memories, and is pinned to an end-to-end encrypted route. When you leave, the thread is destroyed. Clean.</p>
+
+<p>Except the spend went with it. Destroying the thread destroyed its receipt, so the money spent inside a confidential chat quietly vanished from the period ledger. You could run up a bill in private mode and the books would never know. Nobody designed that; it fell out of "destroy everything about this thread" meeting "the ledger lives on the thread." A private chat should forget your words and keep your receipt. Now it does.</p>
+
+<p>That bug was one of about a dozen. Five rounds of adversarial review on the confidential mode found side doors in places I would not have guessed: subagent stores, attached image bytes, the memory tool, automations, run hooks, computer-use artifacts, OS notification bodies, a settings save that overwrote the pinned model, context refills, fork and compact and duplicate, and an auto-safety-reviewer that shipped the transcript to a different model to summarize it. Every one of those is a path where "not saved" or "always encrypted" quietly stopped being true. The lesson generalizes: every typed slash command bypasses whatever you gated in the menu, so the guard has to live on the model, not the UI.</p>
+
+<p>The mode pins to an end-to-end route because a promise about deletion is worth very little if the words were readable on the way out. I have written about <a href="/blog/how-confidential-computing-protects-ai-prompts">what confidential computing actually gets you</a> and why <a href="/blog/attestation-is-all-you-need">attestation is the part that makes it checkable</a>. You can also constrain a confidential chat to US-only or EU-only models, which sounds like compliance theater until you remember that <a href="/blog/censored-at-the-host-not-the-model">where a model is hosted changes what it will say</a> and that <a href="/blog/the-ai-models-that-go-silent-on-china">some of them go silent on entire topics</a>.</p>
+
+<p>The counterargument is that this is over-engineering for a solo tool. It would be, if the failure were visible. A leaked prompt does not throw an exception and an unbilled thread does not page you; both look exactly like everything working. That is precisely the class of thing you have to go looking for on purpose, which is why it took five rounds and why <a href="/blog/the-models-that-say-no">I keep testing the claims instead of reading the policy page</a>.</p>
+
+<p>Watch the meter, and know when you are off the record.</p>
+""",
+    ),
+    BlogPost(
+        slug="sre-agent-on-three-clouds",
+        title="An SRE Agent on 3 clouds that keeps your site reliably up",
+        description=(
+            "Three AI agents on three clouds, each on a different model, watching "
+            "each other and the product. This did not work a year ago because the "
+            "model underneath was never reliable enough to trust with on-call."
+        ),
+        published_date="2026-08-10",
+        source_label="Joseph Perla original",
+        source_url="https://www.jperla.com/blog/sre-agent-on-three-clouds",
+        body_html="""
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto"><rect width="1200" height="630" fill="#ffffff"/><rect x="0" y="0" width="1200" height="10" fill="#1d9e75"/><text x="60" y="120" font-family="Inter,Arial,sans-serif" font-size="52" font-weight="700" fill="#111827">An SRE agent on 3 clouds</text><text x="60" y="176" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="400" fill="#6b7280">One per cloud, each a different model</text><text x="60" y="400" font-family="Inter,Arial,sans-serif" font-size="150" font-weight="700" fill="#0f6e56">3</text><text x="60" y="460" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="500" fill="#374151">clouds, 3 models, 0 single points of failure</text><text x="60" y="560" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="500" fill="#9ca3af">trustedrouter.com</text></svg>
+<p>My on-call rotation is three AI agents, one on each cloud, and they watch each other. Kimi K3 runs on the GCP box, GLM 5.2-Fast on AWS, DeepSeek 0731 on Azure — three <a href="/blog/the-best-open-models-arent-on-your-leaderboard">open models</a>, none of them the expensive one. I text them from my phone and ask whether anything is broken. It works, and the reason it works now and would not have worked last year is that the model underneath finally stopped being the least reliable component.</p>
+
+<p>Start with the part that is just engineering. The chat backend they live in is <a href="https://github.com/Lore-Hex/SREChat">SREChat</a>, a multi-master chat server where every region takes writes during a partition and the regions converge when it heals. Three equal masters, one per cloud, meshed over WireGuard. I built it so that losing an entire cloud degrades nothing, and then I put an agent on each master, which is where it gets useful.</p>
+
+<p>A monitoring agent that lives on the machine it monitors is a joke. It goes quiet at exactly the moment its silence means something, and you find out from a customer. With one agent per cloud, whoever is still alive reports the one that died. That is not theoretical: while I was deploying, the GCP agent went down, and the AWS and Azure agents both independently noticed and paged me. The watchdog cannot be killed by the thing it is watching, because it is not on it.</p>
+
+<p>They also page me for the product itself. The GCP agent can read TrustedRouter's error logs, its Cloud Run revisions, and its Sentry issues, and it will tell me which revision was serving when the errors started. If I turn on the write flag it can roll traffic back to the previous revision. Asking "any TR errors in the last two hours" from a phone at dinner is a genuinely different experience from opening a laptop and remembering which console tab has the logs.</p>
+
+<p>Now the part that is actually new. The reason nobody sensibly did this before is that a monitoring agent has two failure modes and both were unacceptable. It can be wrong, and it can be unavailable. Wrong got fixed by models getting good enough to read a log and say something true about it. Unavailable is the one people underrate: if your agent talks to a single provider, your alerting inherits that provider's worst day. Your pager goes down during the incident that made you want a pager. Every agent here pins its own model and falls back to <code>trustedrouter/auto</code>, so a provider having weather means the answer comes from somewhere else instead of not coming. The router is doing for the agent's brain what the three clouds do for its body, over <a href="/blog/one-api-all-llms-provably-private">one API whose prompt path you can verify</a>.</p>
+
+<p>That is why I am comfortable pointing this at TrustedRouter itself. It is circular in a way that would bother me if the fallback were not real, and it is the strongest statement I can make about the routing layer: I use it for the thing that has to work when everything else does not. It is the same argument as <a href="/blog/ten-cheap-runs-beat-the-frontier">running several cheap models instead of one expensive one</a> — redundancy at the model layer buys you more than picking a better single model, and <a href="/blog/combo-models-are-model-containers">a combo model is a container you can swap</a>. If you are choosing, <a href="/blog/how-to-choose-a-model">pick two of smart, fast, cheap</a>; for on-call I want fast and cheap and I want three of them, which is exactly the <a href="/blog/frontier-smart-cheap-fast-pick-3-open-source">smart-cheap-fast tradeoff open source finally lets you stop making</a>.</p>
+
+<p>Alerting you never test is decoration, so there is a chaos drill on a timer. Every day one region gets its container restarted; every week the mesh gets partitioned for a minute to prove the other two keep serving. The drill reports pass or fail into the same chat as the real alerts, which is the only place I would notice it. The chat server, the agents, and the drills are <a href="/blog/open-source-open-source-open-source">all open source</a>, like everything else here.</p>
+
+<p>The models are good enough now. The routing is reliable enough now. That combination is what turns an agent from a demo into the thing you let wake you up.</p>
+""",
+    ),
+    BlogPost(
         slug="achieving-99999-uptime-as-a-startup",
         title="Achieving 99.999% Uptime as a Startup",
         description=(
