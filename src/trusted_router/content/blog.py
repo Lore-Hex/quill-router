@@ -40,8 +40,9 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
         published_date="2026-08-10",
         source_label="Joseph Perla original",
         source_url="https://www.jperla.com/blog/native-swift-harness-no-electron",
+        og_image="/static/og/blog/native-swift-harness-no-electron.png",
         body_html="""
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto"><rect width="1200" height="630" fill="#ffffff"/><rect x="0" y="0" width="1200" height="10" fill="#1d9e75"/><text x="60" y="120" font-family="Inter,Arial,sans-serif" font-size="52" font-weight="700" fill="#111827">No Electron</text><text x="60" y="176" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="400" fill="#6b7280">QuillCode: an all-native Swift coding harness</text><text x="60" y="400" font-family="Inter,Arial,sans-serif" font-size="150" font-weight="700" fill="#0f6e56">60k</text><text x="60" y="460" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="500" fill="#374151">lines of Swift, 1600+ tests, 680+ merged PRs</text><text x="60" y="560" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="500" fill="#9ca3af">trustedrouter.com</text></svg>
+<figure class="blog-hero-image"><img src="/static/og/blog/native-swift-harness-no-electron.png" alt="Quill Cowork running as a native macOS application" width="1200" height="630"></figure>
 <p>The coding agent I use every day is <a href="https://github.com/Lore-Hex/QuillCode">open source</a> now. It is called QuillCode, it is a native Mac app written in Swift, and it runs on my laptop instead of in somebody else's datacenter.</p>
 
 <p>That last part is the whole point. Almost every useful thing I want an agent to do involves my machine. Run the test suite. Open a worktree and try the risky refactor there. Drive a browser and check that the page actually renders. Read the log file that never leaves my disk. An agent living in a web app can do none of that, so it does the one thing it can do — write code into a text box — and hands the hard half back to you. The hard half is the part I wanted help with.</p>
@@ -61,17 +62,18 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
     ),
     BlogPost(
         slug="an-agent-that-hides-the-bill",
-        title="An AI coworker that hides the bill is a bad coworker",
+        title="Quill Cowork has confidential mode and shows you the bill",
         description=(
-            "QuillCode puts a live token meter in the top bar and a /confidential "
+            "Quill Cowork puts a live token meter in the top bar and a /confidential "
             "mode that forgets the conversation but keeps the receipt. Private "
             "should mean private words, not invisible spending."
         ),
         published_date="2026-08-10",
         source_label="Joseph Perla original",
         source_url="https://www.jperla.com/blog/an-agent-that-hides-the-bill",
+        og_image="/static/og/blog/an-agent-that-hides-the-bill.png",
         body_html="""
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto"><rect width="1200" height="630" fill="#ffffff"/><rect x="0" y="0" width="1200" height="10" fill="#1d9e75"/><text x="60" y="120" font-family="Inter,Arial,sans-serif" font-size="52" font-weight="700" fill="#111827">Show the meter</text><text x="60" y="176" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="400" fill="#6b7280">Budgets and confidential chat in QuillCode</text><text x="60" y="400" font-family="Inter,Arial,sans-serif" font-size="150" font-weight="700" fill="#0f6e56">12</text><text x="60" y="460" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="500" fill="#374151">side doors a private mode has to close</text><text x="60" y="560" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="500" fill="#9ca3af">trustedrouter.com</text></svg>
+<figure class="blog-hero-image"><img src="/static/og/blog/an-agent-that-hides-the-bill.png" alt="Quill Cowork with the expanded TrustedRouter cost limits panel" width="1200" height="630"></figure>
 <p>If you hire someone and they will not tell you what they spent, you fire them. Agents get a pass on this for no reason I can defend, so QuillCode has a meter in the top bar: tokens used against the limit, what is left, and where the number came from. It updates while the agent works. You can watch a bad prompt get expensive in real time, which is the only feedback loop that ever made me write better prompts.</p>
 
 <p>The interesting bug showed up when I added the private mode. QuillCode has <code>/confidential</code>, which opens a chat that is never written to disk, never appears in the sidebar, carries no workspace memories, and is pinned to an end-to-end encrypted route. When you leave, the thread is destroyed. Clean.</p>
@@ -98,8 +100,9 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
         published_date="2026-08-10",
         source_label="Joseph Perla original",
         source_url="https://www.jperla.com/blog/sre-agent-on-three-clouds",
+        og_image="/static/og/blog/sre-agent-on-three-clouds.png",
         body_html="""
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto"><rect width="1200" height="630" fill="#ffffff"/><rect x="0" y="0" width="1200" height="10" fill="#1d9e75"/><text x="60" y="120" font-family="Inter,Arial,sans-serif" font-size="52" font-weight="700" fill="#111827">An SRE agent on 3 clouds</text><text x="60" y="176" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="400" fill="#6b7280">One per cloud, each a different model</text><text x="60" y="400" font-family="Inter,Arial,sans-serif" font-size="150" font-weight="700" fill="#0f6e56">3</text><text x="60" y="460" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="500" fill="#374151">clouds, 3 models, 0 single points of failure</text><text x="60" y="560" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="500" fill="#9ca3af">trustedrouter.com</text></svg>
+<figure class="blog-hero-image"><img src="/static/og/blog/sre-agent-on-three-clouds.png" alt="SREChat agents reporting from GCP, AWS, and Azure" width="1200" height="630"></figure>
 <p>My on-call rotation is three AI agents, one on each cloud, and they watch each other. Kimi K3 runs on the GCP box, GLM 5.2-Fast on AWS, DeepSeek 0731 on Azure — three <a href="/blog/the-best-open-models-arent-on-your-leaderboard">open models</a>, none of them the expensive one. I text them from my phone and ask whether anything is broken. It works, and the reason it works now and would not have worked last year is that the model underneath finally stopped being the least reliable component.</p>
 
 <p>Start with the part that is just engineering. The chat backend they live in is <a href="https://github.com/Lore-Hex/SREChat">SREChat</a>, a multi-master chat server where every region takes writes during a partition and the regions converge when it heals. Three equal masters, one per cloud, meshed over WireGuard. I built it so that losing an entire cloud degrades nothing, and then I put an agent on each master, which is where it gets useful.</p>

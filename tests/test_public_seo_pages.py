@@ -1281,3 +1281,48 @@ def test_blog_post_og_image_uses_first_image_else_default(client: TestClient) ->
     plain = client.get("/blog/the-models-that-say-no")
     plain_card = "https://trustedrouter.com/static/og/blog/the-models-that-say-no.png"
     assert f'property="og:image" content="{plain_card}"' in plain.text
+
+
+@pytest.mark.parametrize(
+    ("slug", "title"),
+    (
+        ("native-swift-harness-no-electron", "Open Source all native Swift harness (NO Electron!)"),
+        (
+            "an-agent-that-hides-the-bill",
+            "Quill Cowork has confidential mode and shows you the bill",
+        ),
+        (
+            "sre-agent-on-three-clouds",
+            "An SRE Agent on 3 clouds that keeps your site reliably up",
+        ),
+    ),
+)
+def test_recent_blog_posts_use_real_product_images(
+    client: TestClient,
+    slug: str,
+    title: str,
+) -> None:
+    image_path = f"/static/og/blog/{slug}.png"
+    image_url = f"https://trustedrouter.com{image_path}"
+
+    post = client.get(f"/blog/{slug}")
+
+    assert post.status_code == 200
+    assert f"<h1>{title}</h1>" in post.text
+    assert f'property="og:image" content="{image_url}"' in post.text
+    assert f'name="twitter:image" content="{image_url}"' in post.text
+    assert f'<img src="{image_path}"' in post.text
+    assert client.get(image_path).status_code == 200
+
+
+def test_blog_index_uses_recent_product_images(client: TestClient) -> None:
+    response = client.get("/blog")
+
+    assert response.status_code == 200
+    for slug in (
+        "native-swift-harness-no-electron",
+        "an-agent-that-hides-the-bill",
+        "sre-agent-on-three-clouds",
+    ):
+        assert f'src="https://trustedrouter.com/static/og/blog/{slug}.png"' in response.text
+    assert "Quill Cowork has confidential mode and shows you the bill" in response.text
