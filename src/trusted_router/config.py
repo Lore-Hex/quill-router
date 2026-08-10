@@ -681,6 +681,11 @@ class Settings(BaseSettings):
     # /responses probe in europe-west4 can legitimately take >10s on slow
     # cheap monitor routes, so 10s creates false downtime.
     synthetic_monitor_timeout_seconds: float = 20.0
+    # Monthly self-funding for the monitor workspace, applied lazily on its
+    # own gateway-authorize path (synthetic/funding.py). Each deployment has
+    # its own database, so each cloud's monitor funds itself from config —
+    # no cron, no per-cloud manual grant to forget. 0 disables.
+    synthetic_monitor_monthly_grant_dollars: float = 200.0
     synthetic_status_sample_limit: int = 5000
     synthetic_status_raw_retention_days: int = 14
     synthetic_status_rollup_retention_months: int = 24

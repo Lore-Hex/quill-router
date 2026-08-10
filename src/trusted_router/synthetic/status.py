@@ -163,12 +163,34 @@ def status_snapshot(
             ]
         ),
     )
+    # Model Inference also pulls the banner, but only as far as "degraded":
+    # on 2026-08-10 every pong probe on two deployments failed 100% while the
+    # banner read "All Systems Operational", because pong samples fed no
+    # component and no SLO. A dead model path must not render green — and it
+    # must not render "Router Core Outage" either, because router_core is
+    # passing; "Partial Outage: Model Inference" is what is actually true.
+    # The SLO math is untouched (pong failures still never burn router_core).
+    model_inference_down = any(
+        str(row["id"]) == "model_inference" and str(row["status"]) == "down" for row in components
+    )
+    if model_inference_down:
+        overall_status = _worse_status(overall_status, "degraded")
+    down_component_names = [
+        str(row["name"])
+        for row in components
+        if str(row["status"]) == "down"
+        and (str(row["id"]) in gateway_region_components or str(row["id"]) == "model_inference")
+    ]
     return {
         "generated_at": iso_now(),
         "overall_status": overall_status,
         "overall_status_label": _status_label(overall_status),
         "overall_status_class": _status_class(overall_status),
-        "summary": _summary(overall_status, freshness=freshness),
+        "summary": _summary(
+            overall_status,
+            freshness=freshness,
+            down_components=down_component_names,
+        ),
         "monitor_freshness": freshness,
         "headline_metrics": _headline_metrics(ordered, now=now),
         "current": current,
@@ -568,15 +590,10 @@ def _slo_long_term_history(
     *,
     slo_id: str,
 ) -> dict[str, list[dict[str, Any]]]:
-    scoped_samples = [
-        sample for sample in samples if slo_id in sample_slo_class_ids(sample)
-    ]
-    scoped_rollups = [
-        rollup for rollup in rollups if slo_id in rollup_slo_class_ids(rollup)
-    ]
+    scoped_samples = [sample for sample in samples if slo_id in sample_slo_class_ids(sample)]
+    scoped_rollups = [rollup for rollup in rollups if slo_id in rollup_slo_class_ids(rollup)]
     return {
-        "daily": _rollup_history(scoped_rollups, period="day")
-        or _daily_rollups(scoped_samples),
+        "daily": _rollup_history(scoped_rollups, period="day") or _daily_rollups(scoped_samples),
         "monthly": _monthly_history(scoped_rollups),
     }
 
@@ -636,9 +653,7 @@ def _slo_classes(
     for definition in SLO_DEFINITIONS:
         slo_id = str(definition["id"])
         slo_samples = [sample for sample in samples if slo_id in sample_slo_class_ids(sample)]
-        slo_rollups = [
-            rollup for rollup in rollups if slo_id in rollup_slo_class_ids(rollup)
-        ]
+        slo_rollups = [rollup for rollup in rollups if slo_id in rollup_slo_class_ids(rollup)]
         current = _slo_current(slo_samples, now=now)
         windows = {
             name: _slo_window(slo_samples, slo_rollups, now=now, seconds=seconds)
@@ -1096,18 +1111,10 @@ def _rollup_group_breakdown(
             "p95_dns_milliseconds": merged["p95_dns_milliseconds"],
             "p50_tcp_connect_milliseconds": merged["p50_tcp_connect_milliseconds"],
             "p95_tcp_connect_milliseconds": merged["p95_tcp_connect_milliseconds"],
-            "p50_tls_handshake_milliseconds": merged[
-                "p50_tls_handshake_milliseconds"
-            ],
-            "p95_tls_handshake_milliseconds": merged[
-                "p95_tls_handshake_milliseconds"
-            ],
-            "p50_gateway_processing_milliseconds": merged[
-                "p50_gateway_processing_milliseconds"
-            ],
-            "p95_gateway_processing_milliseconds": merged[
-                "p95_gateway_processing_milliseconds"
-            ],
+            "p50_tls_handshake_milliseconds": merged["p50_tls_handshake_milliseconds"],
+            "p95_tls_handshake_milliseconds": merged["p95_tls_handshake_milliseconds"],
+            "p50_gateway_processing_milliseconds": merged["p50_gateway_processing_milliseconds"],
+            "p95_gateway_processing_milliseconds": merged["p95_gateway_processing_milliseconds"],
             "last_checked_at": merged["last_checked_at"],
             "top_error": merged["top_error"],
         }
@@ -1416,8 +1423,7 @@ def _recent_events(
         )
 
     component_order = {
-        str(definition["id"]): index
-        for index, definition in enumerate(COMPONENT_DEFINITIONS)
+        str(definition["id"]): index for index, definition in enumerate(COMPONENT_DEFINITIONS)
     }
     rollup_groups_seen: set[tuple[str, str, str, str]] = set()
     recent_rollups = sorted(
@@ -1446,9 +1452,7 @@ def _recent_events(
         if rollup.component == UNCATEGORIZED_COMPONENT and not rollup_slo_class_ids(rollup):
             continue
         counts = _rollup_status_counts(rollup)
-        failure_count = sum(
-            count for status, count in counts.items() if status != "up"
-        )
+        failure_count = sum(count for status, count in counts.items() if status != "up")
         if failure_count <= 0:
             continue
         bucket_key = (
@@ -1559,7 +1563,12 @@ def _status_class(status: str) -> str:
     return status.replace("_", "-")
 
 
-def _summary(status: str, *, freshness: dict[str, Any] | None = None) -> dict[str, str]:
+def _summary(
+    status: str,
+    *,
+    freshness: dict[str, Any] | None = None,
+    down_components: list[str] | None = None,
+) -> dict[str, str]:
     if status == "unknown" and freshness and freshness.get("is_stale"):
         latest = freshness.get("latest_sample_at")
         if latest:
@@ -1587,6 +1596,20 @@ def _summary(status: str, *, freshness: dict[str, Any] | None = None) -> dict[st
             "detail": "Inference may still work, but an attestation check is failing and should be treated as critical.",
         }
     if status in {"degraded", "routing_degraded"}:
+        # Name the failing surface when the degradation is a component-level
+        # outage rather than a router-core burn: "Partial Outage: Model
+        # Inference" is honest and actionable; "Router Core Degraded" for a
+        # dead pong path would be both wrong and alarming.
+        if down_components:
+            names = ", ".join(down_components)
+            verb = "is" if len(down_components) == 1 else "are"
+            return {
+                "headline": f"Partial Outage: {names}",
+                "detail": (
+                    f"{names} {verb} failing synthetic checks. "
+                    "Other router-core checks are passing."
+                ),
+            }
         return {
             "headline": "Router Core Degraded",
             "detail": (

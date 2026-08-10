@@ -17,6 +17,7 @@ from trusted_router.routes.helpers import json_body
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.storage import STORE, ProviderBenchmarkSample, SyntheticProbeSample
 from trusted_router.storage_models import FUTURE_SAMPLE_SKEW_SECONDS, scrub_provider_error_message
+from trusted_router.synthetic.alerts import alert_on_failure_streak
 from trusted_router.synthetic.cli import rotation_pass
 from trusted_router.synthetic.probes import (
     gateway_billing_probe,
@@ -105,10 +106,7 @@ async def _run_and_record(settings: Settings, body: dict[str, Any]) -> dict[str,
     }
 
 
-
-async def run_synthetic_pass(
-    settings: Settings, *, rotation_count: int = 0
-) -> dict[str, Any]:
+async def run_synthetic_pass(settings: Settings, *, rotation_count: int = 0) -> dict[str, Any]:
     """One synthetic pass, for callers that are not an HTTP request.
 
     The in-process scheduler (main.py) uses this so a cloud without its own
@@ -118,6 +116,7 @@ async def run_synthetic_pass(
     return await _run_and_record(
         settings, {"rotation_count": rotation_count} if rotation_count else {}
     )
+
 
 def register(router: APIRouter) -> None:
     @router.get("/internal/synthetic/health")
@@ -191,9 +190,13 @@ def register(router: APIRouter) -> None:
             return {"data": {"scheduled": True}}
         return await _run_and_record(settings, body)
 
+
 def _record_probe_samples(samples: list[SyntheticProbeSample]) -> None:
     for sample in samples:
         STORE.record_synthetic_probe_sample(sample)
+        # After recording, so the streak query sees this sample. Swallows its
+        # own exceptions — alerting must never break probe ingestion.
+        alert_on_failure_streak(STORE, sample)
 
 
 def _record_benchmark_samples(samples: list[ProviderBenchmarkSample]) -> None:
@@ -248,7 +251,9 @@ def _sample_from_body(body: Any) -> SyntheticProbeSample:
         try:
             created = dt.datetime.fromisoformat(created_at.replace("Z", "+00:00"))
         except ValueError:
-            raise api_error(400, "created_at is not a valid timestamp", ErrorType.BAD_REQUEST) from None
+            raise api_error(
+                400, "created_at is not a valid timestamp", ErrorType.BAD_REQUEST
+            ) from None
         if created.tzinfo is None:
             created = created.replace(tzinfo=dt.UTC)
         skew = (created - dt.datetime.now(dt.UTC)).total_seconds()
