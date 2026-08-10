@@ -30,21 +30,23 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
-        slug="i-open-sourced-my-ai-coworker",
-        title="I open-sourced the AI coworker I actually use",
+        slug="native-swift-harness-no-electron",
+        title="Open Source all native Swift harness (NO Electron!)",
         description=(
-            "QuillCode is a native macOS coding agent that runs on your machine, "
-            "uses your tools, and lets you pick the model. 60k lines of Swift, "
-            "1600 tests, and the whole thing is on GitHub."
+            "QuillCode is a coding agent written in Swift with a real AppKit UI. "
+            "No Electron, no bundled browser engine, no 400MB app to open a "
+            "text box. 60k lines, 1600 tests, and it is on GitHub."
         ),
         published_date="2026-08-10",
         source_label="Joseph Perla original",
-        source_url="https://www.jperla.com/blog/i-open-sourced-my-ai-coworker",
+        source_url="https://www.jperla.com/blog/native-swift-harness-no-electron",
         body_html="""
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto"><rect width="1200" height="630" fill="#ffffff"/><rect x="0" y="0" width="1200" height="10" fill="#1d9e75"/><text x="60" y="120" font-family="Inter,Arial,sans-serif" font-size="52" font-weight="700" fill="#111827">An AI coworker on your Mac</text><text x="60" y="176" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="400" fill="#6b7280">QuillCode is open source</text><text x="60" y="400" font-family="Inter,Arial,sans-serif" font-size="150" font-weight="700" fill="#0f6e56">60k</text><text x="60" y="460" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="500" fill="#374151">lines of Swift, 1600+ tests, 680+ merged PRs</text><text x="60" y="560" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="500" fill="#9ca3af">trustedrouter.com</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto"><rect width="1200" height="630" fill="#ffffff"/><rect x="0" y="0" width="1200" height="10" fill="#1d9e75"/><text x="60" y="120" font-family="Inter,Arial,sans-serif" font-size="52" font-weight="700" fill="#111827">No Electron</text><text x="60" y="176" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="400" fill="#6b7280">QuillCode: an all-native Swift coding harness</text><text x="60" y="400" font-family="Inter,Arial,sans-serif" font-size="150" font-weight="700" fill="#0f6e56">60k</text><text x="60" y="460" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="500" fill="#374151">lines of Swift, 1600+ tests, 680+ merged PRs</text><text x="60" y="560" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="500" fill="#9ca3af">trustedrouter.com</text></svg>
 <p>The coding agent I use every day is <a href="https://github.com/Lore-Hex/QuillCode">open source</a> now. It is called QuillCode, it is a native Mac app written in Swift, and it runs on my laptop instead of in somebody else's datacenter.</p>
 
 <p>That last part is the whole point. Almost every useful thing I want an agent to do involves my machine. Run the test suite. Open a worktree and try the risky refactor there. Drive a browser and check that the page actually renders. Read the log file that never leaves my disk. An agent living in a web app can do none of that, so it does the one thing it can do — write code into a text box — and hands the hard half back to you. The hard half is the part I wanted help with.</p>
+
+<p>It is also not an Electron app, which I say with some feeling. The current default for shipping a desktop tool is to bundle an entire browser engine so the team can write the interface in the language they already know, and the result is a text box that eats four hundred megabytes of disk and a couple hundred of RAM before it has done anything. Every one of these apps feels the same: a beachball on a window resize, a scroll that is almost but not quite native, a menu bar that is a drawing of a menu bar. QuillCode's interface is Swift and AppKit. It launches immediately, it scrolls the way every other Mac window scrolls, and the file picker is the file picker. That is not nostalgia, it is the difference between a tool you keep open all day and one you quit because it is heavy.</p>
 
 <p>So QuillCode has local tools, real worktrees, computer use, automations, and a plugin system, and it updates itself with verified builds. It is about sixty thousand lines of Swift with sixteen hundred tests behind it and something north of six hundred and eighty merged pull requests. I mention the test count because a coding agent that edits your repo is exactly the kind of software where you want to know somebody was paranoid.</p>
 
@@ -86,8 +88,8 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
 """,
     ),
     BlogPost(
-        slug="i-use-trustedrouter-to-keep-trustedrouter-up",
-        title="I use TrustedRouter to keep TrustedRouter up",
+        slug="sre-agent-on-three-clouds",
+        title="An SRE Agent on 3 clouds that keeps your site reliably up",
         description=(
             "Three AI agents on three clouds, each on a different model, watching "
             "each other and the product. This did not work a year ago because the "
@@ -95,9 +97,9 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
         ),
         published_date="2026-08-10",
         source_label="Joseph Perla original",
-        source_url="https://www.jperla.com/blog/i-use-trustedrouter-to-keep-trustedrouter-up",
+        source_url="https://www.jperla.com/blog/sre-agent-on-three-clouds",
         body_html="""
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto"><rect width="1200" height="630" fill="#ffffff"/><rect x="0" y="0" width="1200" height="10" fill="#1d9e75"/><text x="60" y="120" font-family="Inter,Arial,sans-serif" font-size="52" font-weight="700" fill="#111827">On-call is three agents</text><text x="60" y="176" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="400" fill="#6b7280">One per cloud, each a different model</text><text x="60" y="400" font-family="Inter,Arial,sans-serif" font-size="150" font-weight="700" fill="#0f6e56">3</text><text x="60" y="460" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="500" fill="#374151">clouds, 3 models, 0 single points of failure</text><text x="60" y="560" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="500" fill="#9ca3af">trustedrouter.com</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto"><rect width="1200" height="630" fill="#ffffff"/><rect x="0" y="0" width="1200" height="10" fill="#1d9e75"/><text x="60" y="120" font-family="Inter,Arial,sans-serif" font-size="52" font-weight="700" fill="#111827">An SRE agent on 3 clouds</text><text x="60" y="176" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="400" fill="#6b7280">One per cloud, each a different model</text><text x="60" y="400" font-family="Inter,Arial,sans-serif" font-size="150" font-weight="700" fill="#0f6e56">3</text><text x="60" y="460" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="500" fill="#374151">clouds, 3 models, 0 single points of failure</text><text x="60" y="560" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="500" fill="#9ca3af">trustedrouter.com</text></svg>
 <p>My on-call rotation is three AI agents, one on each cloud, and they watch each other. Kimi K3 runs on the GCP box, GLM 5.2-Fast on AWS, DeepSeek 0731 on Azure — three <a href="/blog/the-best-open-models-arent-on-your-leaderboard">open models</a>, none of them the expensive one. I text them from my phone and ask whether anything is broken. It works, and the reason it works now and would not have worked last year is that the model underneath finally stopped being the least reliable component.</p>
 
 <p>Start with the part that is just engineering. The chat backend they live in is <a href="https://github.com/Lore-Hex/SREChat">SREChat</a>, a multi-master chat server where every region takes writes during a partition and the regions converge when it heals. Three equal masters, one per cloud, meshed over WireGuard. I built it so that losing an entire cloud degrades nothing, and then I put an agent on each master, which is where it gets useful.</p>
@@ -111,8 +113,6 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
 <p>That is why I am comfortable pointing this at TrustedRouter itself. It is circular in a way that would bother me if the fallback were not real, and it is the strongest statement I can make about the routing layer: I use it for the thing that has to work when everything else does not. It is the same argument as <a href="/blog/ten-cheap-runs-beat-the-frontier">running several cheap models instead of one expensive one</a> — redundancy at the model layer buys you more than picking a better single model, and <a href="/blog/combo-models-are-model-containers">a combo model is a container you can swap</a>. If you are choosing, <a href="/blog/how-to-choose-a-model">pick two of smart, fast, cheap</a>; for on-call I want fast and cheap and I want three of them, which is exactly the <a href="/blog/frontier-smart-cheap-fast-pick-3-open-source">smart-cheap-fast tradeoff open source finally lets you stop making</a>.</p>
 
 <p>Alerting you never test is decoration, so there is a chaos drill on a timer. Every day one region gets its container restarted; every week the mesh gets partitioned for a minute to prove the other two keep serving. The drill reports pass or fail into the same chat as the real alerts, which is the only place I would notice it. The chat server, the agents, and the drills are <a href="/blog/open-source-open-source-open-source">all open source</a>, like everything else here.</p>
-
-<p>I will tell you the embarrassing part, because it is the most useful thing here. The alerting worked on the first real failure and I still missed it. Both surviving agents paged me correctly and I never saw it, because the phone client only polled the conversation I happened to have open — and an alert, by construction, arrives from the cloud you are not looking at. The detection was perfect and the delivery was broken, and from where I sat those are the same thing. If you build one of these, test the notification, not the detector.</p>
 
 <p>The models are good enough now. The routing is reliable enough now. That combination is what turns an agent from a demo into the thing you let wake you up.</p>
 """,
