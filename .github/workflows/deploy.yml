@@ -364,7 +364,7 @@ jobs:
       - name: Capture pre-deploy revisions (for rollback)
         id: prev
         run: |
-          for region in us-central1 europe-west4 us-east4; do
+          for region in us-central1 europe-west4 us-east4 southamerica-east1; do
             rev=$(gcloud run services describe "${SERVICE}" \
               --region="$region" --project="${PROJECT_ID}" \
               --format='value(status.traffic[0].revisionName)' \
@@ -464,6 +464,7 @@ jobs:
           IMAGE_TAG: ${{ needs.build-image.outputs.sha }}
           PREV_EU: ${{ steps.prev.outputs.europe_west4_revision }}
           PREV_US_EAST4: ${{ steps.prev.outputs.us_east4_revision }}
+          PREV_SOUTHAMERICA_EAST1: ${{ steps.prev.outputs.southamerica_east1_revision }}
           WD_EXTRA: ${{ steps.wd_args.outputs.extra }}
           TR_WATCHDOG_SLO_CLASS: control_plane
           TR_DEPLOY_RECONCILE_LB: "0"
@@ -474,6 +475,7 @@ jobs:
             case "$1" in
               europe-west4) printf '%s\n' "${PREV_EU}" ;;
               us-east4) printf '%s\n' "${PREV_US_EAST4}" ;;
+              southamerica-east1) printf '%s\n' "${PREV_SOUTHAMERICA_EAST1}" ;;
               *) return 1 ;;
             esac
           }
@@ -551,7 +553,7 @@ jobs:
           # The image has already passed the full us-central1 ramp and canary.
           # These regions share no mutable Cloud Run resources; each child
           # retains its own traffic ramp, watchdog, and region-local rollback.
-          regions=(europe-west4 us-east4)
+          regions=(europe-west4 us-east4 southamerica-east1)
           log_dir="$(mktemp -d)"
           pids=()
           for region in "${regions[@]}"; do
@@ -578,20 +580,6 @@ jobs:
           if [ "${failed}" -ne 0 ]; then
             exit 1
           fi
-
-      - name: Deploy cold regions (no canary, scale-to-zero)
-        # Stage 3.5 cold region: southamerica-east1. min-instances=0
-        # means ~$0/mo idle plus a ~5-10s cold-start tax on the first
-        # request from that geography. Every region attached to the public
-        # load balancer must run the same reader schema before a newer
-        # synthetic monitor can write shared Bigtable rows. No canary is
-        # needed because the warm regions already validated the image.
-        # rollout.sh handles min-instances=0 automatically when a region is
-        # in TR_CONTROL_PLANE_REGIONS but not TR_WARM_REGIONS.
-        env:
-          TR_DEPLOY_TARGET_REGIONS: southamerica-east1
-          TR_DEPLOY_RECONCILE_LB: "0"
-        run: bash scripts/deploy/rollout.sh
 
       - name: Deploy synthetic monitor Cloud Run Job
         if: ${{ steps.optional.outputs.deploy_synthetic_monitor == 'true' }}
@@ -623,10 +611,8 @@ jobs:
       # was functionally clean. Same anti-pattern fixed in
       # quill-cloud-proxy commit 7b735e8.
       #
-      # Cold region southamerica-east1 deploys after all warm-region
-      # canaries pass. It has no per-region canary by design — warm
-      # regions already validated the image, and the cold region is
-      # lowest-volume by construction.
+      # Every advertised regional control plane is warm and passes its own
+      # staged traffic shift plus region-local canary before this point.
 
       - name: Smoke test prod
         run: |
