@@ -36,6 +36,7 @@ from typing import Any
 
 import httpx
 
+from trusted_router.synthetic.alerts import ops_alert
 from trusted_router.types import ErrorType
 
 log = logging.getLogger(__name__)
@@ -159,9 +160,7 @@ def _run_pass(store: Any, home: str, token: str, limit: int) -> dict[str, Any]:
                 log.warning("home settlement pass parked: transport error to home")
                 break
 
-            classification, reason = classify_apply_response(
-                response.status_code, response.content
-            )
+            classification, reason = classify_apply_response(response.status_code, response.content)
             if classification == FORWARDED:
                 if store.mark_home_settlement_forwarded(authorization_id):
                     counts["forwarded"] += 1
@@ -170,8 +169,10 @@ def _run_pass(store: Any, home: str, token: str, limit: int) -> dict[str, Any]:
             elif classification == DEAD_LETTER:
                 if store.mark_home_settlement_dead_letter(authorization_id, reason=reason):
                     counts["dead_lettered"] += 1
-                    log.error(
-                        "home settlement %s dead-lettered: %s", authorization_id, reason
+                    ops_alert(
+                        f"home settlement {authorization_id} dead-lettered: {reason}",
+                        fingerprint=["home-settlement", "dead-letter"],
+                        tags={"authorization_id": authorization_id},
                     )
                 else:
                     counts["raced"] += 1

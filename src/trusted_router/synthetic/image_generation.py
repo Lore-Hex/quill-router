@@ -95,9 +95,7 @@ async def run() -> int:
                 "generation_id": sample.generation_id,
                 "cost_microdollars": sample.cost_microdollars,
                 "attempts": len(samples),
-                "total_cost_microdollars": sum(
-                    item.cost_microdollars or 0 for item in samples
-                ),
+                "total_cost_microdollars": sum(item.cost_microdollars or 0 for item in samples),
                 "ingest_status": response.status_code,
             },
             separators=(",", ":"),

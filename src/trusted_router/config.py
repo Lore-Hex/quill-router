@@ -691,6 +691,18 @@ class Settings(BaseSettings):
     synthetic_status_rollup_retention_months: int = 24
     synthetic_status_us_url: str = "https://status-us.trustedrouter.com/status.json"
     synthetic_status_eu_url: str = "https://status-eu.trustedrouter.com/status.json"
+    # Fleet peer list ("name=base_url,..."): every deployment watches every
+    # deployment's public status page — its own included, which proves the
+    # local public serving path end to end. Feeds /fleet.json and the
+    # peer_monitor probes (synthetic/fleet.py). Config-as-code default on
+    # purpose: a peer added here reaches all clouds on their next image roll
+    # with no per-cloud env edits. Empty disables (tests set environment=test,
+    # which also gates the probes off — see run_synthetic_once).
+    synthetic_fleet_peers: str = (
+        "gcp=https://trustedrouter.com"
+        ",aws=https://aws.trustedrouter.com"
+        ",azure=https://azure.trustedrouter.com"
+    )
     # Deliberately empty: the auto ladder lives in exactly one place,
     # DEFAULT_AUTO_MODEL_ORDER in catalog_data.py, and an empty setting is what
     # lets that default through in auto_candidate_models().

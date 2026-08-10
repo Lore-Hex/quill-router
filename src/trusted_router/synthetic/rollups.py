@@ -171,7 +171,9 @@ def merge_rollups(rollups: list[SyntheticRollup]) -> dict[str, Any]:
         )
         error_counts.update(rollup.error_counts)
         cost_microdollars += rollup.cost_microdollars
-        if rollup.last_checked_at and (last_checked_at is None or rollup.last_checked_at > last_checked_at):
+        if rollup.last_checked_at and (
+            last_checked_at is None or rollup.last_checked_at > last_checked_at
+        ):
             last_checked_at = rollup.last_checked_at
     return {
         "sample_count": sample_count,
@@ -182,18 +184,10 @@ def merge_rollups(rollups: list[SyntheticRollup]) -> dict[str, Any]:
         "p95_ttfb_milliseconds": percentile_from_histogram(ttfb_histogram, 95),
         "p50_dns_milliseconds": percentile_from_histogram(dns_histogram, 50),
         "p95_dns_milliseconds": percentile_from_histogram(dns_histogram, 95),
-        "p50_tcp_connect_milliseconds": percentile_from_histogram(
-            tcp_connect_histogram, 50
-        ),
-        "p95_tcp_connect_milliseconds": percentile_from_histogram(
-            tcp_connect_histogram, 95
-        ),
-        "p50_tls_handshake_milliseconds": percentile_from_histogram(
-            tls_handshake_histogram, 50
-        ),
-        "p95_tls_handshake_milliseconds": percentile_from_histogram(
-            tls_handshake_histogram, 95
-        ),
+        "p50_tcp_connect_milliseconds": percentile_from_histogram(tcp_connect_histogram, 50),
+        "p95_tcp_connect_milliseconds": percentile_from_histogram(tcp_connect_histogram, 95),
+        "p50_tls_handshake_milliseconds": percentile_from_histogram(tls_handshake_histogram, 50),
+        "p95_tls_handshake_milliseconds": percentile_from_histogram(tls_handshake_histogram, 95),
         "p50_gateway_processing_milliseconds": percentile_from_histogram(
             gateway_processing_histogram, 50
         ),

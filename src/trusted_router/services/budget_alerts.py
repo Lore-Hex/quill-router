@@ -29,9 +29,7 @@ from trusted_router.spend_windows import key_window_limits, utcnow, window_floor
 log = logging.getLogger(__name__)
 
 
-def maybe_send_budget_alerts(
-    *, api_key_hash: str, workspace_id: str, settings: Settings
-) -> None:
+def maybe_send_budget_alerts(*, api_key_hash: str, workspace_id: str, settings: Settings) -> None:
     """Email the workspace owner for each window whose budget this key just
     crossed (alert mode only). No-op for limit-mode keys, keys without window
     budgets, or a store with no window-usage view."""
@@ -99,7 +97,9 @@ def _deliver(
     )
     try:
         get_email_service(settings).send(message)
-    except Exception:  # best-effort: the window is already marked (at-most-once); make a drop observable
+    except (
+        Exception
+    ):  # best-effort: the window is already marked (at-most-once); make a drop observable
         log.exception("budget_alert.delivery_failed key=%s ws=%s", api_key_hash, workspace_id)
 
 

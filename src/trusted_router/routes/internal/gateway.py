@@ -112,6 +112,7 @@ from trusted_router.storage_models import (
     SettleOutboxRow,
     TypedFinalizeResult,
 )
+from trusted_router.synthetic.fleet import record_heartbeat
 from trusted_router.synthetic.funding import ensure_monitor_funding, monitor_lookup_hash
 from trusted_router.types import ErrorType, UsageType
 
@@ -889,7 +890,11 @@ def register(router: APIRouter) -> None:
         limit: int = 100,
     ) -> dict[str, Any]:
         require_internal_gateway(request, settings)
-        return await run_in_threadpool(drain_settle_outbox, limit)
+        result = await run_in_threadpool(drain_settle_outbox, limit)
+        # Cloud Scheduler drives this on a cadence; the heartbeat makes that
+        # cadence visible on /fleet so a silently-dead scheduler is seen.
+        await run_in_threadpool(record_heartbeat, "job:settle-outbox-drain", settings=settings)
+        return result
 
     @router.post("/internal/gateway/home-settlement/drain")
     async def gateway_home_settlement_drain(
@@ -1902,10 +1907,7 @@ def _gateway_candidate_payload(
 def _gateway_provider_route_payload(endpoint: ModelEndpoint) -> dict[str, Any]:
     """Return provider-specific, typed enforcement metadata for the enclave."""
 
-    if (
-        endpoint.provider == "wafer"
-        and endpoint_zero_data_retention(endpoint) is True
-    ):
+    if endpoint.provider == "wafer" and endpoint_zero_data_retention(endpoint) is True:
         return {"wafer_zdr_required": True}
     return {}
 

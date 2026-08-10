@@ -18,6 +18,7 @@ from trusted_router.synthetic.components import (
     COMPONENT_DEFINITIONS,
     COMPONENT_PROBE_TARGETS,
     GATEWAY_REGION_TARGET_NAMES,
+    OPS_PROBE_TYPES,
     REGIONAL_GATEWAY_PROBES,
     SLO_DEFINITIONS,
     UNCATEGORIZED_COMPONENT,
@@ -211,7 +212,12 @@ def status_snapshot(
         },
         "daily": daily,
         "monthly": monthly,
-        "samples": [sample.public_dict() for sample in ordered[:100]],
+        # Ops/liveness samples stay off the public live feed: they would
+        # crowd real probes out of the bounded window and leak internal job
+        # names; /fleet is their surface.
+        "samples": [
+            sample.public_dict() for sample in ordered if sample.probe_type not in OPS_PROBE_TYPES
+        ][:100],
     }
 
 
@@ -229,12 +235,19 @@ def _monitor_freshness(
     # worse than none: it reports "fresh" through a total monitor outage.
     # Small negative ages are ordinary clock skew between the monitor and
     # this host, so only samples beyond the skew budget are excluded.
+    #
+    # Ops/liveness samples (heartbeats, peer policing) are excluded for the
+    # same reason from the other direction: a background loop's heartbeat is
+    # not the probe fleet reporting, and counting it would keep this clock
+    # "fresh" straight through a dead monitor — the masking failure this
+    # detector exists to catch.
+    probe_samples = [sample for sample in samples if sample.probe_type not in OPS_PROBE_TYPES]
     dateable = [
         sample
-        for sample in samples
+        for sample in probe_samples
         if (now - _parse_time(sample.created_at)).total_seconds() >= -FUTURE_SAMPLE_SKEW_SECONDS
     ]
-    future_dated = len(samples) - len(dateable)
+    future_dated = len(probe_samples) - len(dateable)
     if not dateable:
         return {
             "latest_sample_at": None,
