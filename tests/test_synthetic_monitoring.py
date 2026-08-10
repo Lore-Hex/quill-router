@@ -1631,6 +1631,20 @@ async def test_synthetic_http_probes_parse_success_shapes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_attestation_http_error_is_availability_failure_not_format_failure() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"error": {"message": "revision starting"}})
+
+    target = SyntheticTarget("canonical", "https://api.trustedrouter.com/v1", "us-central1")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await attestation_nonce_probe(client, target, monitor_region="europe-west4")
+
+    assert sample.status == "down"
+    assert sample.http_status == 500
+    assert sample.error_type == "attestation_http_500"
+
+
+@pytest.mark.asyncio
 async def test_image_generation_probe_validates_binary_and_records_only_metadata() -> None:
     image = b"\xff\xd8\xff" + (b"\x00" * 2048) + b"\xff\xd9"
     data_url = f"data:image/jpeg;base64,{base64.b64encode(image).decode()}"
