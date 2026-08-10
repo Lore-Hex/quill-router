@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Google AI Studio chat and image models that are available from the Gemini API before the OpenRouter snapshot catches up. Verified against Google Gemini /v1beta/models and direct countTokens/generateContent smoke.",
   "provider": "google-ai-studio",
   "source": "https://generativelanguage.googleapis.com/v1beta/models",
-  "generated_at": "2026-08-10T09:25:10Z",
+  "generated_at": "2026-08-10T11:10:55Z",
   "model_count": 33,
   "models": [
     {
@@ -100,7 +100,8 @@
       "context_length": 1048576,
       "max_output_tokens": 8192,
       "routable": false,
-      "routable_reason": "awaiting-price"
+      "routable_reason": "awaiting-price",
+      "missing_since": "2026-08-10"
     },
     {
       "display_name": "Gemini 2.0 Flash 001",
@@ -123,7 +124,8 @@
       "max_output_tokens": 8192,
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 400000,
-      "cached_input_token_price_per_m": 25000
+      "cached_input_token_price_per_m": 25000,
+      "missing_since": "2026-08-10"
     },
     {
       "display_name": "Gemini 2.0 Flash-Lite",
@@ -145,7 +147,8 @@
       "context_length": 1048576,
       "max_output_tokens": 8192,
       "routable": false,
-      "routable_reason": "awaiting-price"
+      "routable_reason": "awaiting-price",
+      "missing_since": "2026-08-10"
     },
     {
       "display_name": "Gemini 2.0 Flash-Lite 001",
@@ -167,7 +170,8 @@
       "context_length": 1048576,
       "max_output_tokens": 8192,
       "input_token_price_per_m": 75000,
-      "output_token_price_per_m": 300000
+      "output_token_price_per_m": 300000,
+      "missing_since": "2026-08-10"
     },
     {
       "display_name": "Gemini 2.5 Computer Use Preview 10-2025",
@@ -426,7 +430,8 @@
       "context_length": 1048576,
       "max_output_tokens": 65536,
       "routable": false,
-      "routable_reason": "awaiting-price"
+      "routable_reason": "awaiting-price",
+      "missing_since": "2026-08-10"
     },
     {
       "display_name": "Nano Banana 2",
@@ -683,7 +688,8 @@
       "context_length": 1048576,
       "max_output_tokens": 65536,
       "routable": false,
-      "routable_reason": "awaiting-price"
+      "routable_reason": "awaiting-price",
+      "missing_since": "2026-08-10"
     },
     {
       "display_name": "Gemini Robotics-ER 1.6 Preview",
