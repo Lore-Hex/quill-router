@@ -111,6 +111,7 @@ from trusted_router.storage_models import (
     SettleOutboxRow,
     TypedFinalizeResult,
 )
+from trusted_router.synthetic.funding import ensure_monitor_funding, monitor_lookup_hash
 from trusted_router.types import ErrorType, UsageType
 
 logger = logging.getLogger(__name__)
@@ -217,6 +218,14 @@ def _authorize_gateway_sync(
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
     assert_workspace_billing_active(workspace)
+    # The synthetic monitor funds itself: a monthly idempotent grant applied
+    # on its own authorize path, so a dry monitor self-heals on the next
+    # probe instead of failing 402 for days (invisible availability loss —
+    # the deep probes stop proving anything). One set-lookup for monitor
+    # traffic, zero cost for everyone else.
+    monitor_hash = monitor_lookup_hash(settings)
+    if monitor_hash is not None and body.api_key_lookup_hash == monitor_hash:
+        ensure_monitor_funding(STORE, settings, workspace.id)
     body_dict = body.model_dump(exclude_none=True)
     # Preserve pre-web-search idempotency fingerprints byte-for-byte for every
     # ordinary request. A nonzero hosted-tool reservation remains fingerprinted.
@@ -1488,8 +1497,7 @@ def _settle_gateway_authorization(
                 "provider": selected_endpoint.provider,
                 "estimated_microdollars": authorization.estimated_microdollars,
                 "actual_microdollars": actual_cost,
-                "overrun_microdollars": actual_cost
-                - authorization.estimated_microdollars,
+                "overrun_microdollars": actual_cost - authorization.estimated_microdollars,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
             },

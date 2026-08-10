@@ -774,10 +774,19 @@ def test_status_rollups_cover_current_5m_24h_and_daily_windows() -> None:
         ),
     ]
 
-    snapshot = status_snapshot(samples, now=now)
+    # This deployment runs pongs (monitor key set), so the Model Inference
+    # component is published and the two down pongs must show.
+    snapshot = status_snapshot(
+        samples,
+        now=now,
+        settings=Settings(environment="test", synthetic_monitor_api_key="sk-tr-monitor-test"),
+    )
 
     assert snapshot["current"]["checks"]
-    assert snapshot["overall_status"] == "up"
+    # Both pong samples above are down and recent, so the Model Inference
+    # component pulls the banner off green — while router_core (the SLO)
+    # stays up because pong failures never burn it.
+    assert snapshot["overall_status"] == "degraded"
     assert snapshot["slo_classes"]["router_core"]["status"] == "up"
     assert set(snapshot["slo_classes"]) == {"router_core", "control_plane"}
     assert snapshot["history_scope"] == "router_core"
@@ -795,7 +804,11 @@ def test_status_rollups_cover_current_5m_24h_and_daily_windows() -> None:
     assert canonical["p50_latency_milliseconds"] == 25
     assert canonical["end_to_end_p50_latency_milliseconds"] == 25
     assert len(canonical["history"]) == 48
-    assert snapshot["recent_events"] == []
+    # The two recent pong failures now surface on the incident timeline,
+    # attributed to the Model Inference component (pre-2026-08 they mapped
+    # to no component and were silently dropped here).
+    assert {event["id"] for event in snapshot["recent_events"]} == {"syn_down", "syn_down_2"}
+    assert all(event["component"] == "Model Inference" for event in snapshot["recent_events"])
 
 
 def test_status_keeps_provider_failures_out_of_global_slo_classes() -> None:
@@ -838,10 +851,17 @@ def test_status_keeps_provider_failures_out_of_global_slo_classes() -> None:
         ),
     ]
 
-    snapshot = status_snapshot(samples, now=now)
+    snapshot = status_snapshot(
+        samples,
+        now=now,
+        settings=Settings(environment="test", synthetic_monitor_api_key="sk-tr-monitor-test"),
+    )
 
-    assert snapshot["overall_status"] == "up"
-    assert snapshot["summary"]["headline"] == "All Systems Operational"
+    # Provider-effective failures stay out of the SLO math (July decision),
+    # but since 2026-08 they are no longer allowed to hide: the Model
+    # Inference component goes down and pulls the banner to degraded.
+    assert snapshot["overall_status"] == "degraded"
+    assert snapshot["summary"]["headline"] == "Partial Outage: Model Inference"
     assert snapshot["slo_classes"]["router_core"]["status"] == "up"
     assert snapshot["slo_classes"]["router_core"]["windows"]["5m"]["bad_count"] == 0
     assert set(snapshot["slo_classes"]) == {"router_core", "control_plane"}
@@ -862,10 +882,16 @@ def test_status_keeps_provider_failures_out_of_global_slo_classes() -> None:
     assert canonical["status"] == "up"
     assert canonical["sample_count_24h"] == 1
     assert snapshot["windows"]["5m"]["sample_count"] == 3
-    assert all(
-        event["probe_type"] not in {"openai_sdk_pong", "responses_pong"}
+    # Pong failures stay out of the SLO windows above but are no longer
+    # hidden from the incident timeline: they surface as Model Inference
+    # component events.
+    pong_events = [
+        event
         for event in snapshot["recent_events"]
-    )
+        if event["probe_type"] in {"openai_sdk_pong", "responses_pong"}
+    ]
+    assert len(pong_events) == 2
+    assert all(event["component"] == "Model Inference" for event in pong_events)
 
 
 def test_regional_gateway_maintenance_never_reduces_global_router_core_slo() -> None:
