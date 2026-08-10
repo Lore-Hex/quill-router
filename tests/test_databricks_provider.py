@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import copy
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from scripts.pricing.base import ProviderPricingResult
 from scripts.pricing.providers import databricks
 from scripts.pricing.refresh import PROVIDER_SLUGS
 from trusted_router.catalog import PROVIDERS
@@ -137,12 +140,14 @@ def test_databricks_fetch_uses_public_sources_without_operator_credentials(
     monkeypatch.delenv("DATABRICKS_TOKEN", raising=False)
     monkeypatch.delenv("DATABRICKS_HOST", raising=False)
     monkeypatch.setattr(databricks, "_DISCOVERED_MANIFEST_ROWS", {})
-    monkeypatch.setattr(databricks, "_LIVE_CANARY_OK", True)
+    monkeypatch.setattr(databricks, "_LIVE_CANARY_CHECKED_MODEL_IDS", {"old"})
+    monkeypatch.setattr(databricks, "_LIVE_CANARY_HEALTHY_MODEL_IDS", {"old"})
 
     result = databricks.fetch()
 
     assert set(result.prices) == set(databricks.EXPECTED_MODELS)
-    assert databricks._LIVE_CANARY_OK is False
+    assert databricks._LIVE_CANARY_CHECKED_MODEL_IDS == set()
+    assert databricks._LIVE_CANARY_HEALTHY_MODEL_IDS == set()
     assert len(databricks._DISCOVERED_MANIFEST_ROWS) == len(databricks.EXPECTED_MODELS)
 
 
@@ -176,10 +181,15 @@ def test_databricks_fetch_runs_private_canary_when_pair_is_configured(
     monkeypatch.setenv("DATABRICKS_TOKEN", "token")
     monkeypatch.setenv("DATABRICKS_HOST", "dbc-1234.cloud.databricks.com")
     calls: list[dict[str, Any]] = []
+
+    def fake_probe(**kwargs: Any) -> bool:
+        calls.append(copy.deepcopy(kwargs))
+        return kwargs["model"] != "databricks-glm-5-2"
+
     monkeypatch.setattr(
         databricks,
         "probe_openai_chat",
-        lambda **kwargs: calls.append(copy.deepcopy(kwargs)) is None,
+        fake_probe,
     )
 
     databricks.fetch()
@@ -188,11 +198,15 @@ def test_databricks_fetch_runs_private_canary_when_pair_is_configured(
         {
             "base_url": "https://dbc-1234.cloud.databricks.com/serving-endpoints",
             "api_key": "token",
-            "model": "databricks-gpt-oss-20b",
-            "max_tokens": 16,
+            "model": databricks.UPSTREAM_ID_MAP[model_id],
+            "max_tokens": 4,
         }
+        for model_id in databricks.EXPECTED_MODELS
     ]
-    assert databricks._LIVE_CANARY_OK is True
+    assert databricks._LIVE_CANARY_CHECKED_MODEL_IDS == set(databricks.EXPECTED_MODELS)
+    assert databricks._LIVE_CANARY_HEALTHY_MODEL_IDS == {
+        model_id for model_id in databricks.EXPECTED_MODELS if model_id != "z-ai/glm-5.2"
+    }
 
 
 def test_databricks_fetch_rejects_partial_private_configuration(
@@ -226,6 +240,47 @@ def test_databricks_fetch_rejects_partial_private_configuration(
     monkeypatch.delenv("DATABRICKS_HOST", raising=False)
     with pytest.raises(RuntimeError, match="must be set together"):
         databricks.fetch()
+
+
+def test_databricks_manifest_activates_only_models_with_passing_canaries(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "databricks.json"
+    manifest_path.write_text(
+        databricks.MANIFEST_PATH.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    prices, discovered = databricks._parse_catalog(
+        _pricing_html(),
+        _supported_models_html(),
+    )
+    checked = set(discovered)
+    healthy = {"openai/gpt-oss-20b", "meta-llama/llama-3.1-8b-instruct"}
+    monkeypatch.setattr(databricks, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(databricks, "_DISCOVERED_MANIFEST_ROWS", discovered)
+    monkeypatch.setattr(databricks, "_LIVE_CANARY_CHECKED_MODEL_IDS", checked)
+    monkeypatch.setattr(databricks, "_LIVE_CANARY_HEALTHY_MODEL_IDS", healthy)
+    monkeypatch.setenv("DATABRICKS_TOKEN", "token")
+    monkeypatch.setenv("DATABRICKS_HOST", "dbc-1234.cloud.databricks.com")
+
+    databricks.write_provider_manifest(
+        ProviderPricingResult(
+            slug="databricks",
+            prices=prices,
+            source="api",
+            fetched_url=databricks.PRICING_URL,
+        )
+    )
+
+    by_id = {
+        row["id"]: row for row in json.loads(manifest_path.read_text(encoding="utf-8"))["models"]
+    }
+    for model_id in healthy:
+        assert "routable_reason" not in by_id[model_id]
+    for model_id in checked - healthy:
+        assert by_id[model_id]["routable"] is False
+        assert by_id[model_id]["routable_reason"] == "provider-canary-failed"
 
 
 def test_databricks_is_prepaid_standard_privacy_and_not_byok() -> None:
