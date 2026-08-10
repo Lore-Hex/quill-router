@@ -81,6 +81,7 @@ from trusted_router.catalog import (
 from trusted_router.catalog_ingest import _modalities
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.routes.internal.gateway import _gateway_provider_route_payload
 from trusted_router.routing import chat_route_candidates, chat_route_endpoint_candidates
 
 
@@ -1919,6 +1920,31 @@ def test_wafer_kimi_k26_is_available_but_standard_tier_only() -> None:
         )
     assert getattr(exc.value, "status_code", None) == 400
     assert "No route candidates match" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "endpoint_id",
+    [
+        "z-ai/glm-5.2@wafer/prepaid",
+        "moonshotai/kimi-k3@wafer/prepaid",
+        "moonshotai/kimi-k3-fast@wafer/prepaid",
+        "deepseek/deepseek-v4-flash-0731-fast@wafer/prepaid",
+    ],
+)
+def test_wafer_manifest_drives_zdr_routing_and_gateway_enforcement(
+    endpoint_id: str,
+) -> None:
+    zdr_endpoint = MODEL_ENDPOINTS[endpoint_id]
+
+    assert endpoint_privacy_tier(zdr_endpoint) == PRIVACY_TIER_ZERO_RETENTION
+    assert endpoint_zero_data_retention(zdr_endpoint) is True
+    assert _gateway_provider_route_payload(zdr_endpoint) == {
+        "wafer_zdr_required": True
+    }
+    standard_endpoint = MODEL_ENDPOINTS.get("moonshotai/kimi-k2.6@wafer/prepaid")
+    if standard_endpoint is not None:
+        assert endpoint_zero_data_retention(standard_endpoint) is False
+        assert _gateway_provider_route_payload(standard_endpoint) == {}
 
 
 def test_glm_52_supplements_publish_current_model_across_providers() -> None:

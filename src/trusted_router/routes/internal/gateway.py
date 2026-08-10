@@ -40,6 +40,7 @@ from trusted_router.catalog import (
     default_endpoint_for_model,
     effective_endpoint,
     endpoint_for_id,
+    endpoint_zero_data_retention,
 )
 from trusted_router.config import Settings, get_settings
 from trusted_router.errors import api_error, assert_workspace_billing_active
@@ -1039,6 +1040,7 @@ def _gateway_authorize_response(
             "endpoint_id": endpoint.id,
             "provider": endpoint.provider,
             "provider_name": PROVIDERS[endpoint.provider].name,
+            **_gateway_provider_route_payload(endpoint),
             "requested_model": requested_model_id,
             "usage_type": model_usage_type.value,
             "limit_usage_type": limit_usage_type.value,
@@ -1890,10 +1892,22 @@ def _gateway_candidate_payload(
         "upstream_model": endpoint.upstream_id or model.id,
         "provider": endpoint.provider,
         "provider_name": PROVIDERS[endpoint.provider].name,
+        **_gateway_provider_route_payload(endpoint),
         "usage_type": usage_type.value,
         **_gateway_byok_payload(byok_config, workspace_id),
         "region": region,
     }
+
+
+def _gateway_provider_route_payload(endpoint: ModelEndpoint) -> dict[str, Any]:
+    """Return provider-specific, typed enforcement metadata for the enclave."""
+
+    if (
+        endpoint.provider == "wafer"
+        and endpoint_zero_data_retention(endpoint) is True
+    ):
+        return {"wafer_zdr_required": True}
+    return {}
 
 
 def _gateway_byok_payload(byok_config: Any | None, workspace_id: str) -> dict[str, Any]:

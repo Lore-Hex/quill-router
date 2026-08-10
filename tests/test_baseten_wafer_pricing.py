@@ -379,6 +379,40 @@ def test_wafer_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # no
                     }
                 },
             },
+            {
+                "id": "Kimi-K3",
+                "max_model_len": 262144,
+                "supports_vision": True,
+                "zdr_supported": True,
+                "wafer": {
+                    "pricing": {
+                        "input_cents_per_million": 300,
+                        "output_cents_per_million": 1500,
+                    }
+                },
+            },
+            {
+                "id": "kimi-k3-fast",
+                "max_model_len": 262144,
+                "zdr_supported": True,
+                "wafer": {
+                    "pricing": {
+                        "input_cents_per_million": 450,
+                        "output_cents_per_million": 2250,
+                    }
+                },
+            },
+            {
+                "id": "DeepSeek-V4-Flash-0731-Fast",
+                "max_model_len": 131072,
+                "zdr_supported": True,
+                "wafer": {
+                    "pricing": {
+                        "input_cents_per_million": 28,
+                        "output_cents_per_million": 56,
+                    }
+                },
+            },
         ]
     }
 
@@ -402,6 +436,9 @@ def test_wafer_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # no
     fast = result.prices["z-ai/glm-5.2-fast"]
     kimi = result.prices["moonshotai/kimi-k2.6"]
     minimax = result.prices["minimax/minimax-m3"]
+    kimi_k3 = result.prices["moonshotai/kimi-k3"]
+    kimi_k3_fast = result.prices["moonshotai/kimi-k3-fast"]
+    deepseek_fast = result.prices["deepseek/deepseek-v4-flash-0731-fast"]
 
     assert glm.prompt_micro_per_m == 1_200_000
     assert glm.completion_micro_per_m == 4_100_000
@@ -411,9 +448,23 @@ def test_wafer_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # no
     assert fast.tiers[0].prompt_cached_micro_per_m == 500_000
     assert kimi.prompt_micro_per_m == 1_140_000
     assert minimax.completion_micro_per_m == 1_320_000
+    assert kimi_k3.prompt_micro_per_m == 3_000_000
+    assert kimi_k3_fast.completion_micro_per_m == 22_500_000
+    assert deepseek_fast.prompt_micro_per_m == 280_000
+    assert deepseek_fast.completion_micro_per_m == 560_000
     assert wafer.UPSTREAM_ID_MAP["z-ai/glm-5.2"] == "GLM-5.2"
     assert wafer.UPSTREAM_ID_MAP["z-ai/glm-5.2-fast"] == "glm5.2-fast"
     assert wafer.UPSTREAM_ID_MAP["moonshotai/kimi-k2.6"] == "Kimi-K2.6"
+    assert wafer.UPSTREAM_ID_MAP["moonshotai/kimi-k3"] == "Kimi-K3"
+    assert wafer.UPSTREAM_ID_MAP["moonshotai/kimi-k3-fast"] == "kimi-k3-fast"
+    assert (
+        wafer.UPSTREAM_ID_MAP["deepseek/deepseek-v4-flash-0731-fast"]
+        == "DeepSeek-V4-Flash-0731-Fast"
+    )
+    kimi_manifest = wafer._DISCOVERED_MANIFEST_ROWS["moonshotai/kimi-k3"]
+    assert kimi_manifest["context_length"] == 262_144
+    assert kimi_manifest["zdr_supported"] is True
+    assert kimi_manifest["input_modalities"] == ["text", "image"]
 
 
 def test_wafer_provider_appends_new_priced_models_to_manifest(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
@@ -530,6 +581,40 @@ def test_wafer_provider_appends_new_priced_models_to_manifest(tmp_path: Path, mo
                     }
                 },
             },
+            {
+                "id": "Kimi-K3",
+                "max_model_len": 262144,
+                "supports_vision": True,
+                "zdr_supported": True,
+                "wafer": {
+                    "pricing": {
+                        "input_cents_per_million": 300,
+                        "output_cents_per_million": 1500,
+                    }
+                },
+            },
+            {
+                "id": "kimi-k3-fast",
+                "max_model_len": 262144,
+                "zdr_supported": True,
+                "wafer": {
+                    "pricing": {
+                        "input_cents_per_million": 450,
+                        "output_cents_per_million": 2250,
+                    }
+                },
+            },
+            {
+                "id": "DeepSeek-V4-Flash-0731-Fast",
+                "max_model_len": 131072,
+                "zdr_supported": True,
+                "wafer": {
+                    "pricing": {
+                        "input_cents_per_million": 28,
+                        "output_cents_per_million": 56,
+                    }
+                },
+            },
         ]
     }
 
@@ -553,11 +638,11 @@ def test_wafer_provider_appends_new_priced_models_to_manifest(tmp_path: Path, mo
 
     assert notes == [
         "wafer: refreshed provider_models/wafer.json "
-        "(5 priced rows, appended 3)"
+        "(8 priced rows, appended 6)"
     ]
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     by_id = {row["id"]: row for row in raw["models"]}
-    assert raw["model_count"] == 6
+    assert raw["model_count"] == 9
     assert by_id["moonshotai/kimi-k2.7-code"]["missing_since"]
     assert by_id["moonshotai/kimi-k2.7-code"].get("routable") is not False
     assert by_id["z-ai/glm-5.2"]["input_token_price_per_m"] == 1_200_000
@@ -567,6 +652,13 @@ def test_wafer_provider_appends_new_priced_models_to_manifest(tmp_path: Path, mo
     assert by_id["z-ai/glm-5.2-fast"]["cached_input_token_price_per_m"] == 500_000
     assert by_id["z-ai/glm-5.2-fast"]["zdr_supported"] is True
     assert by_id["moonshotai/kimi-k2.6"]["input_modalities"] == ["text", "image"]
+    assert by_id["moonshotai/kimi-k3"]["upstream_id"] == "Kimi-K3"
+    assert by_id["moonshotai/kimi-k3"]["zdr_supported"] is True
+    assert by_id["moonshotai/kimi-k3-fast"]["upstream_id"] == "kimi-k3-fast"
+    assert (
+        by_id["deepseek/deepseek-v4-flash-0731-fast"]["input_token_price_per_m"]
+        == 280_000
+    )
 
 
 def test_wafer_delisted_expected_model_reaches_manifest_prune(
