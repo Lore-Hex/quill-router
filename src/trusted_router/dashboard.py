@@ -125,6 +125,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/aws-bedrock-alternative",
     "/llm-document-processing",
     "/gpt-oss-120b-api",
+    "/latest-model-apis",
     "/eu-ai-act-llm-compliance",
     "/x402-llm-api",
     "/",
@@ -1090,6 +1091,32 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         description=(
             "A private LLM API where privacy is cryptographically verifiable. "
             "Route to Claude, GPT, Gemini, DeepSeek through an attested gateway."
+        ),
+    ),
+    "latest-model-apis": PublicPage(
+        template="public/seo_latest_model_apis.html",
+        title="Latest AI Model APIs: Kimi K3, GLM 5.2, DeepSeek V4",
+        description=(
+            "Call Kimi K3, GLM 5.2, DeepSeek V4, and Gemini 3.6 Flash through "
+            "one OpenAI-compatible API with published pricing, privacy labels, and fallback."
+        ),
+        faq_items=(
+            (
+                "Which new AI models are available through TrustedRouter?",
+                "Current highlighted routes include Kimi K3, GLM 5.2, DeepSeek V4 Pro and Flash, and Gemini 3.6 Flash. The live models catalog is the source of truth and lists hundreds of additional routes, their providers, context limits, prices, and privacy posture.",
+            ),
+            (
+                "Do I need a separate account for every model provider?",
+                "No. Prepaid TrustedRouter credits provide one key and one OpenAI-compatible base URL across supported providers. Bring-your-own provider keys are also available when you prefer to keep a direct provider relationship.",
+            ),
+            (
+                "Can I switch models without changing SDKs?",
+                "Yes. Keep the OpenAI SDK and TrustedRouter base URL, then change only the model string. The same key can call Kimi K3, GLM 5.2, DeepSeek V4, Gemini 3.6 Flash, and the rest of the live catalog.",
+            ),
+            (
+                "Does every model route have the same privacy guarantee?",
+                "No. TrustedRouter itself keeps no prompt or output logs, always, while upstream provider behavior differs. Every route publishes its provider, Zero-Data-Retention status, and verified confidential-compute status so you can choose deliberately.",
+            ),
         ),
     ),
     "hipaa-llm-api": PublicPage(
