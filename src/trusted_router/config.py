@@ -698,6 +698,13 @@ class Settings(BaseSettings):
     # purpose: a peer added here reaches all clouds on their next image roll
     # with no per-cloud env edits. Empty disables (tests set environment=test,
     # which also gates the probes off — see run_synthetic_once).
+    # The standing remediator (synthetic/remediator.py): "off" | "observe" |
+    # "act". Observe-first is the contract — a week of recorded decisions
+    # calibrates flap rates before any actuator moves traffic. "act" is
+    # accepted now so the flip is config-only later, but until actuators
+    # ship it behaves as observe.
+    remediator_mode: str = "observe"
+    remediator_interval_seconds: int = 120
     synthetic_fleet_peers: str = (
         "gcp=https://trustedrouter.com"
         ",aws=https://aws.trustedrouter.com"

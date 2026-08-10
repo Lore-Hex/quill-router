@@ -1963,6 +1963,16 @@ def _fleet_page_html(snapshot: dict[str, Any]) -> str:
             f"<td>{html.escape(str(beat.get('last_beat_at') or ''))}</td>"
             "</tr>"
         )
+    remediator = snapshot.get("remediator") or {}
+    decisions = []
+    for row in remediator.get("decisions") or []:
+        decisions.append(
+            "<tr>"
+            f"<td>{html.escape(str(row.get('at') or ''))}</td>"
+            f"<td>{html.escape(str(row.get('decision') or ''))}</td>"
+            f"<td>{html.escape(str(row.get('detail') or ''))}</td>"
+            "</tr>"
+        )
     overall = str(snapshot.get("fleet_overall_status") or "unknown")
     table_css = "width:100%;border-collapse:collapse;margin:12px 0 28px"
     cell_css = (
@@ -1989,6 +1999,9 @@ h1{{font-size:20px;margin:0 0 4px}} h2{{font-size:16px;color:#8a8f98;margin:28px
 <h2>Scheduler heartbeats (this deployment)</h2>
 <table style="{table_css}"><tr><th>job</th><th>liveness</th><th>age</th><th>last beat</th></tr>
 {"".join(beats) or '<tr><td colspan="4">no heartbeats recorded yet</td></tr>'}</table>
+<h2>Remediator (mode: {html.escape(str(remediator.get("mode") or "off"))})</h2>
+<table style="{table_css}"><tr><th>at</th><th>decision</th><th>detail</th></tr>
+{"".join(decisions) or '<tr><td colspan="3">no decisions recorded — nothing needed fixing</td></tr>'}</table>
 </body></html>"""
 
 

@@ -379,7 +379,22 @@ async def fleet_snapshot(
         "generated_at": iso_now(),
         "fleet_overall_status": _fleet_overall(summaries) if summaries else "unknown",
         "deployments": summaries,
-        # Blocking storage read — off the event loop, same rule as every
+        # Blocking storage reads — off the event loop, same rule as every
         # other sync store call on a request path (head-of-line blocking).
         "heartbeats": await asyncio.to_thread(_heartbeat_rows),
+        "remediator": {
+            "mode": settings.remediator_mode,
+            "decisions": await asyncio.to_thread(_recent_decisions_safe),
+        },
     }
+
+
+def _recent_decisions_safe() -> list[dict[str, Any]]:
+    # The fleet page must render even if the remediator surface breaks.
+    try:
+        from trusted_router.synthetic.remediator import recent_decisions
+
+        return recent_decisions()
+    except Exception:  # noqa: BLE001 - fleet view over remediator introspection
+        logger.exception("remediator decision read failed")
+        return []

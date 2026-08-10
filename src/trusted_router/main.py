@@ -212,6 +212,38 @@ def create_app(
 
             _asyncio.create_task(loop())  # noqa: RUF006 - lifetime is the process
 
+    # The standing remediator (command-center Inc 3): detect -> decide ->
+    # record on a fixed cadence, on every control plane, outside deploy
+    # windows. Observe mode by default; see synthetic/remediator.py.
+    if settings.remediator_mode != "off":
+
+        @app.on_event("startup")
+        async def _start_remediator_loop() -> None:  # pragma: no cover - thread wiring
+            import asyncio as _asyncio
+            import logging as _logging
+            import random as _random
+
+            from trusted_router.synthetic.fleet import record_heartbeat
+            from trusted_router.synthetic.remediator import run_remediator_pass
+
+            interval = max(60, settings.remediator_interval_seconds)
+            log = _logging.getLogger(__name__)
+
+            async def loop() -> None:
+                await _asyncio.sleep(_random.uniform(5, min(60, interval)))  # noqa: S311
+                while True:
+                    try:
+                        await _asyncio.to_thread(run_remediator_pass, settings)
+                    except Exception:
+                        # The watcher must be the last thing to die quietly.
+                        log.exception("remediator pass failed")
+                    await _asyncio.to_thread(
+                        record_heartbeat, "scheduler:remediator", settings=settings
+                    )
+                    await _asyncio.sleep(interval)
+
+            _asyncio.create_task(loop())  # noqa: RUF006 - lifetime is the process
+
     register_http_middleware(app, settings)
 
     @app.exception_handler(StarletteHTTPException)
