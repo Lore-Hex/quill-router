@@ -354,6 +354,7 @@ def test_fleet_json_shape_is_stable() -> None:
         "generated_at",
         "fleet_overall_status",
         "deployments",
+        "remediator",
         "heartbeats",
     }
     json.dumps(snapshot)  # must be JSON-serializable as-is
