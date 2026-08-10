@@ -126,6 +126,39 @@ def test_paid_landing_sets_signed_httponly_cookie(client: TestClient) -> None:
     assert "twclid" not in context.last_touch
 
 
+@pytest.mark.parametrize(
+    ("path", "campaign"),
+    [
+        ("/openrouter-alternative", "exact_openrouter_migration_20260809"),
+        ("/private-llm-api", "exact_private_llm_20260809"),
+        ("/llm-failover", "exact_provider_failover_20260809"),
+        ("/latest-model-apis", "exact_hot_models_20260809"),
+    ],
+)
+def test_exact_intent_landings_keep_distinct_first_party_attribution(
+    client: TestClient,
+    path: str,
+    campaign: str,
+) -> None:
+    response = client.get(
+        f"{path}?utm_source=google&utm_medium=paid_search"
+        f"&utm_campaign={campaign}&utm_content=rsa1&gclid=click-{campaign}"
+    )
+
+    assert response.status_code == 200
+    context = decode_attribution_cookie(
+        client.cookies.get(ATTRIBUTION_COOKIE_NAME), client.app.state.settings
+    )
+    assert context is not None
+    assert context.last_touch["utm_source"] == "google"
+    assert context.last_touch["utm_medium"] == "paid_search"
+    assert context.last_touch["utm_campaign"] == campaign
+    assert context.last_touch["utm_content"] == "rsa1"
+    assert context.last_touch["landing_path"] == path
+    assert context.last_touch["gclid_fingerprint"]
+    assert "gclid" not in context.last_touch
+
+
 def test_first_touch_is_preserved_and_last_touch_updates(client: TestClient) -> None:
     first = client.get("/?utm_source=x&utm_campaign=first&twclid=tw-first")
     assert first.status_code == 200

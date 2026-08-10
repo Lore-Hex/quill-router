@@ -6,7 +6,8 @@
     <h2>Your uptime should not depend on one provider's status page.</h2>
     <p>TrustedRouter is an OpenAI-compatible API with automatic LLM failover built in. When a provider goes down, requests roll over to a healthy route. No code change, no config push, no incident channel at 3 a.m. Your users keep getting answers.</p>
     <p>One key fronts 220+ model routes across 30+ providers: Claude, GPT, Gemini, DeepSeek, Kimi, Qwen, GLM, Llama, Mistral, and more. Pin an exact model, or send traffic to <code>trustedrouter/auto</code> and let the gateway pick the best fit per request. Migration is a one-line change: point <code>base_url</code> at <code>{{ api_base_url }}</code> and keep your SDK, your model ids, and your code.</p>
-    <p><a class="btn primary" href="/choose">Browse 220+ routes</a> <a class="btn" href="/llm-provider-latency-benchmarks">See measured latency</a></p>
+    <p><button class="btn primary" type="button" data-action="open-signin">Create key and test failover</button> <a class="btn" href="/choose">Browse routes</a> <a class="btn" href="/llm-provider-latency-benchmarks">See measured latency</a></p>
+    <p class="microcopy">New email signups receive starter credit. No card required.</p>
   </div>
   <div class="copy-terminal">
     <div class="code-head"><span>failover.py</span><span>Python</span></div>

@@ -789,6 +789,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def seo_gpt_oss_120b_api() -> str:
         return public_page_html(settings, "gpt-oss-120b-api")
 
+    @public_html_route("/latest-model-apis")
+    async def seo_latest_model_apis() -> str:
+        return public_page_html(settings, "latest-model-apis")
+
     @public_html_route("/eu-ai-act-llm-compliance")
     async def seo_eu_ai_act_llm_compliance() -> str:
         return public_page_html(settings, "eu-ai-act-llm-compliance")

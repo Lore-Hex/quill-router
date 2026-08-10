@@ -918,6 +918,7 @@ def test_resources_directory_links_previous_orphan_pages(client: TestClient) -> 
         "/llm-data-residency",
         "/llm-document-processing",
         "/llm-failover",
+        "/latest-model-apis",
         "/minimax-m3-api",
         "/portkey-alternative",
         "/private-llm-api",
@@ -934,6 +935,55 @@ def test_resources_directory_links_previous_orphan_pages(client: TestClient) -> 
     assert 'href="/resources"' in footer.text
     assert 'href="/customers/robot-robot-human"' in footer.text
     assert 'href="/careers"' in footer.text
+
+
+def test_exact_intent_search_landings_are_message_matched(client: TestClient) -> None:
+    cases = {
+        "/openrouter-alternative": (
+            "Switch from OpenRouter in one base URL.",
+            "Create my API key",
+        ),
+        "/private-llm-api": (
+            'A private LLM API where "private" means cryptographically verified.',
+            "Create key and test privately",
+        ),
+        "/llm-failover": (
+            "Your uptime should not depend on one provider's status page.",
+            "Create key and test failover",
+        ),
+        "/latest-model-apis": (
+            "Try the models developers are evaluating now.",
+            "Create key and run a model",
+        ),
+    }
+
+    for path, expected in cases.items():
+        response = client.get(
+            f"{path}?utm_source=google&utm_medium=paid_search"
+            "&utm_campaign=exact_intent_test&utm_content=rsa1"
+        )
+        assert response.status_code == 200, path
+        for text in expected:
+            assert text in response.text, (path, text)
+        assert 'data-action="open-signin"' in response.text
+        assert f'<link rel="canonical" href="https://trustedrouter.com{path}">' in response.text
+        assert "utm_campaign" not in response.text
+
+
+def test_latest_model_api_landing_links_current_catalog_routes(client: TestClient) -> None:
+    response = client.get("/latest-model-apis")
+
+    assert response.status_code == 200
+    assert 'href="/models/moonshotai/kimi-k3"' in response.text
+    assert 'href="/models/z-ai/glm-5.2"' in response.text
+    assert 'href="/models/deepseek/deepseek-v4-pro"' in response.text
+    assert 'href="/models/google/gemini-3.6-flash"' in response.text
+    assert "No card required." in response.text
+    assert "Upstream guarantees differ" in response.text
+
+    sitemap = client.get("/sitemap-core.xml")
+    assert sitemap.status_code == 200
+    assert "https://trustedrouter.com/latest-model-apis" in sitemap.text
 
 
 def test_retired_model_pages_redirect_to_current_catalog_entries(client: TestClient) -> None:
