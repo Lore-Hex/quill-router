@@ -93,6 +93,10 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
         "https://wharf.neurometric.ai/v1",
     ),
     "engy": (("ENGY_API_KEY",), "https://api.engy.ai/v1"),
+    "databricks": (
+        ("DATABRICKS_TOKEN",),
+        "https://invalid-unconfigured.cloud.databricks.com/serving-endpoints",
+    ),
     # 0G Private Computer. TeeTLS only attests the router; forcing private
     # ensures inference itself uses a TeeML confidential-compute route.
     "zero-g": (("ZERO_G_API_KEY",), "https://router-api.0g.ai/v1"),
@@ -476,6 +480,11 @@ class ProviderClient:
             if not account_id:
                 raise RuntimeError("CLOUDFLARE_WORKERS_AI_ACCOUNT_ID is required")
             return default.format(account_id=account_id)
+        if provider == "databricks":
+            host = (self._secret("DATABRICKS_HOST") or "").strip().rstrip("/")
+            if not host:
+                raise RuntimeError("DATABRICKS_HOST is required")
+            return f"{host}/serving-endpoints"
         return self._secret(f"{provider.upper()}_BASE_URL") or default
 
     def _vertex_auth_and_base_url(self) -> tuple[str, str]:

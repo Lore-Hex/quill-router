@@ -31,6 +31,7 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "deepseek": ProviderBrand("https://www.deepseek.com/"),
     "digitalocean": ProviderBrand("https://www.digitalocean.com/products/gradient-ai-platform"),
     "engy": ProviderBrand("https://engy.ai/"),
+    "databricks": ProviderBrand("https://www.databricks.com/"),
     "fireworks": ProviderBrand("https://fireworks.ai/"),
     "friendli": ProviderBrand("https://friendli.ai/"),
     "gmi": ProviderBrand("https://www.gmicloud.ai/"),

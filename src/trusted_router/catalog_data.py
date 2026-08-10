@@ -829,6 +829,29 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://engy.ai/privacy",
     ),
+    "databricks": Provider(
+        slug="databricks",
+        name="Databricks",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=True,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Databricks Foundation Model APIs are a Designated Service and "
+            "pay-per-token workloads are HIPAA compliant. Databricks may "
+            "temporarily process or store inputs and outputs for abuse "
+            "prevention, and may process data outside the originating cloud "
+            "or region. This route is therefore standard privacy, not ZDR, "
+            "confidential compute, or end-to-end encrypted."
+        ),
+        provider_policy_url=(
+            "https://docs.databricks.com/aws/en/machine-learning/"
+            "foundation-model-apis/compliance"
+        ),
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
     "zero-g": Provider(
         slug="zero-g",
         name="0G Private Computer",
@@ -1083,6 +1106,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "streamlake",
         "neurometric",
         "engy",
+        "databricks",
         "zero-g",
         "nebius",
         "minimax",

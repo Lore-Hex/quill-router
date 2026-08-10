@@ -80,6 +80,15 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "crusoe"
   },
+  "databricks": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Databricks",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "databricks"
+  },
   "deepinfra": {
     "card_version": 2,
     "model_count": 52,
