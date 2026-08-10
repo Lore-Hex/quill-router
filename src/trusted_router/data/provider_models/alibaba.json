@@ -3,7 +3,7 @@
   "provider": "alibaba",
   "source": "https://ws-el6e4bpnggpx7g88.eu-central-1.maas.aliyuncs.com/compatible-mode/v1/models",
   "price_source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
-  "generated_at": "2026-08-10T05:41:00Z",
+  "generated_at": "2026-08-10T07:45:08Z",
   "price_scale": "microdollars_per_million",
   "model_count": 79,
   "models": [
@@ -2264,7 +2264,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "created": 1786007541,
+      "created": 1786346867,
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-08-07"
@@ -2278,7 +2278,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "created": 1786069263,
+      "created": 1786347355,
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-08-07"
