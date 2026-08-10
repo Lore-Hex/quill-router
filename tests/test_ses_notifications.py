@@ -117,9 +117,15 @@ def test_complaint_blocks_email(verified_client: TestClient) -> None:
     assert block is not None and block.reason == "complaint"
 
 
-def test_replayed_message_id_is_idempotent(verified_client: TestClient) -> None:
+def test_replayed_message_id_is_idempotent(
+    verified_client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     envelope = _envelope(MessageId="dup-msg", Message=_bounce_message(["dup@example.com"]))
-    with patch("trusted_router.routes.ses_notifications.verify_sns_message"):
+    with (
+        patch("trusted_router.routes.ses_notifications.verify_sns_message"),
+        caplog.at_level(logging.WARNING, logger="trusted_router.routes.ses_notifications"),
+    ):
         first = verified_client.post("/internal/ses/notifications", json=envelope)
         second = verified_client.post("/internal/ses/notifications", json=envelope)
     assert first.json()["data"] == {
@@ -129,9 +135,12 @@ def test_replayed_message_id_is_idempotent(verified_client: TestClient) -> None:
     }
     assert second.json()["data"] == {
         "kind": "Bounce",
-        "blocked_count": 1,
+        "blocked_count": 0,
         "replayed": True,
     }
+    assert sum(
+        record.getMessage().startswith("ses_feedback.received ") for record in caplog.records
+    ) == 1
 
 
 def test_feedback_persists_privacy_safe_send_classification(
@@ -166,15 +175,18 @@ def test_feedback_persists_privacy_safe_send_classification(
     assert block.acquisition_source == "google"
     assert block.acquisition_medium == "paid_search"
     assert block.acquisition_campaign == "legal-startups"
-    feedback_logs = [
-        record.getMessage()
+    feedback_records = [
+        record
         for record in caplog.records
         if record.getMessage().startswith("ses_feedback.received ")
     ]
-    assert len(feedback_logs) == 1
-    assert "campaign-recipient@example.com" not in feedback_logs[0]
-    assert "class=email_verification" in feedback_logs[0]
-    assert "source=google" in feedback_logs[0]
+    assert len(feedback_records) == 1
+    feedback_log = feedback_records[0].getMessage()
+    assert "campaign-recipient@example.com" not in feedback_log
+    assert "class=email_verification" in feedback_log
+    assert "source=google" in feedback_log
+    assert feedback_records[0].ses_message_id == "ses-msg-1"
+    assert feedback_records[0].feedback_id == "feedback-abc"
 
 
 def test_signature_failure_returns_403(verified_client: TestClient) -> None:
@@ -317,7 +329,10 @@ def test_email_service_sends_expected_ses_payload(monkeypatch) -> None:
     }
 
 
-def test_email_service_uses_dedicated_alert_sender_and_sanitized_tags(monkeypatch) -> None:
+def test_email_service_uses_dedicated_alert_sender_and_sanitized_tags(
+    monkeypatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     calls: list[dict[str, Any]] = []
 
     class FakeSESClient:
@@ -338,17 +353,18 @@ def test_email_service_uses_dedicated_alert_sender_and_sanitized_tags(monkeypatc
         )
     )
 
-    assert service.send(
-        EmailMessage(
-            to="owner@example.com",
-            subject="Budget alert",
-            text_body="Budget crossed.",
-            mail_class="budget alert",
-            sender_profile="alerts",
-            acquisition_source="ads.example/path",
-            acquisition_campaign="Legal teams: Q3",
+    with caplog.at_level(logging.INFO, logger="trusted_router.services.email"):
+        assert service.send(
+            EmailMessage(
+                to="owner@example.com",
+                subject="Budget alert",
+                text_body="Budget crossed.",
+                mail_class="budget alert",
+                sender_profile="alerts",
+                acquisition_source="ads.example/path",
+                acquisition_campaign="Legal teams: Q3",
+            )
         )
-    )
 
     call = calls[0]
     assert call["Source"] == "Example Alerts <alerts@alerts.example.com>"
@@ -359,6 +375,13 @@ def test_email_service_uses_dedicated_alert_sender_and_sanitized_tags(monkeypatc
         "acquisition_source": "ads-example-path",
         "acquisition_campaign": "Legal-teams-Q3",
     }
+    accepted = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "email_send.accepted"
+    ]
+    assert len(accepted) == 1
+    assert accepted[0].ses_message_id == "ses-alert-1"
 
 
 def test_alert_sender_never_falls_back_to_default_identity(monkeypatch) -> None:

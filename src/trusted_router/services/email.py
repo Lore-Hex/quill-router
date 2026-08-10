@@ -128,6 +128,7 @@ class EmailService:
             message_id or "unknown",
             extra={
                 "event": "email_send.accepted",
+                "ses_message_id": str(message_id or "unknown"),
                 "mail_class": message.mail_class,
                 "sender_profile": message.sender_profile,
                 "acquisition_source": message.acquisition_source or "unknown",

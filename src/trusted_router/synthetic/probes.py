@@ -862,6 +862,22 @@ async def attestation_nonce_probe(
             status_code = response.status_code
             peer_cert_der = None
         latency_ms = _elapsed_ms(started)
+        if status_code != 200:
+            # A gateway error document is not attestation evidence. Parsing a
+            # 5xx JSON/HTML body used to misclassify short rollout failures as
+            # unsupported_attestation_format, which looked like a cryptographic
+            # trust regression instead of the availability failure it was.
+            return _sample(
+                "attestation_nonce",
+                target,
+                monitor_region,
+                url,
+                status="down",
+                latency_milliseconds=latency_ms,
+                ttfb_milliseconds=latency_ms,
+                http_status=status_code,
+                error_type=f"attestation_http_{status_code}",
+            )
         evidence = _attestation_evidence(
             body,
             nonce,

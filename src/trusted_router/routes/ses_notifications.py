@@ -99,8 +99,16 @@ def register_ses_notification_routes(router: APIRouter) -> None:
             return JSONResponse({"data": {"ignored": True, "reason": "Message is not JSON"}})
 
         kind = str(feedback.get("notificationType") or feedback.get("eventType") or "")
-        blocked_count = _apply_feedback(kind, feedback)
+        # Apply the suppression first so a transient storage failure leaves the
+        # SNS message retryable. The message-id claim only controls reporting:
+        # suppression writes are idempotent, while duplicate SNS deliveries
+        # must not inflate bounce/complaint counts.
+        blocked_count = _apply_feedback(kind, feedback, emit_log=False)
         replayed = bool(message_id and not STORE.record_sns_message_once(message_id))
+        if replayed:
+            blocked_count = 0
+        else:
+            _log_feedback(kind, feedback, blocked_count)
         return JSONResponse(
             {
                 "data": {
@@ -112,7 +120,12 @@ def register_ses_notification_routes(router: APIRouter) -> None:
         )
 
 
-def _apply_feedback(kind: str, feedback: dict[str, Any]) -> int:
+def _apply_feedback(
+    kind: str,
+    feedback: dict[str, Any],
+    *,
+    emit_log: bool = True,
+) -> int:
     """Inspect a parsed SES feedback envelope and add email blocks.
 
     Returns a count, never recipient identities. Both the legacy
@@ -122,8 +135,6 @@ def _apply_feedback(kind: str, feedback: dict[str, Any]) -> int:
     """
     blocked_count = 0
     tags = _mail_tags(feedback)
-    recipient_count = 0
-    bounce_type: str | None = None
     if kind in {"Bounce", "bounce"}:
         raw_bounce = feedback.get("bounce")
         bounce = raw_bounce if isinstance(raw_bounce, dict) else {}
@@ -131,7 +142,6 @@ def _apply_feedback(kind: str, feedback: dict[str, Any]) -> int:
         bounce_type = str(raw_bounce_type) if raw_bounce_type else None
         raw_recipients = bounce.get("bouncedRecipients")
         recipients = raw_recipients if isinstance(raw_recipients, list) else []
-        recipient_count = len(recipients)
         # Only PERMANENT bounces stop sends. Transient bounces (mailbox full,
         # greylisting) self-resolve and shouldn't suppress permanently.
         if bounce_type and bounce_type.lower() != "permanent":
@@ -154,7 +164,6 @@ def _apply_feedback(kind: str, feedback: dict[str, Any]) -> int:
         complaint = raw_complaint if isinstance(raw_complaint, dict) else {}
         raw_recipients = complaint.get("complainedRecipients")
         recipients = raw_recipients if isinstance(raw_recipients, list) else []
-        recipient_count = len(recipients)
         feedback_id = complaint.get("feedbackId") or _mail_message_id(feedback)
         for recipient in recipients:
             email = recipient.get("emailAddress") if isinstance(recipient, dict) else None
@@ -166,29 +175,53 @@ def _apply_feedback(kind: str, feedback: dict[str, Any]) -> int:
                     **tags,
                 )
                 blocked_count += 1
-    if kind in {"Bounce", "bounce", "Complaint", "complaint"}:
-        log.warning(
-            "ses_feedback.received kind=%s bounce_type=%s recipients=%d blocked=%d "
-            "class=%s profile=%s source=%s medium=%s campaign=%s",
-            kind.lower(),
-            bounce_type or "none",
-            recipient_count,
-            blocked_count,
-            tags["mail_class"] or "unknown",
-            tags["sender_profile"] or "unknown",
-            tags["acquisition_source"] or "unknown",
-            tags["acquisition_medium"] or "unknown",
-            tags["acquisition_campaign"] or "unknown",
-            extra={
-                "event": "ses_feedback.received",
-                "feedback_kind": kind.lower(),
-                "bounce_type": bounce_type or "none",
-                "recipient_count": recipient_count,
-                "blocked_count": blocked_count,
-                **{name: value or "unknown" for name, value in tags.items()},
-            },
-        )
+    if emit_log:
+        _log_feedback(kind, feedback, blocked_count)
     return blocked_count
+
+
+def _log_feedback(kind: str, feedback: dict[str, Any], blocked_count: int) -> None:
+    if kind not in {"Bounce", "bounce", "Complaint", "complaint"}:
+        return
+    tags = _mail_tags(feedback)
+    raw_bounce = feedback.get("bounce")
+    bounce = raw_bounce if isinstance(raw_bounce, dict) else {}
+    raw_complaint = feedback.get("complaint")
+    complaint = raw_complaint if isinstance(raw_complaint, dict) else {}
+    bounce_type = str(bounce.get("bounceType") or "none")
+    raw_recipients = (
+        bounce.get("bouncedRecipients")
+        if kind in {"Bounce", "bounce"}
+        else complaint.get("complainedRecipients")
+    )
+    recipient_count = len(raw_recipients) if isinstance(raw_recipients, list) else 0
+    feedback_id = bounce.get("feedbackId") or complaint.get("feedbackId")
+    ses_message_id = _mail_message_id(feedback)
+    log.warning(
+        "ses_feedback.received kind=%s bounce_type=%s recipients=%d blocked=%d "
+        "class=%s profile=%s source=%s medium=%s campaign=%s message_id=%s feedback_id=%s",
+        kind.lower(),
+        bounce_type,
+        recipient_count,
+        blocked_count,
+        tags["mail_class"] or "unknown",
+        tags["sender_profile"] or "unknown",
+        tags["acquisition_source"] or "unknown",
+        tags["acquisition_medium"] or "unknown",
+        tags["acquisition_campaign"] or "unknown",
+        ses_message_id or "unknown",
+        feedback_id or "unknown",
+        extra={
+            "event": "ses_feedback.received",
+            "feedback_kind": kind.lower(),
+            "bounce_type": bounce_type,
+            "recipient_count": recipient_count,
+            "blocked_count": blocked_count,
+            "ses_message_id": ses_message_id or "unknown",
+            "feedback_id": str(feedback_id or "unknown"),
+            **{name: value or "unknown" for name, value in tags.items()},
+        },
+    )
 
 
 def _mail_tags(feedback: dict[str, Any]) -> dict[str, str | None]:
