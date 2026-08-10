@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Wafer serverless API. Refreshed hourly from Wafer's OpenAI-compatible /v1/models feed.",
   "provider": "wafer",
   "source": "https://pass.wafer.ai/v1/models",
-  "generated_at": "2026-08-10T01:53:16Z",
+  "generated_at": "2026-08-10T03:59:17Z",
   "price_scale": "microdollars_per_million",
   "zdr_header": "Wafer-ZDR: required",
   "model_count": 6,
@@ -26,7 +26,9 @@
         "text"
       ],
       "cached_input_token_price_per_m": 70000,
-      "missing_since": "2026-08-10"
+      "missing_since": "2026-08-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "moonshotai/kimi-k2.6",

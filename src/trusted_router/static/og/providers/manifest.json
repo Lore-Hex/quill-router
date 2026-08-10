@@ -406,10 +406,10 @@
   },
   "wafer": {
     "card_version": 2,
-    "model_count": 5,
+    "model_count": 4,
     "name": "Wafer",
     "privacy": "Policy documented",
-    "route_count": 10,
+    "route_count": 8,
     "route_mode": "Prepaid + BYOK",
     "slug": "wafer"
   },
