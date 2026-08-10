@@ -1,5 +1,11 @@
 {% extends "public/_base.html" %}
 {% block body %}
+<section class="marketing-grid three" aria-label="Model selection resources">
+  <a class="marketing-card card-as-link" href="/leaderboard"><span class="card-label">Measured speed</span><h3>Find the fastest routes.</h3><p>Compare provider TTFT, throughput, and uptime from routed probes.</p><span class="card-link">Open leaderboard →</span></a>
+  <a class="marketing-card card-as-link" href="/models?filter=open"><span class="card-label">Open weights</span><h3>Compare open models.</h3><p>Browse DeepSeek, GLM, Gemma, Kimi, MiniMax, Qwen, and other open routes.</p><span class="card-link">Browse models →</span></a>
+  <a class="marketing-card card-as-link" href="/private-llm-api"><span class="card-label">Privacy</span><h3>Require ZDR or confidential routes.</h3><p>Separate gateway attestation from each downstream provider's privacy posture.</p><span class="card-link">Review privacy →</span></a>
+</section>
+
 <section class="model-catalog">
   <div class="model-catalog-head">
     <div>

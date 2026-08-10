@@ -815,6 +815,85 @@ def test_model_overview_only_links_subpages_with_indexable_content(
     assert 'href="/models/minimax/minimax-m3/api"' not in response.text
 
 
+def test_model_overview_surfaces_cached_route_evidence(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import dashboard
+
+    measured = [
+        {
+            "model": "minimax/minimax-m3",
+            "provider": "novita",
+            "sample_count": 12,
+            "p50_ttft_ms": 140,
+            "p50_tokens_per_second": 52.0,
+            "throughput_sample_count": 8,
+            "uptime": 0.99,
+        },
+        {
+            "model": "minimax/minimax-m3",
+            "provider": "minimax",
+            "sample_count": 10,
+            "p50_ttft_ms": 220,
+            "p50_tokens_per_second": 91.0,
+            "throughput_sample_count": 7,
+            "uptime": 1.0,
+        },
+    ]
+    monkeypatch.setattr(dashboard, "measured_for_model", lambda *_args, **_kwargs: measured)
+
+    response = client.get("/models/minimax/minimax-m3")
+
+    assert response.status_code == 200
+    assert "Current route evidence" in response.text
+    assert "Lowest prepaid input price" in response.text
+    assert "140 ms" in response.text
+    assert "91 tok/s" in response.text
+    assert "99.00% to 100.00%" in response.text
+    assert 'href="/providers/novita"' in response.text
+    assert 'href="/providers/minimax"' in response.text
+    assert 'href="/models/minimax/minimax-m3/performance"' in response.text
+    assert 'href="/models/minimax/minimax-m3/uptime"' not in response.text
+    assert "n=12" not in response.text
+    assert "n=10" not in response.text
+
+
+def test_model_route_evidence_does_not_invent_a_prepaid_price(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import dashboard
+
+    monkeypatch.setattr(dashboard, "endpoints_for_model", lambda _model_id: [])
+    monkeypatch.setattr(dashboard, "measured_for_model", lambda *_args, **_kwargs: [])
+
+    evidence = dashboard._model_route_evidence(
+        dashboard.MODELS["minimax/minimax-m3"],
+        test_mode=True,
+    )
+
+    assert evidence["lowest_prompt_price"] == "BYOK only"
+    assert evidence["lowest_completion_price"] == "BYOK only"
+
+
+def test_model_overview_links_canonical_related_comparisons(client: TestClient) -> None:
+    response = client.get("/models/minimax/minimax-m3")
+
+    assert response.status_code == 200
+    assert "Compare MiniMax: MiniMax M3" in response.text
+    related_paths = re.findall(
+        r'href="(/compare/models/[^\"]+/vs/[^\"]+)"',
+        response.text,
+    )
+    assert related_paths
+    assert all("minimax/minimax-m3" in path for path in related_paths)
+    assert all(
+        left.casefold() < right.casefold()
+        for path in related_paths
+        for left, right in [path.removeprefix("/compare/models/").split("/vs/", 1)]
+    )
+
+
 def test_model_seo_cluster_pages_are_public_and_not_openrouter_links(
     client: TestClient,
 ) -> None:
@@ -869,6 +948,49 @@ def test_model_comparison_pages_are_public(client: TestClient) -> None:
     assert "Can I test MoonshotAI: Kimi K2.6 and Z.ai: GLM 5.1 with the same API?" in response.text
     comparison_schema = _json_ld(response.text)
     assert "FAQPage" in json.dumps(comparison_schema)
+
+
+def test_model_comparison_surfaces_distinct_measured_route_metrics(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import dashboard
+
+    def measured(model_id: str, **_kwargs: object) -> list[dict[str, object]]:
+        if model_id == "moonshotai/kimi-k2.6":
+            return [
+                {
+                    "provider": "together",
+                    "sample_count": 9,
+                    "p50_ttft_ms": 180,
+                    "p50_tokens_per_second": 75.0,
+                    "throughput_sample_count": 6,
+                    "uptime": 0.995,
+                }
+            ]
+        return [
+            {
+                "provider": "zai",
+                "sample_count": 11,
+                "p50_ttft_ms": 120,
+                "p50_tokens_per_second": 48.0,
+                "throughput_sample_count": 7,
+                "uptime": 1.0,
+            }
+        ]
+
+    monkeypatch.setattr(dashboard, "measured_for_model", measured)
+    response = client.get("/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.1")
+
+    assert response.status_code == 200
+    assert "Highest measured throughput" in response.text
+    assert "75 tok/s" in response.text
+    assert "48 tok/s" in response.text
+    assert "Recent route uptime range" in response.text
+    assert "99.50%" in response.text
+    assert "100.00%" in response.text
+    assert "Related comparisons" in response.text
+    assert "Browse every comparison" in response.text
 
 
 def test_reversed_model_comparison_redirects_to_stable_canonical(
@@ -927,6 +1049,15 @@ def test_model_comparison_directory_links_every_sitemap_pair(client: TestClient)
     )
 
 
+def test_model_comparison_graph_covers_every_public_model() -> None:
+    from trusted_router.dashboard import _model_comparison_pairs, _public_models_for_seo
+
+    represented = {
+        model.id.casefold() for left, right in _model_comparison_pairs() for model in (left, right)
+    }
+    assert {model.id.casefold() for model in _public_models_for_seo()} <= represented
+
+
 def test_resources_directory_links_previous_orphan_pages(client: TestClient) -> None:
     response = client.get("/resources")
     assert response.status_code == 200
@@ -972,6 +1103,43 @@ def test_resources_directory_links_previous_orphan_pages(client: TestClient) -> 
     assert 'href="/resources"' in footer.text
     assert 'href="/customers/robot-robot-human"' in footer.text
     assert 'href="/careers"' in footer.text
+
+
+def test_high_authority_pages_link_the_primary_intent_hubs(client: TestClient) -> None:
+    primary_hubs = {
+        "/compare/models",
+        "/private-llm-api",
+        "/eu",
+        "/openrouter-alternative",
+        "/docs/agent-setup",
+    }
+    homepage = client.get("/")
+    resources = client.get("/resources")
+    assert homepage.status_code == resources.status_code == 200
+    for path in primary_hubs:
+        assert f'href="{path}"' in homepage.text, path
+        assert f'href="{path}"' in resources.text, path
+
+    for heading in [
+        "Models and comparisons",
+        "Private and ZDR APIs",
+        "EU AI infrastructure",
+        "OpenRouter migration",
+        "Agents and coding tools",
+        "Production use cases",
+    ]:
+        assert heading in resources.text
+
+    eu = client.get("/eu")
+    private = client.get("/private-llm-api")
+    migration = client.get("/openrouter-alternative")
+    agents = client.get("/docs/agent-setup")
+    comparisons = client.get("/compare/models")
+    assert 'href="/llm-data-residency"' in eu.text
+    assert 'href="/providers"' in private.text
+    assert 'href="/docs/migrate-from-openrouter"' in migration.text
+    assert 'href="/compare/models"' in agents.text
+    assert 'href="/leaderboard"' in comparisons.text
 
 
 def test_exact_intent_search_landings_are_message_matched(client: TestClient) -> None:

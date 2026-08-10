@@ -14,8 +14,8 @@
     <div class="public-proof-strip">
       <div><strong>{{ comparison.left_price }}</strong><span>{{ left.name }} cheapest route</span></div>
       <div><strong>{{ comparison.right_price }}</strong><span>{{ right.name }} cheapest route</span></div>
-      <div><strong>{{ comparison.left_ttft }}</strong><span>{{ left.name }} measured p50 TTFT</span></div>
-      <div><strong>{{ comparison.right_ttft }}</strong><span>{{ right.name }} measured p50 TTFT</span></div>
+      <div><strong>{{ comparison.left_ttft }}</strong><span>{{ left.name }} fastest measured p50 TTFT{% if comparison.left_ttft_provider %} via {{ comparison.left_ttft_provider }}{% endif %}</span></div>
+      <div><strong>{{ comparison.right_ttft }}</strong><span>{{ right.name }} fastest measured p50 TTFT{% if comparison.right_ttft_provider %} via {{ comparison.right_ttft_provider }}{% endif %}</span></div>
     </div>
   </div>
 </section>
@@ -56,6 +56,15 @@
     <span>Privacy posture</span><span>{{ comparison.left_privacy }}</span><span>{{ comparison.right_privacy }}</span>
   </div>
   <div class="matrix-row">
+    <span>Fastest measured p50 TTFT</span><span>{{ comparison.left_ttft }}{% if comparison.left_ttft_provider %} via <a href="/providers/{{ comparison.left_ttft_provider }}">{{ comparison.left_ttft_provider }}</a>{% endif %}</span><span>{{ comparison.right_ttft }}{% if comparison.right_ttft_provider %} via <a href="/providers/{{ comparison.right_ttft_provider }}">{{ comparison.right_ttft_provider }}</a>{% endif %}</span>
+  </div>
+  <div class="matrix-row">
+    <span>Highest measured throughput</span><span>{{ comparison.left_throughput }}{% if comparison.left_throughput_provider %} via <a href="/providers/{{ comparison.left_throughput_provider }}">{{ comparison.left_throughput_provider }}</a>{% endif %}</span><span>{{ comparison.right_throughput }}{% if comparison.right_throughput_provider %} via <a href="/providers/{{ comparison.right_throughput_provider }}">{{ comparison.right_throughput_provider }}</a>{% endif %}</span>
+  </div>
+  <div class="matrix-row">
+    <span>Recent route uptime range</span><span>{{ comparison.left_uptime }}</span><span>{{ comparison.right_uptime }}</span>
+  </div>
+  <div class="matrix-row">
     <span>Modes</span>
     <span>
       {% if left.supports_chat %}<span class="pill">chat</span>{% endif %}
@@ -94,6 +103,19 @@
     </div>
   </div>
 </section>
+
+{% if related_comparisons %}
+<section class="panel" aria-label="Related model comparisons">
+  <div class="panel-head"><h2>Related comparisons</h2><a href="/compare/models">Browse every comparison</a></div>
+  <div class="panel-body">
+    <ul class="link-list">
+      {% for related in related_comparisons %}
+      <li><a href="{{ related.href }}">{{ related.label }}</a><span>{{ related.route_count }} combined provider routes</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+</section>
+{% endif %}
 
 <section class="marketing-split">
   <div class="marketing-copy">
