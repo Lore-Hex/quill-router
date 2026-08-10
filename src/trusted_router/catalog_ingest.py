@@ -134,6 +134,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "together",
         "wafer",
         "engy",
+        "databricks",
         "zero-g",
     }
 )
