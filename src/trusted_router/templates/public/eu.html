@@ -7,6 +7,14 @@
   <div><strong>Same trust model</strong><span>TLS terminates inside the attested gateway.</span></div>
 </section>
 
+<section class="panel" aria-label="EU LLM gateway explained">
+  <div class="panel-head"><h2>What the EU LLM gateway controls</h2><span class="pill good">Europe West</span></div>
+  <div class="panel-body">
+    <p>An EU LLM gateway controls where your application connects to TrustedRouter and where routing decisions happen. Use <span class="mono">https://api-europe-west4.quillrouter.com/v1</span> so authentication, policy checks, provider selection, and response streaming begin in Europe West inside the attested gateway.</p>
+    <p>Gateway region, provider region, and privacy posture are separate controls. The regional hostname selects the gateway. <span class="mono">trustedrouter/eu</span> prefers EU-focused routes. <span class="mono">provider.only</span> enforces your approved provider list, while <span class="mono">provider.min_privacy</span> enforces ZDR or confidential-compute requirements.</p>
+  </div>
+</section>
+
 <section class="marketing-split" aria-label="EU quickstart">
   <div class="marketing-copy">
     <span class="eyebrow">Europe-first routing</span>

@@ -285,6 +285,36 @@ def test_public_provider_route_defaults_to_html_for_link_checkers(client: TestCl
     assert json_response.headers["content-type"].startswith("application/json")
 
 
+def test_search_console_opportunity_pages_answer_observed_queries(
+    client: TestClient,
+) -> None:
+    eu = client.get("/eu")
+    assert eu.status_code == 200
+    assert "<title>EU LLM Gateway: Private AI Routing in Europe | TrustedRouter</title>" in eu.text
+    assert "What the EU LLM gateway controls" in eu.text
+    assert "https://api-europe-west4.quillrouter.com/v1" in eu.text
+    assert "Does the EU gateway guarantee EU data residency?" in eu.text
+    assert "FAQPage" in json.dumps(_json_ld(eu.text))
+
+    agents = client.get("/docs/agent-setup")
+    assert agents.status_code == 200
+    assert "<title>AI Agent Router Base URL Setup | TrustedRouter</title>" in agents.text
+    assert "Agent router base URLs" in agents.text
+    assert "https://api.trustedrouter.com/v1" in agents.text
+    assert "What base URL should an OpenAI-compatible agent use?" in agents.text
+    assert "FAQPage" in json.dumps(_json_ld(agents.text))
+
+    deepseek = client.get("/deepseek-api-privacy")
+    assert deepseek.status_code == 200
+    assert (
+        "<title>DeepSeek API Privacy &amp; Zero Data Retention | TrustedRouter</title>"
+        in deepseek.text
+    )
+    assert "DeepSeek zero data retention" in deepseek.text
+    assert '"min_privacy": "zdr"' in deepseek.text
+    assert "How do I require DeepSeek zero data retention?" in deepseek.text
+
+
 def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClient) -> None:
     models = client.get("/models")
     assert models.status_code == 200
@@ -724,12 +754,15 @@ def test_provider_detail_page_links_served_models(client: TestClient) -> None:
     response = client.get("/providers/minimax")
 
     assert response.status_code == 200
-    assert "<title>MiniMax Models and API Routes | TrustedRouter</title>" in response.text
+    assert "<title>MiniMax Models, Pricing &amp; Privacy | TrustedRouter</title>" in response.text
     assert "MiniMax M3" in response.text
     assert 'href="https://aiiq.org/models/minimax-m3/"' in response.text
     assert "IQ 109" in response.text
     assert "/models/minimax/minimax-m3/benchmarks" in response.text
     assert "Policy source" in response.text
+    assert "Does MiniMax have zero data retention?" in response.text
+    provider_schema = _json_ld(response.text)
+    assert "FAQPage" in json.dumps(provider_schema)
 
 
 def test_vertex_provider_page_scopes_zdr_to_managed_prepaid_routes(
@@ -832,6 +865,10 @@ def test_model_comparison_pages_are_public(client: TestClient) -> None:
     assert "/models/moonshotai/kimi-k2.6/pricing" in response.text
     assert "/models/z-ai/glm-5.1/providers" in response.text
     assert "openrouter.ai" not in response.text.lower()
+    assert "Which should I use, MoonshotAI: Kimi K2.6 or Z.ai: GLM 5.1?" in response.text
+    assert "Can I test MoonshotAI: Kimi K2.6 and Z.ai: GLM 5.1 with the same API?" in response.text
+    comparison_schema = _json_ld(response.text)
+    assert "FAQPage" in json.dumps(comparison_schema)
 
 
 def test_reversed_model_comparison_redirects_to_stable_canonical(
@@ -1025,25 +1062,22 @@ def test_first_body_image_picks_first_in_document_order() -> None:
 def test_blog_post_og_image_uses_first_image_else_default(client: TestClient) -> None:
     training = client.get("/blog/they-are-still-training-on-your-data")
     training_card = (
-        "https://trustedrouter.com/static/og/blog/"
-        "they-are-still-training-on-your-data.png"
+        "https://trustedrouter.com/static/og/blog/they-are-still-training-on-your-data.png"
     )
     assert f'property="og:image" content="{training_card}"' in training.text
     assert f'name="twitter:image" content="{training_card}"' in training.text
-    assert client.get(
-        "/static/og/blog/they-are-still-training-on-your-data.png"
-    ).status_code == 200
+    assert client.get("/static/og/blog/they-are-still-training-on-your-data.png").status_code == 200
 
     privacy = client.get("/blog/no-log-is-a-promise-attestation-is-proof")
     privacy_card = (
-        "https://trustedrouter.com/static/og/blog/"
-        "no-log-is-a-promise-attestation-is-proof.png"
+        "https://trustedrouter.com/static/og/blog/no-log-is-a-promise-attestation-is-proof.png"
     )
     assert f'property="og:image" content="{privacy_card}"' in privacy.text
     assert f'name="twitter:image" content="{privacy_card}"' in privacy.text
-    assert client.get(
-        "/static/og/blog/no-log-is-a-promise-attestation-is-proof.png"
-    ).status_code == 200
+    assert (
+        client.get("/static/og/blog/no-log-is-a-promise-attestation-is-proof.png").status_code
+        == 200
+    )
 
     sign_in = client.get("/blog/sign-in-with-trustedrouter")
     sign_in_card = "https://trustedrouter.com/static/og/sign-in-with-trustedrouter.png"

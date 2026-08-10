@@ -371,8 +371,11 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "deepseek-api-privacy": PublicPage(
         template="public/seo_deepseek_api_privacy.html",
-        title="DeepSeek V4 API Privacy: Attested, No Data to China",
-        description="Run DeepSeek V4 Pro and V4 Flash on attested, non-Chinese infrastructure. No prompt or output logs. Real-time inference is content-stateless. OpenAI-compatible.",
+        title="DeepSeek API Privacy & Zero Data Retention",
+        description=(
+            "Run DeepSeek V4 Pro and V4 Flash through an attested OpenAI-compatible "
+            "gateway. No prompt or output logging, with enforceable ZDR route filters."
+        ),
         faq_items=(
             (
                 "Is the DeepSeek API safe to use?",
@@ -381,6 +384,10 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             (
                 "Does using DeepSeek through TrustedRouter send data to China?",
                 "No. DeepSeek V4 routes are served by non-Chinese hosting providers on attested infrastructure, so prompts never reach the model vendor. Zero-Data-Retention routes add a contractual guarantee that providers keep nothing, and TEE routes keep the prompt sealed even from the hosting provider. Each route's privacy tier is listed on the models page, and the attestation backing the claim is checkable live.",
+            ),
+            (
+                "How do I require DeepSeek zero data retention?",
+                f"Set provider.min_privacy to zdr on a DeepSeek request. The router then considers only endpoints with a recorded zero-data-retention posture and fails closed if none are eligible. {CONTENT_HANDLING_CLAIM} The ZDR filter adds the downstream provider requirement.",
             ),
             (
                 "When will DeepSeek R2 be released?",
@@ -965,10 +972,24 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "docs/agent-setup": PublicPage(
         template="public/agent_setup.html",
-        title="Agent Setup For TrustedRouter",
+        title="AI Agent Router Base URL Setup",
         description=(
-            "Configure coding agents for TrustedRouter with the API base URL, environment "
-            "variables, model aliases, privacy routes, quick smoke tests, and migration notes."
+            "TrustedRouter base URLs, environment variables, smoke tests, and model "
+            "aliases for Claude Code, Codex, OpenAI SDK agents, and Anthropic SDK agents."
+        ),
+        faq_items=(
+            (
+                "What base URL should an OpenAI-compatible agent use?",
+                "Use https://api.trustedrouter.com/v1. Keep the OpenAI SDK and set OPENAI_API_KEY to your TrustedRouter key. The older https://api.quillrouter.com/v1 hostname remains a permanent working alias.",
+            ),
+            (
+                "What base URL should an Anthropic-compatible agent use?",
+                "Use https://api.trustedrouter.com without /v1, and set ANTHROPIC_API_KEY to your TrustedRouter key. Anthropic SDKs append their own Messages API path.",
+            ),
+            (
+                "What is the EU agent router base URL?",
+                "Use https://api-europe-west4.quillrouter.com/v1 for OpenAI-compatible requests and choose trustedrouter/eu for EU-focused routing. Add provider.only when your policy requires a strict provider allowlist.",
+            ),
         ),
     ),
     "docs/mcp": PublicPage(
@@ -1007,10 +1028,28 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "eu": PublicPage(
         template="public/eu.html",
         og_card="eu.png",
-        title="EU LLM Gateway",
+        title="EU LLM Gateway: Private AI Routing in Europe",
         description=(
-            "Route AI workloads through TrustedRouter's attested European gateway with "
-            "EU-focused model providers, privacy controls, regional failover, and usage billing."
+            "Route OpenAI-compatible LLM requests through an attested Europe West "
+            "gateway, with EU-focused models, provider controls, and no prompt logs."
+        ),
+        faq_items=(
+            (
+                "What is an EU LLM gateway?",
+                "An EU LLM gateway accepts your API connection in a European region, authenticates and routes the request there, and forwards it only to eligible model providers. TrustedRouter's Europe West gateway terminates TLS inside the same attested open-source workload as its other regional gateways.",
+            ),
+            (
+                "Which URL should European applications use?",
+                "Use https://api-europe-west4.quillrouter.com/v1 as the OpenAI-compatible base URL. The trustedrouter/eu model alias prefers EU and privacy-forward routes. The eu.trustedrouter.com hostname is the Europe-focused product and setup page.",
+            ),
+            (
+                "Does the EU gateway guarantee EU data residency?",
+                "The regional gateway keeps the TrustedRouter routing hop in Europe, but an upstream provider can process outside the EU. For a hard residency policy, combine the EU gateway with provider.only and a contractually approved provider allowlist. The router fails closed when no allowed route is available.",
+            ),
+            (
+                "Can I require zero data retention on the EU gateway?",
+                "Yes. Use trustedrouter/zdr or set provider.min_privacy to zdr. This is separate from geography: the EU hostname controls the gateway region, while the privacy filter controls which downstream provider routes are eligible.",
+            ),
         ),
     ),
     "trustedos": PublicPage(
@@ -2509,13 +2548,14 @@ def public_provider_detail_html(settings: Settings, provider_slug: str) -> str |
         return None
     test_mode = settings.environment == "test"
     served_models = _provider_model_rows(provider_slug, test_mode=test_mode)
+    provider_faq_items = _provider_faq_items(provider, model_count=len(served_models))
     return (
         _env()
         .get_template("public/provider_detail.html")
         .render(
             api_base_url=settings.api_base_url,
             site_url=f"https://{settings.trusted_domain}/providers/{provider.slug}",
-            title=f"{provider.name} Models and API Routes | TrustedRouter",
+            title=f"{provider.name} Models, Pricing & Privacy | TrustedRouter",
             heading=provider.name,
             description=(
                 f"Explore {provider.name} models on TrustedRouter with current routes, token pricing, "
@@ -2526,6 +2566,7 @@ def public_provider_detail_html(settings: Settings, provider_slug: str) -> str |
             provider=_provider_detail_view(provider, served_models=served_models),
             served_models=served_models,
             measured=measured_for_provider(provider.slug, test_mode=settings.environment == "test"),
+            faq_items=provider_faq_items,
             json_ld_blob=_json_ld_graph(
                 _breadcrumb_node(
                     settings,
@@ -2546,6 +2587,7 @@ def public_provider_detail_html(settings: Settings, provider_slug: str) -> str |
                     ],
                 ),
                 _provider_page_node(settings, provider),
+                _faq_node(provider_faq_items),
             ),
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
@@ -2662,6 +2704,8 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
     test_mode = settings.environment == "test"
     site_path = canonical_model_comparison_path(left.id, right.id)
     assert site_path is not None
+    comparison = _comparison_view(left, right)
+    faq_items = _model_comparison_faq_items(left, right, comparison=comparison)
     return (
         _env()
         .get_template("public/model_compare.html")
@@ -2671,8 +2715,8 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
             title=_seo_comparison_title(left, right),
             heading=f"{left.name} vs {right.name}",
             description=(
-                f"Compare {left_name} and {right_name} across token pricing, context windows, "
-                "provider availability, privacy options, route diversity, and measured performance."
+                f"{left_name} vs {right_name}: compare current API pricing, context, provider "
+                "routes, privacy, p50 latency, and OpenAI-compatible access."
             ),
             left=_model_detail_view(
                 left,
@@ -2684,7 +2728,8 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
                 test_mode=test_mode,
                 include_section_links=False,
             ),
-            comparison=_comparison_view(left, right),
+            comparison=comparison,
+            faq_items=faq_items,
             json_ld_blob=_json_ld_graph(
                 _breadcrumb_node(
                     settings,
@@ -2693,7 +2738,8 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
                         ("Models", "/models"),
                         (f"{left.name} vs {right.name}", site_path),
                     ),
-                )
+                ),
+                _faq_node(faq_items),
             ),
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
@@ -3454,6 +3500,70 @@ def _provider_detail_view(
     return view
 
 
+def _provider_faq_items(
+    provider: Provider,
+    *,
+    model_count: int,
+) -> tuple[tuple[str, str], ...]:
+    if provider.slug == "trustedrouter":
+        zdr_answer = (
+            f"{CONTENT_HANDLING_CLAIM} For the downstream model provider, select "
+            "trustedrouter/zdr or set provider.min_privacy to zdr so the router "
+            "considers only eligible routes."
+        )
+    elif provider.provider_zero_data_retention is True:
+        zdr_answer = (
+            f"TrustedRouter records {provider.name} as supporting provider-level zero "
+            "data retention based on the policy source linked on this page. This is a "
+            "provider policy claim, separate from TrustedRouter's content-stateless "
+            "real-time gateway and from end-to-end confidential compute."
+        )
+    elif provider.prepaid_zero_data_retention:
+        zdr_answer = (
+            f"TrustedRouter records managed prepaid {provider.name} routes as zero data "
+            "retention. That classification does not automatically cover every direct or "
+            "BYOK account. Use provider.min_privacy=zdr to require an eligible route."
+        )
+    elif provider.prepaid_zero_data_retention_effective_on:
+        zdr_answer = (
+            f"TrustedRouter records {provider.name}'s prepaid zero-data-retention policy "
+            f"as scheduled for {provider.prepaid_zero_data_retention_effective_on}. Until "
+            "then, the router does not treat those routes as ZDR-eligible."
+        )
+    else:
+        zdr_answer = (
+            f"TrustedRouter does not currently mark {provider.name} as provider-level zero "
+            "data retention. Use trustedrouter/zdr or provider.min_privacy=zdr to select a "
+            "different eligible route, and review the linked policy source for changes."
+        )
+
+    if provider.provider_e2ee and provider.provider_confidential_compute:
+        e2ee_answer = (
+            f"TrustedRouter records {provider.name} as supporting provider-side "
+            "confidential compute and end-to-end encrypted inference. The route-specific "
+            "model page shows whether that protection applies to a particular endpoint."
+        )
+    else:
+        e2ee_answer = (
+            f"TrustedRouter does not currently mark {provider.name} as end-to-end "
+            "encrypted at the provider boundary. The TrustedRouter gateway is still "
+            "attested, but the selected provider normally receives the request in order "
+            "to run the model. Use trustedrouter/e2e for the stronger route requirement."
+        )
+
+    return (
+        (f"Does {provider.name} have zero data retention?", zdr_answer),
+        (f"Is {provider.name} end-to-end encrypted?", e2ee_answer),
+        (
+            f"Which {provider.name} models are available through TrustedRouter?",
+            f"This page currently lists {model_count} public {provider.name} model"
+            f"{'s' if model_count != 1 else ''}, with live pricing, route count, context "
+            "length, measured performance when available, and links to each model's "
+            "provider and benchmark pages.",
+        ),
+    )
+
+
 def _provider_privacy_tier(provider: Provider) -> str:
     if provider.slug == "trustedrouter":
         return "TR gateway"
@@ -3854,6 +3964,42 @@ def _comparison_view(left: Model, right: Model) -> dict[str, object]:
         "left_ttft": f"{left_measured} ms" if left_measured is not None else "not enough data",
         "right_ttft": f"{right_measured} ms" if right_measured is not None else "not enough data",
     }
+
+
+def _model_comparison_faq_items(
+    left: Model,
+    right: Model,
+    *,
+    comparison: Mapping[str, object],
+) -> tuple[tuple[str, str], ...]:
+    left_price = str(comparison["left_price"])
+    right_price = str(comparison["right_price"])
+    left_ttft = str(comparison["left_ttft"])
+    right_ttft = str(comparison["right_ttft"])
+    return (
+        (
+            f"Which should I use, {left.name} or {right.name}?",
+            str(comparison["summary"]),
+        ),
+        (
+            f"Is {left.name} or {right.name} cheaper?",
+            f"The current cheapest TrustedRouter route is {left_price} for {left.name} "
+            f"and {right_price} for {right.name}. The comparison uses current catalog "
+            "prices and updates as provider pricing changes.",
+        ),
+        (
+            f"Is {left.name} or {right.name} faster?",
+            f"Current measured p50 time to first token is {left_ttft} for {left.name} "
+            f"and {right_ttft} for {right.name}. These are routed probe measurements, "
+            "not vendor-advertised speeds, and update as new samples arrive.",
+        ),
+        (
+            f"Can I test {left.name} and {right.name} with the same API?",
+            "Yes. Use the same OpenAI-compatible TrustedRouter base URL and API key, "
+            f"then change only the model id between {left.id} and {right.id}. This makes "
+            "side-by-side evals possible without maintaining two provider integrations.",
+        ),
+    )
 
 
 def _comparison_summary(
