@@ -107,6 +107,7 @@ from trusted_router.provider_contract import (
     PROVIDER_CATALOG_SCHEMA,
     PROVIDER_CATALOG_V2_SCHEMA,
 )
+from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
 from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.services.ops_chat import OpsChatSupportMessage, fanout_support_message
 from trusted_router.services.trust_release import (
@@ -155,7 +156,6 @@ LEADERBOARD_RECENT_WINDOW_MINUTES = PUBLIC_BENCHMARK_RECENT_MINUTES
 LEADERBOARD_SNAPSHOT_CACHE_SECONDS = 300
 LEADERBOARD_RESPONSE_CACHE_SECONDS = 60
 LEADERBOARD_RESPONSE_STALE_SECONDS = 600
-PUBLIC_ANALYTICS_SNAPSHOT_MAX_AGE_SECONDS = 600
 VIDEO_LEADERBOARD_SAMPLE_LIMIT = 5_000
 VIDEO_LEADERBOARD_RECENT_WINDOW_MINUTES = 30 * 24 * 60
 CHOOSE_PAGE_CACHE_SECONDS = 300
@@ -1837,22 +1837,7 @@ def _precomputed_public_analytics_snapshot(name: str) -> dict[str, Any] | None:
     reader = getattr(STORE, "public_analytics_snapshot", None)
     if not callable(reader):
         return None
-    payload = reader(name)
-    if not isinstance(payload, dict):
-        return None
-    generated_at = payload.get("generated_at")
-    if not isinstance(generated_at, str):
-        return None
-    try:
-        generated = dt.datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if generated.tzinfo is None:
-        generated = generated.replace(tzinfo=dt.UTC)
-    age = (dt.datetime.now(dt.UTC) - generated.astimezone(dt.UTC)).total_seconds()
-    if age < 0 or age > PUBLIC_ANALYTICS_SNAPSHOT_MAX_AGE_SECONDS:
-        return None
-    return payload
+    return current_public_analytics_snapshot(name, reader=reader)
 
 
 def _status_snapshot(settings: Settings) -> dict[str, Any]:
