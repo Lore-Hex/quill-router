@@ -2669,6 +2669,7 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     test_mode = settings.environment == "test"
     seo_name = _seo_model_name(model)
     site_url = f"https://{settings.trusted_domain}/models/{model_id}"
+    model_view = _model_detail_view(model, test_mode=test_mode)
     return (
         _env()
         .get_template("public/model_detail.html")
@@ -2681,7 +2682,9 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
                 f"Compare every TrustedRouter route for {seo_name}, including token pricing, context "
                 "limits, privacy policy, regional availability, measured uptime, and API support."
             ),
-            model=_model_detail_view(model, test_mode=test_mode),
+            model=model_view,
+            route_evidence=_model_route_evidence(model, test_mode=test_mode),
+            related_comparisons=_related_model_comparison_rows(model.id, limit=6),
             # Service/Offer JSON-LD. The page sells API access to a hosted
             # routing service, not a retail product with customer ratings.
             # Avoid Product schema so Search Console doesn't expect review
@@ -2704,7 +2707,7 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
     test_mode = settings.environment == "test"
     site_path = canonical_model_comparison_path(left.id, right.id)
     assert site_path is not None
-    comparison = _comparison_view(left, right)
+    comparison = _comparison_view(left, right, test_mode=test_mode)
     faq_items = _model_comparison_faq_items(left, right, comparison=comparison)
     return (
         _env()
@@ -2729,6 +2732,12 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
                 include_section_links=False,
             ),
             comparison=comparison,
+            related_comparisons=_related_model_comparison_rows(
+                left.id,
+                right.id,
+                exclude_path=site_path,
+                limit=8,
+            ),
             faq_items=faq_items,
             json_ld_blob=_json_ld_graph(
                 _breadcrumb_node(
@@ -3649,6 +3658,12 @@ def _model_detail_view(
             str(view["provider"]),
         )
     )
+    section_links = _model_section_links(
+        model.id,
+        active_section=active_section,
+        include_sections=not is_meta and include_section_links,
+        test_mode=test_mode,
+    )
     return {
         "id": model.id,
         "name": model.name,
@@ -3676,11 +3691,22 @@ def _model_detail_view(
         "pricing_href": (
             f"/models/{model.id}/pricing" if not is_meta and len(endpoints) >= 2 else None
         ),
-        "section_links": _model_section_links(
-            model.id,
-            active_section=active_section,
-            include_sections=not is_meta and include_section_links,
-            test_mode=test_mode,
+        "section_links": section_links,
+        "performance_href": next(
+            (
+                str(link["href"])
+                for link in section_links
+                if link["label"] == MODEL_SEO_SECTION_LABELS["performance"]
+            ),
+            None,
+        ),
+        "uptime_href": next(
+            (
+                str(link["href"])
+                for link in section_links
+                if link["label"] == MODEL_SEO_SECTION_LABELS["uptime"]
+            ),
+            None,
         ),
         "ai_iq": ai_iq,
         "is_meta": is_meta,
@@ -3890,20 +3916,51 @@ def _llms_model_rows(*, test_mode: bool = False) -> list[dict[str, object]]:
     return [_model_view(model, test_mode=test_mode) for model in models]
 
 
-def _model_comparison_pairs() -> list[tuple[Model, Model]]:
-    candidates = sorted(
+@lru_cache(maxsize=1)
+def _model_comparison_pairs() -> tuple[tuple[Model, Model], ...]:
+    all_models = sorted(
         _public_models_for_seo(),
         key=lambda model: (
             -len(endpoints_for_model(model.id)),
             -(model.context_length or 0),
             model.id.lower(),
         ),
-    )[:MODEL_COMPARE_MODEL_LIMIT]
-    pairs = [
+    )
+    core_models = all_models[:MODEL_COMPARE_MODEL_LIMIT]
+    core_pairs = [
         tuple(sorted(pair, key=lambda model: model.id.casefold()))
-        for pair in combinations(candidates, 2)
+        for pair in combinations(core_models, 2)
+        if pair[0].id.casefold() != pair[1].id.casefold()
     ]
-    return cast(list[tuple[Model, Model]], pairs[:MODEL_COMPARE_URL_LIMIT])
+    core_budget = max(0, MODEL_COMPARE_URL_LIMIT - len(all_models))
+    pairs = cast(list[tuple[Model, Model]], core_pairs[:core_budget])
+    seen = {frozenset((left.id.casefold(), right.id.casefold())) for left, right in pairs}
+    covered = {model.id for pair in pairs for model in pair}
+    anchors = core_models[: min(12, len(core_models))]
+
+    for index, model in enumerate(all_models):
+        if model.id in covered or not anchors:
+            continue
+        anchor = anchors[index % len(anchors)]
+        if anchor.id.casefold() == model.id.casefold():
+            anchor = anchors[(index + 1) % len(anchors)]
+        pair = tuple(sorted((model, anchor), key=lambda item: item.id.casefold()))
+        key = frozenset((pair[0].id.casefold(), pair[1].id.casefold()))
+        if len(key) != 2 or key in seen:
+            continue
+        pairs.append((pair[0], pair[1]))
+        seen.add(key)
+        covered.update((pair[0].id, pair[1].id))
+
+    for left, right in core_pairs[core_budget:]:
+        key = frozenset((left.id.casefold(), right.id.casefold()))
+        if key in seen:
+            continue
+        pairs.append((left, right))
+        seen.add(key)
+        if len(pairs) >= MODEL_COMPARE_URL_LIMIT:
+            break
+    return tuple(pairs[:MODEL_COMPARE_URL_LIMIT])
 
 
 def _canonical_model_comparison_pair(
@@ -3918,6 +3975,7 @@ def _canonical_model_comparison_pair(
         or left.id in META_MODEL_IDS
         or right.id in META_MODEL_IDS
         or left.id == right.id
+        or left.id.casefold() == right.id.casefold()
     ):
         return None
     ordered = sorted((left, right), key=lambda model: model.id.casefold())
@@ -3937,13 +3995,164 @@ def _seo_model_rows(*, test_mode: bool = False) -> list[dict[str, object]]:
     return [_model_view(model, test_mode=test_mode) for model in _public_models_for_seo()]
 
 
-def _comparison_view(left: Model, right: Model) -> dict[str, object]:
+def _model_route_evidence(
+    model: Model,
+    *,
+    test_mode: bool = False,
+) -> dict[str, object]:
+    endpoints = endpoints_for_model(model.id)
+    measured = measured_for_model(model.id, test_mode=test_mode)
+    priced_endpoints = [endpoint for endpoint in endpoints if endpoint.usage_type == "Credits"]
+    prompt_prices = [
+        endpoint.prompt_price_microdollars_per_million_tokens for endpoint in priced_endpoints
+    ]
+    completion_prices = [
+        endpoint.completion_price_microdollars_per_million_tokens for endpoint in priced_endpoints
+    ]
+    lowest_prompt = min(prompt_prices) if prompt_prices else None
+    lowest_completion = min(completion_prices) if completion_prices else None
+
+    ttft_rows = [
+        row
+        for row in measured
+        if row.get("p50_ttft_ms") is not None and int(row.get("sample_count") or 0) >= 2
+    ]
+    fastest_ttft_row = min(
+        ttft_rows,
+        key=lambda row: int(row["p50_ttft_ms"]),
+        default=None,
+    )
+    throughput_rows = [
+        row
+        for row in measured
+        if row.get("p50_tokens_per_second") is not None
+        and int(row.get("throughput_sample_count") or 0) >= 2
+    ]
+    fastest_throughput_row = max(
+        throughput_rows,
+        key=lambda row: float(row["p50_tokens_per_second"]),
+        default=None,
+    )
+    uptime_rows = [
+        row
+        for row in measured
+        if row.get("uptime") is not None and int(row.get("sample_count") or 0) > 0
+    ]
+    uptime_values = [float(row["uptime"]) * 100 for row in uptime_rows]
+    if uptime_values:
+        lowest_uptime = min(uptime_values)
+        highest_uptime = max(uptime_values)
+        uptime_range = (
+            f"{lowest_uptime:.2f}%"
+            if abs(highest_uptime - lowest_uptime) < 0.005
+            else f"{lowest_uptime:.2f}% to {highest_uptime:.2f}%"
+        )
+    else:
+        uptime_range = "not enough data"
+
+    fastest_ttft_ms = int(fastest_ttft_row["p50_ttft_ms"]) if fastest_ttft_row is not None else None
+    fastest_throughput = (
+        float(fastest_throughput_row["p50_tokens_per_second"])
+        if fastest_throughput_row is not None
+        else None
+    )
+    return {
+        "lowest_prompt_price": _price(lowest_prompt) if lowest_prompt is not None else "BYOK only",
+        "lowest_completion_price": (
+            _price(lowest_completion) if lowest_completion is not None else "BYOK only"
+        ),
+        "fastest_ttft_ms": fastest_ttft_ms,
+        "fastest_ttft": (
+            f"{fastest_ttft_ms} ms" if fastest_ttft_ms is not None else "not enough data"
+        ),
+        "fastest_ttft_provider": (
+            str(fastest_ttft_row.get("provider") or "") if fastest_ttft_row is not None else ""
+        ),
+        "fastest_throughput": (
+            f"{fastest_throughput:.0f} tok/s"
+            if fastest_throughput is not None
+            else "not enough data"
+        ),
+        "fastest_throughput_provider": (
+            str(fastest_throughput_row.get("provider") or "")
+            if fastest_throughput_row is not None
+            else ""
+        ),
+        "uptime_range": uptime_range,
+        "route_count": len(endpoints),
+        "provider_count": len(
+            _endpoint_provider_views(endpoints, fallback_provider=model.provider)
+        ),
+    }
+
+
+@lru_cache(maxsize=1)
+def _model_comparison_index() -> dict[
+    str,
+    tuple[tuple[str, str, str, str, int], ...],
+]:
+    indexed: dict[str, list[tuple[str, str, str, str, int]]] = {}
+    for left, right in _model_comparison_pairs():
+        path = f"/compare/models/{left.id}/vs/{right.id}"
+        row = (
+            path,
+            f"{left.name} vs {right.name}",
+            left.id,
+            right.id,
+            len(endpoints_for_model(left.id)) + len(endpoints_for_model(right.id)),
+        )
+        for model_id in {left.id.casefold(), right.id.casefold()}:
+            indexed.setdefault(model_id, []).append(row)
+    return {
+        model_id: tuple(sorted(rows, key=lambda row: (-row[4], row[0].casefold())))
+        for model_id, rows in indexed.items()
+    }
+
+
+def _related_model_comparison_rows(
+    *model_ids: str,
+    exclude_path: str | None = None,
+    limit: int = 6,
+) -> list[dict[str, object]]:
+    target_ids = {model_id.casefold() for model_id in model_ids}
+    candidates: dict[str, tuple[str, str, str, str, int]] = {}
+    comparison_index = _model_comparison_index()
+    for model_id in target_ids:
+        for indexed_row in comparison_index.get(model_id, ()):
+            candidates[indexed_row[0]] = indexed_row
+
+    ranked: list[tuple[int, int, str, dict[str, object]]] = []
+    for path, label, left_id, right_id, route_count in candidates.values():
+        pair_ids = {left_id.casefold(), right_id.casefold()}
+        shared = len(target_ids & pair_ids)
+        if path == exclude_path:
+            continue
+        result_row: dict[str, object] = {
+            "href": path,
+            "label": label,
+            "left_id": left_id,
+            "right_id": right_id,
+            "route_count": route_count,
+        }
+        ranked.append((-shared, -route_count, path.casefold(), result_row))
+    ranked.sort(key=lambda item: item[:3])
+    return [item[3] for item in ranked[:limit]]
+
+
+def _comparison_view(
+    left: Model,
+    right: Model,
+    *,
+    test_mode: bool = False,
+) -> dict[str, object]:
     left_total = _cheapest_total_microdollars(left)
     right_total = _cheapest_total_microdollars(right)
     left_routes = len(endpoints_for_model(left.id))
     right_routes = len(endpoints_for_model(right.id))
-    left_measured = _best_measured_ttft(left.id)
-    right_measured = _best_measured_ttft(right.id)
+    left_evidence = _model_route_evidence(left, test_mode=test_mode)
+    right_evidence = _model_route_evidence(right, test_mode=test_mode)
+    left_measured = cast(int | None, left_evidence["fastest_ttft_ms"])
+    right_measured = cast(int | None, right_evidence["fastest_ttft_ms"])
     return {
         "summary": _comparison_summary(
             left,
@@ -3961,8 +4170,16 @@ def _comparison_view(left: Model, right: Model) -> dict[str, object]:
         "right_routes": right_routes,
         "left_privacy": _privacy_summary(left),
         "right_privacy": _privacy_summary(right),
-        "left_ttft": f"{left_measured} ms" if left_measured is not None else "not enough data",
-        "right_ttft": f"{right_measured} ms" if right_measured is not None else "not enough data",
+        "left_ttft": left_evidence["fastest_ttft"],
+        "right_ttft": right_evidence["fastest_ttft"],
+        "left_ttft_provider": left_evidence["fastest_ttft_provider"],
+        "right_ttft_provider": right_evidence["fastest_ttft_provider"],
+        "left_throughput": left_evidence["fastest_throughput"],
+        "right_throughput": right_evidence["fastest_throughput"],
+        "left_throughput_provider": left_evidence["fastest_throughput_provider"],
+        "right_throughput_provider": right_evidence["fastest_throughput_provider"],
+        "left_uptime": left_evidence["uptime_range"],
+        "right_uptime": right_evidence["uptime_range"],
     }
 
 
@@ -4030,10 +4247,13 @@ def _comparison_summary(
 
 def _cheapest_total_microdollars(model: Model) -> int:
     endpoints = endpoints_for_model(model.id)
+    priced_endpoints = [endpoint for endpoint in endpoints if endpoint.usage_type == "Credits"]
+    if not priced_endpoints:
+        priced_endpoints = endpoints
     totals = [
         endpoint.prompt_price_microdollars_per_million_tokens
         + endpoint.completion_price_microdollars_per_million_tokens
-        for endpoint in endpoints
+        for endpoint in priced_endpoints
         if endpoint.prompt_price_microdollars_per_million_tokens
         or endpoint.completion_price_microdollars_per_million_tokens
     ]
@@ -4043,16 +4263,6 @@ def _cheapest_total_microdollars(model: Model) -> int:
         model.prompt_price_microdollars_per_million_tokens
         + model.completion_price_microdollars_per_million_tokens
     )
-
-
-def _best_measured_ttft(model_id: str) -> int | None:
-    rows = measured_for_model(model_id)
-    values = [
-        int(row["p50_ttft_ms"])
-        for row in rows
-        if row.get("p50_ttft_ms") is not None and int(row.get("sample_count") or 0) >= 2
-    ]
-    return min(values) if values else None
 
 
 def _privacy_summary(model: Model) -> str:

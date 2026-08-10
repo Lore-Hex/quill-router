@@ -86,6 +86,27 @@
   </div>
 </section>
 
+{% if not model.is_meta %}
+<section class="panel" aria-label="Current {{ model.name }} route evidence">
+  <div class="panel-head"><h2>Current route evidence</h2><a href="/leaderboard">Live leaderboard</a></div>
+  <div class="panel-body">
+    <div class="public-proof-strip">
+      <div><strong>{{ route_evidence.lowest_prompt_price }}</strong><span>Lowest prepaid input price</span></div>
+      <div><strong>{{ route_evidence.lowest_completion_price }}</strong><span>Lowest prepaid output price</span></div>
+      <div><strong>{{ route_evidence.fastest_ttft }}</strong><span>Fastest measured p50 TTFT{% if route_evidence.fastest_ttft_provider %} via <a href="/providers/{{ route_evidence.fastest_ttft_provider }}">{{ route_evidence.fastest_ttft_provider }}</a>{% endif %}</span></div>
+      <div><strong>{{ route_evidence.fastest_throughput }}</strong><span>Highest measured throughput{% if route_evidence.fastest_throughput_provider %} via <a href="/providers/{{ route_evidence.fastest_throughput_provider }}">{{ route_evidence.fastest_throughput_provider }}</a>{% endif %}</span></div>
+    </div>
+    <p class="muted-copy">Recent provider-route uptime spans {{ route_evidence.uptime_range }} across {{ route_evidence.route_count }} route{{ '' if route_evidence.route_count == 1 else 's' }} and {{ route_evidence.provider_count }} provider{{ '' if route_evidence.provider_count == 1 else 's' }}. Price comes from the current prepaid catalog. Speed and uptime come from routed probes rather than vendor claims.</p>
+    <div class="mini-links">
+      {% if model.pricing_href %}<a href="{{ model.pricing_href }}">All route prices</a>{% endif %}
+      {% if model.providers_href %}<a href="{{ model.providers_href }}">All providers</a>{% endif %}
+      {% if model.performance_href %}<a href="{{ model.performance_href }}">Performance details</a>{% endif %}
+      {% if model.uptime_href %}<a href="{{ model.uptime_href }}">Uptime details</a>{% endif %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
 <section class="panel">
   <div class="panel-head"><h2>{% if model.is_meta and model.configuration_hidden %}Configuration{% elif model.is_meta %}Models used by this orchestration{% else %}Providers serving this model{% endif %}</h2></div>
   <div class="panel-body">
@@ -100,6 +121,7 @@
       through the component models below inside the attested prompt path, using
       the preset's worker, advisor, judge, or synthesizer roles.
     </p>
+    <div class="model-table-wrap">
     <table data-sortable="true">
       <thead>
         <tr>
@@ -120,6 +142,7 @@
         {% endfor %}
       </tbody>
     </table>
+    </div>
     {% else %}
     <p style="color:var(--muted);font-size:14px">
       Sorted by lowest combined prompt and completion price. Use
@@ -132,6 +155,7 @@
       TrustedRouter gateway only. Provider policy separately describes the
       upstream model host's retention, confidential compute, and E2EE posture.
     </p>
+    <div class="model-table-wrap">
     <table data-sortable="true">
       <thead>
         <tr>
@@ -158,10 +182,24 @@
         {% endfor %}
       </tbody>
     </table>
+    </div>
     <p class="signup-foot">
       Endpoint JSON: <span class="mono">{{ api_base_url }}/models/{{ model.id }}/endpoints</span>
     </p>
     {% endif %}
   </div>
 </section>
+
+{% if related_comparisons %}
+<section class="panel" aria-label="Compare {{ model.name }} with other models">
+  <div class="panel-head"><h2>Compare {{ model.name }}</h2><a href="/compare/models">All comparisons</a></div>
+  <div class="panel-body">
+    <ul class="link-list">
+      {% for related in related_comparisons %}
+      <li><a href="{{ related.href }}">{{ related.label }}</a><span>{{ related.route_count }} combined provider routes</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+</section>
+{% endif %}
 {% endblock %}
