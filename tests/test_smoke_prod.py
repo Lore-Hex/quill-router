@@ -14,9 +14,12 @@ from __future__ import annotations
 
 import os
 import socket
+from typing import Any
 
 import httpx
 import pytest
+
+from trusted_router.routing_candidates import auto_candidate_models
 
 PROD_BASE_URL = os.environ.get("TR_PROD_BASE_URL", "https://trustedrouter.com")
 PROD_STATUS_URL = os.environ.get("TR_PROD_STATUS_URL", "https://status.trustedrouter.com")
@@ -35,6 +38,13 @@ def client() -> httpx.Client:
 @pytest.fixture(scope="module")
 def api_client() -> httpx.Client:
     return httpx.Client(base_url=PROD_API_BASE_URL, timeout=10.0, follow_redirects=False)
+
+
+@pytest.fixture(scope="module")
+def model_catalog(client: httpx.Client) -> list[dict[str, Any]]:
+    response = client.get("/v1/models", timeout=20.0)
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
 
 
 @pytest.fixture(scope="module")
@@ -100,20 +110,21 @@ def test_public_dns_resolves_expected_hosts() -> None:
         assert socket.getaddrinfo(host, 443), host
 
 
-def test_api_catalog_and_regions_are_publicly_reachable(client: httpx.Client) -> None:
+def test_api_catalog_and_regions_are_publicly_reachable(
+    client: httpx.Client,
+    model_catalog: list[dict[str, Any]],
+) -> None:
     """The catalog (models / providers / regions) lives on the control
     plane and must be readable without auth — SDKs call these BEFORE the
     user has a key. The attested gateway at api.trustedrouter.com only
     handles chat; it has no catalog routes."""
-    models = client.get("/v1/models")
     providers = client.get("/v1/providers")
     regions = client.get("/v1/regions")
 
-    assert models.status_code == 200, models.text
     assert providers.status_code == 200, providers.text
     assert regions.status_code == 200, regions.text
-    assert any(item["id"] == "trustedrouter/auto" for item in models.json()["data"])
-    assert any(item["id"] == "trustedrouter/eu" for item in models.json()["data"])
+    assert any(item["id"] == "trustedrouter/auto" for item in model_catalog)
+    assert any(item["id"] == "trustedrouter/eu" for item in model_catalog)
     assert {
         "anthropic",
         "openai",
@@ -201,25 +212,21 @@ def test_attested_gateway_rejects_unauthenticated_chat(api_client: httpx.Client)
     assert response.status_code == 401, response.text
 
 
-def test_v1_models_includes_kimi_and_auto_fallback_chain(client: httpx.Client) -> None:
-    """trustedrouter/auto's auto_candidates list is the rollover chain
-    used when a user requests the meta-model. If the chain regresses, all
-    auto routes fail open in unexpected order."""
-    response = client.get("/v1/models")
-    assert response.status_code == 200
-    models = {item["id"]: item for item in response.json()["data"]}
+def test_v1_models_includes_kimi_and_auto_fallback_chain(
+    model_catalog: list[dict[str, Any]],
+) -> None:
+    """Production publishes the versioned auto ladder in its intended order."""
+    models = {item["id"]: item for item in model_catalog}
 
     assert "moonshotai/kimi-k2.6" in models
+    assert "moonshotai/kimi-k3" in models
     auto = models["trustedrouter/auto"]
     candidates = auto["trustedrouter"]["auto_candidates"]
-    assert "anthropic/claude-opus-4.7" in candidates
-    assert "openai/gpt-4.1-mini" in candidates
-    assert "google/gemini-2.5-flash" in candidates
-    assert "deepseek/deepseek-v4-flash" in candidates
-    assert "minimax/minimax-m3" in candidates
-    assert "moonshotai/kimi-k2.6" in candidates
-    assert "mistralai/mistral-small-2603" in candidates
-    assert "z-ai/glm-4.6" in candidates
+    expected = [model.id for model in auto_candidate_models()]
+    assert candidates == expected
+
+    for vendor in ("deepseek/", "moonshotai/", "z-ai/", "openai/", "google/", "minimax/", "anthropic/"):
+        assert any(candidate.startswith(vendor) for candidate in candidates)
 
     eu = models["trustedrouter/eu"]
     eu_candidates = eu["trustedrouter"]["auto_candidates"]
@@ -444,15 +451,15 @@ def test_health_check_response_is_under_one_kilobyte(client: httpx.Client) -> No
     assert len(response.content) < 1024
 
 
-def test_v1_models_exposes_trustedrouter_metadata_block(client: httpx.Client) -> None:
+def test_v1_models_exposes_trustedrouter_metadata_block(
+    model_catalog: list[dict[str, Any]],
+) -> None:
     """Every model in the catalog has to carry the `trustedrouter` block
     SDKs use for routing decisions (prepaid vs BYOK availability,
     attested-gateway flag, microdollar pricing). One model missing the
     block silently breaks SDK auto-fallback."""
-    response = client.get("/v1/models")
-    models = response.json()["data"]
-    assert len(models) >= 5
-    for model in models:
+    assert len(model_catalog) >= 5
+    for model in model_catalog:
         assert "trustedrouter" in model, f"{model.get('id')} missing trustedrouter block"
         meta = model["trustedrouter"]
         assert "provider" in meta
