@@ -2,10 +2,10 @@
   "_about": "Provider-native supplement for Wafer serverless API. Refreshed hourly from Wafer's OpenAI-compatible /v1/models feed.",
   "provider": "wafer",
   "source": "https://pass.wafer.ai/v1/models",
-  "generated_at": "2026-08-10T07:45:08Z",
+  "generated_at": "2026-08-10T08:06:57Z",
   "price_scale": "microdollars_per_million",
   "zdr_header": "Wafer-ZDR: required",
-  "model_count": 6,
+  "model_count": 9,
   "models": [
     {
       "id": "minimax/minimax-m3",
@@ -98,7 +98,68 @@
       ],
       "zdr_supported": false,
       "routable": false,
-      "routable_reason": "awaiting-price"
+      "routable_reason": "awaiting-price",
+      "context_length": 262144,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "deepseek/deepseek-v4-flash-0731-fast",
+      "upstream_id": "DeepSeek-V4-Flash-0731-Fast",
+      "display_name": "DeepSeek-V4-Flash-0731-Fast",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "zdr_supported": true,
+      "context_length": 1048576,
+      "input_token_price_per_m": 280000,
+      "output_token_price_per_m": 560000,
+      "cached_input_token_price_per_m": 70000
+    },
+    {
+      "id": "moonshotai/kimi-k3",
+      "upstream_id": "Kimi-K3",
+      "display_name": "Kimi-K3",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "zdr_supported": true,
+      "context_length": 1048576,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 300000
+    },
+    {
+      "id": "moonshotai/kimi-k3-fast",
+      "upstream_id": "kimi-k3-fast",
+      "display_name": "Kimi-K3-Fast",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "zdr_supported": true,
+      "context_length": 1048576,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "input_token_price_per_m": 4500000,
+      "output_token_price_per_m": 22500000,
+      "cached_input_token_price_per_m": 450000
     }
   ]
 }

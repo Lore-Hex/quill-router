@@ -22,6 +22,7 @@ from trusted_router.catalog_data import (
     ModelProviderPrivacyOverride,
     Provider,
 )
+from trusted_router.wafer_policy import wafer_zdr_support
 
 
 def provider_privacy_tier(provider: Provider) -> int:
@@ -41,9 +42,28 @@ def provider_privacy_tier(provider: Provider) -> int:
 def _model_provider_privacy_override(
     model_id: str, provider_slug: str
 ) -> ModelProviderPrivacyOverride | None:
-    return _MODEL_PROVIDER_PRIVACY_OVERRIDES.get(
+    override = _MODEL_PROVIDER_PRIVACY_OVERRIDES.get(
         (model_id, provider_slug)
     ) or _MODEL_PROVIDER_PRIVACY_OVERRIDES.get((model_id, "*"))
+    if override is not None or provider_slug != "wafer":
+        return override
+
+    zdr_supported = wafer_zdr_support(model_id)
+    if zdr_supported is None:
+        return None
+    return ModelProviderPrivacyOverride(
+        privacy_tier=(
+            PRIVACY_TIER_ZERO_RETENTION if zdr_supported else PRIVACY_TIER_STANDARD
+        ),
+        provider_zero_data_retention=zdr_supported,
+        provider_policy=(
+            "Wafer's authenticated model catalog reports that this exact route "
+            "supports request-scoped ZDR via Wafer-ZDR: required."
+            if zdr_supported
+            else "Wafer's authenticated model catalog does not report ZDR support "
+            "for this exact route."
+        ),
+    )
 
 
 def model_provider_privacy_tier(model_id: str, provider_slug: str) -> int:
