@@ -20,12 +20,19 @@ from trusted_router.money import (
     money_pair,
 )
 from trusted_router.schemas import CheckoutRequest
+from trusted_router.services.stripe_fees import (
+    CREDITS_LINE_ITEM_NAME,
+    PROCESSING_FEE_LINE_ITEM_NAME,
+    ProcessingFee,
+    stripe_processing_fee,
+)
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
 _TOKEN_CACHE_SECONDS_SKEW = 60
 _TOKEN_CACHE_LOCK = threading.Lock()
 _TOKEN_CACHE: dict[tuple[str, str], tuple[str, float]] = {}
+_CHECKOUT_REFERENCE_VERSION = "tr1"
 
 
 @dataclass(frozen=True)
@@ -36,6 +43,15 @@ class PayPalCaptureResult:
     amount_microdollars: int
     credited: bool
     status: str
+    processing_fee_microdollars: int = 0
+    charge_amount_microdollars: int = 0
+
+
+@dataclass(frozen=True)
+class _PayPalCreditReference:
+    workspace_id: str
+    credit_amount_cents: int | None = None
+    charge_amount_cents: int | None = None
 
 
 def create_paypal_checkout_session(
@@ -45,7 +61,13 @@ def create_paypal_checkout_session(
     customer_email: str | None,
     settings: Settings,
 ) -> dict[str, Any]:
+    credit_amount_cents = dollars_to_cents(body.amount)
     amount_microdollars = dollars_to_microdollars(body.amount)
+    fee = stripe_processing_fee(
+        credit_amount_cents=credit_amount_cents,
+        variable_basis_points=settings.stripe_card_fee_basis_points,
+        fixed_fee_cents=settings.stripe_card_fee_fixed_cents,
+    )
     workspace = STORE.get_workspace(workspace_id)
     if workspace is None:
         raise api_error(404, "Workspace not found", ErrorType.NOT_FOUND)
@@ -62,6 +84,8 @@ def create_paypal_checkout_session(
                 "url": f"https://{settings.trusted_domain}/billing/mock-paypal-checkout",
                 "workspace_id": workspace_id,
                 **money_pair("amount", amount_microdollars),
+                **money_pair("processing_fee", fee.processing_fee_microdollars),
+                **money_pair("total", fee.charge_amount_microdollars),
                 "mode": "mock_paypal",
             }
         raise api_error(400, "PayPal checkout is not configured", ErrorType.BAD_REQUEST)
@@ -78,12 +102,19 @@ def create_paypal_checkout_session(
             "purchase_units": [
                 {
                     "reference_id": workspace_id,
-                    "custom_id": workspace_id,
+                    "custom_id": _paypal_checkout_reference(workspace_id, fee),
                     "description": "TrustedRouter prepaid credits",
                     "amount": {
                         "currency_code": "USD",
-                        "value": _paypal_amount_value(dollars_to_cents(body.amount)),
+                        "value": _paypal_amount_value(fee.charge_amount_cents),
+                        "breakdown": {
+                            "item_total": {
+                                "currency_code": "USD",
+                                "value": _paypal_amount_value(fee.charge_amount_cents),
+                            }
+                        },
                     },
+                    "items": _paypal_line_items(fee),
                 }
             ],
             "application_context": {
@@ -110,6 +141,8 @@ def create_paypal_checkout_session(
         "url": approval_url,
         "workspace_id": workspace_id,
         **money_pair("amount", amount_microdollars),
+        **money_pair("processing_fee", fee.processing_fee_microdollars),
+        **money_pair("total", fee.charge_amount_microdollars),
         "mode": "paypal",
     }
 
@@ -137,6 +170,8 @@ def capture_paypal_order_for_workspace(
             amount_microdollars=result.amount_microdollars,
             credited=result.credited,
             status=result.status,
+            processing_fee_microdollars=result.processing_fee_microdollars,
+            charge_amount_microdollars=result.charge_amount_microdollars,
         )
     return result
 
@@ -155,6 +190,8 @@ def credit_paypal_capture(
     if STORE.get_credit_account(workspace_id) is None:
         raise api_error(404, "Credit account not found", ErrorType.NOT_FOUND)
     amount_microdollars = parsed["amount_microdollars"]
+    processing_fee_microdollars = parsed["processing_fee_microdollars"]
+    charge_amount_microdollars = parsed["charge_amount_microdollars"]
     capture_id = parsed["capture_id"]
     credited = STORE.credit_workspace_typed_direct(
         workspace_id,
@@ -174,6 +211,8 @@ def credit_paypal_capture(
         amount_microdollars=amount_microdollars,
         credited=credited,
         status=parsed["status"],
+        processing_fee_microdollars=processing_fee_microdollars,
+        charge_amount_microdollars=charge_amount_microdollars,
     )
 
 
@@ -282,6 +321,44 @@ def _paypal_amount_value(cents: int) -> str:
     return f"{sign}{cents // 100}.{cents % 100:02d}"
 
 
+def _paypal_checkout_reference(workspace_id: str, fee: ProcessingFee) -> str:
+    return "|".join(
+        (
+            _CHECKOUT_REFERENCE_VERSION,
+            workspace_id,
+            str(fee.credit_amount_cents),
+            str(fee.charge_amount_cents),
+        )
+    )
+
+
+def _paypal_line_items(fee: ProcessingFee) -> list[dict[str, Any]]:
+    items = [
+        {
+            "name": CREDITS_LINE_ITEM_NAME,
+            "unit_amount": {
+                "currency_code": "USD",
+                "value": _paypal_amount_value(fee.credit_amount_cents),
+            },
+            "quantity": "1",
+            "category": "DIGITAL_GOODS",
+        }
+    ]
+    if fee.processing_fee_cents:
+        items.append(
+            {
+                "name": PROCESSING_FEE_LINE_ITEM_NAME,
+                "unit_amount": {
+                    "currency_code": "USD",
+                    "value": _paypal_amount_value(fee.processing_fee_cents),
+                },
+                "quantity": "1",
+                "category": "DIGITAL_GOODS",
+            }
+        )
+    return items
+
+
 def _approval_url(order: Mapping[str, Any]) -> str | None:
     links = order.get("links")
     if not isinstance(links, list):
@@ -301,14 +378,10 @@ def _extract_capture(event_or_order: Mapping[str, Any]) -> dict[str, Any]:
         resource = event_or_order.get("resource")
         if not isinstance(resource, dict):
             raise api_error(400, "PayPal webhook has no capture resource", ErrorType.BAD_REQUEST)
-        capture_id = str(resource.get("id") or "")
-        return {
-            "order_id": _paypal_related_order_id(resource),
-            "capture_id": capture_id,
-            "workspace_id": _paypal_workspace_id(resource),
-            "amount_microdollars": _paypal_amount_microdollars(resource.get("amount")),
-            "status": str(resource.get("status") or ""),
-        }
+        return _paypal_capture_payload(
+            resource,
+            order_id=_paypal_related_order_id(resource),
+        )
 
     order_id = str(event_or_order.get("id") or "")
     purchase_units = event_or_order.get("purchase_units")
@@ -323,23 +396,68 @@ def _extract_capture(event_or_order: Mapping[str, Any]) -> dict[str, Any]:
     capture = captures[0]
     if not isinstance(capture, dict):
         raise api_error(400, "PayPal capture is invalid", ErrorType.BAD_REQUEST)
+    return _paypal_capture_payload(capture, order_id=order_id, fallback=unit)
+
+
+def _paypal_capture_payload(
+    capture: Mapping[str, Any],
+    *,
+    order_id: str,
+    fallback: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     capture_id = str(capture.get("id") or "")
+    if not capture_id:
+        raise api_error(400, "PayPal capture has no id", ErrorType.BAD_REQUEST)
+    reference = _paypal_credit_reference(capture, fallback=fallback)
+    charge_amount_microdollars = _paypal_amount_microdollars(capture.get("amount"))
+    amount_microdollars = charge_amount_microdollars
+    processing_fee_microdollars = 0
+    if reference.charge_amount_cents is not None:
+        expected_charge = reference.charge_amount_cents * 10_000
+        if charge_amount_microdollars != expected_charge:
+            raise api_error(400, "PayPal capture amount mismatch", ErrorType.BAD_REQUEST)
+        if reference.credit_amount_cents is None:
+            raise api_error(400, "PayPal capture reference is invalid", ErrorType.BAD_REQUEST)
+        amount_microdollars = reference.credit_amount_cents * 10_000
+        processing_fee_microdollars = charge_amount_microdollars - amount_microdollars
     return {
         "order_id": order_id,
         "capture_id": capture_id,
-        "workspace_id": _paypal_workspace_id(capture, fallback=unit),
-        "amount_microdollars": _paypal_amount_microdollars(capture.get("amount")),
+        "workspace_id": reference.workspace_id,
+        "amount_microdollars": amount_microdollars,
+        "processing_fee_microdollars": processing_fee_microdollars,
+        "charge_amount_microdollars": charge_amount_microdollars,
         "status": str(capture.get("status") or ""),
     }
 
 
-def _paypal_workspace_id(resource: Mapping[str, Any], *, fallback: Mapping[str, Any] | None = None) -> str:
-    workspace_id = resource.get("custom_id")
-    if not isinstance(workspace_id, str) and fallback is not None:
-        workspace_id = fallback.get("custom_id") or fallback.get("reference_id")
-    if not isinstance(workspace_id, str) or not workspace_id:
+def _paypal_credit_reference(
+    resource: Mapping[str, Any],
+    *,
+    fallback: Mapping[str, Any] | None = None,
+) -> _PayPalCreditReference:
+    raw_reference = resource.get("custom_id")
+    if not isinstance(raw_reference, str) and fallback is not None:
+        raw_reference = fallback.get("custom_id") or fallback.get("reference_id")
+    if not isinstance(raw_reference, str) or not raw_reference:
         raise api_error(400, "PayPal capture has no workspace reference", ErrorType.BAD_REQUEST)
-    return workspace_id
+    if not raw_reference.startswith(f"{_CHECKOUT_REFERENCE_VERSION}|"):
+        return _PayPalCreditReference(workspace_id=raw_reference)
+    parts = raw_reference.split("|")
+    if len(parts) != 4 or not parts[1]:
+        raise api_error(400, "PayPal capture reference is invalid", ErrorType.BAD_REQUEST)
+    try:
+        credit_amount_cents = int(parts[2])
+        charge_amount_cents = int(parts[3])
+    except ValueError as exc:
+        raise api_error(400, "PayPal capture reference is invalid", ErrorType.BAD_REQUEST) from exc
+    if credit_amount_cents <= 0 or charge_amount_cents < credit_amount_cents:
+        raise api_error(400, "PayPal capture reference is invalid", ErrorType.BAD_REQUEST)
+    return _PayPalCreditReference(
+        workspace_id=parts[1],
+        credit_amount_cents=credit_amount_cents,
+        charge_amount_cents=charge_amount_cents,
+    )
 
 
 def _paypal_related_order_id(resource: Mapping[str, Any]) -> str:
@@ -363,4 +481,7 @@ def _paypal_amount_microdollars(amount: Any) -> int:
         raise api_error(400, "PayPal capture amount is invalid", ErrorType.BAD_REQUEST) from exc
     if not decimal.is_finite() or decimal <= 0:
         raise api_error(400, "PayPal capture amount is invalid", ErrorType.BAD_REQUEST)
-    return int((decimal * MICRODOLLARS_PER_DOLLAR).to_integral_value())
+    microdollars = int((decimal * MICRODOLLARS_PER_DOLLAR).to_integral_value())
+    if microdollars % 10_000:
+        raise api_error(400, "PayPal capture amount is invalid", ErrorType.BAD_REQUEST)
+    return microdollars
