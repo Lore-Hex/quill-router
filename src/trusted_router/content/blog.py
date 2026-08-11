@@ -62,7 +62,7 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
     ),
     BlogPost(
         slug="an-agent-that-hides-the-bill",
-        title="Quill Cowork has confidential mode and shows you the bill",
+        title="Quill Cowork has confidential mode and trusts you with the bill",
         description=(
             "Quill Cowork puts a live token meter in the top bar and a /confidential "
             "mode that forgets the conversation but keeps the receipt. Private "
