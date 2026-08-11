@@ -32,6 +32,7 @@ from scripts.pricing.model_ids import (
     mapped_or_canonical_model_id,
     remember_upstream_id,
 )
+from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "wafer"
 URL = "https://pass.wafer.ai/v1/models"
@@ -45,7 +46,6 @@ MANIFEST_PATH = (
 )
 
 EXPECTED_MODELS = [
-    "z-ai/glm-5.1",
     "z-ai/glm-5.2",
     "z-ai/glm-5.2-fast",
     # Pinning a model Wafer might delist deadlocks manifest rebuilds
@@ -193,6 +193,8 @@ def fetch() -> ProviderPricingResult:
         if or_id is None:
             continue
         remember_upstream_id(UPSTREAM_ID_MAP, or_id, native_id)
+        if provider_model_retired(SLUG, or_id, native_id):
+            continue
         # Feed presence is authoritative even when Wafer renames a pricing
         # key. Record it before parsing so a schema drift cannot look like a
         # delisting and destroy the route's committed price.
