@@ -47,6 +47,8 @@ def register(router: APIRouter) -> None:
                     "credited": result.credited,
                     "status": result.status,
                     **money_pair("amount", result.amount_microdollars),
+                    **money_pair("processing_fee", result.processing_fee_microdollars),
+                    **money_pair("total", result.charge_amount_microdollars),
                 }
             }
         return {"data": {"ignored": True, "event_id": event_id}}
