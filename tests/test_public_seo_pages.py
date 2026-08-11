@@ -1289,7 +1289,7 @@ def test_blog_post_og_image_uses_first_image_else_default(client: TestClient) ->
         ("native-swift-harness-no-electron", "Open Source all native Swift harness (NO Electron!)"),
         (
             "an-agent-that-hides-the-bill",
-            "Quill Cowork has confidential mode and shows you the bill",
+            "Quill Cowork has confidential mode and trusts you with the bill",
         ),
         (
             "sre-agent-on-three-clouds",
@@ -1325,4 +1325,4 @@ def test_blog_index_uses_recent_product_images(client: TestClient) -> None:
         "sre-agent-on-three-clouds",
     ):
         assert f'src="https://trustedrouter.com/static/og/blog/{slug}.png"' in response.text
-    assert "Quill Cowork has confidential mode and shows you the bill" in response.text
+    assert "Quill Cowork has confidential mode and trusts you with the bill" in response.text
