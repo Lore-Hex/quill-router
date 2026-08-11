@@ -20,7 +20,7 @@ from scripts.pricing.base import (
     validate,
 )
 from scripts.pricing.manifest import (
-    set_manifest_canary_state,
+    set_manifest_model_canary_states,
     write_discovered_chat_manifest,
 )
 from scripts.pricing.openai_catalog import probe_openai_chat
@@ -136,7 +136,8 @@ UPSTREAM_ID_MAP = {
     str(row["id"]): str(row["upstream_id"]) for row in MODEL_CONFIG.values()
 }
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
-_LIVE_CANARY_OK = False
+_LIVE_CANARY_CHECKED_MODEL_IDS: set[str] = set()
+_LIVE_CANARY_HEALTHY_MODEL_IDS: set[str] = set()
 
 
 class _TableRows(HTMLParser):
@@ -280,7 +281,9 @@ def normalize_workspace_host(value: str) -> str:
 
 
 def fetch() -> ProviderPricingResult:
-    global _DISCOVERED_MANIFEST_ROWS, _LIVE_CANARY_OK  # noqa: PLW0603
+    global _DISCOVERED_MANIFEST_ROWS  # noqa: PLW0603
+    global _LIVE_CANARY_CHECKED_MODEL_IDS  # noqa: PLW0603
+    global _LIVE_CANARY_HEALTHY_MODEL_IDS  # noqa: PLW0603
 
     transport = httpx.HTTPTransport(retries=PROVIDER_FETCH_TRANSPORT_RETRIES)
     with httpx.Client(
@@ -307,15 +310,19 @@ def fetch() -> ProviderPricingResult:
     host = (os.environ.get("DATABRICKS_HOST") or "").strip()
     if bool(token) != bool(host):
         raise RuntimeError("databricks: DATABRICKS_HOST and DATABRICKS_TOKEN must be set together")
-    _LIVE_CANARY_OK = False
+    _LIVE_CANARY_CHECKED_MODEL_IDS = set()
+    _LIVE_CANARY_HEALTHY_MODEL_IDS = set()
     if token and host:
         base_url = f"{normalize_workspace_host(host)}/serving-endpoints"
-        _LIVE_CANARY_OK = probe_openai_chat(
-            base_url=base_url,
-            api_key=token,
-            model="databricks-gpt-oss-20b",
-            max_tokens=16,
-        )
+        for model_id, row in discovered.items():
+            _LIVE_CANARY_CHECKED_MODEL_IDS.add(model_id)
+            if probe_openai_chat(
+                base_url=base_url,
+                api_key=token,
+                model=str(row["upstream_id"]),
+                max_tokens=4,
+            ):
+                _LIVE_CANARY_HEALTHY_MODEL_IDS.add(model_id)
 
     return ProviderPricingResult(
         slug=SLUG,
@@ -325,7 +332,13 @@ def fetch() -> ProviderPricingResult:
         notes=[
             f"matched {len(discovered)} documented pay-per-token endpoints",
             f"converted DBU prices at ${_dbu_usd()}/DBU",
-            f"account canary {'passed' if _LIVE_CANARY_OK else 'not configured or failed'}",
+            "account canary "
+            + (
+                f"passed {len(_LIVE_CANARY_HEALTHY_MODEL_IDS)}/"
+                f"{len(_LIVE_CANARY_CHECKED_MODEL_IDS)} models"
+                if _LIVE_CANARY_CHECKED_MODEL_IDS
+                else "not configured"
+            ),
         ],
     )
 
@@ -341,5 +354,9 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     # Databricks credentials. Preserve the last private canary state unless
     # this process was explicitly configured to run an authenticated check.
     if os.environ.get("DATABRICKS_TOKEN") and os.environ.get("DATABRICKS_HOST"):
-        set_manifest_canary_state(MANIFEST_PATH, healthy=_LIVE_CANARY_OK)
+        set_manifest_model_canary_states(
+            MANIFEST_PATH,
+            checked_model_ids=_LIVE_CANARY_CHECKED_MODEL_IDS,
+            healthy_model_ids=_LIVE_CANARY_HEALTHY_MODEL_IDS,
+        )
     return notes
