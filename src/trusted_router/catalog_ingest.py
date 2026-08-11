@@ -745,6 +745,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "streamlake",
         "neurometric",
         "engy",
+        "databricks",
         "zero-g",
         "kimi",
         "zai",

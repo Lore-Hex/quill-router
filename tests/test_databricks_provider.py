@@ -10,7 +10,7 @@ import pytest
 from scripts.pricing.base import ProviderPricingResult
 from scripts.pricing.providers import databricks
 from scripts.pricing.refresh import PROVIDER_SLUGS
-from trusted_router.catalog import PROVIDERS
+from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
 from trusted_router.providers import OPENAI_COMPATIBLE_PROVIDERS, ProviderClient
 from trusted_router.services.inference_errors import default_provider_secret_ref
 
@@ -294,6 +294,26 @@ def test_databricks_is_prepaid_standard_privacy_and_not_byok() -> None:
     assert OPENAI_COMPATIBLE_PROVIDERS["databricks"][0] == ("DATABRICKS_TOKEN",)
     assert default_provider_secret_ref("databricks") == "env://DATABRICKS_TOKEN"
     assert "databricks" in PROVIDER_SLUGS
+
+
+def test_databricks_canaried_manifest_routes_are_in_catalog() -> None:
+    active = {
+        row["id"]: row
+        for row in json.loads(databricks.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
+        if row.get("routable") is not False
+    }
+    dark = {
+        row["id"]
+        for row in json.loads(databricks.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
+        if row.get("routable") is False
+    }
+
+    for model_id, row in active.items():
+        endpoint = MODEL_ENDPOINTS[f"{model_id}@databricks/prepaid"]
+        assert endpoint.upstream_id == row["upstream_id"]
+        assert endpoint.usage_type == "Credits"
+    for model_id in dark:
+        assert f"{model_id}@databricks/prepaid" not in MODEL_ENDPOINTS
 
 
 def test_provider_client_requires_workspace_host() -> None:
