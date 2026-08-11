@@ -61,7 +61,10 @@
       "output_token_price_per_m": 3200000,
       "zdr_supported": true,
       "context_length": 202752,
-      "cached_input_token_price_per_m": 100000
+      "cached_input_token_price_per_m": 100000,
+      "deprecation_at": "2026-08-10T00:00:00Z",
+      "retirement_at": "2026-08-17T00:00:00Z",
+      "replacement_model_id": "z-ai/glm-5.2"
     },
     {
       "id": "z-ai/glm-5.2",
@@ -159,7 +162,10 @@
       ],
       "input_token_price_per_m": 4500000,
       "output_token_price_per_m": 22500000,
-      "cached_input_token_price_per_m": 450000
+      "cached_input_token_price_per_m": 450000,
+      "deprecation_at": "2026-08-10T00:00:00Z",
+      "retirement_at": "2026-08-17T00:00:00Z",
+      "replacement_model_id": "moonshotai/kimi-k3"
     }
   ]
 }

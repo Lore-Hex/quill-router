@@ -18,6 +18,7 @@ PARASAIL_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
 FRIENDLI_QWEN3_235B_RETIREMENT_AT = datetime(2026, 8, 5, 0, 0, tzinfo=UTC)
 FRIENDLI_K_EXAONE_236B_RETIREMENT_AT = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
 CRUSOE_NEMOTRON_3_ULTRA_RETIREMENT_AT = datetime(2026, 7, 28, 18, 0, tzinfo=UTC)
+WAFER_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,27 @@ class _Retirement:
 
 
 _RETIREMENTS = (
+    # Wafer announced that GLM 5.1 and Kimi K3 Fast retire on 2026-08-17,
+    # with GLM 5.2 and Kimi K3 Standard as their respective replacements.
+    # The notice did not specify a time zone, so use 00:00 UTC as the
+    # conservative cutover. Other providers serving these models are
+    # unaffected.
+    _Retirement(
+        provider="wafer",
+        model_ids=frozenset(
+            {
+                "z-ai/glm-5.1",
+                "moonshotai/kimi-k3-fast",
+            }
+        ),
+        upstream_ids=frozenset(
+            {
+                "GLM-5.1",
+                "kimi-k3-fast",
+            }
+        ),
+        effective_at=WAFER_AUGUST_2026_RETIREMENT_AT,
+    ),
     # Crusoe announced that Nemotron 3 Ultra retires from its Serverless
     # offering at 2026-07-28 11:00 PT, which is 2026-07-28 18:00 UTC.
     # Other providers serving Nemotron 3 Ultra are unaffected.
