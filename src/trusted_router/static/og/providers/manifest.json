@@ -82,11 +82,11 @@
   },
   "databricks": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 8,
     "name": "Databricks",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 8,
+    "route_mode": "Prepaid",
     "slug": "databricks"
   },
   "deepinfra": {
