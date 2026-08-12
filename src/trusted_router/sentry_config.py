@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import logging
 import os
@@ -10,6 +11,7 @@ from collections.abc import Callable, MutableMapping
 from dataclasses import dataclass
 from threading import Lock
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 from trusted_router.config import Settings
 
@@ -317,7 +319,20 @@ def _is_public_scanner_405(event: dict[str, Any]) -> bool:
         "/wp-login.php",
         "/xmlrpc.php",
     )
-    return any(marker in target for marker in scanner_markers)
+    if any(marker in target for marker in scanner_markers):
+        return True
+
+    # Internet scanners also probe the load balancer's numeric address with a
+    # bare POST. This cannot be a supported product route, while the equivalent
+    # request on a named host remains visible as a potentially broken client.
+    method = str(request.get("method") or "").upper()
+    url = str(request.get("url") or "")
+    try:
+        parsed = urlsplit(url)
+        ipaddress.ip_address(parsed.hostname or "")
+    except (ValueError, TypeError):
+        return False
+    return method == "POST" and parsed.path in {"", "/"} and not parsed.query
 
 
 def configure_sentry_floodgate(settings: Settings) -> None:

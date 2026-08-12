@@ -328,10 +328,10 @@ def test_sentry_failed_request_statuses_exclude_expected_compatibility_501() -> 
 
 
 def test_sentry_drops_wordpress_scanner_405_but_keeps_application_405() -> None:
-    def event(url: str) -> dict:
+    def event(url: str, *, method: str = "POST") -> dict:
         return {
             "level": "error",
-            "request": {"url": url},
+            "request": {"method": method, "url": url},
             "exception": {
                 "values": [
                     {
@@ -349,6 +349,10 @@ def test_sentry_drops_wordpress_scanner_405_but_keeps_application_405() -> None:
         )
         is None
     )
+    assert before_send(event("http://35.241.14.18/"), {}) is None
+    assert before_send(event("http://[2001:db8::1]/"), {}) is None
+    assert before_send(event("http://35.241.14.18/health"), {}) is not None
+    assert before_send(event("https://trustedrouter.com/"), {}) is not None
     assert before_send(event("https://trustedrouter.com/console/credits"), {}) is not None
 
 
