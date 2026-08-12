@@ -90,10 +90,23 @@ def test_contract_guards_are_nonempty_and_deterministic() -> None:
             sys.modules["trusted_router.catalog"] = previous_catalog
 
 
+#: Where the public package keeps its vendored copy. It lives inside the
+#: package rather than at the repo root because the runtime loads it as package
+#: data, and one copy cannot drift from another copy that does not exist.
+PUBLIC_SNAPSHOT_RELPATH = "src/tr_provider_check/data/contract_snapshot.json"
+
+
 def test_optional_public_provider_check_snapshot() -> None:
     provider_check_repo = os.environ.get("PROVIDER_CHECK_REPO_PATH")
     if not provider_check_repo:
         pytest.skip("PROVIDER_CHECK_REPO_PATH is not set")
-    public_snapshot = Path(provider_check_repo) / "contract_snapshot.json"
+    public_snapshot = Path(provider_check_repo) / PUBLIC_SNAPSHOT_RELPATH
+    # Pointing the gate at a path that does not exist is the failure mode this
+    # check exists to prevent, so say so instead of raising FileNotFoundError:
+    # an operator who set the variable asked for the comparison to run.
+    assert public_snapshot.is_file(), (
+        f"PROVIDER_CHECK_REPO_PATH is set but {public_snapshot} does not exist. "
+        "Point it at a Lore-Hex/trustedrouter-provider-check checkout."
+    )
     public_contract = json.loads(public_snapshot.read_text(encoding="utf-8"))
     assert public_contract == _committed_contract(), PARITY_MESSAGE
