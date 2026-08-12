@@ -83,4 +83,5 @@ def test_gateway_alert_workflow_requires_explicit_apply() -> None:
     assert 'if [ "${CONFIRMATION}" != "APPLY" ]' in workflow
     assert "id-token: write" in workflow
     assert "tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com" in workflow
+    assert "install_components: beta" in workflow
     assert "gateway_reliability.sh --apply" in workflow
