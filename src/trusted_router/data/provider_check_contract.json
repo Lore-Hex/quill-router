@@ -1,0 +1,4315 @@
+{
+  "catalog_contract": {
+    "decimal_behavior": [
+      {
+        "input": "12.340",
+        "name": "valid_decimal",
+        "nullable": false,
+        "result": "12.340"
+      },
+      {
+        "exception": "RuntimeError",
+        "input": "01.5",
+        "name": "leading_zero",
+        "nullable": false
+      },
+      {
+        "exception": "RuntimeError",
+        "input": "1.",
+        "name": "missing_fraction",
+        "nullable": false
+      },
+      {
+        "exception": "RuntimeError",
+        "input": ".5",
+        "name": "missing_integer",
+        "nullable": false
+      },
+      {
+        "exception": "RuntimeError",
+        "input": "-1",
+        "name": "negative",
+        "nullable": false
+      },
+      {
+        "exception": "RuntimeError",
+        "input": 7,
+        "name": "non_string",
+        "nullable": false
+      },
+      {
+        "exception": "RuntimeError",
+        "input": "",
+        "name": "empty",
+        "nullable": false
+      },
+      {
+        "input": null,
+        "name": "nullable_none",
+        "nullable": true,
+        "result": null
+      },
+      {
+        "exception": "RuntimeError",
+        "input": null,
+        "name": "non_nullable_none",
+        "nullable": false
+      },
+      {
+        "exception": "RuntimeError",
+        "input": "not-a-decimal",
+        "name": "junk",
+        "nullable": false
+      }
+    ],
+    "frozensets": {
+      "_CAPABILITY_FIELDS": [
+        "prompt_caching",
+        "reasoning",
+        "streaming",
+        "structured_output",
+        "tools"
+      ],
+      "_CAPACITY_SCOPES": [
+        "global",
+        "model",
+        "model_region",
+        "region"
+      ],
+      "_ENDPOINTS": [
+        "chat/completions",
+        "responses"
+      ],
+      "_ERROR_CONTRACT_FIELDS": [
+        "account_quota_error_codes",
+        "overload_status",
+        "rate_limit_status",
+        "retry_after_header"
+      ],
+      "_INPUT_MODALITIES": [
+        "audio",
+        "file",
+        "image",
+        "text",
+        "video"
+      ],
+      "_LIFECYCLE_FIELDS": [
+        "deprecation_at",
+        "replacement_model_id",
+        "retirement_at",
+        "status"
+      ],
+      "_LIFECYCLE_STATUSES": [
+        "active",
+        "deprecated",
+        "retired"
+      ],
+      "_MODEL_FIELDS": [
+        "capabilities",
+        "context_length",
+        "endpoints",
+        "id",
+        "input_modalities",
+        "lifecycle",
+        "max_output_tokens",
+        "name",
+        "object",
+        "output_modalities",
+        "owned_by",
+        "pricing",
+        "type"
+      ],
+      "_MODEL_V2_FIELDS": [
+        "capabilities",
+        "context_length",
+        "endpoints",
+        "id",
+        "input_modalities",
+        "lifecycle",
+        "max_output_tokens",
+        "name",
+        "object",
+        "output_modalities",
+        "owned_by",
+        "pricing",
+        "reliability",
+        "type"
+      ],
+      "_OUTPUT_MODALITIES": [
+        "audio",
+        "image",
+        "text"
+      ],
+      "_PRICING_FIELDS": [
+        "cache_write",
+        "cached_input",
+        "currency",
+        "input",
+        "minimum_request",
+        "output",
+        "unit"
+      ],
+      "_PROVIDER_V2_FIELDS": [
+        "error_contract",
+        "id",
+        "incident_contact",
+        "regions",
+        "request_id_header",
+        "status_url",
+        "support_contact"
+      ],
+      "_RELIABILITY_FIELDS": [
+        "capacity_scope",
+        "completion_timeout_seconds",
+        "first_token_timeout_seconds",
+        "stream_idle_timeout_seconds"
+      ],
+      "_TOP_LEVEL_FIELDS": [
+        "data",
+        "object"
+      ],
+      "_TOP_LEVEL_V2_FIELDS": [
+        "contract_version",
+        "data",
+        "object",
+        "provider"
+      ]
+    },
+    "invariants": {
+      "error_contract": {
+        "overload_status": 503,
+        "rate_limit_status": 429,
+        "retry_after_header": "Retry-After"
+      },
+      "pricing": {
+        "cache_write_allowed_values": [
+          null,
+          0
+        ],
+        "currency": "USD",
+        "minimum_request": 0,
+        "prompt_caching_matches_cached_input_presence": true,
+        "unit": "per_1m_tokens"
+      }
+    },
+    "model_id_pattern": "^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$",
+    "owner_pattern": "^[a-z0-9][a-z0-9._-]*$"
+  },
+  "contract_version": "c811d765b89f44f542c127e5d546439b3fea9953d4cf42b620861cfc278d741e",
+  "decision_tables": [
+    {
+      "max_tokens": 512,
+      "model": "vendor/o1-preview",
+      "omits_temperature": true,
+      "provider": "openai"
+    },
+    {
+      "max_tokens": 512,
+      "model": "vendor/o3-mini",
+      "omits_temperature": true,
+      "provider": "openai"
+    },
+    {
+      "max_tokens": 512,
+      "model": "vendor/o4-mini",
+      "omits_temperature": true,
+      "provider": "openai"
+    },
+    {
+      "max_tokens": 512,
+      "model": "vendor/gpt-5.4",
+      "omits_temperature": true,
+      "provider": "openai"
+    },
+    {
+      "max_tokens": 2048,
+      "model": "google/gemini-2.5-pro",
+      "omits_temperature": false,
+      "provider": "generic"
+    },
+    {
+      "max_tokens": 2048,
+      "model": "google/gemini-3-pro",
+      "omits_temperature": false,
+      "provider": "generic"
+    },
+    {
+      "max_tokens": 512,
+      "model": "openai/gpt-oss-120b",
+      "omits_temperature": false,
+      "provider": "generic"
+    },
+    {
+      "max_tokens": 512,
+      "model": "zai/glm-4.6",
+      "omits_temperature": false,
+      "provider": "generic"
+    },
+    {
+      "max_tokens": 512,
+      "model": "zai/glm-4.7",
+      "omits_temperature": false,
+      "provider": "generic"
+    },
+    {
+      "max_tokens": 512,
+      "model": "zai/glm-5",
+      "omits_temperature": false,
+      "provider": "generic"
+    },
+    {
+      "max_tokens": 512,
+      "model": "nvidia/nemotron-3",
+      "omits_temperature": false,
+      "provider": "generic"
+    },
+    {
+      "max_tokens": 512,
+      "model": "anthropic/claude-fable-5",
+      "omits_temperature": false,
+      "provider": "generic"
+    },
+    {
+      "max_tokens": 512,
+      "model": "anthropic/claude-sonnet-5",
+      "omits_temperature": false,
+      "provider": "generic"
+    },
+    {
+      "max_tokens": 512,
+      "model": "acme/reasoning-model",
+      "omits_temperature": false,
+      "provider": "generic"
+    },
+    {
+      "max_tokens": 512,
+      "model": "acme/thinking-model",
+      "omits_temperature": false,
+      "provider": "generic"
+    },
+    {
+      "max_tokens": 128,
+      "model": "moonshotai/kimi-k2.5",
+      "omits_temperature": true,
+      "provider": "kimi"
+    },
+    {
+      "max_tokens": 128,
+      "model": "x-ai/grok-4",
+      "omits_temperature": false,
+      "provider": "generic"
+    },
+    {
+      "max_tokens": 128,
+      "model": "anthropic/claude-opus-4.7",
+      "omits_temperature": true,
+      "provider": "anthropic"
+    },
+    {
+      "max_tokens": 128,
+      "model": "anthropic/claude-opus-4.8",
+      "omits_temperature": true,
+      "provider": "anthropic"
+    },
+    {
+      "max_tokens": 16,
+      "model": "openai/gpt-5.1",
+      "omits_temperature": false,
+      "provider": "generic"
+    },
+    {
+      "max_tokens": 16,
+      "model": "openai/gpt-4.1",
+      "omits_temperature": false,
+      "provider": "openai"
+    },
+    {
+      "max_tokens": 128,
+      "model": "moonshotai/kimi-k2.5",
+      "omits_temperature": false,
+      "provider": "novita"
+    },
+    {
+      "max_tokens": 16,
+      "model": "moonshotai/kimi-latest",
+      "omits_temperature": false,
+      "provider": "kimi"
+    },
+    {
+      "max_tokens": 128,
+      "model": "anthropic/claude-opus-4.7",
+      "omits_temperature": false,
+      "provider": "generic"
+    },
+    {
+      "max_tokens": 16,
+      "model": "anthropic/claude-haiku-5",
+      "omits_temperature": false,
+      "provider": "anthropic"
+    },
+    {
+      "max_tokens": 16,
+      "model": "acme/plain-model",
+      "omits_temperature": false,
+      "provider": "generic"
+    }
+  ],
+  "extractors": [
+    {
+      "input": {
+        "json": {
+          "choices": []
+        },
+        "status_code": 200
+      },
+      "name": "chat_text:empty_choices",
+      "result": ""
+    },
+    {
+      "input": {
+        "json": {
+          "choices": [
+            {
+              "message": {
+                "content": [
+                  {
+                    "content": "PONG"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "status_code": 200
+      },
+      "name": "chat_text:list_content_parts",
+      "result": "PONG"
+    },
+    {
+      "input": {
+        "json": {
+          "choices": [
+            {
+              "message": {
+                "content": [
+                  {
+                    "text": "PONG",
+                    "type": "text"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "status_code": 200
+      },
+      "name": "chat_text:list_text_parts",
+      "result": "PONG"
+    },
+    {
+      "input": {
+        "status_code": 200,
+        "text": "not-json"
+      },
+      "name": "chat_text:malformed_json",
+      "result": ""
+    },
+    {
+      "input": {
+        "json": {},
+        "status_code": 200
+      },
+      "name": "chat_text:missing_keys",
+      "result": ""
+    },
+    {
+      "input": {
+        "json": {
+          "choices": [
+            {
+              "message": {
+                "content": "PONG"
+              }
+            }
+          ]
+        },
+        "status_code": 503
+      },
+      "name": "chat_text:non_200",
+      "result": ""
+    },
+    {
+      "input": {
+        "json": {
+          "choices": [
+            {
+              "message": {
+                "content": "",
+                "reasoning_content": "PONG"
+              }
+            }
+          ]
+        },
+        "status_code": 200
+      },
+      "name": "chat_text:reasoning_content_string",
+      "result": "PONG"
+    },
+    {
+      "input": {
+        "json": {
+          "choices": [
+            {
+              "message": {
+                "reasoning": [
+                  {
+                    "text": "PONG"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "status_code": 200
+      },
+      "name": "chat_text:reasoning_list",
+      "result": "PONG"
+    },
+    {
+      "input": {
+        "json": {
+          "choices": [
+            {
+              "message": {
+                "content": "PONG"
+              }
+            }
+          ]
+        },
+        "status_code": 200
+      },
+      "name": "chat_text:string_content",
+      "result": "PONG"
+    },
+    {
+      "input": {
+        "keys": [
+          "a",
+          "b"
+        ],
+        "values": {
+          "a": 1,
+          "b": 2
+        }
+      },
+      "name": "first_int:first_key_precedence",
+      "result": 1
+    },
+    {
+      "input": {
+        "keys": [
+          "a",
+          "b"
+        ],
+        "values": {
+          "a": "bad",
+          "b": "3"
+        }
+      },
+      "name": "first_int:invalid_then_valid",
+      "result": 3
+    },
+    {
+      "input": {
+        "keys": [
+          "a",
+          "b"
+        ],
+        "values": {}
+      },
+      "name": "first_int:missing",
+      "result": 0
+    },
+    {
+      "input": {
+        "keys": [
+          "a"
+        ],
+        "values": {
+          "a": -7
+        }
+      },
+      "name": "first_int:negative_clamp",
+      "result": 0
+    },
+    {
+      "input": {
+        "keys": [
+          "a"
+        ],
+        "values": {
+          "a": []
+        }
+      },
+      "name": "first_int:non_int",
+      "result": 0
+    },
+    {
+      "input": {
+        "keys": [
+          "a",
+          "b"
+        ],
+        "values": {
+          "a": null,
+          "b": 2
+        }
+      },
+      "name": "first_int:second_key_fallback",
+      "result": 2
+    },
+    {
+      "input": {
+        "text": "The answer is PONG today."
+      },
+      "name": "pong_matches:embedded_sentence",
+      "result": true
+    },
+    {
+      "input": {
+        "text": ""
+      },
+      "name": "pong_matches:empty",
+      "result": false
+    },
+    {
+      "input": {
+        "text": "PONG"
+      },
+      "name": "pong_matches:exact",
+      "result": true
+    },
+    {
+      "input": {
+        "text": "pong"
+      },
+      "name": "pong_matches:lowercase",
+      "result": true
+    },
+    {
+      "input": {
+        "text": "**PONG**"
+      },
+      "name": "pong_matches:markdown",
+      "result": true
+    },
+    {
+      "input": {
+        "text": null
+      },
+      "name": "pong_matches:none",
+      "result": "AttributeError"
+    },
+    {
+      "input": {
+        "text": "PING"
+      },
+      "name": "pong_matches:nonmatching",
+      "result": false
+    },
+    {
+      "input": {
+        "status_code": 504,
+        "text": ""
+      },
+      "name": "response_error:empty_body",
+      "result": [
+        "http_504",
+        504,
+        null
+      ]
+    },
+    {
+      "input": {
+        "status_code": 502,
+        "text": "<html>bad gateway</html>"
+      },
+      "name": "response_error:html_body",
+      "result": [
+        "http_502",
+        502,
+        null
+      ]
+    },
+    {
+      "input": {
+        "json": {
+          "error": {
+            "message": "busy",
+            "status": 529,
+            "type": "overloaded"
+          }
+        },
+        "status_code": 503
+      },
+      "name": "response_error:json_error",
+      "result": [
+        "overloaded",
+        529,
+        "busy"
+      ]
+    },
+    {
+      "input": {
+        "json": {
+          "error": {
+            "type": "provider_error"
+          }
+        },
+        "status_code": 200
+      },
+      "name": "response_error:json_error_on_200",
+      "result": [
+        "provider_error",
+        200,
+        null
+      ]
+    },
+    {
+      "input": {
+        "json": {
+          "detail": {
+            "error": {
+              "message": "bad",
+              "type": "invalid_request"
+            }
+          }
+        },
+        "status_code": 422
+      },
+      "name": "response_error:nested_detail",
+      "result": [
+        "probe_config_error",
+        422,
+        "bad"
+      ]
+    },
+    {
+      "input": {
+        "json": {},
+        "status_code": 200
+      },
+      "name": "response_error:success_200",
+      "result": [
+        "http_200",
+        200,
+        null
+      ]
+    },
+    {
+      "input": {
+        "json": {
+          "output": [
+            {
+              "summary": [
+                {
+                  "text": "THINK"
+                }
+              ],
+              "type": "reasoning"
+            },
+            {
+              "content": [
+                {
+                  "text": "PONG"
+                }
+              ],
+              "type": "message"
+            }
+          ]
+        },
+        "status_code": 200
+      },
+      "name": "responses_text:full_output_walk",
+      "result": "THINK PONG"
+    },
+    {
+      "input": {
+        "json": {
+          "output": [
+            {
+              "content": [
+                {
+                  "text": "PONG"
+                }
+              ]
+            }
+          ]
+        },
+        "status_code": 200
+      },
+      "name": "responses_text:list_text_parts",
+      "result": "PONG"
+    },
+    {
+      "input": {
+        "status_code": 200,
+        "text": "not-json"
+      },
+      "name": "responses_text:malformed_json",
+      "result": ""
+    },
+    {
+      "input": {
+        "json": {},
+        "status_code": 200
+      },
+      "name": "responses_text:missing_keys",
+      "result": ""
+    },
+    {
+      "input": {
+        "json": {
+          "output": [
+            {
+              "content": "PONG"
+            }
+          ]
+        },
+        "status_code": 503
+      },
+      "name": "responses_text:non_200",
+      "result": ""
+    },
+    {
+      "input": {
+        "json": {
+          "output": [
+            "ignored"
+          ]
+        },
+        "status_code": 200
+      },
+      "name": "responses_text:non_dict_output_item",
+      "result": ""
+    },
+    {
+      "input": {
+        "json": {
+          "output": [
+            {
+              "summary": [
+                {
+                  "text": "PONG"
+                }
+              ]
+            }
+          ]
+        },
+        "status_code": 200
+      },
+      "name": "responses_text:reasoning_summary",
+      "result": "PONG"
+    },
+    {
+      "input": {
+        "json": {
+          "output": [
+            {
+              "content": "PONG"
+            }
+          ]
+        },
+        "status_code": 200
+      },
+      "name": "responses_text:string_content",
+      "result": "PONG"
+    },
+    {
+      "input": {
+        "line": "data: {\"error\":{\"code\":410,\"status_code\":411,\"type\":\"upstream\"}}"
+      },
+      "name": "sse_line_error:code_precedence",
+      "result": [
+        "upstream",
+        410,
+        null
+      ]
+    },
+    {
+      "input": {
+        "line": "data: {\"error\":{\"message\":\"boom\"}}"
+      },
+      "name": "sse_line_error:default_type",
+      "result": [
+        "provider_error",
+        null,
+        "boom"
+      ]
+    },
+    {
+      "input": {
+        "line": "data: {\"error\":{\"status_code\":411,\"type\":\"upstream\"}}"
+      },
+      "name": "sse_line_error:status_code",
+      "result": [
+        "upstream",
+        411,
+        null
+      ]
+    },
+    {
+      "input": {
+        "line": "data: {\"error\":{\"code\":410,\"status\":409,\"status_code\":411,\"type\":\"upstream\"}}"
+      },
+      "name": "sse_line_error:status_precedence",
+      "result": [
+        "upstream",
+        409,
+        null
+      ]
+    },
+    {
+      "input": {
+        "line": "data: {\"choices\":[{\"finish_reason\":\"content_filter\"}]}"
+      },
+      "name": "sse_line_finish_reason:content_filter",
+      "result": "content_filter"
+    },
+    {
+      "input": {
+        "line": "data: {\"choices\":[{\"finish_reason\":\"function_call\"}]}"
+      },
+      "name": "sse_line_finish_reason:function_call",
+      "result": "function_call"
+    },
+    {
+      "input": {
+        "line": "data: {\"choices\":[{\"finish_reason\":\"future\"}]}"
+      },
+      "name": "sse_line_finish_reason:future",
+      "result": "future"
+    },
+    {
+      "input": {
+        "line": "data: {\"choices\":[{\"finish_reason\":\"length\"}]}"
+      },
+      "name": "sse_line_finish_reason:length",
+      "result": "length"
+    },
+    {
+      "input": {
+        "line": "data: {\"choices\":[{\"finish_reason\":\"stop\"}]}"
+      },
+      "name": "sse_line_finish_reason:stop",
+      "result": "stop"
+    },
+    {
+      "input": {
+        "line": "data: {\"choices\":[{\"finish_reason\":\"tool_calls\"}]}"
+      },
+      "name": "sse_line_finish_reason:tool_calls",
+      "result": "tool_calls"
+    },
+    {
+      "input": {
+        "line": "data: {\"choices\":[{\"text\":\"PONG\"}]}"
+      },
+      "name": "sse_line_has_content:choice_text",
+      "result": true
+    },
+    {
+      "input": {
+        "line": "data: {\"choices\":[{\"delta\":{\"content\":\"PONG\"}}]}"
+      },
+      "name": "sse_line_has_content:delta_content",
+      "result": true
+    },
+    {
+      "input": {
+        "line": "data: {\"choices\":[{\"delta\":{\"output_text\":\"PONG\"}}]}"
+      },
+      "name": "sse_line_has_content:delta_output_text",
+      "result": true
+    },
+    {
+      "input": {
+        "line": "data: {\"choices\":[{\"delta\":{\"reasoning\":\"PONG\"}}]}"
+      },
+      "name": "sse_line_has_content:delta_reasoning",
+      "result": true
+    },
+    {
+      "input": {
+        "line": "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"PONG\"}}]}"
+      },
+      "name": "sse_line_has_content:delta_reasoning_content",
+      "result": true
+    },
+    {
+      "input": {
+        "line": "data: {\"choices\":[{\"delta\":{\"text\":\"PONG\"}}]}"
+      },
+      "name": "sse_line_has_content:delta_text",
+      "result": true
+    },
+    {
+      "input": {
+        "line": "data: {\"choices\":[{\"delta\":{\"thinking\":\"PONG\"}}]}"
+      },
+      "name": "sse_line_has_content:delta_thinking",
+      "result": true
+    },
+    {
+      "input": {
+        "line": "data: {\"choices\":[{\"delta\":{\"content\":\"\"}}]}"
+      },
+      "name": "sse_line_has_content:empty_content",
+      "result": false
+    },
+    {
+      "input": {
+        "line": "data: {\"choices\":[{\"message\":{\"content\":\"PONG\"}}]}"
+      },
+      "name": "sse_line_has_content:message_content",
+      "result": true
+    },
+    {
+      "input": {
+        "line": "data: {\"choices\":[{\"message\":{\"reasoning\":\"PONG\"}}]}"
+      },
+      "name": "sse_line_has_content:message_reasoning",
+      "result": true
+    },
+    {
+      "input": {
+        "line": "data: {\"choices\":[{\"message\":{\"reasoning_content\":\"PONG\"}}]}"
+      },
+      "name": "sse_line_has_content:message_reasoning_content",
+      "result": true
+    },
+    {
+      "input": {
+        "line": "data: {\"choices\":[{\"message\":{\"text\":\"PONG\"}}]}"
+      },
+      "name": "sse_line_has_content:message_text",
+      "result": true
+    },
+    {
+      "input": {
+        "line": "data: {\"choices\":[{\"message\":{\"thinking\":\"PONG\"}}]}"
+      },
+      "name": "sse_line_has_content:message_thinking",
+      "result": true
+    },
+    {
+      "input": {
+        "line": "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}"
+      },
+      "name": "sse_line_has_content:role_only",
+      "result": false
+    },
+    {
+      "input": {
+        "line": "data: {\"choices\":[{\"delta\":{\"audio\":\"PONG\"}}]}"
+      },
+      "name": "sse_line_has_content:unrecognized_audio",
+      "result": false
+    },
+    {
+      "input": {
+        "line": ": ping"
+      },
+      "name": "sse_line_payload:comment",
+      "result": null
+    },
+    {
+      "input": {
+        "line": "data:{\"value\":1}"
+      },
+      "name": "sse_line_payload:data_no_space",
+      "result": {
+        "value": 1
+      }
+    },
+    {
+      "input": {
+        "line": "data: {\"value\":1}"
+      },
+      "name": "sse_line_payload:data_space",
+      "result": {
+        "value": 1
+      }
+    },
+    {
+      "input": {
+        "line": "data: [DONE]"
+      },
+      "name": "sse_line_payload:done",
+      "result": null
+    },
+    {
+      "input": {
+        "line": ""
+      },
+      "name": "sse_line_payload:empty",
+      "result": null
+    },
+    {
+      "input": {
+        "line": "data: {oops"
+      },
+      "name": "sse_line_payload:malformed",
+      "result": null
+    },
+    {
+      "input": {
+        "line": "data: [1,2]"
+      },
+      "name": "sse_line_payload:non_dict",
+      "result": null
+    },
+    {
+      "input": {
+        "line": "data: {\"usage\":{\"input_tokens\":6,\"output_tokens\":7}}"
+      },
+      "name": "sse_line_usage:alias_fallback",
+      "result": {
+        "input_tokens": 6,
+        "output_tokens": 7,
+        "reasoning_tokens": 0
+      }
+    },
+    {
+      "input": {
+        "line": "data: {\"usage\":{\"completion_tokens\":3,\"completion_tokens_details\":{\"reasoning_tokens\":5},\"input_tokens\":2,\"output_tokens\":4,\"prompt_tokens\":1}}"
+      },
+      "name": "sse_line_usage:canonical_precedence",
+      "result": {
+        "input_tokens": 1,
+        "output_tokens": 3,
+        "reasoning_tokens": 5
+      }
+    },
+    {
+      "input": {
+        "line": "data: {\"usage\":{}}"
+      },
+      "name": "sse_line_usage:missing_keys",
+      "result": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0
+      }
+    },
+    {
+      "input": {
+        "line": "data: {}"
+      },
+      "name": "sse_line_usage:missing_usage",
+      "result": null
+    },
+    {
+      "input": {
+        "line": "data: {\"usage\":{\"completion_tokens\":-2,\"completion_tokens_details\":{\"reasoning_tokens\":-3},\"prompt_tokens\":-1}}"
+      },
+      "name": "sse_line_usage:negative_clamp",
+      "result": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0
+      }
+    },
+    {
+      "input": {
+        "line": "data: {\"usage\":{\"completion_tokens\":[],\"completion_tokens_details\":{\"reasoning_tokens\":\"bad\"},\"input_tokens\":\"8\",\"output_tokens\":\"9\",\"prompt_tokens\":\"bad\"}}"
+      },
+      "name": "sse_line_usage:non_int_values",
+      "result": {
+        "input_tokens": 8,
+        "output_tokens": 9,
+        "reasoning_tokens": 0
+      }
+    }
+  ],
+  "failure_classification": [
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported account quota",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:account quota"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported billing quota",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:billing quota"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported credit balance",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:credit balance"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported credits exhausted",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:credits exhausted"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported insufficient credit",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:insufficient credit"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported insufficient funds",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:insufficient funds"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported monthly spend",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:monthly spend"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported payment required",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:payment required"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported quota exceeded for quota metric",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:quota exceeded for quota metric"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "bad_request",
+        "status": "error"
+      },
+      "name": "config_types:bad_request"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "invalid_request",
+        "status": "error"
+      },
+      "name": "config_types:invalid_request"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "invalid_request_error",
+        "status": "error"
+      },
+      "name": "config_types:invalid_request_error"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "model_not_available",
+        "status": "error"
+      },
+      "name": "config_types:model_not_available"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "model_not_found",
+        "status": "error"
+      },
+      "name": "config_types:model_not_found"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "not_found",
+        "status": "error"
+      },
+      "name": "config_types:not_found"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "not_supported",
+        "status": "error"
+      },
+      "name": "config_types:not_supported"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "probe_config_error",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "probe_config_error",
+        "status": "error"
+      },
+      "name": "config_types:probe_config_error"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "provider_auth_config",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "provider_auth_config",
+        "status": "error"
+      },
+      "name": "config_types:provider_auth_config"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "unsupported",
+        "status": "error"
+      },
+      "name": "config_types:unsupported"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "unsupported_model",
+        "status": "error"
+      },
+      "name": "config_types:unsupported_model"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "unsupported_provider",
+        "status": "error"
+      },
+      "name": "config_types:unsupported_provider"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "unsupported_route",
+        "status": "error"
+      },
+      "name": "config_types:unsupported_route"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "customer_quota",
+        "owner": "customer"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "credit_limit_exceeded",
+        "status": "error"
+      },
+      "name": "customer_quota_types:credit_limit_exceeded"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "customer_quota",
+        "owner": "customer"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "insufficient_credits",
+        "status": "error"
+      },
+      "name": "customer_quota_types:insufficient_credits"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "customer_quota",
+        "owner": "customer"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "key_limit_exceeded",
+        "status": "error"
+      },
+      "name": "customer_quota_types:key_limit_exceeded"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "customer_quota",
+        "owner": "customer"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "rate_limit_exceeded",
+        "status": "error"
+      },
+      "name": "customer_quota_types:rate_limit_exceeded"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "customer_quota",
+        "owner": "customer"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "workspace_limit_exceeded",
+        "status": "error"
+      },
+      "name": "customer_quota_types:workspace_limit_exceeded"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported deployment for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "dead_markers:deployment"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported does not exist for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "dead_markers:does not exist"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported no endpoint for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "dead_markers:no endpoint"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported not available for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "dead_markers:not available"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported not found for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "dead_markers:not found"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported not supported for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "dead_markers:not supported"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported unavailable for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "dead_markers:unavailable"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported unknown model for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "dead_markers:unknown model"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": 400,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "dead_statuses:400"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "provider_auth_config",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": 401,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "dead_statuses:401"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "provider_auth_config",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": 403,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "dead_statuses:403"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": 404,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "dead_statuses:404"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": 422,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "dead_statuses:422"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_cerebras/_failure",
+        "status": "error"
+      },
+      "name": "fast_markers:cerebras/"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_fast_failure",
+        "status": "error"
+      },
+      "name": "fast_markers:fast"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_flash-lite_failure",
+        "status": "error"
+      },
+      "name": "fast_markers:flash-lite"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_groq/_failure",
+        "status": "error"
+      },
+      "name": "fast_markers:groq/"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_haiku_failure",
+        "status": "error"
+      },
+      "name": "fast_markers:haiku"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": true,
+        "failure_class": "provider_capacity",
+        "owner": "provider"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "capacity_exceeded",
+        "status": "error"
+      },
+      "name": "generic:capacity_type"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "provider_auth_config",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": 401,
+        "error_type": "not_found",
+        "status": "error"
+      },
+      "name": "generic:not_found_with_401"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": true,
+        "failure_class": "provider_capacity",
+        "owner": "provider"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "overloaded",
+        "status": "error"
+      },
+      "name": "generic:overloaded_type"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": 402,
+        "error_type": null,
+        "status": "error"
+      },
+      "name": "generic:plain_402"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": true,
+        "failure_class": "provider_capacity",
+        "owner": "provider"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": 429,
+        "error_type": null,
+        "status": "error"
+      },
+      "name": "generic:plain_429"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": true,
+        "failure_class": "provider_internal",
+        "owner": "provider"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": 500,
+        "error_type": null,
+        "status": "error"
+      },
+      "name": "generic:plain_500"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": true,
+        "failure_class": "provider_capacity",
+        "owner": "provider"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": 503,
+        "error_type": null,
+        "status": "error"
+      },
+      "name": "generic:plain_503"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": true,
+        "failure_class": "provider_capacity",
+        "owner": "provider"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": 529,
+        "error_type": null,
+        "status": "error"
+      },
+      "name": "generic:plain_529"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "router_fault",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "router_database_contention",
+        "status": "error"
+      },
+      "name": "generic:router_prefix"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": true,
+        "failure_class": "success",
+        "owner": "none"
+      },
+      "input": {
+        "error_message": "account quota",
+        "error_status": 500,
+        "error_type": "router_error",
+        "status": "success"
+      },
+      "name": "generic:success_shaped"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": true,
+        "failure_class": "provider_timeout",
+        "owner": "provider"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "ReadTimeout",
+        "status": "error"
+      },
+      "name": "generic:timeout_type"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "unmapped_failure",
+        "status": "error"
+      },
+      "name": "generic:unknown_type"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "unmapped_failure",
+        "status": "unsupported"
+      },
+      "name": "generic:unsupported_status_only"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "router_fault",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "monitor_account_unavailable",
+        "status": "error"
+      },
+      "name": "monitor_configuration_error_types:monitor_account_unavailable"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "router_fault",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "monitor_workspace_paused",
+        "status": "error"
+      },
+      "name": "monitor_configuration_error_types:monitor_workspace_paused"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "bad_request",
+        "status": "error"
+      },
+      "name": "probe_config_error_types:bad_request"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "invalid_request",
+        "status": "error"
+      },
+      "name": "probe_config_error_types:invalid_request"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "invalid_request_error",
+        "status": "error"
+      },
+      "name": "probe_config_error_types:invalid_request_error"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "invalid_request_error_type",
+        "status": "error"
+      },
+      "name": "probe_config_error_types:invalid_request_error_type"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported max_completion_tokens for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "probe_config_message_markers:max_completion_tokens"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported max_tokens for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "probe_config_message_markers:max_tokens"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported temperature for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "probe_config_message_markers:temperature"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported top_p for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "probe_config_message_markers:top_p"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_/o1_failure",
+        "status": "error"
+      },
+      "name": "slow_reasoning_markers:/o1"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_/o3_failure",
+        "status": "error"
+      },
+      "name": "slow_reasoning_markers:/o3"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_/o4_failure",
+        "status": "error"
+      },
+      "name": "slow_reasoning_markers:/o4"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_deep-research_failure",
+        "status": "error"
+      },
+      "name": "slow_reasoning_markers:deep-research"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_deepseek-r_failure",
+        "status": "error"
+      },
+      "name": "slow_reasoning_markers:deepseek-r"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_glm-5_failure",
+        "status": "error"
+      },
+      "name": "slow_reasoning_markers:glm-5"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_gpt-5.5_failure",
+        "status": "error"
+      },
+      "name": "slow_reasoning_markers:gpt-5.5"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_gpt-5.6_failure",
+        "status": "error"
+      },
+      "name": "slow_reasoning_markers:gpt-5.6"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_opus_failure",
+        "status": "error"
+      },
+      "name": "slow_reasoning_markers:opus"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_reasoning_failure",
+        "status": "error"
+      },
+      "name": "slow_reasoning_markers:reasoning"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_thinking_failure",
+        "status": "error"
+      },
+      "name": "slow_reasoning_markers:thinking"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": true,
+        "failure_class": "provider_stream",
+        "owner": "provider"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_empty_stream_failure",
+        "status": "error"
+      },
+      "name": "stream_markers:empty_stream"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": true,
+        "failure_class": "provider_stream",
+        "owner": "provider"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_incomplete_stream_failure",
+        "status": "error"
+      },
+      "name": "stream_markers:incomplete_stream"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": true,
+        "failure_class": "provider_stream",
+        "owner": "provider"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_stream_error_failure",
+        "status": "error"
+      },
+      "name": "stream_markers:stream_error"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": true,
+        "failure_class": "provider_stream",
+        "owner": "provider"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_stream_interrupted_failure",
+        "status": "error"
+      },
+      "name": "stream_markers:stream_interrupted"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": true,
+        "failure_class": "provider_timeout",
+        "owner": "provider"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_connecttimeout_failure",
+        "status": "error"
+      },
+      "name": "timeout_markers:connecttimeout"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": true,
+        "failure_class": "provider_timeout",
+        "owner": "provider"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_deadline_failure",
+        "status": "error"
+      },
+      "name": "timeout_markers:deadline"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": true,
+        "failure_class": "provider_timeout",
+        "owner": "provider"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_readtimeout_failure",
+        "status": "error"
+      },
+      "name": "timeout_markers:readtimeout"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": true,
+        "failure_class": "provider_timeout",
+        "owner": "provider"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_timed_out_failure",
+        "status": "error"
+      },
+      "name": "timeout_markers:timed_out"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": true,
+        "failure_class": "provider_timeout",
+        "owner": "provider"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "synthetic_timeout_failure",
+        "status": "error"
+      },
+      "name": "timeout_markers:timeout"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "model_not_available",
+        "status": "error"
+      },
+      "name": "unsupported_route_error_types:model_not_available"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "model_not_found",
+        "status": "error"
+      },
+      "name": "unsupported_route_error_types:model_not_found"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "not_found",
+        "status": "error"
+      },
+      "name": "unsupported_route_error_types:not_found"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "not_supported",
+        "status": "error"
+      },
+      "name": "unsupported_route_error_types:not_supported"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "unsupported",
+        "status": "error"
+      },
+      "name": "unsupported_route_error_types:unsupported"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "unsupported_model",
+        "status": "error"
+      },
+      "name": "unsupported_route_error_types:unsupported_model"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "unsupported_provider",
+        "status": "error"
+      },
+      "name": "unsupported_route_error_types:unsupported_provider"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unsupported_route",
+        "owner": "configuration"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
+        "error_type": "unsupported_route",
+        "status": "error"
+      },
+      "name": "unsupported_route_error_types:unsupported_route"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported does not exist for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "unsupported_route_message_markers:does not exist"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported does not support for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "unsupported_route_message_markers:does not support"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported invalid model for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "unsupported_route_message_markers:invalid model"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported model does not exist for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "unsupported_route_message_markers:model does not exist"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported model not found for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "unsupported_route_message_markers:model not found"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported model_not_found for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "unsupported_route_message_markers:model_not_found"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported no endpoint for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "unsupported_route_message_markers:no endpoint"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported no route for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "unsupported_route_message_markers:no route"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported no such model for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "unsupported_route_message_markers:no such model"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported not authorized for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "unsupported_route_message_markers:not authorized"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported not available for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "unsupported_route_message_markers:not available"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported not enabled for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "unsupported_route_message_markers:not enabled"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported not permitted for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "unsupported_route_message_markers:not permitted"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported not supported for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "unsupported_route_message_markers:not supported"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported unavailable for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "unsupported_route_message_markers:unavailable"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported unknown model for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "unsupported_route_message_markers:unknown model"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": "upstream reported unsupported for this request",
+        "error_status": null,
+        "error_type": "provider_error",
+        "status": "error"
+      },
+      "name": "unsupported_route_message_markers:unsupported"
+    }
+  ],
+  "leaderboard": {
+    "excluded_samples": 4,
+    "model_count": 6,
+    "models": [
+      {
+        "availability_within_deadline": 1.0,
+        "capacity_acceptance_rate": 1.0,
+        "capacity_attempt_count": 4,
+        "completion_rate": 1.0,
+        "deadline_sample_count": 4,
+        "effective_attempt_count": 4,
+        "error_rate": 0.0,
+        "errors": {},
+        "excluded_count": 0,
+        "excluded_reasons": {},
+        "failure_classes": {},
+        "failure_owners": {},
+        "first_token_deadline_ms": 20000,
+        "last_seen": "2026-01-01T07:40:00Z",
+        "model": "alpha/challenger",
+        "p50_tokens_per_second": null,
+        "p50_ttfb_ms": 450,
+        "p50_ttft_ms": 600,
+        "p95_ttfb_ms": 550,
+        "p95_ttft_ms": 800,
+        "provider": "alpha",
+        "provider_availability": 1.0,
+        "provider_sample_count": 4,
+        "rank": 1,
+        "rank_eligible": true,
+        "sample_count": 4,
+        "throughput_sample_count": 0,
+        "top_error": null,
+        "top_excluded": null,
+        "ttft_sample_count": 4,
+        "uptime": 1.0
+      },
+      {
+        "availability_within_deadline": 0.75,
+        "capacity_acceptance_rate": 1.0,
+        "capacity_attempt_count": 4,
+        "completion_rate": 0.75,
+        "deadline_sample_count": 4,
+        "effective_attempt_count": 4,
+        "error_rate": 0.25,
+        "errors": {
+          "ReadTimeout": 1
+        },
+        "excluded_count": 0,
+        "excluded_reasons": {},
+        "failure_classes": {
+          "provider_timeout": 1
+        },
+        "failure_owners": {
+          "provider": 1
+        },
+        "first_token_deadline_ms": 20000,
+        "last_seen": "2026-01-01T05:00:00Z",
+        "model": "alpha/steady",
+        "p50_tokens_per_second": 25.0,
+        "p50_ttfb_ms": 100,
+        "p50_ttft_ms": 140,
+        "p95_ttfb_ms": 120,
+        "p95_ttft_ms": 18000,
+        "provider": "alpha",
+        "provider_availability": 0.75,
+        "provider_sample_count": 4,
+        "rank": 2,
+        "rank_eligible": true,
+        "sample_count": 4,
+        "throughput_sample_count": 2,
+        "top_error": "ReadTimeout",
+        "top_excluded": null,
+        "ttft_sample_count": 3,
+        "uptime": 0.75
+      },
+      {
+        "availability_within_deadline": null,
+        "capacity_acceptance_rate": 1.0,
+        "capacity_attempt_count": 1,
+        "completion_rate": 1.0,
+        "deadline_sample_count": 0,
+        "effective_attempt_count": 1,
+        "error_rate": 0.0,
+        "errors": {},
+        "excluded_count": 1,
+        "excluded_reasons": {
+          "unsupported_route": 1
+        },
+        "failure_classes": {},
+        "failure_owners": {},
+        "first_token_deadline_ms": 20000,
+        "last_seen": "2026-01-01T07:00:00Z",
+        "model": "alpha/thin",
+        "p50_tokens_per_second": null,
+        "p50_ttfb_ms": null,
+        "p50_ttft_ms": null,
+        "p95_ttfb_ms": null,
+        "p95_ttft_ms": null,
+        "provider": "alpha",
+        "provider_availability": 1.0,
+        "provider_sample_count": 1,
+        "rank": null,
+        "rank_eligible": false,
+        "sample_count": 1,
+        "throughput_sample_count": 0,
+        "top_error": null,
+        "top_excluded": "unsupported_route",
+        "ttft_sample_count": 0,
+        "uptime": 1.0
+      },
+      {
+        "availability_within_deadline": null,
+        "capacity_acceptance_rate": null,
+        "capacity_attempt_count": 0,
+        "completion_rate": null,
+        "deadline_sample_count": 0,
+        "effective_attempt_count": 0,
+        "error_rate": 0.0,
+        "errors": {},
+        "excluded_count": 0,
+        "excluded_reasons": {},
+        "failure_classes": {},
+        "failure_owners": {},
+        "first_token_deadline_ms": 20000,
+        "last_seen": "2026-01-01T07:50:00Z",
+        "model": "alpha/throughput-only",
+        "p50_tokens_per_second": 30.0,
+        "p50_ttfb_ms": null,
+        "p50_ttft_ms": null,
+        "p95_ttfb_ms": null,
+        "p95_ttft_ms": null,
+        "provider": "alpha",
+        "provider_availability": null,
+        "provider_sample_count": 0,
+        "rank": null,
+        "rank_eligible": false,
+        "sample_count": 0,
+        "throughput_sample_count": 1,
+        "top_error": null,
+        "top_excluded": null,
+        "ttft_sample_count": 0,
+        "uptime": null
+      },
+      {
+        "availability_within_deadline": 0.75,
+        "capacity_acceptance_rate": 0.75,
+        "capacity_attempt_count": 4,
+        "completion_rate": 0.75,
+        "deadline_sample_count": 4,
+        "effective_attempt_count": 4,
+        "error_rate": 0.25,
+        "errors": {
+          "rate_limit_error": 1
+        },
+        "excluded_count": 0,
+        "excluded_reasons": {},
+        "failure_classes": {
+          "provider_capacity": 1
+        },
+        "failure_owners": {
+          "provider": 1
+        },
+        "first_token_deadline_ms": 20000,
+        "last_seen": "2026-01-01T10:30:00Z",
+        "model": "beta/stable",
+        "p50_tokens_per_second": null,
+        "p50_ttfb_ms": 160,
+        "p50_ttft_ms": 225,
+        "p95_ttfb_ms": 175,
+        "p95_ttft_ms": 250,
+        "provider": "beta",
+        "provider_availability": 0.75,
+        "provider_sample_count": 4,
+        "rank": 3,
+        "rank_eligible": true,
+        "sample_count": 4,
+        "throughput_sample_count": 0,
+        "top_error": "rate_limit_error",
+        "top_excluded": null,
+        "ttft_sample_count": 3,
+        "uptime": 0.75
+      },
+      {
+        "availability_within_deadline": 0.0,
+        "capacity_acceptance_rate": 1.0,
+        "capacity_attempt_count": 2,
+        "completion_rate": 0.25,
+        "deadline_sample_count": 2,
+        "effective_attempt_count": 4,
+        "error_rate": 0.6667,
+        "errors": {
+          "error": 1,
+          "http_500": 1
+        },
+        "excluded_count": 3,
+        "excluded_reasons": {
+          "provider_auth_config": 1,
+          "rate_limit_exceeded": 1,
+          "router_error": 1
+        },
+        "failure_classes": {
+          "customer_quota": 1,
+          "provider_internal": 1,
+          "router_fault": 1,
+          "unknown": 1
+        },
+        "failure_owners": {
+          "customer": 1,
+          "provider": 1,
+          "trustedrouter": 1,
+          "unknown": 1
+        },
+        "first_token_deadline_ms": 20000,
+        "last_seen": "2026-01-01T16:00:00Z",
+        "model": "beta/thin",
+        "p50_tokens_per_second": null,
+        "p50_ttfb_ms": 200,
+        "p50_ttft_ms": 30000,
+        "p95_ttfb_ms": 200,
+        "p95_ttft_ms": 30000,
+        "provider": "beta",
+        "provider_availability": 0.5,
+        "provider_sample_count": 2,
+        "rank": null,
+        "rank_eligible": false,
+        "sample_count": 3,
+        "throughput_sample_count": 0,
+        "top_error": "http_500",
+        "top_excluded": "router_error",
+        "ttft_sample_count": 1,
+        "uptime": 0.3333
+      }
+    ],
+    "models_order": [
+      "alpha/alpha/challenger",
+      "alpha/alpha/steady",
+      "beta/beta/stable",
+      "alpha/alpha/thin",
+      "beta/beta/thin",
+      "alpha/alpha/throughput-only"
+    ],
+    "provider_count": 2,
+    "providers": [
+      {
+        "availability_within_deadline": 0.875,
+        "capacity_acceptance_rate": 1.0,
+        "capacity_attempt_count": 9,
+        "completion_rate": 0.8889,
+        "deadline_sample_count": 8,
+        "effective_attempt_count": 9,
+        "error_rate": 0.1111,
+        "errors": {
+          "ReadTimeout": 1
+        },
+        "excluded_count": 1,
+        "excluded_reasons": {
+          "unsupported_route": 1
+        },
+        "failure_classes": {
+          "provider_timeout": 1
+        },
+        "failure_owners": {
+          "provider": 1
+        },
+        "model_count": 4,
+        "p50_tokens_per_second": 25.0,
+        "p50_ttfb_ms": 400,
+        "p50_ttft_ms": 140,
+        "p95_ttfb_ms": 550,
+        "p95_ttft_ms": 18000,
+        "provider": "alpha",
+        "provider_availability": 0.8889,
+        "provider_sample_count": 9,
+        "rank": 1,
+        "rank_eligible": true,
+        "sample_count": 9,
+        "throughput_sample_count": 3,
+        "top_error": "ReadTimeout",
+        "top_excluded": "unsupported_route",
+        "ttft_sample_count": 7,
+        "uptime": 0.8889
+      },
+      {
+        "availability_within_deadline": 0.5,
+        "capacity_acceptance_rate": 0.8333,
+        "capacity_attempt_count": 6,
+        "completion_rate": 0.5,
+        "deadline_sample_count": 6,
+        "effective_attempt_count": 8,
+        "error_rate": 0.4286,
+        "errors": {
+          "error": 1,
+          "http_500": 1,
+          "rate_limit_error": 1
+        },
+        "excluded_count": 3,
+        "excluded_reasons": {
+          "provider_auth_config": 1,
+          "rate_limit_exceeded": 1,
+          "router_error": 1
+        },
+        "failure_classes": {
+          "customer_quota": 1,
+          "provider_capacity": 1,
+          "provider_internal": 1,
+          "router_fault": 1,
+          "unknown": 1
+        },
+        "failure_owners": {
+          "customer": 1,
+          "provider": 2,
+          "trustedrouter": 1,
+          "unknown": 1
+        },
+        "model_count": 2,
+        "p50_tokens_per_second": null,
+        "p50_ttfb_ms": 160,
+        "p50_ttft_ms": 225,
+        "p95_ttfb_ms": 200,
+        "p95_ttft_ms": 30000,
+        "provider": "beta",
+        "provider_availability": 0.6667,
+        "provider_sample_count": 6,
+        "rank": 2,
+        "rank_eligible": true,
+        "sample_count": 7,
+        "throughput_sample_count": 0,
+        "top_error": "rate_limit_error",
+        "top_excluded": "router_error",
+        "ttft_sample_count": 4,
+        "uptime": 0.5714
+      }
+    ],
+    "providers_order": [
+      "alpha",
+      "beta"
+    ],
+    "total_samples": 16,
+    "total_throughput_samples": 3
+  },
+  "markers": {
+    "account_quota_markers": [
+      "account quota",
+      "billing quota",
+      "credit balance",
+      "credits exhausted",
+      "insufficient credit",
+      "insufficient funds",
+      "monthly spend",
+      "payment required",
+      "quota exceeded for quota metric"
+    ],
+    "config_types": [
+      "bad_request",
+      "invalid_request",
+      "invalid_request_error",
+      "model_not_available",
+      "model_not_found",
+      "not_found",
+      "not_supported",
+      "probe_config_error",
+      "provider_auth_config",
+      "unsupported",
+      "unsupported_model",
+      "unsupported_provider",
+      "unsupported_route"
+    ],
+    "customer_quota_types": [
+      "credit_limit_exceeded",
+      "insufficient_credits",
+      "key_limit_exceeded",
+      "rate_limit_exceeded",
+      "workspace_limit_exceeded"
+    ],
+    "dead_markers": [
+      "deployment",
+      "does not exist",
+      "no endpoint",
+      "not available",
+      "not found",
+      "not supported",
+      "unavailable",
+      "unknown model"
+    ],
+    "dead_statuses": [
+      400,
+      401,
+      403,
+      404,
+      422
+    ],
+    "fast_markers": [
+      "cerebras/",
+      "fast",
+      "flash-lite",
+      "groq/",
+      "haiku"
+    ],
+    "monitor_configuration_error_types": [
+      "monitor_account_unavailable",
+      "monitor_workspace_paused"
+    ],
+    "probe_config_error_types": [
+      "bad_request",
+      "invalid_request",
+      "invalid_request_error",
+      "invalid_request_error_type"
+    ],
+    "probe_config_message_markers": [
+      "max_completion_tokens",
+      "max_tokens",
+      "temperature",
+      "top_p"
+    ],
+    "router_origin_behavior": [
+      {
+        "input": null,
+        "result": false
+      },
+      {
+        "input": "",
+        "result": false
+      },
+      {
+        "input": "monitor_account_unavailable",
+        "result": true
+      },
+      {
+        "input": "monitor_workspace_paused",
+        "result": true
+      },
+      {
+        "input": "router_database_contention",
+        "result": true
+      },
+      {
+        "input": "provider_timeout",
+        "result": false
+      },
+      {
+        "input": "Router_error",
+        "result": false
+      }
+    ],
+    "slow_reasoning_markers": [
+      "/o1",
+      "/o3",
+      "/o4",
+      "deep-research",
+      "deepseek-r",
+      "glm-5",
+      "gpt-5.5",
+      "gpt-5.6",
+      "opus",
+      "reasoning",
+      "thinking"
+    ],
+    "stream_markers": [
+      "empty_stream",
+      "incomplete_stream",
+      "stream_error",
+      "stream_interrupted"
+    ],
+    "timeout_markers": [
+      "connecttimeout",
+      "deadline",
+      "readtimeout",
+      "timed_out",
+      "timeout"
+    ],
+    "unsupported_route_error_types": [
+      "model_not_available",
+      "model_not_found",
+      "not_found",
+      "not_supported",
+      "unsupported",
+      "unsupported_model",
+      "unsupported_provider",
+      "unsupported_route"
+    ],
+    "unsupported_route_message_markers": [
+      "does not exist",
+      "does not support",
+      "invalid model",
+      "model does not exist",
+      "model not found",
+      "model_not_found",
+      "no endpoint",
+      "no route",
+      "no such model",
+      "not authorized",
+      "not available",
+      "not enabled",
+      "not permitted",
+      "not supported",
+      "unavailable",
+      "unknown model",
+      "unsupported"
+    ]
+  },
+  "model_deadlines": [
+    {
+      "completion_seconds": 60.0,
+      "default_first_token_seconds": 20.0,
+      "first_token_seconds": 15.0,
+      "model": "anthropic/haiku",
+      "provider": null
+    },
+    {
+      "completion_seconds": 900.0,
+      "default_first_token_seconds": 20.0,
+      "first_token_seconds": 100.0,
+      "model": "catalog/completion-ceiling",
+      "provider": "catalog-provider"
+    },
+    {
+      "completion_seconds": 80.0,
+      "default_first_token_seconds": 20.0,
+      "first_token_seconds": 20.0,
+      "model": "catalog/completion-fallback",
+      "provider": "catalog-provider"
+    },
+    {
+      "completion_seconds": 30.0,
+      "default_first_token_seconds": 20.0,
+      "first_token_seconds": 5.0,
+      "model": "catalog/completion-floor",
+      "provider": "catalog-provider"
+    },
+    {
+      "completion_seconds": 400.0,
+      "default_first_token_seconds": 20.0,
+      "first_token_seconds": 300.0,
+      "model": "catalog/first-ceiling",
+      "provider": "catalog-provider"
+    },
+    {
+      "completion_seconds": 40.0,
+      "default_first_token_seconds": 20.0,
+      "first_token_seconds": 5.0,
+      "model": "catalog/first-floor",
+      "provider": "catalog-provider"
+    },
+    {
+      "completion_seconds": 80.0,
+      "default_first_token_seconds": 20.0,
+      "first_token_seconds": 20.0,
+      "model": "catalog/usage-filter",
+      "provider": "catalog-provider"
+    },
+    {
+      "completion_seconds": 60.0,
+      "default_first_token_seconds": 400.0,
+      "first_token_seconds": 15.0,
+      "model": "vendor/fast-high-clamp",
+      "provider": null
+    },
+    {
+      "completion_seconds": 30.0,
+      "default_first_token_seconds": 1.0,
+      "first_token_seconds": 5.0,
+      "model": "vendor/fast-low-clamp",
+      "provider": null
+    },
+    {
+      "default_first_token_seconds": 0.0,
+      "exception": "ValueError",
+      "model": "vendor/invalid-default",
+      "provider": null
+    },
+    {
+      "completion_seconds": 300.0,
+      "default_first_token_seconds": 80.0,
+      "first_token_seconds": 80.0,
+      "model": "vendor/plain-completion-ceiling",
+      "provider": null
+    },
+    {
+      "completion_seconds": 30.0,
+      "default_first_token_seconds": 6.0,
+      "first_token_seconds": 6.0,
+      "model": "vendor/plain-completion-floor",
+      "provider": null
+    },
+    {
+      "completion_seconds": 80.0,
+      "default_first_token_seconds": 20.0,
+      "first_token_seconds": 20.0,
+      "model": "vendor/plain-default",
+      "provider": null
+    },
+    {
+      "completion_seconds": 300.0,
+      "default_first_token_seconds": 400.0,
+      "first_token_seconds": 90.0,
+      "model": "vendor/plain-high-clamp",
+      "provider": null
+    },
+    {
+      "completion_seconds": 30.0,
+      "default_first_token_seconds": 1.0,
+      "first_token_seconds": 5.0,
+      "model": "vendor/plain-low-clamp",
+      "provider": null
+    },
+    {
+      "completion_seconds": 180.0,
+      "default_first_token_seconds": 20.0,
+      "first_token_seconds": 45.0,
+      "model": "vendor/reasoning-haiku",
+      "provider": null
+    },
+    {
+      "completion_seconds": 240.0,
+      "default_first_token_seconds": 60.0,
+      "first_token_seconds": 60.0,
+      "model": "vendor/reasoning-high-default",
+      "provider": null
+    },
+    {
+      "completion_seconds": 180.0,
+      "default_first_token_seconds": 20.0,
+      "first_token_seconds": 45.0,
+      "model": "vendor/reasoning-pro",
+      "provider": null
+    }
+  ],
+  "prompts": {
+    "pong": "reply exactly PONG",
+    "throughput": "Continue writing the lowercase word benchmark separated by single spaces until the response token limit stops you. Do not count, explain, use punctuation, or stop early."
+  },
+  "rotation_errors": {
+    "classification": [
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": null,
+          "source": null,
+          "status": 401
+        },
+        "name": "auth:401",
+        "result": "provider_auth_config"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": null,
+          "source": null,
+          "status": 403
+        },
+        "name": "auth:403",
+        "result": "provider_auth_config"
+      },
+      {
+        "input": {
+          "error_type": "custom_provider_error",
+          "message": null,
+          "source": null,
+          "status": 500
+        },
+        "name": "fallback:unchanged",
+        "result": "custom_provider_error"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "database contention",
+          "source": null,
+          "status": null
+        },
+        "name": "message:database_contention",
+        "result": "router_database_contention"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "deadlock",
+          "source": null,
+          "status": null
+        },
+        "name": "message:deadlock",
+        "result": "router_database_contention"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "planned maintenance",
+          "source": null,
+          "status": null
+        },
+        "name": "message:planned_maintenance",
+        "result": "router_maintenance"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "read-only mode",
+          "source": null,
+          "status": null
+        },
+        "name": "message:read_only_mode",
+        "result": "router_maintenance"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "workspace billing is paused",
+          "source": null,
+          "status": null
+        },
+        "name": "message:workspace_billing_paused",
+        "result": "monitor_workspace_paused"
+      },
+      {
+        "input": {
+          "error_type": "unsupported_route",
+          "message": "insufficient credits",
+          "source": "router",
+          "status": null
+        },
+        "name": "precedence:router_account_before_unsupported",
+        "result": "monitor_account_unavailable"
+      },
+      {
+        "input": {
+          "error_type": "unsupported_route",
+          "message": null,
+          "source": null,
+          "status": 401
+        },
+        "name": "precedence:unsupported_before_auth",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "workspace billing is paused after database contention",
+          "source": null,
+          "status": null
+        },
+        "name": "precedence:workspace_before_contention",
+        "result": "monitor_workspace_paused"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "max_completion_tokens",
+          "source": null,
+          "status": 400
+        },
+        "name": "probe_config_message:400:max_completion_tokens",
+        "result": "probe_config_error"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "max_tokens",
+          "source": null,
+          "status": 400
+        },
+        "name": "probe_config_message:400:max_tokens",
+        "result": "probe_config_error"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "temperature",
+          "source": null,
+          "status": 400
+        },
+        "name": "probe_config_message:400:temperature",
+        "result": "probe_config_error"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "top_p",
+          "source": null,
+          "status": 400
+        },
+        "name": "probe_config_message:400:top_p",
+        "result": "probe_config_error"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "max_completion_tokens",
+          "source": null,
+          "status": 422
+        },
+        "name": "probe_config_message:422:max_completion_tokens",
+        "result": "probe_config_error"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "max_tokens",
+          "source": null,
+          "status": 422
+        },
+        "name": "probe_config_message:422:max_tokens",
+        "result": "probe_config_error"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "temperature",
+          "source": null,
+          "status": 422
+        },
+        "name": "probe_config_message:422:temperature",
+        "result": "probe_config_error"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "top_p",
+          "source": null,
+          "status": 422
+        },
+        "name": "probe_config_message:422:top_p",
+        "result": "probe_config_error"
+      },
+      {
+        "input": {
+          "error_type": "bad_request",
+          "message": null,
+          "source": null,
+          "status": null
+        },
+        "name": "probe_config_type:bad_request",
+        "result": "probe_config_error"
+      },
+      {
+        "input": {
+          "error_type": "invalid_request",
+          "message": null,
+          "source": null,
+          "status": null
+        },
+        "name": "probe_config_type:invalid_request",
+        "result": "probe_config_error"
+      },
+      {
+        "input": {
+          "error_type": "invalid_request_error",
+          "message": null,
+          "source": null,
+          "status": null
+        },
+        "name": "probe_config_type:invalid_request_error",
+        "result": "probe_config_error"
+      },
+      {
+        "input": {
+          "error_type": "invalid_request_error_type",
+          "message": null,
+          "source": null,
+          "status": null
+        },
+        "name": "probe_config_type:invalid_request_error_type",
+        "result": "probe_config_error"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": null,
+          "source": "router",
+          "status": null
+        },
+        "name": "router:fallback",
+        "result": "router_error"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "api key expired",
+          "source": "router",
+          "status": null
+        },
+        "name": "router_account:api key expired",
+        "result": "monitor_account_unavailable"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "api key is disabled",
+          "source": "router",
+          "status": null
+        },
+        "name": "router_account:api key is disabled",
+        "result": "monitor_account_unavailable"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "api key not found",
+          "source": "router",
+          "status": null
+        },
+        "name": "router_account:api key not found",
+        "result": "monitor_account_unavailable"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "insufficient credits",
+          "source": "router",
+          "status": null
+        },
+        "name": "router_account:insufficient credits",
+        "result": "monitor_account_unavailable"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "invalid api key",
+          "source": "router",
+          "status": null
+        },
+        "name": "router_account:invalid api key",
+        "result": "monitor_account_unavailable"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "does not exist",
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_message:does not exist",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "does not support",
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_message:does not support",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "invalid model",
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_message:invalid model",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "model does not exist",
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_message:model does not exist",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "model not found",
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_message:model not found",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "model_not_found",
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_message:model_not_found",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "no endpoint",
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_message:no endpoint",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "no route",
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_message:no route",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "no such model",
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_message:no such model",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "not authorized",
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_message:not authorized",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "not available",
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_message:not available",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "not enabled",
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_message:not enabled",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "not permitted",
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_message:not permitted",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "not supported",
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_message:not supported",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "unavailable",
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_message:unavailable",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "unknown model",
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_message:unknown model",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "provider_error",
+          "message": "unsupported",
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_message:unsupported",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "model_not_available",
+          "message": null,
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_type:model_not_available",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "model_not_found",
+          "message": null,
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_type:model_not_found",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "not_found",
+          "message": null,
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_type:not_found",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "not_supported",
+          "message": null,
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_type:not_supported",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "unsupported",
+          "message": null,
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_type:unsupported",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "unsupported_model",
+          "message": null,
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_type:unsupported_model",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "unsupported_provider",
+          "message": null,
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_type:unsupported_provider",
+        "result": "unsupported_route"
+      },
+      {
+        "input": {
+          "error_type": "unsupported_route",
+          "message": null,
+          "source": null,
+          "status": null
+        },
+        "name": "unsupported_type:unsupported_route",
+        "result": "unsupported_route"
+      }
+    ],
+    "excluded_from_uptime": [
+      {
+        "input": null,
+        "result": false
+      },
+      {
+        "input": "",
+        "result": false
+      },
+      {
+        "input": "None",
+        "result": false
+      },
+      {
+        "input": "ReadTimeout",
+        "result": false
+      },
+      {
+        "input": "Router_error",
+        "result": false
+      },
+      {
+        "input": "bad_request",
+        "result": false
+      },
+      {
+        "input": "capacity_exceeded",
+        "result": false
+      },
+      {
+        "input": "credit_limit_exceeded",
+        "result": false
+      },
+      {
+        "input": "custom_provider_error",
+        "result": false
+      },
+      {
+        "input": "http_200",
+        "result": false
+      },
+      {
+        "input": "http_502",
+        "result": false
+      },
+      {
+        "input": "http_504",
+        "result": false
+      },
+      {
+        "input": "insufficient_credits",
+        "result": false
+      },
+      {
+        "input": "insufficient_throughput_sample",
+        "result": true
+      },
+      {
+        "input": "invalid_request",
+        "result": false
+      },
+      {
+        "input": "invalid_request_error",
+        "result": false
+      },
+      {
+        "input": "invalid_request_error_type",
+        "result": false
+      },
+      {
+        "input": "key_limit_exceeded",
+        "result": false
+      },
+      {
+        "input": "model_not_available",
+        "result": false
+      },
+      {
+        "input": "model_not_found",
+        "result": false
+      },
+      {
+        "input": "monitor_account_unavailable",
+        "result": true
+      },
+      {
+        "input": "monitor_workspace_paused",
+        "result": true
+      },
+      {
+        "input": "not_found",
+        "result": false
+      },
+      {
+        "input": "not_supported",
+        "result": false
+      },
+      {
+        "input": "overloaded",
+        "result": false
+      },
+      {
+        "input": "probe_config_error",
+        "result": true
+      },
+      {
+        "input": "provider_auth_config",
+        "result": true
+      },
+      {
+        "input": "provider_error",
+        "result": false
+      },
+      {
+        "input": "provider_timeout",
+        "result": false
+      },
+      {
+        "input": "rate_limit_error",
+        "result": false
+      },
+      {
+        "input": "rate_limit_exceeded",
+        "result": false
+      },
+      {
+        "input": "router_database_contention",
+        "result": true
+      },
+      {
+        "input": "router_error",
+        "result": true
+      },
+      {
+        "input": "router_maintenance",
+        "result": true
+      },
+      {
+        "input": "synthetic_/o1_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_/o3_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_/o4_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_cerebras/_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_connecttimeout_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_deadline_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_deep-research_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_deepseek-r_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_empty_stream_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_fast_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_flash-lite_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_glm-5_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_gpt-5.5_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_gpt-5.6_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_groq/_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_haiku_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_incomplete_stream_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_opus_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_readtimeout_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_reasoning_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_stream_error_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_stream_interrupted_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_thinking_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_timed_out_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_timeout_failure",
+        "result": false
+      },
+      {
+        "input": "unmapped_failure",
+        "result": false
+      },
+      {
+        "input": "unsupported",
+        "result": false
+      },
+      {
+        "input": "unsupported_model",
+        "result": false
+      },
+      {
+        "input": "unsupported_provider",
+        "result": false
+      },
+      {
+        "input": "unsupported_route",
+        "result": true
+      },
+      {
+        "input": "upstream",
+        "result": false
+      },
+      {
+        "input": "workspace_limit_exceeded",
+        "result": false
+      }
+    ]
+  },
+  "sample_fields": [
+    "created_at",
+    "elapsed_milliseconds",
+    "error_message",
+    "error_status",
+    "error_type",
+    "first_token_milliseconds",
+    "model",
+    "output_tokens",
+    "provider",
+    "source",
+    "speed_tokens_per_second",
+    "status",
+    "ttfb_milliseconds"
+  ],
+  "source_hashes": {
+    "catalog._decimal": "2c1bf5587a4d60d56b65cdece79937608e43a35661df24b4d1f087de5abfb4ce",
+    "components.is_router_origin_error": "ce3a226b41f03957f4ef43d2bdb51a1d5750db7ae2ad96b5b7c5fb1efee6f134",
+    "leaderboard._effective_throughput": "8d2a0df175cb0a7b986b0900f44f75fbe42e6b604e45127a2bdb0007d2b5e020",
+    "leaderboard._excluded_from_uptime": "6e673fe96aa8f6e317a2db774aa9f46de1a3c38ba958245e3d4e1527f2eb61a5",
+    "leaderboard._percentile": "f400388aa9334b49eef0e7005a79478c39c5c7868c2b0a6a3909b1f443f95742",
+    "leaderboard._sort_key": "ce505ca4b7d577416f080b19c67feb6791f7f3e446374677e402f5f8a10891b4",
+    "leaderboard.aggregate_leaderboard": "1ae336252e85afbe0181b55ed8c37288c8f144d01ad8c6db4888eb739bf20601",
+    "probes._chat_text": "d93e2345277c7fc9f2f201a308768f3cc42b2d53a9715a5cfe7801e3a0f2a3bb",
+    "probes._first_int": "29a2c84649a74c53afb4bfe4d017f9b799908bcd08704a26d1e4d2b7ac46c64a",
+    "probes._observe_provider_stream": "eb68ab6008853ff16e7930e20f151de978bf6b498bffd55dcce2023a50542c58",
+    "probes._pong_matches": "998237bb5709cb6804b12310face8e43876dd189fa179eed2802df8871716b0b",
+    "probes._response_error": "b99b11a62e9d331e655f65b612fb6dbab94885c3accb3dd30989311baa469d13",
+    "probes._responses_text": "99429cf72be3c5cd8dadd9569a08bfe1c17a6c42318309a376f4bf12d31bf1fa",
+    "probes._rotation_error_type": "54584b9ec26edb80f372d63f7b3a08916b1947b99b632e009a6b46e442ff3a76",
+    "probes._rotation_max_tokens": "99b68643eeec2f398dae3a920eea77bdf04644884e015c61ae01e57d0a19653e",
+    "probes._rotation_omits_temperature": "cd342f2c4d36ce49f57acad9b8a21b7515ebbbdeec42e53b7cc514b827c04980",
+    "probes._sse_line_error": "bc5e36f9addbf54b9f4045d0817d41e4818a9e78de53769be58e36cc3eee5b33",
+    "probes._sse_line_finish_reason": "90dfa40b8825eb4346522c1537f4a118feaa8c80e7f7b163883933748d096144",
+    "probes._sse_line_has_content": "5e5e660c7a34a0f8ab529fc0462b9972a2b973723c05e4025c45bfa4c0201d64",
+    "probes._sse_line_payload": "b1c471040fa210f1fafb8653c207989707ae0cdd014e9e31ed03cbc931d70e6e",
+    "probes._sse_line_usage": "03d596eaae4e6875f2e58789d477987617c72f87ba23120503c101374d4063bc",
+    "provider_reliability.classify_provider_failure": "f8e1b14099827858028ec415bf78272616bc81f3aeafc04a0b83117efd2c9e37",
+    "provider_reliability.model_deadlines": "61436cfe1e43f1aeb34ada0539a284de2a1c9ea4f871118db1ea80e6039dee08",
+    "routes._classify": "e28308b685513256d3d6441d429e1896796f68cc1d131bb78832fad4633bf7f0"
+  }
+}
