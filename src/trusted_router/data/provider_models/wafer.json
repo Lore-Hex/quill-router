@@ -90,7 +90,10 @@
       "output_token_price_per_m": 6600000,
       "zdr_supported": true,
       "context_length": 1048576,
-      "cached_input_token_price_per_m": 210000
+      "cached_input_token_price_per_m": 210000,
+      "deprecation_at": "2026-08-12T00:00:00Z",
+      "retirement_at": "2026-08-17T00:00:00Z",
+      "replacement_model_id": "z-ai/glm-5.2"
     },
     {
       "id": "qwen/qwen3.5-397b-a17b",

@@ -36,8 +36,9 @@ class _Retirement:
 
 
 _RETIREMENTS = (
-    # Wafer announced that GLM 5.1 and Kimi K3 Fast retire on 2026-08-17,
-    # with GLM 5.2 and Kimi K3 Standard as their respective replacements.
+    # Wafer announced that GLM 5.1, GLM 5.2 Fast, and Kimi K3 Fast retire on
+    # 2026-08-17. Standard GLM 5.2 replaces both GLM routes, while Kimi K3
+    # Standard replaces Kimi K3 Fast.
     # The notice did not specify a time zone, so use 00:00 UTC as the
     # conservative cutover. Other providers serving these models are
     # unaffected.
@@ -46,12 +47,15 @@ _RETIREMENTS = (
         model_ids=frozenset(
             {
                 "z-ai/glm-5.1",
+                "z-ai/glm-5.2-fast",
                 "moonshotai/kimi-k3-fast",
             }
         ),
         upstream_ids=frozenset(
             {
                 "GLM-5.1",
+                "GLM-5.2-Fast",
+                "glm5.2-fast",
                 "kimi-k3-fast",
             }
         ),
