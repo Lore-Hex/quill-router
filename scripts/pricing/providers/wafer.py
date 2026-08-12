@@ -47,10 +47,9 @@ MANIFEST_PATH = (
 
 EXPECTED_MODELS = [
     "z-ai/glm-5.2",
-    "z-ai/glm-5.2-fast",
     # Pinning a model Wafer might delist deadlocks manifest rebuilds
     # (validate raises -> stale fallback -> prune skipped); kimi-k2.6 already
-    # flipped non-ZDR once.
+    # flipped non-ZDR once. Retiring models must not be pinned here either.
     "minimax/minimax-m3",
 ]
 

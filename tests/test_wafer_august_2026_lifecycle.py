@@ -14,6 +14,7 @@ from trusted_router.catalog import endpoints_for_model
 _CUTOFF = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
 _RETIRING = {
     "z-ai/glm-5.1": "GLM-5.1",
+    "z-ai/glm-5.2-fast": "glm5.2-fast",
     "moonshotai/kimi-k3-fast": "kimi-k3-fast",
 }
 _REPLACEMENTS = {
@@ -167,6 +168,8 @@ def test_wafer_manifest_records_announced_replacements() -> None:
 
     assert rows["z-ai/glm-5.1"]["retirement_at"] == "2026-08-17T00:00:00Z"
     assert rows["z-ai/glm-5.1"]["replacement_model_id"] == "z-ai/glm-5.2"
+    assert rows["z-ai/glm-5.2-fast"]["retirement_at"] == "2026-08-17T00:00:00Z"
+    assert rows["z-ai/glm-5.2-fast"]["replacement_model_id"] == "z-ai/glm-5.2"
     assert (
         rows["moonshotai/kimi-k3-fast"]["retirement_at"]
         == "2026-08-17T00:00:00Z"
