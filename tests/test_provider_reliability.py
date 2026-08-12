@@ -45,6 +45,32 @@ def test_provider_account_quota_is_owned_by_trustedrouter() -> None:
     assert result.capacity_rejected is True
 
 
+def test_monitor_account_unavailable_is_a_router_fault_not_a_capacity_rejection() -> None:
+    # The probe never reached the provider: this type is only emitted when the
+    # MONITOR's own router account is unusable (probes.py, source == "router"
+    # plus an "insufficient credits"/"invalid api key" message). It is monitor
+    # trouble, so it must not read as an upstream capacity rejection — a bare
+    # 402 still does, and that path is asserted alongside it here so removing
+    # the redundant leg cannot quietly take the real one with it.
+    monitor = classify_provider_failure(
+        status="error",
+        error_type="monitor_account_unavailable",
+        error_status=None,
+    )
+    upstream_payment_required = classify_provider_failure(
+        status="error",
+        error_type="provider_error",
+        error_status=402,
+    )
+
+    assert monitor.owner is FailureOwner.TRUSTEDROUTER
+    assert monitor.failure_class is FailureClass.ROUTER_FAULT
+    assert monitor.counts_toward_provider_availability is False
+    assert monitor.capacity_rejected is False
+    assert upstream_payment_required.failure_class is FailureClass.TRUSTEDROUTER_CAPACITY
+    assert upstream_payment_required.capacity_rejected is True
+
+
 def test_ambiguous_error_is_not_charged_to_provider() -> None:
     result = classify_provider_failure(
         status="error",
