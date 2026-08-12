@@ -42,6 +42,16 @@ VIDEO_GENERATION_MODEL = "x-ai/grok-imagine-video"
 VIDEO_GENERATION_PROVIDER = "grok"
 VIDEO_GENERATION_DURATION_SECONDS = 1
 VIDEO_GENERATION_RESOLUTION = "480p"
+# Reverted from "Respond with only the word PONG." back to
+# "reply exactly PONG" — the original phrasing worked at
+# 99.97% uptime for ~24h on the same monitor pool, then the
+# rephrase coincided with a surge to 100% pong_mismatch at
+# 06:00Z 2026-06-02. DeepSeek V4 Flash (current pool leader)
+# appears to interpret the new phrasing differently — maybe
+# refusing, maybe wrapping in markdown the extractor doesn't
+# reach. Reverting to the known-good prompt while we
+# investigate the underlying response shape.
+PONG_PROMPT = "reply exactly PONG"
 _IMAGE_CANARY_PROMPT = (
     "Generate and return an actual square image now, not a textual description. "
     "Show one solid red circle centered on a white background."
@@ -975,16 +985,7 @@ async def openai_chat_pong_probe(
     url = _api_url(target.api_base_url, "/chat/completions")
     body = {
         "model": model,
-        # Reverted from "Respond with only the word PONG." back to
-        # "reply exactly PONG" — the original phrasing worked at
-        # 99.97% uptime for ~24h on the same monitor pool, then the
-        # rephrase coincided with a surge to 100% pong_mismatch at
-        # 06:00Z 2026-06-02. DeepSeek V4 Flash (current pool leader)
-        # appears to interpret the new phrasing differently — maybe
-        # refusing, maybe wrapping in markdown the extractor doesn't
-        # reach. Reverting to the known-good prompt while we
-        # investigate the underlying response shape.
-        "messages": [{"role": "user", "content": "reply exactly PONG"}],
+        "messages": [{"role": "user", "content": PONG_PROMPT}],
         # max_tokens stays at 128 so reasoning models (kimi-k2.6,
         # glm-4.6) in the rollover tail still finish their thinking
         # phase if they're ever reached.
@@ -1042,10 +1043,10 @@ async def responses_pong_probe(
     url = _api_url(target.api_base_url, "/responses")
     body = {
         "model": model,
-        # Same prompt as chat-completions — see that probe's revert
-        # comment. Original phrasing worked, rephrase coincided with
+        # Same prompt as chat-completions — see PONG_PROMPT's warning
+        # comment. Original phrasing worked; rephrasing coincided with a
         # 100% failure surge on 2026-06-02.
-        "input": "reply exactly PONG",
+        "input": PONG_PROMPT,
         # See chat-completions probe — same reason: reasoning models in
         # the monitor pool need headroom past their thinking phase.
         "max_output_tokens": 128,
@@ -2143,7 +2144,7 @@ async def provider_rotation_probe(
     url = _api_url(target.api_base_url, "/chat/completions")
     body = {
         "model": model,
-        "messages": [{"role": "user", "content": "reply exactly PONG"}],
+        "messages": [{"role": "user", "content": PONG_PROMPT}],
         "max_tokens": _rotation_max_tokens(provider, model),
         "stream": True,
         "provider": {"only": [provider]},
