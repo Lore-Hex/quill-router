@@ -103,7 +103,11 @@ ensure_policies() {
   done
 }
 
-ensure_slow_metric
+if ! ensure_slow_metric; then
+  # Log-metric administration is a separate IAM capability from alert-policy
+  # administration. Do not let that optional metric block urgent policy fixes.
+  log "WARN: unable to reconcile the optional slow billing-path metric; continuing with alert policies"
+fi
 channel="$(ensure_channel)"
 ensure_policies "$channel"
 log "Gateway billing-path alerting is configured"

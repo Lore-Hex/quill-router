@@ -71,6 +71,8 @@ def test_gateway_alert_deploy_is_idempotent_and_dry_run_by_default() -> None:
     assert "TrustedRouter Spanner on-call" in script
     assert 'httpRequest.status < 500' in script
     assert 'httpRequest.latency >= "10s"' in script
+    assert "if ! ensure_slow_metric; then" in script
+    assert "continuing with alert policies" in script
 
 
 def test_gateway_alert_workflow_requires_explicit_apply() -> None:
