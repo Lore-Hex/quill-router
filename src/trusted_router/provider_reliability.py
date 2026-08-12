@@ -140,11 +140,7 @@ def classify_provider_failure(
             FailureClass.PROVIDER_AUTH_CONFIG,
             False,
         )
-    if (
-        error_status == 402
-        or kind == "monitor_account_unavailable"
-        or any(marker in message for marker in _ACCOUNT_QUOTA_MARKERS)
-    ):
+    if error_status == 402 or any(marker in message for marker in _ACCOUNT_QUOTA_MARKERS):
         return FailureAttribution(
             FailureOwner.TRUSTEDROUTER,
             FailureClass.TRUSTEDROUTER_CAPACITY,
