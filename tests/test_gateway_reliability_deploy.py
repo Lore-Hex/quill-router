@@ -14,6 +14,7 @@ def test_gateway_5xx_alert_is_immediate_and_debounced() -> None:
     assert 'resource.labels.service_name = "trusted-router"' in policy
     assert "httpRequest.status >= 500" in policy
     assert "httpRequest.status < 600" in policy
+    assert "httpRequest.status != 501" in policy
     assert "/internal/gateway/(authorize|settle|refund)" in policy
     assert "notificationRateLimit:" in policy
     assert "period: 1800s" in policy

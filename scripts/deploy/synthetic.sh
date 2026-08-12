@@ -201,7 +201,10 @@ throughput_env_vars=(
   "TR_SYNTHETIC_BENCHMARK_INGEST_URL=${throughput_ingest_base}/v1/internal/synthetic/benchmark"
   "TR_SYNTHETIC_ROUTE_HEALTH_URL=${throughput_ingest_base}/v1/internal/synthetic/route-health"
   "TR_SYNTHETIC_BILLING_CONCURRENCY=1"
-  "TR_SYNTHETIC_START_DELAY_SECONDS=45"
+  # This isolated job does not contend with the regional health jobs, so it
+  # does not need their startup staggering. The probe itself gets 210 seconds
+  # and the task keeps another 90 seconds for cold start and sample ingestion.
+  "TR_SYNTHETIC_START_DELAY_SECONDS=0"
   "TR_SYNTHETIC_ROTATION_ENABLED=false"
   "TR_SYNTHETIC_ROTATION_PER_PASS=0"
   "TR_SYNTHETIC_THROUGHPUT_ENABLED=true"
@@ -211,6 +214,7 @@ throughput_env_vars=(
   "TR_SYNTHETIC_THROUGHPUT_MAX_TOKENS=512"
   "TR_SYNTHETIC_THROUGHPUT_MINIMUM_OUTPUT_TOKENS=128"
   "TR_SYNTHETIC_THROUGHPUT_TIMEOUT_SECONDS=90"
+  "TR_SYNTHETIC_THROUGHPUT_TIMEOUT_CEILING_SECONDS=210"
   "TR_SYNTHETIC_THROUGHPUT_INTERVAL_SECONDS=300"
 )
 throughput_set_env_vars="$(IFS='|'; echo "^|^${throughput_env_vars[*]}")"
@@ -225,7 +229,7 @@ gc run jobs deploy "$throughput_job_name" \
   --set-env-vars "$throughput_set_env_vars" \
   --update-secrets "$UPDATE_SECRETS" \
   --max-retries 0 \
-  --task-timeout 180s \
+  --task-timeout 300s \
   --cpu 1 \
   --memory 1Gi \
   --quiet >/dev/null

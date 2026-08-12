@@ -75,6 +75,17 @@ SENSITIVE_STRING_PREFIXES: tuple[str, ...] = (
     "ghr_",  # GitHub refresh token
 )
 
+# An HTTP 501 is an explicit compatibility response, not an unhandled server
+# failure. In particular, the gateway returns it before creating a billing hold
+# when a route/endpoint combination is unsupported. Keep real 5xx failures and
+# our high-signal 405 contract signal in Sentry without paging on that expected
+# fail-closed response.
+SENTRY_FAILED_REQUEST_STATUS_CODES = {
+    405,
+    *range(500, 501),
+    *range(502, 600),
+}
+
 
 @dataclass(frozen=True)
 class SentryFloodgateConfig:
@@ -198,11 +209,11 @@ def init_sentry(settings: Settings) -> None:
             # unreported: 401/402/404 are routine and would drown the signal.
             StarletteIntegration(
                 transaction_style="endpoint",
-                failed_request_status_codes={405, *range(500, 600)},
+                failed_request_status_codes=SENTRY_FAILED_REQUEST_STATUS_CODES,
             ),
             FastApiIntegration(
                 transaction_style="endpoint",
-                failed_request_status_codes={405, *range(500, 600)},
+                failed_request_status_codes=SENTRY_FAILED_REQUEST_STATUS_CODES,
             ),
         ],
         # cast over Sentry's TypedDict event/log signatures — the scrubbers
@@ -272,11 +283,41 @@ def before_breadcrumb(
 
 def _is_dropped_noise(event: dict[str, Any]) -> bool:
     text = json.dumps(event, default=str)
-    return (
+    if (
         "Failed to export metrics to Cloud Monitoring" in text
         and "spanner.googleapis.com/internal/client/" in text
         and "missing (instance_id)" in text
+    ):
+        return True
+    return _is_public_scanner_405(event)
+
+
+def _is_public_scanner_405(event: dict[str, Any]) -> bool:
+    """Drop only unmistakable CMS reconnaissance, not application 405s."""
+    exception = event.get("exception")
+    values = exception.get("values") if isinstance(exception, dict) else None
+    if not isinstance(values, list) or not values:
+        return False
+    latest = values[-1]
+    if not isinstance(latest, dict):
+        return False
+    if latest.get("type") != "HTTPException" or latest.get("value") != "Method Not Allowed":
+        return False
+
+    request = event.get("request")
+    if not isinstance(request, dict):
+        return False
+    target = " ".join(
+        str(request.get(field) or "") for field in ("url", "query_string", "path")
+    ).lower()
+    scanner_markers = (
+        "rest_route=%2fbatch%2fv1",
+        "rest_route=/batch/v1",
+        "/wp-admin",
+        "/wp-login.php",
+        "/xmlrpc.php",
     )
+    return any(marker in target for marker in scanner_markers)
 
 
 def configure_sentry_floodgate(settings: Settings) -> None:
