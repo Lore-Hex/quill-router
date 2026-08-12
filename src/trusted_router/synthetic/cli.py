@@ -47,6 +47,7 @@ _DEFAULT_THROUGHPUT_ROUTE_LIMIT = 200
 _DEFAULT_THROUGHPUT_MAX_TOKENS = 512
 _DEFAULT_THROUGHPUT_MINIMUM_OUTPUT_TOKENS = 128
 _DEFAULT_THROUGHPUT_TIMEOUT_SECONDS = 90.0
+_DEFAULT_THROUGHPUT_TIMEOUT_CEILING_SECONDS = 210.0
 _DEFAULT_THROUGHPUT_INTERVAL_SECONDS = THROUGHPUT_INTERVAL_SECONDS
 
 
@@ -127,6 +128,7 @@ async def _probe_and_rotation_pass(
     throughput_max_tokens: int = _DEFAULT_THROUGHPUT_MAX_TOKENS,
     throughput_minimum_output_tokens: int = _DEFAULT_THROUGHPUT_MINIMUM_OUTPUT_TOKENS,
     throughput_timeout_seconds: float = _DEFAULT_THROUGHPUT_TIMEOUT_SECONDS,
+    throughput_timeout_ceiling_seconds: float = _DEFAULT_THROUGHPUT_TIMEOUT_CEILING_SECONDS,
     throughput_interval_seconds: int = _DEFAULT_THROUGHPUT_INTERVAL_SECONDS,
     billing_concurrency: int = DEFAULT_SYNTHETIC_BILLING_CONCURRENCY,
 ) -> tuple[list[SyntheticProbeSample], list[ProviderBenchmarkSample]]:
@@ -168,6 +170,7 @@ async def _probe_and_rotation_pass(
                     max_tokens=throughput_max_tokens,
                     minimum_output_tokens=throughput_minimum_output_tokens,
                     timeout_seconds=throughput_timeout_seconds,
+                    timeout_ceiling_seconds=throughput_timeout_ceiling_seconds,
                     interval_seconds=throughput_interval_seconds,
                 )
             )
@@ -278,6 +281,7 @@ async def _throughput_pass(
     max_tokens: int,
     minimum_output_tokens: int,
     timeout_seconds: float,
+    timeout_ceiling_seconds: float,
     interval_seconds: int,
 ) -> list[ProviderBenchmarkSample]:
     candidates = throughput_candidates(limit=route_limit)
@@ -288,13 +292,17 @@ async def _throughput_pass(
     if picked is None:
         return []
     provider, model = picked
-    effective_timeout_seconds = max(
+    model_timeout_seconds = max(
         timeout_seconds,
         model_deadlines(
             model,
             provider=provider,
             default_first_token_seconds=settings.synthetic_monitor_timeout_seconds,
         ).completion_seconds,
+    )
+    effective_timeout_seconds = min(
+        model_timeout_seconds,
+        max(timeout_ceiling_seconds, 1.0),
     )
     target = SyntheticTarget("throughput", settings.api_base_url, monitor_region)
     async with httpx.AsyncClient(timeout=httpx.Timeout(effective_timeout_seconds)) as client:
@@ -417,6 +425,12 @@ async def run() -> int:
             str(_DEFAULT_THROUGHPUT_TIMEOUT_SECONDS),
         )
     )
+    throughput_timeout_ceiling_seconds = float(
+        os.environ.get(
+            "TR_SYNTHETIC_THROUGHPUT_TIMEOUT_CEILING_SECONDS",
+            str(_DEFAULT_THROUGHPUT_TIMEOUT_CEILING_SECONDS),
+        )
+    )
     throughput_interval_seconds = max(
         1,
         int(
@@ -472,6 +486,7 @@ async def run() -> int:
                 max_tokens=throughput_max_tokens,
                 minimum_output_tokens=throughput_minimum_output_tokens,
                 timeout_seconds=throughput_timeout_seconds,
+                timeout_ceiling_seconds=throughput_timeout_ceiling_seconds,
                 interval_seconds=throughput_interval_seconds,
             )
         )
@@ -494,6 +509,7 @@ async def run() -> int:
                 throughput_max_tokens=throughput_max_tokens,
                 throughput_minimum_output_tokens=throughput_minimum_output_tokens,
                 throughput_timeout_seconds=throughput_timeout_seconds,
+                throughput_timeout_ceiling_seconds=throughput_timeout_ceiling_seconds,
                 throughput_interval_seconds=throughput_interval_seconds,
                 billing_concurrency=billing_concurrency,
             )

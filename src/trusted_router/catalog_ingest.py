@@ -124,6 +124,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "cerebras",
         "cloudflare-workers-ai",
         "crusoe",
+        "anthropic",
         "baseten",
         "friendli",
         "google-ai-studio",

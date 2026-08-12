@@ -17,6 +17,7 @@ from trusted_router.main import create_app
 from trusted_router.sentry_config import (
     SENSITIVE_STRING_FRAGMENTS,
     SENSITIVE_STRING_PREFIXES,
+    SENTRY_FAILED_REQUEST_STATUS_CODES,
     before_breadcrumb,
     before_send,
     before_send_log,
@@ -316,6 +317,39 @@ def test_sentry_drops_spanner_client_metrics_export_noise() -> None:
     assert before_send(noisy, {}) is None
     assert before_send_log(noisy, {}) is None
     assert before_breadcrumb(noisy, {}) is None
+
+
+def test_sentry_failed_request_statuses_exclude_expected_compatibility_501() -> None:
+    assert 405 in SENTRY_FAILED_REQUEST_STATUS_CODES
+    assert 500 in SENTRY_FAILED_REQUEST_STATUS_CODES
+    assert 501 not in SENTRY_FAILED_REQUEST_STATUS_CODES
+    assert 502 in SENTRY_FAILED_REQUEST_STATUS_CODES
+    assert 599 in SENTRY_FAILED_REQUEST_STATUS_CODES
+
+
+def test_sentry_drops_wordpress_scanner_405_but_keeps_application_405() -> None:
+    def event(url: str) -> dict:
+        return {
+            "level": "error",
+            "request": {"url": url},
+            "exception": {
+                "values": [
+                    {
+                        "type": "HTTPException",
+                        "value": "Method Not Allowed",
+                    }
+                ]
+            },
+        }
+
+    assert (
+        before_send(
+            event("https://trustedrouter.com/?rest_route=%2Fbatch%2Fv1"),
+            {},
+        )
+        is None
+    )
+    assert before_send(event("https://trustedrouter.com/console/credits"), {}) is not None
 
 
 def test_sentry_floodgate_drops_repeated_issue_after_per_fingerprint_limit() -> None:

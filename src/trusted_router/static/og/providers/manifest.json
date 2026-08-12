@@ -10,10 +10,10 @@
   },
   "anthropic": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 10,
     "name": "Anthropic",
     "privacy": "Policy documented",
-    "route_count": 22,
+    "route_count": 20,
     "route_mode": "Prepaid + BYOK",
     "slug": "anthropic"
   },

@@ -329,6 +329,48 @@ async def test_throughput_pass_runs_in_configured_region_only(
 
 
 @pytest.mark.asyncio
+async def test_throughput_pass_caps_model_deadline_to_job_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, float] = {}
+
+    class _Deadlines:
+        completion_seconds = 900.0
+
+    async def fake_probe(
+        _client: httpx.AsyncClient,
+        _target: SyntheticTarget,
+        **kwargs: Any,
+    ) -> ProviderBenchmarkSample:
+        captured["total_timeout_seconds"] = float(kwargs["total_timeout_seconds"])
+        return _benchmark_sample()
+
+    monkeypatch.setattr(cli_module, "throughput_candidates", lambda limit: [("slow", "slow/model")])
+    monkeypatch.setattr(
+        cli_module,
+        "choose_throughput_target",
+        lambda _candidates, interval_seconds: ("slow", "slow/model"),
+    )
+    monkeypatch.setattr(cli_module, "model_deadlines", lambda *_args, **_kwargs: _Deadlines())
+    monkeypatch.setattr(cli_module, "provider_throughput_probe", fake_probe)
+
+    result = await cli_module._throughput_pass(
+        settings=Settings(environment="test", sentry_dsn=None),
+        monitor_region="us-central1",
+        api_key="sk-test",  # noqa: S106 - test placeholder.
+        route_limit=200,
+        max_tokens=512,
+        minimum_output_tokens=128,
+        timeout_seconds=90.0,
+        timeout_ceiling_seconds=210.0,
+        interval_seconds=300,
+    )
+
+    assert len(result) == 1
+    assert captured["total_timeout_seconds"] == 210.0
+
+
+@pytest.mark.asyncio
 async def test_throughput_only_cli_skips_every_health_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

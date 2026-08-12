@@ -10,6 +10,7 @@ from trusted_router.catalog import (
     endpoint_zero_data_retention,
     endpoints_for_model,
 )
+from trusted_router.synthetic.probes import rotation_candidates
 
 
 def _opus_5_api_row() -> dict[str, object]:
@@ -268,3 +269,10 @@ def test_opus_5_catalog_is_routable_for_chat_and_messages_but_not_zdr() -> None:
         for endpoint in anthropic_endpoints
     )
     assert not any(endpoint_zero_data_retention(endpoint) for endpoint in endpoints)
+
+
+def test_anthropic_rotation_uses_authenticated_manifest_not_snapshot_only_models() -> None:
+    candidates = set(rotation_candidates()["anthropic"])
+
+    assert "anthropic/claude-opus-5" in candidates
+    assert "anthropic/claude-opus-5-fast" not in candidates
