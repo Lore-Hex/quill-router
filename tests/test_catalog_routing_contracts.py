@@ -333,8 +333,9 @@ def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped()
         ),
         (
             "grok",
-            4,
+            5,
             [
+                "x-ai/grok-4.6",
                 "x-ai/grok-4.5",
                 "x-ai/grok-4.3",
             ],
@@ -395,6 +396,38 @@ def test_grok_45_uses_xai_native_model_id_and_pricing() -> None:
     assert prepaid.prompt_price_microdollars_per_million_tokens == 2_100_000
     assert prepaid.completion_price_microdollars_per_million_tokens == 6_300_000
     assert prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 525_000
+
+
+def test_grok_46_uses_xai_native_model_id_and_long_context_pricing() -> None:
+    model = MODELS["x-ai/grok-4.6"]
+    prepaid = MODEL_ENDPOINTS["x-ai/grok-4.6@grok/prepaid"]
+    byok = MODEL_ENDPOINTS["x-ai/grok-4.6@grok/byok"]
+
+    assert model.provider == "grok"
+    assert model.context_length == 500_000
+    assert prepaid.upstream_id == "grok-4.6"
+    assert byok.upstream_id == "grok-4.6"
+    assert [tier.max_prompt_tokens for tier in prepaid.price_tiers] == [200_000, None]
+    assert [
+        (
+            tier.prompt_price_microdollars_per_million_tokens,
+            tier.completion_price_microdollars_per_million_tokens,
+            tier.prompt_cached_price_microdollars_per_million_tokens,
+        )
+        for tier in prepaid.price_tiers
+    ] == [
+        (2_100_000, 6_300_000, 525_000),
+        (4_200_000, 12_600_000, 1_050_000),
+    ]
+
+
+def test_qwen_38_routes_only_through_hosts_with_verified_pricing() -> None:
+    model_id = "qwen/qwen3.8-max"
+
+    assert f"{model_id}@novita/prepaid" in MODEL_ENDPOINTS
+    assert f"{model_id}@atlas-cloud/prepaid" in MODEL_ENDPOINTS
+    assert f"{model_id}@alibaba/prepaid" not in MODEL_ENDPOINTS
+    assert f"{model_id}@alibaba/byok" not in MODEL_ENDPOINTS
 
 
 def test_novita_hy3_uses_live_provider_id_and_price_floor() -> None:
