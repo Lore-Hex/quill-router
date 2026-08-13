@@ -8,6 +8,7 @@ from typing import Any
 from trusted_router.config import Settings
 from trusted_router.domains import (
     api_base_url_for_domain,
+    canonical_public_url,
     configured_control_domains,
 )
 
@@ -117,7 +118,7 @@ def trust_html(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TrustedRouter Trust</title>
-  <link rel="canonical" href="https://trust.trustedrouter.com/">
+  <link rel="canonical" href="{html.escape(canonical_public_url(settings, '/trust'))}">
   <style>
     :root {{
       color-scheme: light;

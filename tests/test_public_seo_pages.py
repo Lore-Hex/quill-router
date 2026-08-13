@@ -189,7 +189,7 @@ def test_duplicate_api_reference_surfaces_redirect_to_canonical(
         assert response.headers["location"] == "/api/reference"
 
 
-def test_trust_page_declares_dedicated_trust_host_as_canonical(
+def test_trust_page_declares_primary_trust_path_as_canonical(
     client: TestClient,
 ) -> None:
     for path, headers in [
@@ -199,7 +199,7 @@ def test_trust_page_declares_dedicated_trust_host_as_canonical(
         response = client.get(path, headers=headers)
         assert response.status_code == 200
         assert response.text.count('rel="canonical"') == 1
-        assert '<link rel="canonical" href="https://trust.trustedrouter.com/">' in response.text
+        assert '<link rel="canonical" href="https://trustedrouter.com/trust">' in response.text
 
 
 def test_indexnow_key_file_is_public(client: TestClient) -> None:
