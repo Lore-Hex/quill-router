@@ -91,19 +91,19 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 52,
+    "model_count": 53,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 103,
+    "route_count": 104,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
   "deepseek": {
     "card_version": 2,
-    "model_count": 4,
+    "model_count": 5,
     "name": "DeepSeek",
     "privacy": "Policy documented",
-    "route_count": 7,
+    "route_count": 8,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepseek"
   },
@@ -127,10 +127,10 @@
   },
   "fireworks": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 12,
     "name": "Fireworks AI",
     "privacy": "Policy documented",
-    "route_count": 22,
+    "route_count": 23,
     "route_mode": "Prepaid + BYOK",
     "slug": "fireworks"
   },
@@ -307,10 +307,10 @@
   },
   "parasail": {
     "card_version": 2,
-    "model_count": 26,
+    "model_count": 27,
     "name": "Parasail",
     "privacy": "Zero retention",
-    "route_count": 52,
+    "route_count": 53,
     "route_mode": "Prepaid + BYOK",
     "slug": "parasail"
   },
@@ -334,10 +334,10 @@
   },
   "siliconflow": {
     "card_version": 2,
-    "model_count": 28,
+    "model_count": 29,
     "name": "SiliconFlow",
     "privacy": "Policy documented",
-    "route_count": 56,
+    "route_count": 57,
     "route_mode": "Prepaid + BYOK",
     "slug": "siliconflow"
   },

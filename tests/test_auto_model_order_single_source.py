@@ -36,11 +36,10 @@ def test_documented_ladder_survives_catalog_filtering() -> None:
     assert len(auto_candidate_models(None)) >= 3
 
 
-def test_auto_leads_with_the_intended_cheap_model() -> None:
-    """The ladder is tried in order, so entry zero is what auto costs in the
-    common case. It must be the cheap leader, not a frontier model."""
-    assert DEFAULT_AUTO_MODEL_ORDER[0] == "deepseek/deepseek-v4-flash-0731"
-    assert auto_candidate_models(None)[0].id == "deepseek/deepseek-v4-flash-0731"
+def test_auto_leads_with_the_current_deepseek_release() -> None:
+    """The global ladder must start with the explicitly pinned 0813 release."""
+    assert DEFAULT_AUTO_MODEL_ORDER[0] == "deepseek/deepseek-v4-pro-0813"
+    assert auto_candidate_models(None)[0].id == "deepseek/deepseek-v4-pro-0813"
 
 
 def test_explicit_override_still_wins() -> None:

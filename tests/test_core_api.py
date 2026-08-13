@@ -806,23 +806,29 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/aristotle",
         "trustedrouter/aristotle-1.0",
         "trustedrouter/aristotle-1.1",
+        "trustedrouter/aristotle-2.0",
         "trustedrouter/plato",
         "trustedrouter/plato-1.0",
+        "trustedrouter/plato-3.0",
         "trustedrouter/plato-pro",
         "trustedrouter/plato-pro-1.0",
         "trustedrouter/plato-pro-2.0",
         "trustedrouter/socrates-1.1",
+        "trustedrouter/socrates-2.0",
         "trustedrouter/socrates-pro",
         "trustedrouter/socrates-pro-1.0",
         "trustedrouter/socrates-pro-plus",
         "trustedrouter/socrates-pro-plus-1.0",
         "trustedrouter/iris-1.0",
         "trustedrouter/iris-2.0",
+        "trustedrouter/iris-3.0",
         "trustedrouter/prometheus-1.0",
         "trustedrouter/prometheus-1.0-1m",
         "trustedrouter/prometheus-2.0",
+        "trustedrouter/prometheus-3.0",
         "trustedrouter/zeus-1.0",
         "trustedrouter/zeus-1.0-mini",
+        "trustedrouter/zeus-2.0",
         "trustedrouter/iris-code",
         "trustedrouter/prometheus-code",
         "trustedrouter/zeus-code",
@@ -831,8 +837,12 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/zeus-code-1.0",
         "trustedrouter/openpatcher-g1",
         "trustedrouter/openpatcher-g2",
+        "trustedrouter/openpatcher-g3",
         "trustedrouter/openpatcher-s2",
+        "trustedrouter/openpatcher-s3",
         "trustedrouter/athena",
+        "trustedrouter/athena-1.0",
+        "trustedrouter/athena-2.0",
         "trustedrouter/selector",
         "trustedrouter/mapreduce",
         "trustedrouter/liberty-1.0",
@@ -852,10 +862,14 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "cerebras/zai-glm-4.7",
     ]
     plato_meta = models_by_id["trustedrouter/plato"]["trustedrouter"]
-    plato_pro_meta = models_by_id["trustedrouter/plato-pro-1.0"]["trustedrouter"]
+    plato_3_meta = models_by_id["trustedrouter/plato-3.0"]["trustedrouter"]
     assert models_by_id["trustedrouter/plato"]["context_length"] == 1_048_576
-    assert plato_meta["canonical_model_id"] == "trustedrouter/plato-pro-1.0"
-    assert plato_meta["auto_candidates"] == plato_pro_meta["auto_candidates"]
+    assert plato_meta["canonical_model_id"] == "trustedrouter/plato-3.0"
+    assert plato_meta["auto_candidates"] == plato_3_meta["auto_candidates"]
+    assert plato_meta["auto_candidates"] == [
+        "deepseek/deepseek-v4-pro-0813",
+        "trustedrouter/prometheus-3.0",
+    ]
     plato_pro_2_meta = models_by_id["trustedrouter/plato-pro-2.0"]["trustedrouter"]
     assert models_by_id["trustedrouter/plato-pro"]["trustedrouter"]["canonical_model_id"] == (
         "trustedrouter/plato-pro-2.0"
@@ -870,36 +884,44 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     ]
     iris_meta = models_by_id["trustedrouter/iris"]["trustedrouter"]
     assert iris_meta["route_kind"] == "fusion_panel"
-    assert iris_meta["canonical_model_id"] == "trustedrouter/iris-2.0"
+    assert iris_meta["canonical_model_id"] == "trustedrouter/iris-3.0"
     assert models_by_id["trustedrouter/iris"]["context_length"] == 1_048_576
     assert iris_meta["auto_candidates"] == [
         "minimax/minimax-m3",
         "moonshotai/kimi-k3",
-        "deepseek/deepseek-v4-pro",
+        "deepseek/deepseek-v4-pro-0813",
     ]
     assert models_by_id["trustedrouter/iris-1.0"]["trustedrouter"]["auto_candidates"] == [
         "minimax/minimax-m3",
         "moonshotai/kimi-k2.6",
-        "deepseek/deepseek-v4-pro",
+        "deepseek/deepseek-v4-pro-0423",
     ]
     prometheus_code_meta = models_by_id["trustedrouter/prometheus-code"]["trustedrouter"]
     assert prometheus_code_meta["route_kind"] == "fusion_panel"
     assert "moonshotai/kimi-k2.7-code" in prometheus_code_meta["auto_candidates"]
-    assert (
-        models_by_id["trustedrouter/prometheus-code-1.0"]["trustedrouter"]["auto_candidates"]
-        == prometheus_code_meta["auto_candidates"]
-    )
+    assert models_by_id["trustedrouter/prometheus-code-1.0"]["trustedrouter"][
+        "auto_candidates"
+    ][-1] == "deepseek/deepseek-v4-pro-0423"
+    assert prometheus_code_meta["auto_candidates"][-1] == "deepseek/deepseek-v4-pro-0813"
     prometheus_2_meta = models_by_id["trustedrouter/prometheus-2.0"]["trustedrouter"]
+    prometheus_3_meta = models_by_id["trustedrouter/prometheus-3.0"]["trustedrouter"]
     assert models_by_id["trustedrouter/prometheus"]["context_length"] == 1_048_576
     assert models_by_id["trustedrouter/prometheus-2.0"]["context_length"] == 1_048_576
     assert models_by_id["trustedrouter/prometheus"]["trustedrouter"]["canonical_model_id"] == (
-        "trustedrouter/prometheus-2.0"
+        "trustedrouter/prometheus-3.0"
     )
     assert prometheus_2_meta["auto_candidates"] == [
         "minimax/minimax-m3",
         "moonshotai/kimi-k3",
         "z-ai/glm-5.2",
-        "deepseek/deepseek-v4-pro",
+        "deepseek/deepseek-v4-pro-0423",
+        "xiaomi/mimo-v2.5-pro",
+    ]
+    assert prometheus_3_meta["auto_candidates"] == [
+        "minimax/minimax-m3",
+        "moonshotai/kimi-k3",
+        "z-ai/glm-5.2",
+        "deepseek/deepseek-v4-pro-0813",
         "xiaomi/mimo-v2.5-pro",
     ]
     zeus_meta = models_by_id["trustedrouter/zeus"]["trustedrouter"]
@@ -914,11 +936,11 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "minimax/minimax-m3",
         "z-ai/glm-5.2",
         "xiaomi/mimo-v2.5-pro",
-        "deepseek/deepseek-v4-pro",
+        "deepseek/deepseek-v4-pro-0813",
     ]
-    assert (
-        models_by_id["trustedrouter/zeus-1.0"]["trustedrouter"]["auto_candidates"]
-        == zeus_meta["auto_candidates"]
+    assert zeus_meta["canonical_model_id"] == "trustedrouter/zeus-2.0"
+    assert models_by_id["trustedrouter/zeus-1.0"]["trustedrouter"]["auto_candidates"][-1] == (
+        "deepseek/deepseek-v4-pro-0423"
     )
     assert models_by_id["trustedrouter/zeus-1.0-mini"]["trustedrouter"]["auto_candidates"] == [
         "google/gemini-3.1-pro-preview",
@@ -926,7 +948,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "minimax/minimax-m3",
         "z-ai/glm-5.2",
         "xiaomi/mimo-v2.5-pro",
-        "deepseek/deepseek-v4-pro",
+        "deepseek/deepseek-v4-pro-0423",
     ]
     aristotle_10_meta = models_by_id["trustedrouter/aristotle-1.0"]["trustedrouter"]
     aristotle_11_meta = models_by_id["trustedrouter/aristotle-1.1"]["trustedrouter"]
@@ -938,13 +960,17 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     ]
     assert models_by_id["trustedrouter/aristotle-1.1"]["context_length"] == 1_048_576
     assert models_by_id["trustedrouter/aristotle"]["context_length"] == 1_048_576
-    assert aristotle_meta["canonical_model_id"] == "trustedrouter/aristotle-1.1"
+    assert aristotle_meta["canonical_model_id"] == "trustedrouter/aristotle-2.0"
     assert aristotle_11_meta["auto_candidates"] == [
         "z-ai/glm-5.2-fast",
         "z-ai/glm-5.2",
         "trustedrouter/zeus-1.0",
     ]
-    assert aristotle_meta["auto_candidates"] == aristotle_11_meta["auto_candidates"]
+    assert aristotle_meta["auto_candidates"] == [
+        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.2",
+        "trustedrouter/zeus-2.0",
+    ]
     socrates_pro_plus_meta = models_by_id["trustedrouter/socrates-pro-plus-1.0"]["trustedrouter"]
     assert socrates_pro_plus_meta["auto_candidates"] == [
         "xiaomi/mimo-v2.5-pro-ultraspeed",
@@ -972,11 +998,24 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "google/gemma-4-31b-it",
         "trustedrouter/prometheus-2.0",
     ]
+    openpatcher_g3_meta = models_by_id["trustedrouter/openpatcher-g3"]["trustedrouter"]
+    assert openpatcher_g3_meta["route_kind"] == "advisor_orchestration"
+    assert openpatcher_g3_meta["auto_candidates"] == [
+        "moonshotai/kimi-k3",
+        "google/gemma-4-31b-it",
+        "trustedrouter/prometheus-3.0",
+    ]
     openpatcher_s2_meta = models_by_id["trustedrouter/openpatcher-s2"]["trustedrouter"]
     assert openpatcher_s2_meta["route_kind"] == "fusion_panel"
     assert openpatcher_s2_meta["auto_candidates"] == [
         "moonshotai/kimi-k3",
         "z-ai/glm-5.2",
+    ]
+    openpatcher_s3_meta = models_by_id["trustedrouter/openpatcher-s3"]["trustedrouter"]
+    assert openpatcher_s3_meta["route_kind"] == "fusion_panel"
+    assert openpatcher_s3_meta["auto_candidates"] == [
+        "z-ai/glm-5.2",
+        "deepseek/deepseek-v4-pro-0813",
     ]
     athena_meta = models_by_id["trustedrouter/athena"]["trustedrouter"]
     assert athena_meta["route_kind"] == "private_orchestration"
