@@ -1157,6 +1157,10 @@ def test_console_workspace_selector_persists_session_workspace(
         assert f'<option value="{org.id}" selected>' in workspace_page.text, path
         assert f'<option value="{personal.id}" selected>' not in workspace_page.text, path
 
+    credits_page = client.get("/console/credits")
+    normalized_credits = " ".join(credits_page.text.split())
+    assert "with an $0.80 minimum fee" in normalized_credits
+
     created = client.post(
         "/console/api-keys",
         data={"name": "org-key", "limit": ""},

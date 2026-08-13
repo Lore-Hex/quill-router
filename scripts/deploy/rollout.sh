@@ -359,6 +359,7 @@ ENV_VARS=(
   # Replace these zeros with the signed Adyen commercial terms before launch.
   "TR_ADYEN_CARD_FEE_BASIS_POINTS=0"
   "TR_ADYEN_CARD_FEE_FIXED_CENTS=0"
+  "TR_CHECKOUT_CARD_FEE_MINIMUM_CENTS=80"
   "TR_OPS_CHAT_WEBHOOK_URLS=https://a.uptimerouter.com,https://b.trustedrouter.com,https://c.allyrouter.com"
   # /trustedos partner-inquiry form leads. Plain env (an address, not a
   # secret); without it the handler falls back to TR_SES_FROM_EMAIL, which

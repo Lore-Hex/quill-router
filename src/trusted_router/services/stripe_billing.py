@@ -51,12 +51,16 @@ def create_checkout_session(
     else:
         fee_basis_points = settings.stripe_card_fee_basis_points
         fee_fixed_cents = settings.stripe_card_fee_fixed_cents
+        fee_minimum_cents = settings.checkout_card_fee_minimum_cents
         fee_max_cents = None
         payment_method = "card"
+    if ach_requested or stablecoin_requested:
+        fee_minimum_cents = 0
     fee = stripe_processing_fee(
         credit_amount_cents=amount_cents,
         variable_basis_points=fee_basis_points,
         fixed_fee_cents=fee_fixed_cents,
+        minimum_fee_cents=fee_minimum_cents,
         max_fee_cents=fee_max_cents,
     )
     payment_metadata = fee.metadata(

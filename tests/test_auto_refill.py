@@ -179,6 +179,33 @@ def test_auto_refill_fires_below_threshold(
     assert account.last_auto_refill_status == "pending"
 
 
+def test_small_auto_refill_applies_card_fee_floor(stripe_settings: Settings) -> None:
+    user = STORE.ensure_user("small-refill@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    STORE.set_stripe_customer(
+        workspace.id,
+        customer_id="cus_small",
+        payment_method_id="pm_small",
+    )
+    STORE.update_auto_refill_settings(
+        workspace.id,
+        enabled=True,
+        threshold_microdollars=2_000_000,
+        amount_microdollars=3_000_000,
+    )
+    STORE.settle(STORE.reserve(workspace.id, "small-key", 9_000_000).id, 9_000_000)
+
+    fake_intent = MagicMock(id="pi_small")
+    with patch("stripe.PaymentIntent.create", return_value=fake_intent) as create:
+        outcome = maybe_charge_after_settle(workspace.id, settings=stripe_settings)
+
+    assert outcome.fired is True
+    kwargs = create.call_args.kwargs
+    assert kwargs["amount"] == 380
+    assert kwargs["metadata"]["processing_fee_cents"] == "80"
+    assert kwargs["metadata"]["fee_minimum_cents"] == "80"
+
+
 def test_auto_refill_records_card_error(
     configured_workspace: str, stripe_settings: Settings
 ) -> None:
