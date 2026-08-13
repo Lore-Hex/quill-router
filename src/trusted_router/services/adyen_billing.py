@@ -99,6 +99,7 @@ def create_adyen_checkout_session(
         credit_amount_cents=credit_amount_cents,
         variable_basis_points=settings.adyen_card_fee_basis_points,
         fixed_fee_cents=settings.adyen_card_fee_fixed_cents,
+        minimum_fee_cents=settings.checkout_card_fee_minimum_cents,
     )
     merchant_reference = _new_checkout_reference(
         workspace_id=workspace_id,

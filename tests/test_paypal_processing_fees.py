@@ -240,6 +240,23 @@ def test_mock_paypal_checkout_reports_same_fee_breakdown(
     assert data["total_microdollars"] == 26_060_000
 
 
+def test_small_paypal_checkout_applies_eighty_cent_fee_floor(
+    client: TestClient,
+    user_headers: dict[str, str],
+) -> None:
+    response = client.post(
+        "/v1/billing/checkout",
+        headers=user_headers,
+        json={"amount": 3, "payment_method": "paypal"},
+    )
+
+    assert response.status_code == 201, response.text
+    data = response.json()["data"]
+    assert data["amount_microdollars"] == 3_000_000
+    assert data["processing_fee_microdollars"] == 800_000
+    assert data["total_microdollars"] == 3_800_000
+
+
 def test_paypal_capture_rejects_cross_workspace_reference(
     client: TestClient,
     user_headers: dict[str, str],

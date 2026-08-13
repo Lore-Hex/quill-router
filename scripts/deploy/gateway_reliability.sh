@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Provision early, customer-facing billing-path alerts.
+# IAM bootstrap (project IAM administrator only):
+#   bash scripts/deploy/gateway_reliability_iam.sh --apply
 
 set -euo pipefail
 

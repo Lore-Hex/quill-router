@@ -101,6 +101,7 @@ def maybe_charge_after_settle(
         credit_amount_cents=credit_amount_cents,
         variable_basis_points=settings.stripe_card_fee_basis_points,
         fixed_fee_cents=settings.stripe_card_fee_fixed_cents,
+        minimum_fee_cents=settings.checkout_card_fee_minimum_cents,
     )
     idempotency_key = (
         f"auto-refill:{workspace_id}:{fee.charge_amount_cents}:"

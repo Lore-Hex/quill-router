@@ -85,3 +85,34 @@ def test_gateway_alert_workflow_requires_explicit_apply() -> None:
     assert "tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com" in workflow
     assert "install_components: beta" in workflow
     assert "gateway_reliability.sh --apply" in workflow
+
+
+def test_gateway_alert_iam_is_least_privilege_and_dry_run_by_default() -> None:
+    script = (DEPLOY / "gateway_reliability_iam.sh").read_text(encoding="utf-8")
+
+    assert 'if [ "${1:-}" = "--apply" ]' in script
+    assert "trustedRouterAlertReconciler" in script
+    for permission in (
+        "logging.logMetrics.create",
+        "logging.logMetrics.get",
+        "logging.logMetrics.list",
+        "logging.logMetrics.update",
+        # Cloud Monitoring replaces this associated Logging object whenever a
+        # log-matched policy is updated.
+        "logging.notificationRules.create",
+        "logging.notificationRules.delete",
+        "monitoring.alertPolicies.create",
+        "monitoring.alertPolicies.get",
+        "monitoring.alertPolicies.list",
+        "monitoring.alertPolicies.update",
+        "monitoring.notificationChannels.create",
+        "monitoring.notificationChannels.get",
+        "monitoring.notificationChannels.list",
+    ):
+        assert permission in script
+    assert "logging.logEntries.list" not in script
+    assert "logging.logMetrics.delete" not in script
+    assert "monitoring.alertPolicies.delete" not in script
+    assert "resourcemanager.projects.setIamPolicy" not in script
+    assert "roles/logging.admin" not in script
+    assert "roles/monitoring.admin" not in script

@@ -208,6 +208,37 @@ def test_adyen_checkout_session_has_exact_money_and_no_balance_side_effect(
     assert sum(item["amountIncludingTax"] for item in payload["lineItems"]) == 2609
 
 
+def test_small_adyen_checkout_applies_card_fee_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(201, json={"id": "CS_FLOOR", "sessionData": "opaque"})
+
+    monkeypatch.setattr(
+        adyen_billing.httpx,
+        "Client",
+        _http_client_factory(handler),
+    )
+    app = create_app(
+        _settings(adyen_card_fee_basis_points=300, adyen_card_fee_fixed_cents=30),
+        init_observability=False,
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/billing/checkout",
+            headers={"x-trustedrouter-user": "adyen@example.com"},
+            json={"amount": "3.00", "payment_method": "adyen"},
+        )
+
+    assert response.status_code == 201, response.text
+    payload = captured["payload"]
+    assert payload["amount"] == {"currency": "USD", "value": 380}
+    assert [item["amountIncludingTax"] for item in payload["lineItems"]] == [300, 80]
+
+
 def test_adyen_inactive_merchant_is_a_retryable_checkout_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

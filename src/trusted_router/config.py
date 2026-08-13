@@ -353,6 +353,9 @@ class Settings(BaseSettings):
     # They are explicit config because negotiated Stripe pricing can differ.
     stripe_card_fee_basis_points: int = 290
     stripe_card_fee_fixed_cents: int = 30
+    # Card-style rails have a purchase-fee floor. ACH and stablecoin retain
+    # their lower rail-specific schedules and deliberately do not use it.
+    checkout_card_fee_minimum_cents: int = 80
     stripe_stablecoin_fee_basis_points: int = 150
     stripe_stablecoin_fee_fixed_cents: int = 0
     stripe_ach_fee_basis_points: int = 80
@@ -765,6 +768,10 @@ class Settings(BaseSettings):
                 raise ValueError(f"{name} must be between 0 and 9999")
         for name, value in (
             ("TR_STRIPE_CARD_FEE_FIXED_CENTS", self.stripe_card_fee_fixed_cents),
+            (
+                "TR_CHECKOUT_CARD_FEE_MINIMUM_CENTS",
+                self.checkout_card_fee_minimum_cents,
+            ),
             (
                 "TR_STRIPE_STABLECOIN_FEE_FIXED_CENTS",
                 self.stripe_stablecoin_fee_fixed_cents,
