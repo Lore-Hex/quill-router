@@ -18,7 +18,8 @@
       "id": "deepseek/deepseek-v4-flash",
       "upstream_id": "deepseek-v4-flash",
       "input_token_price_per_m": 140000,
-      "output_token_price_per_m": 280000
+      "output_token_price_per_m": 280000,
+      "cached_input_token_price_per_m": 2800
     },
     {
       "display_name": "deepseek-v4-pro",
@@ -36,12 +37,13 @@
       "status": 1,
       "id": "deepseek/deepseek-v4-pro",
       "upstream_id": "deepseek-v4-pro",
-      "input_token_price_per_m": 560000,
-      "output_token_price_per_m": 1680000
+      "input_token_price_per_m": 435000,
+      "output_token_price_per_m": 870000,
+      "cached_input_token_price_per_m": 3625
     }
   ],
   "source": "https://api.deepseek.com/models",
-  "generated_at": "2026-08-13T17:59:19Z",
+  "generated_at": "2026-08-13T20:40:59Z",
   "price_scale": "microdollars_per_million",
   "model_count": 2
 }

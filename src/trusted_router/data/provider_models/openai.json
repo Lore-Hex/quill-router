@@ -617,7 +617,7 @@
       "upstream_id": "gpt-3.5-turbo-instruct",
       "created": 1692901427,
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 1500000,
       "output_token_price_per_m": 2000000,
       "missing_since": "2026-08-13"
@@ -843,7 +843,7 @@
     }
   ],
   "source": "https://api.openai.com/v1/models",
-  "generated_at": "2026-08-13T18:19:07Z",
+  "generated_at": "2026-08-13T20:40:59Z",
   "price_scale": "microdollars_per_million",
   "model_count": 34
 }
