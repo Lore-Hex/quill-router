@@ -42,7 +42,7 @@ from urllib.parse import urlparse
 from urllib3.util.retry import Retry
 
 from trusted_router.config import Settings
-from trusted_router.sentry_config import _scrub
+from trusted_router.sentry_config import _scrub, _scrub_string
 
 log = logging.getLogger(__name__)
 HTTPAdapter: Any = importlib.import_module("requests.adapters").HTTPAdapter
@@ -255,9 +255,16 @@ class _AxiomScrubFilter(logging.Filter):
             # Collapsing args means Axiom loses structured args fields and gets
             # the final formatted message only. That is the point: nothing
             # unscrubbed can leave the process.
-            record.msg = _AXIOM_EMAIL_VALUE_RE.sub(
-                "[Filtered-email]",
-                _AXIOM_SECRET_VALUE_RE.sub(r"\1=[Filtered]", collapsed),
+            # _scrub_string last: the two regexes above only catch secrets in
+            # `key=value` shape and e-mail addresses, so a bare `sk-tr-v1-…` in
+            # an ordinary message ("rotating sk-tr-v1-ABC…") passed straight
+            # through to the shipper. _scrub_string applies the same declared
+            # fragment/prefix blocklist the structured fields already get.
+            record.msg = _scrub_string(
+                _AXIOM_EMAIL_VALUE_RE.sub(
+                    "[Filtered-email]",
+                    _AXIOM_SECRET_VALUE_RE.sub(r"\1=[Filtered]", collapsed),
+                )
             )
             if len(record.msg) > self._MAX_MESSAGE_CHARS:
                 record.msg = (

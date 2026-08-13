@@ -6,11 +6,15 @@ import logging
 import os
 import sys
 import time
-from collections.abc import Callable, Mapping, MutableMapping
+from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
+from datetime import time as _dt_time
+from decimal import Decimal
 from threading import Lock
 from typing import Any, cast
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from trusted_router.config import Settings
 
@@ -470,20 +474,101 @@ def _hash_identity(identity: str) -> str:
     return hashlib.sha256(identity.encode()).hexdigest()
 
 
-def _scrub(value: Any) -> Any:
-    if isinstance(value, dict):
-        out: dict[str, Any] = {}
-        for key, item in value.items():
+# Walk limits. A log extra is not a data structure we control, so the scrubber
+# has to terminate on a cyclic or pathological one rather than recursing until
+# the interpreter gives up *inside a logging filter*.
+_SCRUB_MAX_DEPTH = 12
+_SCRUB_MAX_ITEMS = 500
+
+# Types whose str() is structurally incapable of carrying a secret (hex and
+# dashes, digits, ISO timestamps) and which appear constantly in log extras.
+# Everything outside this set is replaced by its type name rather than
+# stringified: calling repr() on an arbitrary object can execute application
+# code, raise, recurse, be enormous, or expose a value in a format the
+# blocklist does not recognise.
+_SAFE_REPR_TYPES = (UUID, datetime, date, _dt_time, timedelta, Decimal)
+
+
+def _scrub(value: Any, *, _depth: int = 0, _seen: frozenset[int] = frozenset()) -> Any:
+    """Redact secrets from an arbitrary logging value.
+
+    Totality matters here because this is the last barrier on the Axiom path:
+    `_AxiomScrubFilter` runs every log-record attribute through it and hands
+    the record straight to the shipper. It previously recursed into dict, list
+    and str only and returned everything else untouched, so a secret inside a
+    tuple extra was serialised and shipped verbatim.
+
+    The contract is now a whitelist rather than a blacklist: a value is only
+    returned unchanged if it is a scalar that cannot hold a string.
+    """
+    if _depth > _SCRUB_MAX_DEPTH:
+        return "[Filtered-depth]"
+
+    if isinstance(value, str):
+        return _scrub_string(value)
+
+    # Scalars that cannot carry a string secret. bool is checked implicitly —
+    # it is an int subclass and equally safe.
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+
+    # Bytes are redacted wholesale rather than decoded and blocklist-scrubbed:
+    # a key can reach a log as base64, hex, or some framing the fragment list
+    # does not know, and there is no diagnostic value in the payload anyway.
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return "[Filtered-bytes]"
+
+    # Cycle guard, keyed on the path rather than globally so that a value
+    # legitimately repeated across sibling branches is still scrubbed in each.
+    marker = id(value)
+    if marker in _seen:
+        return "[Filtered-cycle]"
+    seen = _seen | {marker}
+    child_depth = _depth + 1
+
+    if isinstance(value, Mapping):
+        out: dict[Any, Any] = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= _SCRUB_MAX_ITEMS:
+                out["[truncated]"] = f"{len(value) - _SCRUB_MAX_ITEMS} more"
+                break
             if _is_sensitive_key(str(key)):
                 out[key] = "[Filtered]"
             else:
-                out[key] = _scrub(item)
+                out[key] = _scrub(item, _depth=child_depth, _seen=seen)
         return out
-    if isinstance(value, list):
-        return [_scrub(item) for item in value]
-    if isinstance(value, str):
-        return _scrub_string(value)
-    return value
+
+    if isinstance(value, (set, frozenset)):
+        # Deterministically ordered so two runs of the same event produce the
+        # same record; sorted on the scrubbed text since the members may not be
+        # mutually comparable.
+        return sorted(
+            (str(_scrub(item, _depth=child_depth, _seen=seen)) for item in _limited(value)),
+        )
+
+    if isinstance(value, (list, tuple)):
+        scrubbed = [_scrub(item, _depth=child_depth, _seen=seen) for item in _limited(value)]
+        if len(value) > _SCRUB_MAX_ITEMS:
+            scrubbed.append(f"[truncated {len(value) - _SCRUB_MAX_ITEMS} more]")
+        return tuple(scrubbed) if isinstance(value, tuple) else scrubbed
+
+    if isinstance(value, _SAFE_REPR_TYPES):
+        return _scrub_string(str(value))
+
+    # Unknown object: name the type so the log still says what was there, but
+    # never call repr() on it.
+    return f"[Filtered-{type(value).__name__}]"
+
+
+def _limited(items: Iterable[Any]) -> list[Any]:
+    """First _SCRUB_MAX_ITEMS elements, so one enormous extra cannot stall the
+    logging filter it is being scrubbed inside."""
+    out: list[Any] = []
+    for item in items:
+        if len(out) >= _SCRUB_MAX_ITEMS:
+            break
+        out.append(item)
+    return out
 
 
 def _is_sensitive_key(key: str) -> bool:
