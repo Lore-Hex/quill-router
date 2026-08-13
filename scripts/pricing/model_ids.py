@@ -91,6 +91,13 @@ def canonicalize_native_model_id(native_id: str) -> str | None:
     model_slug = model_slug.replace(" ", "-")
     model_slug = _MODEL_CHARS_RE.sub("-", model_slug)
     model_slug = re.sub(r"-{2,}", "-", model_slug).strip("-")
+    # NVIDIA catalogs commonly use native IDs such as
+    # ``nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B``. The first NVIDIA names the
+    # author; the second is provider-native branding, not part of the public
+    # model slug. Without this normalization, automatic provider refreshes can
+    # recreate a duplicate ``nvidia/nvidia-nemotron-*`` public model.
+    if canonical_author == "nvidia" and model_slug.startswith("nvidia-nemotron-"):
+        model_slug = model_slug.removeprefix("nvidia-")
     if not model_slug:
         return None
     return f"{canonical_author}/{model_slug}"
