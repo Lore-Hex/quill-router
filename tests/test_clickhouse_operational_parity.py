@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from clickhouse.verify_operational_parity import (
     _canonical,
     _source_rollups_from_raw,
+    _source_rows,
     _stable_source_row,
 )
 from trusted_router.storage_models import SyntheticProbeSample
@@ -84,6 +85,27 @@ def test_parity_grace_excludes_recent_raw_rows() -> None:
     )
 
 
+def test_parity_waits_for_shared_heartbeat_bucket_to_close() -> None:
+    bucket_start = dt.datetime(2026, 8, 13, 15, 0, tzinfo=dt.UTC)
+    bucket = int(bucket_start.timestamp() // 300)
+    payload = {
+        "id": f"syn_hb_scheduler_remediator_{bucket}",
+        "probe_type": "heartbeat",
+        "created_at": "2026-08-13T15:00:01Z",
+    }
+
+    assert not _stable_source_row(
+        payload,
+        surface="synthetic",
+        cutoff=dt.datetime(2026, 8, 13, 15, 3, tzinfo=dt.UTC),
+    )
+    assert _stable_source_row(
+        payload,
+        surface="synthetic",
+        cutoff=dt.datetime(2026, 8, 13, 15, 5, tzinfo=dt.UTC),
+    )
+
+
 def test_parity_excludes_incomplete_rollup_periods() -> None:
     cutoff = dt.datetime(2026, 8, 1, 0, 2, tzinfo=dt.UTC)
     assert _stable_source_row(
@@ -137,3 +159,43 @@ def test_rollup_parity_rebuilds_from_bounded_raw_bigtable_samples() -> None:
     assert table.end_key.startswith(b"synthetic_recent#")
     assert table.start_key < table.end_key
     assert all(payload["sample_count"] == 1 for payload in rollups.values())
+
+
+def test_synthetic_parity_keeps_newest_duplicate_id() -> None:
+    now = dt.datetime.now(dt.UTC)
+    bucket = int((now - dt.timedelta(minutes=10)).timestamp() // 300)
+    bucket_start = dt.datetime.fromtimestamp(bucket * 300, tz=dt.UTC)
+
+    def row(sample_id: str, created_at: dt.datetime) -> object:
+        sample = SyntheticProbeSample(
+            id=sample_id,
+            probe_type="heartbeat",
+            target="scheduler:remediator",
+            target_url="",
+            monitor_region="us-central1",
+            status="up",
+            created_at=created_at.isoformat().replace("+00:00", "Z"),
+        )
+        cell = SimpleNamespace(
+            value=json.dumps(dataclasses.asdict(sample)).encode("utf-8")
+        )
+        return SimpleNamespace(cells={"synthetic": {b"body": [cell]}})
+
+    shared_id = f"syn_hb_shared_{bucket}"
+    newest_created_at = bucket_start + dt.timedelta(minutes=3)
+    newest = row(shared_id, newest_created_at)
+    older_duplicate = row(shared_id, bucket_start + dt.timedelta(minutes=1))
+    other = row(
+        f"syn_hb_other_{bucket - 1}",
+        bucket_start - dt.timedelta(minutes=2),
+    )
+
+    class Table:
+        def read_rows(self, **_: object) -> list[object]:
+            return [newest, older_duplicate, other]
+
+    samples = _source_rows(Table(), surface="synthetic", limit=2)
+
+    assert samples[shared_id]["created_at"] == newest_created_at.isoformat().replace(
+        "+00:00", "Z"
+    )
