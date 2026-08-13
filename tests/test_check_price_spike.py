@@ -24,12 +24,14 @@ def _make_snapshot(prices: dict[str, tuple[str, str]]) -> dict:
 def _make_endpoint_snapshot(
     headline: tuple[str, str],
     endpoints: list[tuple[str, str, str, str]],
+    *,
+    model_id: str = "a/b",
 ) -> dict:
     return {
         "model_count": 1,
         "models": [
             {
-                "id": "a/b",
+                "id": model_id,
                 "pricing": {"prompt": headline[0], "completion": headline[1]},
                 "endpoints": [
                     {
@@ -204,3 +206,59 @@ def test_same_provider_endpoint_spike_blocks_and_is_visible(
     out = capsys.readouterr().out
     assert "PRICE SPIKE FAILURES" in out
     assert "provider" in out
+
+
+def test_confirmed_tinfoil_kimi_k3_price_transition_is_allowed(
+    tmp_path: Path, capsys
+) -> None:
+    from scripts.check_price_spike import main
+
+    before = _write(
+        tmp_path,
+        "before.json",
+        _make_endpoint_snapshot(
+            ("0.000002", "0.000006"),
+            [("tinfoil", "kimi-k3", "0.000002", "0.000006")],
+            model_id="moonshotai/kimi-k3",
+        ),
+    )
+    after = _write(
+        tmp_path,
+        "after.json",
+        _make_endpoint_snapshot(
+            ("0.00000255", "0.00001275"),
+            [("tinfoil", "kimi-k3", "0.000004", "0.00002")],
+            model_id="moonshotai/kimi-k3",
+        ),
+    )
+
+    assert main([str(before), str(after), "--summary"]) == 0
+    assert "moonshotai/kimi-k3" in capsys.readouterr().out
+
+
+def test_unapproved_tinfoil_kimi_k3_price_transition_still_blocks(
+    tmp_path: Path, capsys
+) -> None:
+    from scripts.check_price_spike import main
+
+    before = _write(
+        tmp_path,
+        "before.json",
+        _make_endpoint_snapshot(
+            ("0.000002", "0.000006"),
+            [("tinfoil", "kimi-k3", "0.000002", "0.000006")],
+            model_id="moonshotai/kimi-k3",
+        ),
+    )
+    after = _write(
+        tmp_path,
+        "after.json",
+        _make_endpoint_snapshot(
+            ("0.000005", "0.000021"),
+            [("tinfoil", "kimi-k3", "0.000005", "0.000021")],
+            model_id="moonshotai/kimi-k3",
+        ),
+    )
+
+    assert main([str(before), str(after), "--summary"]) == 1
+    assert "PRICE SPIKE FAILURES" in capsys.readouterr().out

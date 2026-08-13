@@ -32,6 +32,26 @@ from pathlib import Path
 
 DEFAULT_SPIKE_RATIO = 2.0  # 100% increase = ≥2× the previous value
 
+# Exact, provider-endpoint-scoped transitions confirmed against an upstream
+# source. These approvals do not weaken the general spike gate: a different
+# route, dimension, old value, or new value still fails closed.
+APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
+    {
+        (
+            "moonshotai/kimi-k3 [tinfoil:tinfoil:kimi-k3]",
+            "prompt",
+            Decimal("0.000002"),
+            Decimal("0.000004"),
+        ),
+        (
+            "moonshotai/kimi-k3 [tinfoil:tinfoil:kimi-k3]",
+            "completion",
+            Decimal("0.000006"),
+            Decimal("0.00002"),
+        ),
+    }
+)
+
 
 def _load(path: Path) -> dict[str, dict[str, str]]:
     """Return {model_id: {"prompt": str, "completion": str}} from a snapshot file."""
@@ -123,6 +143,13 @@ def check(
             ("completion", prev_c, cur_c),
         ):
             if prv > 0 and curv >= prv * spike:
+                if (
+                    model_id,
+                    dim,
+                    prv,
+                    curv,
+                ) in APPROVED_ENDPOINT_PRICE_TRANSITIONS:
+                    continue
                 ratio = curv / prv
                 failures.append(
                     f"{model_id} {dim}: {prv} → {curv} (×{ratio:.2f} ≥ ×{spike})"
