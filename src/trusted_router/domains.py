@@ -72,6 +72,28 @@ def request_control_origin(request: Request, settings: Settings) -> str:
     return f"https://{request_control_domain(request, settings)}"
 
 
+def canonical_public_url(
+    settings: Settings,
+    path: str = "/",
+    *,
+    query: str | None = None,
+) -> str:
+    """Build a public URL on the one search-canonical control-plane host.
+
+    Alias domains intentionally remain usable, but their crawlable content is
+    the same publication. Keeping canonical URL construction request-agnostic
+    prevents an alias or hostile Host header from creating a second SEO origin.
+    """
+    if not path.startswith("/") or path.startswith("//") or any(
+        separator in path for separator in ("?", "#")
+    ):
+        raise ValueError("canonical public paths must be absolute paths without query data")
+    if query is not None and (not query or query.startswith("?") or "#" in query):
+        raise ValueError("canonical public queries must omit '?' and fragments")
+    origin = f"https://{configured_control_domains(settings)[0]}"
+    return f"{origin}{path}{f'?{query}' if query else ''}"
+
+
 def api_base_url_for_domain(settings: Settings, domain: str) -> str:
     canonical = configured_control_domains(settings)[0]
     normalized = _normalized_domain(domain)

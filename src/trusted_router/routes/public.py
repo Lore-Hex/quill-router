@@ -94,6 +94,7 @@ from trusted_router.dashboard import (
     subprocessors_json,
 )
 from trusted_router.domains import (
+    canonical_public_url,
     control_domain_for_hostname,
     is_status_hostname,
     is_trust_hostname,
@@ -520,6 +521,12 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     def trust_response_status(status: str) -> int:
         return 200 if status in {"live", "embedded"} else 503
+
+    def public_document_headers(path: str) -> dict[str, str]:
+        return {
+            "cache-control": "public, max-age=300, s-maxage=3600",
+            "link": f'<{canonical_public_url(settings, path)}>; rel="canonical"',
+        }
 
     def public_html_route(
         path: str, *, include_slash: bool = True
@@ -1168,14 +1175,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def llms() -> PlainTextResponse:
         return PlainTextResponse(
             llms_txt(settings),
-            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+            headers=public_document_headers("/llms.txt"),
         )
 
     @app.api_route("/docs/llms.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse)
     async def docs_llms() -> PlainTextResponse:
         return PlainTextResponse(
             docs_llms_txt(settings),
-            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+            headers=public_document_headers("/docs/llms.txt"),
         )
 
     @app.api_route(
@@ -1186,7 +1193,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def docs_llms_full() -> PlainTextResponse:
         return PlainTextResponse(
             docs_llms_full_txt(settings),
-            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+            headers=public_document_headers("/docs/llms-full.txt"),
         )
 
     @public_html_route("/status")
@@ -1703,6 +1710,11 @@ def _status_history_page_html(
         "public/status_history.html",
         api_base_url=settings.api_base_url,
         site_url=site_url,
+        canonical_url=canonical_public_url(
+            settings,
+            "/status/history",
+            query=f"window={window}",
+        ),
         title=title,
         heading=heading,
         description=(
@@ -2120,6 +2132,7 @@ def _status_page_html(settings: Settings, *, host: str) -> str:
             else settings.api_base_url
         ),
         site_url=site_url,
+        canonical_url=canonical_public_url(settings, "/status"),
         title="Status | TrustedRouter",
         heading="TrustedRouter Status",
         description=(

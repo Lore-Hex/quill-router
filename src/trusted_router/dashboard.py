@@ -58,6 +58,7 @@ from trusted_router.content.legal import (
     subprocessor_packet,
 )
 from trusted_router.content_handling import CONTENT_HANDLING_CLAIM
+from trusted_router.domains import canonical_public_url
 from trusted_router.measured import measured_for_model, measured_for_provider
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR, format_money_precise
 from trusted_router.og import OG_DESCRIPTION, OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, OG_TITLE
@@ -1542,7 +1543,7 @@ def dashboard_html(
     domain = settings.trusted_domain
     resolved_api_base_url = api_base_url or settings.api_base_url
     environment = settings.environment.lower()
-    canonical_site_url = f"https://{domain}/"
+    canonical_site_url = canonical_public_url(settings)
     site_url = site_url or canonical_site_url
     alternate_brand = brand_name != "TrustedRouter"
     page_title = f"{brand_name} | Every model. Privacy with proof." if alternate_brand else OG_TITLE
@@ -1862,7 +1863,8 @@ def _render_public_page(
     site_url: str | None = None,
     robots_meta: str | None = None,
 ) -> str:
-    resolved_site_url = site_url or f"https://{settings.trusted_domain}{path}"
+    canonical_url = canonical_public_url(settings, path)
+    resolved_site_url = site_url or canonical_url
     catalog_evidence = (
         seo_catalog_evidence(page_key, test_mode=settings.environment == "test")
         if page_key is not None and page.template.startswith("public/seo_")
@@ -1875,6 +1877,7 @@ def _render_public_page(
             api_base_url=settings.api_base_url,
             control_plane_api_base_url=f"https://{settings.trusted_domain}/v1",
             site_url=resolved_site_url,
+            canonical_url=canonical_url,
             title=f"{page.title} | TrustedRouter",
             heading=page.title,
             description=page.description,

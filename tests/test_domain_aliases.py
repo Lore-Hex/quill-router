@@ -62,6 +62,81 @@ def test_alias_homepage_uses_attested_api_alias(
 
 
 @pytest.mark.parametrize("domain", ["allyrouter.com", "uptimerouter.com"])
+@pytest.mark.parametrize(
+    ("path", "canonical_path"),
+    [
+        ("/docs", "/docs"),
+        ("/openrouter-alternative", "/openrouter-alternative"),
+        ("/models/minimax/minimax-m3", "/models/minimax/minimax-m3"),
+        ("/providers/minimax", "/providers/minimax"),
+        ("/blog", "/blog"),
+        ("/api/reference?group=models&utm_source=mirror", "/api/reference"),
+    ],
+)
+def test_alias_public_pages_use_primary_canonical(
+    client: TestClient,
+    domain: str,
+    path: str,
+    canonical_path: str,
+) -> None:
+    response = client.get(path, headers={"host": domain})
+
+    assert response.status_code == 200
+    assert response.text.count('rel="canonical"') == 1
+    assert (
+        f'<link rel="canonical" href="https://trustedrouter.com{canonical_path}">'
+        in response.text
+    )
+
+
+@pytest.mark.parametrize("domain", ["allyrouter.com", "uptimerouter.com"])
+def test_alias_status_pages_use_primary_status_canonical(
+    client: TestClient,
+    domain: str,
+) -> None:
+    status = client.get("/", headers={"host": f"status.{domain}"})
+    history = client.get(
+        "/status/history?window=48h&format=html",
+        headers={"host": f"status.{domain}"},
+    )
+
+    assert status.status_code == 200
+    assert (
+        '<link rel="canonical" href="https://trustedrouter.com/status">'
+        in status.text
+    )
+    assert history.status_code == 200
+    assert (
+        '<link rel="canonical" '
+        'href="https://trustedrouter.com/status/history?window=48h">'
+        in history.text
+    )
+
+
+def test_eu_mirror_homepage_uses_primary_eu_canonical(client: TestClient) -> None:
+    response = client.get("/", headers={"host": "eu.trustedrouter.com"})
+
+    assert response.status_code == 200
+    assert '<link rel="canonical" href="https://trustedrouter.com/eu">' in response.text
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/llms.txt", "/docs/llms.txt", "/docs/llms-full.txt"],
+)
+def test_alias_plaintext_docs_publish_primary_canonical_link(
+    client: TestClient,
+    path: str,
+) -> None:
+    response = client.get(path, headers={"host": "allyrouter.com"})
+
+    assert response.status_code == 200
+    assert response.headers["link"] == (
+        f'<https://trustedrouter.com{path}>; rel="canonical"'
+    )
+
+
+@pytest.mark.parametrize("domain", ["allyrouter.com", "uptimerouter.com"])
 def test_alias_status_and_trust_hosts_render(
     client: TestClient,
     domain: str,
