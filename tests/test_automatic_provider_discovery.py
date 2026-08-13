@@ -8,7 +8,7 @@ import pytest
 from scripts.pricing.base import ModelPrice, PriceTier, ProviderPricingResult
 from scripts.pricing.manifest import write_discovered_chat_manifest
 from scripts.pricing.parsers import openai as openai_parser
-from scripts.pricing.providers import grok, openai
+from scripts.pricing.providers import gemini, grok, openai
 from scripts.pricing.refresh import PROVIDER_SLUGS
 from trusted_router.catalog_ingest import _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS
 
@@ -251,6 +251,121 @@ def test_grok_api_discovers_new_model_with_exact_tiered_prices(
             "cached_input_token_price_per_m": 200_000,
         },
     ]
+
+
+def test_gemini_canaries_new_priced_models_before_publication(
+    tmp_path,  # noqa: ANN001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = tmp_path / "google-ai-studio.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "provider": "google-ai-studio",
+                "models": [
+                    {
+                        "id": "google/gemini-3.6-flash",
+                        "upstream_id": "gemini-3.6-flash",
+                        "input_token_price_per_m": 1,
+                        "output_token_price_per_m": 1,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(gemini, "MANIFEST_PATH", manifest)
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        gemini,
+        "fetch_provider",
+        lambda **_kwargs: ProviderPricingResult(
+            slug="gemini",
+            prices={
+                "google/gemini-3.6-flash": ModelPrice(1_500_000, 7_500_000),
+                "google/gemini-3.7-flash": ModelPrice(750_000, 3_750_000),
+            },
+            source="deterministic",
+            fetched_url=gemini.URL,
+        ),
+    )
+    monkeypatch.setattr(
+        gemini,
+        "fetch_json",
+        lambda *_args, **_kwargs: {
+            "models": [
+                {
+                    "name": "models/gemini-3.6-flash",
+                    "supportedGenerationMethods": ["generateContent"],
+                },
+                {
+                    "name": "models/gemini-3.7-flash",
+                    "supportedGenerationMethods": ["generateContent"],
+                },
+            ]
+        },
+    )
+    probed: list[tuple[str | None, str]] = []
+    monkeypatch.setattr(
+        gemini,
+        "_probe_generate_content",
+        lambda **kwargs: probed.append(
+            (kwargs.get("api_key"), str(kwargs["native_id"]))
+        )
+        or True,
+    )
+
+    result = gemini.fetch()
+    gemini.write_provider_manifest(result)
+
+    raw = json.loads(manifest.read_text(encoding="utf-8"))
+    by_id = {row["id"]: row for row in raw["models"]}
+    assert probed == [("test-key", "gemini-3.7-flash")]
+    assert by_id["google/gemini-3.7-flash"]["routable"] is True
+    assert by_id["google/gemini-3.7-flash"]["input_token_price_per_m"] == 750_000
+
+
+def test_gemini_canary_requires_exact_visible_pong(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {"thought": True, "text": "internal"},
+                                {"text": "PONG"},
+                            ]
+                        }
+                    }
+                ]
+            }
+
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        gemini.httpx,
+        "post",
+        lambda *_args, **kwargs: calls.append(kwargs) or Response(),
+    )
+
+    assert gemini._probe_generate_content(  # noqa: SLF001
+        api_key="test-key",
+        native_id="gemini-3.7-flash",
+    )
+    assert calls[0]["json"] == {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": "Reply exactly PONG"}],
+            }
+        ],
+        "generationConfig": {"maxOutputTokens": 64},
+    }
 
 
 def test_grok_failed_new_model_canary_is_published_dark(

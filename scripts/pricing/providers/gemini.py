@@ -26,7 +26,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
+import httpx
+
 from scripts.pricing.base import (
+    PROVIDER_FETCH_TIMEOUT,
+    PROVIDER_FETCH_UA,
     ProviderPricingResult,
     fetch_json,
     fetch_provider,
@@ -34,6 +38,7 @@ from scripts.pricing.base import (
     reconcile_manifest_tombstones,
     validate,
 )
+from scripts.pricing.manifest import apply_canary_results, models_requiring_canary
 
 SLUG = "gemini"
 URL = "https://ai.google.dev/gemini-api/docs/pricing"
@@ -54,6 +59,7 @@ EXPECTED_MODELS = [
     "google/gemini-2.5-flash-lite",
     "google/gemini-3.5-flash",
     "google/gemini-3.6-flash",
+    "google/gemini-3.7-flash",
 ]
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 _STANDARD_TEXT_MODEL_RE = re.compile(r"^google/gemini-\d+(?:\.\d+)?-(?:pro|flash|flash-lite)$")
@@ -163,6 +169,55 @@ def _new_required_price_ids(live_rows: dict[str, dict[str, Any]]) -> frozenset[s
     )
 
 
+def _probe_generate_content(*, api_key: str | None, native_id: str) -> bool:
+    """Run a minimal paid-path Gemini canary without retaining its content."""
+
+    if not api_key:
+        return False
+    try:
+        response = httpx.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{native_id}:generateContent",
+            headers={
+                "x-goog-api-key": api_key,
+                "Content-Type": "application/json",
+                "User-Agent": PROVIDER_FETCH_UA,
+            },
+            json={
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [{"text": "Reply exactly PONG"}],
+                    }
+                ],
+                "generationConfig": {"maxOutputTokens": 64},
+            },
+            timeout=PROVIDER_FETCH_TIMEOUT,
+        )
+    except httpx.HTTPError:
+        return False
+    if response.status_code != 200:
+        return False
+    try:
+        payload = response.json()
+    except (TypeError, ValueError):
+        return False
+    candidates = payload.get("candidates") if isinstance(payload, dict) else None
+    if not isinstance(candidates, list) or not candidates:
+        return False
+    first = candidates[0]
+    content = first.get("content") if isinstance(first, dict) else None
+    parts = content.get("parts") if isinstance(content, dict) else None
+    if not isinstance(parts, list):
+        return False
+    visible = "".join(
+        str(part.get("text") or "")
+        for part in parts
+        if isinstance(part, dict) and part.get("thought") is not True
+    )
+    return visible.strip() == "PONG"
+
+
 def _refresh_price(row: dict[str, Any], result: ProviderPricingResult, model_id: str) -> bool:
     price = result.prices.get(model_id)
     if price is None:
@@ -232,17 +287,35 @@ def fetch() -> ProviderPricingResult:
         expected_models=EXPECTED_MODELS,
         required_models=required_price_ids,
     )
-    _DISCOVERED_MANIFEST_ROWS = live_rows
     result.prices = {
         model_id: price for model_id, price in result.prices.items() if model_id in live_rows
     }
     errors = validate(result.prices, EXPECTED_MODELS)
     if errors:
         raise RuntimeError("; ".join(errors))
+    api_key = os.environ.get("GEMINI_API_KEY")
+    checked = models_requiring_canary(MANIFEST_PATH, result.prices)
+    healthy = {
+        model_id
+        for model_id in checked
+        if _probe_generate_content(
+            api_key=api_key,
+            native_id=str(live_rows[model_id]["upstream_id"]),
+        )
+    }
+    apply_canary_results(
+        live_rows,
+        checked_model_ids=checked,
+        healthy_model_ids=healthy,
+    )
+    _DISCOVERED_MANIFEST_ROWS = live_rows
     if result.source != "stale_snapshot":
         # The manifest's availability view came from a complete live API feed;
         # use that freshness marker for consecutive-miss accounting.
         result.source = "api"
+    result.notes.append(
+        f"canaried {len(checked)} new/held routes ({len(healthy)} healthy)"
+    )
     return result
 
 

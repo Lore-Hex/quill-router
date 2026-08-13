@@ -558,6 +558,12 @@ def test_new_parser_requirements_are_provider_specific_and_text_only(
                     "architecture": {"output_modalities": ["text"]},
                     "endpoints": [{"tr_provider_slug": "google-ai-studio"}],
                 },
+                {
+                    "id": "google/gemini-3.8-flash:batch",
+                    "created": 104,
+                    "architecture": {"output_modalities": ["text"]},
+                    "endpoints": [{"tr_provider_slug": "google-ai-studio"}],
+                },
         ]
     }
 
