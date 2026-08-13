@@ -1153,6 +1153,17 @@ def _install_deepseek_v4_pro_release_routes() -> None:
     if not historical or current is None:
         raise RuntimeError("DeepSeek V4 Pro release routes are incomplete")
 
+    # Versioned release IDs are immutable Credits-only products. The hourly
+    # provider manifests may discover matching native IDs later, but those
+    # supplemental rows must not silently add BYOK routes or alter the route
+    # set behind an already-published version.
+    for endpoint_id, endpoint in tuple(MODEL_ENDPOINTS.items()):
+        if endpoint.model_id in {
+            DEEPSEEK_V4_PRO_0423_MODEL_ID,
+            DEEPSEEK_V4_PRO_0813_MODEL_ID,
+        }:
+            del MODEL_ENDPOINTS[endpoint_id]
+
     def install(
         model_id: str,
         name: str,

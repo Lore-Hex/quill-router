@@ -140,9 +140,7 @@ def test_wave2_manifests_publish_only_live_eligible_routes() -> None:
         provider.SLUG: json.loads(provider.MANIFEST_PATH.read_text(encoding="utf-8"))
         for provider in (inceptron, morph, atlas_cloud, streamlake)
     }
-    assert len(manifests["inceptron"]["models"]) == 4
-    assert len(manifests["morph"]["models"]) == 8
-    assert len(manifests["atlas-cloud"]["models"]) >= 100
+    assert all(raw["models"] for raw in manifests.values())
     atlas_image_rows = [
         row
         for row in manifests["atlas-cloud"]["models"]

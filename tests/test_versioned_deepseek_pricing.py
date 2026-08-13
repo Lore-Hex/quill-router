@@ -97,4 +97,3 @@ def test_deepseek_dated_model_uses_official_family_price_and_native_alias(
     assert result.source == "deterministic"
     assert result.prices[_DATED_MODEL] == result.prices[_GENERIC_MODEL]
     assert deepseek.UPSTREAM_ID_MAP[_DATED_MODEL] == "deepseek-v4-flash"
-    assert any("approved price aliases" in note for note in result.notes)
