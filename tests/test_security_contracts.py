@@ -327,33 +327,117 @@ def test_sentry_failed_request_statuses_exclude_expected_compatibility_501() -> 
     assert 599 in SENTRY_FAILED_REQUEST_STATUS_CODES
 
 
-def test_sentry_drops_wordpress_scanner_405_but_keeps_application_405() -> None:
-    def event(url: str, *, method: str = "POST") -> dict:
-        return {
-            "level": "error",
-            "request": {"method": method, "url": url},
-            "exception": {
-                "values": [
-                    {
-                        "type": "HTTPException",
-                        "value": "Method Not Allowed",
-                    }
-                ]
-            },
-        }
+def _method_not_allowed_event(
+    url: str,
+    *,
+    method: str = "POST",
+    headers: dict[str, str] | list[list[str]] | None = None,
+) -> dict[str, object]:
+    return {
+        "level": "error",
+        "request": {"method": method, "url": url, "headers": headers or {}},
+        "exception": {
+            "values": [
+                {
+                    "type": "HTTPException",
+                    "value": "Method Not Allowed",
+                }
+            ]
+        },
+    }
 
-    assert (
-        before_send(
-            event("https://trustedrouter.com/?rest_route=%2Fbatch%2Fv1"),
-            {},
-        )
-        is None
+
+@pytest.mark.parametrize(
+    ("method", "url", "headers"),
+    [
+        (
+            "GET",
+            "https://trustedrouter.com/v1/internal/synthetic/route-health",
+            {"User-Agent": "meta-externalagent/1.1"},
+        ),
+        ("POST", "https://35.241.14.18/", {"User-Agent": "scanner"}),
+        (
+            "POST",
+            "https://trustedrouter.com/?rest_route=%2Fbatch%2Fv1",
+            {"User-Agent": "wp2shell"},
+        ),
+        (
+            "POST",
+            "https://trustedrouter.com/console/credits",
+            {"Origin": "https://attacker.example"},
+        ),
+    ],
+)
+def test_sentry_drops_untrusted_method_not_allowed_noise(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+) -> None:
+    reset_sentry_floodgate_for_tests()
+    assert before_send(
+        _method_not_allowed_event(url, method=method, headers=headers),
+        {},
+    ) is None
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Referer": "https://trustedrouter.com/console/settings"},
+        [["Origin", "https://trustedrouter.com"]],
+        {"X-TrustedRouter-Internal-Token": "filtered-secret"},
+    ],
+)
+def test_sentry_keeps_trusted_405_and_fingerprints_method_and_path(
+    headers: dict[str, str] | list[list[str]],
+) -> None:
+    reset_sentry_floodgate_for_tests()
+    event = _method_not_allowed_event(
+        "https://trustedrouter.com/console/settings?source=console",
+        headers=headers,
     )
-    assert before_send(event("http://35.241.14.18/"), {}) is None
-    assert before_send(event("http://[2001:db8::1]/"), {}) is None
-    assert before_send(event("http://35.241.14.18/health"), {}) is not None
-    assert before_send(event("https://trustedrouter.com/"), {}) is not None
-    assert before_send(event("https://trustedrouter.com/console/credits"), {}) is not None
+
+    captured = before_send(event, {})
+
+    assert captured is not None
+    assert captured["fingerprint"] == ["http-405", "POST", "/console/settings"]
+    assert "fingerprint" not in event
+
+
+def test_sentry_recognizes_context_only_405_as_untrusted() -> None:
+    reset_sentry_floodgate_for_tests()
+    event = {
+        "request": {
+            "method": "GET",
+            "url": "https://trustedrouter.com/mcp",
+            "headers": {"User-Agent": "Infrawatch/1.0"},
+        },
+        "contexts": {"response": {"status_code": 405}},
+    }
+
+    assert before_send(event, {}) is None
+
+
+def test_sentry_keeps_non_405_server_errors_without_origin() -> None:
+    reset_sentry_floodgate_for_tests()
+    event = {
+        "level": "error",
+        "request": {"method": "POST", "url": "https://trustedrouter.com/v1/keys"},
+        "exception": {"values": [{"type": "RuntimeError", "value": "database failed"}]},
+    }
+
+    assert before_send(event, {}) is not None
+
+
+def test_sentry_does_not_mutate_dropped_scanner_event() -> None:
+    event = _method_not_allowed_event(
+        "https://trustedrouter.com/",
+        headers={"User-Agent": "scanner"},
+    )
+    original = json.loads(json.dumps(event))
+
+    assert before_send(event, {}) is None
+    assert event == original
 
 
 def test_sentry_floodgate_drops_repeated_issue_after_per_fingerprint_limit() -> None:

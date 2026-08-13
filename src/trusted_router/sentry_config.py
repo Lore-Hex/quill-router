@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import hashlib
-import ipaddress
 import json
 import logging
 import os
 import sys
 import time
-from collections.abc import Callable, MutableMapping
+from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass
 from threading import Lock
 from typing import Any, cast
@@ -204,11 +203,11 @@ def init_sentry(settings: Settings) -> None:
             # alert: Starlette answers 405 from the router without an exception
             # for Sentry to catch.
             #
-            # 405 is worth the exception to "don't alert on 4xx" because it is
-            # never a client mistake we can't fix — it means a path exists but
-            # not for that method, i.e. our own form or client targets a route
-            # we did not implement. Low volume, high signal. Other 4xx stay
-            # unreported: 401/402/404 are routine and would drown the signal.
+            # 405 is retained for same-origin UI requests and authenticated
+            # internal workers because those indicate a route contract we can
+            # fix. before_send drops bare public wrong-method traffic before it
+            # can consume the Sentry budget. Other 4xx stay unreported:
+            # 401/402/404 are routine and would drown the signal.
             StarletteIntegration(
                 transaction_style="endpoint",
                 failed_request_status_codes=SENTRY_FAILED_REQUEST_STATUS_CODES,
@@ -255,6 +254,7 @@ def before_send(event: dict[str, Any], hint: dict[str, Any] | None = None) -> di
     if _is_dropped_noise(event):
         return None
     event = _scrub(event)
+    _fingerprint_method_not_allowed(event)
     request = event.get("request")
     if isinstance(request, MutableMapping):
         request.pop("data", None)
@@ -291,48 +291,94 @@ def _is_dropped_noise(event: dict[str, Any]) -> bool:
         and "missing (instance_id)" in text
     ):
         return True
-    return _is_public_scanner_405(event)
+    return _is_untrusted_405(event)
 
 
-def _is_public_scanner_405(event: dict[str, Any]) -> bool:
-    """Drop only unmistakable CMS reconnaissance, not application 405s."""
-    exception = event.get("exception")
-    values = exception.get("values") if isinstance(exception, dict) else None
-    if not isinstance(values, list) or not values:
-        return False
-    latest = values[-1]
-    if not isinstance(latest, dict):
-        return False
-    if latest.get("type") != "HTTPException" or latest.get("value") != "Method Not Allowed":
+def _is_untrusted_405(event: dict[str, Any]) -> bool:
+    """Keep actionable first-party 405s without reporting public probes.
+
+    Public endpoints receive wrong-method requests continuously. A 405 is a
+    product signal only when it came from one of our rendered pages or an
+    authenticated internal worker. SDK/API callers can choose arbitrary HTTP
+    methods, so a bare 405 from the public internet is not a server regression.
+    """
+    if not _is_method_not_allowed_event(event):
         return False
 
     request = event.get("request")
-    if not isinstance(request, dict):
-        return False
-    target = " ".join(
-        str(request.get(field) or "") for field in ("url", "query_string", "path")
-    ).lower()
-    scanner_markers = (
-        "rest_route=%2fbatch%2fv1",
-        "rest_route=/batch/v1",
-        "/wp-admin",
-        "/wp-login.php",
-        "/xmlrpc.php",
-    )
-    if any(marker in target for marker in scanner_markers):
+    if not isinstance(request, Mapping):
         return True
-
-    # Internet scanners also probe the load balancer's numeric address with a
-    # bare POST. This cannot be a supported product route, while the equivalent
-    # request on a named host remains visible as a potentially broken client.
-    method = str(request.get("method") or "").upper()
-    url = str(request.get("url") or "")
-    try:
-        parsed = urlsplit(url)
-        ipaddress.ip_address(parsed.hostname or "")
-    except (ValueError, TypeError):
+    headers = _request_headers(request)
+    if "x-trustedrouter-internal-token" in headers:
         return False
-    return method == "POST" and parsed.path in {"", "/"} and not parsed.query
+
+    request_host = _url_hostname(request.get("url"))
+    if request_host is None:
+        return True
+    for name in ("origin", "referer"):
+        if _url_hostname(headers.get(name)) == request_host:
+            return False
+    return True
+
+
+def _is_method_not_allowed_event(event: Mapping[str, Any]) -> bool:
+    contexts = event.get("contexts")
+    if isinstance(contexts, Mapping):
+        response = contexts.get("response")
+        if isinstance(response, Mapping) and str(response.get("status_code")) == "405":
+            return True
+
+    exception = event.get("exception")
+    values = exception.get("values") if isinstance(exception, Mapping) else None
+    if not isinstance(values, list):
+        return False
+    for value in values:
+        if not isinstance(value, Mapping):
+            continue
+        exception_type = str(value.get("type") or "").lower()
+        exception_value = str(value.get("value") or "").lower()
+        if "httpexception" in exception_type and "method not allowed" in exception_value:
+            return True
+    return False
+
+
+def _request_headers(request: Mapping[str, Any]) -> dict[str, str]:
+    raw_headers = request.get("headers")
+    if isinstance(raw_headers, Mapping):
+        return {str(name).lower(): str(value) for name, value in raw_headers.items()}
+    if isinstance(raw_headers, list):
+        headers: dict[str, str] = {}
+        for item in raw_headers:
+            if isinstance(item, (list, tuple)) and len(item) == 2:
+                headers[str(item[0]).lower()] = str(item[1])
+        return headers
+    return {}
+
+
+def _url_hostname(value: Any) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return urlsplit(value).hostname
+    except ValueError:
+        return None
+
+
+def _fingerprint_method_not_allowed(event: dict[str, Any]) -> None:
+    if not _is_method_not_allowed_event(event) or event.get("fingerprint"):
+        return
+    request = event.get("request")
+    if not isinstance(request, Mapping):
+        return
+    method = str(request.get("method") or "UNKNOWN").upper()
+    url = request.get("url")
+    path = "/"
+    if isinstance(url, str):
+        try:
+            path = urlsplit(url).path or "/"
+        except ValueError:
+            pass
+    event["fingerprint"] = ["http-405", method, path]
 
 
 def configure_sentry_floodgate(settings: Settings) -> None:
