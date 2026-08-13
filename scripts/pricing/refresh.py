@@ -286,7 +286,12 @@ def _latest_model_created(snapshot: dict[str, Any]) -> int:
 def _is_launch_candidate(model_id: str) -> bool:
     """Exclude catalog aliases that do not represent independently priced launches."""
 
-    return not model_id.startswith("~") and not model_id.endswith(":free")
+    # OpenRouter-style suffixes describe routing or billing modes for an
+    # existing model (for example ``:batch``, ``:free``, or ``:nitro``). They
+    # are not independently launched provider SKUs and therefore must not
+    # become parser requirements. Provider-native discovery is responsible
+    # for publishing actual provider model IDs.
+    return not model_id.startswith("~") and ":" not in model_id
 
 
 def _new_parser_requirements(
