@@ -150,7 +150,7 @@ def test_alias_status_and_trust_hosts_render(
     assert trust.status_code == 200
     assert f"https://api.{domain}/v1" in trust.text
     assert f"https://api.{domain}/attestation" in trust.text
-    assert '<link rel="canonical" href="https://trust.trustedrouter.com/">' in trust.text
+    assert '<link rel="canonical" href="https://trustedrouter.com/trust">' in trust.text
 
 
 def test_alias_www_and_status_redirects_stay_on_alias(client: TestClient) -> None:
