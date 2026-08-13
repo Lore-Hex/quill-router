@@ -453,6 +453,7 @@ def test_og_image_route_serves_png(client: TestClient) -> None:
     assert "https://github.com/Lore-Hex/quill-cloud-infra" in trust.text
     assert "https://github.com/Lore-Hex/quill" in trust.text
     assert "https://github.com/Lore-Hex/trusted-router-js" in trust.text
+    assert "https://github.com/Lore-Hex/trustedrouter-provider-check" in trust.text
 
 
 def test_favicon_assets_are_served(client: TestClient) -> None:
@@ -485,6 +486,9 @@ def test_favicon_assets_are_served(client: TestClient) -> None:
     )
     assert release.json()["source_repositories"]["attested_gateway"] == (
         "https://github.com/Lore-Hex/quill-cloud-proxy"
+    )
+    assert release.json()["source_repositories"]["provider_check"] == (
+        "https://github.com/Lore-Hex/trustedrouter-provider-check"
     )
 
 

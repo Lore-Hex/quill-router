@@ -44,6 +44,12 @@ def test_provider_onboarding_page_has_machine_readable_requirements(
     assert "No separate pricing endpoint is required." in response.text
     assert "per_1m_tokens" in response.text
     assert "Do not invent a second format." in response.text
+    assert (
+        "uvx trustedrouter-provider-check --base-url "
+        "https://your-endpoint.example/v1 --model your-model" in response.text
+    )
+    assert 'href="https://github.com/Lore-Hex/trustedrouter-provider-check"' in response.text
+    assert 'href="/docs/provider-conformance"' in response.text
     assert "Featured partnership" in response.text
     assert "Neurometric AI is live on TrustedRouter." in response.text
     assert 'href="/providers/neurometric"' in response.text
