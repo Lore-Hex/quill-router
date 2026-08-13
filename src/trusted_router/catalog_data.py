@@ -964,6 +964,31 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://www.alibabacloud.com/help/en/model-studio/model-pricing",
     ),
+    # Microsoft Foundry direct deployments in eastus2. Availability and exact
+    # regional list prices are synchronized from Azure's account-scoped model,
+    # quota, deployment, and Retail Prices APIs. Do not infer ZDR from Azure's
+    # enterprise positioning: this route stays Standard until Lore Hex has an
+    # applicable written retention agreement and verifies account enforcement.
+    "azure": Provider(
+        slug="azure",
+        name="Microsoft Azure AI Foundry",
+        supports_messages=True,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "No provider-ZDR, confidential-compute, or E2EE claim is currently "
+            "tracked for TrustedRouter's Microsoft Foundry account. Azure model "
+            "availability and pricing are synchronized directly from the account."
+        ),
+        provider_policy_url=(
+            "https://learn.microsoft.com/en-us/azure/ai-foundry/"
+            "responsible-ai/openai/data-privacy"
+        ),
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
     "ltx": Provider(
         slug="ltx",
         name="Lightricks LTX",
@@ -1114,6 +1139,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         # key is entitled to inference and its provider-native catalog is
         # refreshed from the workspace-scoped /models endpoint.
         "alibaba",
+        "azure",
         # Direct asynchronous video APIs. These are handled by provider-native
         # adapters inside the attested gateway, not by the chat adapter.
         "ltx",
