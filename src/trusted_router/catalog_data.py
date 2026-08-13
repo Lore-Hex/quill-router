@@ -1159,9 +1159,15 @@ ROUTING_MODEL_MIN_PRIVACY_TIERS: dict[str, int] = {
 
 MONITOR_MODEL_ID = "trustedrouter/monitor"
 
+DEEPSEEK_V4_PRO_0423_MODEL_ID = "deepseek/deepseek-v4-pro-0423"
+
+DEEPSEEK_V4_PRO_0813_MODEL_ID = "deepseek/deepseek-v4-pro-0813"
+
 SOCRATES_1_0_MODEL_ID = "trustedrouter/socrates-1.0"
 
 SOCRATES_1_1_MODEL_ID = "trustedrouter/socrates-1.1"
+
+SOCRATES_2_0_MODEL_ID = "trustedrouter/socrates-2.0"
 
 SOCRATES_MODEL_ID = "trustedrouter/socrates"
 
@@ -1173,9 +1179,13 @@ ARISTOTLE_1_0_MODEL_ID = "trustedrouter/aristotle-1.0"
 
 ARISTOTLE_1_1_MODEL_ID = "trustedrouter/aristotle-1.1"
 
+ARISTOTLE_2_0_MODEL_ID = "trustedrouter/aristotle-2.0"
+
 ARISTOTLE_MODEL_ID = "trustedrouter/aristotle"
 
 PLATO_1_0_MODEL_ID = "trustedrouter/plato-1.0"
+
+PLATO_3_0_MODEL_ID = "trustedrouter/plato-3.0"
 
 PLATO_MODEL_ID = "trustedrouter/plato"
 
@@ -1197,6 +1207,8 @@ OPEN_PATCHER_S1_MODEL_ID = "trustedrouter/openpatcher-s1"
 
 OPEN_PATCHER_S2_MODEL_ID = "trustedrouter/openpatcher-s2"
 
+OPEN_PATCHER_S3_MODEL_ID = "trustedrouter/openpatcher-s3"
+
 OPEN_PATCHER_A1_MODEL_ID = "trustedrouter/openpatcher-a1"
 
 OPEN_PATCHER_FAST1_MODEL_ID = "trustedrouter/openpatcher-fast1"
@@ -1205,7 +1217,13 @@ OPEN_PATCHER_G1_MODEL_ID = "trustedrouter/openpatcher-g1"
 
 OPEN_PATCHER_G2_MODEL_ID = "trustedrouter/openpatcher-g2"
 
+OPEN_PATCHER_G3_MODEL_ID = "trustedrouter/openpatcher-g3"
+
 ATHENA_MODEL_ID = "trustedrouter/athena"
+
+ATHENA_1_0_MODEL_ID = "trustedrouter/athena-1.0"
+
+ATHENA_2_0_MODEL_ID = "trustedrouter/athena-2.0"
 
 LIBERTY_1_0_MODEL_ID = "trustedrouter/liberty-1.0"
 
@@ -1223,6 +1241,8 @@ US_PROVIDER_ONLY_MODEL_IDS = frozenset(
         OPEN_PATCHER_A1_MODEL_ID,
         OPEN_PATCHER_FAST1_MODEL_ID,
         OPEN_PATCHER_G1_MODEL_ID,
+        ATHENA_1_0_MODEL_ID,
+        ATHENA_2_0_MODEL_ID,
         ATHENA_MODEL_ID,
     }
 )
@@ -1239,15 +1259,21 @@ IRIS_1_0_MODEL_ID = "trustedrouter/iris-1.0"
 
 IRIS_2_0_MODEL_ID = "trustedrouter/iris-2.0"
 
+IRIS_3_0_MODEL_ID = "trustedrouter/iris-3.0"
+
 PROMETHEUS_1_0_MODEL_ID = "trustedrouter/prometheus-1.0"
 
 PROMETHEUS_1_0_1M_MODEL_ID = "trustedrouter/prometheus-1.0-1m"
 
 PROMETHEUS_2_0_MODEL_ID = "trustedrouter/prometheus-2.0"
 
+PROMETHEUS_3_0_MODEL_ID = "trustedrouter/prometheus-3.0"
+
 ZEUS_1_0_MODEL_ID = "trustedrouter/zeus-1.0"
 
 ZEUS_1_0_MINI_MODEL_ID = "trustedrouter/zeus-1.0-mini"
+
+ZEUS_2_0_MODEL_ID = "trustedrouter/zeus-2.0"
 
 SYNTH_CODE_MODEL_ID = "trustedrouter/synth-code"
 
@@ -1284,13 +1310,16 @@ META_MODEL_IDS = frozenset(
         MONITOR_MODEL_ID,
         SOCRATES_1_0_MODEL_ID,
         SOCRATES_1_1_MODEL_ID,
+        SOCRATES_2_0_MODEL_ID,
         SOCRATES_MODEL_ID,
         ADVISOR_MODEL_ID,
         SUBAGENT_MODEL_ID,
         ARISTOTLE_1_0_MODEL_ID,
         ARISTOTLE_1_1_MODEL_ID,
+        ARISTOTLE_2_0_MODEL_ID,
         ARISTOTLE_MODEL_ID,
         PLATO_1_0_MODEL_ID,
+        PLATO_3_0_MODEL_ID,
         PLATO_MODEL_ID,
         PLATO_PRO_1_0_MODEL_ID,
         PLATO_PRO_2_0_MODEL_ID,
@@ -1301,10 +1330,14 @@ META_MODEL_IDS = frozenset(
         SOCRATES_PRO_PLUS_MODEL_ID,
         OPEN_PATCHER_S1_MODEL_ID,
         OPEN_PATCHER_S2_MODEL_ID,
+        OPEN_PATCHER_S3_MODEL_ID,
         OPEN_PATCHER_A1_MODEL_ID,
         OPEN_PATCHER_FAST1_MODEL_ID,
         OPEN_PATCHER_G1_MODEL_ID,
         OPEN_PATCHER_G2_MODEL_ID,
+        OPEN_PATCHER_G3_MODEL_ID,
+        ATHENA_1_0_MODEL_ID,
+        ATHENA_2_0_MODEL_ID,
         ATHENA_MODEL_ID,
         LIBERTY_1_0_MODEL_ID,
         LIBERTY_1_0_1M_MODEL_ID,
@@ -1317,11 +1350,14 @@ META_MODEL_IDS = frozenset(
         ZEUS_MODEL_ID,
         IRIS_1_0_MODEL_ID,
         IRIS_2_0_MODEL_ID,
+        IRIS_3_0_MODEL_ID,
         PROMETHEUS_1_0_MODEL_ID,
         PROMETHEUS_1_0_1M_MODEL_ID,
         PROMETHEUS_2_0_MODEL_ID,
+        PROMETHEUS_3_0_MODEL_ID,
         ZEUS_1_0_MODEL_ID,
         ZEUS_1_0_MINI_MODEL_ID,
+        ZEUS_2_0_MODEL_ID,
         SYNTH_CODE_MODEL_ID,
         IRIS_CODE_MODEL_ID,
         PROMETHEUS_CODE_MODEL_ID,
@@ -1358,15 +1394,16 @@ ORCHESTRATION_PRIMITIVE_BY_MODEL_ID: dict[str, str] = {
 }
 
 CANONICAL_ORCHESTRATION_MODEL_ID: dict[str, str] = {
-    SOCRATES_MODEL_ID: SOCRATES_1_1_MODEL_ID,
-    ARISTOTLE_MODEL_ID: ARISTOTLE_1_1_MODEL_ID,
-    PLATO_MODEL_ID: PLATO_PRO_1_0_MODEL_ID,
+    SOCRATES_MODEL_ID: SOCRATES_2_0_MODEL_ID,
+    ARISTOTLE_MODEL_ID: ARISTOTLE_2_0_MODEL_ID,
+    PLATO_MODEL_ID: PLATO_3_0_MODEL_ID,
     PLATO_PRO_MODEL_ID: PLATO_PRO_2_0_MODEL_ID,
     SOCRATES_PRO_MODEL_ID: SOCRATES_PRO_1_0_MODEL_ID,
     SOCRATES_PRO_PLUS_MODEL_ID: SOCRATES_PRO_PLUS_1_0_MODEL_ID,
-    IRIS_MODEL_ID: IRIS_2_0_MODEL_ID,
-    PROMETHEUS_MODEL_ID: PROMETHEUS_2_0_MODEL_ID,
-    ZEUS_MODEL_ID: ZEUS_1_0_MODEL_ID,
+    IRIS_MODEL_ID: IRIS_3_0_MODEL_ID,
+    PROMETHEUS_MODEL_ID: PROMETHEUS_3_0_MODEL_ID,
+    ZEUS_MODEL_ID: ZEUS_2_0_MODEL_ID,
+    ATHENA_MODEL_ID: ATHENA_2_0_MODEL_ID,
     IRIS_CODE_MODEL_ID: IRIS_CODE_1_0_MODEL_ID,
     PROMETHEUS_CODE_MODEL_ID: PROMETHEUS_CODE_1_0_MODEL_ID,
     ZEUS_CODE_MODEL_ID: ZEUS_CODE_1_0_MODEL_ID,
@@ -1394,6 +1431,7 @@ ORCHESTRATION_ROLLING_ALIAS_MODEL_IDS = frozenset(
         IRIS_MODEL_ID,
         PROMETHEUS_MODEL_ID,
         ZEUS_MODEL_ID,
+        ATHENA_MODEL_ID,
         IRIS_CODE_MODEL_ID,
         PROMETHEUS_CODE_MODEL_ID,
         ZEUS_CODE_MODEL_ID,
@@ -1451,15 +1489,16 @@ US_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
 #
 # Properties pinned by tests rather than trusted to review:
 #
-#   1. The LEADING entries are US-hosted and clear PRIVACY_TIER_ZERO_RETENTION,
-#      so the default route is not quietly weaker on data handling than the
-#      `trustedrouter/zdr` alias a caller could have named explicitly.
-#   2. The ladder spans MORE THAN ONE provider. deepseek-v4-flash-0731 clears
-#      ZDR only via Together, so without this the default route would have a
-#      single point of failure.
+#   1. Privacy and jurisdiction requirements are applied before authorization;
+#      an incompatible leading model is skipped rather than silently weakening
+#      a caller's requested policy.
+#   2. The ladder spans MORE THAN ONE provider. The first-party 0813 route is
+#      followed by independent model/provider families, so an upstream outage
+#      does not make the default route a single point of failure.
 #
-# Order: cheap-and-qualifying first. deepseek-v4-flash-0731, kimi-k3 and
-# glm-5.2 lead because they are inexpensive and all three clear US+ZDR.
+# Order: strongest current DeepSeek release first, then cheap qualifying
+# fallbacks. Privacy and jurisdiction requirements are still applied before
+# any candidate is authorized.
 #
 # Anthropic sits at the BOTTOM deliberately. Its endpoints are currently
 # PRIVACY_TIER_STANDARD (not yet zero-retention), so it is filtered out of any
@@ -1467,6 +1506,7 @@ US_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
 # requests with no privacy floor, and it moves up on its own merits the moment
 # its endpoint tier is raised.
 DEFAULT_AUTO_MODEL_ORDER = [
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
     "deepseek/deepseek-v4-flash-0731",
     "moonshotai/kimi-k3",
     "z-ai/glm-5.2",
@@ -1478,16 +1518,40 @@ DEFAULT_AUTO_MODEL_ORDER = [
     "anthropic/claude-sonnet-4.6",
 ]
 
+# Released orchestration presets are immutable. Never change the component
+# graph behind a versioned model ID; introduce a new preset version and move
+# only its rolling alias. This is especially important for G1/G2 and the
+# historical 0423 DeepSeek graphs used below.
+SYNTH_IRIS_1_MODEL_ORDER = (
+    "minimax/minimax-m3",
+    "moonshotai/kimi-k2.6",
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
+)
+
 SYNTH_BUDGET_MODEL_ORDER = (
     "minimax/minimax-m3",
     "moonshotai/kimi-k2.6",
-    "deepseek/deepseek-v4-pro",
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
 )
 
 SYNTH_IRIS_2_MODEL_ORDER = (
     "minimax/minimax-m3",
     "moonshotai/kimi-k3",
-    "deepseek/deepseek-v4-pro",
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
+)
+
+SYNTH_IRIS_3_MODEL_ORDER = (
+    "minimax/minimax-m3",
+    "moonshotai/kimi-k3",
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
+)
+
+SYNTH_PROMETHEUS_1_MODEL_ORDER = (
+    "minimax/minimax-m3",
+    "moonshotai/kimi-k2.6",
+    "z-ai/glm-5.2",
+    "google/gemma-4-31b-it",
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
 )
 
 SYNTH_QUALITY_MODEL_ORDER = (
@@ -1495,21 +1559,29 @@ SYNTH_QUALITY_MODEL_ORDER = (
     "moonshotai/kimi-k2.6",
     "z-ai/glm-5.2",
     "google/gemma-4-31b-it",
-    "deepseek/deepseek-v4-pro",
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
 )
 
 SYNTH_QUALITY_1M_MODEL_ORDER = (
     "minimax/minimax-m3",
     "xiaomi/mimo-v2.5-pro",
     "z-ai/glm-5.2",
-    "deepseek/deepseek-v4-pro",
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
 )
 
 SYNTH_PROMETHEUS_2_MODEL_ORDER = (
     "minimax/minimax-m3",
     "moonshotai/kimi-k3",
     "z-ai/glm-5.2",
-    "deepseek/deepseek-v4-pro",
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
+    "xiaomi/mimo-v2.5-pro",
+)
+
+SYNTH_PROMETHEUS_3_MODEL_ORDER = (
+    "minimax/minimax-m3",
+    "moonshotai/kimi-k3",
+    "z-ai/glm-5.2",
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
     "xiaomi/mimo-v2.5-pro",
 )
 
@@ -1524,7 +1596,7 @@ LIBERTY_1_0_1M_MODEL_ORDER = (
     "nvidia/nemotron-3-ultra-550b-a55b",
 )
 
-SYNTH_FRONTIER_MODEL_ORDER = (
+SYNTH_FRONTIER_1_MODEL_ORDER = (
     "anthropic/claude-opus-4.8",
     "openai/gpt-5.5",
     "google/gemini-3.1-pro-preview",
@@ -1532,7 +1604,7 @@ SYNTH_FRONTIER_MODEL_ORDER = (
     "minimax/minimax-m3",
     "z-ai/glm-5.2",
     "xiaomi/mimo-v2.5-pro",
-    "deepseek/deepseek-v4-pro",
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
 )
 
 SYNTH_FRONTIER_MINI_MODEL_ORDER = (
@@ -1541,13 +1613,38 @@ SYNTH_FRONTIER_MINI_MODEL_ORDER = (
     "minimax/minimax-m3",
     "z-ai/glm-5.2",
     "xiaomi/mimo-v2.5-pro",
-    "deepseek/deepseek-v4-pro",
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
+)
+
+SYNTH_FRONTIER_MODEL_ORDER = (
+    "anthropic/claude-opus-4.8",
+    "openai/gpt-5.5",
+    "google/gemini-3.1-pro-preview",
+    "google/gemini-3.5-flash",
+    "minimax/minimax-m3",
+    "z-ai/glm-5.2",
+    "xiaomi/mimo-v2.5-pro",
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
+)
+
+SYNTH_CODE_BUDGET_1_MODEL_ORDER = (
+    "minimax/minimax-m3",
+    "moonshotai/kimi-k2.7-code",
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
 )
 
 SYNTH_CODE_BUDGET_MODEL_ORDER = (
     "minimax/minimax-m3",
     "moonshotai/kimi-k2.7-code",
-    "deepseek/deepseek-v4-pro",
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
+)
+
+SYNTH_CODE_QUALITY_1_MODEL_ORDER = (
+    "minimax/minimax-m3",
+    "moonshotai/kimi-k2.7-code",
+    "z-ai/glm-5.2",
+    "google/gemma-4-31b-it",
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
 )
 
 SYNTH_CODE_QUALITY_MODEL_ORDER = (
@@ -1555,7 +1652,7 @@ SYNTH_CODE_QUALITY_MODEL_ORDER = (
     "moonshotai/kimi-k2.7-code",
     "z-ai/glm-5.2",
     "google/gemma-4-31b-it",
-    "deepseek/deepseek-v4-pro",
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
 )
 
 SYNTH_CODE_FRONTIER_MODEL_ORDER = (
@@ -1590,6 +1687,18 @@ SOCRATES_1_1_CATALOG_MODEL_ORDER = (
     ZEUS_1_0_MODEL_ID,
 )
 
+SOCRATES_2_0_WORKER_MODEL_ORDER = (
+    "xiaomi/mimo-v2.5-pro-ultraspeed",
+    "minimax/minimax-m3",
+    "z-ai/glm-5.2-fast",
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
+)
+
+SOCRATES_2_0_CATALOG_MODEL_ORDER = (
+    *SOCRATES_2_0_WORKER_MODEL_ORDER,
+    ZEUS_2_0_MODEL_ID,
+)
+
 SELECTOR_CATALOG_MODEL_ORDER = (
     *SYNTH_QUALITY_MODEL_ORDER,
     "moonshotai/kimi-k2.7-code",
@@ -1606,7 +1715,8 @@ MAPREDUCE_CATALOG_MODEL_ORDER = (
 ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
     SOCRATES_1_0_MODEL_ID: SOCRATES_CATALOG_MODEL_ORDER,
     SOCRATES_1_1_MODEL_ID: SOCRATES_1_1_CATALOG_MODEL_ORDER,
-    SOCRATES_MODEL_ID: SOCRATES_1_1_CATALOG_MODEL_ORDER,
+    SOCRATES_2_0_MODEL_ID: SOCRATES_2_0_CATALOG_MODEL_ORDER,
+    SOCRATES_MODEL_ID: SOCRATES_2_0_CATALOG_MODEL_ORDER,
     ADVISOR_MODEL_ID: SOCRATES_CATALOG_MODEL_ORDER,
     SUBAGENT_MODEL_ID: (
         "deepseek/deepseek-v4-flash",
@@ -1615,7 +1725,7 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
     ),
     ARISTOTLE_1_0_MODEL_ID: (
         "deepseek/deepseek-v4-flash",
-        *SYNTH_FRONTIER_MODEL_ORDER,
+        *SYNTH_FRONTIER_1_MODEL_ORDER,
     ),
     ARISTOTLE_1_1_MODEL_ID: (
         "z-ai/glm-5.2-fast",
@@ -1625,16 +1735,25 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
     ARISTOTLE_MODEL_ID: (
         "z-ai/glm-5.2-fast",
         "z-ai/glm-5.2",
-        ZEUS_1_0_MODEL_ID,
+        ZEUS_2_0_MODEL_ID,
+    ),
+    ARISTOTLE_2_0_MODEL_ID: (
+        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.2",
+        ZEUS_2_0_MODEL_ID,
     ),
     PLATO_1_0_MODEL_ID: (
         "deepseek/deepseek-v4-flash",
         "z-ai/glm-5.2",
-        *SYNTH_QUALITY_MODEL_ORDER,
+        *SYNTH_PROMETHEUS_1_MODEL_ORDER,
     ),
     PLATO_MODEL_ID: (
-        "z-ai/glm-5.2",
-        PROMETHEUS_1_0_1M_MODEL_ID,
+        DEEPSEEK_V4_PRO_0813_MODEL_ID,
+        PROMETHEUS_3_0_MODEL_ID,
+    ),
+    PLATO_3_0_MODEL_ID: (
+        DEEPSEEK_V4_PRO_0813_MODEL_ID,
+        PROMETHEUS_3_0_MODEL_ID,
     ),
     PLATO_PRO_1_0_MODEL_ID: (
         "z-ai/glm-5.2",
@@ -1679,10 +1798,29 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         "google/gemma-4-31b-it",
         PROMETHEUS_2_0_MODEL_ID,
     ),
-    ATHENA_MODEL_ID: (
+    OPEN_PATCHER_G3_MODEL_ID: (
+        "moonshotai/kimi-k3",
+        "google/gemma-4-31b-it",
+        PROMETHEUS_3_0_MODEL_ID,
+    ),
+    ATHENA_1_0_MODEL_ID: (
         "z-ai/glm-5.2-fast",
         "z-ai/glm-5.2",
         ZEUS_1_0_MINI_MODEL_ID,
+        "moonshotai/kimi-k2.7-code",
+        "moonshotai/kimi-k2.6",
+    ),
+    ATHENA_2_0_MODEL_ID: (
+        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.2",
+        ZEUS_2_0_MODEL_ID,
+        "moonshotai/kimi-k2.7-code",
+        "moonshotai/kimi-k2.6",
+    ),
+    ATHENA_MODEL_ID: (
+        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.2",
+        ZEUS_2_0_MODEL_ID,
         "moonshotai/kimi-k2.7-code",
         "moonshotai/kimi-k2.6",
     ),
@@ -1962,11 +2100,14 @@ _PROVIDER_DISPLAY_ORDER = ("tinfoil",)
 for _advisor_model_id in (
     SOCRATES_1_0_MODEL_ID,
     SOCRATES_1_1_MODEL_ID,
+    SOCRATES_2_0_MODEL_ID,
     SOCRATES_MODEL_ID,
     ARISTOTLE_1_0_MODEL_ID,
     ARISTOTLE_1_1_MODEL_ID,
+    ARISTOTLE_2_0_MODEL_ID,
     ARISTOTLE_MODEL_ID,
     PLATO_1_0_MODEL_ID,
+    PLATO_3_0_MODEL_ID,
     PLATO_MODEL_ID,
     PLATO_PRO_1_0_MODEL_ID,
     PLATO_PRO_2_0_MODEL_ID,
@@ -1979,6 +2120,9 @@ for _advisor_model_id in (
     OPEN_PATCHER_FAST1_MODEL_ID,
     OPEN_PATCHER_G1_MODEL_ID,
     OPEN_PATCHER_G2_MODEL_ID,
+    OPEN_PATCHER_G3_MODEL_ID,
+    ATHENA_1_0_MODEL_ID,
+    ATHENA_2_0_MODEL_ID,
     ATHENA_MODEL_ID,
     LIBERTY_2_0_MODEL_ID,
     PARASAIL_LIBERTY_2_0_MODEL_ID,
@@ -1992,11 +2136,14 @@ for _synth_model_id in (
     ZEUS_MODEL_ID,
     IRIS_1_0_MODEL_ID,
     IRIS_2_0_MODEL_ID,
+    IRIS_3_0_MODEL_ID,
     PROMETHEUS_1_0_MODEL_ID,
     PROMETHEUS_1_0_1M_MODEL_ID,
     PROMETHEUS_2_0_MODEL_ID,
+    PROMETHEUS_3_0_MODEL_ID,
     ZEUS_1_0_MODEL_ID,
     ZEUS_1_0_MINI_MODEL_ID,
+    ZEUS_2_0_MODEL_ID,
     IRIS_CODE_MODEL_ID,
     PROMETHEUS_CODE_MODEL_ID,
     ZEUS_CODE_MODEL_ID,
@@ -2005,6 +2152,7 @@ for _synth_model_id in (
     ZEUS_CODE_1_0_MODEL_ID,
     OPEN_PATCHER_S1_MODEL_ID,
     OPEN_PATCHER_S2_MODEL_ID,
+    OPEN_PATCHER_S3_MODEL_ID,
     LIBERTY_1_0_MODEL_ID,
     LIBERTY_1_0_1M_MODEL_ID,
 ):

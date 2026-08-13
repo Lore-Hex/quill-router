@@ -28,8 +28,8 @@ from trusted_router.config import Settings
 from trusted_router.routing import chat_route_endpoint_candidates
 from trusted_router.routing_candidates import auto_candidate_models
 
-# The models the default route should reach for first.
-LEAD_MODELS = 3
+# The models the default route should reach for after the global 0813 leader.
+QUALIFYING_LEAD_MODELS = 3
 
 
 def _us_zdr_providers(model_id: str) -> set[str]:
@@ -42,10 +42,11 @@ def _us_zdr_providers(model_id: str) -> set[str]:
     }
 
 
-def test_leading_auto_candidates_are_us_and_zero_retention() -> None:
-    """The models `auto` reaches for FIRST must clear the bar a caller would
-    have got from the `zdr` alias. Later fallbacks may be weaker — routing
-    filters them out per request — but the default path should not be."""
+def test_leading_privacy_compatible_auto_candidates_are_us_and_zero_retention() -> None:
+    """After policy filtering, the leading ZDR choices must clear the floor."""
+    qualifying = [
+        model_id for model_id in DEFAULT_AUTO_MODEL_ORDER if _us_zdr_providers(model_id)
+    ][:QUALIFYING_LEAD_MODELS]
     offenders = {
         model_id: sorted(
             {
@@ -54,11 +55,12 @@ def test_leading_auto_candidates_are_us_and_zero_retention() -> None:
                 if endpoint.model_id == model_id
             }
         )
-        for model_id in DEFAULT_AUTO_MODEL_ORDER[:LEAD_MODELS]
+        for model_id in qualifying
         if not _us_zdr_providers(model_id)
     }
     assert not offenders, (
-        f"the first {LEAD_MODELS} auto candidates must have a US-hosted endpoint at or "
+        f"the first {QUALIFYING_LEAD_MODELS} compatible auto candidates must have a "
+        "US-hosted endpoint at or "
         f"above zero-retention; these do not: {offenders}"
     )
 
@@ -66,37 +68,30 @@ def test_leading_auto_candidates_are_us_and_zero_retention() -> None:
 def test_auto_ladder_spans_more_than_one_provider() -> None:
     """A single-provider ladder makes one provider outage an `auto` outage."""
     providers: set[str] = set()
-    for model_id in DEFAULT_AUTO_MODEL_ORDER[:LEAD_MODELS]:
+    qualifying = [
+        model_id for model_id in DEFAULT_AUTO_MODEL_ORDER if _us_zdr_providers(model_id)
+    ][:QUALIFYING_LEAD_MODELS]
+    for model_id in qualifying:
         providers |= _us_zdr_providers(model_id)
     assert len(providers) > 1, f"the leading auto candidates share one provider: {providers}"
 
 
-def test_cheap_qualifying_models_lead_the_ladder() -> None:
-    assert DEFAULT_AUTO_MODEL_ORDER[:LEAD_MODELS] == [
+def test_current_release_then_cheap_qualifying_models_lead_the_ladder() -> None:
+    assert DEFAULT_AUTO_MODEL_ORDER[:4] == [
+        "deepseek/deepseek-v4-pro-0813",
         "deepseek/deepseek-v4-flash-0731",
         "moonshotai/kimi-k3",
         "z-ai/glm-5.2",
     ]
 
 
-def test_non_zero_retention_models_sit_at_the_bottom() -> None:
-    """A model that cannot clear ZDR must never outrank one that can — it is
-    unreachable for privacy-constrained requests, so it is a last resort."""
-    ranks_without_zdr = [
-        index
-        for index, model_id in enumerate(DEFAULT_AUTO_MODEL_ORDER)
-        if not _us_zdr_providers(model_id)
-    ]
-    ranks_with_zdr = [
-        index
-        for index, model_id in enumerate(DEFAULT_AUTO_MODEL_ORDER)
-        if _us_zdr_providers(model_id)
-    ]
-    if ranks_without_zdr and ranks_with_zdr:
-        assert min(ranks_without_zdr) > max(ranks_with_zdr), (
-            "models that cannot clear US+ZDR must sit below every model that can; "
-            f"order = {DEFAULT_AUTO_MODEL_ORDER}"
-        )
+def test_zdr_filter_skips_incompatible_global_leader_before_dispatch() -> None:
+    candidates = chat_route_endpoint_candidates(
+        {"model": "trustedrouter/auto", "provider": {"min_privacy": "zdr"}, "messages": []},
+        Settings(),
+    )
+    assert candidates
+    assert all(model.id != "deepseek/deepseek-v4-pro-0813" for model, _endpoint in candidates)
 
 
 def test_every_auto_candidate_is_a_real_resolvable_model() -> None:

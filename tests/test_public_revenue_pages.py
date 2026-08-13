@@ -507,7 +507,7 @@ def test_public_meta_model_detail_renders_orchestration_components(client: TestC
     assert rolling.status_code == 200
     assert '<span class="pill">advisor</span>' in rolling.text
     assert '<span class="pill">rolling alias</span>' in rolling.text
-    assert 'Canonical: <a href="/models/trustedrouter/socrates-1.1"' in rolling.text
+    assert 'Canonical: <a href="/models/trustedrouter/socrates-2.0"' in rolling.text
 
 
 def test_public_k3_combo_pages_render_exact_graphs(
