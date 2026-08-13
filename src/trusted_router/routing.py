@@ -528,7 +528,17 @@ def _requested_model_ids(
             overrides.update(ovr)
         enforced_privacy_tier = ROUTING_MODEL_MIN_PRIVACY_TIERS.get(stripped)
         if enforced_privacy_tier is not None:
-            overrides["min_privacy"] = "e2ee" if enforced_privacy_tier >= 3 else "zdr"
+            alias = "e2ee" if enforced_privacy_tier >= 3 else "zdr"
+            # Strictest wins, not last-seen. `overrides` is one flat dict shared
+            # by every id in `model` + `models[]`, so a plain assignment let a
+            # later, weaker meta-model overwrite a stricter earlier one:
+            # {"model": "trustedrouter/e2e", "models": ["trustedrouter/zdr"]}
+            # resolved to the zdr rank and returned rank-2 endpoints, while the
+            # reverse order resolved to e2ee. A request's privacy guarantee must
+            # not depend on which fallback happens to be listed last.
+            previous = overrides.get("min_privacy")
+            if previous is None or PRIVACY_TIER_ALIASES[alias] > PRIVACY_TIER_ALIASES[previous]:
+                overrides["min_privacy"] = alias
         if stripped == ZDR_MODEL_ID:
             overrides["order"] = (
                 "anthropic,openai,google-vertex,google-ai-studio,tinfoil,venice,phala"
