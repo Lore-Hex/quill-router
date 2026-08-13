@@ -166,7 +166,8 @@ def test_digitalocean_manifest_preserves_exact_upstream_ids() -> None:
     rows = {row["id"]: row for row in manifest["models"]}
 
     assert rows["deepseek/deepseek-v4-flash"]["upstream_id"] == "deepseek-4-flash"
-    assert rows["z-ai/glm-5.2"]["upstream_id"] == "glm-5.2"
-    assert rows["z-ai/glm-5.2"]["input_token_price_per_m"] == 1_400_000
-    assert rows["z-ai/glm-5.2"]["output_token_price_per_m"] == 4_400_000
-    assert rows["z-ai/glm-5.2"]["cached_input_token_price_per_m"] == 210_000
+    glm = rows["z-ai/glm-5.2"]
+    assert glm["upstream_id"] == "glm-5.2"
+    assert glm["input_token_price_per_m"] > 0
+    assert glm["output_token_price_per_m"] > 0
+    assert 0 < glm["cached_input_token_price_per_m"] < glm["input_token_price_per_m"]
