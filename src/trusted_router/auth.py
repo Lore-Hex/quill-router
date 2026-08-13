@@ -161,6 +161,16 @@ def _principal_from_dev_header(
 
 
 def _principal_for_session(request: Request, session: AuthSession) -> Principal:
+    # The state gate lives here rather than at each call site so that every
+    # conversion from a session into an authenticated principal enforces one
+    # invariant. It used to sit only on the cookie branch, so the same
+    # `trsess-` string was rejected as a cookie and accepted as a bearer — and
+    # no storage backend filters by state, they all check lookup, expiry and
+    # token hash only. Note this is deliberately not pushed down into
+    # get_auth_session_by_raw: the pending-email attach flow needs to fetch a
+    # pending session directly, it just must not get a principal from one.
+    if session.state != "active":
+        raise api_error(401, "Invalid session", "unauthorized")
     user = STORE.get_user(session.user_id)
     if user is None:
         raise api_error(401, "Invalid session", "unauthorized")
