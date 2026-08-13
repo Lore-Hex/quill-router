@@ -21,6 +21,8 @@ one failure under MAX_TOLERATED_FAILURES.
 from __future__ import annotations
 
 import os
+from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -32,10 +34,20 @@ from scripts.pricing.base import (
     ProviderPricingResult,
     validate,
 )
+from scripts.pricing.manifest import write_discovered_chat_manifest
 from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_upstream_id
+from scripts.pricing.openai_catalog import positive_int
 
 SLUG = "gmi"
 URL = "https://api.gmi-serving.com/v1/models"
+MANIFEST_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "src"
+    / "trusted_router"
+    / "data"
+    / "provider_models"
+    / "gmi.json"
+)
 
 EXPECTED_MODELS = [
     "google/gemma-4-31b-it",
@@ -62,6 +74,7 @@ _NATIVE_TO_OR_ID = {
     "openai/gpt-5.5": "openai/gpt-5.5",
 }
 UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.items()}
+_DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 
 
 def _extract_lowest_tier(pricing: object) -> tuple[float, float, float | None] | None:
@@ -117,6 +130,9 @@ def _extract_lowest_tier(pricing: object) -> tuple[float, float, float | None] |
 
 
 def fetch() -> ProviderPricingResult:
+    global _DISCOVERED_MANIFEST_ROWS  # noqa: PLW0603
+
+    _DISCOVERED_MANIFEST_ROWS = {}
     api_key = os.environ.get("GMI_API_KEY")
     headers = {"User-Agent": PROVIDER_FETCH_UA, "Accept": "application/json"}
     if api_key:
@@ -132,6 +148,7 @@ def fetch() -> ProviderPricingResult:
         payload = response.json()
     rows = payload.get("data") or []
     prices: dict[str, ModelPrice] = {}
+    discovered: dict[str, dict[str, Any]] = {}
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -155,6 +172,23 @@ def fetch() -> ProviderPricingResult:
                 else None
             ),
         )
+        discovered_row: dict[str, Any] = {
+            "id": or_id,
+            "upstream_id": native_id,
+            "display_name": str(row.get("name") or native_id),
+            "endpoints": ["chat/completions"],
+        }
+        context_length = positive_int(row.get("context_length"))
+        if context_length is not None:
+            discovered_row["context_length"] = context_length
+        max_output = positive_int(
+            row.get("max_output_length") or row.get("max_output_tokens")
+        )
+        if max_output is not None:
+            discovered_row["max_output_tokens"] = max_output
+        discovered[or_id] = discovered_row
+
+    _DISCOVERED_MANIFEST_ROWS = discovered
 
     notes: list[str] = []
     errors = validate(prices, EXPECTED_MODELS)
@@ -167,4 +201,13 @@ def fetch() -> ProviderPricingResult:
         source="api",
         fetched_url=URL,
         notes=notes,
+    )
+
+
+def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
+    return write_discovered_chat_manifest(
+        result,
+        manifest_path=MANIFEST_PATH,
+        discovered_rows=_DISCOVERED_MANIFEST_ROWS,
+        source_url=URL,
     )

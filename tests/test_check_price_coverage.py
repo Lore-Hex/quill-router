@@ -8,8 +8,36 @@ import json
 from scripts import check_price_coverage
 from scripts.check_price_coverage import audit
 
+_NEW_AUTOMATIC_FEED_MODELS = {
+    "openai/gpt-5.6-sol",
+    "x-ai/grok-4.6",
+    "deepseek/deepseek-v4-flash",
+    "mistralai/mistral-small-2603",
+    "z-ai/glm-5.2",
+}
+_NEW_AUTOMATIC_FEED_ALIASES = {
+    "deepseek-v4-flash",
+    "glm-5.2",
+    "gpt-5.6-sol",
+    "grok-4.6",
+    "mistral-small-2603",
+}
+_NEW_AUTOMATIC_FEED_ROWS = (
+    _NEW_AUTOMATIC_FEED_MODELS | _NEW_AUTOMATIC_FEED_ALIASES
+)
+
 
 def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict:
+    if "api.openai.com" in url:
+        return {"data": [{"id": "gpt-5.6-sol"}]}
+    if "api.x.ai" in url:
+        return {"models": [{"id": "grok-4.6"}]}
+    if "api.deepseek.com" in url:
+        return {"data": [{"id": "deepseek-v4-flash"}]}
+    if "api.mistral.ai" in url:
+        return {"data": [{"id": "mistral-small-2603"}]}
+    if "api.z.ai" in url:
+        return {"data": [{"id": "glm-5.2"}]}
     if "api.moonshot.ai" in url:
         return {"data": [{"id": "kimi-k2.7-code"}]}
     if "cerebras.ai" in url:
@@ -141,7 +169,8 @@ def test_model_discovery_warns_when_docs_mention_unpublished_model() -> None:
     warnings, info = check_price_coverage._model_discovery_audit(
         fetch_text=lambda _url: "Supported Models: GLM-5.2, GLM-4.7",
         fetch_json=_known_provider_model_payload,
-        published_model_ids={"z-ai/glm-4.7"},
+        published_model_ids={"z-ai/glm-4.7"}
+        | (_NEW_AUTOMATIC_FEED_ROWS - {"z-ai/glm-5.2"}),
     )
 
     assert any(item.startswith("cerebras: model discovery matched catalog") for item in info)
@@ -171,7 +200,8 @@ def test_model_discovery_reports_match_when_docs_models_are_published() -> None:
     warnings, info = check_price_coverage._model_discovery_audit(
         fetch_text=lambda _url: "Supported Models: GLM-5.2, GLM-4.7",
         fetch_json=_known_provider_model_payload,
-        published_model_ids={"z-ai/glm-5.2", "z-ai/glm-4.7"},
+        published_model_ids={"z-ai/glm-5.2", "z-ai/glm-4.7"}
+        | _NEW_AUTOMATIC_FEED_ROWS,
     )
 
     assert warnings == []

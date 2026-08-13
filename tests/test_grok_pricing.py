@@ -26,6 +26,20 @@ def test_write_provider_manifest_preserves_grok_46_price_tiers(
         encoding="utf-8",
     )
     monkeypatch.setattr(grok, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(
+        grok,
+        "_DISCOVERED_MANIFEST_ROWS",
+        {
+            "x-ai/grok-4.6": {
+                "id": "x-ai/grok-4.6",
+                "upstream_id": "grok-4.6",
+            },
+            "x-ai/grok-4.5": {
+                "id": "x-ai/grok-4.5",
+                "upstream_id": "grok-4.5",
+            },
+        },
+    )
 
     result = ProviderPricingResult(
         slug="grok",

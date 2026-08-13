@@ -88,7 +88,10 @@ def write_discovered_chat_manifest(
     tombstone only after repeated fresh misses, and block mass pruning.
     """
 
-    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest_path.exists():
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    else:
+        raw = {"provider": result.slug, "models": []}
     rows = raw.get("models")
     if not isinstance(rows, list):
         raise RuntimeError(f"{result.slug} manifest has no models list")
@@ -142,11 +145,32 @@ def write_discovered_chat_manifest(
                 row.pop("cached_input_token_price_per_m", None)
             else:
                 row["cached_input_token_price_per_m"] = tier.prompt_cached_micro_per_m
+            if len(price.tiers) == 1:
+                row.pop("price_tiers", None)
+            else:
+                row["price_tiers"] = [
+                    {
+                        "max_prompt_tokens": price_tier.max_prompt_tokens,
+                        "input_token_price_per_m": price_tier.prompt_micro_per_m,
+                        "output_token_price_per_m": price_tier.completion_micro_per_m,
+                        **(
+                            {
+                                "cached_input_token_price_per_m": (
+                                    price_tier.prompt_cached_micro_per_m
+                                )
+                            }
+                            if price_tier.prompt_cached_micro_per_m is not None
+                            else {}
+                        ),
+                    }
+                    for price_tier in price.tiers
+                ]
             updated.append(model_id)
         else:
             row.pop("input_token_price_per_m", None)
             row.pop("output_token_price_per_m", None)
             row.pop("cached_input_token_price_per_m", None)
+            row.pop("price_tiers", None)
             if row.get("routable") is not False or row.get(
                 "routable_reason"
             ) == "price-unavailable":
@@ -198,6 +222,60 @@ def write_discovered_chat_manifest(
         f"{result.slug}: refreshed provider_models/{manifest_path.name} "
         f"({len(updated)} priced rows{suffix})"
     ]
+
+
+def models_requiring_canary(
+    manifest_path: Path,
+    discovered_model_ids: Collection[str],
+    *,
+    failure_reason: str = "provider-canary-failed",
+) -> frozenset[str]:
+    """Return only new routes and routes held by a previous failed canary."""
+
+    if not manifest_path.exists():
+        return frozenset(discovered_model_ids)
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError):
+        return frozenset(discovered_model_ids)
+    rows = raw.get("models") if isinstance(raw, dict) else None
+    if not isinstance(rows, list):
+        return frozenset(discovered_model_ids)
+    existing = {
+        row["id"]: row
+        for row in rows
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
+    return frozenset(
+        model_id
+        for model_id in discovered_model_ids
+        if model_id not in existing
+        or existing[model_id].get("routable_reason") == failure_reason
+    )
+
+
+def apply_canary_results(
+    discovered_rows: dict[str, dict[str, Any]],
+    *,
+    checked_model_ids: Collection[str],
+    healthy_model_ids: Collection[str],
+    failure_reason: str = "provider-canary-failed",
+) -> None:
+    """Attach machine-owned route state before the shared manifest rebuild."""
+
+    checked = set(checked_model_ids)
+    healthy = set(healthy_model_ids)
+    if not healthy <= checked:
+        raise ValueError("healthy model ids must be a subset of checked model ids")
+    for model_id in checked:
+        row = discovered_rows.get(model_id)
+        if row is None:
+            continue
+        row["routable"] = model_id in healthy
+        if model_id in healthy:
+            row.pop("routable_reason", None)
+        else:
+            row["routable_reason"] = failure_reason
 
 
 def set_manifest_canary_state(

@@ -1,0 +1,849 @@
+{
+  "provider": "openai",
+  "models": [
+    {
+      "display_name": "chat-latest",
+      "title": "chat-latest",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/chat-latest",
+      "upstream_id": "chat-latest",
+      "created": 1777704602,
+      "routable": true,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 30000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "gpt-4.1",
+      "title": "gpt-4.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-4.1",
+      "upstream_id": "gpt-4.1",
+      "created": 1744316542,
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 8000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "gpt-4.1-mini",
+      "title": "gpt-4.1-mini",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-4.1-mini",
+      "upstream_id": "gpt-4.1-mini",
+      "created": 1744318173,
+      "routable": true,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 1600000,
+      "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "gpt-4.1-nano",
+      "title": "gpt-4.1-nano",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-4.1-nano",
+      "upstream_id": "gpt-4.1-nano",
+      "created": 1744321707,
+      "routable": true,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 25000
+    },
+    {
+      "display_name": "gpt-4o",
+      "title": "gpt-4o",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-4o",
+      "upstream_id": "gpt-4o",
+      "created": 1715367049,
+      "routable": true,
+      "input_token_price_per_m": 2500000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 1250000
+    },
+    {
+      "display_name": "gpt-4o-mini",
+      "title": "gpt-4o-mini",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-4o-mini",
+      "upstream_id": "gpt-4o-mini",
+      "created": 1721172741,
+      "routable": true,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 600000,
+      "cached_input_token_price_per_m": 75000
+    },
+    {
+      "display_name": "gpt-5.3-codex",
+      "title": "gpt-5.3-codex",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.3-codex",
+      "upstream_id": "gpt-5.3-codex",
+      "created": 1770537915,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 1750000,
+      "output_token_price_per_m": 14000000,
+      "cached_input_token_price_per_m": 175000
+    },
+    {
+      "display_name": "gpt-5.6-luna",
+      "title": "gpt-5.6-luna",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.6-luna",
+      "upstream_id": "gpt-5.6-luna",
+      "created": 1782228658,
+      "routable": true,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 20000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 272000,
+          "input_token_price_per_m": 200000,
+          "output_token_price_per_m": 1200000,
+          "cached_input_token_price_per_m": 20000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 400000,
+          "output_token_price_per_m": 1800000,
+          "cached_input_token_price_per_m": 40000
+        }
+      ]
+    },
+    {
+      "display_name": "gpt-5.6-sol",
+      "title": "gpt-5.6-sol",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.6-sol",
+      "upstream_id": "gpt-5.6-sol",
+      "created": 1782228018,
+      "routable": true,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 30000000,
+      "cached_input_token_price_per_m": 500000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 272000,
+          "input_token_price_per_m": 5000000,
+          "output_token_price_per_m": 30000000,
+          "cached_input_token_price_per_m": 500000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 10000000,
+          "output_token_price_per_m": 45000000,
+          "cached_input_token_price_per_m": 1000000
+        }
+      ]
+    },
+    {
+      "display_name": "gpt-5.6-terra",
+      "title": "gpt-5.6-terra",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.6-terra",
+      "upstream_id": "gpt-5.6-terra",
+      "created": 1782228459,
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 12000000,
+      "cached_input_token_price_per_m": 200000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 272000,
+          "input_token_price_per_m": 2000000,
+          "output_token_price_per_m": 12000000,
+          "cached_input_token_price_per_m": 200000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 4000000,
+          "output_token_price_per_m": 18000000,
+          "cached_input_token_price_per_m": 400000
+        }
+      ]
+    },
+    {
+      "display_name": "o1",
+      "title": "o1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/o1",
+      "upstream_id": "o1",
+      "created": 1734375816,
+      "routable": true,
+      "input_token_price_per_m": 15000000,
+      "output_token_price_per_m": 60000000,
+      "cached_input_token_price_per_m": 7500000
+    },
+    {
+      "display_name": "o3",
+      "title": "o3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/o3",
+      "upstream_id": "o3",
+      "created": 1744225308,
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 8000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "o3-mini",
+      "title": "o3-mini",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/o3-mini",
+      "upstream_id": "o3-mini",
+      "created": 1737146383,
+      "routable": true,
+      "input_token_price_per_m": 1100000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 550000
+    },
+    {
+      "display_name": "o4-mini",
+      "title": "o4-mini",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/o4-mini",
+      "upstream_id": "o4-mini",
+      "created": 1744225351,
+      "routable": true,
+      "input_token_price_per_m": 1100000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 275000
+    },
+    {
+      "display_name": "gpt-5.4",
+      "title": "gpt-5.4",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.4",
+      "upstream_id": "gpt-5.4",
+      "created": 1772691852,
+      "routable": true,
+      "input_token_price_per_m": 2500000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 250000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 272000,
+          "input_token_price_per_m": 2500000,
+          "output_token_price_per_m": 15000000,
+          "cached_input_token_price_per_m": 250000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 5000000,
+          "output_token_price_per_m": 22500000,
+          "cached_input_token_price_per_m": 500000
+        }
+      ]
+    },
+    {
+      "display_name": "gpt-5.4-mini",
+      "title": "gpt-5.4-mini",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.4-mini",
+      "upstream_id": "gpt-5.4-mini",
+      "created": 1773451123,
+      "routable": true,
+      "input_token_price_per_m": 750000,
+      "output_token_price_per_m": 4500000,
+      "cached_input_token_price_per_m": 75000
+    },
+    {
+      "display_name": "gpt-5.4-nano",
+      "title": "gpt-5.4-nano",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.4-nano",
+      "upstream_id": "gpt-5.4-nano",
+      "created": 1773450870,
+      "routable": true,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 1250000,
+      "cached_input_token_price_per_m": 20000
+    },
+    {
+      "display_name": "gpt-5.4-pro",
+      "title": "gpt-5.4-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.4-pro",
+      "upstream_id": "gpt-5.4-pro",
+      "created": 1772659601,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 30000000,
+      "output_token_price_per_m": 180000000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 272000,
+          "input_token_price_per_m": 30000000,
+          "output_token_price_per_m": 180000000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 60000000,
+          "output_token_price_per_m": 270000000
+        }
+      ]
+    },
+    {
+      "display_name": "gpt-5.5",
+      "title": "gpt-5.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.5",
+      "upstream_id": "gpt-5.5",
+      "created": 1776824847,
+      "routable": true,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 30000000,
+      "cached_input_token_price_per_m": 500000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 272000,
+          "input_token_price_per_m": 5000000,
+          "output_token_price_per_m": 30000000,
+          "cached_input_token_price_per_m": 500000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 10000000,
+          "output_token_price_per_m": 45000000,
+          "cached_input_token_price_per_m": 1000000
+        }
+      ]
+    },
+    {
+      "display_name": "gpt-5.5-pro",
+      "title": "gpt-5.5-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.5-pro",
+      "upstream_id": "gpt-5.5-pro",
+      "created": 1776894349,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 30000000,
+      "output_token_price_per_m": 180000000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 272000,
+          "input_token_price_per_m": 30000000,
+          "output_token_price_per_m": 180000000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 60000000,
+          "output_token_price_per_m": 270000000
+        }
+      ]
+    },
+    {
+      "display_name": "gpt-3.5-turbo",
+      "title": "gpt-3.5-turbo",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-3.5-turbo",
+      "upstream_id": "gpt-3.5-turbo",
+      "created": 1677610602,
+      "routable": true,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 1500000
+    },
+    {
+      "display_name": "gpt-3.5-turbo-0125",
+      "title": "gpt-3.5-turbo-0125",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-3.5-turbo-0125",
+      "upstream_id": "gpt-3.5-turbo-0125",
+      "created": 1706048358,
+      "routable": true,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 1500000
+    },
+    {
+      "display_name": "gpt-3.5-turbo-1106",
+      "title": "gpt-3.5-turbo-1106",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-3.5-turbo-1106",
+      "upstream_id": "gpt-3.5-turbo-1106",
+      "created": 1698959748,
+      "routable": true,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 2000000
+    },
+    {
+      "display_name": "gpt-3.5-turbo-instruct",
+      "title": "gpt-3.5-turbo-instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-3.5-turbo-instruct",
+      "upstream_id": "gpt-3.5-turbo-instruct",
+      "created": 1692901427,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 1500000,
+      "output_token_price_per_m": 2000000,
+      "missing_since": "2026-08-13"
+    },
+    {
+      "display_name": "gpt-4-0613",
+      "title": "gpt-4-0613",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-4-0613",
+      "upstream_id": "gpt-4-0613",
+      "created": 1686588896,
+      "routable": true,
+      "input_token_price_per_m": 30000000,
+      "output_token_price_per_m": 60000000
+    },
+    {
+      "display_name": "gpt-5",
+      "title": "gpt-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5",
+      "upstream_id": "gpt-5",
+      "created": 1754425777,
+      "routable": true,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 125000
+    },
+    {
+      "display_name": "gpt-5-mini",
+      "title": "gpt-5-mini",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5-mini",
+      "upstream_id": "gpt-5-mini",
+      "created": 1754425928,
+      "routable": true,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 2000000,
+      "cached_input_token_price_per_m": 25000
+    },
+    {
+      "display_name": "gpt-5-nano",
+      "title": "gpt-5-nano",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5-nano",
+      "upstream_id": "gpt-5-nano",
+      "created": 1754426384,
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 5000
+    },
+    {
+      "display_name": "gpt-5-pro",
+      "title": "gpt-5-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5-pro",
+      "upstream_id": "gpt-5-pro",
+      "created": 1759469822,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 15000000,
+      "output_token_price_per_m": 120000000
+    },
+    {
+      "display_name": "gpt-5.1",
+      "title": "gpt-5.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.1",
+      "upstream_id": "gpt-5.1",
+      "created": 1762800673,
+      "routable": true,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 125000
+    },
+    {
+      "display_name": "gpt-5.2",
+      "title": "gpt-5.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.2",
+      "upstream_id": "gpt-5.2",
+      "created": 1765313051,
+      "routable": true,
+      "input_token_price_per_m": 1750000,
+      "output_token_price_per_m": 14000000,
+      "cached_input_token_price_per_m": 175000
+    },
+    {
+      "display_name": "gpt-5.2-pro",
+      "title": "gpt-5.2-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.2-pro",
+      "upstream_id": "gpt-5.2-pro",
+      "created": 1765343983,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 21000000,
+      "output_token_price_per_m": 168000000
+    },
+    {
+      "display_name": "o1-pro",
+      "title": "o1-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/o1-pro",
+      "upstream_id": "o1-pro",
+      "created": 1742251791,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 150000000,
+      "output_token_price_per_m": 600000000
+    },
+    {
+      "display_name": "o3-pro",
+      "title": "o3-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/o3-pro",
+      "upstream_id": "o3-pro",
+      "created": 1748475349,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 20000000,
+      "output_token_price_per_m": 80000000
+    }
+  ],
+  "source": "https://api.openai.com/v1/models",
+  "generated_at": "2026-08-13T18:19:07Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 34
+}

@@ -1,21 +1,22 @@
-"""xAI Grok — human-only provider config.
+"""xAI language-model discovery and pricing from its authenticated API."""
 
-docs.x.ai's pricing tables moved from /docs/models to /developers/pricing
-in 2026-05. The current page renders one row per model with $-priced
-input/cache/output cells. The model name cell is often a markdown link
-([grok-4.5](url)) rather than a bare slug. The parser handles both
-(see parsers/grok.py).
-"""
 from __future__ import annotations
 
-import json
-from datetime import UTC, datetime
+import os
 from pathlib import Path
+from typing import Any
 
-from scripts.pricing.base import ProviderPricingResult, fetch_provider
+from scripts.pricing.base import ModelPrice, PriceTier, ProviderPricingResult, fetch_json, validate
+from scripts.pricing.manifest import (
+    apply_canary_results,
+    models_requiring_canary,
+    write_discovered_chat_manifest,
+)
+from scripts.pricing.openai_catalog import positive_int, probe_openai_chat
 
 SLUG = "grok"
-URL = "https://docs.x.ai/developers/pricing.md"
+BASE_URL = "https://api.x.ai/v1"
+URL = f"{BASE_URL}/language-models"
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src"
@@ -24,80 +25,148 @@ MANIFEST_PATH = (
     / "provider_models"
     / "grok.json"
 )
+EXPECTED_MODELS = ["x-ai/grok-4.6", "x-ai/grok-4.5"]
 
-EXPECTED_MODELS = [
-    "x-ai/grok-4.6",
-    "x-ai/grok-4.5",
-]
+_NATIVE_TO_MODEL_ID = {
+    "grok-4.20-multi-agent-0309": "x-ai/grok-4.20-multi-agent",
+    "grok-4.20-0309-reasoning": "x-ai/grok-4.20-reasoning",
+    "grok-4.20-0309-non-reasoning": "x-ai/grok-4.20",
+    "grok-4-1-fast-reasoning": "x-ai/grok-4-1-fast-reasoning",
+    "grok-4-1-fast-non-reasoning": "x-ai/grok-4-1-fast",
+}
+UPSTREAM_ID_MAP: dict[str, str] = {
+    model_id: native_id for native_id, model_id in _NATIVE_TO_MODEL_ID.items()
+}
+_DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
+
+
+def _model_id(native_id: str) -> str | None:
+    value = native_id.strip().casefold()
+    if not value.startswith("grok-"):
+        return None
+    return _NATIVE_TO_MODEL_ID.get(value) or f"x-ai/{value}"
+
+
+def _microdollars_per_million(raw: object) -> int | None:
+    value = positive_int(raw)
+    return value * 100 if value is not None else None
+
+
+def _price(row: dict[str, Any]) -> ModelPrice | None:
+    prompt = _microdollars_per_million(row.get("prompt_text_token_price"))
+    completion = _microdollars_per_million(row.get("completion_text_token_price"))
+    if prompt is None or completion is None:
+        return None
+    cached = _microdollars_per_million(row.get("cached_prompt_text_token_price"))
+    threshold = positive_int(row.get("long_context_threshold"))
+    long_prompt = _microdollars_per_million(
+        row.get("prompt_text_token_price_long_context")
+    )
+    long_completion = _microdollars_per_million(
+        row.get("completion_text_token_price_long_context")
+    )
+    long_cached = _microdollars_per_million(
+        row.get("cached_prompt_text_token_price_long_context")
+    )
+    if threshold is None or long_prompt is None or long_completion is None:
+        return ModelPrice(
+            prompt,
+            completion,
+            prompt_cached_micro_per_m=cached,
+        )
+    return ModelPrice(
+        tiers=[
+            PriceTier(threshold, prompt, completion, cached),
+            PriceTier(None, long_prompt, long_completion, long_cached or cached),
+        ]
+    )
 
 
 def fetch() -> ProviderPricingResult:
-    return fetch_provider(
+    global _DISCOVERED_MANIFEST_ROWS  # noqa: PLW0603
+
+    _DISCOVERED_MANIFEST_ROWS = {}
+    api_key = os.environ.get("GROK_API_KEY") or os.environ.get("XAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GROK_API_KEY is required for model discovery")
+    payload = fetch_json(
+        URL,
+        extra_headers={"Authorization": f"Bearer {api_key}"},
+    )
+    raw_rows = payload.get("models") if isinstance(payload, dict) else None
+    rows = [row for row in raw_rows if isinstance(row, dict)] if isinstance(raw_rows, list) else []
+    prices: dict[str, ModelPrice] = {}
+    discovered: dict[str, dict[str, Any]] = {}
+    for source in rows:
+        native_id = source.get("id")
+        if not isinstance(native_id, str):
+            continue
+        output_modalities = {
+            str(value).casefold() for value in (source.get("output_modalities") or [])
+        }
+        if output_modalities and "text" not in output_modalities:
+            continue
+        model_id = _model_id(native_id)
+        price = _price(source)
+        if model_id is None or price is None:
+            continue
+        UPSTREAM_ID_MAP[model_id] = native_id
+        prices[model_id] = price
+        row: dict[str, Any] = {
+            "id": model_id,
+            "upstream_id": native_id,
+            "display_name": native_id,
+            "endpoints": ["chat/completions"],
+            "input_modalities": [
+                str(value) for value in (source.get("input_modalities") or ["text"])
+            ],
+            "output_modalities": [
+                str(value) for value in (source.get("output_modalities") or ["text"])
+            ],
+        }
+        context_length = positive_int(source.get("context_length"))
+        if context_length is not None:
+            row["context_length"] = context_length
+        created = positive_int(source.get("created"))
+        if created is not None:
+            row["created"] = created
+        discovered[model_id] = row
+
+    errors = validate(prices, EXPECTED_MODELS)
+    if errors:
+        raise RuntimeError("; ".join(errors))
+    checked = models_requiring_canary(MANIFEST_PATH, discovered)
+    healthy = {
+        model_id
+        for model_id in checked
+        if probe_openai_chat(
+            base_url=BASE_URL,
+            api_key=api_key,
+            model=UPSTREAM_ID_MAP[model_id],
+        )
+    }
+    apply_canary_results(
+        discovered,
+        checked_model_ids=checked,
+        healthy_model_ids=healthy,
+    )
+    _DISCOVERED_MANIFEST_ROWS = discovered
+    return ProviderPricingResult(
         slug=SLUG,
-        url=URL,
-        expected_models=EXPECTED_MODELS,
+        prices=prices,
+        source="api",
+        fetched_url=URL,
+        notes=[
+            f"discovered {len(discovered)} priced language models",
+            f"canaried {len(checked)} new/held routes ({len(healthy)} healthy)",
+        ],
     )
 
 
 def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
-    """Refresh every checked-in xAI route from the official tiered price table."""
-    raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    rows = raw.get("models")
-    if not isinstance(rows, list):
-        raise RuntimeError("grok manifest has no models list")
-
-    updated: list[str] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        model_id = row.get("id")
-        if not isinstance(model_id, str):
-            continue
-        price = result.prices.get(model_id)
-        if price is None:
-            continue
-
-        first = price.tiers[0]
-        row["input_token_price_per_m"] = first.prompt_micro_per_m
-        row["output_token_price_per_m"] = first.completion_micro_per_m
-        if first.prompt_cached_micro_per_m is None:
-            row.pop("cached_input_token_price_per_m", None)
-        else:
-            row["cached_input_token_price_per_m"] = first.prompt_cached_micro_per_m
-
-        if len(price.tiers) == 1:
-            row.pop("price_tiers", None)
-        else:
-            row["price_tiers"] = [
-                {
-                    "max_prompt_tokens": tier.max_prompt_tokens,
-                    "input_token_price_per_m": tier.prompt_micro_per_m,
-                    "output_token_price_per_m": tier.completion_micro_per_m,
-                    **(
-                        {
-                            "cached_input_token_price_per_m": (
-                                tier.prompt_cached_micro_per_m
-                            )
-                        }
-                        if tier.prompt_cached_micro_per_m is not None
-                        else {}
-                    ),
-                }
-                for tier in price.tiers
-            ]
-        updated.append(model_id)
-
-    missing = sorted(set(EXPECTED_MODELS) - set(updated))
-    if missing:
-        raise RuntimeError(f"grok manifest did not update expected model(s): {missing}")
-
-    raw["source"] = result.fetched_url or URL
-    raw["generated_at"] = (
-        datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return write_discovered_chat_manifest(
+        result,
+        manifest_path=MANIFEST_PATH,
+        discovered_rows=_DISCOVERED_MANIFEST_ROWS,
+        source_url=URL,
     )
-    raw["model_count"] = len(rows)
-    MANIFEST_PATH.write_text(
-        json.dumps(raw, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    return [f"grok: refreshed provider_models/grok.json ({len(updated)} priced rows)"]

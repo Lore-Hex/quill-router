@@ -120,6 +120,54 @@ def discover_openai_chat_catalog(
     return prices, discovered
 
 
+def discover_available_priced_chat_catalog(
+    rows: list[dict[str, Any]],
+    *,
+    prices: dict[str, ModelPrice],
+    explicit_map: dict[str, str],
+    upstream_id_map: dict[str, str],
+    include: Callable[[dict[str, Any]], bool] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Intersect an authenticated model list with independently sourced prices.
+
+    Some first-party catalogs expose availability and capabilities but keep
+    prices on a separate official page. Only the intersection is eligible for
+    publication; availability alone can never create an unpriced route.
+    """
+
+    discovered: dict[str, dict[str, Any]] = {}
+    for source in rows:
+        native_id = source.get("id")
+        if not isinstance(native_id, str) or not native_id.strip():
+            continue
+        if include is not None and not include(source):
+            continue
+        model_id = mapped_or_canonical_model_id(native_id, explicit_map)
+        if model_id is None or model_id not in prices:
+            continue
+        remember_upstream_id(upstream_id_map, model_id, native_id)
+        row: dict[str, Any] = {
+            "id": model_id,
+            "upstream_id": native_id,
+            "display_name": str(source.get("name") or native_id),
+            "endpoints": ["chat/completions"],
+        }
+        context_length = positive_int(
+            source.get("context_length") or source.get("max_context_length")
+        )
+        if context_length is not None:
+            row["context_length"] = context_length
+        created = positive_int(source.get("created"))
+        if created is not None:
+            row["created"] = created
+        for field in ("input_modalities", "output_modalities"):
+            value = source.get(field)
+            if isinstance(value, list):
+                row[field] = [str(item) for item in value]
+        discovered[model_id] = row
+    return discovered
+
+
 def probe_openai_chat(
     *,
     base_url: str,
@@ -128,6 +176,7 @@ def probe_openai_chat(
     extra_headers: dict[str, str] | None = None,
     expected_content: str | None = None,
     max_tokens: int = 4,
+    max_tokens_field: str = "max_tokens",
 ) -> bool:
     """Run a minimal paid-path canary without logging response content."""
 
@@ -146,7 +195,7 @@ def probe_openai_chat(
             json={
                 "model": model,
                 "messages": [{"role": "user", "content": "Reply PONG"}],
-                "max_tokens": max_tokens,
+                max_tokens_field: max_tokens,
                 "stream": False,
             },
             timeout=PROVIDER_FETCH_TIMEOUT,

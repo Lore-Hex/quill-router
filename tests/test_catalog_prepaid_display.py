@@ -14,6 +14,7 @@ from trusted_router.catalog_ingest import (
     _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS,
     _PROVIDER_MODELS_DIR,
     _authoritative_provider_model_ids,
+    _provider_manifest_dark_model_ids,
 )
 from trusted_router.dashboard import _model_detail_view
 
@@ -108,6 +109,21 @@ def test_dark_authoritative_manifest_rows_cannot_return_through_shared_snapshot(
             for model_id in dark_models
             if (provider_slug, model_id) in endpoint_pairs
         }
+
+
+def test_dark_manifest_rows_cannot_return_as_prepaid_snapshot_routes() -> None:
+    dark = _provider_manifest_dark_model_ids()
+    endpoint_pairs = {
+        (endpoint.provider, endpoint.model_id)
+        for endpoint in MODEL_ENDPOINTS.values()
+        if endpoint.usage_type == "Credits"
+    }
+    assert not {
+        (provider_slug, model_id)
+        for provider_slug, model_ids in dark.items()
+        for model_id in model_ids
+        if (provider_slug, model_id) in endpoint_pairs
+    }
 
 
 def test_gmi_only_credits_serves_allowlisted_models() -> None:
