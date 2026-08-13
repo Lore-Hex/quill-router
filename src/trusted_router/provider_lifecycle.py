@@ -19,6 +19,7 @@ FRIENDLI_QWEN3_235B_RETIREMENT_AT = datetime(2026, 8, 5, 0, 0, tzinfo=UTC)
 FRIENDLI_K_EXAONE_236B_RETIREMENT_AT = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
 CRUSOE_NEMOTRON_3_ULTRA_RETIREMENT_AT = datetime(2026, 7, 28, 18, 0, tzinfo=UTC)
 WAFER_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
+NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,14 @@ class _Retirement:
 
 
 _RETIREMENTS = (
+    # Novita's time-limited free-trial Ling 3.0 Tiny route retired at the
+    # provider's exact announced UTC cutover. There is no replacement model.
+    _Retirement(
+        provider="novita",
+        model_ids=frozenset({"inclusionai/ling-3.0-tiny"}),
+        upstream_ids=frozenset({"inclusionai/ling-3.0-tiny"}),
+        effective_at=NOVITA_LING_30_TINY_RETIREMENT_AT,
+    ),
     # Wafer announced that GLM 5.1, GLM 5.2 Fast, and Kimi K3 Fast retire on
     # 2026-08-17. Standard GLM 5.2 replaces both GLM routes, while Kimi K3
     # Standard replaces Kimi K3 Fast.
