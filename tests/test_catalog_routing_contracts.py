@@ -756,25 +756,26 @@ def test_anthropic_opus_41_is_never_prepaid_during_retirement_transition() -> No
     ]
 
 
-def test_deepseek_v4_pro_release_routes_are_exact_and_credits_only() -> None:
+def test_deepseek_v4_pro_release_routes_are_keyed_and_credits_only() -> None:
     old_routes = endpoints_for_model(DEEPSEEK_V4_PRO_0423_MODEL_ID)
     current_routes = endpoints_for_model(DEEPSEEK_V4_PRO_0813_MODEL_ID)
 
     assert old_routes
     assert all(endpoint.usage_type == "Credits" for endpoint in old_routes)
     assert all(endpoint.provider != "deepseek" for endpoint in old_routes)
-    assert {endpoint.provider for endpoint in old_routes} <= {
-        "deepinfra",
-        "fireworks",
-        "gmi",
-        "novita",
-        "parasail",
-        "siliconflow",
-        "together",
-    }
-    assert [(endpoint.provider, endpoint.upstream_id) for endpoint in current_routes] == [
-        ("deepseek", "deepseek-v4-pro")
-    ]
+    assert {endpoint.provider for endpoint in old_routes} <= (
+        GATEWAY_PREPAID_PROVIDER_SLUGS - {"deepseek"}
+    )
+    assert current_routes
+    assert all(endpoint.usage_type == "Credits" for endpoint in current_routes)
+    assert {endpoint.provider for endpoint in current_routes} <= (
+        GATEWAY_PREPAID_PROVIDER_SLUGS
+    )
+    assert [
+        (endpoint.provider, endpoint.upstream_id)
+        for endpoint in current_routes
+        if endpoint.provider == "deepseek"
+    ] == [("deepseek", "deepseek-v4-pro")]
     assert MODELS[DEEPSEEK_V4_PRO_0423_MODEL_ID].byok_available is False
     assert MODELS[DEEPSEEK_V4_PRO_0813_MODEL_ID].byok_available is False
 

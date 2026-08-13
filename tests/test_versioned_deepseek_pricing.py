@@ -85,6 +85,7 @@ def test_deepseek_dated_model_uses_official_family_price_and_native_alias(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fixture = (_FIXTURE_DIR / "deepseek.html").read_text(encoding="utf-8")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.setattr(deepseek, "UPSTREAM_ID_MAP", {})
     monkeypatch.setattr(base, "fetch_html", lambda *_args, **_kwargs: fixture)
     monkeypatch.setattr(base, "self_heal_parser", _unexpected_self_heal)

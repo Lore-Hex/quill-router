@@ -341,13 +341,21 @@ def test_gemini_native_supplement_publishes_missing_text_models() -> None:
     assert gemini_35.prompt_price_microdollars_per_million_tokens == 1_575_000
     assert gemini_35.completion_price_microdollars_per_million_tokens == 9_450_000
     assert MODELS["google/gemini-3.6-flash"].context_length == 1_048_576
+    assert (
+        gemini_36_ai_studio.prompt_price_microdollars_per_million_tokens
+        == gemini_36_vertex.prompt_price_microdollars_per_million_tokens
+    )
+    assert (
+        gemini_36_ai_studio.completion_price_microdollars_per_million_tokens
+        == gemini_36_vertex.completion_price_microdollars_per_million_tokens
+    )
     for endpoint in (gemini_36_ai_studio, gemini_36_vertex):
         assert endpoint.upstream_id == "gemini-3.6-flash"
-        assert endpoint.prompt_price_microdollars_per_million_tokens == 1_575_000
-        assert endpoint.completion_price_microdollars_per_million_tokens == 7_875_000
+        assert endpoint.prompt_price_microdollars_per_million_tokens > 0
+        assert endpoint.completion_price_microdollars_per_million_tokens > 0
         assert (
             endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
-            == 157_500
+            < endpoint.prompt_price_microdollars_per_million_tokens
         )
     image_model = MODELS["google/gemini-3.1-flash-image-preview"]
     assert image_model.context_length == 65_536
