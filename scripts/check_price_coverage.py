@@ -259,9 +259,56 @@ def _kimi_model_id(native_id: str) -> str | None:
     return None
 
 
+def _openai_model_id(native_id: str) -> str | None:
+    value = native_id.strip().casefold()
+    if value.startswith(("gpt-", "o1", "o3", "o4", "chat-latest")):
+        return f"openai/{value}"
+    return None
+
+
+def _grok_model_id(native_id: str) -> str | None:
+    value = native_id.strip().casefold()
+    return f"x-ai/{value}" if value.startswith("grok-") else None
+
+
+def _mistral_model_id(native_id: str) -> str | None:
+    value = native_id.strip().casefold()
+    return f"mistralai/{value}" if value else None
+
+
 _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
     tuple[str, str, tuple[str, ...], Callable[[str], str | None]], ...
 ] = (
+    (
+        "openai",
+        "https://api.openai.com/v1/models",
+        ("OPENAI_API_KEY", "CHATGPT_API_KEY"),
+        _openai_model_id,
+    ),
+    (
+        "grok",
+        "https://api.x.ai/v1/language-models",
+        ("GROK_API_KEY", "XAI_API_KEY"),
+        _grok_model_id,
+    ),
+    (
+        "deepseek",
+        "https://api.deepseek.com/models",
+        ("DEEPSEEK_API_KEY",),
+        canonicalize_unqualified_model_id,
+    ),
+    (
+        "mistral",
+        "https://api.mistral.ai/v1/models",
+        ("MISTRAL_API_KEY",),
+        _mistral_model_id,
+    ),
+    (
+        "zai",
+        "https://api.z.ai/api/paas/v4/models",
+        ("ZAI_API_KEY",),
+        canonicalize_unqualified_model_id,
+    ),
     (
         "kimi",
         "https://api.moonshot.ai/v1/models",

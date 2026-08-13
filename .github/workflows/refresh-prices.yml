@@ -134,6 +134,11 @@ jobs:
                       PHALA_CONFIDENTIAL_API_KEY:trustedrouter-phala-confidential-api-key \
                       SILICON_FLOW_API_KEY:trustedrouter-siliconflow-api-key \
                       VENICE_API_KEY:trustedrouter-venice-api-key \
+                      OPENAI_API_KEY:trustedrouter-openai-api-key \
+                      GROK_API_KEY:trustedrouter-grok-api-key \
+                      DEEPSEEK_API_KEY:trustedrouter-deepseek-api-key \
+                      MISTRAL_API_KEY:trustedrouter-mistral-api-key \
+                      ZAI_API_KEY:trustedrouter-zai-api-key \
                       CEREBRAS_API_KEY:trustedrouter-cerebras-api-key \
                       KIMI_API_KEY:trustedrouter-kimi-api-key \
                       FIREWORKS_API_KEY:trustedrouter-fireworks-api-key \

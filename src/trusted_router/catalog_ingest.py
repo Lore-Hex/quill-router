@@ -128,6 +128,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "baseten",
         "friendli",
         "google-ai-studio",
+        "grok",
         "kimi",
         "novita",
         "phala",
@@ -723,8 +724,12 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "google-vertex",
         "fireworks",
         "deepinfra",
+        "deepseek",
         "grok",
         "gmi",
+        "lightning",
+        "mistral",
+        "openai",
         "together",
         "phala",
         "siliconflow",
@@ -987,6 +992,31 @@ _ANTHROPIC_FIRST_PARTY_PROVIDERS: frozenset[str] = frozenset(
 )
 
 
+def _provider_manifest_dark_model_ids() -> dict[str, frozenset[str]]:
+    """Return provider-native routes explicitly held by fresh discovery."""
+
+    dark: dict[str, frozenset[str]] = {}
+    for path in _PROVIDER_MODELS_DIR.glob("*.json"):
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(raw, dict):
+            continue
+        provider_slug = raw.get("provider")
+        rows = raw.get("models")
+        if not isinstance(provider_slug, str) or not isinstance(rows, list):
+            continue
+        dark[provider_slug] = frozenset(
+            row["id"]
+            for row in rows
+            if isinstance(row, dict)
+            and isinstance(row.get("id"), str)
+            and row.get("routable") is False
+        )
+    return dark
+
+
 def _filter_unserved_provider_endpoints(
     endpoints: dict[str, ModelEndpoint],
     *,
@@ -997,9 +1027,11 @@ def _filter_unserved_provider_endpoints(
     those 502 on an account mismatch — BYOK routes use the customer's own key
     (their account may serve a different model set), so they're left intact.
 
-    Five complementary filters apply:
+    Six complementary filters apply:
       * provider deprecation — drop a disabled upstream route on one provider for
         every usage type (Nebius June 2026 retirements).
+      * discovery hold   — drop prepaid routes explicitly held by a fresh
+        provider-native manifest (failed canary, missing price, or delisting).
       * allowlist        — keep only manifest-listed routes for authoritative
         providers and account-verified Credits models for static allowlists.
       * model denylist    — drop the listed Credits models on EVERY provider (GPT-5.4/pro).
@@ -1008,6 +1040,7 @@ def _filter_unserved_provider_endpoints(
         for Credits, never resellers (policy; see _ANTHROPIC_FIRST_PARTY_PROVIDERS).
     """
     allow = dict(_PROVIDER_SERVED_MODEL_ALLOWLIST)
+    dark = _provider_manifest_dark_model_ids()
     for provider_slug in _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS:
         allow[provider_slug] = _authoritative_provider_model_ids(provider_slug)
 
@@ -1020,6 +1053,11 @@ def _filter_unserved_provider_endpoints(
             return True
         if _is_provider_deprecated_model(
             endpoint.provider, endpoint.model_id, endpoint.upstream_id
+        ):
+            return False
+        if (
+            endpoint.usage_type == "Credits"
+            and endpoint.model_id in dark.get(endpoint.provider, frozenset())
         ):
             return False
         if (

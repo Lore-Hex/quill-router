@@ -112,8 +112,10 @@ def test_every_pricing_parser_has_a_fixture_and_contract_case() -> None:
     ]
     assert refresh._SELF_HEALING_PARSER_SLUGS == parser_slugs - {
         "cerebras",
+        "grok",
         "makora",
         "phala",
+        "venice",
     }
 
 
