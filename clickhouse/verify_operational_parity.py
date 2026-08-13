@@ -41,6 +41,7 @@ PROJECT = "quill-cloud-proxy"
 INSTANCE = "trusted-router-logs"
 TABLE = "trustedrouter-generations"
 T = TypeVar("T")
+HEARTBEAT_BUCKET_SECONDS = 5 * 60
 
 
 def _body(row: Any, families: tuple[str, ...]) -> dict[str, Any] | None:
@@ -83,6 +84,17 @@ def _stable_source_row(
         parsed = parsed.replace(tzinfo=dt.UTC)
     parsed = parsed.astimezone(dt.UTC)
     if surface != "rollup":
+        if surface == "synthetic" and payload.get("probe_type") == "heartbeat":
+            try:
+                bucket = int(str(payload.get("id") or "").rsplit("_", 1)[1])
+            except (IndexError, ValueError):
+                return False
+            bucket_end = dt.datetime.fromtimestamp(
+                (bucket + 1) * HEARTBEAT_BUCKET_SECONDS,
+                tz=dt.UTC,
+            )
+            if bucket_end > cutoff:
+                return False
         return parsed <= cutoff
     period = str(payload.get("period") or "")
     if period == "hour":
@@ -121,6 +133,8 @@ def _source_rows(
         limit=max(limit * 2, limit + 1000),
         filter_=CellsColumnLimitFilter(1),
     )
+    # Reverse-time indexes return newest rows first. Preserve the first row
+    # when deterministic IDs were written by more than one region.
     result: dict[str, dict[str, Any]] = {}
     cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=max(0, grace_seconds))
     for row in rows:
@@ -135,7 +149,7 @@ def _source_rows(
                 surface=surface,
                 cutoff=cutoff,
             ):
-                result[benchmark_sample.id] = normalized
+                result.setdefault(benchmark_sample.id, normalized)
         elif surface == "activity":
             generation = _parse(Generation, raw)
             if generation is None:
@@ -151,13 +165,13 @@ def _source_rows(
             )
             event.row.pop("ingest_version", None)
             if _stable_source_row(event.row, surface=surface, cutoff=cutoff):
-                result[generation.id] = event.row
+                result.setdefault(generation.id, event.row)
         elif surface == "synthetic":
             synthetic_sample = _parse(SyntheticProbeSample, raw)
             if synthetic_sample is not None:
                 payload = synthetic_payload(synthetic_sample)
                 if _stable_source_row(payload, surface=surface, cutoff=cutoff):
-                    result[synthetic_sample.id] = payload
+                    result.setdefault(synthetic_sample.id, payload)
         if len(result) >= limit:
             break
     return result
