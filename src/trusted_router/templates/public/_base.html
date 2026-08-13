@@ -18,7 +18,7 @@
   <meta name="description" content="{{ meta_description }}">
   {% include "_favicon.html" %}
   {% if robots_meta %}<meta name="robots" content="{{ robots_meta }}">{% endif %}
-  <link rel="canonical" href="{{ site_url }}">
+  <link rel="canonical" href="{{ canonical_url|default(site_url, true) }}">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="TrustedRouter">
   <meta property="og:title" content="{{ meta_title }}">
