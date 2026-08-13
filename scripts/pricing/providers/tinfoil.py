@@ -25,6 +25,7 @@ SLUG = "tinfoil"
 URL = "https://inference.tinfoil.sh/v1/models"
 
 EXPECTED_MODELS = [
+    "deepseek/deepseek-v4-flash",
     "z-ai/glm-5.2",
     "google/gemma-4-31b-it",
 ]
@@ -42,6 +43,7 @@ _NATIVE_TO_OR_ID = {
     "kimi-k3": "moonshotai/kimi-k3",
     "glm-5-1": "z-ai/glm-5.1",
     "glm-5-2": "z-ai/glm-5.2",
+    "deepseek-v4-flash": "deepseek/deepseek-v4-flash",
     "deepseek-v4-pro": "deepseek/deepseek-v4-pro",
     "gemma4-31b": "google/gemma-4-31b-it",
     "qwen3-vl-30b": "qwen/qwen3-vl-30b-a3b-instruct",
