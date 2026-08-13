@@ -1,8 +1,8 @@
 {
   "provider": "nebius",
   "source": "https://api.tokenfactory.nebius.com/v1/models?verbose=true",
-  "generated_at": "2026-08-10T15:01:10Z",
-  "model_count": 40,
+  "generated_at": "2026-08-13T16:06:17Z",
+  "model_count": 41,
   "models": [
     {
       "id": "meta-llama/Meta-Llama-3.1-8B-Instruct",
@@ -1007,6 +1007,32 @@
       "model_type": "chat",
       "features": [
         "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "nvidia/nemotron-3_5-lightning",
+      "upstream_id": "nvidia/Nemotron-3_5-Lightning",
+      "display_name": "Nemotron-3.5-Lightning",
+      "title": "nvidia/nemotron-3_5-lightning",
+      "created": 1786454551,
+      "context_length": 8000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 60000,
+      "output_token_price_per_m": 240000,
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling"
       ],
       "input_modalities": [
         "text"

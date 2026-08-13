@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-08-10T15:01:10Z",
+  "generated_at": "2026-08-13T16:06:17Z",
   "model_count": 141,
   "models": [
     {
@@ -3896,8 +3896,9 @@
       "created": 1784113196,
       "context_length": 262144,
       "max_output_tokens": 32768,
-      "input_token_price_per_m": 0,
-      "output_token_price_per_m": 0
+      "input_token_price_per_m": 4500,
+      "output_token_price_per_m": 26000,
+      "cached_input_token_price_per_m": 800
     },
     {
       "id": "deepseek/deepseek-v4-flash-0731",
@@ -3983,7 +3984,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1,
+      "status": 4,
       "created": 1785941340,
       "context_length": 262144,
       "max_output_tokens": 32768,

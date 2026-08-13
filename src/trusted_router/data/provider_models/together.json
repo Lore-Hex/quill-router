@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for Together AI routes that are live ahead of the shared OpenRouter snapshot. Verified against https://api.together.xyz/v1/models on 2026-06-22.",
   "provider": "together",
   "source": "https://api.together.xyz/v1/endpoints?type=serverless",
-  "generated_at": "2026-08-10T15:01:10Z",
-  "model_count": 20,
+  "generated_at": "2026-08-13T16:06:17Z",
+  "model_count": 22,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -483,6 +483,54 @@
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 280000,
       "cached_input_token_price_per_m": 30000
+    },
+    {
+      "display_name": "Muse Glimmer 30B",
+      "title": "meta-models/Muse-Glimmer-30B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-models/muse-glimmer-30b",
+      "upstream_id": "meta-models/Muse-Glimmer-30B",
+      "features": [
+        "serverless"
+      ],
+      "context_length": 131072,
+      "input_token_price_per_m": 350000,
+      "output_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 40000
+    },
+    {
+      "display_name": "Qwen3.8-2.4T-A95B",
+      "title": "Qwen/Qwen3.8-2.4T-A95B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.8-2.4t-a95b",
+      "upstream_id": "Qwen/Qwen3.8-2.4T-A95B",
+      "features": [
+        "serverless"
+      ],
+      "context_length": 262144,
+      "input_token_price_per_m": 2500000,
+      "output_token_price_per_m": 6250000,
+      "cached_input_token_price_per_m": 500000
     }
   ],
   "price_scale": "microdollars_per_million"

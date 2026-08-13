@@ -1,7 +1,7 @@
 {
   "provider": "grok",
-  "source": "https://docs.x.ai/developers/models",
-  "generated_at": "2026-08-13T00:00:00Z",
+  "source": "https://docs.x.ai/developers/pricing.md",
+  "generated_at": "2026-08-13T16:06:17Z",
   "model_count": 2,
   "_note": "xAI first-party OpenAI-compatible chat at api.x.ai/v1. Model IDs are verified against the authenticated xAI catalog; context and tiered prices come from xAI's official pricing table.",
   "models": [
@@ -54,7 +54,7 @@
       "created": 1783468800,
       "context_length": 500000,
       "input_token_price_per_m": 2000000,
-      "cached_input_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 300000,
       "output_token_price_per_m": 6000000,
       "model_type": "chat",
       "features": [
@@ -71,7 +71,21 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 200000,
+          "input_token_price_per_m": 2000000,
+          "output_token_price_per_m": 6000000,
+          "cached_input_token_price_per_m": 300000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 4000000,
+          "output_token_price_per_m": 12000000,
+          "cached_input_token_price_per_m": 600000
+        }
+      ]
     }
   ]
 }

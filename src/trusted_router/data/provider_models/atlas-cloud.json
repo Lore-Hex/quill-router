@@ -3390,8 +3390,8 @@
       "status": 1,
       "id": "deepseek/deepseek-v4-flash-0731",
       "upstream_id": "deepseek-ai/deepseek-v4-flash-0731",
-      "context_length": 262144,
-      "max_output_tokens": 131072,
+      "context_length": 1048576,
+      "max_output_tokens": 393216,
       "supported_features": [
         "json_mode",
         "tools",
@@ -3552,8 +3552,141 @@
       "input_token_price_per_m": 2500000,
       "output_token_price_per_m": 15000000,
       "cached_input_token_price_per_m": 250000
+    },
+    {
+      "display_name": "Claude Haiku 4.5 20251001 AWS",
+      "title": "anthropic/claude-haiku-4.5-20251001-aws",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-haiku-4.5-20251001-aws",
+      "upstream_id": "anthropic/claude-haiku-4.5-20251001-aws",
+      "context_length": 200000,
+      "max_output_tokens": 64000,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 5000000,
+      "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "Claude Opus 4.6 AWS",
+      "title": "anthropic/claude-opus-4.6-aws",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.6-aws",
+      "upstream_id": "anthropic/claude-opus-4.6-aws",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Opus 4.7 AWS",
+      "title": "anthropic/claude-opus-4.7-aws",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.7-aws",
+      "upstream_id": "anthropic/claude-opus-4.7-aws",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Opus 4.8 AWS",
+      "title": "anthropic/claude-opus-4.8-aws",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.8-aws",
+      "upstream_id": "anthropic/claude-opus-4.8-aws",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Sonnet 4.6 AWS",
+      "title": "anthropic/claude-sonnet-4.6-aws",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-sonnet-4.6-aws",
+      "upstream_id": "anthropic/claude-sonnet-4.6-aws",
+      "context_length": 200000,
+      "max_output_tokens": 64000,
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 300000
+    },
+    {
+      "display_name": "Dots 3 Note Preview",
+      "title": "dots-studio/dots-3-note-prev-free",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "dots-studio/dots-3-note-prev-free",
+      "upstream_id": "dots-studio/dots-3-note-prev-free",
+      "context_length": 512000,
+      "max_output_tokens": 512000,
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-08-13"
     }
   ],
-  "generated_at": "2026-08-10T15:01:09Z",
-  "model_count": 130
+  "generated_at": "2026-08-13T16:06:17Z",
+  "model_count": 136
 }

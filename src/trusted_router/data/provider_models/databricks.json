@@ -130,11 +130,10 @@
         "reasoning",
         "prompt_caching"
       ],
-      "routable": false,
+      "routable": true,
       "input_token_price_per_m": 3000000,
       "output_token_price_per_m": 15000000,
-      "cached_input_token_price_per_m": 300000,
-      "routable_reason": "provider-canary-failed"
+      "cached_input_token_price_per_m": 300000
     },
     {
       "display_name": "GPT OSS 120B",
@@ -264,11 +263,10 @@
         "reasoning",
         "prompt_caching"
       ],
-      "routable": false,
+      "routable": true,
       "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 4050000,
-      "cached_input_token_price_per_m": 170000,
-      "routable_reason": "provider-canary-failed"
+      "cached_input_token_price_per_m": 170000
     },
     {
       "display_name": "GLM 5.2",
@@ -293,13 +291,12 @@
         "reasoning",
         "prompt_caching"
       ],
-      "routable": false,
+      "routable": true,
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 260000,
-      "routable_reason": "provider-canary-failed"
+      "cached_input_token_price_per_m": 260000
     }
   ],
-  "generated_at": "2026-08-10T19:19:12Z",
+  "generated_at": "2026-08-13T16:06:17Z",
   "model_count": 11
 }

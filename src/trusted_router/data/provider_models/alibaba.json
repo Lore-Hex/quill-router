@@ -3,7 +3,7 @@
   "provider": "alibaba",
   "source": "https://ws-el6e4bpnggpx7g88.eu-central-1.maas.aliyuncs.com/compatible-mode/v1/models",
   "price_source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
-  "generated_at": "2026-08-10T15:01:09Z",
+  "generated_at": "2026-08-13T16:06:17Z",
   "price_scale": "microdollars_per_million",
   "model_count": 79,
   "models": [
@@ -167,7 +167,7 @@
       "upstream_id": "qwen3.7-max",
       "display_name": "Qwen3.7 Max",
       "title": "qwen3.7-max",
-      "created": 1779362120,
+      "created": 1786420774,
       "context_length": 1048576,
       "input_token_price_per_m": 2500000,
       "output_token_price_per_m": 7500000,
@@ -2264,7 +2264,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "created": 1786346867,
+      "created": 1786446891,
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-08-07"
@@ -2278,7 +2278,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "created": 1786347355,
+      "created": 1786446952,
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-08-07"
