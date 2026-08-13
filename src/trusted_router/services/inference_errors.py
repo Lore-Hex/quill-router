@@ -14,7 +14,6 @@ from trusted_router.errors import api_error
 from trusted_router.providers import ProviderError
 from trusted_router.types import ErrorType
 
-
 # Upstream statuses that mean "this request is malformed", i.e. the next
 # provider will reject it identically. Deliberately just these two rather than
 # "every unlisted 4xx": 408 and 425 are transient, and 402 can mean the
