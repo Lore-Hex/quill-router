@@ -32,11 +32,53 @@ read_env() {
       '
 }
 
+read_image() {
+  local region="$1"
+  local revision
+  revision="$(
+    gc run services describe "$SERVICE" --region="$region" --format=json \
+      | jq -r '
+          [.status.traffic[]?
+           | select(.percent == 100)
+           | .revisionName] as $active
+          | if ($active | length) == 1
+               and .status.latestCreatedRevisionName == $active[0]
+               and .status.latestReadyRevisionName == $active[0]
+            then $active[0]
+            else empty
+            end
+        '
+  )"
+  if [ -z "$revision" ]; then
+    return 1
+  fi
+  gc run revisions describe "$revision" --region="$region" \
+    --format='value(status.imageDigest)'
+}
+
 IFS=',' read -r -a regions <<<"$TR_CONTROL_PLANE_REGIONS"
+live_image=""
+live_release=""
 for region in "${regions[@]}"; do
   mode="$(read_env "$region" TR_ANALYTICS_READ_MODE)"
   if [ "$mode" != "dual" ]; then
     echo "${region} is not in dual mode: ${mode:-unset}" >&2
+    exit 1
+  fi
+
+  region_image="$(read_image "$region")"
+  region_release="$(read_env "$region" TR_RELEASE)"
+  if [ -z "$region_image" ] || [ -z "$region_release" ]; then
+    echo "${region} is missing its live image or release identifier" >&2
+    exit 1
+  fi
+  if [ -z "$live_image" ]; then
+    live_image="$region_image"
+    live_release="$region_release"
+  elif [ "$region_image" != "$live_image" ] || [ "$region_release" != "$live_release" ]; then
+    echo "${region} does not match the live release selected for cutover" >&2
+    echo "expected image=${live_image} release=${live_release}" >&2
+    echo "found image=${region_image} release=${region_release}" >&2
     exit 1
   fi
 done
@@ -148,7 +190,10 @@ if [[ "$deploy_principal" == tr-ops-local@* ]]; then
 fi
 export CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE="$DEPLOY_CREDENTIAL_FILE"
 log "all read-only gates passed; switching rollout identity to ${deploy_principal}"
+log "reusing live release ${live_release} from ${live_image}"
 
+IMAGE="$live_image" \
+TR_DEPLOY_RELEASE_ID="$live_release" \
 TR_ANALYTICS_READ_MODE=clickhouse \
 TR_ANALYTICS_DUAL_READ_STARTED_AT="$started_at" \
 TR_ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
