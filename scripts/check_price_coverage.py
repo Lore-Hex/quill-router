@@ -79,13 +79,18 @@ def _gemini_model_id(native_id: str) -> str | None:
     return f"google/{value.casefold()}"
 
 
-def _novita_model_id(native_id: str) -> str | None:
-    """Match the conservative normalization used by the Novita refresher."""
-
+def _canonical_provider_model_id(native_id: str) -> str | None:
+    """Normalize vendor-native IDs using the shared catalog rules."""
     value = native_id.strip()
     if not value:
         return None
     return canonicalize_native_model_id(value) or canonicalize_unqualified_model_id(value)
+
+
+def _novita_model_id(native_id: str) -> str | None:
+    """Match the conservative normalization used by the Novita refresher."""
+
+    return _canonical_provider_model_id(native_id)
 
 
 _FIREWORKS_MODEL_IDS = {
@@ -404,6 +409,12 @@ _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
         "https://api.engy.ai/v1/models",
         ("ENGY_API_KEY",),
         canonicalize_unqualified_model_id,
+    ),
+    (
+        "pearl",
+        "https://inference.pearlresearch.ai/v1/models",
+        ("PEARL_RESEARCH_API_KEY",),
+        _canonical_provider_model_id,
     ),
 )
 

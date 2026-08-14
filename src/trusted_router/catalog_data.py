@@ -829,6 +829,24 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://engy.ai/privacy",
     ),
+    "pearl": Provider(
+        slug="pearl",
+        name="Pearl Research Labs",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Pearl Research states that it retains operational metadata for "
+            "security and does not train on customer data. No public "
+            "contractual zero-data-retention terms are linked, so "
+            "TrustedRouter classifies these routes as Standard and excludes "
+            "them from ZDR, confidential-compute, and E2EE routing."
+        ),
+        provider_policy_url="https://pearlresearch.ai/legal/privacy",
+        provider_headquarters_country="IL",
+    ),
     "databricks": Provider(
         slug="databricks",
         name="Databricks",
@@ -1106,6 +1124,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "streamlake",
         "neurometric",
         "engy",
+        "pearl",
         "databricks",
         "zero-g",
         "nebius",

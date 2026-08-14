@@ -53,6 +53,7 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "novita": ProviderBrand("https://novita.ai/"),
     "openai": ProviderBrand("https://openai.com/"),
     "parasail": ProviderBrand("https://www.parasail.io/"),
+    "pearl": ProviderBrand("https://pearlresearch.ai/"),
     "phala": ProviderBrand("https://phala.network/"),
     "runway": ProviderBrand("https://runwayml.com/"),
     "siliconflow": ProviderBrand("https://www.siliconflow.com/"),

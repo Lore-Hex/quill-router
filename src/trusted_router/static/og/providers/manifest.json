@@ -314,6 +314,15 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "parasail"
   },
+  "pearl": {
+    "card_version": 2,
+    "model_count": 5,
+    "name": "Pearl Research Labs",
+    "privacy": "Policy documented",
+    "route_count": 5,
+    "route_mode": "Prepaid",
+    "slug": "pearl"
+  },
   "phala": {
     "card_version": 2,
     "model_count": 2,
