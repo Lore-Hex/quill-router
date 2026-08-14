@@ -280,19 +280,21 @@ def test_the_flag_ladder_is_pinned(flags: dict[str, object], expected: int) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_confidential_implies_zero_data_retention_by_construction() -> None:
-    """The gap this module originally recorded, now closed.
+def test_the_contradictory_combination_is_forbidden_not_resolved() -> None:
+    """Why this module forbids a flag combination instead of interpreting it.
 
-    A provider with confidential compute + e2ee but `provider_zero_data_retention`
-    explicitly False used to resolve to tier CONFIDENTIAL — admitted for a
-    `min_privacy=zdr` request — while `/models` published "no ZDR" for the same
-    route. No shipped provider was configured that way, so the biconditional
-    held on the real catalog and only the synthetic half of this module could
-    see it.
+    A provider with confidential compute + e2ee AND an explicit
+    provider_zero_data_retention=False resolves to tier CONFIDENTIAL, which the
+    router admits for a `min_privacy=zdr` request, while
+    endpoint_zero_data_retention reports False.
 
-    `endpoint_zero_data_retention` now derives the claim from the tier: a
-    provider that cannot read content cannot retain it, and the ladder already
-    ranks CONFIDENTIAL above ZERO_RETENTION. The two can no longer disagree.
+    An earlier fix derived ZDR from the tier to make them agree. Review
+    rejected it: confidential compute means the provider cannot READ content
+    and says nothing about whether it RETAINS ciphertext. Deriving would
+    publish a stronger claim than the provider makes.
+
+    So neither function guesses. The combination is forbidden by the test
+    below, which fails loudly if a catalog edit ever introduces it.
     """
     template = next(iter(PROVIDERS.values()))
     contradictory = dataclasses.replace(
@@ -304,13 +306,9 @@ def test_confidential_implies_zero_data_retention_by_construction() -> None:
         prepaid_zero_data_retention=False,
     )
     assert provider_privacy_tier(contradictory) == PRIVACY_TIER_CONFIDENTIAL
-
-    endpoint = next(
-        e for e in ALL_ENDPOINTS if endpoint_privacy_tier(e) == PRIVACY_TIER_CONFIDENTIAL
-    )
-    assert endpoint_zero_data_retention(endpoint) is True, (
-        "a CONFIDENTIAL route must publish ZDR, since the router already admits "
-        "it for a zdr floor"
+    assert contradictory.provider_zero_data_retention is False, (
+        "the two genuinely disagree for this combination — which is why it is "
+        "forbidden rather than interpreted"
     )
 
 
