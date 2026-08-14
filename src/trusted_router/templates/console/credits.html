@@ -10,10 +10,20 @@
     <div class="notice warn" style="margin-top:18px">
       Migration credits are available by approval for qualified design partners spending more than $100 per month on LLMs. This console does not grant them automatically. Apply credits manually after approval.
     </div>
+    {% if wallet_only_billing %}
+    <div class="notice" style="margin-top:18px">
+      Wallet-only accounts can fund with stablecoin. Add and verify an email in
+      <a href="/console/account/preferences">Preferences</a> to use cards or other payment methods.
+    </div>
+    {% endif %}
     <form class="form" method="post" action="/console/credits/checkout" style="margin-top:18px">
       <div class="row">
         <label>Amount (USD)<input name="amount" type="number" min="1" max="10000" step="1" value="25" required></label>
         <label>Payment method
+          {% if wallet_only_billing %}
+          <input type="hidden" name="payment_method" value="stablecoin">
+          <input type="text" value="Stablecoin (USDC)" readonly>
+          {% else %}
           <select name="payment_method">
             <option value="auto">Stripe card</option>
             <option value="ach">Bank account (ACH)</option>
@@ -25,21 +35,27 @@
             <option value="adyen">Adyen</option>
             {% endif %}
           </select>
+          {% endif %}
         </label>
       </div>
       <button class="btn primary" type="submit">Continue to checkout</button>
       <p class="form-help">
+        {% if wallet_only_billing %}
+        Stablecoin checkout adds prepaid credits without attaching a card or bank account.
+        {% else %}
         Card and PayPal checkouts show your credits and the same payment
         processing fee as separate line items before you pay, with an $0.80
         minimum fee. ACH and
         stablecoin keep their lower rail-specific fees. ACH is 0.8%, capped
         at $5, and can take up to four business days. Bank-funded credits
         appear only after settlement.
+        {% endif %}
       </p>
     </form>
   </div>
 </section>
 
+{% if not wallet_only_billing or saved_payment_method %}
 <section class="panel">
   <div class="panel-head">
     <h2>Payment methods</h2>
@@ -49,10 +65,14 @@
   </div>
   <div class="panel-body">
     <p style="color:var(--muted);font-size:14px;margin:0 0 14px">
+      {% if wallet_only_billing %}
+      Wallet-only accounts cannot add or charge a card. You can remove this previously saved card below.
+      {% else %}
       Save a Stripe card for auto refill. One-time credit purchases can use a
       card, ACH bank account, PayPal{% if adyen_enabled %}, Adyen{% endif %}, or USDC above.
       {% if payment_method_pending %}
       <br><strong>Stripe setup is pending. Auto-refill will unlock after Stripe confirms the card.</strong>
+      {% endif %}
       {% endif %}
     </p>
     {% if saved_payment_method %}
@@ -85,6 +105,7 @@
       </form>
     </div>
     {% endif %}
+    {% if not wallet_only_billing %}
     <div class="button-row">
       <form method="post" action="/console/credits/payment-methods/add">
         <button class="btn primary" type="submit">
@@ -97,9 +118,12 @@
       </form>
       {% endif %}
     </div>
+    {% endif %}
   </div>
 </section>
+{% endif %}
 
+{% if not wallet_only_billing %}
 <section class="panel">
   <div class="panel-head">
     <h2>Auto refill</h2>
@@ -139,6 +163,7 @@
     {% endif %}
   </div>
 </section>
+{% endif %}
 
 <section class="panel">
   <div class="panel-head">
@@ -215,8 +240,12 @@
     </p>
     {% else %}
     <p style="color:var(--muted);font-size:14px;margin:0">
+      {% if wallet_only_billing %}
+      No payments yet. Stablecoin payments appear after confirmation.
+      {% else %}
       No payments yet. Card payments appear after completion; ACH credits appear
       after Stripe confirms bank settlement.
+      {% endif %}
     </p>
     {% endif %}
   </div>
