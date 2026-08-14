@@ -37,6 +37,15 @@ for spec in "${specs[@]}"; do
     continue
   fi
 
+  # A .cfg naming only a SPECIFICATION checks nothing while looking checked —
+  # TLC would explore the state space and report success having verified no
+  # claim at all. Require at least one INVARIANT or PROPERTY.
+  if ! grep -qE '^[[:space:]]*(INVARIANT|INVARIANTS|PROPERTY|PROPERTIES)\b' "$cfg"; then
+    echo "error: $cfg declares no INVARIANT or PROPERTY — it would pass vacuously." >&2
+    failed=1
+    continue
+  fi
+
   echo "=== TLC: $name ==="
   log="$(mktemp)"
   # Write the log first and grep the FILE. Piping straight into `grep -q` makes

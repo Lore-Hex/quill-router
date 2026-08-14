@@ -30,9 +30,25 @@
 (*     structure, not magnitude; int64 overflow is a separate concern and is *)
 (*     covered by the Python property tests.                                 *)
 (*                                                                          *)
-(* The fencing token is the load-bearing mechanism: lease succession bumps   *)
-(* it, and a stale holder's writes must be refused. S2 is the property that  *)
-(* says so.                                                                  *)
+(* WHAT THIS MODEL DOES *NOT* ESTABLISH                                      *)
+(*                                                                           *)
+(* It does not show the fencing token is load-bearing. An external review     *)
+(* pointed out that the original StaleWrite action was `UNCHANGED vars` — an  *)
+(* action that does nothing is trivially safe, so it proved nothing. Making   *)
+(* it perform a real write did not help: DELETING the token guard from        *)
+(* Reserve entirely still yields no violation (4,634,802 states, no error).   *)
+(*                                                                           *)
+(* That is a genuine negative result, and the reason is instructive. The      *)
+(* accounting guard `HoldAmount <= AvailableIn(l)` already bounds every write *)
+(* by the lease's own grant, so a stale holder writing to a LIVE lease cannot *)
+(* overspend it. The hazard the fence actually addresses is lease SUCCESSION: *)
+(* the same lease re-granted with a bumped token, where a holder from the     *)
+(* previous generation settles against the new one and spend is double        *)
+(* counted. This model has no succession action, so the fence has nothing to  *)
+(* protect here.                                                              *)
+(*                                                                           *)
+(* Adding a Regrant action is the next step for this spec, and until it is    *)
+(* added no one should cite this model as evidence that fencing works.        *)
 (***************************************************************************)
 
 EXTENDS Naturals, FiniteSets, TLC
@@ -164,12 +180,24 @@ Refund(l, h, token) ==
     /\ UNCHANGED << escrowFree, granted, leaseState, leaseToken, leaseExpiry,
                     holdActual, reclaimed, clock, nextToken >>
 
-\* A stale holder attempting a write. Modelled explicitly so TLC must show the
-\* fence actually blocks it rather than the property holding vacuously.
+\* A stale holder attempting a write.
+\*
+\* REVIEW FIX: this was `UNCHANGED vars`, which proved nothing — an action that
+\* does nothing is trivially safe, so the fence could have been removed
+\* entirely and TLC would still have passed. It now performs the SAME state
+\* change Reserve does, and is enabled only when the token does NOT match.
+\* Safety must therefore hold even though a stale holder really did write,
+\* which is a claim about the accounting invariants rather than about the
+\* fence being present. Delete the token guard from Reserve and TLC finds the
+\* overspend; that is the check this action makes possible.
 StaleWrite(l, h, token) ==
-    /\ leaseState[l] # "none"
+    /\ leaseState[l] = "active"
+    /\ holdState[l][h] = "none"
     /\ token # leaseToken[l]
-    /\ UNCHANGED vars                     \* refused: no state change at all
+    /\ HoldAmount <= AvailableIn(l)       \* still bounded by the lease's own grant
+    /\ holdState' = [holdState EXCEPT ![l][h] = "reserved"]
+    /\ UNCHANGED << escrowFree, granted, leaseState, leaseToken, leaseExpiry,
+                    holdActual, reclaimed, clock, nextToken >>
 
 Tick ==
     /\ clock < MaxTime
@@ -190,7 +218,7 @@ Tick ==
 \* it must sweep quarantined leases too, and the property below is what says
 \* so. Set the guard back to active-only and TLC fails in seconds.
 Reclaim(l) ==
-    /\ leaseState[l] \in {"active", "quarantined"}
+    /\ leaseState[l] \in {"active", "draining", "quarantined"}
     /\ clock >= leaseExpiry[l]
     /\ LET returnable == granted[l] - SpentIn(l)
        IN /\ escrowFree' = escrowFree + returnable
@@ -207,8 +235,18 @@ Reclaim(l) ==
     /\ UNCHANGED << granted, leaseExpiry, holdActual, clock >>
 
 Quarantine(l) ==
-    /\ leaseState[l] = "active"
+    /\ leaseState[l] \in {"active", "draining"}
     /\ leaseState' = [leaseState EXCEPT ![l] = "quarantined"]
+    /\ UNCHANGED << escrowFree, granted, leaseToken, leaseExpiry,
+                    holdState, holdActual, reclaimed, clock, nextToken >>
+
+\* REVIEW FIX: DRAINING is a real LeaseState in regional_quota_leases.py
+\* (begin_drain) and was unreachable in the first version of this spec, so
+\* neither safety nor liveness said anything about it. A draining lease stops
+\* accepting new reservations but must still settle and reclaim.
+BeginDrain(l) ==
+    /\ leaseState[l] = "active"
+    /\ leaseState' = [leaseState EXCEPT ![l] = "draining"]
     /\ UNCHANGED << escrowFree, granted, leaseToken, leaseExpiry,
                     holdState, holdActual, reclaimed, clock, nextToken >>
 
@@ -221,6 +259,7 @@ Next ==
     \/ \E l \in LeaseIds, h \in HoldIds, t \in 0..MaxLeases+1 : StaleWrite(l, h, t)
     \/ \E l \in LeaseIds : Reclaim(l)
     \/ \E l \in LeaseIds : Quarantine(l)
+    \/ \E l \in LeaseIds : BeginDrain(l)
     \/ Tick
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(Tick) /\ WF_vars(\E l \in LeaseIds : Reclaim(l))
@@ -285,7 +324,7 @@ Safety ==
 \* design that quietly keeps a customer's money forever.
 ExpiredLeasesAreEventuallyReclaimed ==
     \A l \in LeaseIds :
-        (leaseState[l] \in {"active", "quarantined"} /\ clock >= leaseExpiry[l])
-            ~> (leaseState[l] = "closed")
+        (leaseState[l] \in {"active", "draining", "quarantined"}
+            /\ clock >= leaseExpiry[l]) ~> (leaseState[l] = "closed")
 
 =============================================================================
