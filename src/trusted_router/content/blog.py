@@ -30,6 +30,55 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="proofs-in-production",
+        title="Proofs that find real production bugs",
+        description=(
+            "We wrote property tests and a TLA+ model against the running "
+            "TrustedRouter code and put them in CI. They found fifteen real "
+            "defects, including one that crashed the Swift SDK from a response "
+            "header and one that let a request downgrade its own privacy floor."
+        ),
+        published_date="2026-08-14",
+        source_label=None,
+        source_url=None,
+        og_image="/static/og/blog/proofs-in-production.png",
+        body_html="""
+<figure class="blog-hero-image"><img src="/static/og/blog/proofs-in-production.png" alt="Proofs that find real production bugs" width="1200" height="630"></figure>
+<p>I spent a week pointing proof tools at TrustedRouter's own source and they found fifteen real defects. Not style problems. A single response header that crashed the Swift SDK's process. A request that could quietly downgrade the privacy tier it was routed under. An API key that survived our log scrubber because it was a dictionary key instead of a value. All of it in code that was reviewed, tested, and running.</p>
+<p>I want to describe what actually worked, because "formal methods" usually gets discussed as something you do instead of shipping, on a system small enough to fit in a paper. That is not what this was. The control plane is fifty thousand lines of Python with three thousand five hundred tests already passing. The proofs went in on top of that, they run in CI on every push, and the interesting part is not that they passed. It is what they caught on the way.</p>
+<h2>Write the law, not the example</h2>
+<p>A normal test picks an input and asserts an output. A property picks the <em>claim</em> and lets a generator hunt for a counterexample. The difference sounds academic until you see which bugs each one can and cannot see.</p>
+<p>Our attestation verifier checks that the gateway you are talking to is the exact build we published. It had tests. Good ones, with real RSA signatures and crafted JWTs. Every one of them passed. Here is the property instead:</p>
+<p><strong>for every claims set K and policy P, if verification succeeds then K's image digest was in P's accepted set.</strong></p>
+<p>That is false, and it was false for a year. Both image checks were written as <code>if accepted_digests and workload not in accepted_digests: raise</code>. An <em>empty</em> accepted set skips the check rather than failing it. And the policy builder mapped a trust release with no image fields — a truncated response, a CDN error page that happens to parse as JSON — to exactly that empty set. Verification then succeeded against any genuinely-attested workload and reported success. The caller believed it had pinned a build. It had pinned nothing.</p>
+<p>The example tests all passed <em>while the implication was vacuous</em>. That is the whole lesson. They asserted "a matching digest verifies" and "a mismatched digest raises", and both remained true in a world where the check never ran. Only a statement quantified over all policies can notice that the premise had become unreachable.</p>
+<h2>The generator only searches where you let it</h2>
+<p>Properties are not magic, and the way they fail is instructive. We wrote one for the log scrubber that reads well: no declared secret survives, for any Python value shape. It generated dicts, lists, tuples, sets, bytes, nested combinations, planting canary secrets at random leaf positions. It ran fifteen hundred examples per commit and passed.</p>
+<p>It was searching half the space. Every canary went into a <em>value</em>, because the generator drew mapping keys from plain text. And <code>_scrub</code> checked whether a key <em>name</em> looked sensitive but never scrubbed the key's own text, so this shipped a live credential to our log sink:</p>
+<p><code>_scrub({"sk-tr-v1-SECRET": 1}) -&gt; {'sk-tr-v1-SECRET': 1}</code></p>
+<p>A dict keyed by an API key is not exotic. It is what a per-key request counter looks like. An outside reviewer found it by reading; the property that existed to prevent exactly this had never looked. A property test is only as good as the positions its generator can reach, and "I generated containers" is not the same as "I generated every position a string can occupy in a container."</p>
+<h2>Some bugs need a model, not a test</h2>
+<p>Property tests drive code. When the thing you are worried about is a <em>composition</em> that does not exist yet, there is nothing to drive.</p>
+<p>We have a module for regional prepaid quota leases — several regional planes each holding a bounded slice of one workspace's escrow. It is deliberately dark: no migration, no data, no callers. The failure mode that matters is oversubscription, planes collectively spending more than the workspace escrowed, and it lives in the interaction between a granter, several leaseholders, and a reclaimer sweeping expired leases. None of that is code yet.</p>
+<p>So we wrote it in TLA+ and ran a model checker over every interleaving. Eight million states. It found a design gap in six.</p>
+<p>If the reclaimer only sweeps <em>active</em> leases, a lease that gets quarantined and then expires can never be closed, and its escrow is stranded permanently. Quarantine is meant to stop a suspicious lease spending, not to make the customer forfeit the money. The counterexample was six states long and no amount of unit testing would have produced it, because the reclaimer it describes has not been written. We changed the design and left a note in the spec for whoever builds it.</p>
+<p>The property that caught it was a liveness property — eventually this lease is closed — not a safety one. A safety-only spec is perfectly happy with a system that quietly keeps your money forever. Nothing bad happens; nothing happens at all.</p>
+<h2>What the model does not prove</h2>
+<p>I had also written a "stale write" action into the spec to show that our fencing token blocks writes from a superseded leaseholder. A reviewer pointed out that the action was <code>UNCHANGED vars</code> — it did nothing. An action that does nothing is trivially safe, so it proved nothing.</p>
+<p>I made it perform a real write and the check still passed. Then I deleted the fencing guard entirely, and it <em>still</em> passed: four and a half million states, no violation. The accounting bound already prevents overspend regardless of who writes. The hazard fencing actually addresses is lease succession, which this model does not have.</p>
+<p>So the spec now says, in its header, that it does not establish that fencing works and nobody should cite it as if it did. That is the least satisfying paragraph in this post and the most important one. A proof that proves less than its title suggests is worse than no proof, because it reads as evidence. Model checkers do not stop you claiming too much; they only stop you being wrong about the thing you actually wrote down.</p>
+<h2>Put it in CI or it decays</h2>
+<p>The property tests are pytest files, so they run in the existing suite with no new infrastructure. The TLA+ specs needed a job: a JVM, a cached tools jar, one model-checking run per spec, and it blocks the deploy gate like every other check.</p>
+<p>Two details in that runner are doing real work. A spec without a config file is a hard error rather than a skip, and a config that names no invariant or property is also a hard error — otherwise the checker explores the whole state space and reports success having verified nothing at all. Passing vacuously while looking checked is the exact failure this is supposed to prevent, so the build refuses.</p>
+<p>The single highest-value test we wrote is not a proof of anything. It partitions every field on our generation record into "goes to analytics" or "deliberately excluded", and fails the build when a new field belongs to neither. The real risk to a no-content-logging promise was never that somebody writes a leaky projection. It is that somebody adds a field and an existing projection picks it up, while every value-asserting test stays green. That test converts "remember not to leak" into "the build stops until you decide."</p>
+<h2>Was it worth it</h2>
+<p>Fifteen defects across twenty-three merged pull requests. The ones I would have least liked to find in the wild: a <code>Retry-After</code> header of <code>inf</code> crashed the Swift SDK's process outright — an uncatchable runtime trap, which on iOS is an app termination triggered by a response header. The same header hung the Python client forever and parked the Go client for two hundred and ninety-two years. Six SDKs, six different failure modes, one missing bound.</p>
+<p>The obvious objection is that this is expensive and only pays off on aerospace software. I think that gets it backwards. The cheap properties found most of the bugs. Bounds on untrusted numbers, round-trip laws on anything durable, and one classification test that fails when a struct grows a field — none of that requires a background in verification, and together they caught more than the model did.</p>
+<p>The model earned its place for a different reason: it let us check a design before writing it, while changing our minds still cost nothing. That is the cheapest that decision will ever be, and it is the one place where "prove it first" is straightforwardly less work than shipping and finding out.</p>
+<p>Every property, every spec, and all twenty-three pull requests are in <a href="https://github.com/Lore-Hex/quill-router">the open source repo</a>, along with the code they check. If you want to know what our gateway does with your prompts, that is the same answer as always: <a href="/blog/attestation-is-all-you-need">read it, and verify the build that is running</a>.</p>
+""",
+    ),
+    BlogPost(
         slug="native-swift-harness-no-electron",
         title="Open Source all native Swift harness (NO Electron!)",
         description=(
