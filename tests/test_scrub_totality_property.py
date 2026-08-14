@@ -74,12 +74,19 @@ leaves = st.one_of(
     st.none(),
 )
 
+# Mapping KEYS carry secrets too. The first version of this module generated
+# keys only from st.text(), so every canary lived in a value — and a real leak
+# through {"sk-tr-v1-...": 3} survived the whole suite until an external review
+# pointed at it. That shape is not exotic: a per-key counter or a cache-hit
+# tally is exactly a dict keyed by the credential.
+keys = st.one_of(st.text(max_size=6), st.sampled_from(SECRETS))
+
 values = st.recursive(
     leaves,
     lambda children: st.one_of(
         st.lists(children, max_size=4),
         st.lists(children, max_size=4).map(tuple),
-        st.dictionaries(st.text(max_size=6), children, max_size=4),
+        st.dictionaries(keys, children, max_size=4),
         st.frozensets(st.sampled_from(SECRETS) | st.text(max_size=6), max_size=3),
     ),
     max_leaves=12,
@@ -214,3 +221,25 @@ def test_a_bare_secret_in_the_message_is_scrubbed(secret: str) -> None:
 
     assert _AxiomScrubFilter().filter(record) is True
     assert CANARY_SUFFIX not in record.getMessage()
+
+
+def test_a_secret_used_as_a_mapping_key_is_scrubbed() -> None:
+    """The concrete shape the generator missed.
+
+    `_scrub` checked whether a key NAME was sensitive ("api_key") but never
+    scrubbed the key's own text, so a credential used as a key survived intact
+    while the value beside it was filtered. Found by external review, not by
+    this module — which is why the generator above now produces secret keys.
+    """
+    secret = f"sk-tr-v1-{CANARY_SUFFIX}"
+    assert not _leaked(_scrub({secret: 1}))
+    assert not _leaked(_scrub({"nested": {secret: 1}}))
+    assert not _leaked(_scrub([{secret: 1}]))
+    assert not _leaked(_scrub({secret: secret}))
+
+
+def test_scrubbing_a_key_does_not_disturb_a_harmless_one() -> None:
+    """The bound must not rename ordinary keys, or every structured log field
+    changes name and dashboards break."""
+    scrubbed = _scrub({"request_id": "abc", "count": 3})
+    assert scrubbed == {"request_id": "abc", "count": 3}
