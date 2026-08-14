@@ -91,6 +91,20 @@ SENTRY_FAILED_REQUEST_STATUS_CODES = {
     *range(502, 600),
 }
 
+# Same-origin Referer is normally evidence that a 405 came from our UI, but
+# crawlers synthesize it while walking forms and script-discovered URLs. Keep
+# this list deliberately limited to unambiguous crawler identifiers so browser
+# and SDK contract regressions still reach Sentry.
+CRAWLER_USER_AGENT_MARKERS: tuple[str, ...] = (
+    "bot",
+    "crawler",
+    "externalagent",
+    "facebookexternalhit",
+    "heritrix",
+    "slurp",
+    "spider",
+)
+
 
 @dataclass(frozen=True)
 class SentryFloodgateConfig:
@@ -315,6 +329,8 @@ def _is_untrusted_405(event: dict[str, Any]) -> bool:
     headers = _request_headers(request)
     if "x-trustedrouter-internal-token" in headers:
         return False
+    if _is_crawler_user_agent(headers.get("user-agent")):
+        return True
 
     request_host = _url_hostname(request.get("url"))
     if request_host is None:
@@ -357,6 +373,13 @@ def _request_headers(request: Mapping[str, Any]) -> dict[str, str]:
                 headers[str(item[0]).lower()] = str(item[1])
         return headers
     return {}
+
+
+def _is_crawler_user_agent(value: str | None) -> bool:
+    if not value:
+        return False
+    normalized = value.casefold()
+    return any(marker in normalized for marker in CRAWLER_USER_AGENT_MARKERS)
 
 
 def _url_hostname(value: Any) -> str | None:
