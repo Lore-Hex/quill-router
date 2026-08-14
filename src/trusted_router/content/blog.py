@@ -35,8 +35,8 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
         description=(
             "We wrote property tests and a TLA+ model against the running "
             "TrustedRouter code and put them in CI. They found fifteen real "
-            "defects, including one that crashed the Swift SDK from a response "
-            "header and one that let a request downgrade its own privacy floor."
+            "defects, including one that crashed the Swift SDK's process from a "
+            "single response header."
         ),
         published_date="2026-08-14",
         source_label=None,
@@ -44,7 +44,7 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
         og_image="/static/og/blog/proofs-in-production.png",
         body_html="""
 <figure class="blog-hero-image"><img src="/static/og/blog/proofs-in-production.png" alt="Proofs that find real production bugs" width="1200" height="630"></figure>
-<p>I spent a week pointing proof tools at TrustedRouter's own source and they found fifteen real defects. Not style problems. A single response header that crashed the Swift SDK's process. A request that could quietly downgrade the privacy tier it was routed under. An API key that survived our log scrubber because it was a dictionary key instead of a value. All of it in code that was reviewed, tested, and running.</p>
+<p>I spent a week pointing proof tools at TrustedRouter's own source and they found fifteen real defects. Not style problems. A single response header that crashed the Swift SDK's process. An attestation check that could pass without checking anything. An API key that survived our log scrubber because it was a dictionary key instead of a value. All of it in code that was reviewed, tested, and running.</p>
 <p>I want to describe what actually worked, because "formal methods" usually gets discussed as something you do instead of shipping, on a system small enough to fit in a paper. That is not what this was. The control plane is fifty thousand lines of Python with three thousand five hundred tests already passing. The proofs went in on top of that, they run in CI on every push, and the interesting part is not that they passed. It is what they caught on the way.</p>
 <h2>Write the law, not the example</h2>
 <p>A normal test picks an input and asserts an output. A property picks the <em>claim</em> and lets a generator hunt for a counterexample. The difference sounds academic until you see which bugs each one can and cannot see.</p>
