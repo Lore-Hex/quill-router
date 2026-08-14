@@ -513,6 +513,31 @@ class Settings(BaseSettings):
     # exact typed Spanner counters remain the only production authority until
     # a durable regional ledger and reconciliation worker have passed the
     # rollout gates in docs/design/regional-quota-leases.md.
+    # ---- notifications (email / sms / voice to the account owner) ----------
+    # Delivery credentials. TrustedRouter is the registered A2P 10DLC brand and
+    # every customer's notification sends from these numbers, so a customer
+    # never registers anything — and sender reputation becomes a shared asset,
+    # which is why notify requires a verified phone and is metered.
+    notify_enabled: bool = False
+    telnyx_api_key: str | None = None
+    telnyx_from_number: str | None = None
+    telnyx_texml_account_id: str | None = None
+    twilio_account_sid: str | None = None
+    twilio_auth_token: str | None = None
+    twilio_api_key_sid: str | None = None
+    twilio_api_key_secret: str | None = None
+    twilio_from_number: str | None = None
+    # ONE price per notification, whatever the channel. Email costs us far less
+    # than a phone call, but pricing it lower would make it the obvious channel
+    # to abuse, and a customer reasoning about "which notification is cheap"
+    # is a customer being trained to route around the expensive one. Uniform
+    # pricing keeps the product explainable and the incentives honest.
+    notify_price_microdollars: int = 10_000  # $0.01 per notification
+    # Per-workspace ceilings. The pager equivalent of the leash: an agent in a
+    # loop must not be able to spend a customer's balance overnight.
+    notify_max_per_hour: int = 30
+    notify_max_voice_per_hour: int = 4
+
     regional_quota_leases_enabled: bool = False
     regional_quota_lease_pilot_workspace_ids: str = ""
     regional_quota_lease_ttl_seconds: int = 60
