@@ -114,3 +114,39 @@ jobs:
       # backend) and waits on /health — no DB service containers needed.
       - name: Browser smoke
         run: npm run test:browser
+
+  # Model checking. The property tests in `tests/` run inside the `test` job
+  # like any other pytest file; this job is for the TLA+ specs in `proofs/`,
+  # which need a JVM and TLC and have nothing to do with the Python suite.
+  #
+  # These specs cover designs whose failure modes are concurrent or temporal —
+  # things a test cannot reach because the composition being checked does not
+  # exist in code yet. RegionalQuotaLease models multiple regional planes
+  # against one workspace escrow before the billing path delegates real spend
+  # to it; its first run produced a liveness counterexample in six states.
+  #
+  # Runtime is a few seconds per spec at the bounds in each .cfg. If a spec
+  # ever gets slow enough to matter, tighten its constants rather than dropping
+  # the job — an unchecked spec is worse than no spec, because it reads as
+  # evidence.
+  proofs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Cache TLA+ tools
+        id: tla-cache
+        uses: actions/cache@v4
+        with:
+          path: proofs/tla2tools.jar
+          key: tla2tools-v1.8.0
+      - name: Fetch TLA+ tools
+        if: steps.tla-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o proofs/tla2tools.jar \
+            https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
+      - name: Model-check every spec
+        run: ./proofs/check.sh

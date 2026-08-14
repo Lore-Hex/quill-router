@@ -276,30 +276,25 @@ def test_the_flag_ladder_is_pinned(flags: dict[str, object], expected: int) -> N
 
 
 # ---------------------------------------------------------------------------
-# A latent incoherence the code permits and the data currently avoids.
+# The incoherence this module found, and the guard that keeps it closed.
 # ---------------------------------------------------------------------------
 
 
-def test_confidential_without_the_zdr_flag_is_a_known_latent_incoherence() -> None:
-    """Standing record of a gap the shipped catalog does not currently hit.
+def test_the_contradictory_combination_is_forbidden_not_resolved() -> None:
+    """Why this module forbids a flag combination instead of interpreting it.
 
-    A provider with `provider_confidential_compute` and `provider_e2ee` set but
-    `provider_zero_data_retention=False` resolves to tier CONFIDENTIAL (3),
-    which is above ZERO_RETENTION (2) — so the router would admit it for a
-    `min_privacy=zdr` request. But `endpoint_zero_data_retention` reads the raw
-    flag and returns False, so `/models` would publish "no ZDR" for a route the
-    router treats as satisfying ZDR.
+    A provider with confidential compute + e2ee AND an explicit
+    provider_zero_data_retention=False resolves to tier CONFIDENTIAL, which the
+    router admits for a `min_privacy=zdr` request, while
+    endpoint_zero_data_retention reports False.
 
-    The two would disagree, which is exactly what
-    `test_zero_data_retention_is_exactly_the_zdr_tier` forbids across the real
-    catalog. No shipped provider has that flag combination, so the biconditional
-    holds today — this test exists so the gap is recorded rather than
-    rediscovered.
+    An earlier fix derived ZDR from the tier to make them agree. Review
+    rejected it: confidential compute means the provider cannot READ content
+    and says nothing about whether it RETAINS ciphertext. Deriving would
+    publish a stronger claim than the provider makes.
 
-    Deliberately NOT fixed here. The repair is a product decision about what
-    the ZDR badge means (does confidential compute imply zero retention?), and
-    it changes a value published on a customer-visible API. If this test starts
-    failing, the ladder was changed and this note should be revisited.
+    So neither function guesses. The combination is forbidden by the test
+    below, which fails loudly if a catalog edit ever introduces it.
     """
     template = next(iter(PROVIDERS.values()))
     contradictory = dataclasses.replace(
@@ -310,15 +305,10 @@ def test_confidential_without_the_zdr_flag_is_a_known_latent_incoherence() -> No
         provider_e2ee=True,
         prepaid_zero_data_retention=False,
     )
-
-    tier = provider_privacy_tier(contradictory)
-    assert tier == PRIVACY_TIER_CONFIDENTIAL
-    assert tier >= PRIVACY_TIER_ZERO_RETENTION, (
-        "the router would admit this provider for a zdr floor..."
-    )
+    assert provider_privacy_tier(contradictory) == PRIVACY_TIER_CONFIDENTIAL
     assert contradictory.provider_zero_data_retention is False, (
-        "...while the published ZDR claim would say False. Coherent only because "
-        "no real provider is configured this way."
+        "the two genuinely disagree for this combination — which is why it is "
+        "forbidden rather than interpreted"
     )
 
 
