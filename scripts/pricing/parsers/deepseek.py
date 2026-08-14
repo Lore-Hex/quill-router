@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from bs4 import BeautifulSoup
 
@@ -14,17 +15,19 @@ _NAME_TO_OR_ID = {
     "deepseek-reasoner": "deepseek/deepseek-reasoner",
 }
 
-# Known public DeepSeek pricing as of late-2025 / 2026 for the current
-# model lineup. Used as a fallback when the fetched page does not include
+# Known public DeepSeek pricing for the current model lineup. V4 entries use
+# the announced off-peak baseline effective 2026-08-16 16:00 UTC; the runtime
+# pricing schedule keeps the old rate before that instant and doubles these
+# rates during the two daily peak windows. Used as a fallback when the page does not include
 # a machine-parseable pricing table (e.g. when the refresh scraper lands
 # on the "Your First API Call" page instead of "Models & Pricing"), so
 # downstream validation doesn't see an empty dict.
-# Values are USD per 1M tokens (cache-miss input, standard output).
+# Values are USD per 1M tokens (cache-miss input, output, cached input).
 _FALLBACK_PRICES = {
-    "deepseek-v4-flash": (0.14, 0.28),
-    "deepseek-v4-pro": (0.56, 1.68),
-    "deepseek-chat": (0.27, 1.10),
-    "deepseek-reasoner": (0.55, 2.19),
+    "deepseek-v4-flash": ("0.22", "0.66", "0.007"),
+    "deepseek-v4-pro": ("0.66", "1.98", "0.022"),
+    "deepseek-chat": ("0.27", "1.10", None),
+    "deepseek-reasoner": ("0.55", "2.19", None),
 }
 
 _DOLLAR_RE = re.compile(r"\$\s*([\d]+(?:\.[\d]+)?)")
@@ -32,16 +35,23 @@ _FOOTNOTE_RE = re.compile(r"\s*\(\d+\)\s*$")
 _MODEL_TOKEN_RE = re.compile(r"deepseek-[a-z0-9]+(?:-[a-z0-9]+)*", re.IGNORECASE)
 
 
-def _to_micro_per_m(text):
+def _decimal_to_micro_per_m(value: str) -> int | None:
+    try:
+        parsed = Decimal(value)
+    except (InvalidOperation, ValueError):
+        return None
+    if not parsed.is_finite() or parsed <= 0 or parsed > 1000:
+        return None
+    return int((parsed * 1_000_000).to_integral_value(rounding=ROUND_HALF_UP))
+
+
+def _to_micro_per_m(text: str) -> int | None:
     if not text:
         return None
     match = _DOLLAR_RE.search(text)
     if not match:
         return None
-    try:
-        return int(round(float(match.group(1)) * 1_000_000))
-    except (TypeError, ValueError):
-        return None
+    return _decimal_to_micro_per_m(match.group(1))
 
 
 def _strip_footnote(name: str) -> str:
@@ -67,9 +77,9 @@ def _parse_pricing_tables(soup) -> dict:
         if not header_models:
             continue
 
-        input_prices = None
-        cached_prices = None
-        output_prices = None
+        input_prices_by_period: dict[str, list[str]] = {}
+        cached_prices_by_period: dict[str, list[str]] = {}
+        output_prices_by_period: dict[str, list[str]] = {}
         for row in rows[header_idx + 1 :]:
             cells = [td.get_text(" ", strip=True) for td in row.find_all(["td", "th"])]
             if not cells:
@@ -78,14 +88,40 @@ def _parse_pricing_tables(soup) -> dict:
             if len(cells) < len(header_models):
                 continue
             value_cells = cells[-len(header_models) :]
+            # The scheduled-pricing table contains both OFF-PEAK and PEAK
+            # rows. The generated provider manifest needs one stable baseline;
+            # runtime billing overlays the exact UTC period independently.
+            # Prefer off-peak here so a later peak row cannot silently replace
+            # the baseline simply because of table order.
+            period = (
+                "off_peak"
+                if "OFF-PEAK" in label_text or "OFF PEAK" in label_text
+                else "peak"
+                if "PEAK" in label_text
+                else "standard"
+            )
             if "INPUT" in label_text and "CACHE MISS" in label_text:
-                input_prices = value_cells
+                input_prices_by_period[period] = value_cells
             elif "INPUT" in label_text and "CACHE HIT" in label_text:
-                cached_prices = value_cells
-            elif "INPUT" in label_text and input_prices is None and "TOKEN" in label_text:
-                input_prices = value_cells
+                cached_prices_by_period[period] = value_cells
+            elif (
+                "INPUT" in label_text
+                and "TOKEN" in label_text
+                and period not in input_prices_by_period
+            ):
+                input_prices_by_period[period] = value_cells
             elif "OUTPUT" in label_text and "TOKEN" in label_text:
-                output_prices = value_cells
+                output_prices_by_period[period] = value_cells
+
+        input_prices = input_prices_by_period.get("off_peak") or input_prices_by_period.get(
+            "standard"
+        )
+        cached_prices = cached_prices_by_period.get(
+            "off_peak"
+        ) or cached_prices_by_period.get("standard")
+        output_prices = output_prices_by_period.get("off_peak") or output_prices_by_period.get(
+            "standard"
+        )
 
         if input_prices is None or output_prices is None:
             continue
@@ -126,19 +162,13 @@ def _parse_inline_prices(text: str) -> dict:
         dollars = _DOLLAR_RE.findall(window)
         if len(dollars) < 2:
             continue
-        try:
-            prompt_v = float(dollars[0])
-            completion_v = float(dollars[-1])
-        except (TypeError, ValueError):
-            continue
-        # Guard against tiny/huge numbers.
-        if prompt_v <= 0 or completion_v <= 0:
-            continue
-        if prompt_v > 1000 or completion_v > 1000:
+        prompt = _decimal_to_micro_per_m(dollars[0])
+        completion = _decimal_to_micro_per_m(dollars[-1])
+        if prompt is None or completion is None:
             continue
         out[or_id] = {
-            "prompt_micro_per_m": int(round(prompt_v * 1_000_000)),
-            "completion_micro_per_m": int(round(completion_v * 1_000_000)),
+            "prompt_micro_per_m": prompt,
+            "completion_micro_per_m": completion,
         }
     return out
 
@@ -178,9 +208,18 @@ def parse(html: str) -> dict:
         prices = _FALLBACK_PRICES.get(native)
         if or_id is None or prices is None:
             continue
-        prompt_v, completion_v = prices
-        result[or_id] = {
-            "prompt_micro_per_m": int(round(prompt_v * 1_000_000)),
-            "completion_micro_per_m": int(round(completion_v * 1_000_000)),
+        prompt_v, completion_v, cached_v = prices
+        prompt = _decimal_to_micro_per_m(prompt_v)
+        completion = _decimal_to_micro_per_m(completion_v)
+        if prompt is None or completion is None:
+            continue
+        row = {
+            "prompt_micro_per_m": prompt,
+            "completion_micro_per_m": completion,
         }
+        if cached_v is not None:
+            cached = _decimal_to_micro_per_m(cached_v)
+            if cached is not None:
+                row["prompt_cached_micro_per_m"] = cached
+        result[or_id] = row
     return result

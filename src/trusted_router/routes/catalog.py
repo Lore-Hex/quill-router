@@ -11,6 +11,7 @@ from trusted_router.catalog import (
     PRIVACY_TIER_LABELS,
     PROVIDER_JURISDICTION_US,
     PROVIDERS,
+    ModelEndpoint,
     endpoint_confidential_compute,
     endpoint_e2ee,
     endpoint_privacy_tier,
@@ -28,6 +29,7 @@ from trusted_router.openai_service_tiers import (
     OPENAI_SERVICE_TIERS,
     openai_priority_pricing,
 )
+from trusted_router.provider_lifecycle import provider_pricing_schedule
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.routing import catalog_endpoint_candidates, provider_route_preferences
 
@@ -86,6 +88,26 @@ def _openai_service_tier_metadata(
             "priority_pricing": pricing.public_payload(),
         }
     return {"service_tiers": ["default"]}
+
+
+def _endpoint_pricing_payload(endpoint: ModelEndpoint) -> dict[str, str]:
+    payload = {
+        "prompt": microdollars_per_million_tokens_to_token_decimal(
+            endpoint.prompt_price_microdollars_per_million_tokens
+        ),
+        "completion": microdollars_per_million_tokens_to_token_decimal(
+            endpoint.completion_price_microdollars_per_million_tokens
+        ),
+    }
+    tiers = getattr(endpoint, "price_tiers", ()) or ()
+    cached_price = (
+        tiers[0].prompt_cached_price_microdollars_per_million_tokens if tiers else None
+    )
+    if cached_price is not None:
+        payload["input_cache_read"] = microdollars_per_million_tokens_to_token_decimal(
+            cached_price
+        )
+    return payload
 
 
 def _public_model_matches_filters(shape: dict[str, Any], request: Request) -> bool:
@@ -179,14 +201,7 @@ def register_catalog_routes(router: APIRouter) -> None:
                     "endpoint_id": endpoint.id,
                     "provider": endpoint.provider,
                     "context_length": model.context_length,
-                    "pricing": {
-                        "prompt": microdollars_per_million_tokens_to_token_decimal(
-                            endpoint.prompt_price_microdollars_per_million_tokens
-                        ),
-                        "completion": microdollars_per_million_tokens_to_token_decimal(
-                            endpoint.completion_price_microdollars_per_million_tokens
-                        ),
-                    },
+                    "pricing": _endpoint_pricing_payload(endpoint),
                     "usage_type": endpoint.usage_type,
                     "upstream_id": endpoint.upstream_id,
                     "prompt_price_microdollars_per_million_tokens": (
@@ -227,6 +242,10 @@ def register_catalog_routes(router: APIRouter) -> None:
                         "prepaid_available": endpoint.usage_type == "Credits",
                         "byok_available": endpoint.usage_type == "BYOK",
                         **_openai_service_tier_metadata(
+                            endpoint.provider,
+                            endpoint.model_id,
+                        ),
+                        "pricing_schedule": provider_pricing_schedule(
                             endpoint.provider,
                             endpoint.model_id,
                         ),
