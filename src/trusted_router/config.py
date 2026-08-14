@@ -544,11 +544,14 @@ class Settings(BaseSettings):
     #
     # A price set on the typical case loses money exactly when it matters: the
     # expensive path is the FALLBACK, which fires during an incident, when
-    # volume spikes. There is also a fixed monthly 10DLC campaign fee that no
-    # per-message price recovers at low volume. $0.05 clears every path with
-    # room, and is still nothing to a customer whose pager just saved them an
-    # outage.
-    notify_price_microdollars: int = 50_000  # $0.05 per notification
+    # volume spikes.
+    #
+    # $0.02 is positive on every path, thinnest on a Twilio VOICE fallback
+    # (~$0.006 margin on a one-minute minimum). That is a deliberate choice, not
+    # an oversight — the cheap path is the common one. Two things to watch: the
+    # fixed monthly 10DLC campaign fee needs volume to amortize, and a sustained
+    # Telnyx outage pushes every send onto the thin path at once.
+    notify_price_microdollars: int = 20_000  # $0.02 per notification
     # Per-workspace ceilings. The pager equivalent of the leash: an agent in a
     # loop must not be able to spend a customer's balance overnight.
     notify_max_per_hour: int = 30

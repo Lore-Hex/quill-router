@@ -87,6 +87,20 @@ class User:
     created_at: str = field(default_factory=iso_now)
     email_verified: bool = False
     wallet_address: str | None = None
+    # Owner notifications (see phone_verification.py). A verified phone is the
+    # cost floor on account farming, so it gates every notify channel including
+    # email. `pending_phone` is the number awaiting proof and is deliberately
+    # NOT reachable — otherwise starting verification would itself be a way to
+    # send someone a message.
+    phone: str | None = None
+    phone_verified: bool = False
+    phone_verified_at: str | None = None
+    pending_phone: str | None = None
+    phone_code_hash: str | None = None
+    phone_code_salt: str | None = None
+    phone_code_expires_at: str | None = None
+    phone_code_attempts: int = 0
+    phone_code_sent_at: str | None = None
 
 
 @dataclass
