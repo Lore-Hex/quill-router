@@ -555,10 +555,16 @@ def _scrub(value: Any, *, _depth: int = 0, _seen: frozenset[int] = frozenset()) 
             if index >= _SCRUB_MAX_ITEMS:
                 out["[truncated]"] = f"{len(value) - _SCRUB_MAX_ITEMS} more"
                 break
+            # The KEY is a string that leaves the process too. A secret can be
+            # the key rather than the value — {"sk-tr-v1-...": 3} is what a
+            # per-key counter or cache-hit tally looks like — and scrubbing only
+            # values left it intact. Scrub the key with the same string rules
+            # before deciding anything about the value under it.
+            safe_key = _scrub_string(key) if isinstance(key, str) else key
             if _is_sensitive_key(str(key)):
-                out[key] = "[Filtered]"
+                out[safe_key] = "[Filtered]"
             else:
-                out[key] = _scrub(item, _depth=child_depth, _seen=seen)
+                out[safe_key] = _scrub(item, _depth=child_depth, _seen=seen)
         return out
 
     if isinstance(value, (set, frozenset)):
