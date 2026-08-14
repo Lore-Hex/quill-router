@@ -20,6 +20,7 @@ FRIENDLI_K_EXAONE_236B_RETIREMENT_AT = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
 CRUSOE_NEMOTRON_3_ULTRA_RETIREMENT_AT = datetime(2026, 7, 28, 18, 0, tzinfo=UTC)
 WAFER_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
 NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
+ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,119 @@ class _Retirement:
 
 
 _RETIREMENTS = (
+    # Alibaba Cloud Model Studio is consolidating its previously announced
+    # retirements at 2026-10-10 00:00 UTC+08. Keep this provider-scoped: the
+    # same open-weight models remain routable through other healthy providers.
+    # Alibaba explicitly canceled retirement for qwen-vl-ocr, qwen-mt-image,
+    # and the named ASR/live-translation routes, so none appear here.
+    _Retirement(
+        provider="alibaba",
+        model_ids=frozenset(
+            {
+                "deepseek/deepseek-r1",
+                "deepseek/deepseek-r1-0528",
+                "deepseek/deepseek-r1-distill-qwen-7b",
+                "deepseek/deepseek-r1-distill-qwen-14b",
+                "deepseek/deepseek-r1-distill-qwen-32b",
+                "deepseek/deepseek-v3",
+                "deepseek/deepseek-v3.1",
+                "deepseek/deepseek-v3.2",
+                "deepseek/deepseek-v3.2-exp",
+                "minimax/minimax-m2.1",
+                "moonshotai/kimi-k2-instruct",
+                "moonshotai/kimi-k2-thinking",
+                "qwen/qwen3-8b",
+                "qwen/qwen3-14b",
+                "qwen/qwen3-30b-a3b",
+                "qwen/qwen3-30b-a3b-instruct-2507",
+                "qwen/qwen3-30b-a3b-thinking-2507",
+                "qwen/qwen3-32b",
+                "qwen/qwen3-235b-a22b",
+                "qwen/qwen3-235b-a22b-instruct-2507",
+                "qwen/qwen3-235b-a22b-thinking-2507",
+                "qwen/qwen3-coder-30b-a3b-instruct",
+                "qwen/qwen3-coder-480b-a35b-instruct",
+                "qwen/qwen3-coder-next",
+                "qwen/qwen3-coder-plus",
+                "qwen/qwen3-coder-plus-2025-07-22",
+                "qwen/qwen3-coder-plus-2025-09-23",
+                "qwen/qwen3-max",
+                "qwen/qwen3-max-2025-09-23",
+                "qwen/qwen3-max-2026-01-23",
+                "qwen/qwen3-max-preview",
+                "qwen/qwen3-next-80b-a3b-instruct",
+                "qwen/qwen3-next-80b-a3b-thinking",
+                "qwen/qwen3-vl-8b-instruct",
+                "qwen/qwen3-vl-8b-thinking",
+                "qwen/qwen3-vl-30b-a3b-instruct",
+                "qwen/qwen3-vl-30b-a3b-thinking",
+                "qwen/qwen3-vl-32b-instruct",
+                "qwen/qwen3-vl-32b-thinking",
+                "qwen/qwen3-vl-235b-a22b-instruct",
+                "qwen/qwen3-vl-235b-a22b-thinking",
+                "qwen/qwen3-vl-flash",
+                "qwen/qwen3-vl-flash-2025-10-15",
+                "qwen/qwen3-vl-flash-2026-01-22",
+                "qwen/qwen3.6-max-preview",
+                "qwen/qwen-mt-turbo",
+                "z-ai/glm-4.6",
+                "z-ai/glm-4.7",
+            }
+        ),
+        upstream_ids=frozenset(
+            {
+                "deepseek-r1",
+                "deepseek-r1-0528",
+                "deepseek-r1-distill-qwen-7b",
+                "deepseek-r1-distill-qwen-14b",
+                "deepseek-r1-distill-qwen-32b",
+                "deepseek-v3",
+                "deepseek-v3.1",
+                "deepseek-v3.2",
+                "deepseek-v3.2-exp",
+                "MiniMax-M2.1",
+                "Moonshot-Kimi-K2-Instruct",
+                "kimi-k2-thinking",
+                "qwen3-8b",
+                "qwen3-14b",
+                "qwen3-30b-a3b",
+                "qwen3-30b-a3b-instruct-2507",
+                "qwen3-30b-a3b-thinking-2507",
+                "qwen3-32b",
+                "qwen3-235b-a22b",
+                "qwen3-235b-a22b-instruct-2507",
+                "qwen3-235b-a22b-thinking-2507",
+                "qwen3-coder-30b-a3b-instruct",
+                "qwen3-coder-480b-a35b-instruct",
+                "qwen3-coder-next",
+                "qwen3-coder-plus",
+                "qwen3-coder-plus-2025-07-22",
+                "qwen3-coder-plus-2025-09-23",
+                "qwen3-max",
+                "qwen3-max-2025-09-23",
+                "qwen3-max-2026-01-23",
+                "qwen3-max-preview",
+                "qwen3-next-80b-a3b-instruct",
+                "qwen3-next-80b-a3b-thinking",
+                "qwen3-vl-8b-instruct",
+                "qwen3-vl-8b-thinking",
+                "qwen3-vl-30b-a3b-instruct",
+                "qwen3-vl-30b-a3b-thinking",
+                "qwen3-vl-32b-instruct",
+                "qwen3-vl-32b-thinking",
+                "qwen3-vl-235b-a22b-instruct",
+                "qwen3-vl-235b-a22b-thinking",
+                "qwen3-vl-flash",
+                "qwen3-vl-flash-2025-10-15",
+                "qwen3-vl-flash-2026-01-22",
+                "qwen3.6-max-preview",
+                "qwen-mt-turbo",
+                "glm-4.6",
+                "glm-4.7",
+            }
+        ),
+        effective_at=ALIBABA_OCTOBER_2026_RETIREMENT_AT,
+    ),
     # Novita's time-limited free-trial Ling 3.0 Tiny route retired at the
     # provider's exact announced UTC cutover. There is no replacement model.
     _Retirement(
