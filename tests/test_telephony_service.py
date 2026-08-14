@@ -72,16 +72,40 @@ def test_sms_falls_over_to_twilio_and_flags_it(monkeypatch, calls):
     assert any("telnyx=500" in attempt for attempt in result.attempts)
 
 
-def test_voice_prefers_twilio(calls):
-    # Twilio's inline TwiML needs no callback URL, so a voice call does not
-    # depend on TrustedRouter being reachable — the situation it is called for.
-    service = telephony.TelephonyService(_settings())
-    result = service.send("voice", "+15551234567", "everything is on fire")
+def test_voice_prefers_telnyx_but_falls_back_to_inline_twiml(monkeypatch, calls):
+    # Telnyx is cheaper so it leads. Its voice path is TeXML, which fetches
+    # instructions FROM US — so when TrustedRouter is unreachable (the very
+    # situation being called about) it cannot build the call, and Twilio's
+    # inline TwiML, which needs nothing of ours, has to catch it.
+    service = telephony.TelephonyService(_settings(telnyx_texml_account_id="acct-1"))
+    assert service.send("voice", "+15551234567", "fire").carrier == "telnyx"
+
+    monkeypatch.setattr(service, "_telnyx_voice", lambda to, body: (0, "texml unreachable"))
+    result = service.send("voice", "+15551234567", "fire")
 
     assert result.carrier == "twilio"
-    url, payload, _headers = calls[0]
+    assert result.failed_primary
+    url, payload, _headers = calls[-1]
     assert "/Calls.json" in url
     assert "<Response><Say" in payload["Twiml"]
+
+
+def test_a_caller_can_pin_a_carrier(calls):
+    service = telephony.TelephonyService(_settings())
+    assert service.send("sms", "+1555", "x", preferred_carrier="twilio").carrier == "twilio"
+    assert service.send("sms", "+1555", "x", preferred_carrier="telnyx").carrier == "telnyx"
+
+
+def test_a_preference_is_not_an_exclusion(monkeypatch, calls):
+    # Honouring "telnyx only" would turn a preference into a single point of
+    # failure the caller never asked for: they want it to ARRIVE.
+    service = telephony.TelephonyService(_settings())
+    monkeypatch.setattr(service, "_telnyx_sms", lambda to, body: (500, "telnyx down"))
+
+    result = service.send("sms", "+1555", "x", preferred_carrier="telnyx")
+
+    assert result.delivered
+    assert result.carrier == "twilio"
 
 
 def test_twilio_api_key_authenticates_but_the_path_uses_the_account_sid(calls):

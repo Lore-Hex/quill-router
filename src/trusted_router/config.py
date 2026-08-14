@@ -527,12 +527,28 @@ class Settings(BaseSettings):
     twilio_api_key_sid: str | None = None
     twilio_api_key_secret: str | None = None
     twilio_from_number: str | None = None
-    # ONE price per notification, whatever the channel. Email costs us far less
-    # than a phone call, but pricing it lower would make it the obvious channel
-    # to abuse, and a customer reasoning about "which notification is cheap"
-    # is a customer being trained to route around the expensive one. Uniform
-    # pricing keeps the product explainable and the incentives honest.
-    notify_price_microdollars: int = 10_000  # $0.01 per notification
+    # ONE price per notification, whatever the channel.
+    #
+    # Email costs us far less than a phone call, but pricing it lower makes it
+    # the obvious channel to abuse, and a customer reasoning about "which
+    # notification is cheap" is a customer being trained to route around the
+    # expensive one. Uniform pricing keeps the product explainable.
+    #
+    # Set from the WORST case, not the typical one. Approximate carrier cost per
+    # notification (verify against current rate cards before launch):
+    #
+    #     email via SES        ~$0.0001
+    #     sms via Telnyx       ~$0.004 + ~$0.003 A2P carrier pass-through
+    #     sms via Twilio       ~$0.008 + pass-through
+    #     voice, 1-min minimum ~$0.007 Telnyx, ~$0.014 Twilio
+    #
+    # A price set on the typical case loses money exactly when it matters: the
+    # expensive path is the FALLBACK, which fires during an incident, when
+    # volume spikes. There is also a fixed monthly 10DLC campaign fee that no
+    # per-message price recovers at low volume. $0.05 clears every path with
+    # room, and is still nothing to a customer whose pager just saved them an
+    # outage.
+    notify_price_microdollars: int = 50_000  # $0.05 per notification
     # Per-workspace ceilings. The pager equivalent of the leash: an agent in a
     # loop must not be able to spend a customer's balance overnight.
     notify_max_per_hour: int = 30

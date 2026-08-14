@@ -9,9 +9,15 @@ dropped page is the failure the product exists to prevent. Which carrier
 delivered is returned, so a quietly-failing primary shows up as a metric rather
 than as latency nobody looks at.
 
-Voice deliberately prefers Twilio: its inline TwiML needs no callback URL, so a
-voice call does not depend on TrustedRouter itself being reachable — which is
-precisely the situation a customer's agent is calling about.
+Telnyx is the default for both channels because it is cheaper and is the number
+other properties send from. Twilio is the standby.
+
+That ordering has one honest cost worth knowing: Telnyx voice goes through
+TeXML, which fetches its instructions FROM US, so a voice call placed while
+TrustedRouter itself is unreachable cannot be built. The failover handles it —
+Telnyx fails, Twilio's inline TwiML needs nothing of ours, and the call still
+goes out — so the tradeoff is one extra round trip in the rare case, not a lost
+notification. Callers who care can pin a carrier per request.
 
 CARRIER REGISTRATION (why SMS is the slow lane)
 -----------------------------------------------
@@ -181,17 +187,34 @@ class TelephonyService:
 
     # -- delivery -----------------------------------------------------------
 
-    def send(self, channel: Channel, to: str, body: str) -> TelephonyResult:
+    def send(
+        self,
+        channel: Channel,
+        to: str,
+        body: str,
+        preferred_carrier: str | None = None,
+    ) -> TelephonyResult:
+        """Deliver, trying carriers in preference order.
+
+        `preferred_carrier` moves one carrier to the front; it does NOT disable
+        the other. A caller expressing a preference still wants the message to
+        arrive, and silently honouring "telnyx only" would turn a preference
+        into a single point of failure the caller did not ask for.
+        """
         if channel == "sms":
-            chain = (
+            chain = [
                 ("telnyx", self.telnyx_enabled, self._telnyx_sms),
                 ("twilio", self.twilio_enabled, self._twilio_sms),
-            )
+            ]
         else:
-            chain = (
-                ("twilio", self.twilio_enabled, self._twilio_voice),
+            chain = [
                 ("telnyx", self.telnyx_enabled, self._telnyx_voice),
-            )
+                ("twilio", self.twilio_enabled, self._twilio_voice),
+            ]
+
+        if preferred_carrier:
+            wanted = preferred_carrier.strip().lower()
+            chain.sort(key=lambda entry: entry[0] != wanted)
 
         attempts: list[str] = []
         for name, usable, send in chain:
