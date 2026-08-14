@@ -14,6 +14,10 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import ValidationError
 
 from trusted_router.auth import SettingsDep
+from trusted_router.billing_policy import (
+    is_stablecoin_checkout_method,
+    is_wallet_only_user,
+)
 from trusted_router.domains import request_control_origin
 from trusted_router.routes.console._shared import ConsoleDep, money, render
 from trusted_router.schemas import CheckoutRequest
@@ -44,6 +48,7 @@ def register(app: FastAPI) -> None:
     async def console_credits(ctx: ConsoleDep, settings: SettingsDep) -> Response:
         credit = STORE.get_credit_account(ctx.workspace.id)
         summary = live_credit_summary(ctx.workspace.id)
+        wallet_only_billing = is_wallet_only_user(ctx.user)
         # Pull the last 20 Stripe checkout sessions tagged with this
         # workspace_id from Stripe's Search API. Returns [] if Stripe is
         # unreachable / not configured / there are no payments yet — all
@@ -88,6 +93,7 @@ def register(app: FastAPI) -> None:
             last_auto_refill_status=credit.last_auto_refill_status if credit else None,
             paypal_enabled=settings.paypal_enabled or settings.environment.lower() in {"local", "test"},
             adyen_enabled=settings.adyen_checkout_ready,
+            wallet_only_billing=wallet_only_billing,
             payments=payments,
             saved_payment_method=saved_payment_method,
             api_base_url=ctx.api_base_url,
@@ -105,6 +111,10 @@ def register(app: FastAPI) -> None:
         amount: str = Form(...),
         payment_method: str = Form("auto"),
     ) -> Response:
+        if is_wallet_only_user(ctx.user) and not is_stablecoin_checkout_method(
+            payment_method
+        ):
+            return _wallet_only_redirect()
         origin = request_control_origin(request, settings)
         if payment_method == "paypal":
             success_url = f"{origin}/console/credits/paypal/capture"
@@ -194,6 +204,8 @@ def register(app: FastAPI) -> None:
         settings: SettingsDep,
         token: str = "",
     ) -> Response:
+        if is_wallet_only_user(ctx.user):
+            return _wallet_only_redirect()
         if not token:
             return RedirectResponse(url="/console/credits?error=paypal_missing_order", status_code=303)
         try:
@@ -213,6 +225,8 @@ def register(app: FastAPI) -> None:
         ctx: ConsoleDep,
         settings: SettingsDep,
     ) -> Response:
+        if is_wallet_only_user(ctx.user):
+            return _wallet_only_redirect()
         credit = STORE.get_credit_account(ctx.workspace.id)
         origin = request_control_origin(request, settings)
         try:
@@ -236,6 +250,8 @@ def register(app: FastAPI) -> None:
         ctx: ConsoleDep,
         settings: SettingsDep,
     ) -> Response:
+        if is_wallet_only_user(ctx.user):
+            return _wallet_only_redirect()
         credit = STORE.get_credit_account(ctx.workspace.id)
         if not (credit and credit.stripe_customer_id):
             return RedirectResponse(url="/console/credits?error=no_payment_method", status_code=303)
@@ -275,6 +291,8 @@ def register(app: FastAPI) -> None:
         # Reject the enable toggle if there's no saved payment method —
         # otherwise the trigger fires every settle and silently fails.
         truly_enable = enabled == "1"
+        if truly_enable and is_wallet_only_user(ctx.user):
+            return _wallet_only_redirect()
         if truly_enable and not (credit and credit.stripe_customer_id and credit.stripe_payment_method_id):
             return RedirectResponse(url="/console/credits?error=no_payment_method", status_code=303)
         STORE.update_auto_refill_settings(
@@ -284,3 +302,10 @@ def register(app: FastAPI) -> None:
             amount_microdollars=amount * 1_000_000,
         )
         return RedirectResponse(url="/console/credits?saved=1", status_code=303)
+
+
+def _wallet_only_redirect() -> RedirectResponse:
+    return RedirectResponse(
+        url="/console/credits?error=stablecoin_only",
+        status_code=303,
+    )

@@ -8,6 +8,11 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from trusted_router.auth import ManagementPrincipal, SettingsDep, principal_from_request
+from trusted_router.billing_policy import (
+    WALLET_ONLY_STABLECOIN_MESSAGE,
+    is_stablecoin_checkout_method,
+    is_wallet_only_principal,
+)
 from trusted_router.config import Settings
 from trusted_router.domains import request_control_origin
 from trusted_router.errors import api_error, deprecated
@@ -63,6 +68,14 @@ def register_billing_routes(router: APIRouter) -> None:
         workspace_id = body.workspace_id or principal.workspace.id
         if workspace_id != principal.workspace.id:
             raise api_error(403, "Forbidden", ErrorType.FORBIDDEN)
+        if is_wallet_only_principal(principal) and not is_stablecoin_checkout_method(
+            body.payment_method
+        ):
+            raise api_error(
+                403,
+                WALLET_ONLY_STABLECOIN_MESSAGE,
+                ErrorType.FORBIDDEN,
+            )
         body = _checkout_body_with_first_party_returns(body, request, settings)
         account = STORE.get_credit_account(workspace_id)
         return JSONResponse(
@@ -100,6 +113,7 @@ def register_billing_routes(router: APIRouter) -> None:
         principal: ManagementPrincipal,
         settings: SettingsDep,
     ) -> dict[str, dict[str, Any]]:
+        _reject_wallet_only_traditional_billing(principal)
         result = capture_paypal_order_for_workspace(
             order_id=order_id,
             workspace_id=principal.workspace.id,
@@ -189,6 +203,7 @@ def register_billing_routes(router: APIRouter) -> None:
         principal: ManagementPrincipal,
         settings: SettingsDep,
     ) -> dict[str, dict[str, str]]:
+        _reject_wallet_only_traditional_billing(principal)
         body = await json_body(request)
         return_url = str(body.get("return_url") or f"{request_control_origin(request, settings)}/billing")
         account = STORE.get_credit_account(principal.workspace.id)
@@ -201,6 +216,7 @@ def register_billing_routes(router: APIRouter) -> None:
         principal: ManagementPrincipal,
         settings: SettingsDep,
     ) -> JSONResponse:
+        _reject_wallet_only_traditional_billing(principal)
         account = STORE.get_credit_account(principal.workspace.id)
         return JSONResponse(
             {
@@ -235,6 +251,15 @@ def _checkout_customer_email(principal: Any) -> str | None:
         if user is not None and user.email and "@" in user.email:
             return user.email
     return None
+
+
+def _reject_wallet_only_traditional_billing(principal: Any) -> None:
+    if is_wallet_only_principal(principal):
+        raise api_error(
+            403,
+            WALLET_ONLY_STABLECOIN_MESSAGE,
+            ErrorType.FORBIDDEN,
+        )
 
 
 def _checkout_body_with_first_party_returns(
