@@ -136,6 +136,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "together",
         "wafer",
         "engy",
+        "pearl",
         "databricks",
         "zero-g",
     }
@@ -751,6 +752,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "streamlake",
         "neurometric",
         "engy",
+        "pearl",
         "databricks",
         "zero-g",
         "kimi",

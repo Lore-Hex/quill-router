@@ -70,6 +70,8 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "ibm-granite/granite-4.1-8b"}]}
     if "api.engy.ai" in url:
         return {"data": [{"id": "glm-5.2"}]}
+    if "inference.pearlresearch.ai" in url:
+        return {"data": [{"id": "deepseek/deepseek-v4-flash"}]}
     return {"data": []}
 
 

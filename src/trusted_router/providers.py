@@ -93,6 +93,10 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
         "https://wharf.neurometric.ai/v1",
     ),
     "engy": (("ENGY_API_KEY",), "https://api.engy.ai/v1"),
+    "pearl": (
+        ("PEARL_RESEARCH_API_KEY",),
+        "https://inference.pearlresearch.ai/v1",
+    ),
     "databricks": (
         ("DATABRICKS_TOKEN",),
         "https://invalid-unconfigured.cloud.databricks.com/serving-endpoints",
