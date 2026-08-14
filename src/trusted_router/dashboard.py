@@ -71,6 +71,7 @@ from trusted_router.provider_contract import (
     PROVIDER_CATALOG_EXAMPLE,
     PROVIDER_CATALOG_V2_EXAMPLE,
 )
+from trusted_router.provider_lifecycle import provider_pricing_schedule
 from trusted_router.regions import configured_regions, region_map_payload
 from trusted_router.seo_catalog import seo_catalog_evidence
 from trusted_router.seo_meta import (
@@ -3635,6 +3636,10 @@ def _model_detail_view(
                 ),
                 "prompt_microdollars_per_million_tokens": endpoint.prompt_price_microdollars_per_million_tokens,
                 "completion_microdollars_per_million_tokens": endpoint.completion_price_microdollars_per_million_tokens,
+                "pricing_schedule": provider_pricing_schedule(
+                    endpoint.provider,
+                    endpoint.model_id,
+                ),
                 "attested_gateway": ep_provider.attested_gateway if ep_provider else False,
                 "provider_zero_data_retention": (
                     endpoint_zero_data_retention(endpoint) if ep_provider else None

@@ -147,6 +147,7 @@
           <th>Usage</th>
           <th>Prompt</th>
           <th>Completion</th>
+          <th>Schedule</th>
         </tr>
       </thead>
       <tbody>
@@ -156,6 +157,13 @@
           <td>{{ endpoint.usage_type }}</td>
           <td>{{ endpoint.prompt_price }}</td>
           <td>{{ endpoint.completion_price }}</td>
+          <td>
+            {% if endpoint.pricing_schedule %}
+            DeepSeek direct authorization-time pricing. New rates begin 2026-08-16 16:00 UTC. Peak 01:00–04:00 UTC and 06:00–10:00 UTC.
+            {% else %}
+            Flat
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>

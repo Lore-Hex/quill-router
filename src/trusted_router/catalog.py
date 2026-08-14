@@ -320,7 +320,16 @@ def effective_endpoint(
         return endpoint
     prompt_price = _customer_price(provider_price.prompt_microdollars_per_million_tokens)
     completion_price = _customer_price(provider_price.completion_microdollars_per_million_tokens)
-    tiers = _flat_tier(prompt_price, completion_price)
+    cached_prompt_price = (
+        _customer_price(provider_price.prompt_cached_microdollars_per_million_tokens)
+        if provider_price.prompt_cached_microdollars_per_million_tokens is not None
+        else None
+    )
+    tiers = _flat_tier(
+        prompt_price,
+        completion_price,
+        prompt_cached=cached_prompt_price,
+    )
     return replace(
         endpoint,
         prompt_price_microdollars_per_million_tokens=prompt_price,

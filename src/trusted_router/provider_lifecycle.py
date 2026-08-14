@@ -21,12 +21,44 @@ CRUSOE_NEMOTRON_3_ULTRA_RETIREMENT_AT = datetime(2026, 7, 28, 18, 0, tzinfo=UTC)
 WAFER_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
 NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
 ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
+DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
+
+# DeepSeek prices direct V4 traffic at twice the off-peak rate during these
+# half-open UTC windows. Keep them as seconds since midnight so boundary
+# behavior is independent of locale, daylight-saving time, and date.
+DEEPSEEK_V4_PEAK_WINDOWS_UTC = (
+    (1 * 60 * 60, 4 * 60 * 60),
+    (6 * 60 * 60, 10 * 60 * 60),
+)
 
 
 @dataclass(frozen=True)
 class ProviderPrice:
     prompt_microdollars_per_million_tokens: int
     completion_microdollars_per_million_tokens: int
+    prompt_cached_microdollars_per_million_tokens: int | None = None
+
+
+_DEEPSEEK_V4_FLASH_MODEL_IDS = frozenset(
+    {
+        "deepseek/deepseek-v4-flash",
+        # This TrustedRouter alias resolves to the same first-party
+        # `deepseek-v4-flash` upstream id and therefore the same bill.
+        "deepseek/deepseek-v4-flash-0731",
+    }
+)
+_DEEPSEEK_V4_PRICES = {
+    "flash": {
+        "legacy": ProviderPrice(140_000, 280_000, 2_800),
+        "off_peak": ProviderPrice(220_000, 660_000, 7_000),
+        "peak": ProviderPrice(440_000, 1_320_000, 14_000),
+    },
+    "pro": {
+        "legacy": ProviderPrice(435_000, 870_000, 3_625),
+        "off_peak": ProviderPrice(660_000, 1_980_000, 22_000),
+        "peak": ProviderPrice(1_320_000, 3_960_000, 44_000),
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -334,6 +366,60 @@ def provider_model_retired(
     return False
 
 
+def _deepseek_v4_family(provider_slug: str, model_id: str) -> str | None:
+    if provider_slug != "deepseek":
+        return None
+    if model_id in _DEEPSEEK_V4_FLASH_MODEL_IDS:
+        return "flash"
+    if model_id == "deepseek/deepseek-v4-pro":
+        return "pro"
+    return None
+
+
+def _deepseek_v4_period(effective_at: datetime) -> str:
+    if effective_at < DEEPSEEK_V4_PRICING_EFFECTIVE_AT:
+        return "legacy"
+    seconds_since_midnight = (
+        effective_at.hour * 60 * 60 + effective_at.minute * 60 + effective_at.second
+    )
+    if any(
+        start <= seconds_since_midnight < end
+        for start, end in DEEPSEEK_V4_PEAK_WINDOWS_UTC
+    ):
+        return "peak"
+    return "off_peak"
+
+
+def provider_pricing_schedule(
+    provider_slug: str,
+    model_id: str,
+    *,
+    at: datetime | str | None = None,
+) -> dict[str, object] | None:
+    """Public timing metadata for a provider's variable token pricing."""
+    if _deepseek_v4_family(provider_slug, model_id) is None:
+        return None
+    effective_at = _effective_time(at)
+
+    def clock(seconds: int) -> str:
+        return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}"
+
+    return {
+        "kind": "time_of_day",
+        "timezone": "UTC",
+        "effective_at": DEEPSEEK_V4_PRICING_EFFECTIVE_AT.isoformat().replace("+00:00", "Z"),
+        "current_period": _deepseek_v4_period(effective_at),
+        "peak_multiplier": 2,
+        "peak_windows": [
+            {"start": clock(start), "end": clock(end)}
+            for start, end in DEEPSEEK_V4_PEAK_WINDOWS_UTC
+        ],
+        # Authorization time, not settlement time, selects the period so a
+        # long stream cannot change price midway through the request.
+        "rate_locked_at": "authorization",
+    }
+
+
 def provider_price_microdollars(
     provider_slug: str,
     model_id: str,
@@ -345,8 +431,13 @@ def provider_price_microdollars(
     Pinning both sides prevents a provider API from publishing the new price
     early and makes the exact advertised transition deterministic.
     """
-    if provider_slug != "phala" or model_id != "qwen/qwen-2.5-7b-instruct":
-        return None
-    if _effective_time(at) < PHALA_JULY_2026_EFFECTIVE_AT:
-        return ProviderPrice(40_000, 100_000)
-    return ProviderPrice(100_000, 200_000)
+    effective_at = _effective_time(at)
+    family = _deepseek_v4_family(provider_slug, model_id)
+    if family is not None:
+        return _DEEPSEEK_V4_PRICES[family][_deepseek_v4_period(effective_at)]
+
+    if provider_slug == "phala" and model_id == "qwen/qwen-2.5-7b-instruct":
+        if effective_at < PHALA_JULY_2026_EFFECTIVE_AT:
+            return ProviderPrice(40_000, 100_000)
+        return ProviderPrice(100_000, 200_000)
+    return None
