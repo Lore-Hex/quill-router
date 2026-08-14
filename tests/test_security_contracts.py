@@ -404,6 +404,84 @@ def test_sentry_keeps_trusted_405_and_fingerprints_method_and_path(
     assert "fingerprint" not in event
 
 
+@pytest.mark.parametrize(
+    ("url", "referer", "user_agent"),
+    [
+        (
+            "https://uptimerouter.com/support/inquiry",
+            "https://uptimerouter.com/support",
+            (
+                "Mozilla/5.0 (compatible; heritrix/3.14.2-SNAPSHOT "
+                "+https://www.image-meta.com)"
+            ),
+        ),
+        (
+            "https://uptimerouter.com/analytics/events",
+            "https://uptimerouter.com/static/dashboard.js",
+            (
+                "Mozilla/5.0 (compatible; heritrix/3.14.2-SNAPSHOT "
+                "+https://www.image-meta.com)"
+            ),
+        ),
+        (
+            "https://uptimerouter.com/",
+            "https://uptimerouter.com/docs",
+            "Mozilla/5.0 (compatible; Amzn-SearchBot/1.0)",
+        ),
+    ],
+)
+def test_sentry_drops_crawler_405_even_with_same_origin_referer(
+    url: str,
+    referer: str,
+    user_agent: str,
+) -> None:
+    reset_sentry_floodgate_for_tests()
+    event = _method_not_allowed_event(
+        url,
+        method="GET",
+        headers={
+            "Referer": referer,
+            "User-Agent": user_agent,
+        },
+    )
+
+    assert before_send(event, {}) is None
+
+
+def test_sentry_keeps_internal_worker_405_with_crawler_shaped_user_agent() -> None:
+    reset_sentry_floodgate_for_tests()
+    event = _method_not_allowed_event(
+        "https://trustedrouter.com/v1/internal/synthetic/route-health",
+        method="GET",
+        headers={
+            "User-Agent": "trustedrouter-synthetic-bot/1.0",
+            "X-TrustedRouter-Internal-Token": "private-token",
+        },
+    )
+
+    assert before_send(event, {}) is not None
+
+
+def test_sentry_keeps_crawler_originated_server_error() -> None:
+    reset_sentry_floodgate_for_tests()
+    event = {
+        "level": "error",
+        "request": {
+            "method": "GET",
+            "url": "https://uptimerouter.com/support",
+            "headers": {
+                "Referer": "https://uptimerouter.com/",
+                "User-Agent": "heritrix/3.14.2",
+            },
+        },
+        "exception": {
+            "values": [{"type": "RuntimeError", "value": "database failed"}]
+        },
+    }
+
+    assert before_send(event, {}) is not None
+
+
 def test_sentry_recognizes_context_only_405_as_untrusted() -> None:
     reset_sentry_floodgate_for_tests()
     event = {
