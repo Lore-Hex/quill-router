@@ -15,3 +15,4 @@ node_modules/
 artifacts/
 test-results/
 playwright-report/
+proofs/tla2tools.jar

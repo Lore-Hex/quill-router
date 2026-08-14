@@ -276,30 +276,23 @@ def test_the_flag_ladder_is_pinned(flags: dict[str, object], expected: int) -> N
 
 
 # ---------------------------------------------------------------------------
-# A latent incoherence the code permits and the data currently avoids.
+# The incoherence this module found, and the guard that keeps it closed.
 # ---------------------------------------------------------------------------
 
 
-def test_confidential_without_the_zdr_flag_is_a_known_latent_incoherence() -> None:
-    """Standing record of a gap the shipped catalog does not currently hit.
+def test_confidential_implies_zero_data_retention_by_construction() -> None:
+    """The gap this module originally recorded, now closed.
 
-    A provider with `provider_confidential_compute` and `provider_e2ee` set but
-    `provider_zero_data_retention=False` resolves to tier CONFIDENTIAL (3),
-    which is above ZERO_RETENTION (2) — so the router would admit it for a
-    `min_privacy=zdr` request. But `endpoint_zero_data_retention` reads the raw
-    flag and returns False, so `/models` would publish "no ZDR" for a route the
-    router treats as satisfying ZDR.
+    A provider with confidential compute + e2ee but `provider_zero_data_retention`
+    explicitly False used to resolve to tier CONFIDENTIAL — admitted for a
+    `min_privacy=zdr` request — while `/models` published "no ZDR" for the same
+    route. No shipped provider was configured that way, so the biconditional
+    held on the real catalog and only the synthetic half of this module could
+    see it.
 
-    The two would disagree, which is exactly what
-    `test_zero_data_retention_is_exactly_the_zdr_tier` forbids across the real
-    catalog. No shipped provider has that flag combination, so the biconditional
-    holds today — this test exists so the gap is recorded rather than
-    rediscovered.
-
-    Deliberately NOT fixed here. The repair is a product decision about what
-    the ZDR badge means (does confidential compute imply zero retention?), and
-    it changes a value published on a customer-visible API. If this test starts
-    failing, the ladder was changed and this note should be revisited.
+    `endpoint_zero_data_retention` now derives the claim from the tier: a
+    provider that cannot read content cannot retain it, and the ladder already
+    ranks CONFIDENTIAL above ZERO_RETENTION. The two can no longer disagree.
     """
     template = next(iter(PROVIDERS.values()))
     contradictory = dataclasses.replace(
@@ -310,15 +303,14 @@ def test_confidential_without_the_zdr_flag_is_a_known_latent_incoherence() -> No
         provider_e2ee=True,
         prepaid_zero_data_retention=False,
     )
+    assert provider_privacy_tier(contradictory) == PRIVACY_TIER_CONFIDENTIAL
 
-    tier = provider_privacy_tier(contradictory)
-    assert tier == PRIVACY_TIER_CONFIDENTIAL
-    assert tier >= PRIVACY_TIER_ZERO_RETENTION, (
-        "the router would admit this provider for a zdr floor..."
+    endpoint = next(
+        e for e in ALL_ENDPOINTS if endpoint_privacy_tier(e) == PRIVACY_TIER_CONFIDENTIAL
     )
-    assert contradictory.provider_zero_data_retention is False, (
-        "...while the published ZDR claim would say False. Coherent only because "
-        "no real provider is configured this way."
+    assert endpoint_zero_data_retention(endpoint) is True, (
+        "a CONFIDENTIAL route must publish ZDR, since the router already admits "
+        "it for a zdr floor"
     )
 
 

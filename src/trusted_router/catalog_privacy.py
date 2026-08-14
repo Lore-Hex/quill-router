@@ -89,7 +89,22 @@ def endpoint_stores_content(endpoint: ModelEndpoint) -> bool:
 
 
 def endpoint_zero_data_retention(endpoint: ModelEndpoint) -> bool | None:
-    """Return the ZDR guarantee that applies to this exact credential path."""
+    """Return the ZDR guarantee that applies to this exact credential path.
+
+    Confidential compute plus provider-side e2ee implies zero retention: the
+    provider cannot retain content it cannot read. The tier ladder already
+    encodes that ordering (CONFIDENTIAL outranks ZERO_RETENTION), so deriving
+    this from the tier keeps the published claim and the routing floor in
+    agreement by construction.
+
+    Without it the two could disagree: a route at CONFIDENTIAL is admitted for
+    a `min_privacy=zdr` request, while a raw `provider_zero_data_retention=False`
+    would publish "no ZDR" for that same route. No shipped provider is
+    configured that way today, so this closes the gap before it is reachable
+    rather than after. See tests/test_catalog_privacy_coherence_property.py.
+    """
+    if endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_CONFIDENTIAL:
+        return True
     override = _model_provider_privacy_override(endpoint.model_id, endpoint.provider)
     if override is not None and override.provider_zero_data_retention is not None:
         return override.provider_zero_data_retention
