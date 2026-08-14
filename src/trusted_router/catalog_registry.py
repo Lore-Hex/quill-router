@@ -1124,10 +1124,11 @@ def _install_deepseek_v4_pro_release_routes() -> None:
     """Install honest release-specific leaves for immutable combo presets.
 
     DeepSeek's API accepts only ``deepseek-v4-pro``. Its official model page
-    identifies that rolling upstream as build 0813 as of 2026-08-13, so the
-    0813 leaf is deliberately first-party-only. The 0423 leaf is cloned only
-    from snapshot endpoints explicitly labeled 20260423 and excludes the now
-    rolling first-party route.
+    identifies that rolling upstream as build 0813 as of 2026-08-13. Additional
+    providers enter the immutable 0813 leaf only when their provider-native
+    catalog exposes that exact release ID. The 0423 leaf is cloned only from
+    snapshot endpoints explicitly labeled 20260423 and excludes the now rolling
+    first-party route.
     """
     base = MODELS.get("deepseek/deepseek-v4-pro")
     if base is None:
@@ -1150,7 +1151,10 @@ def _install_deepseek_v4_pro_release_routes() -> None:
         and endpoint.provider in historical_provider_slugs
     ]
     current = MODEL_ENDPOINTS.get(f"{base.id}@deepseek/prepaid")
-    if not historical or current is None:
+    baseten_current = MODEL_ENDPOINTS.get(
+        f"{DEEPSEEK_V4_PRO_0813_MODEL_ID}@baseten/prepaid"
+    )
+    if not historical or current is None or baseten_current is None:
         raise RuntimeError("DeepSeek V4 Pro release routes are incomplete")
 
     # Versioned release IDs are immutable Credits-only products. The hourly
@@ -1168,8 +1172,6 @@ def _install_deepseek_v4_pro_release_routes() -> None:
         model_id: str,
         name: str,
         sources: list[ModelEndpoint],
-        *,
-        upstream_id: str | None = None,
     ) -> None:
         prompt = min(endpoint.prompt_price_microdollars_per_million_tokens for endpoint in sources)
         completion = min(
@@ -1198,7 +1200,6 @@ def _install_deepseek_v4_pro_release_routes() -> None:
                 source,
                 id=endpoint_id,
                 model_id=model_id,
-                upstream_id=upstream_id or source.upstream_id,
             )
 
     install(
@@ -1209,8 +1210,7 @@ def _install_deepseek_v4_pro_release_routes() -> None:
     install(
         DEEPSEEK_V4_PRO_0813_MODEL_ID,
         "DeepSeek V4 Pro 0813",
-        [current],
-        upstream_id="deepseek-v4-pro",
+        [current, baseten_current],
     )
 
 

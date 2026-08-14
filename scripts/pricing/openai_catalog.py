@@ -101,7 +101,9 @@ def discover_openai_chat_catalog(
         if context_length is not None:
             row["context_length"] = context_length
         max_output = positive_int(
-            source.get("max_output_length") or source.get("max_output_tokens")
+            source.get("max_output_length")
+            or source.get("max_output_tokens")
+            or source.get("max_completion_tokens")
         )
         if max_output is not None:
             row["max_output_tokens"] = max_output

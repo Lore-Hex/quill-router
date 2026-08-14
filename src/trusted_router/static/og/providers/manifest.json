@@ -28,10 +28,10 @@
   },
   "baseten": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 13,
     "name": "Baseten",
-    "privacy": "Policy documented",
-    "route_count": 24,
+    "privacy": "Zero retention",
+    "route_count": 25,
     "route_mode": "Prepaid + BYOK",
     "slug": "baseten"
   },

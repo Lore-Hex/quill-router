@@ -22,6 +22,22 @@ def test_baseten_fetch_discovers_prices_without_float_drift(monkeypatch) -> None
     payload = {
         "data": [
             {
+                "id": "deepseek-ai/DeepSeek-V4-Pro-0813",
+                "context_length": 1_048_576,
+                "max_completion_tokens": 262_144,
+                "pricing": {
+                    "prompt": "0.00000132",
+                    "completion": "0.00000396",
+                    "input_cache_read": "0.000000132",
+                },
+                "supported_features": [
+                    "tools",
+                    "json_mode",
+                    "structured_outputs",
+                    "reasoning",
+                ],
+            },
+            {
                 "id": "zai-org/GLM-5.2",
                 "context_length": 524288,
                 "pricing": {
@@ -74,11 +90,15 @@ def test_baseten_fetch_discovers_prices_without_float_drift(monkeypatch) -> None
     monkeypatch.setattr(baseten.httpx, "Client", FakeClient)
 
     result = baseten.fetch()
+    deepseek = result.prices["deepseek/deepseek-v4-pro-0813"]
     glm = result.prices["z-ai/glm-5.2"]
     glm_fast = result.prices["z-ai/glm-5.2-fast"]
     kimi = result.prices["moonshotai/kimi-k2.7-code"]
     inkling = result.prices["thinkingmachines/inkling-1m"]
 
+    assert deepseek.prompt_micro_per_m == 1_320_000
+    assert deepseek.completion_micro_per_m == 3_960_000
+    assert deepseek.tiers[0].prompt_cached_micro_per_m == 132_000
     assert glm.prompt_micro_per_m == 1_400_000
     assert glm.completion_micro_per_m == 4_400_000
     assert glm.tiers[0].prompt_cached_micro_per_m == 140_000
@@ -93,6 +113,16 @@ def test_baseten_fetch_discovers_prices_without_float_drift(monkeypatch) -> None
     assert baseten.UPSTREAM_ID_MAP["z-ai/glm-5.2"] == "zai-org/GLM-5.2"
     assert baseten.UPSTREAM_ID_MAP["z-ai/glm-5.2-fast"] == "zai-org/GLM-5.2-Fast"
     assert baseten.UPSTREAM_ID_MAP["thinkingmachines/inkling-1m"] == "thinkingmachines/inkling"
+    assert (
+        baseten.UPSTREAM_ID_MAP["deepseek/deepseek-v4-pro-0813"]
+        == "deepseek-ai/DeepSeek-V4-Pro-0813"
+    )
+    discovered = baseten._DISCOVERED_MANIFEST_ROWS[
+        "deepseek/deepseek-v4-pro-0813"
+    ]
+    assert discovered["context_length"] == 1_048_576
+    assert discovered["max_output_tokens"] == 262_144
+    assert "reasoning" in discovered["supported_features"]
 
 
 def test_baseten_zero_price_discovery_is_immediately_disabled(
@@ -100,6 +130,14 @@ def test_baseten_zero_price_discovery_is_immediately_disabled(
 ) -> None:  # noqa: ANN001
     payload = {
         "data": [
+            {
+                "id": "deepseek-ai/DeepSeek-V4-Pro-0813",
+                "pricing": {
+                    "prompt": "0.00000132",
+                    "completion": "0.00000396",
+                    "input_cache_read": "0.000000132",
+                },
+            },
             {
                 "id": "thinkingmachines/inkling-small",
                 "context_length": 1_048_576,
@@ -201,7 +239,12 @@ def test_baseten_zero_price_discovery_is_immediately_disabled(
         == "price-unavailable"
     )
 
-    payload["data"][0]["pricing"] = {
+    inkling_small = next(
+        row
+        for row in payload["data"]
+        if row["id"] == "thinkingmachines/inkling-small"
+    )
+    inkling_small["pricing"] = {
         "prompt": "0.0000003",
         "completion": "0.0000012",
     }

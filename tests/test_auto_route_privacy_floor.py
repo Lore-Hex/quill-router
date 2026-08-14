@@ -85,13 +85,22 @@ def test_current_release_then_cheap_qualifying_models_lead_the_ladder() -> None:
     ]
 
 
-def test_zdr_filter_skips_incompatible_global_leader_before_dispatch() -> None:
+def test_zdr_filter_uses_only_compatible_routes_for_global_leader() -> None:
     candidates = chat_route_endpoint_candidates(
         {"model": "trustedrouter/auto", "provider": {"min_privacy": "zdr"}, "messages": []},
         Settings(),
     )
     assert candidates
-    assert all(model.id != "deepseek/deepseek-v4-pro-0813" for model, _endpoint in candidates)
+    leader_routes = [
+        endpoint
+        for model, endpoint in candidates
+        if model.id == "deepseek/deepseek-v4-pro-0813"
+    ]
+    assert {endpoint.provider for endpoint in leader_routes} == {"baseten"}
+    assert all(
+        endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_ZERO_RETENTION
+        for _model, endpoint in candidates
+    )
 
 
 def test_every_auto_candidate_is_a_real_resolvable_model() -> None:
