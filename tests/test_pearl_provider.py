@@ -137,6 +137,8 @@ def test_pearl_fetch_discovers_models_and_fails_one_bad_canary_closed(
     canaried: list[str] = []
 
     def probe(**kwargs: object) -> bool:
+        assert kwargs["expected_content"] == "PONG"
+        assert kwargs["max_tokens"] == 256
         model = str(kwargs["model"])
         canaried.append(model)
         return model != "zai-org/GLM-5.2"

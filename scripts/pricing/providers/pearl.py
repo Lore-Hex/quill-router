@@ -115,7 +115,8 @@ def fetch() -> ProviderPricingResult:
             base_url=BASE_URL,
             api_key=api_key,
             model=UPSTREAM_ID_MAP[model_id],
-            max_tokens=64,
+            expected_content="PONG",
+            max_tokens=256,
         )
     }
     apply_canary_results(
