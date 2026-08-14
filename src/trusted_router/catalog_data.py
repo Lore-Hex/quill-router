@@ -630,12 +630,15 @@ PROVIDERS: dict[str, Provider] = {
         slug="baseten",
         name="Baseten",
         supports_prepaid=True,
+        stores_content=False,
+        provider_zero_data_retention=True,
         provider_policy=(
-            "No provider-ZDR claim is tracked here. Baseten's inference and "
-            "security documentation are linked for users who need to review API "
-            "data handling."
+            "Baseten states that it does not store synchronous Model API inputs "
+            "or outputs by default. TrustedRouter uses the synchronous Model API "
+            "path; Baseten documents separate temporary input storage for async "
+            "inference."
         ),
-        provider_policy_url="https://docs.baseten.co/inference/overview",
+        provider_policy_url="https://docs.baseten.co/observability/security",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Telnyx Inference — OpenAI-compatible chat completions at
@@ -1511,9 +1514,9 @@ US_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
 #   1. Privacy and jurisdiction requirements are applied before authorization;
 #      an incompatible leading model is skipped rather than silently weakening
 #      a caller's requested policy.
-#   2. The ladder spans MORE THAN ONE provider. The first-party 0813 route is
-#      followed by independent model/provider families, so an upstream outage
-#      does not make the default route a single point of failure.
+#   2. The ladder spans MORE THAN ONE provider. The 0813 leader itself has
+#      release-pinned first-party and Baseten routes, and it is followed by
+#      independent model/provider families.
 #
 # Order: strongest current DeepSeek release first, then cheap qualifying
 # fallbacks. Privacy and jurisdiction requirements are still applied before

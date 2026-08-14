@@ -768,14 +768,30 @@ def test_deepseek_v4_pro_release_routes_are_keyed_and_credits_only() -> None:
     )
     assert current_routes
     assert all(endpoint.usage_type == "Credits" for endpoint in current_routes)
-    assert {endpoint.provider for endpoint in current_routes} <= (
-        GATEWAY_PREPAID_PROVIDER_SLUGS
-    )
+    assert {endpoint.provider for endpoint in current_routes} == {
+        "deepseek",
+        "baseten",
+    }
+    assert {endpoint.provider for endpoint in current_routes} <= GATEWAY_PREPAID_PROVIDER_SLUGS
     assert [
         (endpoint.provider, endpoint.upstream_id)
         for endpoint in current_routes
         if endpoint.provider == "deepseek"
     ] == [("deepseek", "deepseek-v4-pro")]
+    assert [
+        (endpoint.provider, endpoint.upstream_id)
+        for endpoint in current_routes
+        if endpoint.provider == "baseten"
+    ] == [("baseten", "deepseek-ai/DeepSeek-V4-Pro-0813")]
+    baseten = next(
+        endpoint for endpoint in current_routes if endpoint.provider == "baseten"
+    )
+    # Public prepaid rates include the normal 5% TrustedRouter markup over the
+    # exact provider-native $1.32 / $3.96 prices asserted in the parser test.
+    assert baseten.prompt_price_microdollars_per_million_tokens == 1_386_000
+    assert baseten.completion_price_microdollars_per_million_tokens == 4_158_000
+    assert endpoint_zero_data_retention(baseten) is True
+    assert endpoint_privacy_tier(baseten) >= PRIVACY_TIER_ZERO_RETENTION
     assert MODELS[DEEPSEEK_V4_PRO_0423_MODEL_ID].byok_available is False
     assert MODELS[DEEPSEEK_V4_PRO_0813_MODEL_ID].byok_available is False
 

@@ -224,9 +224,12 @@ jobs:
         run: uv run python scripts/generate_provider_og.py
 
       - name: Price-source coverage audit
-        # General stale-price gaps stay visibility-only, but provider docs that
-        # announce a model we do not publish are a hard failure. That catches
-        # releases like GLM-5.2 when docs update before pricing/OpenRouter does.
+        id: coverage_audit
+        # Keep strict discovery as a durable alert, but do not let one provider's
+        # unpublished model freeze independently safe catalog updates from every
+        # other provider. The missing route remains fail-closed and the final
+        # step still fails this workflow after validation, commit, and dispatch.
+        continue-on-error: true
         if: always()
         run: |
           set -o pipefail
@@ -320,3 +323,9 @@ jobs:
           echo "  dispatched deploy.yml for new snapshot"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fail for unresolved model-discovery gaps
+        if: steps.coverage_audit.outcome == 'failure'
+        run: |
+          echo "::error title=Model discovery coverage gap::Safe provider updates were published, but one or more newly announced models remain unpublished. Review the Price-source coverage audit."
+          exit 1
