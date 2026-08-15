@@ -22,33 +22,45 @@ catalog-valid provider slug can collide with a control purpose.
         and aad(workspace, p) differs from aad(workspace, purpose)
         for every control purpose
 
-Two things this deliberately does NOT claim:
+Since step 2 of the migration this module also covers the v2 format, which
+length-prefixes every AAD component and adds a namespace separating provider
+keys from control secrets. v1 envelopes still exist in storage until the step-3
+backfill, so both formats must open and the v1 collision is still asserted
+below rather than quietly dropped.
 
-  * The AAD map is still not injective in general. `_aad` joins with ":" and
-    neither escapes nor length-prefixes, so ("a:b", "c") and ("a", "b:c")
-    collide. Reaching that needs a colon in a workspace id, and all three
-    backends mint str(uuid.uuid4()), so it is not reachable by normal issuance
-    — but it is a real property of the function and is asserted below as a
-    known gap rather than quietly left out.
-  * Repairing the encoding needs a V2 envelope algorithm and a dual-read
-    migration, because existing ciphertexts AND wrapped DEKs were sealed under
-    the current AAD, and the attested enclave consumes these envelopes too.
-    That is out of scope here; this closes the reachable door.
+The v2 encoding must stay byte-identical to aadV2 in quill-cloud-proxy. Both
+sides pin the same hex vector; see test_the_v2_vector_matches_the_enclave.
 """
 
 from __future__ import annotations
 
+import dataclasses
+import secrets as secrets_module
+
 import pytest
+from cryptography.exceptions import InvalidTag
 from fastapi.testclient import TestClient
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from trusted_router.byok_crypto import _aad
+from trusted_router.byok_crypto import (
+    ALGORITHM,
+    ALGORITHM_V2,
+    NAMESPACE_CONTROL,
+    NAMESPACE_PROVIDER,
+    _aad,
+    _aad_v2,
+    decrypt_byok_secret,
+    decrypt_control_secret,
+    encrypt_byok_secret,
+    encrypt_control_secret,
+)
 from trusted_router.catalog import PROVIDERS
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.provider_compat import canonical_byok_provider
 from trusted_router.storage import STORE
+from trusted_router.storage_models import EncryptedSecretEnvelope
 
 WORKSPACE = "11111111-2222-3333-4444-555555555555"
 
@@ -194,3 +206,179 @@ def test_aad_encoding_is_not_injective_in_general() -> None:
     should be deleted along with the workaround it documents.
     """
     assert _aad("a:b", "c") == _aad("a", "b:c")
+
+
+# ---------------------------------------------------------------- v2 format ---
+#
+# Step 2 of docs/design/byok-aad-v2-migration.md. New envelopes are written v2,
+# whose AAD is length-prefixed and carries a namespace component. v1 envelopes
+# still exist in storage until the step-3 backfill, so both formats must open.
+
+
+def _settings() -> Settings:
+    return Settings(environment="test")
+
+
+def test_the_v2_vector_matches_the_enclave() -> None:
+    """The two implementations must agree byte for byte.
+
+    This exact hex is pinned in
+    quill-cloud-proxy/enclave-go/internal/byokcache/aad_v2_test.go. If the two
+    ever diverge it is not a test failure in the usual sense — it is every BYOK
+    key written by one plane failing to open on the other, which is precisely
+    the outage the migration ordering exists to avoid.
+    """
+    assert _aad_v2("provider", "ws-1", "openai").hex() == (
+        "0000001574727573746564726f757465722f62796f6b2f7632"
+        "0000000870726f76696465720000000477732d31000000066f70656e6169"
+    )
+
+
+@given(
+    namespace=st.sampled_from([NAMESPACE_PROVIDER, NAMESPACE_CONTROL]),
+    workspace=st.text(alphabet=":/abc\x00", max_size=6),
+    context=st.text(alphabet=":/abc\x00", max_size=6),
+)
+@settings(max_examples=400)
+def test_v2_aad_is_injective(namespace: str, workspace: str, context: str) -> None:
+    """The property v1 lacks: distinct tuples produce distinct bytes.
+
+    Quantified over an alphabet of exactly the characters that break a
+    delimiter-joined encoding — colons, slashes, NUL — because those are the
+    inputs where a naive scheme silently collapses two tuples into one.
+    """
+    encoded = _aad_v2(namespace, workspace, context)
+    for other in [
+        (namespace, workspace, context + "x"),
+        (namespace, workspace + "x", context),
+        (NAMESPACE_CONTROL if namespace == NAMESPACE_PROVIDER else NAMESPACE_PROVIDER,
+         workspace, context),
+    ]:
+        if other != (namespace, workspace, context):
+            assert _aad_v2(*other) != encoded
+
+
+def test_v2_separates_the_two_v1_collision_classes() -> None:
+    """Both concrete v1 collisions are gone under v2."""
+    assert _aad("a:b", "c") == _aad("a", "b:c")  # v1, still true
+    assert _aad_v2("provider", "a:b", "c") != _aad_v2("provider", "a", "b:c")
+    assert _aad_v2(NAMESPACE_PROVIDER, "w", "x") != _aad_v2(NAMESPACE_CONTROL, "w", "x")
+
+
+def test_new_byok_secrets_are_written_v2() -> None:
+    envelope = encrypt_byok_secret(
+        "sk-provider-key", _settings(), workspace_id=WORKSPACE, provider="openai"
+    )
+    assert envelope.algorithm == ALGORITHM_V2
+    assert (
+        decrypt_byok_secret(
+            envelope, _settings(), workspace_id=WORKSPACE, provider="openai"
+        )
+        == "sk-provider-key"
+    )
+
+
+def test_new_control_secrets_are_written_v2() -> None:
+    envelope = encrypt_control_secret(
+        "shhh", _settings(), workspace_id=WORKSPACE, purpose="broadcast:bdst_1:api-key"
+    )
+    assert envelope.algorithm == ALGORITHM_V2
+    assert (
+        decrypt_control_secret(
+            envelope,
+            _settings(),
+            workspace_id=WORKSPACE,
+            purpose="broadcast:bdst_1:api-key",
+        )
+        == "shhh"
+    )
+
+
+def test_a_control_secret_does_not_open_as_a_provider_key() -> None:
+    """The whole point of the namespace component.
+
+    Under v1 these two shared associated data whenever the purpose string
+    equalled the provider slug, so each opened the other. The console guard
+    (#544) made that unreachable; the namespace makes it impossible.
+    """
+    shared_context = "openai"
+    control = encrypt_control_secret(
+        "control-secret", _settings(), workspace_id=WORKSPACE, purpose=shared_context
+    )
+
+    with pytest.raises(InvalidTag):
+        decrypt_byok_secret(
+            control, _settings(), workspace_id=WORKSPACE, provider=shared_context
+        )
+
+
+def test_a_provider_key_does_not_open_as_a_control_secret() -> None:
+    shared_context = "openai"
+    provider = encrypt_byok_secret(
+        "sk-provider-key", _settings(), workspace_id=WORKSPACE, provider=shared_context
+    )
+
+    with pytest.raises(InvalidTag):
+        decrypt_control_secret(
+            provider, _settings(), workspace_id=WORKSPACE, purpose=shared_context
+        )
+
+
+def test_v1_envelopes_still_decrypt() -> None:
+    """Rows written before the migration must keep working until the backfill.
+
+    Sealed here the way v1 sealed them, since nothing writes v1 any more.
+    """
+    envelope = _seal_v1("legacy-secret", workspace_id=WORKSPACE, context="openai")
+    assert envelope.algorithm == ALGORITHM
+    assert (
+        decrypt_byok_secret(
+            envelope, _settings(), workspace_id=WORKSPACE, provider="openai"
+        )
+        == "legacy-secret"
+    )
+
+
+def test_an_unknown_algorithm_is_still_refused() -> None:
+    envelope = _seal_v1("x", workspace_id=WORKSPACE, context="openai")
+    envelope = dataclasses.replace(envelope, algorithm="TR-BYOK-ENVELOPE-AES-256-GCM-V3")
+    with pytest.raises(ValueError, match="unsupported BYOK envelope algorithm"):
+        decrypt_byok_secret(
+            envelope, _settings(), workspace_id=WORKSPACE, provider="openai"
+        )
+
+
+@given(
+    workspace=st.sampled_from(["ws-1", "ws-2"]),
+    context=st.sampled_from(["openai", "anthropic"]),
+)
+def test_v2_still_rejects_a_wrong_binding(workspace: str, context: str) -> None:
+    """Cross-binding rejection is what AAD is for; v2 must not weaken it."""
+    envelope = encrypt_byok_secret(
+        "sk", _settings(), workspace_id=workspace, provider=context
+    )
+    for other_ws, other_ctx in [("ws-other", context), (workspace, "other-provider")]:
+        with pytest.raises(InvalidTag):
+            decrypt_byok_secret(
+                envelope, _settings(), workspace_id=other_ws, provider=other_ctx
+            )
+
+
+def _seal_v1(secret: str, *, workspace_id: str, context: str):
+    """Seal an envelope the way v1 did, for backward-compatibility tests."""
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    from trusted_router.byok_crypto import _b64, _key_ref, _wrap_dek
+
+    dek = secrets_module.token_bytes(32)
+    nonce = secrets_module.token_bytes(12)
+    dek_nonce = secrets_module.token_bytes(12)
+    aad = _aad(workspace_id, context)
+    return EncryptedSecretEnvelope(
+        algorithm=ALGORITHM,
+        key_ref=_key_ref(_settings()),
+        encrypted_dek=_b64(_wrap_dek(dek, dek_nonce, aad, _settings())),
+        dek_nonce=_b64(dek_nonce),
+        ciphertext=_b64(AESGCM(dek).encrypt(nonce, secret.encode(), aad)),
+        nonce=_b64(nonce),
+    )
