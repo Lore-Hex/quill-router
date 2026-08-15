@@ -44,7 +44,8 @@
       "routable": true,
       "input_token_price_per_m": 110000,
       "output_token_price_per_m": 200000,
-      "cached_input_token_price_per_m": 20000
+      "cached_input_token_price_per_m": 20000,
+      "missing_since": "2026-08-15"
     },
     {
       "display_name": "DeepSeek: DeepSeek V4 Flash 0731",
@@ -87,7 +88,8 @@
       "routable": true,
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 280000,
-      "cached_input_token_price_per_m": 28000
+      "cached_input_token_price_per_m": 28000,
+      "missing_since": "2026-08-15"
     },
     {
       "display_name": "DeepSeek: V4 Pro",
@@ -218,6 +220,6 @@
       "cached_input_token_price_per_m": 200000
     }
   ],
-  "generated_at": "2026-08-14T00:30:26Z",
+  "generated_at": "2026-08-15T17:16:20Z",
   "model_count": 5
 }

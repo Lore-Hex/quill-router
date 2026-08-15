@@ -47,7 +47,7 @@
       "status": 1,
       "id": "z-ai/glm-5.2",
       "upstream_id": "glm-5.2",
-      "context_length": 262144,
+      "context_length": 208192,
       "routable": true,
       "supported_features": [
         "chat",
@@ -63,6 +63,6 @@
       "cached_input_token_price_per_m": 180000
     }
   ],
-  "generated_at": "2026-08-13T20:40:59Z",
+  "generated_at": "2026-08-15T17:16:20Z",
   "model_count": 2
 }

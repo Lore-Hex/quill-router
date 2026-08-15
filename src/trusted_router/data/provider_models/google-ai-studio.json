@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for Google AI Studio chat and image models that are available from the Gemini API before the OpenRouter snapshot catches up. Verified against Google Gemini /v1beta/models and direct countTokens/generateContent smoke.",
   "provider": "google-ai-studio",
   "source": "https://generativelanguage.googleapis.com/v1beta/models",
-  "generated_at": "2026-08-13T20:40:59Z",
-  "model_count": 34,
+  "generated_at": "2026-08-15T17:16:20Z",
+  "model_count": 35,
   "models": [
     {
       "id": "google/gemini-3.5-flash",
@@ -814,6 +814,29 @@
       "input_token_price_per_m": 750000,
       "output_token_price_per_m": 3750000,
       "cached_input_token_price_per_m": 75000
+    },
+    {
+      "display_name": "[Confidential] Gemini 3.7 Flash Video Understanding EAP",
+      "title": "google/gemini-3.7-flash-video-understanding-eap",
+      "model_type": "chat",
+      "features": [],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.7-flash-video-understanding-eap",
+      "upstream_id": "gemini-3.7-flash-video-understanding-eap",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-08-15"
     }
   ],
   "pricing_source": "https://ai.google.dev/gemini-api/docs/pricing"

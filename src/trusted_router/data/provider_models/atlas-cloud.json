@@ -2886,7 +2886,7 @@
       "max_output_tokens": 500000,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 6000000,
-      "cached_input_token_price_per_m": 500000
+      "cached_input_token_price_per_m": 300000
     },
     {
       "display_name": "Grok Build 0.1",
@@ -3685,8 +3685,31 @@
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-08-13"
+    },
+    {
+      "display_name": "Grok 4.6",
+      "title": "xai/grok-4.6",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "x-ai/grok-4.6",
+      "upstream_id": "xai/grok-4.6",
+      "context_length": 500000,
+      "max_output_tokens": 500000,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 6000000,
+      "cached_input_token_price_per_m": 500000
     }
   ],
-  "generated_at": "2026-08-13T20:40:59Z",
-  "model_count": 136
+  "generated_at": "2026-08-15T17:16:20Z",
+  "model_count": 137
 }
