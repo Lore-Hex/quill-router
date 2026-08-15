@@ -1,14 +1,28 @@
 # BYOK envelope AAD v2 — migration plan
 
-**Status:** proposed, not started
-**Owner:** unassigned
+**Status:** deployed through step 3 on GCP, AWS, and Azure; step 4 is not started
+**Owner:** TrustedRouter platform/security
 **Blocks on:** nothing. The reachable exploit path is already closed (#544).
 **Spans:** `quill-router` and `quill-cloud-proxy`. Ordering between them is the
 whole difficulty — **and it repeats per cloud deployment**, see §4.0.
 
-**Progress:** steps 1 and 2 are done **for the GCP deployment only**
-(quill-cloud-proxy#162, quill-router#560). AWS and Azure have not been
-sequenced. Steps 3 and 4 are not started anywhere.
+**Progress (2026-08-15):** the per-cloud sequence is complete through step 3.
+Step 4 remains deliberately undone, so every enclave and control plane still
+reads v1 envelopes during the retention window.
+
+| Cloud | Step 1: enclave reads v1/v2 | Step 2: control plane writes v2 | Step 3: database backfill |
+|---|---|---|---|
+| GCP | complete in every serving region | complete | 7 BYOK envelopes migrated; 7 v2, 0 v1 after an independent audit |
+| AWS | complete in Paris and Ireland | complete on both Fargate services and both App Runner services | clean audit: no BYOK or Broadcast secret rows existed |
+| Azure | complete in UAE North and Southeast Asia | complete | clean audit: no BYOK or Broadcast secret rows existed |
+
+The backfill implementation landed in quill-router#573. The standalone
+operator configuration and mandatory explicit-KMS apply gate landed in
+quill-router#576. The GCP migration temporarily granted the dedicated operator
+identity key-scoped encrypt/decrypt access, then removed it automatically; the
+post-migration IAM audit found no remaining operator binding. AWS and Azure
+were read-only audits because their independent databases contained nothing to
+rewrite.
 
 ---
 
