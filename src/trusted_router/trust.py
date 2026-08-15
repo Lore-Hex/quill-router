@@ -21,6 +21,29 @@ JAVASCRIPT_SDK_REPO = "https://github.com/Lore-Hex/trusted-router-js"
 PROVIDER_CHECK_REPO = "https://github.com/Lore-Hex/trustedrouter-provider-check"
 
 
+NOT_CONFIGURED = "not-configured"
+
+AWS_API_HOSTNAME = "api-aws.trustedrouter.com"
+AZURE_API_HOSTNAME = "api-azure.trustedrouter.com"
+
+# Nitro attestation documents are COSE_Sign1 signed by AWS's own PKI. There is
+# no issuer URL to compare the way GCP's JWT has one; the check is a chain to
+# this published root.
+AWS_ATTESTATION_ROOT = "https://aws-nitro-enclaves.amazonaws.com/AWS_NitroEnclaves_Root-G1.zip"
+
+
+def _source_repositories() -> dict[str, str]:
+    return {
+        "control_plane": CONTROL_PLANE_REPO,
+        "attested_gateway": ATTESTED_GATEWAY_REPO,
+        "cloud_infra": CLOUD_INFRA_REPO,
+        "quill": QUILL_REPO,
+        "python_sdk": PYTHON_SDK_REPO,
+        "javascript_sdk": JAVASCRIPT_SDK_REPO,
+        "provider_check": PROVIDER_CHECK_REPO,
+    }
+
+
 def gcp_release(
     settings: Settings,
     *,
@@ -28,23 +51,15 @@ def gcp_release(
     release_metadata_status: str = "embedded",
 ) -> dict[str, Any]:
     metadata = release_metadata or {
-        "source_commit": settings.trust_gcp_source_commit or "not-configured",
-        "image_reference": settings.trust_gcp_image_reference or "not-configured",
-        "image_digest": settings.trust_gcp_image_digest or "not-configured",
+        "source_commit": settings.trust_gcp_source_commit or NOT_CONFIGURED,
+        "image_reference": settings.trust_gcp_image_reference or NOT_CONFIGURED,
+        "image_digest": settings.trust_gcp_image_digest or NOT_CONFIGURED,
     }
     api_hostnames = [f"api.{domain}" for domain in configured_control_domains(settings)]
     return {
         "platform": "gcp-confidential-space",
         "source_repo": ATTESTED_GATEWAY_REPO,
-        "source_repositories": {
-            "control_plane": CONTROL_PLANE_REPO,
-            "attested_gateway": ATTESTED_GATEWAY_REPO,
-            "cloud_infra": CLOUD_INFRA_REPO,
-            "quill": QUILL_REPO,
-            "python_sdk": PYTHON_SDK_REPO,
-            "javascript_sdk": JAVASCRIPT_SDK_REPO,
-            "provider_check": PROVIDER_CHECK_REPO,
-        },
+        "source_repositories": _source_repositories(),
         "source_commit": metadata["source_commit"],
         "image_reference": metadata["image_reference"],
         "image_digest": metadata["image_digest"],
@@ -70,6 +85,92 @@ def gcp_release(
 
 def gcp_release_json(settings: Settings) -> str:
     return json.dumps(gcp_release(settings), indent=2, sort_keys=True) + "\n"
+
+
+def aws_release(settings: Settings) -> dict[str, Any]:
+    """Publish the AWS Nitro serving plane's measurement.
+
+    Deploy-time configured rather than resolved live: the enclave answers
+    attestation over a self-signed certificate, so fetching it from here would
+    mean the control plane making an unauthenticated TLS connection and parsing
+    CBOR on a public route. The staleness that trade buys is checked out of band
+    by scripts/verify_trust_measurements.py instead.
+    """
+    accepted = settings.trust_aws_accepted_pcr0_list
+    return {
+        "platform": "aws-nitro-enclaves",
+        "source_repo": ATTESTED_GATEWAY_REPO,
+        "source_repositories": _source_repositories(),
+        "source_commit": settings.trust_aws_source_commit or NOT_CONFIGURED,
+        "image_reference": settings.trust_aws_image_reference or NOT_CONFIGURED,
+        # PCR0 measures the enclave image file: kernel, ramdisk, and
+        # application, as built by nitro-cli build-enclave.
+        "measurement_type": "nitro-pcr0-sha384",
+        "pcr0": settings.trust_aws_pcr0 or NOT_CONFIGURED,
+        "accepted_pcr0s": list(accepted),
+        "release_metadata_status": ("configured" if accepted else NOT_CONFIGURED),
+        "attestation_format": "cose-sign1-nitro-attestation-document",
+        "attestation_root": AWS_ATTESTATION_ROOT,
+        "api_base_url": f"https://{AWS_API_HOSTNAME}/v1",
+        "tls": {
+            # Deliberately not a public-CA certificate. The enclave generates
+            # its own key, and binds the certificate fingerprint and the TLS
+            # exporter value into the attestation's user_data, so the connection
+            # you are on is the connection that was attested. Chain validation
+            # is replaced by that binding, not dropped.
+            "mode": "attested-self-signed-inside-enclave",
+            "hostname": AWS_API_HOSTNAME,
+            "certificate_binding": "user_data[0:64]=certificate fingerprint, "
+            "user_data[64:96]=TLS exporter channel binding",
+        },
+        "data_policy": {
+            "prompt_output_storage": False,
+            "control_plane_prompt_access": False,
+        },
+    }
+
+
+def azure_release(settings: Settings) -> dict[str, Any]:
+    """Publish the Azure SEV-SNP serving plane's measurement.
+
+    hostdata is sha256 over the decoded CCE policy, which is what the released
+    key is bound to; it is the value a verifier compares against
+    x-ms-sevsnpvm-hostdata in an MAA token.
+    """
+    accepted = settings.trust_azure_accepted_hostdata_list
+    return {
+        "platform": "azure-confidential-containers-sev-snp",
+        "source_repo": ATTESTED_GATEWAY_REPO,
+        "source_repositories": _source_repositories(),
+        "source_commit": settings.trust_azure_source_commit or NOT_CONFIGURED,
+        "image_reference": settings.trust_azure_image_reference or NOT_CONFIGURED,
+        "measurement_type": "sev-snp-hostdata-sha256",
+        "hostdata": settings.trust_azure_hostdata or NOT_CONFIGURED,
+        "accepted_hostdata": list(accepted),
+        "release_metadata_status": ("configured" if accepted else NOT_CONFIGURED),
+        "attestation_format": "microsoft-azure-attestation-jwt",
+        "attestation_type": "sevsnpvm",
+        # One MAA instance per serving region, so which issuer signs depends on
+        # which region answered. A verifier should accept any of them.
+        "attestation_issuers": list(settings.trust_azure_attestation_issuer_list),
+        "api_base_url": f"https://{AZURE_API_HOSTNAME}/v1",
+        "tls": {
+            "mode": "acme-inside-confidential-container",
+            "hostname": AZURE_API_HOSTNAME,
+        },
+        "data_policy": {
+            "prompt_output_storage": False,
+            "control_plane_prompt_access": False,
+        },
+    }
+
+
+def aws_release_json(settings: Settings) -> str:
+    return json.dumps(aws_release(settings), indent=2, sort_keys=True) + "\n"
+
+
+def azure_release_json(settings: Settings) -> str:
+    return json.dumps(azure_release(settings), indent=2, sort_keys=True) + "\n"
 
 
 def trust_html(
@@ -127,18 +228,38 @@ def trust_html(
     if release_metadata_status == "stale":
         release_warning = (
             '<section class="panel warn"><h2>Release record temporarily stale</h2>'
-            '<p>This page is showing the last validated gateway release record and returns '
-            'HTTP 503. Verify the canonical trust record before sending sensitive data.</p></section>'
+            "<p>This page is showing the last validated gateway release record and returns "
+            "HTTP 503. Verify the canonical trust record before sending sensitive data.</p></section>"
         )
     elif release_metadata_status == "unavailable":
         release_warning = (
             '<section class="panel warn"><h2>Live release record unavailable</h2>'
-            '<p>This page cannot currently verify the running gateway digest and returns '
-            'HTTP 503. Do not rely on an older embedded digest.</p></section>'
+            "<p>This page cannot currently verify the running gateway digest and returns "
+            "HTTP 503. Do not rely on an older embedded digest.</p></section>"
         )
     else:
         release_warning = ""
     release_json = html.escape(json.dumps(release, indent=2, sort_keys=True) + "\n")
+
+    aws = aws_release(settings)
+    azure = azure_release(settings)
+    aws_pcr0 = html.escape(str(aws["pcr0"]))
+    aws_api = html.escape(str(aws["api_base_url"]))
+    azure_hostdata = html.escape(str(azure["hostdata"]))
+    azure_api = html.escape(str(azure["api_base_url"]))
+    azure_issuers = html.escape(", ".join(azure["attestation_issuers"]) or NOT_CONFIGURED)
+
+    def _plane_note(payload: Mapping[str, Any]) -> str:
+        if payload["release_metadata_status"] == NOT_CONFIGURED:
+            return (
+                "<p><strong>No measurement published for this plane yet.</strong> "
+                "Do not treat its absence as a measurement of zero — verify against a "
+                "live attestation before sending sensitive data.</p>"
+            )
+        return ""
+
+    aws_note = _plane_note(aws)
+    azure_note = _plane_note(azure)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -243,11 +364,54 @@ def trust_html(
         <p><a href="/trust/image-digest-gcp.txt">image-digest-gcp.txt</a></p>
         <p><a href="/trust/image-reference-gcp.txt">image-reference-gcp.txt</a></p>
         <p><a href="/trust/gcp-release.json">gcp-release.json</a></p>
+        <p><a href="/trust/aws-release.json">aws-release.json</a></p>
+        <p><a href="/trust/azure-release.json">azure-release.json</a></p>
       </div>
       <div class="panel warn">
         <h2>DNS Requirement</h2>
         <p><code>{api_hostname}</code> must remain DNS-only or TCP-passthrough. TLS termination by a CDN would break the hosted-code trust claim because the prompt path certificate key must remain inside the measured workload.</p>
       </div>
+    </section>
+    <section class="grid" aria-label="Attested serving planes">
+      <div class="panel">
+        <h2>GCP · Confidential Space</h2>
+        <div class="kv">
+          <div><div class="label">Measures</div><div class="value">Container image digest</div></div>
+          <div><div class="label">Image digest</div><div class="value">{digest}</div></div>
+          <div><div class="label">Attestation issuer</div><div class="value">confidentialcomputing.googleapis.com</div></div>
+          <div><div class="label">API base</div><div class="value">{api}</div></div>
+          <div><div class="label">Release record</div><div class="value"><a href="/trust/gcp-release.json">gcp-release.json</a></div></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>AWS · Nitro Enclaves</h2>
+        {aws_note}
+        <div class="kv">
+          <div><div class="label">Measures</div><div class="value">PCR0 over the enclave image file (SHA-384)</div></div>
+          <div><div class="label">PCR0</div><div class="value">{aws_pcr0}</div></div>
+          <div><div class="label">Attestation</div><div class="value">COSE_Sign1, AWS Nitro PKI</div></div>
+          <div><div class="label">API base</div><div class="value">{aws_api}</div></div>
+          <div><div class="label">Release record</div><div class="value"><a href="/trust/aws-release.json">aws-release.json</a></div></div>
+        </div>
+        <p>This plane serves a certificate generated inside the enclave rather than one from a public CA. Its fingerprint and the TLS exporter value are bound into the attestation, so the connection you are on is the connection that was attested. Verify with <code>--attested-cert-only</code>; chain validation is replaced by that binding, not dropped.</p>
+      </div>
+      <div class="panel">
+        <h2>Azure · Confidential Containers</h2>
+        {azure_note}
+        <div class="kv">
+          <div><div class="label">Measures</div><div class="value">SEV-SNP hostdata, sha256 over the CCE policy</div></div>
+          <div><div class="label">hostdata</div><div class="value">{azure_hostdata}</div></div>
+          <div><div class="label">MAA issuers</div><div class="value">{azure_issuers}</div></div>
+          <div><div class="label">API base</div><div class="value">{azure_api}</div></div>
+          <div><div class="label">Release record</div><div class="value"><a href="/trust/azure-release.json">azure-release.json</a></div></div>
+        </div>
+        <p>Compare <code>hostdata</code> against <code>x-ms-sevsnpvm-hostdata</code> in a live MAA token. Each serving region runs its own MAA instance, so accept any issuer listed above.</p>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Why the three measurements look different</h2>
+      <p>Each platform measures the artifact its own hardware can attest to, so there is no single number to compare across all three. GCP measures the container image; AWS measures the enclave image file into PCR0; Azure measures the policy that constrains what the container is allowed to be. A verifier checks one plane at a time, against that plane's own record.</p>
+      <p>Measurements published here are a <strong>set</strong>, not a single value. During a rollout the released key is deliberately bound to both the outgoing and incoming measurement so the old enclave keeps serving while the new one starts. A verifier pinned to exactly one value would fail during precisely that window, which is why each record carries the full accepted set alongside the value expected to be serving.</p>
     </section>
     <section class="grid">
       <div class="panel"><h2>No Prompt Logs</h2><p>Ordinary synchronous and streaming prompt/output storage is disabled. The opt-in Batch API uses separately documented encrypted retention. Generation content endpoint returns a compatible <code>content_not_stored</code> response.</p></div>

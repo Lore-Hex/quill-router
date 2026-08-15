@@ -124,7 +124,7 @@ from trusted_router.synthetic.fleet import fleet_snapshot
 from trusted_router.synthetic.leaderboard import aggregate_leaderboard
 from trusted_router.synthetic.status import history_payload, status_snapshot
 from trusted_router.synthetic.video_leaderboard import aggregate_video_leaderboard
-from trusted_router.trust import gcp_release, trust_html
+from trusted_router.trust import aws_release, azure_release, gcp_release, trust_html
 from trusted_router.views import render_template
 
 STATUS_SNAPSHOT_CACHE_SECONDS = 15
@@ -1507,6 +1507,47 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             ),
             status_code=trust_response_status(release.status),
             headers=trust_response_headers(release.status),
+        )
+
+    # AWS and Azure are deploy-time configured, so unlike the GCP record there
+    # is nothing to resolve and no stale/live distinction to report. What there
+    # IS is an unconfigured state, and that must not render as a measurement:
+    # serve 503 so a verifier treats it as "no answer" rather than reading
+    # "not-configured" as the value it should expect.
+    def _static_release_response(payload: dict[str, Any]) -> JSONResponse:
+        configured = payload["release_metadata_status"] != "not-configured"
+        return JSONResponse(
+            payload,
+            status_code=200 if configured else 503,
+            headers=trust_response_headers("embedded" if configured else "unavailable"),
+        )
+
+    @app.get("/trust/aws-release.json")
+    async def trust_release_aws() -> JSONResponse:
+        return _static_release_response(aws_release(settings))
+
+    @app.get("/trust/azure-release.json")
+    async def trust_release_azure() -> JSONResponse:
+        return _static_release_response(azure_release(settings))
+
+    @app.get("/trust/pcr0-aws.txt")
+    async def trust_pcr0_aws() -> PlainTextResponse:
+        payload = aws_release(settings)
+        configured = payload["release_metadata_status"] != "not-configured"
+        return PlainTextResponse(
+            "".join(f"{value}\n" for value in payload["accepted_pcr0s"]),
+            status_code=200 if configured else 503,
+            headers=trust_response_headers("embedded" if configured else "unavailable"),
+        )
+
+    @app.get("/trust/hostdata-azure.txt")
+    async def trust_hostdata_azure() -> PlainTextResponse:
+        payload = azure_release(settings)
+        configured = payload["release_metadata_status"] != "not-configured"
+        return PlainTextResponse(
+            "".join(f"{value}\n" for value in payload["accepted_hostdata"]),
+            status_code=200 if configured else 503,
+            headers=trust_response_headers("embedded" if configured else "unavailable"),
         )
 
     @app.get("/trust/image-digest-gcp.txt")
