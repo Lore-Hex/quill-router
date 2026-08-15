@@ -1,0 +1,96 @@
+{% extends "public/_base.html" %}
+
+{% block body %}
+<section class="public-section docs-section">
+  <div class="panel">
+    <div class="panel-head"><h2>Reach your human</h2><span class="pill good">POST /v1/notify</span></div>
+    <div class="panel-body">
+      <p>An agent running unattended sometimes needs a person. <code>/v1/notify</code> sends a push notification, email, SMS, or phone call to <strong>the owner of the account the API key belongs to</strong> — using the same <code>sk-tr-...</code> key the agent already uses for inference.</p>
+      <pre><code>curl {{ api_base_url }}/v1/notify \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "channel": "call",
+    "subject": "region sre1 down",
+    "body": "Six minutes unreachable. Failover did not fire."
+  }'</code></pre>
+      <p class="muted">Channels: <code>push</code>, <code>email</code>, <code>sms</code>, <code>voice</code>.</p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>You cannot choose who it reaches</h2><span class="pill">by design</span></div>
+    <div class="panel-body">
+      <p>There is no <code>to</code> parameter. The destination is resolved from the API key to its workspace to that workspace's owner, and only to contacts that owner has verified. Sending a <code>to</code> field does nothing; the owner is still the recipient.</p>
+      <p>That is what makes this safe on an ordinary inference key. A key that leaks cannot be pointed at a stranger, so this is a self-notification primitive rather than a messaging API. It also means you never handle anyone's phone number to use it.</p>
+      <p class="muted">Message bodies are handled by the control plane and never enter the attested inference path, so zero-retention inference stays a statement about inference alone.</p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>Verify a phone first</h2><span class="pill">required for every channel</span></div>
+    <div class="panel-body">
+      <p>Every channel — including email — requires a verified phone number on the account. The phone is not protecting the recipient, since there is only one possible recipient. It is a cost floor on account farming: TrustedRouter sends from its own A2P brand, so sender reputation is shared, and email is the cheapest channel to abuse.</p>
+      <p>Add a number in <strong>Settings &rarr; Notifications</strong>, or over the API:</p>
+      <pre><code># Send a code. channel: "sms" or "voice".
+curl {{ api_base_url }}/notify/phone/start \
+  -H "Content-Type: application/json" \
+  -d '{"phone": "+15551234567", "channel": "voice"}'
+
+# Confirm it.
+curl {{ api_base_url }}/notify/phone/confirm \
+  -H "Content-Type: application/json" \
+  -d '{"code": "123456"}'</code></pre>
+      <p class="muted">These are session endpoints, not API-key endpoints: adding a phone changes who your account can page, so it belongs to whoever can sign in. Codes last 10 minutes, allow 5 attempts, and cannot be re-sent more than once a minute. <strong>Voice delivery works on landlines and desk phones</strong>, which never had SMS.</p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>Pricing</h2><span class="pill good">push is free</span></div>
+    <div class="panel-body">
+      <div class="public-proof-strip">
+        <div><strong>Push</strong><span>Free</span></div>
+        <div><strong>Email</strong><span>$0.02</span></div>
+        <div><strong>SMS</strong><span>$0.02</span></div>
+        <div><strong>Voice</strong><span>$0.02</span></div>
+      </div>
+      <p><strong>You are charged only when a notification is delivered.</strong> If both carriers fail, the reservation is refunded in full and the response reports <code>charged_microdollars: 0</code>. You asked for your human to be reached; if they were not reached, you did not get what you paid for.</p>
+      <p>Push is free because it costs us nothing and is delivered by our own client, so the cheapest way for an agent to reach you is the SREChat app. Email is priced the same as SMS deliberately — pricing it lower would make it the obvious channel to abuse.</p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>Responses</h2><span class="pill">retry accordingly</span></div>
+    <div class="panel-body">
+      <pre><code>{
+  "delivered": true,
+  "channel": "voice",
+  "carrier": "telnyx",
+  "detail": "queued",
+  "charged_microdollars": 20000
+}</code></pre>
+      <div class="public-proof-strip">
+        <div><strong>200</strong><span>Delivered</span></div>
+        <div><strong>400</strong><span>Bad request — fix and retry</span></div>
+        <div><strong>409</strong><span>Refused — action needed</span></div>
+        <div><strong>502</strong><span>Carriers failed — retry later</span></div>
+      </div>
+      <p>A <strong>409</strong> carries a <code>refusal</code> field and means something you must change: <code>phone_not_verified</code>, <code>email_not_verified</code>, <code>no_push_device</code>. Retrying will not help until you fix it. A <strong>502</strong> is our problem and is worth retrying — and cost you nothing.</p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>Choosing a channel</h2><span class="pill">escalation ladder</span></div>
+    <div class="panel-body">
+      <p>Notifications are a convenience, not a guaranteed delivery channel. Carriers, handset settings, and network conditions delay and drop messages, so do not rely on one as the sole safeguard where a missed alert could cause harm.</p>
+      <div class="public-proof-strip">
+        <div><strong>push</strong><span>Worth knowing, not worth waking someone</span></div>
+        <div><strong>email</strong><span>Detail and after-action records</span></div>
+        <div><strong>sms</strong><span>Needs attention soon</span></div>
+        <div><strong>voice</strong><span>Urgent, or dangerous to get wrong</span></div>
+      </div>
+      <p class="muted">Every SMS and call opens with &ldquo;Trusted Router&rdquo;. An unrecognized number reading an unattributed sentence at 3am is indistinguishable from a scam, and gets hung up on.</p>
+    </div>
+  </div>
+</section>
+{% endblock %}

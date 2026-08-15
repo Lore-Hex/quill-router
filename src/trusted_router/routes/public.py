@@ -770,6 +770,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def mcp_docs() -> str:
         return public_page_html(settings, "docs/mcp")
 
+    @public_html_route("/docs/notify")
+    async def notify_docs() -> str:
+        return public_page_html(settings, "docs/notify")
+
     @public_html_route("/docs/evals")
     async def evals() -> str:
         return public_page_html(settings, "docs/evals")
