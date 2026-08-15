@@ -1441,14 +1441,60 @@ def test_the_identity_parser_answers_with_a_value_for_every_hostile_string() -> 
 #: at least one of the two normalizers that used to exist: the checker's kept an
 #: explicit ':443' and the validator's dropped it, and neither folded a trailing
 #: slash, a trailing dot on the host, or a doubled path slash.
+#:
+#: The `..` and the multi-dot-host entries joined late, because the rules that
+#: fold them were the two rules in endpoint_identity with nothing behind them:
+#: deleting the `..` branch of _normalized_path, or narrowing the host fold to
+#: ONE trailing dot, left this whole file green while restoring exactly the
+#: false coverage count it exists to remove — validated_azure_metadata accepts
+#: `/attestation` and `/uaen/../attestation` as two regions, and the checker
+#: calls one place two endpoints. Their single-dot neighbours in this list (the
+#: `.` path segment, the one trailing host dot) made both look tested: the same
+#: "two rules covering only each other" shape this change has now hit three
+#: times.
 ENDPOINT_TWINS = [
     (UAEN_URL, "https://api-azure.trustedrouter.com:443/attestation"),
     (UAEN_URL, UAEN_URL + "/"),
     (UAEN_URL, "https://api-azure.trustedrouter.com./attestation"),
+    (UAEN_URL, "https://api-azure.trustedrouter.com..../attestation"),
     (UAEN_URL, "https://api-azure.trustedrouter.com//attestation"),
     (UAEN_URL, "https://api-azure.trustedrouter.com/./attestation"),
+    (UAEN_URL, "https://api-azure.trustedrouter.com/uaen/../attestation"),
     (UAEN_URL, "https://API-AZURE.TrustedRouter.com/attestation"),
 ]
+
+#: Pairs that name TWO places, asserted for the same reason as the twins above:
+#: a fold in the safe direction still costs a region's coverage, because the
+#: checker contacts one endpoint per identity. Nothing pinned the OTHER half of
+#: the port rule — replacing the whole default-port computation with
+#: `port = None`, so that every port folds away, left this file green.
+ENDPOINT_DISTINCTS = [
+    (UAEN_URL, "https://api-azure.trustedrouter.com:8443/attestation"),
+    (UAEN_URL, "https://api-azure-sea.trustedrouter.com/attestation"),
+    (UAEN_URL, "https://api-azure.trustedrouter.com/attestation/uaen"),
+    (UAEN_URL, "https://api-azure.trustedrouter.com/Attestation"),
+    (UAEN_URL, "http://api-azure.trustedrouter.com/attestation"),
+]
+
+
+@pytest.mark.parametrize(("first", "second"), ENDPOINT_DISTINCTS)
+def test_two_different_places_do_not_fold_into_one(first: str, second: str) -> None:
+    """The fold has to stop somewhere, and where it stops is a coverage claim.
+
+    Every twin above asserts that endpoint_identity folds ENOUGH. This asserts
+    it does not fold too much: an over-eager normalizer makes two real endpoints
+    look like one, the checker contacts one of them, and the record's second
+    region goes uncovered while the run counts it as covered — the same false
+    coverage, arrived at from the other side.
+    """
+    from trusted_router.endpoint_identity import parse_endpoint
+
+    left = parse_endpoint(first)
+    right = parse_endpoint(second)
+
+    assert left is not None
+    assert right is not None
+    assert left.identity != right.identity
 
 
 @pytest.mark.parametrize(("first", "second"), ENDPOINT_TWINS)

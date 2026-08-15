@@ -24,8 +24,12 @@ STDLIB ONLY, ON PURPOSE
 WHAT "THE SAME PLACE" MEANS HERE, EXACTLY
     Scheme, host, port and path, after the normalizations a client would perform
     or that cannot change where a request lands:
-      * scheme and host are lowercased, and one trailing dot on the host is
-        removed (`h.com.` and `h.com` are the same name in DNS);
+      * scheme and host are lowercased, and EVERY trailing dot on the host is
+        removed, not just one (`h.com.` and `h.com` are the same name in DNS;
+        `h.com....` is not a name any resolver accepts, and folding it here
+        can only turn two spellings into one place, never one into two). A
+        host that is nothing but dots folds to the empty string and is
+        refused outright, like any other absent host;
       * a port equal to the scheme's default is dropped, so `https://h/x` and
         `https://h:443/x` are one place;
       * the path has empty segments and `.`/`..` segments removed per RFC 3986
@@ -35,13 +39,48 @@ WHAT "THE SAME PLACE" MEANS HERE, EXACTLY
         transmitted, and an attestation route is not made into a second region
         by a parameter.
 
+    WHERE EACH OF THOSE RULES IS PINNED, since a fold nothing tests is a fold
+    that can be deleted for looking redundant. Host case, trailing host dots,
+    the default port, the trailing slash, empty segments and `.`/`..` segments
+    each have a spelling in ENDPOINT_TWINS (tests/test_trust_measurement_drift
+    .py), driven through BOTH the mirror and the checker. The `..` fold and the
+    multi-dot host joined that list late: they were the two rules here with
+    nothing behind them, and deleting either left the whole file green while
+    restoring the false region count this module exists to remove. Ignoring
+    query and fragment is pinned differently, by the mirror refusing a region
+    URL that carries either. Lowercasing the scheme is pinned by nothing on
+    purpose — urlsplit has already done it, so that call is belt-and-braces and
+    not a rule. The opposite direction — spellings that must stay TWO places,
+    including a non-default port — is pinned by ENDPOINT_DISTINCTS beside it.
+
     Dropping the trailing slash is the one rule a server may disagree with: an
     origin is free to serve `/a` and `/a/` differently, or to redirect between
-    them. It is deliberate and it is the safe direction. Every caller here uses
-    this to answer "how many distinct places did we cover", so folding two
-    strings together can only make a record claim FEWER regions than it wrote
-    down — never more — and the callers report the fold as a defect rather than
-    swallowing it.
+    them. It is deliberate, and it is the safe direction for the two callers
+    that COUNT places: services.trust_release._endpoint_identity, whose caller
+    _validated_azure_regions refuses a record naming one endpoint twice, and
+    scripts/verify_trust_measurements.py's _endpoint_identity, which folds
+    azure_plan's endpoint list so coverage is counted over distinct places. For
+    those two, folding two strings together can only make a record claim FEWER
+    regions than it wrote down, never more, and each reports the fold as a
+    defect — a refused record and a coverage gap — rather than swallowing it.
+
+    TWO CALLERS COUNT NOTHING, AND BOTH SWALLOW A REFUSAL
+    Two more call sites are not census at all, and the paragraph above does not
+    describe them. scripts/verify_trust_measurements.py's _attestation_url, and
+    _alias_attestation_urls through it, use parse_endpoint to BUILD a URL to
+    fetch out of a record's `api_base_url`: they keep scheme, host and port,
+    discard the parsed path outright, and count nothing. Neither reports a
+    string this module refuses. _attestation_url returns the fallback endpoint
+    compiled into that script, so an `api_base_url` carrying userinfo, a
+    malformed authority or a non-http scheme makes the run poll the compiled-in
+    endpoint and stay green — the outcome _attestation_url's own docstring says
+    it exists to prevent — and _alias_attestation_urls drops such an alias from
+    the list it prints. That is a real gap in the checker, left open and named
+    here rather than papered over. It is NOT reachable through the mirror that
+    serves /trust/azure-release.json: trust.azure_release sets `api_base_url`
+    from the compiled-in AZURE_API_HOSTNAME constant rather than from the
+    upstream record, so no upstream string reaches _attestation_url there. It
+    is reachable by pointing --control-plane at a record nobody validated.
 
 WHAT THIS DOES NOT DO
     * No DNS. Two hostnames that resolve to one address, or a hostname and its
