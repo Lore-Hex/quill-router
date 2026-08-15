@@ -1210,14 +1210,23 @@ def test_the_real_write_surface_writes_exactly_v2_today() -> None:
     # diff, without the gate itself depending on that answer. Also pins the
     # rehydration sites: a new one appears here before it appears in
     # production, and it is the one shape the scan reads no format from.
+    #
+    # The line numbers are deliberately dropped. An earlier version asserted
+    # the full "file:line" strings and went red on this branch the moment main
+    # gained an unrelated 14-line change to storage_models.py -- the sites had
+    # not moved, the file above them had. A canary that fires on every edit to
+    # a file it is only watching three lines of is a canary that gets deleted,
+    # which is the failure mode this whole gate is written against. Comparing
+    # the files, with multiplicity, still names a NEW rehydration site the
+    # moment one appears and is stable under edits that are not one.
     scan = scan_write_surface(read_write_surface())
 
     assert scan.formats == frozenset({V2})
-    assert scan.rehydration_sites == (
-        "src/trusted_router/byok_aad_backfill.py:210",
-        "src/trusted_router/storage_models.py:217",
-        "src/trusted_router/storage_models.py:252",
-        "src/trusted_router/storage_models.py:254",
+    assert tuple(site.rsplit(":", 1)[0] for site in scan.rehydration_sites) == (
+        "src/trusted_router/byok_aad_backfill.py",
+        "src/trusted_router/storage_models.py",
+        "src/trusted_router/storage_models.py",
+        "src/trusted_router/storage_models.py",
     )
 
 
