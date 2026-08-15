@@ -2260,6 +2260,8 @@ async def test_run_synthetic_once_fans_out_targets_and_probes(monkeypatch: pytes
             "https://trusted-router-control-eu.example",
         ),
     ]
+    active_probes = 0
+    peak_active_probes = 0
 
     def fake_probe(probe_type: str) -> Any:
         async def run(
@@ -2269,15 +2271,21 @@ async def test_run_synthetic_once_fans_out_targets_and_probes(monkeypatch: pytes
             monitor_region: str,
             **_kwargs: Any,
         ) -> SyntheticProbeSample:
-            await asyncio.sleep(0.03)
-            return _sample(
-                id=f"{probe_type}-{target.name}",
-                probe_type=probe_type,
-                status="up",
-                target=target.name,
-                target_region=target.region,
-                monitor_region=monitor_region,
-            )
+            nonlocal active_probes, peak_active_probes
+            active_probes += 1
+            peak_active_probes = max(peak_active_probes, active_probes)
+            try:
+                await asyncio.sleep(0.03)
+                return _sample(
+                    id=f"{probe_type}-{target.name}",
+                    probe_type=probe_type,
+                    status="up",
+                    target=target.name,
+                    target_region=target.region,
+                    monitor_region=monitor_region,
+                )
+            finally:
+                active_probes -= 1
 
         return run
 
@@ -2310,7 +2318,6 @@ async def test_run_synthetic_once_fans_out_targets_and_probes(monkeypatch: pytes
     monkeypatch.setattr(probe_module, "openai_chat_pong_probe", fake_probe("openai_sdk_pong"))
     monkeypatch.setattr(probe_module, "responses_pong_probe", fake_probe("responses_pong"))
 
-    started = time.perf_counter()
     samples = await run_synthetic_once(
         Settings(
             environment="test",
@@ -2320,13 +2327,11 @@ async def test_run_synthetic_once_fans_out_targets_and_probes(monkeypatch: pytes
         monitor_region="us-central1",
         api_key="sk-tr-test",
     )
-    elapsed = time.perf_counter() - started
 
     assert len(samples) == 19
     assert {sample.target for sample in samples} == {"canonical", "us-east4", "europe-west4"}
-    # Serial execution would take about 13 * 30ms. Keep enough slack for busy CI
-    # while still proving a single slow target no longer blocks the whole pass.
-    assert elapsed < 0.18
+    assert peak_active_probes > 1
+    assert active_probes == 0
 
 
 @pytest.mark.asyncio
