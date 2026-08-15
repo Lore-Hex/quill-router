@@ -125,10 +125,11 @@ jobs:
   # against one workspace escrow before the billing path delegates real spend
   # to it; its first run produced a liveness counterexample in six states.
   #
-  # Runtime is a few seconds per spec at the bounds in each .cfg. If a spec
-  # ever gets slow enough to matter, tighten its constants rather than dropping
-  # the job — an unchecked spec is worse than no spec, because it reads as
-  # evidence.
+  # Runtime is a minute or two per spec at the bounds in each .cfg — it was a
+  # few seconds until RegionalQuotaLease grew a lease-succession action and
+  # check.sh started passing -workers auto. If a spec ever gets slow enough to
+  # matter, tighten its constants rather than dropping the job — an unchecked
+  # spec is worse than no spec, because it reads as evidence.
   proofs:
     runs-on: ubuntu-latest
     steps:

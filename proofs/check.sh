@@ -10,6 +10,15 @@
 # "no action is enabled" is a legitimate terminal state (every lease closed,
 # clock exhausted), not a bug. Safety invariants and temporal properties are
 # still fully checked.
+#
+# -workers auto because this script used to run TLC single-threaded, which was
+# not a deliberate choice — it is just TLC's default. RegionalQuotaLease grew a
+# succession action and about a quarter more states (4,634,802 -> 5,844,105),
+# and at the default one worker it had not finished after fifteen minutes on
+# the machine this was measured on; at -workers auto on eight cores it takes
+# under three. Nothing about the result changes — an exhaustive breadth-first
+# search visits the same states whatever the worker count, and the counts
+# reported at four and at eight workers were identical.
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -52,7 +61,7 @@ for spec in "${specs[@]}"; do
   # grep exit on first match, which SIGPIPEs tee/java and — under `pipefail` —
   # reports a passing check as a failure.
   java -XX:+UseParallelGC -cp "$JAR" tlc2.TLC \
-      -deadlock -config "$cfg" "$spec" >"$log" 2>&1 || true
+      -deadlock -workers auto -config "$cfg" "$spec" >"$log" 2>&1 || true
   cat "$log"
   if grep -qE '^Model checking completed\. No error has been found\.' "$log"; then
     grep -E 'states generated' "$log" | tail -1
