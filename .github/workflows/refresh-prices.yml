@@ -35,6 +35,7 @@ permissions:
   id-token: write   # for Workload Identity Federation
   contents: write   # auto-commit + push the snapshot diff to main
   actions: write    # dispatch ci.yml + deploy.yml for a new snapshot
+  issues: write     # upsert the durable model-discovery coverage alert
                     # (GITHUB_TOKEN-pushed commits don't auto-trigger
                     # downstream workflows, so we explicitly fan out
                     # via workflow_dispatch — the one exception to
@@ -234,6 +235,7 @@ jobs:
         run: |
           set -o pipefail
           uv run python -m scripts.check_price_coverage --strict-model-discovery \
+            | tee /tmp/coverage-summary.txt \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Validate generated catalog before commit
@@ -324,8 +326,46 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Fail for unresolved model-discovery gaps
-        if: steps.coverage_audit.outcome == 'failure'
+      - name: Reconcile model-discovery coverage issue
+        if: always()
+        env:
+          COVERAGE_OUTCOME: ${{ steps.coverage_audit.outcome }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "::error title=Model discovery coverage gap::Safe provider updates were published, but one or more newly announced models remain unpublished. Review the Price-source coverage audit."
-          exit 1
+          set -euo pipefail
+          title="[bot] Model discovery coverage gaps"
+          issue_number=$(gh issue list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --state open \
+            --search "${title} in:title" \
+            --json number,title \
+            --jq "map(select(.title == \"${title}\"))[0].number // empty")
+
+          if [ "${COVERAGE_OUTCOME}" = "failure" ]; then
+            {
+              echo "The hourly price refresh published every independently safe update, but the separate model-discovery audit found unresolved coverage."
+              echo
+              echo "Latest run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+              echo
+              cat /tmp/coverage-summary.txt
+            } > /tmp/coverage-issue.md
+
+            if [ -n "${issue_number}" ]; then
+              gh issue edit "${issue_number}" \
+                --repo "${GITHUB_REPOSITORY}" \
+                --body-file /tmp/coverage-issue.md
+            else
+              gh issue create \
+                --repo "${GITHUB_REPOSITORY}" \
+                --title "${title}" \
+                --body-file /tmp/coverage-issue.md
+            fi
+            echo "::warning title=Model discovery coverage gap::Safe provider updates were published; unresolved discovery coverage is tracked in GitHub Issues."
+            exit 0
+          fi
+
+          if [ -n "${issue_number}" ]; then
+            gh issue close "${issue_number}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --comment "Resolved by ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
+          fi
