@@ -382,6 +382,7 @@ def trust_html(
           <div><div class="label">API base</div><div class="value">{api}</div></div>
           <div><div class="label">Release record</div><div class="value"><a href="/trust/gcp-release.json">gcp-release.json</a></div></div>
         </div>
+        <p>Compare <code>image_digest</code> against the digest in a live attestation JWT from the issuer above, checking its audience is <code>quill-cloud</code>. The certificate fingerprint is bound into the attestation nonce, so the connection you are on is the connection that was attested.</p>
       </div>
       <div class="panel">
         <h2>AWS · Nitro Enclaves</h2>
