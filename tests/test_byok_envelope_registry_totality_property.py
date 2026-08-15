@@ -6,32 +6,53 @@ locations — byok.encrypted_secret, broadcast_destination.encrypted_api_key and
 broadcast_destination.encrypted_headers — and tag each with the AAD namespace
 ("provider" or "control") its envelope was sealed under. The law:
 
-    for every dataclass D in storage_models, and every field f of D whose
-    annotation admits an EncryptedSecretEnvelope,
+    for every dataclass D the package defines, and every field f of D whose
+    RESOLVED annotation admits an EncryptedSecretEnvelope,
         (kind(D), f) is in the registry, and the registry's family for f is
         the namespace of the encrypt_* function that actually seals f,
     and the registry names no (kind, field) pair that is not such a pair.
 
 The right-hand side is derived, not restated. The field set comes from
-`dataclasses.fields` + `typing.get_type_hints` over storage_models; the entity
-`kind` from an AST scan of the storage adapters' typed read call sites; the
-family from an AST scan of the sealing call sites, where the sealing functions
-and the namespace each one uses are themselves read off `byok_crypto`'s AST
-rather than written down here. What IS restated: the names of the entity-IO
-primitives, and the pin in `test_the_derivation_reproduces_todays_registry`.
-Both are deliberate — the first is the vocabulary the scan needs, the second is
-a guard against a scan that quietly stops finding anything.
+`dataclasses.fields` + `typing.get_type_hints` over every dataclass in every
+module of the package; the entity `kind` from an AST scan of the typed read call
+sites, with the kind argument resolved through the calling module's own
+namespace; the family from an AST scan of the sealing call sites, where the
+sealing functions and the namespace each one uses are themselves read off
+`byok_crypto`'s AST rather than written down here.
 
-Reflection over the dataclasses is the load-bearing half, but its reach is
-narrower than "any envelope that reaches storage": see the settle_body finding
-below.
+Resolved is the load-bearing word, and it is the correction the second
+adversarial review forced. The previous version reflected only storage_models
+and policed that scope with a scan for the literal substring
+"EncryptedSecretEnvelope" in unparsed annotation text. `SealedKey: TypeAlias =
+EncryptedSecretEnvelope | None` walked past it, and so did `import ... as
+_Envelope`; a complete envelope-bearing persisted model, with a real
+`encrypt_control_secret` call and a real unregistered kind, passed the whole
+file. Reflection over resolved annotations sees an alias, a renamed import, a
+quoted forward reference and a subclass as the one type they all are, and
+`envelope_fields` now covers the whole package, so where the model is declared
+no longer decides whether it is seen. Both variants were re-run against this
+version: each now fails the central law by name.
 
-That reflection is scoped to storage_models, which makes its scope a claim in
-its own right, so the scope is checked too:
-`test_every_envelope_typed_attribute_lives_in_storage_models` scans every class
-annotation in the package and fails if an `EncryptedSecretEnvelope` is declared
-anywhere else. Without it the law would be a true statement about the wrong
-universe — the most comfortable way for a totality proof to be worthless.
+What IS restated, in full, because a hand-maintained list this file did not
+disclose was itself a review finding:
+
+  - the names of the entity-IO primitives (`ENTITY_READ_FUNCTIONS`,
+    `ENTITY_IO_FUNCTIONS`) — the vocabulary the AST scans need. An adapter that
+    persisted through a primitive named here would be seen; one that used some
+    other name would not. On the read side that fails closed, because a model
+    with no recognised read gets no kind and the law reports it as uncovered.
+    On the write side it does not: see the scope limit below.
+  - `NON_ENVELOPE_KINDS`, one entry today, and `LOOSELY_TYPED_FIELDS`, two.
+    Both are declarations with reasons and both are asserted in both
+    directions, so an entry that stops being true fails the build.
+  - the pin in `test_the_derivation_reproduces_todays_registry`, a guard
+    against a derivation that quietly stops finding anything.
+
+`ENVELOPE_ADAPTER_MODULES`, a third hand-maintained list, used to be here too:
+two file names, so the identical write-only-kind defect in storage_postgres.py
+was invisible. Review was right that this file criticised `_MIGRATED_KINDS` for
+exactly that and then did it. It is gone — `envelope_adjacent_kinds` derives its
+own scope, package-wide — and what replaced it is pinned rather than trusted.
 
 Why this is a proof and not a test. The registry is exactly right today — every
 caller of the two encrypt functions was walked by hand and maps to precisely
@@ -98,12 +119,23 @@ claim. Reflection follows types, and `dict[str, Any]` is the absence of one.
 directly, not argued. So the claim "an envelope reaching storage must be a
 field this reflection finds" is false, and the law proves totality over typed
 fields, not over persisted bytes. `test_every_loosely_typed_persisted_field_is_classified`
-freezes the list of such shapes at two so it cannot grow in silence; closing
+holds the list of such shapes at two so it cannot grow in silence; closing
 the hole properly needs the backfill to walk bodies rather than named fields,
 which is a change to the migration, not to a test.
 
+The second review sharpened that finding twice, and both corrections are in the
+code rather than in this paragraph. The classifier matched only `Any` and
+`object`, so `signing_material: dict` — one token shorter than the shape it did
+catch, and no less opaque — was invisible to it AND to the envelope reflection,
+which means the count really was wrong, not just the sentence. Unparameterized
+containers now count. And the domain was `vars(storage_models)`, which is the
+hand-scoping mistake again in miniature; it is now every dataclass the package
+reads back under an entity kind, unioned with storage_models. That widening
+resolves 26 models and still finds exactly the two fields listed, so nothing was
+declared away to make it fit.
+
 Scope limit, stated plainly. This establishes that the registry's (kind, field,
-family) set equals the set derivable from the storage dataclasses and the
+family) set equals the set derivable from the package's dataclasses and the
 sealing call sites. It does NOT establish:
 
   - that the derived set is the set of envelopes that exist in production. A
@@ -111,11 +143,27 @@ sealing call sites. It does NOT establish:
     whose dataclass has since been deleted is invisible to this module and to
     the backfill alike, and no reflection over today's source can see it.
   - totality over loosely typed bodies, per the refutation above.
+  - that every kind an envelope-bearing model can be WRITTEN to is registered.
+    `envelope_adjacent_kinds` sees an entity-IO call when the function around it
+    mentions an envelope-bearing model class, an envelope field name, a sealing
+    function, or an id helper reached from one of those. That is enough for the
+    two write-only-kind attacks review landed — a kind hoisted to a module
+    constant, and the same write moved to storage_postgres.py, which the id
+    helper `byok_id` pulls in — and both were re-run against this version and
+    fail. It is NOT enough for a function that persists an envelope-bearing
+    object while mentioning none of that vocabulary: taking the object as `Any`
+    and building the row id inline still passes, verified by construction. That
+    residue is a name scan's floor, not an oversight; closing it needs the type
+    of each written value, which is dataflow.
   - that every WRITER of a field agrees on its family. `sealed_families`
     aggregates by bare field name, so if one of the two modules writing
     `encrypted_secret` began sealing through a wrapper with the other family,
     the wrapper would contribute nothing and the union would still read
     {provider}. Detecting that needs dataflow analysis, not a name scan.
+  - anything about a class that is not a module attribute. Resolved reflection
+    reaches classes through `vars(module)`, so a dataclass defined inside a
+    function body is seen only by the text scan beside it, and therefore only
+    if its annotation spells the envelope out.
   - anything about the AAD *context* component (the provider slug, the
     broadcast purpose) beyond the three-way identity pinned in
     `test_the_broadcast_context_helper_matches_the_service`. Context
@@ -128,11 +176,14 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import importlib
 import pathlib
+import pkgutil
 import re
 import sys
 import types
 import typing
+from collections.abc import Iterable
 from typing import Any
 
 import pytest
@@ -202,32 +253,158 @@ ENTITY_IO_FUNCTIONS = ENTITY_READ_FUNCTIONS | {
 
 
 # ---------------------------------------------------------------------------
+# The package, imported. Every scan below needs the module OBJECT, not just its
+# text: an annotation is only a type once it has been evaluated in the
+# namespace its author wrote it in, and a kind is only a string once the name
+# bound to it has been looked up. Adversarial review broke the previous,
+# text-only versions of both with one token of indirection each.
+# ---------------------------------------------------------------------------
+
+
+def _import_package_modules() -> dict[pathlib.Path, types.ModuleType]:
+    """Source path -> imported module, for every module in the package.
+
+    A module that fails to import is a hard error, not a skip. A skipped module
+    is a blind spot, and a blind spot is the exact defect this file exists to
+    remove.
+    """
+    found: dict[pathlib.Path, types.ModuleType] = {
+        pathlib.Path(trusted_router.__file__ or "").resolve(): trusted_router
+    }
+    failures: dict[str, str] = {}
+    for info in pkgutil.walk_packages(
+        trusted_router.__path__, prefix=f"{trusted_router.__name__}."
+    ):
+        try:
+            module = importlib.import_module(info.name)
+        except Exception as exc:  # noqa: BLE001 - any failure is a blind spot
+            failures[info.name] = f"{type(exc).__name__}: {exc}"
+            continue
+        source = getattr(module, "__file__", None)
+        if source:
+            found[pathlib.Path(source).resolve()] = module
+    if failures:
+        raise AssertionError(
+            f"these package modules could not be imported, so no reflection below can "
+            f"see the envelopes they declare: {failures}"
+        )
+    return found
+
+
+MODULES_BY_PATH = _import_package_modules()
+
+
+def _module_for(path: pathlib.Path) -> types.ModuleType:
+    """The imported module for a source file.
+
+    Inside the package a missing module is an error, because a file scanned
+    without its namespace is a file whose kind constants and annotations cannot
+    be resolved — the weakness this rework exists to remove.
+    `test_every_package_source_file_is_an_imported_module` keeps that total.
+
+    Outside the package the negative controls below build synthetic trees on
+    disk that were never imported. They get an empty namespace, which resolves
+    nothing; that is only safe because no path under `SRC` can reach it.
+    """
+    module = MODULES_BY_PATH.get(path.resolve())
+    if module is not None:
+        return module
+    if path.resolve().is_relative_to(SRC.resolve()):
+        raise AssertionError(
+            f"{path} is a package source with no imported module, so its annotations "
+            "and kind constants cannot be resolved"
+        )
+    return types.ModuleType(f"<unimported {path.name}>")
+
+
+# ---------------------------------------------------------------------------
 # Derivation 1: which dataclass fields can hold an envelope.
 # ---------------------------------------------------------------------------
 
 
 def _admits_envelope(annotation: Any) -> bool:
-    """Does this resolved annotation admit an `EncryptedSecretEnvelope`?
+    """Does this RESOLVED annotation admit an `EncryptedSecretEnvelope`?
 
-    Recursing through `get_args` covers `X | None` and any other generic that
-    wraps the envelope. A container-wrapped envelope (a list or dict of them)
-    would be reported here too, and deliberately so: the backfill handles a
-    single envelope per field and would silently skip a collection, which is
-    the same hole under a different shape.
+    Resolved is the load-bearing word. The caller must hand this the object
+    `typing.get_type_hints` produced, never the text the author typed, because
+    every cheap way to hide an envelope from a text scan — `SealedKey:
+    TypeAlias = EncryptedSecretEnvelope | None`, `import ... as _Envelope`, a
+    quoted annotation, a re-export — evaluates to the same object here.
+
+    `issubclass` rather than `is`, so a subclass of the envelope counts.
+    Recursing through `get_args` covers `X | None`, `Annotated[...]` and any
+    other generic that wraps the envelope; `__supertype__` covers `NewType`. A
+    container-wrapped envelope (a list or dict of them) is reported too, and
+    deliberately so: the backfill handles a single envelope per field and would
+    silently skip a collection, which is the same hole under a different shape.
     """
-    if annotation is EncryptedSecretEnvelope:
+    if isinstance(annotation, type) and issubclass(annotation, EncryptedSecretEnvelope):
+        return True
+    supertype = getattr(annotation, "__supertype__", None)
+    if supertype is not None and _admits_envelope(supertype):
         return True
     return any(_admits_envelope(arg) for arg in typing.get_args(annotation))
 
 
-def envelope_annotated_attributes(root: pathlib.Path) -> set[tuple[str, str, str]]:
-    """(module path, class name, attribute) for every envelope-typed attribute.
+def _own_annotated_names(cls: type) -> tuple[str, ...]:
+    """The attribute names annotated on this class itself, not on its bases."""
+    return tuple(vars(cls).get("__annotations__") or ())
 
-    A textual scan over annotations, not reflection, precisely because its job
-    is to police reflection's domain: `envelope_fields` only ever looks inside
-    storage_models, so an envelope declared on a dataclass in some other module
-    would be invisible to it and the law would hold over the wrong universe.
-    Nothing here is skipped, including the backfill module itself.
+
+def _package_classes(modules: Iterable[types.ModuleType]) -> list[tuple[types.ModuleType, type]]:
+    """Every class each module defines, as a module attribute."""
+    found: list[tuple[types.ModuleType, type]] = []
+    for module in modules:
+        for obj in vars(module).values():
+            if isinstance(obj, type) and getattr(obj, "__module__", None) == module.__name__:
+                found.append((module, obj))
+    return found
+
+
+def envelope_typed_attributes(
+    modules: Iterable[types.ModuleType],
+) -> set[tuple[str, str, str]]:
+    """(module, qualname, attribute) for every attribute RESOLVING to an envelope.
+
+    Reflection, not text. This is what makes the domain claim below survive type
+    indirection: the annotation is evaluated in its own module's namespace, so
+    an alias, a `TypeAlias`, a renamed import, a quoted forward reference and a
+    subclass all resolve to the same object and are all seen.
+
+    An annotation that cannot be resolved raises rather than being skipped —
+    an unresolvable annotation is indistinguishable from a hidden envelope.
+    """
+    found: set[tuple[str, str, str]] = set()
+    unresolved: list[str] = []
+    for module, cls in _package_classes(modules):
+        own = _own_annotated_names(cls)
+        if not own:
+            continue
+        try:
+            hints = typing.get_type_hints(cls)
+        except Exception as exc:  # noqa: BLE001 - unresolvable is a blind spot
+            unresolved.append(f"{module.__name__}:{cls.__qualname__} ({type(exc).__name__}: {exc})")
+            continue
+        for name in own:
+            if name in hints and _admits_envelope(hints[name]):
+                found.add((module.__name__, cls.__qualname__, name))
+    if unresolved:
+        raise AssertionError(
+            "the annotations of these classes could not be resolved, so whether they "
+            f"declare an EncryptedSecretEnvelope is unknown: {unresolved}"
+        )
+    return found
+
+
+def envelope_annotated_attributes(root: pathlib.Path) -> set[tuple[str, str, str]]:
+    """(module path, class name, attribute) for every envelope-SPELLING annotation.
+
+    A textual complement to `envelope_typed_attributes`, kept for the one thing
+    reflection cannot reach: a class that is not a module attribute, such as one
+    defined inside a function body. It only ever sees the literal class name, so
+    on its own it is defeated by any type indirection — which is precisely how
+    adversarial review defeated the previous version of the domain guard, when
+    this scan was the whole of it. The two are unioned, never substituted.
     """
     found: set[tuple[str, str, str]] = set()
     for path in sorted(root.rglob("*.py")):
@@ -249,20 +426,38 @@ def envelope_annotated_attributes(root: pathlib.Path) -> set[tuple[str, str, str
     return found
 
 
-def envelope_fields(module: types.ModuleType) -> dict[str, tuple[str, ...]]:
-    """Model name -> its envelope-bearing field names, by reflection."""
+def envelope_fields(modules: Iterable[types.ModuleType]) -> dict[str, tuple[str, ...]]:
+    """Model name -> its envelope-bearing field names, by reflection.
+
+    Over every dataclass the package defines, not just storage_models'. The
+    previous version was scoped to storage_models and leaned on a text scan to
+    police that scope; adversarial review walked straight past the text scan
+    with a `TypeAlias` and landed a complete envelope-bearing persisted model in
+    a new adapter module that no assertion in this file could see. Widening the
+    reflection is what removes that class of evasion: wherever the model is
+    declared, it now owes the registry a (kind, field, family).
+    """
     found: dict[str, tuple[str, ...]] = {}
-    for obj in vars(module).values():
-        if not (isinstance(obj, type) and dataclasses.is_dataclass(obj)):
-            continue
-        if obj.__module__ != module.__name__:
+    homes: dict[str, str] = {}
+    collisions: list[str] = []
+    for module, obj in _package_classes(modules):
+        if not dataclasses.is_dataclass(obj):
             continue
         hints = typing.get_type_hints(obj)
         fields = tuple(
             field.name for field in dataclasses.fields(obj) if _admits_envelope(hints[field.name])
         )
-        if fields:
-            found[obj.__name__] = fields
+        if not fields:
+            continue
+        if obj.__name__ in found:
+            collisions.append(f"{obj.__name__} ({homes[obj.__name__]} and {module.__name__})")
+        found[obj.__name__] = fields
+        homes[obj.__name__] = module.__name__
+    if collisions:
+        raise AssertionError(
+            "two envelope-bearing dataclasses share a name, so the kind derivation "
+            f"below cannot tell them apart: {collisions}"
+        )
     return found
 
 
@@ -284,20 +479,39 @@ def _python_sources(root: pathlib.Path) -> list[pathlib.Path]:
     return sorted(p for p in root.rglob("*.py") if p.name != BACKFILL_MODULE)
 
 
-def _literal_kind(node: ast.Call, index: int) -> str | None:
-    """The kind literal at its declared argument position, or None."""
+def _kind_argument(node: ast.Call, index: int, module: types.ModuleType) -> str | None:
+    """The kind at its declared argument position, or None if it is not a constant.
+
+    Resolved through the calling module's own namespace, not just matched as a
+    literal. The previous version accepted only `ast.Constant`, so hoisting a
+    repeated kind to `ARCHIVE_KIND = "byok_archive"` — ordinary practice, and
+    the variant adversarial review used — made the call site invisible to every
+    scan here. `getattr` on the module covers a constant defined in the module,
+    one imported into it by name, and `other_module.CONST`.
+
+    None means "not resolvable to a string constant", which callers must treat
+    as unknown rather than as absent; see `envelope_adjacent_kinds`.
+    """
     if len(node.args) <= index:
         return None
     argument = node.args[index]
-    if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
-        return argument.value
+    if isinstance(argument, ast.Constant):
+        return argument.value if isinstance(argument.value, str) else None
+    if isinstance(argument, ast.Name):
+        value = getattr(module, argument.id, None)
+        return value if isinstance(value, str) else None
+    if isinstance(argument, ast.Attribute) and isinstance(argument.value, ast.Name):
+        base = getattr(module, argument.value.id, None)
+        value = getattr(base, argument.attr, None) if base is not None else None
+        return value if isinstance(value, str) else None
     return None
 
 
 def entity_kinds(root: pathlib.Path, model_names: frozenset[str]) -> dict[str, set[str]]:
-    """Model name -> the literal entity kinds it is read back under."""
+    """Model name -> the entity kinds it is read back under."""
     found: dict[str, set[str]] = {}
     for path in _python_sources(root):
+        module = _module_for(path)
         tree = ast.parse(path.read_text(), filename=str(path))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
@@ -305,7 +519,7 @@ def entity_kinds(root: pathlib.Path, model_names: frozenset[str]) -> dict[str, s
             index = ENTITY_READ_FUNCTIONS.get(_called_name(node) or "")
             if index is None:
                 continue
-            kind = _literal_kind(node, index)
+            kind = _kind_argument(node, index, module)
             if kind is None:
                 continue
             named = [arg.id for arg in node.args if isinstance(arg, ast.Name)]
@@ -320,28 +534,140 @@ def entity_kinds(root: pathlib.Path, model_names: frozenset[str]) -> dict[str, s
     return found
 
 
-def kinds_named_by(root: pathlib.Path, module_names: tuple[str, ...]) -> set[str]:
-    """Every literal kind any entity-IO call in these modules names.
+def persisted_dataclasses(root: pathlib.Path) -> set[type]:
+    """Every dataclass the package reads back under an entity kind.
 
-    Reads and writes both, because the gap this closes is a kind that is only
-    ever written. An envelope-bearing config archived under a second kind by a
-    plain `write_entity` would leave `entity_kinds` unchanged and every other
-    assertion green, while the archived row kept its v1 envelope.
+    The derived domain for the loosely typed field check below, which used to be
+    the hand-written `vars(storage_models)`. Same shape of complaint as the
+    hand-written adapter module list: a persisted model declared elsewhere would
+    have gone unclassified. Measured, not assumed — this resolves 26 models
+    today and the two loosely typed fields it finds are both in storage_models,
+    so widening the domain cost no new declarations.
     """
-    found: set[str] = set()
-    for name in module_names:
-        path = root / name
+    found: set[type] = set()
+    for path in _python_sources(root):
+        module = _module_for(path)
         tree = ast.parse(path.read_text(), filename=str(path))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
-            index = ENTITY_IO_FUNCTIONS.get(_called_name(node) or "")
-            if index is None:
+            index = ENTITY_READ_FUNCTIONS.get(_called_name(node) or "")
+            if index is None or _kind_argument(node, index, module) is None:
                 continue
-            kind = _literal_kind(node, index)
-            if kind is not None:
-                found.add(kind)
+            named = [arg.id for arg in node.args if isinstance(arg, ast.Name)]
+            named += [
+                keyword.value.id
+                for keyword in node.keywords
+                if keyword.arg == "cls" and isinstance(keyword.value, ast.Name)
+            ]
+            for name in named:
+                obj = getattr(module, name, None)
+                if isinstance(obj, type) and dataclasses.is_dataclass(obj):
+                    found.add(obj)
     return found
+
+
+def _names_mentioned(node: ast.AST) -> set[str]:
+    """Every bare name, attribute name and parameter name appearing under `node`."""
+    mentioned: set[str] = set()
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name):
+            mentioned.add(child.id)
+        elif isinstance(child, ast.Attribute):
+            mentioned.add(child.attr)
+        elif isinstance(child, ast.arg):
+            mentioned.add(child.arg)
+    return mentioned
+
+
+def _package_functions(
+    root: pathlib.Path,
+) -> list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef, types.ModuleType]]:
+    found: list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef, types.ModuleType]] = []
+    for path in _python_sources(root):
+        module = _module_for(path)
+        relative = path.relative_to(root).as_posix()
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                found.append((relative, node, module))
+    return found
+
+
+def _entity_io_calls(
+    scope: ast.AST, module: types.ModuleType
+) -> list[tuple[ast.Call, int, str | None]]:
+    calls: list[tuple[ast.Call, int, str | None]] = []
+    for node in ast.walk(scope):
+        if not isinstance(node, ast.Call):
+            continue
+        index = ENTITY_IO_FUNCTIONS.get(_called_name(node) or "")
+        if index is None:
+            continue
+        calls.append((node, index, _kind_argument(node, index, module)))
+    return calls
+
+
+def envelope_adjacent_kinds(
+    root: pathlib.Path,
+    model_names: frozenset[str],
+    field_names: frozenset[str],
+    sealer_names: frozenset[str],
+    registry_kinds: frozenset[str],
+) -> tuple[dict[str, set[str]], list[str]]:
+    """Every kind named by a function that handles envelope material.
+
+    Returns (kind -> the call sites naming it, unresolvable call sites).
+
+    This replaces a hand-written two-entry list of adapter modules. Adversarial
+    review was right that such a list is the same maintenance hazard the module
+    docstring criticises `_MIGRATED_KINDS` for, and proved it by putting the
+    same defect in a third module the list did not name. The scope is now
+    derived and package-wide.
+
+    A function is envelope-adjacent when it mentions a derived envelope-bearing
+    model class, a derived envelope field name, a sealing function, or an id
+    helper that an already-adjacent function uses to build the entity id of a
+    registry kind. That last clause is a fixed point, not a guess: it is how
+    `byok_id` enters the vocabulary, and with it every function that builds a
+    byok row id — including one that takes the config as an untyped parameter.
+
+    Reads and writes both, because the gap this closes is a kind that is only
+    ever written. A config archived under a second kind by a plain
+    `write_entity` leaves `entity_kinds` unchanged and every other assertion
+    green, while the archived row keeps its v1 envelope.
+    """
+    functions = _package_functions(root)
+    vocabulary = set(model_names) | set(field_names) | set(sealer_names)
+    for _ in range(len(functions) + 1):
+        widened = set(vocabulary)
+        for _relative, function, module in functions:
+            if not (_names_mentioned(function) & vocabulary):
+                continue
+            for node, index, kind in _entity_io_calls(function, module):
+                if kind not in registry_kinds or len(node.args) <= index + 1:
+                    continue
+                widened |= {
+                    name
+                    for call in ast.walk(node.args[index + 1])
+                    if isinstance(call, ast.Call) and (name := _called_name(call)) is not None
+                }
+        if widened == vocabulary:
+            break
+        vocabulary = widened
+
+    found: dict[str, set[str]] = {}
+    unresolvable: list[str] = []
+    for relative, function, module in functions:
+        if not (_names_mentioned(function) & vocabulary):
+            continue
+        for node, _index, kind in _entity_io_calls(function, module):
+            site = f"{relative}:{function.name}:{node.lineno}"
+            if kind is None:
+                unresolvable.append(f"{site} -> {ast.unparse(node)[:90]}")
+            else:
+                found.setdefault(kind, set()).add(site)
+    return found, unresolvable
 
 
 # ---------------------------------------------------------------------------
@@ -459,10 +785,20 @@ def sealed_families(
 # ---------------------------------------------------------------------------
 
 SEALING_FUNCTIONS = sealing_functions(byok_crypto)
-DERIVED_MODEL_FIELDS = envelope_fields(storage_models)
+DERIVED_MODEL_FIELDS = envelope_fields(MODULES_BY_PATH.values())
 DERIVED_FIELD_NAMES = frozenset(name for fields in DERIVED_MODEL_FIELDS.values() for name in fields)
 DERIVED_KINDS = entity_kinds(SRC, frozenset(DERIVED_MODEL_FIELDS))
 DERIVED_FAMILIES = sealed_families(SRC, DERIVED_FIELD_NAMES)
+# Seeded with the DERIVED kinds, never with `_MIGRATED_KINDS`: a scope that
+# widens by reading the registry it audits would narrow again if a kind were
+# dropped from the registry, which is the direction that must never fail open.
+DERIVED_ADJACENT_KINDS, UNRESOLVABLE_KIND_CALL_SITES = envelope_adjacent_kinds(
+    SRC,
+    frozenset(DERIVED_MODEL_FIELDS),
+    DERIVED_FIELD_NAMES,
+    frozenset(SEALING_FUNCTIONS),
+    frozenset(kind for kinds in DERIVED_KINDS.values() for kind in kinds),
+)
 
 
 def _registry_pairs() -> set[tuple[str, str, str]]:
@@ -532,46 +868,66 @@ def _registry_kind_literals() -> set[str]:
 # ---------------------------------------------------------------------------
 
 STORAGE_MODELS_MODULE = "storage_models.py"
+STORAGE_MODELS_NAME = storage_models.__name__
+
+
+def test_every_package_source_file_is_an_imported_module() -> None:
+    """Every scan below resolves names through a module object, so a source file
+    with no module would be scanned with a weaker tool or not at all."""
+    on_disk = {path.resolve() for path in SRC.rglob("*.py")}
+    missing = sorted(str(path.relative_to(SRC)) for path in on_disk - set(MODULES_BY_PATH))
+    assert not missing, (
+        f"{missing} are package sources that `pkgutil.walk_packages` did not import, "
+        "so annotations and kind constants in them cannot be resolved. Give the "
+        "directory an __init__.py, or widen `_import_package_modules`."
+    )
 
 
 def test_every_envelope_typed_attribute_lives_in_storage_models() -> None:
-    """The reflection's domain is storage_models. This checks that is the whole
-    domain.
+    """A convention check, no longer the thing the law's scope rests on.
 
-    Found by attacking this module rather than by writing it: `envelope_fields`
-    skips any class whose `__module__` is not storage_models, so an envelope
-    declared on a dataclass in storage_broadcast.py or a route module would
-    contribute no field, no pair, and no failure. The law would then be a true
-    statement about the wrong universe — the most comfortable way for a
-    totality proof to be worthless.
+    It used to be the scope guard, and it was the weakest link in this file:
+    it matched the literal substring "EncryptedSecretEnvelope" in an unparsed
+    annotation, so `SealedKey: TypeAlias = EncryptedSecretEnvelope | None`
+    walked past it, and `envelope_fields` — scoped to storage_models — never
+    looked either. Adversarial review landed a complete envelope-bearing
+    persisted model, with a real sealing call and a real unregistered kind,
+    entirely inside that gap.
+
+    The fix was not here. `envelope_fields` now reflects over every dataclass in
+    the package, so an envelope-bearing model declared anywhere owes the
+    registry a (kind, field, family) and the law fails without it. What remains
+    here is the narrower and still useful statement that these models are all
+    declared in one file, checked by the union of resolved reflection (which
+    sees through aliases) and the text scan (which sees classes reflection
+    cannot reach). A failure is a convention violation, not a hole.
     """
-    stray = sorted(
+    resolved = {
+        (module, cls, attribute)
+        for module, cls, attribute in envelope_typed_attributes(MODULES_BY_PATH.values())
+        if module != STORAGE_MODELS_NAME
+    }
+    spelled = {
         (module, cls, attribute)
         for module, cls, attribute in envelope_annotated_attributes(SRC)
         if module != STORAGE_MODELS_MODULE
-    )
+    }
+    stray = sorted(resolved | spelled)
     assert not stray, (
         "EncryptedSecretEnvelope is declared outside storage_models: "
         + ", ".join(f"{module}:{cls}.{attribute}" for module, cls, attribute in stray)
-        + ". The reflection this module's law is built on only sees storage_models, "
-        "so these envelopes are invisible to it and to the backfill. Move the field "
-        "onto a storage_models dataclass, or widen `envelope_fields` and this guard "
-        "together."
+        + ". The law still covers them — `envelope_fields` reflects the whole package "
+        "— but this codebase keeps persisted secret material in one file. Move the "
+        "field onto a storage_models dataclass, or record here why it cannot be."
     )
 
 
-# The adapters dedicated to the two envelope-bearing models. Every kind they
-# name must be either a registry kind or a declared non-envelope one.
-ENVELOPE_ADAPTER_MODULES = ("storage_gcp_byok.py", "storage_gcp_broadcast.py")
-
+# Kinds an envelope-adjacent function names that carry no envelope. Both
+# directions are asserted, so an entry that stops being named fails too.
 NON_ENVELOPE_KINDS = {
-    # Index rows. Body is {"destination_id": ...} — no secret material.
-    "broadcast_destination_by_workspace": "pointer row",
-    "broadcast_delivery_due": "pointer row",
-    # BroadcastDeliveryJob. No envelope-typed field, but see
-    # LOOSELY_TYPED_FIELDS: its `settle_body` is dict[str, Any] and would carry
-    # a nested envelope into storage unscanned.
-    "broadcast_delivery": "delivery job, loosely typed body",
+    # Index row written as a dict literal: {"destination_id": ...}. See
+    # SpannerBroadcastDestinations.create in storage_gcp_broadcast.py.
+    "broadcast_destination_by_workspace": "pointer row, dict literal body",
 }
 
 # Fields on a persisted dataclass whose annotation admits Any, and so could
@@ -592,10 +948,26 @@ LOOSELY_TYPED_FIELDS = {
 }
 
 
+_OPAQUE_CONTAINERS = (dict, list, set, frozenset, tuple)
+
+
 def _admits_any(annotation: Any) -> bool:
+    """Can this resolved annotation hold an arbitrary object?
+
+    `Any` and `object` are the obvious cases. An unparameterized container is
+    the case adversarial review added: `signing_material: dict` is exactly as
+    opaque as `dict[str, Any]`, and the previous version of this function saw
+    only the second, so the "frozen at two" claim next door was false for the
+    first. A parameterized container is judged by its parameters, so
+    `dict[str, str]` is not opaque and `dict[str, Any]` is.
+    """
     if annotation is Any or annotation is object:
         return True
-    return any(_admits_any(arg) for arg in typing.get_args(annotation))
+    arguments = typing.get_args(annotation)
+    if arguments:
+        return any(_admits_any(argument) for argument in arguments if argument is not Ellipsis)
+    origin = typing.get_origin(annotation) or annotation
+    return isinstance(origin, type) and issubclass(origin, _OPAQUE_CONTAINERS)
 
 
 def test_every_loosely_typed_persisted_field_is_classified() -> None:
@@ -610,13 +982,25 @@ def test_every_loosely_typed_persisted_field_is_classified() -> None:
     reflected dataclass field is FALSE for that shape, and this test exists to
     stop the list of such shapes from growing silently rather than to close the
     hole — closing it needs the backfill to walk bodies, not fields.
+
+    Two corrections from the second review. `_admits_any` matched only `Any` and
+    `object`, so a bare `dict` — no less opaque, one token shorter — was neither
+    flagged here nor seen by the envelope reflection, and the "frozen at two"
+    claim was false for it. And the domain was `vars(storage_models)`, so a
+    persisted model declared elsewhere was unclassified; it is now every
+    dataclass the package reads back under an entity kind, unioned with
+    storage_models so a model with no typed read is still covered.
     """
-    loose = {
-        (model.__name__, field.name)
+    models = persisted_dataclasses(SRC) | {
+        model
         for model in vars(storage_models).values()
         if isinstance(model, type)
         and dataclasses.is_dataclass(model)
         and model.__module__ == storage_models.__name__
+    }
+    loose = {
+        (model.__name__, field.name)
+        for model in models
         for field in dataclasses.fields(model)
         if _admits_any(typing.get_type_hints(model)[field.name])
     }
@@ -635,25 +1019,51 @@ def test_every_loosely_typed_persisted_field_is_classified() -> None:
     )
 
 
-def test_every_kind_the_envelope_adapters_touch_is_registered_or_declared() -> None:
+def test_every_kind_an_envelope_handling_function_names_is_registered_or_declared() -> None:
     """A kind an envelope-bearing model is WRITTEN to, that nothing reads back.
 
     `entity_kinds` derives from typed reads, so archiving a `ByokProviderConfig`
-    under a second kind with a bare `write_entity` would change nothing it sees
-    and leave every other assertion green while the archived row kept its v1
-    envelope. Adversarial review constructed that case. Enumerating the kinds
-    these two adapters name at all — reads and writes — is what closes it.
+    under a second kind with a bare `write_entity` changes nothing it sees and
+    leaves every other assertion green while the archived row keeps its v1
+    envelope.
+
+    Two rounds of adversarial review found three ways past the previous version
+    of this test, and all three are why it now looks like this. The kind had to
+    be an inline string, so a module constant escaped: kinds are now resolved
+    through the calling module's namespace. The scan covered two hand-listed
+    adapter modules, so the same write in storage_postgres.py escaped: the scope
+    is now derived, package-wide and function-scoped. And a dynamic kind used
+    to be skipped in silence: it now fails.
+
+    Scope, precisely. This sees an entity-IO call when the function around it
+    mentions an envelope-bearing model, an envelope field, a sealing function,
+    or an id helper reached from one of those. A function that persists an
+    envelope-bearing object while mentioning none of them — one that takes it as
+    `Any` and builds the row id itself — is not seen. That residue is named in
+    the module scope limit; it is not claimed to be covered.
     """
-    named = kinds_named_by(SRC, ENVELOPE_ADAPTER_MODULES)
+    assert not UNRESOLVABLE_KIND_CALL_SITES, (
+        "these envelope-handling call sites pass a kind this scan cannot resolve to a "
+        "constant, so it cannot be checked against the registry: "
+        + "; ".join(sorted(UNRESOLVABLE_KIND_CALL_SITES))
+        + ". Bind the kind to a module-level constant, or make the helper generic "
+        "enough that no envelope-bearing model reaches it."
+    )
+    named = set(DERIVED_ADJACENT_KINDS)
     unaccounted = sorted(named - set(_MIGRATED_KINDS) - set(NON_ENVELOPE_KINDS))
     assert not unaccounted, (
-        f"the envelope adapters name kind(s) {unaccounted} that are neither in the "
-        "backfill registry nor declared secret-free. If such a row can hold an "
-        "envelope the backfill will never scan it; if it cannot, say so in "
-        "NON_ENVELOPE_KINDS with the reason."
+        f"envelope-handling code names kind(s) {unaccounted} that are neither in the "
+        "backfill registry nor declared secret-free — at "
+        + "; ".join(
+            f"{kind} ({', '.join(sorted(DERIVED_ADJACENT_KINDS[kind]))})" for kind in unaccounted
+        )
+        + ". If such a row can hold an envelope the backfill will never scan it; if it "
+        "cannot, say so in NON_ENVELOPE_KINDS with the reason."
     )
     stale = sorted(set(NON_ENVELOPE_KINDS) - named)
-    assert not stale, f"NON_ENVELOPE_KINDS names kinds these adapters no longer touch: {stale}"
+    assert not stale, (
+        f"NON_ENVELOPE_KINDS names kinds no envelope-handling function touches: {stale}"
+    )
 
 
 def test_the_sealing_oracle_is_read_off_byok_crypto() -> None:
@@ -1013,15 +1423,43 @@ def test_the_reflection_detects_a_new_envelope_field(
     exec(  # noqa: S102 - a synthetic module is the point of the control
         "from __future__ import annotations\n"
         "from dataclasses import dataclass\n"
+        "from typing import TypeAlias\n"
+        "Sealed: TypeAlias = EncryptedSecretEnvelope | None\n"
+        "_Renamed = EncryptedSecretEnvelope\n"
+        "class Derived(EncryptedSecretEnvelope):\n"
+        "    pass\n"
         "@dataclass\n"
         "class Probe:\n"
         "    plain: str = ''\n"
         "    encrypted_probe: EncryptedSecretEnvelope | None = None\n"
-        "    nested_probe: list[EncryptedSecretEnvelope] | None = None\n",
+        "    nested_probe: list[EncryptedSecretEnvelope] | None = None\n"
+        "    aliased_probe: Sealed = None\n"
+        "    renamed_probe: _Renamed | None = None\n"
+        "    subclassed_probe: Derived | None = None\n"
+        "    quoted_probe: 'Sealed' = None\n",
         module.__dict__,
     )
 
-    assert envelope_fields(module) == {"Probe": ("encrypted_probe", "nested_probe")}
+    # Each of the last four is a form of type indirection that defeated the
+    # previous, text-matching version of the domain guard. They are here because
+    # the reflection must see them as the same type, not because the shapes are
+    # exotic.
+    assert envelope_fields([module]) == {
+        "Probe": (
+            "encrypted_probe",
+            "nested_probe",
+            "aliased_probe",
+            "renamed_probe",
+            "subclassed_probe",
+            "quoted_probe",
+        )
+    }
+    assert envelope_typed_attributes([module]) >= {
+        (module.__name__, "Probe", "aliased_probe"),
+        (module.__name__, "Probe", "renamed_probe"),
+        (module.__name__, "Probe", "subclassed_probe"),
+        (module.__name__, "Probe", "quoted_probe"),
+    }
 
 
 def test_the_ast_scans_detect_a_new_kind_and_a_new_sealing_site(
@@ -1056,6 +1494,35 @@ def test_the_ast_scans_detect_a_new_kind_and_a_new_sealing_site(
     }
 
 
+def test_a_kind_bound_to_a_module_constant_is_resolved(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Negative control for the kind resolution, against the exact evasion.
+
+    Adversarial review defeated the previous version by hoisting a repeated kind
+    to `ARCHIVE_KIND = "byok_archive"`; `_literal_kind` required an
+    `ast.Constant`, so the call site vanished from every scan. The kind is now
+    looked up in the calling module's namespace, and a name that resolves to no
+    string still resolves to None so the caller can fail rather than skip.
+    """
+    source = tmp_path / "adapter.py"
+    source.write_text(
+        "def load(io, probe_id):\n"
+        "    return io.read_entity(PROBE_KIND, probe_id, ProbeModel)\n"
+        "def stash(io, probe_id, probe):\n"
+        "    io.write_entity(runtime_kind(), probe_id, probe)\n"
+    )
+    module = types.ModuleType("tests._synthetic_adapter")
+    module.PROBE_KIND = "probe_kind"  # type: ignore[attr-defined]
+    monkeypatch.setitem(MODULES_BY_PATH, source.resolve(), module)
+
+    tree = ast.parse(source.read_text())
+    calls = _entity_io_calls(tree, module)
+    assert [kind for _node, _index, kind in calls] == ["probe_kind", None]
+    assert entity_kinds(tmp_path, frozenset({"ProbeModel"})) == {"ProbeModel": {"probe_kind"}}
+
+
 def test_the_derivation_reproduces_todays_registry() -> None:
     """A pin on what the derivation currently yields.
 
@@ -1075,4 +1542,18 @@ def test_the_derivation_reproduces_todays_registry() -> None:
         "encrypted_secret": {NAMESPACE_PROVIDER},
         "encrypted_api_key": {NAMESPACE_CONTROL},
         "encrypted_headers": {NAMESPACE_CONTROL},
+    }
+    # The derived scope of the adapter-kind guard. Pinned because it replaced a
+    # hand-written module list: a fixed point that quietly stopped widening
+    # would shrink this rather than fail anything, and the guard would go silent
+    # the way the two-module list did.
+    assert set(DERIVED_ADJACENT_KINDS) == {
+        "byok",
+        "broadcast_destination",
+        "broadcast_destination_by_workspace",
+    }
+    assert {site.split(":")[0] for sites in DERIVED_ADJACENT_KINDS.values() for site in sites} == {
+        "storage_gcp_byok.py",
+        "storage_gcp_broadcast.py",
+        "storage_postgres.py",
     }
