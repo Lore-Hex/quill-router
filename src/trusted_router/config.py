@@ -362,7 +362,10 @@ class Settings(BaseSettings):
     # hypothetical: trust.trustedrouter.com/pcr0.txt has served the same PCR0
     # since the initial commit and it matches no running enclave. Nothing caught
     # it because no code ever compared the published value to a live
-    # attestation. scripts/verify_trust_measurements.py is that comparison.
+    # attestation. scripts/verify_trust_measurements.py is that comparison, and
+    # .github/workflows/trust-drift.yml is what makes it happen: for a while
+    # this comment named a script that nothing in the repo ever executed, which
+    # is the same "nobody compared them" failure one level up.
     #
     # Both are SETS, not scalars. During a bind window the released key is bound
     # to the old and the new measurement at once — quill-cloud-proxy's

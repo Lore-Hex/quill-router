@@ -139,7 +139,9 @@ def aws_release(settings: Settings, *, metadata: Mapping[str, Any] | None = None
     attestation over a self-signed certificate, so fetching it from here would
     mean the control plane making an unauthenticated TLS connection and parsing
     CBOR on a public route. The staleness that trade buys is checked out of band
-    by scripts/verify_trust_measurements.py instead.
+    by scripts/verify_trust_measurements.py, which .github/workflows/trust-drift.yml
+    runs hourly in --strict mode — until that workflow existed, nothing executed
+    the comparison this docstring relies on.
     """
     # Mirrored from the plane's own published record when available. The
     # settings are only the offline fallback — the control plane is not the
@@ -173,7 +175,15 @@ def aws_release(settings: Settings, *, metadata: Mapping[str, Any] | None = None
             # is replaced by that binding, not dropped.
             "mode": "attested-self-signed-inside-enclave",
             "hostname": AWS_API_HOSTNAME,
-            "certificate_binding": "user_data[0:64]=certificate fingerprint, "
+            # Measured against the live enclave 2026-08-15, 8/8 samples:
+            # user_data is 96 bytes and [0:32] is SHA-256 of the served
+            # certificate DER, which is also the window probes.py checks. This
+            # field previously said [0:64], sending a verifier to compare a
+            # 64-byte window against a 32-byte hash and conclude the binding
+            # failed. [32:64] is a build-invariant constant, unchanged across
+            # nonces and connections, and is deliberately left undescribed
+            # rather than guessed at.
+            "certificate_binding": "user_data[0:32]=SHA-256 of the served certificate (DER), "
             "user_data[64:96]=TLS exporter channel binding",
         },
         "data_policy": {
@@ -181,6 +191,50 @@ def aws_release(settings: Settings, *, metadata: Mapping[str, Any] | None = None
             "control_plane_prompt_access": False,
         },
     }
+
+
+#: The only keys copied out of an upstream region entry. Mirroring whatever
+#: arrives would let the plane's record inject arbitrary fields into ours.
+_AZURE_REGION_FIELDS = (
+    "attestation_url",
+    "hostdata",
+    "attestation_issuer",
+    "launch_measurement",
+    "compliance_status",
+)
+
+
+def _azure_regions(metadata: Mapping[str, Any]) -> tuple[dict[str, str], ...]:
+    """Per-region endpoints from the plane's record, or nothing.
+
+    A region entry is kept only when it is self-consistent with the rest of the
+    record: it names an endpoint, and its hostdata and issuer both appear in the
+    union sets published alongside it. An entry that fails that is DROPPED
+    rather than corrected, which is deliberate — a dropped region shows up
+    downstream as an issuer with no endpoint, and
+    scripts/verify_trust_measurements.py reports that as an uncovered region
+    instead of comparing a live attestation against a value the record itself
+    contradicts.
+    """
+    accepted = {str(v) for v in metadata.get("accepted_hostdata", [])}
+    issuers = {str(v) for v in metadata.get("attestation_issuers", [])}
+    regions: list[dict[str, str]] = []
+    for entry in metadata.get("regions") or []:
+        if not isinstance(entry, Mapping):
+            continue
+        url = str(entry.get("attestation_url") or "")
+        hostdata = str(entry.get("hostdata") or "")
+        issuer = str(entry.get("attestation_issuer") or "")
+        if not url or hostdata not in accepted or (issuers and issuer not in issuers):
+            continue
+        regions.append(
+            {
+                field: str(entry[field])
+                for field in _AZURE_REGION_FIELDS
+                if isinstance(entry.get(field), str)
+            }
+        )
+    return tuple(regions)
 
 
 def azure_release(
@@ -198,10 +252,12 @@ def azure_release(
             str(v) for v in metadata.get("accepted_hostdata", []) if v != NOT_CONFIGURED
         )
         issuers = tuple(str(v) for v in metadata.get("attestation_issuers", []))
+        regions = _azure_regions(metadata)
     else:
         hostdata = settings.trust_azure_hostdata or NOT_CONFIGURED
         accepted = settings.trust_azure_accepted_hostdata_list
         issuers = settings.trust_azure_attestation_issuer_list
+        regions = ()
     return {
         "platform": "azure-confidential-containers-sev-snp",
         "source_repo": ATTESTED_GATEWAY_REPO,
@@ -217,6 +273,13 @@ def azure_release(
         # One MAA instance per serving region, so which issuer signs depends on
         # which region answered. A verifier should accept any of them.
         "attestation_issuers": list(issuers),
+        # WHERE each of those regions answers. accepted_hostdata is a union and
+        # cannot say which endpoint serves which value, so a reader holding only
+        # the union can verify whichever region anycast happens to give them and
+        # has no way to reach the others. Dropping this array on the way through
+        # the mirror is what let scripts/verify_trust_measurements.py check one
+        # of two Azure regions and report success for the plane.
+        "regions": [dict(region) for region in regions],
         "api_base_url": f"https://{AZURE_API_HOSTNAME}/v1",
         "tls": {
             "mode": "acme-inside-confidential-container",
