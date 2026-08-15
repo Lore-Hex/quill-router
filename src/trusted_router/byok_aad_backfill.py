@@ -26,7 +26,7 @@ from trusted_router.byok_crypto import (
     encrypt_byok_secret,
     encrypt_control_secret,
 )
-from trusted_router.config import Settings
+from trusted_router.key_management import KeyWrapperSettings
 from trusted_router.storage_models import EncryptedSecretEnvelope
 
 _MIGRATED_KINDS = ("broadcast_destination", "byok")
@@ -102,7 +102,7 @@ class BackfillRunner:
         self,
         store: EntityStore,
         *,
-        settings: Settings | None = None,
+        settings: KeyWrapperSettings | None = None,
         apply: bool = False,
         kms_operations_per_second: float = 5.0,
         reporter: Callable[[str], None] = print,
