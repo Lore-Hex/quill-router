@@ -184,12 +184,33 @@ DSN="postgresql://${PG_ADMIN}:${PG_PASSWORD}@${PG_HOST}:5432/${PG_DB}?sslmode=re
 # it takes effect for this script only once a control plane carrying it is
 # serving. Until then this line checks one of two Azure regions.
 #
-# There is no skip flag on purpose. Rolling back a control plane un-ships bad
-# code; it does not un-write an envelope. §5: a cloud whose control plane has
-# written even one v2 envelope needs its enclave to keep v2 read support
-# permanently.
+# REPORT-ONLY TODAY, and say so plainly: check_format_ordering.py ships with
+# DEFAULT_MODE = "report-only", so the command below prints its table and a
+# loud "WOULD BLOCK" verdict and exits 0. THIS SCRIPT WILL CONTINUE TO DEPLOY
+# EVEN WHEN THE ORDERING IS VIOLATED until that default is flipped. Read the
+# gate's output before answering any deploy prompt; do not read its exit code
+# as a verdict.
+#
+# The reason is the ordering rule applied to the gate itself: what the gate
+# reads is a generated accepted_formats.json at the released enclave commit,
+# and Azure has never published a source_commit, let alone one carrying that
+# file. Enforcing today would stop every Azure control-plane deploy for a
+# reason nobody can clear from this repository.
+#
+# THE FLIP: when `uv run python -m scripts.check_format_ordering --mode
+# enforcing --cloud gcp --cloud aws --cloud azure` exits 0, set
+# DEFAULT_MODE = ENFORCING in scripts/check_format_ordering.py. One line, and
+# it arms this script, aws_eu_control_plane.sh and deploy.yml together.
+#
+# There is no skip flag on purpose, and there will not be one once it is
+# enforcing. Rolling back a control plane un-ships bad code; it does not
+# un-write an envelope. §5: a cloud whose control plane has written even one v2
+# envelope needs its enclave to keep v2 read support permanently.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 log "checking BYOK envelope format ordering against both live azure regions"
+log "  (report-only until DEFAULT_MODE is flipped: read the verdict, not the exit code)"
+# This branch is reachable only in ENFORCING mode; in report-only the command
+# exits 0 whatever it found, and the verdict it printed is the whole output.
 if ! (cd "$REPO_ROOT" && uv run python -m scripts.check_format_ordering --cloud azure); then
   cat >&2 <<'BLOCKED'
 

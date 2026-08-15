@@ -140,14 +140,46 @@ jobs:
         # scripts/deploy/aws_eu_control_plane.sh and azure_control_plane.sh —
         # the hand-run path is the one that skipped the ordering before.
         #
-        # NOT skippable by hotfix, unlike the CI-green gate above. That
-        # asymmetry is the point: a hotfix that ships a broken build is undone
-        # by rolling back, but a hotfix that writes an unreadable envelope is
-        # not. §5 of the migration doc is explicit — a cloud whose control
-        # plane has written even one v2 envelope needs its enclave to keep v2
-        # read support permanently. The write is one-way, so the escape hatch
-        # cannot be a flag on the deploy; it is to stop the build writing the
-        # format, which is code.
+        # REPORT-ONLY TODAY. The script's DEFAULT_MODE is "report-only", so
+        # this step prints its table and a loud "WOULD BLOCK" verdict and then
+        # exits 0. It does not stop this deploy, and until it is flipped this
+        # job's green tick means "the gate ran", not "the ordering holds".
+        #
+        # Why it ships that way. The evidence the gate needs is a generated
+        # enclave-go/internal/byokcache/accepted_formats.json at the commit
+        # each release record names, and no cloud has ever published one —
+        # AWS and Azure carry no source_commit at all, and the released GCP
+        # enclave predates the declaration. An enforcing gate landed today
+        # would hard-red every control-plane deploy on all three clouds for a
+        # reason nobody can clear from THIS repository. Shipping the enforcing
+        # half before the half it depends on exists is the ordering trap this
+        # gate is about.
+        #
+        # THE FLIP, and its precondition: when a real run of
+        #   uv run python -m scripts.check_format_ordering --mode enforcing \
+        #       --cloud gcp --cloud aws --cloud azure
+        # exits 0, set DEFAULT_MODE = ENFORCING in
+        # scripts/check_format_ordering.py. That is one line and it changes
+        # this job and both hand-run deploy scripts at once. Nothing else here
+        # needs editing.
+        #
+        # --cloud gcp, deliberately. This workflow deploys Cloud Run only
+        # (us-central1, europe-west4, us-east4, southamerica-east1), and each
+        # cloud is a standalone TrustedRouter with its OWN database
+        # (docs/storage-portability/multi-cloud-separation.md), so a v2
+        # envelope written here never reaches an AWS or Azure enclave.
+        # Blocking a GCP rollout on Azure's enclave would be a gate that fires
+        # for reasons the operator cannot act on, which is the fastest way to
+        # get a gate deleted.
+        #
+        # ONCE ENFORCING, not skippable by hotfix, unlike the CI-green gate
+        # above. That asymmetry is the point: a hotfix that ships a broken
+        # build is undone by rolling back, but a hotfix that writes an
+        # unreadable envelope is not. §5 of the migration doc is explicit — a
+        # cloud whose control plane has written even one v2 envelope needs its
+        # enclave to keep v2 read support permanently. The write is one-way,
+        # so the escape hatch cannot be a flag on the deploy; it is to stop the
+        # build writing the format, which is code.
         run: |
           set -euo pipefail
           uv sync --frozen --no-dev
@@ -367,9 +399,14 @@ jobs:
       - migrate-schema
       - sync-runtime-secrets
       - confirm-current-main
-      # Blocks the rollout, not just the image build: an envelope format the
-      # enclave cannot read is only harmful once a revision serving traffic
-      # writes one.
+      # Placed on the rollout rather than on the image build: an envelope
+      # format the enclave cannot read is only harmful once a revision serving
+      # traffic writes one. While the gate is REPORT-ONLY this dependency only
+      # means the deploy waits for the job, not that a bad ordering stops it —
+      # the job exits 0 either way. It becomes a real block when
+      # DEFAULT_MODE in scripts/check_format_ordering.py is flipped to
+      # ENFORCING; the wiring is already correct for that day, which is why it
+      # is here now.
       - gate-on-envelope-ordering
     if: ${{ needs.confirm-current-main.outputs.proceed == 'true' }}
     runs-on: ubuntu-latest

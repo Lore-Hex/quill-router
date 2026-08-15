@@ -21,10 +21,10 @@ too. A gate that hardcodes "writes V2, needs V2" is correct until the day a V3
 write lands, at which point it keeps passing while asserting a fact about a
 format the build no longer writes.
 
-BOTH SIDES OF THAT DERIVATION WERE DEFEATED ONCE
-------------------------------------------------
-An adversarial review broke the first version of both halves, and the tests it
-produced are kept here as the ones that matter most:
+BOTH SIDES OF THAT DERIVATION WERE DEFEATED, THE WRITE SIDE TWICE
+------------------------------------------------------------------
+Adversarial review broke both halves, and the tests it produced are kept here as
+the ones that matter most:
 
 * ACCEPTS came from parsing case labels out of the switch in `envelopeAAD`.
   Four compiling, gofmt-clean edits kept `case AlgorithmV2:` in cache.go while
@@ -38,7 +38,31 @@ produced are kept here as the ones that matter most:
 * WRITES came from calls spelled `EncryptedSecretEnvelope` in one hardcoded
   file. An alias, a subclass, dataclasses.replace, an assignment to
   `.algorithm`, and a write site in any other module were all invisible. The
-  five tests in `test_written_formats_sees_a_v3_written_through_*` are that fix.
+  fix was a wider scan, and a SECOND review walked past that one too — an
+  annotated alias, an alias imported from a sibling module, a subclass defined
+  in a sibling module — because the answer was still syntax.
+  `test_written_formats_sees_a_v3_written_through_an_indirection` carries every
+  shape from both rounds.
+* So the write side is no longer primarily syntax. `probe_write_entry_points()`
+  CALLS this tree and reads `.algorithm` off the envelopes those calls produced,
+  and the gate uses the union of that and the scan. The tests for it are
+  `test_the_probe_reports_the_format_a_real_call_produced`,
+  `test_the_probe_refuses_when_its_recorder_is_blind`, and
+  `test_an_entry_point_with_no_probe_is_a_refusal` — the last being the
+  enumeration closure that keeps the probe's coverage checkable rather than
+  claimed.
+
+REPORT-ONLY IS A MODE, AND BOTH MODES ARE PROVED HERE
+------------------------------------------------------
+`DEFAULT_MODE` is REPORT_ONLY: the gate prints its table and a verdict and exits
+0, because the enclave-side evidence it needs has never been published for any
+of the three clouds and an enforcing gate would stop every deploy for a reason
+no operator can clear from this repository. `test_report_only_would_block_but_
+exits_zero` and `test_enforcing_blocks_the_same_run` drive the real `main()` over
+the same fabricated world and assert the two exit codes and the two verdicts,
+including that three named pass-shaped strings are absent from the report-only
+output. That is a check on three specific phrasings, not a proof that no
+sentence anywhere could ever be misread as a pass.
 
 THE REAL DEFECT THIS COMES FROM
 -------------------------------
@@ -70,10 +94,19 @@ SCOPE LIMIT, stated plainly
   prove — and neither can the gate — that a present one is the commit that built
   the running enclave.
 * The accepted-formats declaration is proved here to be bound to the package
-  source at the same commit. It is NOT proved to have been generated rather than
-  hand-written; that is quill-cloud-proxy's CI running the generating test, and
-  the property that the generator measures behaviour is proved there, in
-  enclave-go/internal/byokcache/accepted_formats_test.go, not here.
+  source at the same commit, for every non-test .go file that commit's package
+  contains. It is NOT proved to have been generated rather than hand-written;
+  that is quill-cloud-proxy's CI running the generating test, and the property
+  that the generator measures behaviour is proved there, in
+  enclave-go/internal/byokcache/accepted_formats_test.go, not here. Nor does
+  anything here or there show that the round trip the declaration records would
+  still succeed under the enclave's own run-time configuration: a v2 refusal
+  behind an environment variable produces a green CI and a V1,V2 declaration.
+* The behavioural write probe is exercised here against the REAL modules, so
+  these tests do depend on this tree importing and on a local AES key wrapper
+  working. They do not prove that every write path is probed — that is the
+  enumeration closure, which is itself only as complete as the return
+  annotations in src/trusted_router.
 * The subset check is over algorithm STRINGS. It does not prove the two
   implementations of a shared format agree byte for byte; that is
   tests/test_byok_aad_namespace_property.py's pinned hex vector, and the two
@@ -95,15 +128,22 @@ from typing import Any
 import cbor2
 import pytest
 
+import scripts.check_format_ordering as gate
 from scripts.check_format_ordering import (
     DECLARATION_PATH,
     DECLARATION_SCHEMA,
     ENCLAVE_PACKAGE,
+    ENFORCING,
     PLANES,
+    PROBE_CONTROL_FORMAT,
+    REPORT_ONLY,
     RegionResult,
+    WriteProbe,
     accepted_formats,
     check_plane,
+    derive_written_formats,
     gather,
+    probe_write_entry_points,
     read_write_surface,
     regions_of,
     render,
@@ -256,6 +296,28 @@ def source_from(trees: dict[str, dict[str, bytes]] | None = None):  # noqa: ANN2
     return _read
 
 
+def lister_from(trees: dict[str, dict[str, bytes]] | None = None):  # noqa: ANN201 - test helper
+    """The package's real file list at a commit, as the contents API gives it.
+
+    Deliberately derived from the fixture tree rather than from the
+    declaration, because the property under test is that the declaration is
+    checked against the PACKAGE and not against its own key set.
+    """
+    table = ENCLAVE if trees is None else trees
+    prefix = f"{ENCLAVE_PACKAGE}/"
+
+    def _list(commit: str) -> frozenset[str]:
+        if commit not in table:
+            raise ValueError(f"cannot list {ENCLAVE_PACKAGE} at {commit} (HTTP 404)")
+        return frozenset(
+            path[len(prefix) :]
+            for path in table[commit]
+            if path.startswith(prefix) and path.endswith(".go")
+        )
+
+    return _list
+
+
 def gcp_record(**overrides: Any) -> dict[str, Any]:
     record: dict[str, Any] = {
         "platform": "gcp-confidential-space",
@@ -331,6 +393,7 @@ def run(spec_name: str, record: dict[str, Any], written: frozenset[str], **kwarg
         written,
         attest=kwargs.pop("attest", attest_from()),
         source=kwargs.pop("source", source_from()),
+        list_package=kwargs.pop("list_package", lister_from()),
         **kwargs,
     )
 
@@ -360,6 +423,7 @@ def test_every_cloud_clears_when_every_enclave_reads_what_the_plane_writes() -> 
         }[path],
         attest=attest_from(),
         source=source_from(),
+        list_package=lister_from(),
     )
 
     assert [result.host for result in results] == [
@@ -622,6 +686,7 @@ def test_a_malformed_regions_array_blocks_the_whole_cloud() -> None:
         records=lambda path: record,  # noqa: ARG005
         attest=attest_from(),
         source=source_from(),
+        list_package=lister_from(),
     )
 
     assert not results[0].ok
@@ -636,6 +701,7 @@ def test_an_unreadable_record_blocks_the_whole_cloud() -> None:
         records=lambda path: (_ for _ in ()).throw(ValueError(f"HTTP 404 for {path}")),
         attest=attest_from(),
         source=source_from(),
+        list_package=lister_from(),
     )
 
     assert not results[0].ok
@@ -660,7 +726,7 @@ def test_a_case_label_is_not_acceptance() -> None:
     tree = {COMMIT_V1_ONLY: enclave_tree([V1], accepts_v2_label=True)}
     assert b"case AlgorithmV2:" in tree[COMMIT_V1_ONLY][f"{ENCLAVE_PACKAGE}/cache.go"]
 
-    assert accepted_formats(COMMIT_V1_ONLY, source_from(tree)) == frozenset({V1})
+    assert accepted_formats(COMMIT_V1_ONLY, source_from(tree), lister_from(tree)) == frozenset({V1})
 
     results = run(
         "aws",
@@ -687,7 +753,49 @@ def test_a_declaration_that_no_longer_matches_the_package_blocks() -> None:
     )
 
     with pytest.raises(ValueError, match="different build"):
-        accepted_formats(COMMIT_V1_AND_V2, source_from({COMMIT_V1_AND_V2: tampered}))
+        accepted_formats(
+            COMMIT_V1_AND_V2,
+            source_from({COMMIT_V1_AND_V2: tampered}),
+            lister_from({COMMIT_V1_AND_V2: tampered}),
+        )
+
+
+def test_a_declaration_that_pins_only_part_of_the_package_blocks() -> None:
+    """Verifying the pins it lists says nothing about the files it omits.
+
+    The consumer used to iterate the declaration's own `source_sha256` keys, so
+    a declaration pinning one unrelated file — correctly, at that commit —
+    passed over a cache.go that had changed underneath it. The pin list is now
+    checked against the package's real file list at that commit, and a subset
+    is a refusal.
+    """
+    sources = {
+        "cache.go": cache_go(accepts_v2=True),
+        "kms_http_gcp.go": b"package byokcache\n\n// unrelated\n",
+    }
+    files = {f"{ENCLAVE_PACKAGE}/{name}": body for name, body in sources.items()}
+    # The declaration pins only the unrelated file, and pins it correctly.
+    files[DECLARATION_PATH] = declaration([V1, V2], {"kms_http_gcp.go": sources["kms_http_gcp.go"]})
+    tree = {COMMIT_V1_AND_V2: files}
+
+    with pytest.raises(ValueError, match="does not pin cache.go"):
+        accepted_formats(COMMIT_V1_AND_V2, source_from(tree), lister_from(tree))
+
+
+def test_a_package_listing_that_cannot_be_obtained_blocks() -> None:
+    # Completeness that cannot be checked is completeness that was not checked.
+    def exploding(commit: str) -> frozenset[str]:
+        raise ValueError(f"cannot list the package at {commit} (HTTP 403)")
+
+    with pytest.raises(ValueError, match="HTTP 403"):
+        accepted_formats(COMMIT_V1_AND_V2, source_from(), exploding)
+
+
+def test_an_empty_package_listing_blocks_rather_than_matching_vacuously() -> None:
+    # "The declaration pins every file in an empty package" is true and worth
+    # nothing, and it is what a listing bug would produce.
+    with pytest.raises(ValueError, match="nothing the declaration could be bound to"):
+        accepted_formats(COMMIT_V1_AND_V2, source_from(), lambda commit: frozenset())  # noqa: ARG005
 
 
 def test_a_declaration_is_read_for_every_file_it_pins() -> None:
@@ -696,7 +804,11 @@ def test_a_declaration_is_read_for_every_file_it_pins() -> None:
     incomplete = {COMMIT_V1_AND_V2: {DECLARATION_PATH: ENCLAVE[COMMIT_V1_AND_V2][DECLARATION_PATH]}}
 
     with pytest.raises(ValueError, match="cache.go"):
-        accepted_formats(COMMIT_V1_AND_V2, source_from(incomplete))
+        accepted_formats(
+            COMMIT_V1_AND_V2,
+            source_from(incomplete),
+            lister_from({COMMIT_V1_AND_V2: ENCLAVE[COMMIT_V1_AND_V2]}),
+        )
 
 
 @pytest.mark.parametrize(
@@ -725,7 +837,11 @@ def test_a_declaration_this_script_cannot_read_blocks(
     files[DECLARATION_PATH] = declaration([V1, V2], sources, overrides)
 
     with pytest.raises(ValueError, match=reason):
-        accepted_formats(COMMIT_V1_AND_V2, source_from({COMMIT_V1_AND_V2: files}))
+        accepted_formats(
+            COMMIT_V1_AND_V2,
+            source_from({COMMIT_V1_AND_V2: files}),
+            lister_from({COMMIT_V1_AND_V2: files}),
+        )
 
 
 def test_a_probe_that_accepted_its_own_control_value_blocks() -> None:
@@ -739,7 +855,11 @@ def test_a_probe_that_accepted_its_own_control_value_blocks() -> None:
     files[DECLARATION_PATH] = declaration([V1, V2, CONTROL], sources)
 
     with pytest.raises(ValueError, match="cannot distinguish"):
-        accepted_formats(COMMIT_V1_AND_V2, source_from({COMMIT_V1_AND_V2: files}))
+        accepted_formats(
+            COMMIT_V1_AND_V2,
+            source_from({COMMIT_V1_AND_V2: files}),
+            lister_from({COMMIT_V1_AND_V2: files}),
+        )
 
 
 def test_a_declaration_that_is_not_json_blocks() -> None:
@@ -749,7 +869,11 @@ def test_a_declaration_that_is_not_json_blocks() -> None:
     }
 
     with pytest.raises(ValueError, match="not JSON"):
-        accepted_formats(COMMIT_V1_AND_V2, source_from({COMMIT_V1_AND_V2: files}))
+        accepted_formats(
+            COMMIT_V1_AND_V2,
+            source_from({COMMIT_V1_AND_V2: files}),
+            lister_from({COMMIT_V1_AND_V2: files}),
+        )
 
 
 # --------------------------------------------------------------------------
@@ -825,18 +949,71 @@ def test_written_formats_reports_every_format_the_module_writes() -> None:
             "an imported replace",
             id="bare-replace",
         ),
+        pytest.param(
+            "_Envelope: type[EncryptedSecretEnvelope] = EncryptedSecretEnvelope\n"
+            "def seal():\n"
+            "    return _Envelope(algorithm=ALGORITHM_V3)\n",
+            "an ANNOTATED module-level alias -- one type annotation away from the plain alias "
+            "above, in a repo that runs mypy over 240 files",
+            id="annotated-alias",
+        ),
     ],
 )
 def test_written_formats_sees_a_v3_written_through_an_indirection(body: str, label: str) -> None:
     """Each of these returned {V2} while the build wrote V3.
 
-    The reviewer wrote all of them against the first version of this parser,
-    which matched a callee spelled exactly EncryptedSecretEnvelope. A gate that
-    can be stepped around by renaming a local is a gate about spelling.
+    The first five come from the review of the first parser, which matched a
+    callee spelled exactly EncryptedSecretEnvelope. The annotated alias comes
+    from the review of the SECOND parser, which closed the name set over
+    ast.Assign and never looked at ast.AnnAssign. A gate that can be stepped
+    around by adding a type annotation is a gate about spelling.
     """
     source = f'ALGORITHM_V3 = "{V3}"\n' + body
 
     assert written_formats(module(source)) == frozenset({V3}), label
+
+
+@pytest.mark.parametrize(
+    ("sibling", "call", "label"),
+    [
+        pytest.param(
+            "from trusted_router.storage_models import EncryptedSecretEnvelope\n"
+            "Envelope = EncryptedSecretEnvelope\n",
+            "Envelope",
+            "an alias defined in a sibling module and imported",
+            id="cross-module-alias",
+        ),
+        pytest.param(
+            "from trusted_router.storage_models import EncryptedSecretEnvelope\n"
+            "class V3Envelope(EncryptedSecretEnvelope):\n"
+            "    pass\n",
+            "V3Envelope",
+            "a subclass defined in a sibling module and imported",
+            id="cross-module-subclass",
+        ),
+    ],
+)
+def test_written_formats_closes_the_name_set_across_modules(
+    sibling: str, call: str, label: str
+) -> None:
+    """The constructor-name closure is over the surface, not over one file.
+
+    The second review's whole method here was to move the alias or the subclass
+    one module away. `_constructor_names` took a single tree, so a name defined
+    in `v3_models.py` and imported into `byok_crypto.py` was simply not in the
+    set, and the call fell through in silence while the build wrote V3.
+    """
+    sources = {
+        "src/trusted_router/v3_models.py": sibling,
+        "src/trusted_router/byok_crypto.py": (
+            f'ALGORITHM_V3 = "{V3}"\n'
+            f"from trusted_router.v3_models import {call}\n"
+            "def seal():\n"
+            f"    return {call}(algorithm=ALGORITHM_V3)\n"
+        ),
+    }
+
+    assert written_formats(sources) == frozenset({V3}), label
 
 
 def test_written_formats_sees_a_write_site_in_any_module() -> None:
@@ -858,32 +1035,93 @@ def test_written_formats_sees_a_write_site_in_any_module() -> None:
     assert written_formats(sources) == frozenset({V2, V3})
 
 
-def test_written_formats_refuses_a_format_assigned_after_construction() -> None:
+@pytest.mark.parametrize(
+    ("body", "reason"),
+    [
+        pytest.param(
+            "    envelope.algorithm = ALGORITHM_V3\n", "assigns an `algorithm` attribute", id="attr"
+        ),
+        pytest.param(
+            "    setattr(envelope, 'algorithm', ALGORITHM_V3)\n",
+            "through setattr",
+            id="setattr",
+        ),
+        pytest.param(
+            "    object.__setattr__(envelope, 'algorithm', ALGORITHM_V3)\n",
+            "through __setattr__",
+            id="object-setattr",
+        ),
+        pytest.param(
+            "    envelope.__dict__['algorithm'] = ALGORITHM_V3\n",
+            "__dict__",
+            id="dunder-dict",
+        ),
+    ],
+)
+def test_written_formats_refuses_a_format_assigned_after_construction(
+    body: str, reason: str
+) -> None:
     """`envelope.algorithm = ALGORITHM_V3` writes V3 and no constructor says so.
 
-    EncryptedSecretEnvelope is a plain, non-frozen dataclass, so this runs. The
-    format written is not derivable from any call, so the answer is a refusal
-    rather than a set that quietly omits it.
+    EncryptedSecretEnvelope is a plain, non-frozen dataclass, so all four of
+    these run. Only the first was refused: `setattr`, `object.__setattr__` and
+    a direct `__dict__` write are the same mutation spelled differently, and
+    they were silently ignored while the second review used them.
     """
-    source = (
-        f'ALGORITHM_V3 = "{V3}"\n'
-        "def seal(envelope):\n"
-        "    envelope.algorithm = ALGORITHM_V3\n"
-        "    return envelope\n"
-    )
+    source = f'ALGORITHM_V3 = "{V3}"\ndef seal(envelope):\n{body}    return envelope\n'
 
-    with pytest.raises(ValueError, match="assigns .algorithm"):
+    with pytest.raises(ValueError, match=reason):
         written_formats(module(source))
 
 
-def test_written_formats_refuses_the_constructor_used_as_a_value() -> None:
-    # functools.partial, a factory table, a registry: the format written
-    # through one of those is chosen somewhere this parser does not look.
-    source = (
-        "import functools\n"
-        f'ALGORITHM_V3 = "{V3}"\n'
-        "make = functools.partial(EncryptedSecretEnvelope, algorithm=ALGORITHM_V3)\n"
-    )
+def test_the_algorithm_refusal_is_deliberately_over_broad() -> None:
+    """It cannot tell an envelope from a JWT header, and the message says so.
+
+    A narrower rule would have to decide which objects are envelopes, which is
+    the inference this scan exists because it cannot make. Being wrong in this
+    direction is a refusal a human clears by reading one line; being wrong in
+    the other is a silent green over a V3 write. The cost is real and is stated
+    here rather than discovered: an unrelated `self.algorithm = "RS256"`
+    anywhere under src/trusted_router stops the gate.
+    """
+    sources = {
+        "src/trusted_router/byok_crypto.py": (
+            f'ALGORITHM_V2 = "{V2}"\n'
+            "def seal():\n"
+            "    return EncryptedSecretEnvelope(algorithm=ALGORITHM_V2)\n"
+        ),
+        "src/trusted_router/jwt_helper.py": (
+            "class SigningHeader:\n    def __init__(self):\n        self.algorithm = 'RS256'\n"
+        ),
+    }
+
+    with pytest.raises(ValueError, match="cannot tell whether that object is an envelope"):
+        written_formats(sources)
+
+
+@pytest.mark.parametrize(
+    "handover",
+    [
+        pytest.param(
+            "make = functools.partial(EncryptedSecretEnvelope, algorithm=ALGORITHM_V3)\n",
+            id="bare-name",
+        ),
+        pytest.param(
+            "import trusted_router.storage_models as storage_models\n"
+            "make = functools.partial(storage_models.EncryptedSecretEnvelope)\n",
+            id="dotted",
+        ),
+    ],
+)
+def test_written_formats_refuses_the_constructor_used_as_a_value(handover: str) -> None:
+    """functools.partial, a factory table, a registry.
+
+    The format written through one of those is chosen somewhere this parser
+    does not look. Only the bare-Name handover was refused; the dotted form
+    passed cleanly, so the fail-closed half of the indirection guard was
+    asymmetric and the asymmetry was one attribute access wide.
+    """
+    source = "import functools\n" + f'ALGORITHM_V3 = "{V3}"\n' + handover
 
     with pytest.raises(ValueError, match="indirection"):
         written_formats(module(source))
@@ -966,6 +1204,357 @@ def test_the_real_write_surface_writes_exactly_v2_today() -> None:
 def test_an_unparseable_module_blocks() -> None:
     with pytest.raises(ValueError, match="cannot parse"):
         written_formats(module("def seal(:\n"))
+
+
+# --------------------------------------------------------------------------
+# WRITES is primarily BEHAVIOUR: what calling this tree actually produced
+# --------------------------------------------------------------------------
+
+
+def test_the_probe_reports_the_format_a_real_call_produced() -> None:
+    """The write-side twin of the enclave's declaration, on the real modules.
+
+    Both write entry points are called for real against a local AES wrapper,
+    and the format is read off the envelope objects those calls constructed.
+    Nothing here parses anything, which is the point: every spelling that
+    defeated the scan twice — an alias, a subclass, dataclasses.replace, an
+    assignment to .algorithm, a sibling module — converges on the same object
+    and the same attribute value.
+    """
+    observed = probe_write_entry_points()
+
+    assert observed.formats == frozenset({V2})
+    assert dict(observed.by_entry_point) == {
+        "src/trusted_router/byok_crypto.py:encrypt_byok_secret": (V2,),
+        "src/trusted_router/byok_crypto.py:encrypt_control_secret": (V2,),
+    }
+
+
+def test_the_probe_reads_the_object_and_not_the_call_that_made_it() -> None:
+    """A format assigned AFTER construction is the value the probe reports.
+
+    This is the shape the scan can only refuse on: `envelope.algorithm = V3`
+    with the constructor still saying V2. The probe holds the object, reads it
+    once the entry point has returned, and reports V3.
+    """
+
+    def mutating_entry_point(settings: Any) -> object:  # noqa: ARG001 - matches the probe signature
+        from trusted_router.byok_crypto import ALGORITHM_V2
+        from trusted_router.storage_models import EncryptedSecretEnvelope
+
+        envelope = EncryptedSecretEnvelope(
+            algorithm=ALGORITHM_V2,
+            key_ref="k",
+            encrypted_dek="",
+            dek_nonce="",
+            ciphertext="",
+            nonce="",
+        )
+        envelope.algorithm = V3
+        return envelope
+
+    observed = probe_write_entry_points({"fabricated:mutating": mutating_entry_point})
+
+    assert observed.formats == frozenset({V3})
+
+
+class _SwallowsInitPatch(type):
+    """A class whose `__init__` cannot be replaced, and says nothing about it.
+
+    Fabricates the one failure the probe's control exists to catch: the
+    recorder is installed, the install silently does nothing, and every
+    subsequent observation is empty. An empty observation from a blind recorder
+    reads exactly like "this build writes no new format".
+    """
+
+    def __setattr__(cls, name: str, value: Any) -> None:
+        if name == "__init__":
+            return
+        super().__setattr__(name, value)
+
+
+class _UnrecordableEnvelope(metaclass=_SwallowsInitPatch):
+    def __init__(self, **fields: Any) -> None:
+        self.__dict__.update(fields)
+
+
+def test_the_probe_refuses_when_its_recorder_is_blind() -> None:
+    """A recorder that sees nothing reports "no V3" for a build that writes V3.
+
+    So the recorder is shown a format before it is trusted to report one: an
+    envelope carrying PROBE_CONTROL_FORMAT is constructed and must come back.
+    This is the same argument as the declaration's `rejected_control`, and the
+    same sentinel string.
+    """
+    with pytest.raises(ValueError, match="did not observe its own control envelope"):
+        probe_write_entry_points(
+            {"fabricated:never-reached": lambda settings: None},  # noqa: ARG005
+            envelope_type=_UnrecordableEnvelope,
+        )
+
+
+def test_a_probe_that_cannot_call_its_entry_point_refuses() -> None:
+    # A probe that raises is not evidence that the path writes nothing; it is a
+    # path whose written format was not measured, and deleting the probe to
+    # make the gate green is the failure mode this message names.
+    def exploding(settings: Any) -> object:  # noqa: ARG001 - matches the probe signature
+        raise RuntimeError("no key material here")
+
+    with pytest.raises(ValueError, match="could not be called by the probe"):
+        probe_write_entry_points({"fabricated:exploding": exploding})
+
+
+def test_a_probe_that_produced_no_envelope_refuses() -> None:
+    with pytest.raises(ValueError, match="produced no envelope"):
+        probe_write_entry_points({"fabricated:silent": lambda settings: None})  # noqa: ARG005
+
+
+def test_an_entry_point_that_produced_the_control_value_refuses() -> None:
+    """The control string must stay a fixture, never an observation.
+
+    If a real call can produce PROBE_CONTROL_FORMAT, the probe can no longer
+    tell its own scaffolding from a write, and the union it feeds the subset
+    check would carry a format no enclave will ever accept.
+    """
+
+    def leaks_the_control(settings: Any) -> object:  # noqa: ARG001 - matches the probe signature
+        from trusted_router.storage_models import EncryptedSecretEnvelope
+
+        return EncryptedSecretEnvelope(
+            algorithm=PROBE_CONTROL_FORMAT,
+            key_ref="k",
+            encrypted_dek="",
+            dek_nonce="",
+            ciphertext="",
+            nonce="",
+        )
+
+    with pytest.raises(ValueError, match="produced the probe's own control value"):
+        probe_write_entry_points({"fabricated:leaky": leaks_the_control})
+
+
+def test_an_entry_point_with_no_probe_is_a_refusal() -> None:
+    """The enumeration closure, which is what makes the probe's coverage real.
+
+    A behavioural probe is only as good as the set of paths it calls, and "we
+    called the important ones" is the claim that rots. So the entry points are
+    read out of the source — every function under src/trusted_router whose
+    return annotation names the envelope type — and one that `_WRITE_PROBES`
+    does not call stops the gate. It is the same closure the enclave probe
+    applies to algorithm constants it does not know how to seal.
+    """
+    sources = {
+        "src/trusted_router/byok_crypto.py": (
+            f'ALGORITHM_V2 = "{V2}"\n'
+            "def encrypt_byok_secret(a, b) -> EncryptedSecretEnvelope:\n"
+            "    return EncryptedSecretEnvelope(algorithm=ALGORITHM_V2)\n"
+        ),
+        "src/trusted_router/broadcast_crypto.py": (
+            "def seal_broadcast(a) -> EncryptedSecretEnvelope | None:\n    return None\n"
+        ),
+    }
+
+    with pytest.raises(ValueError, match="no behavioural probe calls them"):
+        derive_written_formats(sources, probe=lambda: WriteProbe(frozenset({V2}), ()))
+
+
+def test_two_entry_points_sharing_a_name_in_one_module_refuse() -> None:
+    # One probe key would stand for both, so one of them would go unmeasured
+    # while the table looked complete.
+    sources = {
+        "src/trusted_router/byok_crypto.py": (
+            f'ALGORITHM_V2 = "{V2}"\n'
+            "def seal(a) -> EncryptedSecretEnvelope:\n"
+            "    return EncryptedSecretEnvelope(algorithm=ALGORITHM_V2)\n"
+            "def seal(a, b) -> EncryptedSecretEnvelope:\n"
+            "    return EncryptedSecretEnvelope(algorithm=ALGORITHM_V2)\n"
+        )
+    }
+
+    with pytest.raises(ValueError, match="share a name inside one module"):
+        derive_written_formats(sources, probe=lambda: WriteProbe(frozenset({V2}), ()))
+
+
+def test_a_pep695_type_alias_annotation_is_not_enumerated() -> None:
+    """A known, checked hole in the enumeration, recorded rather than implied.
+
+    `type Env = EncryptedSecretEnvelope` parses to `ast.TypeAlias`, which the
+    constructor-name closure does not read, so `-> Env` does not register as a
+    write entry point and no probe is demanded for it. It is not a fail-open by
+    itself — the write inside still has to get past the syntactic scan — but it
+    is the shape that silently demotes a path to scan-only coverage, and the
+    docstring on `_write_entry_points` says so because this assertion is what
+    keeps that sentence honest.
+    """
+    source = (
+        f'ALGORITHM_V2 = "{V2}"\n'
+        "type Env = EncryptedSecretEnvelope\n"
+        "def seal() -> Env:\n"
+        "    return EncryptedSecretEnvelope(algorithm=ALGORITHM_V2)\n"
+    )
+    plain = (
+        f'ALGORITHM_V2 = "{V2}"\n'
+        "Env = EncryptedSecretEnvelope\n"
+        "def seal() -> Env:\n"
+        "    return Env(algorithm=ALGORITHM_V2)\n"
+    )
+
+    assert scan_write_surface(module(source)).entry_points == ()
+    assert scan_write_surface(module(plain)).entry_points == (
+        "src/trusted_router/byok_crypto.py:seal",
+    )
+
+
+def test_the_real_tree_has_a_probe_for_every_entry_point_it_declares() -> None:
+    # The closure above is worth nothing if the real tree does not satisfy it.
+    # This is the assertion that goes red the day someone adds a third
+    # `-> EncryptedSecretEnvelope` function without a probe.
+    scan = scan_write_surface(read_write_surface())
+
+    assert scan.entry_points == (
+        "src/trusted_router/byok_crypto.py:encrypt_byok_secret",
+        "src/trusted_router/byok_crypto.py:encrypt_control_secret",
+    )
+    assert set(scan.entry_points) == set(gate._WRITE_PROBES)
+
+
+def test_the_gate_uses_the_union_of_the_two_derivations() -> None:
+    """Union, because each derivation is blind where the other is not.
+
+    A format only the probe saw is a write through an indirection no parser
+    followed; a format only the scan saw is a write path nothing exercised.
+    Taking either alone discards one of those. Taking the union can only make
+    `written ⊆ accepted` harder to satisfy, which is the direction a gate is
+    allowed to be wrong in.
+    """
+    sources = {
+        "src/trusted_router/byok_crypto.py": (
+            f'ALGORITHM_V2 = "{V2}"\n'
+            "def seal():\n"
+            "    return EncryptedSecretEnvelope(algorithm=ALGORITHM_V2)\n"
+        )
+    }
+
+    derivation = derive_written_formats(sources, probe=lambda: WriteProbe(frozenset({V3}), ()))
+
+    assert derivation.behavioural == frozenset({V3})
+    assert derivation.syntactic == frozenset({V2})
+    assert derivation.formats == frozenset({V2, V3})
+
+
+def test_the_real_tree_writes_exactly_v2_by_both_derivations() -> None:
+    # Pins the current answer end to end, so a change to the write side is
+    # visible in a diff without the gate depending on the answer.
+    derivation = derive_written_formats(read_write_surface())
+
+    assert derivation.behavioural == frozenset({V2})
+    assert derivation.syntactic == frozenset({V2})
+    assert derivation.formats == frozenset({V2})
+    assert PROBE_CONTROL_FORMAT not in derivation.formats
+
+
+# --------------------------------------------------------------------------
+# Report-only and enforcing are the same verdict and two exit codes
+# --------------------------------------------------------------------------
+
+
+def drive_main(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> tuple[int, str]:
+    """Run the REAL main() over the fabricated world, with no network.
+
+    Only the four I/O seams are replaced — record fetch, attestation fetch,
+    enclave file read, enclave package listing. Everything else, including the
+    write derivation against this working tree, is the production path.
+    """
+    records = {
+        "/trust/aws-release.json": aws_record(source_commit=COMMIT_V1_ONLY),
+        "/trust/gcp-release.json": gcp_record(),
+    }
+    monkeypatch.setattr(gate, "fetch_record", lambda plane, path: records[path])  # noqa: ARG005
+    monkeypatch.setattr(gate, "_fetch", lambda url, **kw: attest_from()(url, True))  # noqa: ARG005
+    monkeypatch.setattr(gate, "fetch_enclave_file", source_from())
+    monkeypatch.setattr(gate, "fetch_enclave_package_files", lister_from())
+    return gate.main(argv)
+
+
+def test_report_only_would_block_but_exits_zero(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The mode this ships in, over an AWS enclave that cannot read what we write.
+
+    Report-only is not "check less". It is the same check, the same table and
+    the same BLOCKED lines, with the deploy not stopped — because the evidence
+    this gate needs has never been published for any cloud, and an enforcing
+    gate landed today would stop every deploy for a reason no operator can
+    clear from this repository.
+
+    The requirement that earns the mode: nothing printed may read as a pass.
+    """
+    exit_code = drive_main(monkeypatch, ["--cloud", "aws", "--mode", REPORT_ONLY])
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "BLOCKED aws/api-aws.trustedrouter.com" in out
+    assert "ACCEPTS only" in out
+    assert "REPORT-ONLY: this gate WOULD BLOCK this deploy" in out
+    assert "NOTHING WAS VERIFIED and NOTHING WAS STOPPED" in out
+    for reads_like_a_pass in ("every format this build writes", " ok\n", "passed"):
+        assert reads_like_a_pass not in out, reads_like_a_pass
+
+
+def test_enforcing_blocks_the_same_run(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Same world, same table, different exit code. That is the whole of the
+    # flip, and it is what `DEFAULT_MODE = ENFORCING` will do to every caller.
+    exit_code = drive_main(monkeypatch, ["--cloud", "aws", "--mode", ENFORCING])
+    out = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "BLOCKED aws/api-aws.trustedrouter.com" in out
+    assert "BLOCKED: 1 serving region(s) block this deploy" in out
+    assert "REPORT-ONLY" not in out
+
+
+def test_the_default_mode_is_the_one_documented_as_the_flip() -> None:
+    # The module docstring tells the next engineer that flipping this gate is a
+    # one-line change to DEFAULT_MODE. That sentence is only true while
+    # DEFAULT_MODE is what --mode falls back to.
+    assert gate.DEFAULT_MODE == REPORT_ONLY
+    assert gate.main.__module__ == "scripts.check_format_ordering"
+
+
+def test_a_clear_run_says_so_in_both_modes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A gate that says nothing when it clears teaches people to ignore it.
+
+    Report-only labels the clear run too, so a reader can never mistake "this
+    run cleared" for "this run would have been enforced".
+    """
+    assert drive_main(monkeypatch, ["--cloud", "gcp", "--mode", ENFORCING]) == 0
+    enforcing = capsys.readouterr().out
+    assert drive_main(monkeypatch, ["--cloud", "gcp", "--mode", REPORT_ONLY]) == 0
+    report_only = capsys.readouterr().out
+
+    assert "1 serving region(s) checked for gcp" in enforcing
+    assert "REPORT-ONLY" not in enforcing
+    assert "REPORT-ONLY (nothing would have blocked)" in report_only
+
+
+def test_an_underivable_write_side_refuses_in_report_only_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Report-only is about the ENCLAVE evidence, not about this build.
+
+    Not knowing what this build writes is a defect in this repository, which
+    whoever is deploying can fix here and now. It exits 1 in both modes, and
+    that asymmetry is deliberate rather than an oversight.
+    """
+    monkeypatch.setattr(
+        gate, "read_write_surface", lambda: {"src/trusted_router/x.py": "def f(:\n"}
+    )
+
+    assert drive_main(monkeypatch, ["--cloud", "gcp", "--mode", REPORT_ONLY]) == 1
 
 
 # --------------------------------------------------------------------------
