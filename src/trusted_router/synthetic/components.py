@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from trusted_router.config import Settings
 from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup
+
+if TYPE_CHECKING:
+    from trusted_router.config import Settings
 
 # Target name of the billing/settlement and provider-fallback probes. Unlike
 # the gateway targets these do not come from the region topology — every

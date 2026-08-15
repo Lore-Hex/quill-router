@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
 
 from clickhouse.build_public_snapshots import _clickhouse_string_array, build_snapshots
 from trusted_router.config import Settings
@@ -11,6 +16,38 @@ from trusted_router.storage_models import (
     SyntheticProbeSample,
     SyntheticRollup,
 )
+
+
+def test_snapshot_worker_imports_without_control_plane_dependencies() -> None:
+    root = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join((str(root), str(root / "src")))
+    code = textwrap.dedent(
+        """
+        import builtins
+
+        original_import = builtins.__import__
+
+        def import_without_pydantic(name, *args, **kwargs):
+            if name == "pydantic" or name.startswith("pydantic."):
+                raise ModuleNotFoundError("pydantic is intentionally absent")
+            return original_import(name, *args, **kwargs)
+
+        builtins.__import__ = import_without_pydantic
+        import clickhouse.build_public_snapshots
+        """
+    )
+
+    result = subprocess.run(  # noqa: S603 - interpreter and test program are fixed
+        [sys.executable, "-c", code],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_current_public_analytics_snapshot_accepts_fresh_utc_payload() -> None:
