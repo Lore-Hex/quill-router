@@ -202,6 +202,17 @@ def parse_gateway_region_targets(raw: str) -> tuple[GatewayRegionTarget, ...]:
     return tuple(entries)
 
 
+def _comma_set(raw: str, *, primary: str | None = None) -> tuple[str, ...]:
+    """Parse a comma-separated setting into a de-duplicated ordered tuple.
+
+    ``primary`` is prepended when given, so the value that should be serving
+    leads the set regardless of where it appears in the configured string.
+    """
+    values = [primary.strip()] if primary and primary.strip() else []
+    values.extend(value.strip() for value in raw.split(",") if value.strip())
+    return tuple(dict.fromkeys(values))
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="TR_", env_file=".env", extra="ignore")
 
@@ -338,6 +349,40 @@ class Settings(BaseSettings):
     # the canonical DNS zone is unavailable. Every fetched record is subjected
     # to the same strict release validation before it enters the cache.
     trust_gcp_release_fallback_urls: str = ""
+
+    # AWS and Azure measure a different artifact than GCP does. AWS Nitro
+    # measures the enclave image file into PCR0 (SHA-384); Azure Confidential
+    # Containers measure the SEV-SNP hostdata, which is sha256 over the decoded
+    # CCE policy. Neither plane publishes a release record the control plane can
+    # fetch the way it fetches the GCP gateway's, so both are supplied at deploy
+    # time.
+    #
+    # An unset measurement publishes "not-configured" and serves 503 rather than
+    # a number that may no longer be running. That failure mode is not
+    # hypothetical: trust.trustedrouter.com/pcr0.txt has served the same PCR0
+    # since the initial commit and it matches no running enclave. Nothing caught
+    # it because no code ever compared the published value to a live
+    # attestation. scripts/verify_trust_measurements.py is that comparison.
+    #
+    # Both are SETS, not scalars. During a bind window the released key is bound
+    # to the old and the new measurement at once — quill-cloud-proxy's
+    # tools/deploy-azure-aci.sh emits an anyOf over BOTH hostdata values so the
+    # outgoing enclave keeps serving while the incoming one comes up. A verifier
+    # pinned to a single value fails exactly when a rollout is in flight, which
+    # is when it is least helpful to fail. The primary is what should be
+    # serving; the accepted set is what a verifier should tolerate.
+    trust_aws_source_commit: str | None = None
+    trust_aws_image_reference: str | None = None
+    trust_aws_pcr0: str | None = None
+    trust_aws_accepted_pcr0s: str = ""
+    trust_azure_source_commit: str | None = None
+    trust_azure_image_reference: str | None = None
+    trust_azure_hostdata: str | None = None
+    trust_azure_accepted_hostdata: str = ""
+    # Azure serves from more than one region and each region has its own MAA
+    # instance, so the issuer a verifier sees depends on which region answered.
+    # Comma-separated; a verifier should accept any of them.
+    trust_azure_attestation_issuers: str = ""
 
     rate_limit_enabled: bool = True
     rate_limit_window_seconds: int = 60
@@ -1052,13 +1097,25 @@ class Settings(BaseSettings):
 
     @property
     def trust_gcp_release_fallback_url_list(self) -> tuple[str, ...]:
-        return tuple(
-            dict.fromkeys(
-                value.strip()
-                for value in self.trust_gcp_release_fallback_urls.split(",")
-                if value.strip()
-            )
-        )
+        return _comma_set(self.trust_gcp_release_fallback_urls)
+
+    @property
+    def trust_aws_accepted_pcr0_list(self) -> tuple[str, ...]:
+        """Every PCR0 a verifier should accept, primary first.
+
+        The primary is always a member. A bind window that widened the accepted
+        set but forgot the currently-serving value would otherwise publish a set
+        that rejects the enclave answering the request.
+        """
+        return _comma_set(self.trust_aws_accepted_pcr0s, primary=self.trust_aws_pcr0)
+
+    @property
+    def trust_azure_accepted_hostdata_list(self) -> tuple[str, ...]:
+        return _comma_set(self.trust_azure_accepted_hostdata, primary=self.trust_azure_hostdata)
+
+    @property
+    def trust_azure_attestation_issuer_list(self) -> tuple[str, ...]:
+        return _comma_set(self.trust_azure_attestation_issuers)
 
     @property
     def google_alias_credentials(self) -> dict[str, tuple[str, str]]:
