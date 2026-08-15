@@ -141,6 +141,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/leaderboard/video",
     "/status",
     "/security",
+    "/trust",
     "/eu",
     "/trustedos",
     "/legal",
@@ -176,6 +177,8 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/llm-provider-latency-benchmarks",
     "/pricing",
     "/docs",
+    "/docs/x402",
+    "/api/reference",
     "/apps",
     "/resources",
     "/customers/robot-robot-human",
@@ -1030,7 +1033,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "eu": PublicPage(
         template="public/eu.html",
         og_card="eu.png",
-        title="EU LLM Gateway: Private AI Routing in Europe",
+        title="EU LLM Gateway: Private AI Routing",
         description=(
             "Route OpenAI-compatible LLM requests through an attested Europe West "
             "gateway, with EU-focused models, provider controls, and no prompt logs."
@@ -1335,11 +1338,10 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "docs": PublicPage(
         template="public/docs.html",
         og_card="docs.png",
-        title="Docs — Quickstart, SDKs, and API Reference",
+        title="API Docs: Quickstart and SDKs",
         description=(
-            "Point any OpenAI-compatible SDK at TrustedRouter with one base_url "
-            "change. Guides, Python / TypeScript / Swift SDKs, and the "
-            "OpenAI-compatible API reference."
+            "Use TrustedRouter with any OpenAI-compatible SDK after one base_url change. "
+            "Get quickstarts, Python and TypeScript SDKs, privacy controls, and API reference."
         ),
     ),
     "vibe-coders": PublicPage(
@@ -2519,11 +2521,11 @@ def public_providers_html(settings: Settings) -> str:
         .render(
             api_base_url=settings.api_base_url,
             site_url=f"https://{settings.trusted_domain}/providers",
-            title="Providers | TrustedRouter",
+            title="AI Providers: Models, Privacy and Uptime | TrustedRouter",
             heading="Providers",
             description=(
-                "Compare AI providers by available models, token pricing, retention policies, "
-                "regional coverage, confidential compute, encrypted routes, and measured performance."
+                "Compare AI providers by model coverage, token pricing, zero-retention policy, "
+                "region, confidential compute, encrypted routes, live uptime, and throughput."
             ),
             providers=providers,
             json_ld_blob=_json_ld_graph(
@@ -2674,6 +2676,8 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     seo_name = _seo_model_name(model)
     site_url = f"https://{settings.trusted_domain}/models/{model_id}"
     model_view = _model_detail_view(model, test_mode=test_mode)
+    route_evidence = _model_route_evidence(model, test_mode=test_mode)
+    faq_items = _model_faq_items(model, route_evidence=route_evidence)
     return (
         _env()
         .get_template("public/model_detail.html")
@@ -2687,13 +2691,19 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
                 "limits, privacy policy, regional availability, measured uptime, and API support."
             ),
             model=model_view,
-            route_evidence=_model_route_evidence(model, test_mode=test_mode),
+            route_evidence=route_evidence,
             related_comparisons=_related_model_comparison_rows(model.id, limit=6),
             # Service/Offer JSON-LD. The page sells API access to a hosted
             # routing service, not a retail product with customer ratings.
             # Avoid Product schema so Search Console doesn't expect review
             # or aggregateRating fields that we cannot honestly provide yet.
-            json_ld_blob=_model_json_ld(settings, model, site_url),
+            faq_items=faq_items,
+            json_ld_blob=_model_json_ld(
+                settings,
+                model,
+                site_url,
+                faq_items=faq_items,
+            ),
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
             static_version=_static_version(settings),
@@ -2742,6 +2752,7 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
                 exclude_path=site_path,
                 limit=8,
             ),
+            comparison_neighbors=_model_comparison_neighbor_rows(left.id, right.id),
             faq_items=faq_items,
             json_ld_blob=_json_ld_graph(
                 _breadcrumb_node(
@@ -4094,6 +4105,49 @@ def _model_route_evidence(
     }
 
 
+def _model_faq_items(
+    model: Model,
+    *,
+    route_evidence: Mapping[str, object],
+) -> tuple[tuple[str, str], ...]:
+    provider_names = [
+        provider["name"]
+        for provider in _endpoint_provider_views(
+            endpoints_for_model(model.id),
+            fallback_provider=model.provider,
+        )
+    ]
+    if len(provider_names) == 1:
+        provider_answer = str(provider_names[0])
+    else:
+        provider_answer = ", ".join(str(name) for name in provider_names[:-1])
+        provider_answer = f"{provider_answer}, and {provider_names[-1]}"
+    return (
+        (
+            f"What model ID should I use for {model.name}?",
+            f"Use {model.id} as the model field with the TrustedRouter OpenAI-compatible "
+            "API. The same model ID works for prepaid and eligible BYOK routes.",
+        ),
+        (
+            f"Which providers serve {model.name}?",
+            f"TrustedRouter currently lists {provider_answer} for {model.name}. Provider "
+            "availability and routing eligibility can change as catalog and health data update.",
+        ),
+        (
+            f"How much does {model.name} cost through TrustedRouter?",
+            f"The current lowest prepaid input price is {route_evidence['lowest_prompt_price']} "
+            f"and the lowest output price is {route_evidence['lowest_completion_price']}. "
+            "Prices are per one million tokens and come from the current route catalog.",
+        ),
+        (
+            f"How do I require zero data retention for {model.name}?",
+            "Set provider.min_privacy to zdr on the request. TrustedRouter considers only "
+            "routes with a recorded zero-data-retention posture and fails closed if no "
+            "eligible route remains.",
+        ),
+    )
+
+
 @lru_cache(maxsize=1)
 def _model_comparison_index() -> dict[
     str,
@@ -4145,6 +4199,43 @@ def _related_model_comparison_rows(
         ranked.append((-shared, -route_count, path.casefold(), result_row))
     ranked.sort(key=lambda item: item[:3])
     return [item[3] for item in ranked[:limit]]
+
+
+@lru_cache(maxsize=1)
+def _model_comparison_neighbor_index() -> dict[
+    str,
+    tuple[tuple[str, str, str], ...],
+]:
+    pairs = _model_comparison_pairs()
+    if len(pairs) < 2:
+        return {}
+    rows = [
+        (
+            f"/compare/models/{left.id}/vs/{right.id}",
+            f"{left.name} vs {right.name}",
+        )
+        for left, right in pairs
+    ]
+    return {
+        path: (
+            (rows[(index - 1) % len(rows)][0], rows[(index - 1) % len(rows)][1], "Previous"),
+            (rows[(index + 1) % len(rows)][0], rows[(index + 1) % len(rows)][1], "Next"),
+        )
+        for index, (path, _label) in enumerate(rows)
+    }
+
+
+def _model_comparison_neighbor_rows(
+    left_id: str,
+    right_id: str,
+) -> list[dict[str, str]]:
+    path = canonical_model_comparison_path(left_id, right_id)
+    if path is None:
+        return []
+    return [
+        {"href": href, "label": label, "relation": relation}
+        for href, label, relation in _model_comparison_neighbor_index().get(path, ())
+    ]
 
 
 def _comparison_view(
@@ -4345,7 +4436,13 @@ _BRAND_DISPLAY_NAMES: dict[str, str] = {
 }
 
 
-def _model_json_ld(settings: Settings, model: Model, site_url: str) -> str:
+def _model_json_ld(
+    settings: Settings,
+    model: Model,
+    site_url: str,
+    *,
+    faq_items: Sequence[tuple[str, str]] = (),
+) -> str:
     """Build the Service/Offer JSON-LD blob for the model detail page.
 
     Returns a JSON string ready to be injected into a
@@ -4360,6 +4457,7 @@ def _model_json_ld(settings: Settings, model: Model, site_url: str) -> str:
             (("Home", "/"), ("Models", "/models"), (model.name, f"/models/{model.id}")),
         ),
         _model_service_node(settings, model, site_url),
+        _faq_node(faq_items),
     )
 
 

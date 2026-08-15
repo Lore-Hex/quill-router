@@ -565,12 +565,33 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             f"https://{settings.trusted_domain}/api/reference",
             quote=True,
         )
+        title = "TrustedRouter API Reference: Endpoints and Schemas"
+        description = (
+            "Explore TrustedRouter's OpenAI-compatible API endpoints, request schemas, "
+            "authentication, models, keys, billing, observability, and stable compatibility errors."
+        )
+        escaped_description = html.escape(description, quote=True)
+        metadata = (
+            f'<meta name="description" content="{escaped_description}">\n'
+            f'<link rel="canonical" href="{canonical}">\n'
+            '<meta property="og:type" content="website">\n'
+            f'<meta property="og:title" content="{html.escape(title, quote=True)}">\n'
+            f'<meta property="og:description" content="{escaped_description}">\n'
+            f'<meta property="og:url" content="{canonical}">\n'
+            '<meta property="og:image" content="https://trustedrouter.com/og.png">\n'
+            '<meta name="twitter:card" content="summary_large_image">\n'
+        )
         body = (
             bytes(response.body)
             .decode()
             .replace(
+                f"<title>{html.escape(app.title)} API reference</title>",
+                f"<title>{html.escape(title)}</title>",
+                1,
+            )
+            .replace(
                 "</head>",
-                f'<link rel="canonical" href="{canonical}">\n</head>',
+                f"{metadata}</head>",
                 1,
             )
         )
