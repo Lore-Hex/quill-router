@@ -22,7 +22,7 @@ from trusted_router.byok_crypto import (
     decrypt_control_secret,
 )
 from trusted_router.config import Settings
-from trusted_router.key_management import key_wrapper_for
+from trusted_router.key_management import KeyWrapperConfig, key_wrapper_for
 from trusted_router.storage_models import EncryptedSecretEnvelope
 
 
@@ -99,6 +99,14 @@ def _apply(store: MemoryEntityStore, settings: Settings, logs: list[str] | None 
         reporter=(logs.append if logs is not None else lambda _message: None),
         sleep=lambda _seconds: None,
     ).run(batch_size=1)
+
+
+def test_operator_key_config_is_kms_only_and_fails_closed() -> None:
+    key_name = "projects/example/locations/global/keyRings/ring/cryptoKeys/byok"
+
+    assert key_wrapper_for(KeyWrapperConfig(byok_kms_key_name=key_name)).key_ref == key_name
+    with pytest.raises(ValueError, match="required outside local/test"):
+        key_wrapper_for(KeyWrapperConfig())
 
 
 def test_provider_backfill_is_verified_resumable_and_idempotent() -> None:

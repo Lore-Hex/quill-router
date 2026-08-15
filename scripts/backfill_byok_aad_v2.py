@@ -26,7 +26,7 @@ from trusted_router.byok_aad_backfill import (
     PostgresEntityStore,
     SpannerEntityStore,
 )
-from trusted_router.config import Settings
+from trusted_router.key_management import KeyWrapperConfig
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -55,6 +55,11 @@ def _parser() -> argparse.ArgumentParser:
         default=os.environ.get("TR_SPANNER_DATABASE_ID", "trusted-router"),
     )
     parser.add_argument("--postgres-dsn", default=os.environ.get("TR_POSTGRES_DSN", ""))
+    parser.add_argument(
+        "--kms-key-name",
+        default=os.environ.get("TR_BYOK_KMS_KEY_NAME", ""),
+        help="Wrapping KMS key; required with --apply",
+    )
     return parser
 
 
@@ -84,6 +89,8 @@ def main() -> int:
         raise SystemExit("--expected-v1 is required with --apply")
     if args.expected_v1 is not None and args.expected_v1 < 0:
         raise SystemExit("--expected-v1 cannot be negative")
+    if args.apply and not args.kms_key_name.strip():
+        raise SystemExit("--kms-key-name or TR_BYOK_KMS_KEY_NAME is required with --apply")
     after = None
     if args.after_kind is not None and args.after_id is not None:
         after = (args.after_kind, args.after_id)
@@ -108,7 +115,7 @@ def main() -> int:
 
     migrated = BackfillRunner(
         store,
-        settings=Settings(),
+        settings=KeyWrapperConfig(byok_kms_key_name=args.kms_key_name.strip()),
         apply=True,
         kms_operations_per_second=args.kms_operations_per_second,
     ).run(batch_size=args.batch_size, after=after)

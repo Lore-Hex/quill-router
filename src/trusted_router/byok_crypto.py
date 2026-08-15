@@ -8,8 +8,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-from trusted_router.config import Settings
-from trusted_router.key_management import key_wrapper_for
+from trusted_router.key_management import KeyWrapperSettings, key_wrapper_for
 from trusted_router.storage_models import EncryptedSecretEnvelope
 
 # v1 associated data is colon-joined with no escaping or length prefix, so
@@ -51,7 +50,7 @@ _DEV_WRAPPING_KEY = _derive_dev_wrapping_key()
 
 def encrypt_byok_secret(
     raw_secret: str,
-    settings: Settings,
+    settings: KeyWrapperSettings,
     *,
     workspace_id: str,
     provider: str,
@@ -86,7 +85,7 @@ def encrypt_byok_secret(
 
 def decrypt_byok_secret(
     envelope: EncryptedSecretEnvelope,
-    settings: Settings,
+    settings: KeyWrapperSettings,
     *,
     workspace_id: str,
     provider: str,
@@ -99,7 +98,7 @@ def decrypt_byok_secret(
 
 def encrypt_control_secret(
     raw_secret: str,
-    settings: Settings,
+    settings: KeyWrapperSettings,
     *,
     workspace_id: str,
     purpose: str,
@@ -135,7 +134,7 @@ def encrypt_control_secret(
 
 def decrypt_control_secret(
     envelope: EncryptedSecretEnvelope,
-    settings: Settings,
+    settings: KeyWrapperSettings,
     *,
     workspace_id: str,
     purpose: str,
@@ -197,7 +196,7 @@ def byok_cache_key(
     return "byokcache:v1:" + digest.hexdigest()
 
 
-def _wrapping_key(settings: Settings) -> bytes:
+def _wrapping_key(settings: KeyWrapperSettings) -> bytes:
     if settings.byok_envelope_key_b64:
         key = _unb64(settings.byok_envelope_key_b64)
         if len(key) != 32:
@@ -208,14 +207,19 @@ def _wrapping_key(settings: Settings) -> bytes:
     raise ValueError("TR_BYOK_ENVELOPE_KEY_B64 is required outside local/test")
 
 
-def _wrap_dek(dek: bytes, dek_nonce: bytes, aad: bytes, settings: Settings) -> bytes:
+def _wrap_dek(
+    dek: bytes,
+    dek_nonce: bytes,
+    aad: bytes,
+    settings: KeyWrapperSettings,
+) -> bytes:
     return key_wrapper_for(settings).wrap(dek, nonce=dek_nonce, aad=aad)
 
 
 def _unwrap_dek(
     envelope: EncryptedSecretEnvelope,
     aad: bytes,
-    settings: Settings,
+    settings: KeyWrapperSettings,
 ) -> bytes:
     encrypted_dek = _unb64(envelope.encrypted_dek)
     return key_wrapper_for(settings).unwrap(
@@ -223,7 +227,7 @@ def _unwrap_dek(
     )
 
 
-def _key_ref(settings: Settings) -> str:
+def _key_ref(settings: KeyWrapperSettings) -> str:
     return key_wrapper_for(settings).key_ref
 
 
