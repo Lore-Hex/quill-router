@@ -232,6 +232,10 @@ def test_confidential_ai_badge_is_embeddable_and_scoped(client: TestClient) -> N
 
     security = client.get("/security")
     assert 'href="/badge">Get the badge</a>' in security.text
+    assert "Chutes requests are encrypted to the measured GPU workload" in security.text
+    assert "nras.attestation.nvidia.com" in security.text
+    assert "api.trustedservices.intel.com" in security.text
+    assert "never falls back to plaintext Chutes transport" in security.text
 
 
 def test_blog_has_no_phd_hiring_banner(client: TestClient) -> None:

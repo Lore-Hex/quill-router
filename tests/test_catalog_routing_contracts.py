@@ -1676,6 +1676,7 @@ def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:
     assert zdr_endpoints
     assert e2e_endpoints
     assert e2e_endpoints[0][1].provider == "tinfoil"
+    assert "chutes" in {endpoint.provider for _model, endpoint in e2e_endpoints}
     assert "anthropic" not in {endpoint.provider for _model, endpoint in zdr_endpoints}
     assert "google-ai-studio" not in {endpoint.provider for _model, endpoint in zdr_endpoints}
     assert "google-vertex" in {endpoint.provider for _model, endpoint in zdr_endpoints}
