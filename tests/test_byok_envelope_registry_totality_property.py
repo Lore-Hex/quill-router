@@ -68,14 +68,27 @@ disclose was itself a review finding:
     are False, so a persisted field annotated with either is invisible the way
     a bare `dict` was before the third review. Named here because the previous
     version of this paragraph claimed to be complete and was not.
-  - the AST shapes each scan understands, enumerated in `_bound_names`,
-    `_kind_argument` and `_admits_envelope` rather than gathered in one place.
-    Each is a floor on what a name scan can see and each says so where it is
-    written. An expression outside those shapes yields None. In the kind and
-    family derivations that fails the build — an unplaced kind, an unsealed
-    field, an unresolvable call site. In `persisted_dataclasses` it does not: a
-    model whose read cannot be resolved simply drops out of the domain of the
-    loosely typed check, which narrows that check rather than failing it.
+  - the AST shapes each name scan understands, written where that scan is
+    rather than gathered in one place. The two that decide what the law sees
+    are `_bound_names`' assignment-target shapes and `_kind_argument`'s three
+    kind-argument shapes; `_read_call_classes` has one of its own and reads a
+    model class only from a bare name, which fails closed by leaving the model
+    unplaced. Each is a floor on what a name scan can see and each says so
+    where it is written. A target outside `_bound_names` contributes no name,
+    so the field it binds is left with no sealing site and the law reports it
+    as `UNSEALED_FAMILY`. An argument outside `_kind_argument` yields None, and
+    what None costs depends on the caller: in `envelope_adjacent_kinds` it
+    fails the build as an unresolvable call site, while in `entity_kinds` and
+    `persisted_dataclasses` the read is skipped, so the model reaches the law
+    as `UNPLACED_KIND` and drops out of the domain of the loosely typed check —
+    narrowing that check rather than failing it.
+  - the type shapes `_admits_envelope` understands: a subclass check,
+    `__supertype__`, and recursion through `get_args`. Not an AST scan — it
+    reads the object `typing.get_type_hints` produced and returns a bool, which
+    is why an alias, a renamed import or a quoted annotation does not defeat it
+    — but a wrapper that reaches the envelope through none of those three is
+    reported False, and the field is invisible to the law rather than failing
+    it.
   - the pin in `test_the_derivation_reproduces_todays_registry`, a guard
     against a derivation that quietly stops finding anything.
 
@@ -209,11 +222,17 @@ sealing call sites. It does NOT establish:
     trade recorded above, it is a real loss against the module-scoped list this
     replaced, which would have caught such a write inside its two files.
   - that a kind resolved from a NAME is the kind that call site really uses,
-    beyond the shadowing `_shadowed_names` rejects. A name bound in the calling
-    scope now resolves to None and the site is reported unresolvable; a name
-    rebound at module level between definition and call, or one that arrives
-    through `import *`, is still read as whatever the imported module holds at
-    test time.
+    beyond the shadowing `_shadowed_names` rejects. In a FUNCTION scope, a name
+    the scope binds as a `Store` name or a parameter yields None and the site
+    is reported unresolvable. In the `<module>` scope the module namespace is
+    the right answer for a module-level assignment, so what shadows there is
+    the scopes nested inside it — a lambda, a comprehension target, and a class
+    body, the last of which the fourth review found still resolving through the
+    module. `_shadowed_names` holds the full enumeration of both. Three shapes
+    are still read as whatever the imported module holds at test time: a name
+    bound by a `def`, `class` or `import` statement rather than by an
+    assignment, a name rebound at module level between definition and call, and
+    a name that arrives through `import *`.
   - that every WRITER of a field agrees on its family. `sealed_families`
     aggregates by bare field name, so if one of the two modules writing
     `encrypted_secret` began sealing through a wrapper with the other family,
@@ -559,9 +578,20 @@ def _shadowed_names(nodes: Iterable[ast.AST], *, module_level: bool) -> frozense
     function scope is passed as its full walk — the same inside any nested def
     or lambda. A `def`, `class` or `import` statement also binds a name, and
     those three are NOT read, so a kind argument shadowed by one of them still
-    resolves through the module. In the module scope a binding IS the module
-    namespace and the lookup is right, so only a nested scope inside it — a
-    lambda, a comprehension target — shadows.
+    resolves through the module.
+
+    In the `<module>` scope most bindings ARE the module namespace and the
+    lookup is right, so only a scope nested inside it shadows: a lambda, a
+    comprehension target, and a CLASS BODY. The class body is the fourth
+    review's finding and it is the same fail-open one level in — a class-level
+    `KIND = "byok_archive"` above a class-body `write_entity(KIND, ...)` is not
+    a module attribute, so the module lookup answered "byok", the registered
+    kind, and the scan reported nothing. Measured before the fix, not reasoned
+    about. Nested `def` bodies inside a class are NOT read here: those names are
+    locals of their own scope, which gets its own `_Scope` entry, and reading
+    them would shadow module constants the class body resolves correctly. A
+    lambda inside a class body IS read, by the same rule that reads one at
+    module level.
     """
     shadowed: set[str] = set()
     for node in nodes:
@@ -570,6 +600,8 @@ def _shadowed_names(nodes: Iterable[ast.AST], *, module_level: bool) -> frozense
                 inner: Iterable[ast.AST] = ast.walk(node)
             elif isinstance(node, ast.comprehension):
                 inner = ast.walk(node.target)
+            elif isinstance(node, ast.ClassDef):
+                inner = _outside_functions(node)
             else:
                 continue
         else:
@@ -710,14 +742,18 @@ class _Scope(typing.NamedTuple):
     shadowed: frozenset[str]
 
 
-def _outside_functions(tree: ast.Module) -> list[ast.AST]:
+def _outside_functions(tree: ast.Module | ast.ClassDef) -> list[ast.AST]:
     """The nodes of `tree` that no function or method definition contains.
 
-    Module level, class bodies, and any lambda in either: a lambda is not an
-    `ast.FunctionDef`, so the walk stops at real defs only and a lambda body
-    stays in this scope. A function's decorators, annotations and argument
-    defaults hang off its own `ast.FunctionDef` node and therefore belong to
-    that function's scope, not to this one.
+    Called on a module, it is module level, class bodies, and any lambda in
+    either: a lambda is not an `ast.FunctionDef`, so the walk stops at real defs
+    only and a lambda body stays in this scope. A function's decorators,
+    annotations and argument defaults hang off its own `ast.FunctionDef` node
+    and therefore belong to that function's scope, not to this one.
+
+    Called on a single `ast.ClassDef` — which is what `_shadowed_names` does to
+    find the names a class body binds — it is that class body without its
+    methods, by the same rule.
     """
     nodes: list[ast.AST] = []
     stack: list[ast.AST] = list(ast.iter_child_nodes(tree))
@@ -1244,17 +1280,20 @@ def test_every_kind_an_envelope_handling_function_names_is_registered_or_declare
     leaves every other assertion green while the archived row keeps its v1
     envelope.
 
-    Three rounds of adversarial review found five ways past earlier versions of
-    this test, and all five are why it now looks like this. The kind had to be
+    Four rounds of adversarial review found six ways past earlier versions of
+    this test, and all six are why it now looks like this. The kind had to be
     an inline string, so a module constant escaped: kinds are now resolved
     through the calling module's namespace. That resolution then read a
     function-local of the same name as the module constant, reporting a real
     write under the wrong, registered kind: a shadowed name is now unresolvable
-    and the site is reported. The scan covered two hand-listed adapter modules,
-    so the same write in storage_postgres.py escaped: the scope is now derived
-    and package-wide. It collected function definitions only, so a write inside
-    a module-level `lambda` escaped: there is now a `<module>` scope per file.
-    And a dynamic kind used to be skipped in silence: it now fails.
+    and the site is reported. The shadow set then missed CLASS-BODY bindings,
+    which are not module attributes either, so the same mis-attribution
+    survived one level in: class bodies now shadow too. The scan covered two
+    hand-listed adapter modules, so the same write in storage_postgres.py
+    escaped: the scope is now derived and package-wide. It collected function
+    definitions only, so a write inside a module-level `lambda` escaped: there
+    is now a `<module>` scope per file. And a dynamic kind used to be skipped in
+    silence: it now fails.
 
     Scope, precisely, including what it LOST. This sees an entity-IO call when
     the scope around it mentions an envelope-bearing model, an envelope field, a
@@ -1736,6 +1775,15 @@ def test_a_kind_bound_to_a_module_constant_is_resolved(
     It must come back None — unresolvable, therefore reported — and the read in
     `load` must keep resolving, because a file that binds the name in one
     function still has a real module constant everywhere else.
+
+    `Archiver` is the same fail-open one level in, and it survived the fix that
+    closed `shadow` because a class body is neither a function scope nor the
+    module namespace. A class-level `PROBE_KIND` is not an attribute of the
+    module, so the lookup answered "probe_kind" — registered — for a write that
+    really goes to "probe_archive", which is exactly the shape the fourth
+    review measured. `_shadowed_names` now reads class-body bindings in the
+    `<module>` scope, and both halves are pinned below: guarded it is None,
+    unguarded it is the mis-attribution itself.
     """
     source = tmp_path / "adapter.py"
     source.write_text(
@@ -1746,6 +1794,9 @@ def test_a_kind_bound_to_a_module_constant_is_resolved(
         "def shadow(io, probe_id, probe):\n"
         "    PROBE_KIND = 'probe_archive'\n"
         "    io.write_entity(PROBE_KIND, probe_id, probe)\n"
+        "class Archiver:\n"
+        "    PROBE_KIND = 'probe_archive'\n"
+        "    SEED = io.write_entity(PROBE_KIND, 'seed', ProbeModel)\n"
     )
     module = types.ModuleType("tests._synthetic_adapter")
     module.PROBE_KIND = "probe_kind"  # type: ignore[attr-defined]
@@ -1758,16 +1809,16 @@ def test_a_kind_bound_to_a_module_constant_is_resolved(
     assert by_scope["adapter.py:load"] == ["probe_kind"]
     assert by_scope["adapter.py:stash"] == [None]
     assert by_scope["adapter.py:shadow"] == [None]
-    # Without the scope's shadow set the archive write resolves to the module
-    # constant instead — the fail-open itself, pinned so that the guard cannot
-    # be dropped in silence.
+    assert by_scope["adapter.py:<module>"] == [None]
+    # Without the scope's shadow set both archive writes resolve to the module
+    # constant instead — the fail-open itself, pinned so that neither half of
+    # the guard can be dropped in silence.
     unguarded = _package_scopes(tmp_path)
-    assert [
-        kind
+    assert {
+        scope.site: [kind for _n, _i, kind in _entity_io_calls(scope.nodes, module)]
         for scope in unguarded
-        if scope.site == "adapter.py:shadow"
-        for _n, _i, kind in _entity_io_calls(scope.nodes, module)
-    ] == ["probe_kind"]
+        if scope.site in {"adapter.py:shadow", "adapter.py:<module>"}
+    } == {"adapter.py:shadow": ["probe_kind"], "adapter.py:<module>": ["probe_kind"]}
     assert entity_kinds(tmp_path, frozenset({"ProbeModel"})) == {"ProbeModel": {"probe_kind"}}
 
 
