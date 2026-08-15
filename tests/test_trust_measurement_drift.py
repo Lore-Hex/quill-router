@@ -1484,8 +1484,13 @@ def test_two_different_places_do_not_fold_into_one(first: str, second: str) -> N
     Every twin above asserts that endpoint_identity folds ENOUGH. This asserts
     it does not fold too much: an over-eager normalizer makes two real endpoints
     look like one, the checker contacts one of them, and the record's second
-    region goes uncovered while the run counts it as covered — the same false
-    coverage, arrived at from the other side.
+    region goes uncovered.
+
+    That failure is loud, not silent — the gap is raised, the folded URL is
+    named in the detail line, and --strict exits non-zero. What this twin buys
+    is therefore not "catches an otherwise invisible hole" but "the hole is
+    attributed to the normalizer rather than to the plane", which is the
+    difference between fixing this file and paging whoever owns Azure.
     """
     from trusted_router.endpoint_identity import parse_endpoint
 
