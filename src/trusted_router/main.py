@@ -44,6 +44,7 @@ from trusted_router.routes.inference import register_inference_routes
 from trusted_router.routes.internal import register_internal_routes
 from trusted_router.routes.keys import register_key_routes
 from trusted_router.routes.mcp import register_mcp_routes
+from trusted_router.routes.notify import register_notify_routes
 from trusted_router.routes.oauth import register_oauth_routes
 from trusted_router.routes.oauth_keys import register_oauth_key_routes
 from trusted_router.routes.provider_portal import register_provider_portal_routes
@@ -417,6 +418,7 @@ def _make_api_router(settings: Settings) -> APIRouter:
     register_compat_stub_routes(router)
     register_signup_routes(router)
     register_email_verify_routes(router)
+    register_notify_routes(router)
     register_wallet_oauth_routes(router)
     register_ses_notification_routes(router)
     register_internal_routes(router)
