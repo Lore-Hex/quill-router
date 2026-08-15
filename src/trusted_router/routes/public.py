@@ -10,7 +10,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -116,7 +116,11 @@ from trusted_router.services.trust_release import (
     ResolvedTrustRelease,
     TrustReleaseResolver,
     TrustReleaseUnavailable,
+    embedded_aws_metadata,
+    embedded_azure_metadata,
     unavailable_trust_release,
+    validated_aws_metadata,
+    validated_azure_metadata,
 )
 from trusted_router.storage import STORE
 from trusted_router.storage_custom_models import normalize_custom_model_id
@@ -505,6 +509,35 @@ async def _handle_support_inquiry(settings: Settings, request: Request) -> JSONR
 def register_public_routes(app: FastAPI, settings: Settings) -> None:
     app.mount("/static", _CachedStaticFiles(directory=STATIC_DIR), name="static")
     trust_release_resolver = TrustReleaseResolver(settings)
+    # One resolver per plane. The control plane mirrors three independently
+    # published records rather than authoring two of them from its own config.
+    aws_release_resolver = TrustReleaseResolver(
+        settings,
+        urls=[settings.trust_aws_release_url],
+        validator=validated_aws_metadata,
+        embedded=embedded_aws_metadata,
+    )
+    azure_release_resolver = TrustReleaseResolver(
+        settings,
+        urls=[settings.trust_azure_release_url],
+        validator=validated_azure_metadata,
+        embedded=embedded_azure_metadata,
+    )
+
+    async def _mirrored(
+        resolver: TrustReleaseResolver, embedded: Callable[[Settings], Mapping[str, Any]]
+    ) -> tuple[Mapping[str, Any], str]:
+        """Authoritative record if reachable, else the offline fallback.
+
+        Falling back to config keeps a verified measurement available during an
+        upstream outage. It is labelled 'embedded' rather than 'live' so the
+        response never implies it was just confirmed from the source.
+        """
+        try:
+            resolved = await resolver.resolve()
+            return resolved.metadata, resolved.status
+        except TrustReleaseUnavailable:
+            return embedded(settings), "embedded"
 
     async def resolved_trust_release() -> ResolvedTrustRelease:
         try:
@@ -1519,25 +1552,28 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     # IS is an unconfigured state, and that must not render as a measurement:
     # serve 503 so a verifier treats it as "no answer" rather than reading
     # "not-configured" as the value it should expect.
-    def _static_release_response(payload: dict[str, Any]) -> JSONResponse:
+    def _static_release_response(payload: dict[str, Any], status: str = "embedded") -> JSONResponse:
         configured = payload["release_metadata_status"] != "not-configured"
         return JSONResponse(
             payload,
             status_code=200 if configured else 503,
-            headers=trust_response_headers("embedded" if configured else "unavailable"),
+            headers=trust_response_headers(status if configured else "unavailable"),
         )
 
     @app.get("/trust/aws-release.json")
     async def trust_release_aws() -> JSONResponse:
-        return _static_release_response(aws_release(settings))
+        metadata, status = await _mirrored(aws_release_resolver, embedded_aws_metadata)
+        return _static_release_response(aws_release(settings, metadata=metadata), status)
 
     @app.get("/trust/azure-release.json")
     async def trust_release_azure() -> JSONResponse:
-        return _static_release_response(azure_release(settings))
+        metadata, status = await _mirrored(azure_release_resolver, embedded_azure_metadata)
+        return _static_release_response(azure_release(settings, metadata=metadata), status)
 
     @app.get("/trust/pcr0-aws.txt")
     async def trust_pcr0_aws() -> PlainTextResponse:
-        payload = aws_release(settings)
+        metadata, _ = await _mirrored(aws_release_resolver, embedded_aws_metadata)
+        payload = aws_release(settings, metadata=metadata)
         configured = payload["release_metadata_status"] != "not-configured"
         return PlainTextResponse(
             "".join(f"{value}\n" for value in payload["accepted_pcr0s"]),
@@ -1547,7 +1583,8 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @app.get("/trust/hostdata-azure.txt")
     async def trust_hostdata_azure() -> PlainTextResponse:
-        payload = azure_release(settings)
+        metadata, _ = await _mirrored(azure_release_resolver, embedded_azure_metadata)
+        payload = azure_release(settings, metadata=metadata)
         configured = payload["release_metadata_status"] != "not-configured"
         return PlainTextResponse(
             "".join(f"{value}\n" for value in payload["accepted_hostdata"]),

@@ -383,6 +383,14 @@ class Settings(BaseSettings):
     # instance, so the issuer a verifier sees depends on which region answered.
     # Comma-separated; a verifier should accept any of them.
     trust_azure_attestation_issuers: str = ""
+    # Where each plane's AUTHORITATIVE record lives. The control plane mirrors
+    # these; the values above are only the offline fallback for when the
+    # authoritative source cannot be reached. Keeping the fallback means a
+    # Sigstore or Pages outage degrades to a stale-but-verified measurement
+    # rather than to no measurement, and the scheduled drift check catches it
+    # either way.
+    trust_aws_release_url: str = ""
+    trust_azure_release_url: str = ""
 
     rate_limit_enabled: bool = True
     rate_limit_window_seconds: int = 60
@@ -1021,6 +1029,12 @@ class Settings(BaseSettings):
             missing.append("TR_BYOK_KMS_KEY_NAME")
         if not self.trust_gcp_release_url:
             self.trust_gcp_release_url = "https://trust.trustedrouter.com/trust/gcp-release.json"
+        if not self.trust_aws_release_url:
+            self.trust_aws_release_url = "https://trust.trustedrouter.com/trust/aws-release.json"
+        if not self.trust_azure_release_url:
+            self.trust_azure_release_url = (
+                "https://trust.trustedrouter.com/trust/azure-release.json"
+            )
         elif not self.trust_gcp_release_url.startswith("https://"):
             missing.append("TR_TRUST_GCP_RELEASE_URL=https://...")
         invalid_release_fallbacks = [

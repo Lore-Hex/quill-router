@@ -36,6 +36,7 @@ from typing import Any
 
 import cbor2
 
+GCP_ATTESTATION_URL = "https://api.trustedrouter.com/attestation"
 AWS_ATTESTATION_URL = "https://api-aws.trustedrouter.com/attestation"
 AZURE_ATTESTATION_URL = "https://api-azure.trustedrouter.com/attestation"
 DEFAULT_CONTROL_PLANE = "https://trustedrouter.com"
@@ -121,15 +122,80 @@ def live_azure_hostdata() -> tuple[str, str]:
     return hostdata, issuer
 
 
+# 503 is what the control plane returns for a record it has no measurement for.
+# Static origins say the same thing differently: S3 returns 403 for a missing
+# object on a bucket that denies listing, GCS and GitHub Pages return 404.
+# Treating only 503 as "unpublished" made this script CRASH against exactly the
+# mirrors the records are moving to — a stack trace where the honest answer is
+# "that plane publishes nothing here".
+NOT_PUBLISHED_STATUSES = frozenset({403, 404, 503})
+
+
 def _published(control_plane: str, path: str) -> dict[str, Any] | None:
-    """Published release record, or None when the plane reports unconfigured."""
+    """Published release record, or None when nothing is published there."""
     url = f"{control_plane.rstrip('/')}{path}"
     try:
         return json.loads(_fetch(url))
     except urllib.error.HTTPError as exc:  # noqa: UP041 - urllib error hierarchy
-        if exc.code == 503:
+        if exc.code in NOT_PUBLISHED_STATUSES:
             return None
         raise
+    except ValueError as exc:
+        # A 200 carrying something that is not a record is a different failure
+        # from an absent record, and must not be silently read as "unpublished"
+        # — that is how a broken mirror looks identical to an honest one.
+        raise ValueError(f"{url} returned a non-JSON body: {exc}") from exc
+
+
+def live_gcp_digest() -> str:
+    """Container image digest from the running Confidential Space workload."""
+    token = _fetch(GCP_ATTESTATION_URL).decode("ascii").strip()
+    parts = token.split(".")
+    if len(parts) != 3:
+        raise ValueError("GCP attestation is not a three-part JWT")
+    padded = parts[1] + "=" * (-len(parts[1]) % 4)
+    claims = json.loads(base64.urlsafe_b64decode(padded))
+    if claims.get("iss") != "https://confidentialcomputing.googleapis.com":
+        raise ValueError(f"unexpected attestation issuer {claims.get('iss')!r}")
+    digest = claims.get("submods", {}).get("container", {}).get("image_digest")
+    if not isinstance(digest, str) or not digest.startswith("sha256:"):
+        raise ValueError("GCP attestation has no container image digest")
+    return digest
+
+
+def check_gcp(control_plane: str) -> Result:
+    """Compare the running GCP workload against the published accepted set.
+
+    Against the SET, never the scalar. A rolling deploy legitimately serves the
+    outgoing digest while the record already names the incoming one — observed
+    exactly that mid-roll on 2026-08-15 — so a scalar comparison would report
+    drift on every deploy and train the reader to ignore it.
+
+    GCP went longest without this check, which is the wrong way round: it is the
+    plane that carries every prompt.
+    """
+    record = _published(control_plane, "/trust/gcp-release.json")
+    if record is None:
+        return Result("gcp", ok=True, detail="no measurement published", skipped=True)
+    accepted = [
+        value
+        for value in record.get("accepted_image_digests") or [record.get("image_digest")]
+        if isinstance(value, str) and value != NOT_CONFIGURED
+    ]
+    if not accepted:
+        return Result("gcp", ok=True, detail="no measurement published", skipped=True)
+    running = live_gcp_digest()
+    if running not in accepted:
+        return Result(
+            "gcp",
+            ok=False,
+            detail="running image digest is not in the published accepted set",
+            extra=[f"running:   {running}", *(f"published: {v}" for v in accepted)],
+        )
+    note = "" if running == record.get("image_digest") else " (rolling; matches accepted set)"
+    return Result(
+        "gcp", ok=True, detail=f"image digest matches{note}", extra=[f"running: {running}"]
+    )
 
 
 def check_aws(control_plane: str) -> Result:
@@ -183,7 +249,7 @@ def main() -> int:
     args = parser.parse_args()
 
     results: list[Result] = []
-    for name, check in (("aws", check_aws), ("azure", check_azure)):
+    for name, check in (("gcp", check_gcp), ("aws", check_aws), ("azure", check_azure)):
         try:
             results.append(check(args.control_plane))
         except Exception as exc:  # noqa: BLE001 - any failure is a failed check
@@ -199,7 +265,10 @@ def main() -> int:
     if failed:
         print(
             f"\n{len(failed)} plane(s) publish a measurement that is not what is running.\n"
-            "Update the TR_TRUST_* values in scripts/deploy/rollout.sh and redeploy, or\n"
+            "Republish from the plane that drifted — in quill-cloud-proxy run\n"
+            "`python3 tools/capture-plane-measurements.py --write` and commit\n"
+            "trust-page/, adding --keep-accepted if a roll is still in progress. The\n"
+            "control plane mirrors those records, so there is nothing to change here.\n"
             "widen the accepted set if a bind window is in progress.",
             file=sys.stderr,
         )

@@ -377,3 +377,257 @@ def test_trust_page_shows_every_plane_and_flags_the_ones_without_a_measurement()
         bare_page = client.get("/trust").text
     # Absence has to be legible on the page too, not just in the JSON.
     assert bare_page.count("No measurement published for this plane yet") == 2
+
+
+# --- A mirror serves a record; it does not rewrite it ------------------------
+
+
+def test_gcp_record_describes_the_gcp_plane_from_every_deployment() -> None:
+    # Shipped live for some time: the AWS- and Azure-hosted control planes each
+    # served a gcp-confidential-space record, Google issuer and audience intact,
+    # whose api_base_url pointed at their OWN gateway — because api_base_url came
+    # from per-deployment settings. Verified on production 2026-08-15:
+    # aws.trustedrouter.com advertised https://api-aws.trustedrouter.com/v1.
+    #
+    # A verifier following that record fetches COSE_Sign1 CBOR over a self-signed
+    # certificate while expecting a Confidential Space JWT, and correctly
+    # concludes the running code does not match the published measurement. The
+    # accusation of tampering is manufactured entirely by us, which makes this
+    # worse than serving nothing.
+    from trusted_router.trust import gcp_release
+
+    canonical = Settings(environment="test", trust_gcp_image_digest="sha256:" + "11" * 32)
+    aws_hosted = Settings(
+        environment="test",
+        trust_gcp_image_digest="sha256:" + "11" * 32,
+        api_base_url="https://api-aws.trustedrouter.com/v1",
+    )
+    azure_hosted = Settings(
+        environment="test",
+        trust_gcp_image_digest="sha256:" + "11" * 32,
+        api_base_url="https://api-azure.trustedrouter.com/v1",
+    )
+
+    for settings in (canonical, aws_hosted, azure_hosted):
+        record = gcp_release(settings)
+        assert record["platform"] == "gcp-confidential-space"
+        assert record["api_base_url"] == "https://api.trustedrouter.com/v1", (
+            "a GCP record must name the GCP plane no matter which deployment mirrors it"
+        )
+        assert record["tls"]["hostname"] == "api.trustedrouter.com"
+        # The two fields must never disagree about which host terminates the
+        # prompt path; that disagreement is what makes the record unverifiable.
+        assert record["api_base_url"] == f"https://{record['tls']['hostname']}/v1"
+
+
+def test_gcp_endpoint_fields_are_derived_from_the_domain_not_hardcoded() -> None:
+    # Without this case the assertions above pass against a hardcoded
+    # "api.trustedrouter.com", because the default domain makes the literal and
+    # the derived value identical. Exercising a different canonical domain is
+    # what proves the value is computed rather than coincidentally right — the
+    # difference matters the day the record is served under another domain.
+    from trusted_router.trust import gcp_release
+
+    settings = Settings(
+        environment="test",
+        trusted_domain="allyrouter.com",
+        trust_gcp_image_digest="sha256:" + "22" * 32,
+    )
+    record = gcp_release(settings)
+    assert record["tls"]["hostname"] == "api.allyrouter.com"
+    assert record["api_base_url"] == "https://api.allyrouter.com/v1"
+
+
+def test_every_plane_record_is_self_consistent_about_its_own_endpoint() -> None:
+    from trusted_router.trust import aws_release, azure_release, gcp_release
+
+    settings = configured_multicloud_settings(
+        trust_gcp_image_digest="sha256:" + "11" * 32,
+        api_base_url="https://api-aws.trustedrouter.com/v1",
+    )
+    for record in (gcp_release(settings), aws_release(settings), azure_release(settings)):
+        assert record["api_base_url"] == f"https://{record['tls']['hostname']}/v1", (
+            f"{record['platform']} points a verifier at {record['api_base_url']} while "
+            f"claiming TLS terminates at {record['tls']['hostname']}"
+        )
+
+
+def test_rolling_accepted_set_survives_the_mirror(httpx_mock: HTTPXMock) -> None:
+    # Live on 2026-08-15: trust.trustedrouter.com correctly published BOTH
+    # digests mid-roll, and trustedrouter.com republished only the incoming one
+    # because the resolver kept just three scalar fields. The fleet was still
+    # serving the outgoing digest, so anyone verifying against the control
+    # plane's copy would have concluded the enclave did not match its published
+    # measurement. Narrowing a pin in transit turns a mirror into an author.
+    outgoing = "sha256:" + "a7" * 32
+    incoming = "sha256:" + "7a" * 32
+    payload = release_payload()
+    payload["image_digest"] = incoming
+    payload["accepted_image_digests"] = [outgoing, incoming]
+    httpx_mock.add_response(
+        url=re.compile(r"https://trust\.example/release\.json\?tr_cache_bucket=\d+"),
+        json=payload,
+    )
+    settings = Settings(
+        environment="test", trust_gcp_release_url="https://trust.example/release.json"
+    )
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        record = client.get("/trust/gcp-release.json").json()
+
+    assert record["image_digest"] == incoming
+    assert outgoing in record["accepted_image_digests"], (
+        "the still-serving digest was dropped; a verifier hitting an enclave that "
+        "has not rolled yet would read this record as a measurement mismatch"
+    )
+    assert record["release_state"] == "rolling"
+
+
+def test_primary_digest_is_always_in_its_own_accepted_set(httpx_mock: HTTPXMock) -> None:
+    # An upstream record whose accepted set omits its own current digest must
+    # not produce a published set that rejects the running enclave.
+    payload = release_payload()
+    payload["accepted_image_digests"] = ["sha256:" + "cc" * 32]
+    httpx_mock.add_response(
+        url=re.compile(r"https://trust\.example/release\.json\?tr_cache_bucket=\d+"),
+        json=payload,
+    )
+    settings = Settings(
+        environment="test", trust_gcp_release_url="https://trust.example/release.json"
+    )
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        record = client.get("/trust/gcp-release.json").json()
+    assert record["image_digest"] in record["accepted_image_digests"]
+
+
+# --- The control plane mirrors; it does not author ---------------------------
+
+
+def _aws_upstream(pcr0: str, accepted: list[str]) -> dict[str, object]:
+    return {"platform": "aws-nitro-enclaves", "pcr0": pcr0, "accepted_pcr0s": accepted}
+
+
+def test_aws_record_is_mirrored_from_the_plane_not_control_plane_config(
+    httpx_mock: HTTPXMock,
+) -> None:
+    # The point of the change: what the AWS enclave runs is published by AWS's
+    # own pipeline. If the control plane computed it from its own settings, one
+    # deployment would be the authority for three independent planes — a single
+    # place to falsify and a single place to fail.
+    upstream = "ab" * 48
+    httpx_mock.add_response(
+        url=re.compile(r"https://trust\.example/aws\.json\?tr_cache_bucket=\d+"),
+        json=_aws_upstream(upstream, [upstream]),
+    )
+    settings = Settings(
+        environment="test",
+        trust_aws_release_url="https://trust.example/aws.json",
+        trust_aws_pcr0="cd" * 48,  # stale local config, deliberately different
+    )
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        record = client.get("/trust/aws-release.json").json()
+
+    assert record["pcr0"] == upstream, "the mirrored record must win over local config"
+    assert record["accepted_pcr0s"] == [upstream]
+
+
+def test_unreachable_upstream_falls_back_without_claiming_it_is_live(
+    httpx_mock: HTTPXMock,
+) -> None:
+    # An upstream outage should degrade to a stale-but-verified measurement
+    # rather than to none — but the response must not imply it was just
+    # confirmed from the source.
+    httpx_mock.add_response(
+        url=re.compile(r"https://trust\.example/aws\.json\?tr_cache_bucket=\d+"), status_code=503
+    )
+    configured = "ef" * 48
+    settings = Settings(
+        environment="test",
+        trust_aws_release_url="https://trust.example/aws.json",
+        trust_aws_pcr0=configured,
+    )
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        response = client.get("/trust/aws-release.json")
+
+    assert response.status_code == 200
+    assert response.json()["pcr0"] == configured
+    assert response.headers["x-trustedrouter-release-status"] == "embedded"
+
+
+def test_a_poisoned_upstream_record_is_rejected_not_republished(
+    httpx_mock: HTTPXMock,
+) -> None:
+    # Mirroring must not mean repeating whatever arrives. A record whose
+    # accepted set excludes its own current measurement would have a verifier
+    # reject the very enclave answering them, so it is refused and the verified
+    # local fallback is served instead.
+    httpx_mock.add_response(
+        url=re.compile(r"https://trust\.example/aws\.json\?tr_cache_bucket=\d+"),
+        json=_aws_upstream("ab" * 48, ["cd" * 48]),
+    )
+    configured = "ef" * 48
+    settings = Settings(
+        environment="test",
+        trust_aws_release_url="https://trust.example/aws.json",
+        trust_aws_pcr0=configured,
+    )
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        record = client.get("/trust/aws-release.json").json()
+
+    assert record["pcr0"] == configured, "a self-inconsistent upstream record was republished"
+
+
+def test_azure_mirror_requires_an_issuer_and_carries_every_region(
+    httpx_mock: HTTPXMock,
+) -> None:
+    uaen, sea = "44" * 32, "26" * 32
+    httpx_mock.add_response(
+        url=re.compile(r"https://trust\.example/azure\.json\?tr_cache_bucket=\d+"),
+        json={
+            "platform": "azure-confidential-containers-sev-snp",
+            "hostdata": uaen,
+            "accepted_hostdata": [uaen, sea],
+            "attestation_issuers": [
+                "https://trquilluaen.uaen.attest.azure.net",
+                "https://trquillsea.sasia.attest.azure.net",
+            ],
+        },
+    )
+    settings = Settings(
+        environment="test", trust_azure_release_url="https://trust.example/azure.json"
+    )
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        record = client.get("/trust/azure-release.json").json()
+
+    # Both regions run different CCE policies, so both hostdata values are
+    # permanently correct. Dropping either makes a verifier routed to that
+    # region conclude tampering.
+    assert record["accepted_hostdata"] == [uaen, sea]
+    assert len(record["attestation_issuers"]) == 2
+
+
+def test_azure_record_without_an_issuer_is_rejected(httpx_mock: HTTPXMock) -> None:
+    # An MAA record naming no issuer is unverifiable: the reader has no way to
+    # know which attestation service's signature to trust, so "hostdata is X"
+    # is an unsupported assertion. Republishing it would look like a measurement
+    # while carrying none of the evidence that makes one meaningful.
+    httpx_mock.add_response(
+        url=re.compile(r"https://trust\.example/azure\.json\?tr_cache_bucket=\d+"),
+        json={
+            "platform": "azure-confidential-containers-sev-snp",
+            "hostdata": "44" * 32,
+            "accepted_hostdata": ["44" * 32],
+            "attestation_issuers": [],
+        },
+    )
+    configured = "99" * 32
+    settings = Settings(
+        environment="test",
+        trust_azure_release_url="https://trust.example/azure.json",
+        trust_azure_hostdata=configured,
+        trust_azure_attestation_issuers="https://trquilluaen.uaen.attest.azure.net",
+    )
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        record = client.get("/trust/azure-release.json").json()
+
+    assert record["hostdata"] == configured, "an issuer-less upstream record was republished"
+    assert record["attestation_issuers"] == ["https://trquilluaen.uaen.attest.azure.net"]
