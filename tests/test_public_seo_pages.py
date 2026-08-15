@@ -36,6 +36,9 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert core.status_code == 200
     assert "<urlset" in core.text
     assert "<loc>https://trustedrouter.com/eu</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/trust</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/api/reference</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/docs/x402</loc>" in core.text
     assert "<loc>https://trustedrouter.com/openai-compatible-llm-api</loc>" in core.text
     assert "<loc>https://trustedrouter.com/kimi-k2-api</loc>" in core.text
     assert "<loc>https://trustedrouter.com/gemini-flash-alternative</loc>" in core.text
@@ -153,6 +156,9 @@ def test_api_reference_declares_one_query_independent_canonical(
     assert response.status_code == 200
     assert response.text.count('rel="canonical"') == 1
     assert '<link rel="canonical" href="https://trustedrouter.com/api/reference">' in response.text
+    assert "<title>TrustedRouter API Reference: Endpoints and Schemas</title>" in response.text
+    assert '<meta name="description"' in response.text
+    assert 'property="og:title"' in response.text
 
 
 @pytest.mark.parametrize(
@@ -200,6 +206,12 @@ def test_trust_page_declares_primary_trust_path_as_canonical(
         assert response.status_code == 200
         assert response.text.count('rel="canonical"') == 1
         assert '<link rel="canonical" href="https://trustedrouter.com/trust">' in response.text
+        assert "<title>Verify TrustedRouter Attestation and Running Code</title>" in response.text
+        assert '<meta name="description"' in response.text
+        assert 'property="og:title"' in response.text
+        assert 'href="https://trustedrouter.com/api/reference">API docs</a>' in response.text
+        assert 'href="https://api.trustedrouter.com/v1">API</a>' not in response.text
+        assert '"@type":"WebPage"' in response.text
 
 
 def test_indexnow_key_file_is_public(client: TestClient) -> None:
@@ -276,7 +288,10 @@ def test_public_provider_route_defaults_to_html_for_link_checkers(client: TestCl
     response = client.get("/providers")
 
     assert response.status_code == 200
-    assert "<title>Providers | TrustedRouter</title>" in response.text
+    assert (
+        "<title>AI Providers: Models, Privacy and Uptime | TrustedRouter</title>"
+        in response.text
+    )
     assert "Provider transparency" in response.text
     assert "application/json" not in response.headers["content-type"]
 
@@ -290,7 +305,7 @@ def test_search_console_opportunity_pages_answer_observed_queries(
 ) -> None:
     eu = client.get("/eu")
     assert eu.status_code == 200
-    assert "<title>EU LLM Gateway: Private AI Routing in Europe | TrustedRouter</title>" in eu.text
+    assert "<title>EU LLM Gateway: Private AI Routing | TrustedRouter</title>" in eu.text
     assert "What the EU LLM gateway controls" in eu.text
     assert "https://api-europe-west4.quillrouter.com/v1" in eu.text
     assert "Does the EU gateway guarantee EU data residency?" in eu.text
@@ -859,6 +874,18 @@ def test_model_overview_surfaces_cached_route_evidence(
     assert "n=10" not in response.text
 
 
+def test_model_overview_answers_high_intent_questions(client: TestClient) -> None:
+    response = client.get("/models/minimax/minimax-m3")
+
+    assert response.status_code == 200
+    assert "What model ID should I use for MiniMax: MiniMax M3?" in response.text
+    assert "Which providers serve MiniMax: MiniMax M3?" in response.text
+    assert "How much does MiniMax: MiniMax M3 cost through TrustedRouter?" in response.text
+    assert "How do I require zero data retention for MiniMax: MiniMax M3?" in response.text
+    assert "provider.min_privacy" in response.text
+    assert "FAQPage" in json.dumps(_json_ld(response.text))
+
+
 def test_model_route_evidence_does_not_invent_a_prepaid_price(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -991,6 +1018,9 @@ def test_model_comparison_surfaces_distinct_measured_route_metrics(
     assert "100.00%" in response.text
     assert "Related comparisons" in response.text
     assert "Browse every comparison" in response.text
+    assert "Keep comparing" in response.text
+    assert "Previous comparison" in response.text
+    assert "Next comparison" in response.text
 
 
 def test_reversed_model_comparison_redirects_to_stable_canonical(
@@ -1056,6 +1086,31 @@ def test_model_comparison_graph_covers_every_public_model() -> None:
         model.id.casefold() for left, right in _model_comparison_pairs() for model in (left, right)
     }
     assert {model.id.casefold() for model in _public_models_for_seo()} <= represented
+
+
+def test_model_comparison_graph_gives_every_page_two_inbound_neighbors() -> None:
+    from trusted_router.dashboard import (
+        _model_comparison_neighbor_index,
+        _model_comparison_pairs,
+    )
+
+    neighbor_index = _model_comparison_neighbor_index()
+    expected_paths = {
+        f"/compare/models/{left.id}/vs/{right.id}"
+        for left, right in _model_comparison_pairs()
+    }
+    inbound_counts = {path: 0 for path in expected_paths}
+
+    assert set(neighbor_index) == expected_paths
+    for source, neighbors in neighbor_index.items():
+        assert len(neighbors) == 2
+        assert {relation for _href, _label, relation in neighbors} == {"Previous", "Next"}
+        for href, _label, _relation in neighbors:
+            assert href != source
+            assert href in inbound_counts
+            inbound_counts[href] += 1
+
+    assert set(inbound_counts.values()) == {2}
 
 
 def test_resources_directory_links_previous_orphan_pages(client: TestClient) -> None:

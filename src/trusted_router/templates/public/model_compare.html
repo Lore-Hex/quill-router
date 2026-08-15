@@ -117,6 +117,19 @@
 </section>
 {% endif %}
 
+{% if comparison_neighbors %}
+<nav class="panel" aria-label="Browse adjacent model comparisons">
+  <div class="panel-head"><h2>Keep comparing</h2><a href="/compare/models">Comparison directory</a></div>
+  <div class="panel-body">
+    <ul class="link-list">
+      {% for neighbor in comparison_neighbors %}
+      <li><a href="{{ neighbor.href }}">{{ neighbor.label }}</a><span>{{ neighbor.relation }} comparison</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+</nav>
+{% endif %}
+
 <section class="marketing-split">
   <div class="marketing-copy">
     <span class="eyebrow">Production choice</span>

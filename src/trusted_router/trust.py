@@ -91,6 +91,30 @@ def trust_html(
     api = html.escape(resolved_api_base_url)
     api_hostname = html.escape(resolved_api_base_url.removeprefix("https://").split("/", 1)[0])
     control_origin = html.escape(f"https://{domain}")
+    canonical_url = html.escape(canonical_public_url(settings, "/trust"), quote=True)
+    docs_url = html.escape(canonical_public_url(settings, "/api/reference"), quote=True)
+    trust_title = "Verify TrustedRouter Attestation and Running Code"
+    trust_description = (
+        "Verify the live TrustedRouter gateway attestation, image digest, source commit, "
+        "TLS boundary, and open-source deployment before sending prompts."
+    )
+    og_image = html.escape(canonical_public_url(settings, "/og.png"), quote=True)
+    trust_json_ld = json.dumps(
+        {
+            "@context": "https://schema.org",
+            "@type": "WebPage",
+            "name": trust_title,
+            "description": trust_description,
+            "url": canonical_public_url(settings, "/trust"),
+            "about": {
+                "@type": "SoftwareApplication",
+                "name": "TrustedRouter",
+                "applicationCategory": "DeveloperApplication",
+                "codeRepository": ATTESTED_GATEWAY_REPO,
+            },
+        },
+        separators=(",", ":"),
+    ).replace("<", "\\u003c")
     control_repo = html.escape(CONTROL_PLANE_REPO)
     gateway_repo = html.escape(ATTESTED_GATEWAY_REPO)
     infra_repo = html.escape(CLOUD_INFRA_REPO)
@@ -117,8 +141,20 @@ def trust_html(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>TrustedRouter Trust</title>
-  <link rel="canonical" href="{html.escape(canonical_public_url(settings, '/trust'))}">
+  <title>{trust_title}</title>
+  <meta name="description" content="{trust_description}">
+  <link rel="canonical" href="{canonical_url}">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="TrustedRouter">
+  <meta property="og:title" content="{trust_title}">
+  <meta property="og:description" content="{trust_description}">
+  <meta property="og:url" content="{canonical_url}">
+  <meta property="og:image" content="{og_image}">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{trust_title}">
+  <meta name="twitter:description" content="{trust_description}">
+  <meta name="twitter:image" content="{og_image}">
+  <script type="application/ld+json">{trust_json_ld}</script>
   <style>
     :root {{
       color-scheme: light;
@@ -165,7 +201,7 @@ def trust_html(
   <header>
     <nav>
       <a class="brand" href="{control_origin}"><span class="mark">TR</span><span>TrustedRouter</span></a>
-      <div class="links"><a href="{control_repo}">Control repo</a><a href="{gateway_repo}">Gateway repo</a><a href="{infra_repo}">Infra repo</a><a href="{quill_repo}">Quill repo</a><a href="/trust/gcp-release.json">gcp-release.json</a><a href="{api}">API</a><a href="{control_origin}">Console</a></div>
+      <div class="links"><a href="{control_repo}">Control repo</a><a href="{gateway_repo}">Gateway repo</a><a href="{infra_repo}">Infra repo</a><a href="{quill_repo}">Quill repo</a><a href="/trust/gcp-release.json">gcp-release.json</a><a href="{docs_url}">API docs</a><a href="{control_origin}">Console</a></div>
     </nav>
   </header>
   <main class="wrap">
