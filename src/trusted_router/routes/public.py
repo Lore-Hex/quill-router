@@ -868,6 +868,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def seo_confidential_computing_llm() -> str:
         return public_page_html(settings, "confidential-computing-llm")
 
+    @public_html_route("/badge")
+    async def confidential_ai_badge() -> str:
+        return public_page_html(settings, "badge")
+
     @public_html_route("/tinfoil-alternative")
     async def seo_tinfoil_alternative() -> str:
         return public_page_html(settings, "tinfoil-alternative")

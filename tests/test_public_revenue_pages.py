@@ -45,6 +45,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/litellm-alternative": "LiteLLM lets you self-host.",
         "/portkey-alternative": "Portkey logs every request.",
         "/confidential-computing-llm": "Run LLM inference behind hardware attestation",
+        "/badge": "Show where your customers' AI data goes.",
         "/tinfoil-alternative": "Same verifiable-privacy bet.",
         "/openai-compatible-llm-api": "Keep the SDK. Change the base URL.",
         "/kimi-k2-api": "Kimi K2 with provider fallback and measured routes.",
@@ -179,6 +180,7 @@ def test_revenue_pages_support_link_checkers(client: TestClient) -> None:
         "/blog/no-log-is-a-promise-attestation-is-proof",
         "/blog/fusion-evals-open-source",
         "/security",
+        "/badge",
         "/eu",
         "/models",
     ]
@@ -187,6 +189,36 @@ def test_revenue_pages_support_link_checkers(client: TestClient) -> None:
         assert client.head(path).status_code == 200
         slash_response = client.get(f"{path}/", follow_redirects=False)
         assert slash_response.status_code == 200
+
+
+def test_confidential_ai_badge_is_embeddable_and_scoped(client: TestClient) -> None:
+    response = client.get("/badge")
+    assert response.status_code == 200
+    assert "Confidential AI" in response.text
+    assert 'model="trustedrouter/confidential"' in response.text
+    assert 'provider.min_privacy="confidential"' in response.text
+    assert "not a SOC 2, ISO 27001, HIPAA, or product-wide certification" in response.text
+    assert "https://trustedrouter.com/static/badges/confidential-ai-light.svg" in response.text
+    assert "https://trustedrouter.com/static/badges/confidential-ai-dark.svg" in response.text
+    assert "certified confidential" not in response.text.casefold()
+
+    for asset in (
+        "/static/badges/confidential-ai-light.svg",
+        "/static/badges/confidential-ai-dark.svg",
+        "/static/badges/confidential-ai-seal.svg",
+        "/static/badges/confidential-ai-light.png",
+        "/static/badges/confidential-ai-dark.png",
+        "/static/badges/confidential-ai-seal.png",
+    ):
+        badge = client.get(asset)
+        assert badge.status_code == 200, asset
+        assert "public" in badge.headers["cache-control"]
+
+    homepage = client.get("/")
+    assert 'href="/badge">Confidential AI badge</a>' in homepage.text
+
+    security = client.get("/security")
+    assert 'href="/badge">Get the badge</a>' in security.text
 
 
 def test_blog_has_no_phd_hiring_banner(client: TestClient) -> None:

@@ -169,6 +169,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/litellm-alternative",
     "/portkey-alternative",
     "/confidential-computing-llm",
+    "/badge",
     "/tinfoil-alternative",
     "/sign-in-with-trustedrouter",
     "/openai-compatible-llm-api",
@@ -1216,6 +1217,15 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         description=(
             "Run LLM routing through confidential computing with GCP Confidential Space, "
             "open source gateway code, remote attestation, protected TLS keys, and no prompt logs."
+        ),
+    ),
+    "badge": PublicPage(
+        template="public/confidential_ai_badge.html",
+        og_card="confidential-computing-llm.png",
+        title="Confidential AI Badge",
+        description=(
+            "A hardware-attested Confidential AI trust seal for products using "
+            "TrustedRouter's strongest confidential route, with live verification."
         ),
     ),
     "tinfoil-alternative": PublicPage(
