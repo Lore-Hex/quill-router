@@ -41,6 +41,7 @@ from trusted_router.byok_v1_attestations import (
     OUTCOME_V1_REMAINS,
     OUTCOME_ZERO_SCAN,
     PASSING_OUTCOMES,
+    V1_ALGORITHM_LITERAL,
     Attestation,
     surface_fingerprint,
     utc_now,
@@ -59,7 +60,7 @@ class EntityRow:
 
 @dataclass(frozen=True)
 class EntityCensus:
-    """A second, differently shaped question about the same table.
+    """Three differently shaped questions about the same table.
 
     `migrated_kind_counts` is an aggregate count per migrated kind; the scan is
     a paged cursor walk. They are computed by different SQL and can therefore
@@ -67,10 +68,27 @@ class EntityCensus:
     still sees them. `sampled_kinds` is a bounded peek at the table's contents
     of any kind at all, so that "the audit found nothing" can be distinguished
     from "the audit could not have found anything".
+
+    `v1_literal_rows` is the one that does not share the scan's assumptions.
+    Both of the above filter on `MIGRATED_KINDS`, and the scan reads envelopes
+    only out of the field names in `MIGRATED_SURFACES` — so a renamed entity
+    kind or a renamed body field hides the same rows from the walk AND from the
+    count, and the disagreement they exist to expose never happens. This one
+    searches whole row bodies for `V1_ALGORITHM_LITERAL` with no kind filter and
+    no field-name assumption, which is why it is the clause `empty_witnessed`
+    actually rests on.
+
+    `source` is whatever the server says it is — instance and database, or
+    database/user/host. It is not a proof of anything. It is recorded so that a
+    reviewer of the ledger can see which database answered and compare it
+    against the cloud the entry claims to speak for, since nothing offline can
+    tell a correct database from a wrong-but-populated one.
     """
 
     migrated_kind_counts: dict[str, int]
     sampled_kinds: tuple[str, ...]
+    v1_literal_rows: int
+    source: str
 
     @property
     def reachable(self) -> bool:
@@ -117,6 +135,11 @@ class BackfillStats:
     # per-kind census, and "we scanned 4000 rows" says nothing about whether
     # any of them were the kind that holds envelopes.
     rows_scanned_by_kind: dict[str, int] = field(default_factory=dict)
+    # Rows carrying at least one v1 envelope. Counted separately from
+    # `v1_envelopes` because the census counts ROWS containing the v1 literal,
+    # and a broadcast destination can hold two v1 envelopes in one row; the
+    # cross-check has to compare like with like.
+    rows_with_v1: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -205,6 +228,7 @@ class BackfillRunner:
         new_body = copy.deepcopy(row.body)
         migrations = 0
         row_failed = False
+        row_v1 = 0
         for field_name, envelope_family in _fields_for_kind(row.kind):
             raw_envelope = row.body.get(field_name)
             if raw_envelope is None:
@@ -226,6 +250,7 @@ class BackfillRunner:
                 self._error(row, field_name, "unsupported_algorithm")
                 continue
             stats.v1_envelopes += 1
+            row_v1 += 1
             if not self._apply:
                 continue
             try:
@@ -242,6 +267,9 @@ class BackfillRunner:
                 stats.failures += 1
                 row_failed = True
                 self._error(row, field_name, type(exc).__name__)
+
+        if row_v1:
+            stats.rows_with_v1 += 1
 
         if not self._apply or row_failed or migrations == 0:
             return
@@ -358,12 +386,19 @@ class SpannerEntityStore:
             ]
 
     def census(self, *, sample_limit: int = 1000) -> EntityCensus:
-        """Aggregate counts for the migrated kinds, plus a bounded liveness peek.
+        """Counts per migrated kind, a bounded liveness peek, and a literal search.
 
-        Deliberately not `SELECT kind, COUNT(*) ... GROUP BY kind` over the
-        whole table: `tr_entities` holds every entity in the deployment and a
-        full group-by is an expensive scan on a live database. The peek is a
-        `LIMIT` read, so its cost does not grow with the table.
+        The per-kind count is deliberately not `GROUP BY kind` over the whole
+        table: `tr_entities` holds every entity in the deployment and a full
+        group-by is an expensive scan on a live database. The peek is a `LIMIT`
+        read, so its cost does not grow with the table.
+
+        The v1 literal search IS a full scan, and there is no way around it —
+        that is the whole point of it. It filters on neither the kind list nor
+        the field map the walk uses, so it is the only question here that a
+        renamed entity kind or a renamed body field cannot hide from. This runs
+        once, before an irreversible step, on a snapshot read; it is not on any
+        request path. On a large table expect it to take a while and let it.
         """
         counts: dict[str, int] = {}
         sampled: set[str] = set()
@@ -382,7 +417,19 @@ class SpannerEntityStore:
             )
             for (kind,) in sample:
                 sampled.add(kind)
-        return EntityCensus(migrated_kind_counts=counts, sampled_kinds=tuple(sorted(sampled)))
+            literal_rows = 0
+            for (count,) in snapshot.execute_sql(
+                "SELECT COUNT(*) FROM tr_entities WHERE STRPOS(body, @literal) > 0",
+                params={"literal": V1_ALGORITHM_LITERAL},
+                param_types={"literal": self._param_types.STRING},
+            ):
+                literal_rows = int(count)
+        return EntityCensus(
+            migrated_kind_counts=counts,
+            sampled_kinds=tuple(sorted(sampled)),
+            v1_literal_rows=literal_rows,
+            source=f"spanner:{self._database.name}",
+        )
 
     def compare_and_swap(self, row: EntityRow, new_body: dict[str, Any]) -> bool:
         new_body_json = _json_body(new_body)
@@ -453,7 +500,13 @@ class PostgresEntityStore:
         return result
 
     def census(self, *, sample_limit: int = 1000) -> EntityCensus:
-        """See SpannerEntityStore.census. Same two questions, same reasons."""
+        """See SpannerEntityStore.census. Same three questions, same reasons.
+
+        `body::text LIKE` rather than a JSON path, so the search does not
+        depend on where in the body an envelope sits or what the field holding
+        it is called — the two things the walk assumes and the two things that
+        made an earlier version of this check blind.
+        """
         import psycopg
 
         with psycopg.connect(self._dsn) as conn:
@@ -465,9 +518,30 @@ class PostgresEntityStore:
                 "SELECT DISTINCT kind FROM (SELECT kind FROM tr_entities LIMIT %s) AS peek",
                 (sample_limit,),
             ).fetchall()
+            # A missing row from either aggregate raises rather than defaulting
+            # to zero: "the server told me nothing" must never become "there is
+            # nothing", which is the confusion this whole module exists for.
+            literal_row = conn.execute(
+                "SELECT COUNT(*) FROM tr_entities WHERE body::text LIKE %s",
+                (f"%{V1_ALGORITHM_LITERAL}%",),
+            ).fetchone()
+            if literal_row is None:
+                raise ValueError("the v1 literal count returned no row")
+            source_row = conn.execute(
+                "SELECT current_database(), current_user, "
+                "coalesce(host(inet_server_addr()), 'local'), inet_server_port()"
+            ).fetchone()
+            if source_row is None:
+                raise ValueError("the database could not identify itself")
+        (literal_rows,) = literal_row
+        database, user, host, port = source_row
         return EntityCensus(
             migrated_kind_counts={kind: int(count) for kind, count in counted},
             sampled_kinds=tuple(sorted(kind for (kind,) in sampled)),
+            v1_literal_rows=int(literal_rows),
+            # Asked of the server rather than parsed out of the DSN, and the
+            # DSN never appears here: it carries the password.
+            source=f"postgres:{database}@{host}:{port} as {user}",
         )
 
     def compare_and_swap(self, row: EntityRow, new_body: dict[str, Any]) -> bool:
@@ -554,6 +628,8 @@ class PreconditionResult:
             "census": {
                 "migrated_kind_counts": dict(sorted(self.census.migrated_kind_counts.items())),
                 "sampled_kinds": list(self.census.sampled_kinds),
+                "v1_literal_rows": self.census.v1_literal_rows,
+                "source": self.census.source,
             },
         }
 
@@ -570,11 +646,27 @@ def check_no_v1_envelopes(
 
     The audit alone cannot do this. `BackfillRunner(apply=False)` reports
     `v1_envelopes == 0` just as happily for a migrated database as for a run
-    that scanned nothing at all — a bad resume cursor, a renamed kind, a
-    read-only credential on the wrong project. Both render as a green check,
-    and on AWS and Azure a green check is exactly what a zero-row audit
-    produced. So this function pairs the walk with a census computed by
-    different SQL and refuses to collapse the two cases.
+    that scanned nothing at all. Both render as a green check, and on AWS and
+    Azure a green check is exactly what a zero-row audit produced. So this
+    function pairs the walk with a census and refuses to collapse the cases.
+
+    WHAT THE CENSUS ACTUALLY SEPARATES, AND WHAT IT DOES NOT
+        * A cursor, ordering or pagination bug in the paged walk — caught by
+          the per-kind counts, which are computed by different SQL from the
+          same kind list.
+        * A renamed entity kind, or an envelope moved to a differently named
+          body field — caught by `census.v1_literal_rows`, and by nothing else
+          here. The per-kind counts cannot catch either: both halves derive
+          their predicate from `MIGRATED_KINDS`, so a renamed kind is renamed
+          in both, and neither reads a field name the surface map does not
+          list. An earlier revision of this docstring claimed the per-kind
+          census covered a renamed kind. It did not, and a live v1 envelope
+          under a renamed field passed as `empty_witnessed`.
+        * A credential pointed at a wrong-but-populated database — NOT caught,
+          and not catchable from here. Such a database is reachable, non-empty,
+          and holds no v1 envelope, which is indistinguishable from success.
+          `census.source` is recorded so the mismatch is at least visible in
+          the ledger afterwards.
 
     The census is taken FIRST, on purpose. Taken last, a BYOK key registered
     while the scan was running would be counted by the census and missed by the
@@ -608,6 +700,23 @@ def check_no_v1_envelopes(
                 f"the scan did not see rows the census can count ({detail}). A resume cursor, "
                 "filter, or ordering bug — or a row deleted mid-run. Re-run before believing "
                 "anything else this reported."
+            ),
+            stats=stats,
+            census=census,
+        )
+    if census.v1_literal_rows > stats.rows_with_v1:
+        return PreconditionResult(
+            cloud=cloud,
+            outcome=OUTCOME_SCAN_DISAGREES,
+            detail=(
+                f"{census.v1_literal_rows} rows in the table carry the v1 algorithm literal "
+                f"{V1_ALGORITHM_LITERAL!r} but the audit classified only {stats.rows_with_v1} "
+                "rows as v1. The literal search uses no kind filter and no field-name map, so "
+                "the walk is blind to at least "
+                f"{census.v1_literal_rows - stats.rows_with_v1} rows holding a v1 envelope — a "
+                "renamed entity kind, an envelope under a body field this repository does not "
+                "know, or a surface missing from MIGRATED_SURFACES. Find those rows before "
+                "believing anything else this reported."
             ),
             stats=stats,
             census=census,
@@ -649,14 +758,28 @@ def check_no_v1_envelopes(
             census=census,
         )
     if stats.envelopes_seen == 0:
+        # Every clause of the sentence below is evaluated above: the literal
+        # search returned zero (checked at the top), the census reached rows
+        # (checked immediately above), and envelopes_seen is zero by this
+        # branch. Nothing here asserts a condition the code did not test —
+        # that is the defect this branch used to have, and it is the same
+        # defect the whole file exists to prevent one layer down.
+        migrated_rows = sum(census.migrated_kind_counts.values())
         return PreconditionResult(
             cloud=cloud,
             outcome=OUTCOME_EMPTY_WITNESSED,
             detail=(
-                f"no envelopes exist on this deployment. The census reached "
-                f"{len(census.sampled_kinds)} entity kinds in the same table with the same "
-                "credentials and counts zero rows of every migrated kind, so the empty result "
-                "is the deployment's state and not the query's failure."
+                f"the walk read {stats.rows_scanned} rows of the migrated kinds and found no "
+                f"envelope in any of them ({stats.missing_envelopes} expected envelope fields "
+                "were absent, which is ordinary — both broadcast secret fields and the BYOK "
+                "secret are optional). What makes this an attestation rather than an empty "
+                f"result is the census: it reached {len(census.sampled_kinds)} entity kinds in "
+                f"the same table with the same credentials, counted {migrated_rows} rows of the "
+                "migrated kinds, and found ZERO rows anywhere in the table carrying "
+                f"{V1_ALGORITHM_LITERAL!r} — a search that filters on no kind and assumes no "
+                "field name, so a renamed kind or a renamed body field cannot hide from it. "
+                "This does not establish that this was the right database; the one that "
+                f"answered was {census.source!r}."
             ),
             stats=stats,
             census=census,
@@ -666,7 +789,8 @@ def check_no_v1_envelopes(
         outcome=OUTCOME_CLEAN,
         detail=(
             f"{stats.envelopes_seen} envelopes examined across {stats.rows_scanned} rows; "
-            f"all {stats.v2_envelopes} are v2."
+            f"all {stats.v2_envelopes} are v2, and no row anywhere in the table carries "
+            f"{V1_ALGORITHM_LITERAL!r}. The database that answered was {census.source!r}."
         ),
         stats=stats,
         census=census,
@@ -702,8 +826,11 @@ def attestation_for(
         envelopes_seen=result.stats.envelopes_seen,
         v1_envelopes=result.stats.v1_envelopes,
         v2_envelopes=result.stats.v2_envelopes,
+        missing_envelopes=result.stats.missing_envelopes,
         census_migrated_kind_counts=dict(result.census.migrated_kind_counts),
         census_sampled_kinds=list(result.census.sampled_kinds),
+        census_v1_literal_rows=result.census.v1_literal_rows,
+        census_source=result.census.source,
         operator=operator,
         note=note,
     )

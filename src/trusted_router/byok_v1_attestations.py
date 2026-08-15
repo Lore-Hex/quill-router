@@ -1,4 +1,4 @@
-"""Per-cloud, machine-checkable evidence that no v1 BYOK envelope remains.
+"""Fleet-wide, machine-checkable evidence that no v1 BYOK envelope remains.
 
 THE LAW
     Step 4 of `docs/design/byok-aad-v2-migration.md` — deleting v1 envelope
@@ -8,6 +8,41 @@ THE LAW
 
     Nothing here removes v1. This module is the precondition and the record;
     `tests/test_byok_v1_removal_gate.py` is the thing that refuses.
+
+WHY EVERY CLOUD, AND NOT EACH CLOUD ON ITS OWN
+    Each cloud is a standalone TrustedRouter with its own database, so each one
+    needs its own run. That much was always in the plan. What was written down
+    wrongly — §4.0 point 1 of the migration doc said a v2 envelope written by
+    one cloud's control plane "never reaches another cloud's enclave" — is that
+    the deployments are *isolated*. They are not. Verified 2026-08-15 in
+    `quill-cloud-proxy`:
+
+      tools/deploy-aws-nitro.sh:888
+        QUILL_TR_CONTROL_PLANE_BASE_URL=https://aws.trustedrouter.com/v1,
+                                        https://trustedrouter.com/v1
+      tools/deploy-azure-aci.sh:269
+        TR_CONTROL_PLANE_BASE_URL=https://azure.trustedrouter.com/v1,
+                                  https://trustedrouter.com/v1
+      tools/deploy-gcp-mig.sh:208
+        TR_CONTROL_PLANE_BASE_URL=https://trustedrouter.com
+      enclave-go/internal/trustedrouter/client.go:41-44, 789-826
+        "baseURLs is ordered: index 0 is this cloud's OWN control plane, later
+         entries are fallbacks used only when an earlier one cannot be dialled."
+        `postToFirstDialable` walks that list, and `Authorization` carries
+        `byok_encrypted_secret` (client.go:216) — so the envelope an enclave
+        decrypts comes from whichever control plane answered.
+
+    So an AWS or Azure enclave whose own control plane cannot be dialled falls
+    over to the home (GCP) plane and is handed envelopes out of the GCP
+    database. Dropping v1 read support on one cloud while another cloud still
+    stores v1 envelopes therefore breaks BYOK on that cloud **during an
+    outage** — the worst possible moment and the hardest to attribute.
+
+    `ENCLAVE_CONTROL_PLANE_SOURCES` below records that topology, and the set of
+    clouds that must attest is derived from it rather than asserted. Today the
+    union is all three, which is why the requirement looks the same as before;
+    it now has the right reason underneath it, and adding a fourth deployment
+    with its own fallback list changes the requirement automatically.
 
 WHY THIS EXISTS AS A LEDGER AND NOT AS A SENTENCE
     Until now the only artifact standing between an engineer and permanently
@@ -29,25 +64,47 @@ THE NEAR-MISS THIS ENCODES
     the credentials were wrong renders exactly like a deployment with no BYOK
     customers. So the outcomes here are deliberately not a boolean:
 
-    * `clean`            — envelopes were seen and every one of them was v2.
-    * `empty_witnessed`  — no envelopes were seen, AND an independently shaped
-                           census of the same table proved it was reachable,
-                           non-empty, and held zero rows of the migrated kinds.
+    * `clean`            — envelopes were seen, every one of them was v2, and
+                           no row anywhere in the table carries the v1
+                           algorithm literal.
+    * `empty_witnessed`  — no envelope of any format was seen, the census
+                           proved the table was reachable and non-empty, and a
+                           search that shares neither the scan's kind filter
+                           nor its field-name map found no row anywhere in the
+                           table carrying the v1 algorithm literal.
     * `zero_scan`        — no envelopes were seen and nothing corroborates that
                            the scan could have seen any. **Never a pass, never
                            recordable.** This is the AWS/Azure shape.
     * `scan_disagrees_with_census` — the census counted rows of a migrated kind
-                           that the scan did not return. Bad cursor, bad
-                           filter, or a mid-run delete. **Never a pass.**
+                           that the scan did not return, or counted rows
+                           carrying the v1 literal that the scan did not
+                           classify as v1. Bad cursor, bad kind filter, a
+                           renamed body field, or a mid-run delete. **Never a
+                           pass.**
     * `v1_remains`, `dirty` — the audit found v1 rows, or found rows it could
                            not classify. **Never a pass.**
+
+    The literal census is what makes the last two of those reachable. An
+    earlier revision of this module derived both the scan's WHERE clause and
+    the census's WHERE clause from `MIGRATED_KINDS`, and read envelopes only
+    out of the field names in `MIGRATED_SURFACES` — so a renamed entity kind or
+    a renamed body field hid the same rows from both halves and produced a
+    corroborated-looking `empty_witnessed` over live v1 envelopes. The literal
+    search assumes neither.
 
 SCOPE LIMIT — what a full ledger does NOT establish
     * It does not prove the enclave side is ready. `quill-cloud-proxy` has its
       own v1 branch and its own removal decision; this repo cannot see it.
+    * **It cannot tell a right database from a wrong-but-populated one.** A
+      credential pointed at some other project's `tr_entities` — one that is
+      reachable, non-empty, and holds no v1 envelope — produces a genuine
+      `empty_witnessed`. Nothing offline can close that. What is done instead
+      is to record `census_source`, the server's own description of the
+      database it answered from, in the attestation, so the mismatch is
+      visible to a reviewer rather than invisible. Compare it against the
+      cloud the entry claims.
     * The census is issued through the same store object as the scan, so it
-      shares the table name. It corroborates reachability, credentials, and the
-      scan's cursor/filter — it does NOT prove `tr_entities` is where envelopes
+      shares the table name. It does NOT prove `tr_entities` is where envelopes
       actually live, and it cannot see a surface that no code path here knows
       about (open question #2 in the migration doc). The fingerprint below is
       the partial answer: adding a surface invalidates every attestation.
@@ -76,6 +133,54 @@ from typing import Any
 #: tuple exists to make impossible.
 STANDALONE_CLOUDS: tuple[str, ...] = ("aws", "azure", "gcp")
 
+#: For each cloud's ENCLAVE, the clouds whose control plane — and therefore
+#: whose database — can serve it a BYOK envelope. Index 0 is the cloud's own
+#: plane; later entries are dial-failure fallbacks. `"gcp"` is the home plane at
+#: `https://trustedrouter.com`, which is the deployment the GCP enclave is
+#: pointed at by `tools/deploy-gcp-mig.sh:208`.
+#:
+#: Transcribed by hand from `quill-cloud-proxy` on 2026-08-15; the citations are
+#: in this module's docstring. **Nothing here re-reads that repository**, so
+#: this dict is a claim about a build that was deployed, not a measurement of
+#: the one running now. If a deploy script's list changes, this changes with it
+#: or the requirement below is wrong.
+#:
+#: The point of writing it down is that it is the reason step 4 is a fleet-wide
+#: decision rather than three independent ones: a cloud that drops v1 reads can
+#: still be handed a v1 envelope out of a *different* cloud's database the next
+#: time its own control plane is undialable.
+ENCLAVE_CONTROL_PLANE_SOURCES: dict[str, tuple[str, ...]] = {
+    "aws": ("aws", "gcp"),
+    "azure": ("azure", "gcp"),
+    "gcp": ("gcp",),
+}
+
+
+def clouds_that_must_attest() -> tuple[str, ...]:
+    """Every cloud whose stored envelopes can reach *some* cloud's enclave.
+
+    The union of `STANDALONE_CLOUDS` and every entry in
+    `ENCLAVE_CONTROL_PLANE_SOURCES` — both directions, so that neither table
+    can weaken the requirement by omission. "All three" is a consequence of the
+    failover topology rather than an axiom: v1 support is one codebase deployed
+    everywhere, and the enclaves cross-read, so the removal is permitted only
+    when every database any enclave can be served from is clear.
+
+    Today this returns exactly `STANDALONE_CLOUDS`. A deployment added to
+    either table alone is still required, which is the safe direction; the
+    unsafe direction — a fourth cloud that reaches nobody's tables — is why the
+    union includes `STANDALONE_CLOUDS` outright.
+    """
+    required = set(STANDALONE_CLOUDS)
+    required.update(ENCLAVE_CONTROL_PLANE_SOURCES)
+    required.update(
+        cloud for sources in ENCLAVE_CONTROL_PLANE_SOURCES.values() for cloud in sources
+    )
+    return tuple(cloud for cloud in STANDALONE_CLOUDS if cloud in required) + tuple(
+        sorted(cloud for cloud in required if cloud not in STANDALONE_CLOUDS)
+    )
+
+
 #: Every encrypted surface the backfill knows how to walk: (entity kind, body
 #: field, AAD namespace family). This is the single source of truth — the
 #: backfill's field map is derived from it — so adding a fourth surface here
@@ -92,7 +197,20 @@ MIGRATED_KINDS: tuple[str, ...] = tuple(
     sorted({kind for kind, _field, _family in MIGRATED_SURFACES})
 )
 
-SCHEMA = "trustedrouter/byok-aad-v1-zero-attestation/v1"
+#: The v1 `algorithm` value as it is written into stored envelope bodies.
+#:
+#: Pinned here rather than imported from `byok_crypto.ALGORITHM` on purpose.
+#: The census below searches row bodies for this string, and it has to keep
+#: working in the tree where step 4 has deleted that constant — a precondition
+#: that stops being expressible the moment someone starts the edit it guards is
+#: not a precondition. `tests/test_byok_v1_precondition.py` asserts the two are
+#: equal while both exist.
+V1_ALGORITHM_LITERAL = "TR-BYOK-ENVELOPE-AES-256-GCM-V1"
+
+#: v2: `census_v1_literal_rows` and `census_source` became required, because a
+#: v1 attestation could be earned without either. Entries written under v1 are
+#: not upgradable — the runs behind them never asked those questions.
+SCHEMA = "trustedrouter/byok-aad-v1-zero-attestation/v2"
 
 OUTCOME_CLEAN = "clean"
 OUTCOME_EMPTY_WITNESSED = "empty_witnessed"
@@ -155,8 +273,16 @@ class Attestation:
     envelopes_seen: int
     v1_envelopes: int
     v2_envelopes: int
+    missing_envelopes: int
     census_migrated_kind_counts: dict[str, int]
     census_sampled_kinds: list[str]
+    #: Rows anywhere in the table whose body carries `V1_ALGORITHM_LITERAL`,
+    #: found without a kind filter and without assuming a body field name. The
+    #: one count in here that is not downstream of `MIGRATED_SURFACES`.
+    census_v1_literal_rows: int
+    #: The server's own description of the database that answered. Not proof of
+    #: the right deployment; the thing a reviewer compares against `cloud`.
+    census_source: str
     operator: str
     note: str = ""
 
@@ -172,8 +298,11 @@ class Attestation:
             "envelopes_seen": self.envelopes_seen,
             "v1_envelopes": self.v1_envelopes,
             "v2_envelopes": self.v2_envelopes,
+            "missing_envelopes": self.missing_envelopes,
             "census_migrated_kind_counts": dict(sorted(self.census_migrated_kind_counts.items())),
             "census_sampled_kinds": sorted(self.census_sampled_kinds),
+            "census_v1_literal_rows": self.census_v1_literal_rows,
+            "census_source": self.census_source,
             "operator": self.operator,
             "note": self.note,
         }
@@ -190,9 +319,24 @@ _REQUIRED_FIELDS = (
     "envelopes_seen",
     "v1_envelopes",
     "v2_envelopes",
+    "missing_envelopes",
     "census_migrated_kind_counts",
     "census_sampled_kinds",
+    "census_v1_literal_rows",
+    "census_source",
     "operator",
+)
+
+#: Fields a hand-edited entry could weaken by writing the right-looking value
+#: at the wrong type: `not "0"` is False, so a string count reads as non-zero
+#: and a string zero reads as present. Cheap to check, so checked.
+_INT_FIELDS = (
+    "rows_scanned",
+    "envelopes_seen",
+    "v1_envelopes",
+    "v2_envelopes",
+    "missing_envelopes",
+    "census_v1_literal_rows",
 )
 
 
@@ -202,9 +346,12 @@ def empty_ledger() -> dict[str, Any]:
         "about": (
             "Recorded output of scripts/check_no_v1_envelopes.py, one entry per standalone "
             "cloud. Read by tests/test_byok_v1_removal_gate.py, which refuses the removal of "
-            "v1 BYOK envelope support until every cloud here attests zero v1 envelopes. An "
-            "entry asserts that a run happened against that cloud's database; writing one by "
-            "hand asserts a run that did not. The gate can check the shape, not the truth."
+            "v1 BYOK envelope support until EVERY cloud here attests zero v1 envelopes. It is "
+            "one fleet-wide verdict, not three: an AWS or Azure enclave falls over to the home "
+            "control plane when its own cannot be dialled, so a v1 envelope in any cloud's "
+            "database can be handed to any cloud's enclave. An entry asserts that a run "
+            "happened against that cloud's database; writing one by hand asserts a run that "
+            "did not. The gate can check the shape, not the truth."
         ),
         "attestations": {},
     }
@@ -253,6 +400,14 @@ def ledger_defects(ledger: dict[str, Any]) -> list[str]:
         if missing:
             defects.append(f"{cloud}: attestation is missing {', '.join(missing)}")
             continue
+        mistyped = [
+            name
+            for name in _INT_FIELDS
+            if not isinstance(entry[name], int) or isinstance(entry[name], bool)
+        ]
+        if mistyped:
+            defects.append(f"{cloud}: these counts are not integers: {', '.join(mistyped)}")
+            continue
         if entry["cloud"] != cloud:
             defects.append(f"{cloud}: attestation records cloud={entry['cloud']!r}")
         if entry["outcome"] not in ALL_OUTCOMES:
@@ -271,17 +426,46 @@ def ledger_defects(ledger: dict[str, Any]) -> list[str]:
             )
         if entry["outcome"] == OUTCOME_CLEAN and not entry["envelopes_seen"]:
             defects.append(f"{cloud}: outcome 'clean' with envelopes_seen=0 is self-contradictory")
-        if entry["outcome"] == OUTCOME_EMPTY_WITNESSED and not entry["census_sampled_kinds"]:
-            defects.append(
-                f"{cloud}: outcome 'empty_witnessed' with no census witness is a zero scan"
-            )
+        if entry["outcome"] == OUTCOME_EMPTY_WITNESSED:
+            if not entry["census_sampled_kinds"]:
+                defects.append(
+                    f"{cloud}: outcome 'empty_witnessed' with no census witness is a zero scan"
+                )
+            if entry["envelopes_seen"]:
+                defects.append(
+                    f"{cloud}: outcome 'empty_witnessed' with "
+                    f"envelopes_seen={entry['envelopes_seen']} is self-contradictory"
+                )
         if entry["v1_envelopes"]:
             defects.append(f"{cloud}: attestation records v1_envelopes={entry['v1_envelopes']}")
+        # The structural half of the run-time check. A passing run that saw no
+        # v1 envelope while the literal census could see rows carrying the v1
+        # marker is the renamed-kind / renamed-field case: the scan was blind,
+        # not the deployment empty. check_no_v1_envelopes refuses to produce
+        # this; the reader has to catch what a hand edit could still write.
+        if entry["census_v1_literal_rows"]:
+            defects.append(
+                f"{cloud}: attestation records census_v1_literal_rows="
+                f"{entry['census_v1_literal_rows']} — rows carrying the v1 algorithm literal "
+                "were counted in the table, so this run did not establish zero v1"
+            )
+        if not isinstance(entry["census_source"], str) or not entry["census_source"].strip():
+            defects.append(
+                f"{cloud}: attestation has no census_source, so nobody can check which "
+                "database answered"
+            )
     return defects
 
 
 def zero_v1_blockers(ledger: dict[str, Any]) -> list[str]:
     """Why step 4 may not proceed yet. Empty list means every cloud attests zero v1.
+
+    The required set comes from `clouds_that_must_attest()`, i.e. from the
+    enclave failover topology, so this is a single fleet-wide verdict and never
+    a per-cloud one. There is deliberately no "is cloud X clear?" function to
+    call by mistake: an AWS enclave that has dropped v1 reads is broken by a v1
+    envelope sitting in the GCP database, so "AWS is clear" is not a claim that
+    authorises anything on its own.
 
     Returns sentences rather than a set of clouds because the caller is a CI
     failure message, and "aws" on its own tells the reader nothing about what
@@ -291,7 +475,7 @@ def zero_v1_blockers(ledger: dict[str, Any]) -> list[str]:
     attestations = ledger.get("attestations")
     if not isinstance(attestations, dict):
         attestations = {}
-    for cloud in STANDALONE_CLOUDS:
+    for cloud in clouds_that_must_attest():
         entry = attestations.get(cloud)
         if not isinstance(entry, dict) or "outcome" not in entry:
             blockers.append(
@@ -331,6 +515,14 @@ def record_attestation(
         )
     if attestation.surface_fingerprint != surface_fingerprint():
         raise ValueError("refusing to record an attestation for a different set of surfaces")
+    if attestation.census_v1_literal_rows:
+        raise ValueError(
+            f"refusing to record a pass with census_v1_literal_rows="
+            f"{attestation.census_v1_literal_rows}: rows carrying the v1 algorithm literal were "
+            "counted in that table"
+        )
+    if not attestation.census_source.strip():
+        raise ValueError("refusing to record an attestation that does not name the database read")
     target = DEFAULT_LEDGER_PATH if path is None else path
     current = load_ledger(target) if ledger is None else ledger
     if current.get("schema") != SCHEMA:

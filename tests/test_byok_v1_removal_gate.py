@@ -1,15 +1,37 @@
 """The gate on step 4: v1 envelope support may not be deleted unattested.
 
 THE LAW
-    If `src/trusted_router/byok_crypto.py` no longer supports v1 envelopes —
-    the `ALGORITHM` constant holding the v1 literal, the `_aad` builder, and
-    the v1 branch of `_envelope_aad` must all be present, or v1 is gone — then
-    `docs/design/byok-aad-v2-attestations.json` must carry a passing zero-v1
-    attestation for **every** standalone cloud, covering the surfaces this
-    repository writes today. Otherwise CI fails and says what to run.
+    If a v1-shaped envelope — sealed exactly as the stored rows were sealed —
+    no longer opens through `decrypt_byok_secret` and `decrypt_control_secret`,
+    then `docs/design/byok-aad-v2-attestations.json` must carry a passing
+    zero-v1 attestation for **every** standalone cloud, covering the surfaces
+    this repository writes today. Otherwise CI fails and says what to run.
 
-    While v1 support is present, this gate asserts nothing about the ledger. It
-    is silent on every change except the one it exists for.
+    While a v1 envelope still opens, this gate asserts nothing about the
+    ledger.
+
+WHY THE TEST IS BEHAVIOURAL AND THE AST PROBE IS ONLY THE EXPLANATION
+    An earlier revision of this file decided by reading `byok_crypto.py`'s AST
+    for three named pieces: the `ALGORITHM` constant, the `_aad` builder, and
+    the v1 arm of `_envelope_aad`. That got it wrong in both directions.
+
+    It stayed **quiet** on the removal the migration doc's own step-4 bullet
+    invites — rejecting v1 at `decrypt_byok_secret`/`decrypt_control_secret`
+    while leaving all three pieces physically in place. Every stored v1
+    envelope is permanently unopenable after that edit, and the gate returned
+    no verdict at all.
+
+    It **fired** on edits that changed nothing: annotating the constant as
+    `ALGORITHM: Final[str]` (an `ast.AnnAssign`, which the probe did not match)
+    and extracting the v1 arm into a helper that `_envelope_aad` calls. Both
+    preserve v1 completely. A gate that cries wolf on a type annotation is a
+    gate somebody deletes, and deleting it is the whole failure.
+
+    So the verdict now comes from sealing a v1 envelope the way a stored row
+    was sealed and asking the public API to open it. Refactors are invisible to
+    that; anything that stops a stored row opening is not, wherever the change
+    lives. The AST probe survives only to name which pieces went missing in the
+    failure message, and it no longer decides anything on its own.
 
 WHY THIS IS A PROOF AND NOT A TEST
     Step 4 of docs/design/byok-aad-v2-migration.md is the only irreversible
@@ -48,11 +70,21 @@ SCOPE LIMIT — what this gate does NOT establish
       constant and its own v1 branch in `byokcache/cache.go`, and removing v1
       there is a separate decision this repository has no visibility into.
       Ordering across the two repos remains a human responsibility.
-    * It reads the source text of one module. A v1 branch moved into a
-      different module, or reimplemented inline, would leave this gate quiet.
-      The probe below is deliberately narrow so that it fires on the edit the
-      migration plan actually prescribes ("remove `_aad`, `ALGORITHM`, and the
-      v1 branches"), and it says so rather than pretending to be exhaustive.
+    * The behavioural probe opens a v1 envelope wrapped by the local/test key
+      wrapper (`KeyWrapperConfig(environment="test")`). It establishes that the
+      v1 AAD path and the algorithm dispatch still work; it does not exercise
+      the KMS wrapper, so a v1 regression that lives only in `GcpKmsKeyWrapper`
+      is out of scope here.
+    * It probes the two public decrypt entry points. A caller that reaches a v1
+      envelope by some other route is not covered, and neither is a v1 branch
+      that some *other* module reimplements privately — but note that a v1 row
+      which those two functions refuse is already unopenable in production,
+      which is the condition the gate cares about.
+    * The v1 wire format (`V1_ALGORITHM` and `_v1_aad` below) is pinned here
+      rather than imported, because it has to stay expressible in the tree
+      where step 4 has deleted the originals. A pin can drift; while `_aad`
+      still exists, `test_the_pinned_v1_format_is_the_one_the_module_seals`
+      holds them equal.
     * Nothing stops someone deleting this file along with v1. No in-repo guard
       can prevent that; what it can do is make the deliberate version of the
       edit cost a sentence in a pull request instead of nothing at all.
@@ -61,11 +93,16 @@ SCOPE LIMIT — what this gate does NOT establish
 from __future__ import annotations
 
 import ast
+import secrets as secrets_module
+import sys
+import types
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from trusted_router.byok_v1_attestations import (
     OUTCOME_CLEAN,
@@ -75,6 +112,8 @@ from trusted_router.byok_v1_attestations import (
     surface_fingerprint,
     zero_v1_blockers,
 )
+from trusted_router.key_management import KeyWrapperConfig
+from trusted_router.storage_models import EncryptedSecretEnvelope
 
 REPO = Path(__file__).resolve().parents[1]
 BYOK_CRYPTO = REPO / "src" / "trusted_router" / "byok_crypto.py"
@@ -86,6 +125,22 @@ CHECK_SCRIPT = "scripts/check_no_v1_envelopes.py"
 #: precisely the tree it is here to judge.
 V1_ALGORITHM = "TR-BYOK-ENVELOPE-AES-256-GCM-V1"
 
+#: The local/test wrapping path, so the probe needs no KMS. See the scope limit.
+PROBE_SETTINGS = KeyWrapperConfig(environment="test")
+
+
+def _v1_aad(workspace_id: str, context: str) -> bytes:
+    """The v1 associated data, as it was sealed into the rows that exist.
+
+    Pinned, not imported, for the same reason as `V1_ALGORITHM`: a stored row
+    carries these bytes whatever the module later calls the function that
+    produced them, and the probe has to keep working after step 4 deletes
+    `_aad`. `test_the_pinned_v1_format_is_the_one_the_module_seals` holds this
+    equal to the real `_aad` while the real one exists.
+    """
+    return f"trustedrouter:byok:{workspace_id}:{context}".encode()
+
+
 #: The migration doc's step 4 says to delete this test along with v1. Until
 #: then it is the standing record of the v1 collision, and deleting it early
 #: would erase the reason any of this exists.
@@ -94,7 +149,13 @@ V1_COLLISION_RECORD = "test_aad_encoding_is_not_injective_in_general"
 
 @dataclass(frozen=True)
 class V1Support:
-    """What `byok_crypto.py` still knows about the v1 envelope format."""
+    """What `byok_crypto.py`'s SOURCE still mentions of the v1 envelope format.
+
+    Descriptive only. `present` here is not the gate's verdict — a refactor can
+    move any of these and keep v1 working perfectly, and an entry-point guard
+    can leave all three in place and break it. `v1_envelope_opens()` decides;
+    this explains.
+    """
 
     algorithm_constant: str | None
     has_aad_builder: bool
@@ -127,6 +188,10 @@ def probe_v1_support(source: str) -> V1Support:
     in comments — a grep would keep reporting v1 as present long after the code
     implementing it was gone, which is the failure mode that makes a guard
     worthless.
+
+    `ast.AnnAssign` is matched as well as `ast.Assign`: `ALGORITHM: Final[str] =
+    "…"` is the same constant, and reading it as an absence used to turn a type
+    annotation into a CI failure about permanently unreadable customer keys.
     """
     tree = ast.parse(source)
     algorithm_constant: str | None = None
@@ -134,8 +199,9 @@ def probe_v1_support(source: str) -> V1Support:
     dispatcher: ast.FunctionDef | None = None
 
     for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
+        if isinstance(node, ast.Assign | ast.AnnAssign):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
                 if isinstance(target, ast.Name) and target.id == "ALGORITHM":
                     if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
                         algorithm_constant = node.value.value
@@ -170,15 +236,147 @@ def probe_v1_support(source: str) -> V1Support:
     )
 
 
+@dataclass(frozen=True)
+class V1Behaviour:
+    """Whether a stored v1 envelope still opens through the public API."""
+
+    #: True: it opened. False: it did not. None: the probe could not be built,
+    #: so this says nothing and the AST probe is all there is.
+    opens: bool | None
+    reason: str
+
+    @property
+    def removed(self) -> bool:
+        """True only for a definite refusal. `None` is never treated as removal.
+
+        An indeterminate probe must not fire the gate: the message it prints is
+        a multi-line warning about unrecoverable customer keys, and printing it
+        because an import failed is how a guard gets deleted.
+        """
+        return self.opens is False
+
+
+def load_module(source: str, name: str = "byok_crypto_under_probe") -> types.ModuleType:
+    """Execute `source` as a module, so the probe can run against a mutation.
+
+    The mutation tests below edit the real `byok_crypto.py` text and need the
+    edited version to be *callable*, not merely parseable. Registered in
+    `sys.modules` under a scratch name while it executes, because dataclass and
+    typing machinery resolves `__module__` through there.
+
+    The `exec` is the point rather than a shortcut: the input is always this
+    repository's own source file, read from disk, optionally with a mutation
+    this file wrote. Nothing external reaches it.
+    """
+    module = types.ModuleType(name)
+    module.__file__ = str(BYOK_CRYPTO)
+    sys.modules[name] = module
+    try:
+        exec(compile(source, str(BYOK_CRYPTO), "exec"), module.__dict__)  # noqa: S102
+    finally:
+        sys.modules.pop(name, None)
+    return module
+
+
+def seal_v1(module: types.ModuleType, secret: str, *, workspace_id: str, context: str) -> Any:
+    """Build the envelope a pre-migration row holds, using only v2-era helpers.
+
+    Deliberately does not touch `ALGORITHM` or `_aad`: the algorithm string and
+    the AAD bytes are pinned above, exactly as a stored row carries them. So
+    retargeting the constant, renaming the builder, or deleting either is
+    invisible to the sealing side and shows up only where it matters — in
+    whether the module can still open the result.
+    """
+    dek = secrets_module.token_bytes(32)
+    nonce = secrets_module.token_bytes(12)
+    dek_nonce = secrets_module.token_bytes(12)
+    aad = _v1_aad(workspace_id, context)
+    return EncryptedSecretEnvelope(
+        algorithm=V1_ALGORITHM,
+        key_ref=module._key_ref(PROBE_SETTINGS),
+        encrypted_dek=module._b64(module._wrap_dek(dek, dek_nonce, aad, PROBE_SETTINGS)),
+        dek_nonce=module._b64(dek_nonce),
+        ciphertext=module._b64(AESGCM(dek).encrypt(nonce, secret.encode(), aad)),
+        nonce=module._b64(nonce),
+    )
+
+
+def v1_envelope_opens(module: types.ModuleType) -> V1Behaviour:
+    """The gate's actual question: can a stored v1 row still be decrypted?
+
+    Both public entry points are tried, because they dispatch differently —
+    `decrypt_control_secret` picks the namespace from the algorithm — and
+    because rejecting v1 at either one is enough to make a stored row
+    unopenable in production.
+    """
+    workspace_id = str(uuid.uuid4())
+    try:
+        provider_envelope = seal_v1(
+            module, "v1-provider", workspace_id=workspace_id, context="openai"
+        )
+        control_envelope = seal_v1(
+            module, "v1-control", workspace_id=workspace_id, context="broadcast:bdst_1:api_key"
+        )
+    except Exception as exc:
+        return V1Behaviour(
+            opens=None,
+            reason=(
+                f"could not seal a v1 envelope with this module's own helpers "
+                f"({type(exc).__name__}: {exc}), so the behavioural probe says nothing"
+            ),
+        )
+
+    try:
+        opened_provider = module.decrypt_byok_secret(
+            provider_envelope, PROBE_SETTINGS, workspace_id=workspace_id, provider="openai"
+        )
+    except Exception as exc:
+        return V1Behaviour(
+            opens=False,
+            reason=(
+                f"decrypt_byok_secret refused a stored v1 envelope: {type(exc).__name__}: {exc}"
+            ),
+        )
+    try:
+        opened_control = module.decrypt_control_secret(
+            control_envelope,
+            PROBE_SETTINGS,
+            workspace_id=workspace_id,
+            purpose="broadcast:bdst_1:api_key",
+        )
+    except Exception as exc:
+        return V1Behaviour(
+            opens=False,
+            reason=(
+                f"decrypt_control_secret refused a stored v1 envelope: {type(exc).__name__}: {exc}"
+            ),
+        )
+    if (opened_provider, opened_control) != ("v1-provider", "v1-control"):
+        return V1Behaviour(
+            opens=False,
+            reason="a v1 envelope decrypted to the wrong plaintext, which is worse than a refusal",
+        )
+    return V1Behaviour(opens=True, reason="a v1 envelope still opens through both entry points")
+
+
 def gate(source: str, ledger: dict[str, Any]) -> str | None:
-    """The CI verdict: a failure message, or None when there is nothing to say."""
+    """The CI verdict: a failure message, or None when there is nothing to say.
+
+    Behaviour decides. The AST probe only supplies the "what changed" lines,
+    and is consulted for a verdict solely when the behavioural probe could not
+    run at all.
+    """
     support = probe_v1_support(source)
-    if support.present:
+    behaviour = v1_envelope_opens(load_module(source))
+    if behaviour.opens is True:
+        return None
+    if behaviour.opens is None and support.present:
         return None
     blockers = zero_v1_blockers(ledger)
     if not blockers:
         return None
-    removed = "\n".join(f"  - {gap}" for gap in support.missing)
+    gaps = list(support.missing) or ["nothing in the module's source text, but:"]
+    removed = "\n".join(f"  - {gap}" for gap in gaps + [behaviour.reason])
     still_blocking = "\n".join(f"  - {blocker}" for blocker in blockers)
     return (
         "v1 BYOK envelope support is being removed from src/trusted_router/byok_crypto.py:\n"
@@ -190,8 +388,10 @@ def gate(source: str, ledger: dict[str, Any]) -> str | None:
         "decrypt again, because the AAD sealing both the ciphertext and the wrapped DEK\n"
         "cannot be rebuilt from a format no implementation carries.\n"
         "\n"
-        "Each cloud is a standalone deployment with its own database, so each one needs\n"
-        "its own run:\n"
+        "Every cloud must attest, not just the one you are looking at. Each is a\n"
+        "standalone deployment with its own database, AND an AWS or Azure enclave falls\n"
+        "over to the home control plane when its own cannot be dialled — so a v1 envelope\n"
+        "left in any one database can be handed to any cloud's enclave, during an outage.\n"
         f"    uv run python {CHECK_SCRIPT} --backend <spanner|postgres> \\\n"
         "        --cloud <" + "|".join(STANDALONE_CLOUDS) + "> --record --operator <you>\n"
         "then commit docs/design/byok-aad-v2-attestations.json.\n"
@@ -218,17 +418,34 @@ def test_v1_support_is_not_removed_before_every_cloud_attests_zero_v1() -> None:
 def test_the_probe_sees_v1_support_in_the_module_today() -> None:
     """Anti-vacuity, first half.
 
-    The gate above is quiet today because v1 support is present. If the probe
-    had silently stopped recognising it — a renamed helper, a restructured
-    dispatch — the gate would be quiet for the opposite reason and would never
-    fire again. This asserts the reason.
+    The gate above is quiet today because a v1 envelope still opens. If the
+    probe had silently stopped being able to ask — an import that no longer
+    resolves, a helper it needs renamed — the gate would be quiet for the
+    opposite reason and would never fire again. This asserts the reason.
     """
-    support = probe_v1_support(BYOK_CRYPTO.read_text())
+    behaviour = v1_envelope_opens(load_module(BYOK_CRYPTO.read_text()))
+    assert behaviour.opens is True, behaviour.reason
 
+    support = probe_v1_support(BYOK_CRYPTO.read_text())
     assert support.algorithm_constant == V1_ALGORITHM
     assert support.has_aad_builder
     assert support.dispatch_selects_v1
     assert support.present
+
+
+def test_the_pinned_v1_format_is_the_one_the_module_seals() -> None:
+    """The pin above must be the real thing while the real thing exists.
+
+    `_v1_aad` and `V1_ALGORITHM` are copies of a wire format, kept so the probe
+    outlives step 4's deletions. A copy can drift, and a drifted copy makes the
+    behavioural probe report a refusal that never happened — a false CI failure
+    on the scariest message in the repository. Held equal here, and this test
+    is the one that becomes unrunnable (and should be deleted) at step 4.
+    """
+    from trusted_router import byok_crypto
+
+    assert byok_crypto.ALGORITHM == V1_ALGORITHM
+    assert byok_crypto._aad("ws", "ctx") == _v1_aad("ws", "ctx")
 
 
 # ------------------------------------------- the edits it must not permit ---
@@ -240,12 +457,12 @@ def _v1_source() -> str:
 
     The tests below work by performing step 4's edits on the real source. Once
     step 4 has actually been performed there is nothing left to mutate, and the
-    two tests above are the ones that speak. Skipping here keeps that moment
+    tests above are the ones that speak. Skipping here keeps that moment
     legible: a failing gate plus a handful of "already removed" skips, rather
-    than four mutation helpers failing about text they cannot find.
+    than mutation helpers failing about text they cannot find.
     """
     source = BYOK_CRYPTO.read_text()
-    if not probe_v1_support(source).present:
+    if v1_envelope_opens(load_module(source)).removed:
         pytest.skip("v1 support is already removed; the gate test above is the live one")
     return source
 
@@ -309,6 +526,46 @@ def _algorithm_constant_retargeted(source: str) -> str:
     )
 
 
+def _rejected_at_the_entry_points(source: str) -> str:
+    """The staged removal the migration doc's own step-4 bullet invites.
+
+    "Keep a v1-shaped envelope in a test fixture asserting it is now rejected"
+    describes exactly this edit: refuse v1 where callers arrive, leave
+    `ALGORITHM`, `_aad` and the dispatch arm physically in place for now. Every
+    stored v1 row is permanently unopenable the moment it ships, and the
+    source-reading version of this gate had nothing to say about it.
+    """
+    guard = (
+        "    if envelope.algorithm != ALGORITHM_V2:\n"
+        '        raise ValueError("v1 BYOK envelopes are no longer supported")\n'
+    )
+    mutated = source.replace(
+        "    aad = _envelope_aad(envelope.algorithm, NAMESPACE_PROVIDER, workspace_id, provider)",
+        guard
+        + "    aad = _envelope_aad(envelope.algorithm, NAMESPACE_PROVIDER, workspace_id, provider)",
+    )
+    return mutated.replace(
+        "    namespace = NAMESPACE_CONTROL if envelope.algorithm == ALGORITHM_V2 "
+        "else NAMESPACE_PROVIDER",
+        guard + "    namespace = NAMESPACE_CONTROL",
+    )
+
+
+def _rejected_only_for_control_secrets(source: str) -> str:
+    """Half of the above: BYOK keeps working, broadcast secrets stop opening.
+
+    A partial removal is the likelier accident, and it is just as unrecoverable
+    for the rows it touches.
+    """
+    return source.replace(
+        "    namespace = NAMESPACE_CONTROL if envelope.algorithm == ALGORITHM_V2 "
+        "else NAMESPACE_PROVIDER",
+        "    if envelope.algorithm != ALGORITHM_V2:\n"
+        '        raise ValueError("v1 control-plane envelopes are no longer supported")\n'
+        "    namespace = NAMESPACE_CONTROL",
+    )
+
+
 def _without_lines(source: str, node: ast.stmt) -> str:
     lines = source.splitlines(keepends=True)
     assert node.end_lineno is not None
@@ -323,25 +580,30 @@ def _without_lines(source: str, node: ast.stmt) -> str:
         (lambda source: _without_function(source, "_aad"), "the _aad v1 associated-data builder"),
         (_without_algorithm_constant, "the ALGORITHM constant"),
         (_algorithm_constant_retargeted, "the ALGORITHM constant"),
+        (_rejected_at_the_entry_points, "decrypt_byok_secret refused"),
+        (_rejected_only_for_control_secrets, "decrypt_control_secret refused"),
     ],
 )
 def test_the_gate_fires_on_each_half_of_the_v1_deletion(
     v1_source: str, mutate: Any, expected_gap: str
 ) -> None:
-    """Every piece step 4 removes, removed one at a time, from the real module.
+    """Every way v1 stops opening, one at a time, on the real module.
 
     Partial removals matter as much as the whole edit: deleting the dispatch
     branch alone already makes every stored v1 envelope unreadable, and it is
-    the smallest diff that does so.
+    the smallest diff that does so. The last two entries are the edits that
+    leave the source text looking untouched — the gate's previous shape passed
+    them both.
     """
     mutated = mutate(v1_source)
     assert mutated != v1_source, "the mutation did not apply"
 
-    support = probe_v1_support(mutated)
+    behaviour = v1_envelope_opens(load_module(mutated))
     verdict = gate(mutated, load_ledger())
 
-    assert not support.present
-    assert any(expected_gap in gap for gap in support.missing), support.missing
+    assert behaviour.removed, behaviour.reason
+    reported = list(probe_v1_support(mutated).missing) + [behaviour.reason]
+    assert any(expected_gap in line for line in reported), reported
     assert verdict is not None, "v1 was removed with no attestation and the gate stayed quiet"
     assert CHECK_SCRIPT in verdict
     for cloud in STANDALONE_CLOUDS:
@@ -355,6 +617,14 @@ def test_the_gate_permits_the_removal_once_every_cloud_attests(v1_source: str) -
     which all three deployments attest zero v1 envelopes, the same edit the
     test above rejects is allowed through without further argument.
     """
+    ledger = _full_ledger()
+    assert zero_v1_blockers(ledger) == []
+
+    assert gate(_without_v1_dispatch(v1_source), ledger) is None
+    assert gate(_rejected_at_the_entry_points(v1_source), ledger) is None
+
+
+def _full_ledger() -> dict[str, Any]:
     ledger = empty_ledger()
     for cloud in STANDALONE_CLOUDS:
         ledger["attestations"][cloud] = {
@@ -368,25 +638,81 @@ def test_the_gate_permits_the_removal_once_every_cloud_attests(v1_source: str) -
             "envelopes_seen": 12,
             "v1_envelopes": 0,
             "v2_envelopes": 12,
+            "missing_envelopes": 0,
             "census_migrated_kind_counts": {"byok": 12},
             "census_sampled_kinds": ["byok", "workspace"],
+            "census_v1_literal_rows": 0,
+            "census_source": f"spanner:projects/tr-{cloud}/instances/i/databases/d",
             "operator": "release-engineer@lorehex.co",
             "note": "step 4 precondition",
         }
-    assert zero_v1_blockers(ledger) == []
-
-    assert gate(_without_v1_dispatch(v1_source), ledger) is None
+    return ledger
 
 
-def test_an_unrelated_edit_to_byok_crypto_keeps_the_gate_quiet(v1_source: str) -> None:
-    """The annoyance check. Touching the file must not summon the gate."""
-    source = v1_source.replace(
-        "def _b64(value: bytes) -> str:",
-        "def _b64(value: bytes) -> str:\n    # an ordinary comment\n",
-    )
-    assert source != v1_source
+def test_one_cloud_short_of_a_full_ledger_still_refuses(v1_source: str) -> None:
+    """There is no per-cloud version of this permission.
 
-    assert gate(source, load_ledger()) is None
+    An AWS enclave that can no longer read v1 is broken by a v1 envelope in the
+    GCP database, because it falls over to the home control plane whenever its
+    own is undialable (byok_v1_attestations, "WHY EVERY CLOUD"). So dropping
+    every cloud but one from the ledger must still refuse the edit, whichever
+    cloud is the one left owing.
+    """
+    for absent in STANDALONE_CLOUDS:
+        ledger = _full_ledger()
+        del ledger["attestations"][absent]
+
+        verdict = gate(_without_v1_dispatch(v1_source), ledger)
+
+        assert verdict is not None, f"the gate cleared with {absent} unattested"
+        assert absent in verdict
+
+
+@pytest.mark.parametrize(
+    ("name", "mutate"),
+    [
+        (
+            "an ordinary comment",
+            lambda source: source.replace(
+                "def _b64(value: bytes) -> str:",
+                "def _b64(value: bytes) -> str:\n    # an ordinary comment\n",
+            ),
+        ),
+        (
+            "a Final[str] annotation on ALGORITHM",
+            lambda source: source.replace(
+                "import secrets\n", "import secrets\nfrom typing import Final\n", 1
+            ).replace(f'ALGORITHM = "{V1_ALGORITHM}"', f'ALGORITHM: Final[str] = "{V1_ALGORITHM}"'),
+        ),
+        (
+            "the v1 arm extracted into a helper",
+            lambda source: source.replace(
+                "    if algorithm == ALGORITHM:\n        return _aad(workspace_id, context)",
+                "    if algorithm == ALGORITHM:\n        return _legacy_aad(workspace_id, context)",
+            ).replace(
+                "def _aad_v2(",
+                "def _legacy_aad(workspace_id: str, context: str) -> bytes:\n"
+                "    return _aad(workspace_id, context)\n\n\ndef _aad_v2(",
+            ),
+        ),
+    ],
+)
+def test_an_unrelated_edit_to_byok_crypto_keeps_the_gate_quiet(
+    v1_source: str, name: str, mutate: Any
+) -> None:
+    """The annoyance check, which is a safety check.
+
+    The gate's failure message is a multi-line warning about customer keys
+    nothing will ever decrypt again. Printing it for a type annotation or a
+    helper extraction — both of which leave every stored v1 envelope opening
+    exactly as before — teaches the reader to ignore it, and the next reader
+    deletes it. The source-reading gate fired on the last two of these.
+    """
+    source = mutate(v1_source)
+    assert source != v1_source, f"the {name} mutation did not apply"
+    assert v1_envelope_opens(load_module(source)).opens is True
+
+    assert gate(source, load_ledger()) is None, name
 
 
 # ---------------------------------------------- the record step 4 deletes ---
@@ -411,7 +737,7 @@ def test_the_v1_collision_record_lives_exactly_as_long_as_v1_does() -> None:
     early deletion shows up as nothing at all; with it, the collection error
     that would otherwise appear becomes a sentence.
     """
-    v1_supported = probe_v1_support(BYOK_CRYPTO.read_text()).present
+    v1_supported = not v1_envelope_opens(load_module(BYOK_CRYPTO.read_text())).removed
     record_kept = _defines(NAMESPACE_PROPERTY_TEST, V1_COLLISION_RECORD)
 
     assert v1_supported == record_kept, (

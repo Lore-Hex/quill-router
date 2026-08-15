@@ -15,9 +15,18 @@ access — it classifies envelopes by their stored `algorithm` field.
       --record --operator you@lorehex.co
   uv run python scripts/check_no_v1_envelopes.py --status-only
 
-Exit codes:
-  0  this cloud attests zero v1 envelopes (outcome clean or empty_witnessed)
-  2  it does not, including the case where the run scanned nothing
+Exit codes. **Zero means the FLEET is clear, never that this cloud is** — the
+enclaves cross-read (byok_v1_attestations, "WHY EVERY CLOUD"), so one cloud's
+green is not permission to remove anything. That is what makes
+
+    check_no_v1_envelopes.py --status-only && <proceed with step 4>
+
+correct rather than a trap:
+
+  0  every standalone cloud attests zero v1 envelopes; step 4 is unblocked
+  1  this run attested its own cloud, but other clouds still owe theirs
+  2  this cloud does not attest — including the case where the run scanned
+     nothing — or, with --status-only, the ledger blocks step 4
   3  the run could not be completed at all
 """
 
@@ -94,22 +103,27 @@ def _store(args: argparse.Namespace) -> AuditableStore:
     return PostgresEntityStore(args.postgres_dsn)
 
 
-def _print_ledger_status(ledger: dict[str, Any]) -> None:
+def _print_ledger_status(ledger: dict[str, Any]) -> list[str]:
+    """Print the fleet-wide verdict and return the blockers behind it."""
     blockers = zero_v1_blockers(ledger)
     print(f"ledger surfaces={surface_fingerprint()}")
     if not blockers:
         print("ledger: every standalone cloud attests zero v1 envelopes")
-        return
+        return blockers
     print("ledger: step 4 is blocked")
     for blocker in blockers:
         print(f"  - {blocker}")
+    return blockers
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.status_only:
-        _print_ledger_status(load_ledger(args.ledger))
-        return 0
+        # Exit 2 when blocked, so that `--status-only && <proceed>` is a
+        # correct shell chain. It returned 0 unconditionally once, which made
+        # the loudest possible printed refusal invisible to the only consumer
+        # that does not read.
+        return 2 if _print_ledger_status(load_ledger(args.ledger)) else 0
     if args.cloud is None or args.backend is None:
         raise SystemExit("--cloud and --backend are required unless --status-only is given")
     if args.record and not args.operator.strip():
@@ -152,7 +166,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"recorded {args.cloud} in the attestation ledger")
     else:
         print("not recorded: pass --record --operator <you> to write it into the ledger")
-    _print_ledger_status(load_ledger(args.ledger))
+    if _print_ledger_status(load_ledger(args.ledger)):
+        print(
+            f"EXIT 1, NOT 0: {args.cloud} attests, the fleet does not. Removing v1 now would "
+            "leave this cloud's enclave unable to open a v1 envelope handed to it by another "
+            "cloud's control plane during a failover."
+        )
+        return 1
     return 0
 
 
