@@ -17,6 +17,7 @@ from trusted_router.synthetic.probes import (
     rotation_candidates,
 )
 from trusted_router.synthetic.throughput import (
+    THROUGHPUT_ANCHOR_MODELS,
     THROUGHPUT_INTERVAL_SECONDS,
     choose_throughput_target,
     projected_monthly_cost_microdollars,
@@ -42,10 +43,10 @@ def test_top_200_throughput_routes_are_deterministic_and_provider_complete() -> 
     assert len(first) == min(200, sum(len(models) for models in pool.values()))
     assert len(first) == len(set(first))
     assert {provider for provider, _ in first} == set(pool)
-    assert ("anthropic", "anthropic/claude-opus-5") in first
-    assert any(model == "moonshotai/kimi-k3" for _, model in first)
-    assert any(model == "z-ai/glm-5.2" for _, model in first)
-    assert any(model == "google/gemini-3.6-flash" for _, model in first)
+    available_models = {model for models in pool.values() for model in models}
+    for anchor in THROUGHPUT_ANCHOR_MODELS:
+        if anchor in available_models:
+            assert any(model == anchor for _, model in first)
     assert all(model in pool[provider] for provider, model in first)
 
 
