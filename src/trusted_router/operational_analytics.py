@@ -301,7 +301,12 @@ FORMAT JSON
         return rollups
 
     def public_snapshot(self, name: str) -> dict[str, Any] | None:
-        if name not in {"leaderboard", "apps"}:
+        if name not in {
+            "leaderboard",
+            "apps",
+            "video_leaderboard",
+            "status_inputs",
+        }:
             raise ValueError("unsupported public analytics snapshot")
         rows = self._query(
             """

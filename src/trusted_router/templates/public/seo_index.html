@@ -80,4 +80,12 @@
     </div>
   </div>
 </section>
+{% if monthly_reports %}
+<section class="panel" aria-label="Monthly benchmark reports">
+  <div class="panel-head"><h2>Monthly benchmark reports</h2><a href="/benchmarks/reports">All reports</a></div>
+  <div class="panel-body"><ul class="link-list">
+    {% for report in monthly_reports %}<li><a href="/benchmarks/reports/{{ report.period }}">{{ report.period_label }}</a><span>{{ report.row_count_label }} rows · {{ report.provider_count_label }} providers · {{ report.model_count_label }} models</span></li>{% endfor %}
+  </ul></div>
+</section>
+{% endif %}
 {% endblock %}

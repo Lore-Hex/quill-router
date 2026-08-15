@@ -30,6 +30,7 @@ from starlette.types import Scope
 
 from trusted_router.ai_iq import ai_iq_catalog_payload
 from trusted_router.apps import aggregate_apps
+from trusted_router.benchmark_reports import monthly_benchmark_report
 from trusted_router.benchmark_samples import (
     PUBLIC_BENCHMARK_RECENT_MINUTES,
     PUBLIC_BENCHMARK_SAMPLE_LIMIT,
@@ -57,6 +58,8 @@ from trusted_router.dashboard import (
     procurement_json,
     public_apps_html,
     public_baa_html,
+    public_benchmark_report_html,
+    public_benchmark_reports_index_html,
     public_benchmarks_html,
     public_blog_index_html,
     public_blog_post_html,
@@ -124,7 +127,7 @@ from trusted_router.services.trust_release import (
 )
 from trusted_router.storage import STORE
 from trusted_router.storage_custom_models import normalize_custom_model_id
-from trusted_router.storage_models import utcnow
+from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup, utcnow
 from trusted_router.synthetic.fleet import fleet_snapshot
 from trusted_router.synthetic.leaderboard import aggregate_leaderboard
 from trusted_router.synthetic.status import history_payload, status_snapshot
@@ -1197,6 +1200,30 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def benchmarks() -> str:
         return public_benchmarks_html(settings)
 
+    @public_html_route("/benchmarks/reports")
+    async def benchmark_reports() -> str:
+        return public_benchmark_reports_index_html(settings)
+
+    @app.get("/benchmarks/reports/{period}.json", include_in_schema=False)
+    async def benchmark_report_json(period: str) -> JSONResponse:
+        report = monthly_benchmark_report(period)
+        if report is None:
+            return JSONResponse(
+                {"error": {"message": "benchmark report not found", "type": "not_found"}},
+                status_code=404,
+            )
+        return JSONResponse(
+            {"data": report},
+            headers={"cache-control": "public, max-age=300, s-maxage=86400"},
+        )
+
+    @public_html_route("/benchmarks/reports/{period}")
+    async def benchmark_report(period: str) -> HTMLResponse:
+        body = public_benchmark_report_html(settings, period)
+        if body is None:
+            return HTMLResponse(public_not_found_html(settings, "/benchmarks/reports"), 404)
+        return HTMLResponse(body)
+
     @public_html_route("/rankings")
     async def rankings() -> str:
         return public_rankings_html(settings)
@@ -1923,26 +1950,43 @@ def _video_leaderboard_snapshot(settings: Settings) -> dict[str, Any]:
         cached_at, payload = _VIDEO_LEADERBOARD_CACHE
         if now - cached_at < LEADERBOARD_SNAPSHOT_CACHE_SECONDS:
             return payload
-    samples = public_video_benchmark_samples(
-        limit=VIDEO_LEADERBOARD_SAMPLE_LIMIT,
-        recent_minutes=VIDEO_LEADERBOARD_RECENT_WINDOW_MINUTES,
-    )
-    configured_routes = {
-        (endpoint.provider, model.id)
-        for model in MODELS.values()
-        if model.supports_video
-        for endpoint in endpoints_for_model(model.id)
-    }
-    payload = aggregate_video_leaderboard(
-        samples,
-        configured_routes=configured_routes,
-    )
-    payload["generated_at"] = utcnow().isoformat().replace("+00:00", "Z")
-    payload["sample_window_count"] = len(samples)
-    payload["sample_limit"] = VIDEO_LEADERBOARD_SAMPLE_LIMIT
-    payload["window_label"] = (
-        f"rolling video benchmark set of up to {VIDEO_LEADERBOARD_SAMPLE_LIMIT:,} jobs"
-    )
+    if settings.environment != "test":
+        try:
+            precomputed = _precomputed_public_analytics_snapshot("video_leaderboard")
+        except Exception:
+            log.exception("public_analytics_snapshot_read_failed name=video_leaderboard")
+            if _VIDEO_LEADERBOARD_CACHE is not None:
+                return _VIDEO_LEADERBOARD_CACHE[1]
+        else:
+            if precomputed is not None:
+                _VIDEO_LEADERBOARD_CACHE = (now, precomputed)
+                return precomputed
+    try:
+        samples = public_video_benchmark_samples(
+            limit=VIDEO_LEADERBOARD_SAMPLE_LIMIT,
+            recent_minutes=VIDEO_LEADERBOARD_RECENT_WINDOW_MINUTES,
+        )
+        configured_routes = {
+            (endpoint.provider, model.id)
+            for model in MODELS.values()
+            if model.supports_video
+            for endpoint in endpoints_for_model(model.id)
+        }
+        payload = aggregate_video_leaderboard(
+            samples,
+            configured_routes=configured_routes,
+        )
+        payload["generated_at"] = utcnow().isoformat().replace("+00:00", "Z")
+        payload["sample_window_count"] = len(samples)
+        payload["sample_limit"] = VIDEO_LEADERBOARD_SAMPLE_LIMIT
+        payload["window_label"] = (
+            f"rolling video benchmark set of up to {VIDEO_LEADERBOARD_SAMPLE_LIMIT:,} jobs"
+        )
+    except Exception:
+        if settings.environment != "test" and _VIDEO_LEADERBOARD_CACHE is not None:
+            log.exception("video_leaderboard_live_fallback_failed_serving_stale")
+            return _VIDEO_LEADERBOARD_CACHE[1]
+        raise
     if settings.environment != "test":
         _VIDEO_LEADERBOARD_CACHE = (now, payload)
     return payload
@@ -1993,15 +2037,45 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
         cached_at, payload = _STATUS_CACHE
         if now - cached_at < STATUS_SNAPSHOT_CACHE_SECONDS:
             return payload
-    # Keep the public status hot path bounded: current state and headline
-    # latency come from a small live sample window, while 24h/48h/monthly
-    # history comes from compact rollups precomputed when the monitor writes
-    # each sample. Do not scan raw 48h/day Bigtable rows on page load.
-    payload = status_snapshot(
-        _status_samples(hours=1),
-        rollups=_status_rollups("snapshot"),
-        settings=settings,
-    )
+    if settings.environment != "test":
+        try:
+            precomputed = _precomputed_public_analytics_snapshot("status_inputs")
+        except Exception:
+            log.exception("public_analytics_snapshot_read_failed name=status_inputs")
+            if _STATUS_CACHE is not None:
+                return _STATUS_CACHE[1]
+        else:
+            if precomputed is not None:
+                try:
+                    samples = [
+                        SyntheticProbeSample(**row)
+                        for row in precomputed.get("samples", [])
+                        if isinstance(row, dict)
+                    ]
+                    rollups = [
+                        SyntheticRollup(**row)
+                        for row in precomputed.get("rollups", [])
+                        if isinstance(row, dict)
+                    ]
+                    payload = status_snapshot(samples, rollups=rollups, settings=settings)
+                except (TypeError, ValueError):
+                    log.exception("public_analytics_snapshot_invalid name=status_inputs")
+                else:
+                    _STATUS_CACHE = (now, payload)
+                    return payload
+    # Keep the fallback bounded. Current state and headline latency come from
+    # a small live sample window; 24h/48h history comes from compact rollups.
+    try:
+        payload = status_snapshot(
+            _status_samples(hours=1),
+            rollups=_status_rollups("snapshot"),
+            settings=settings,
+        )
+    except Exception:
+        if settings.environment != "test" and _STATUS_CACHE is not None:
+            log.exception("status_live_fallback_failed_serving_stale")
+            return _STATUS_CACHE[1]
+        raise
     if settings.environment != "test":
         _STATUS_CACHE = (now, payload)
     return payload

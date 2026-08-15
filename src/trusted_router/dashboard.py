@@ -24,6 +24,11 @@ from trusted_router.bedrock_group_buy import (
     BedrockGroupBuyPublicSnapshot,
     formatted_campaign_money,
 )
+from trusted_router.benchmark_reports import (
+    monthly_benchmark_report,
+    monthly_benchmark_report_view,
+    monthly_benchmark_reports,
+)
 from trusted_router.benchmark_scores import scores_for_model
 from trusted_router.catalog import (
     META_MODEL_IDS,
@@ -136,6 +141,9 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/providers",
     "/providers/marketplace",
     "/benchmarks",
+    "/benchmarks/reports",
+    "/benchmarks/reports/2026-06",
+    "/benchmarks/reports/2026-07",
     "/rankings",
     "/leaderboard",
     "/leaderboard/video",
@@ -398,12 +406,8 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
                 f"Set provider.min_privacy to zdr on a DeepSeek request. The router then considers only endpoints with a recorded zero-data-retention posture and fails closed if none are eligible. {CONTENT_HANDLING_CLAIM} The ZDR filter adds the downstream provider requirement.",
             ),
             (
-                "When will DeepSeek R2 be released?",
-                "R2 is unreleased as of July 2026, and no release date is confirmed. The current generation is V4, available as deepseek-v4-pro and deepseek-v4-flash, and both are live on TrustedRouter today. Because the API is OpenAI-compatible, pointing existing code at V4 now and at newer DeepSeek routes later is a one-line model-id change.",
-            ),
-            (
-                "How do I migrate off the legacy deepseek-chat alias?",
-                "DeepSeek's legacy deepseek-chat alias is scheduled to retire on July 24, 2026. Moving to TrustedRouter takes two edits: set base_url to https://api.trustedrouter.com/v1 and pick a DeepSeek V4 route from the models page. Your OpenAI SDK and the rest of your code stay the same, and automatic provider fallback keeps requests flowing during provider outages.",
+                "Which DeepSeek model ID should I use?",
+                "Read the live TrustedRouter model catalog and choose the current DeepSeek route for your workload. The API is OpenAI-compatible, so changing generations is a model-id change rather than an SDK migration. The live leaderboard shows current route behavior, while monthly benchmark reports preserve historical measurements.",
             ),
         ),
     ),
@@ -2374,6 +2378,108 @@ def public_benchmarks_html(settings: Settings) -> str:
             models=_seo_model_rows(test_mode=test_mode),
             providers=[_provider_view(provider) for provider in providers_for_display()],
             benchmark_links=list(_BENCHMARK_INDEX_LINKS),
+            monthly_reports=[
+                monthly_benchmark_report_view(report)
+                for report in monthly_benchmark_reports()
+            ],
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
+    )
+
+
+def public_benchmark_reports_index_html(settings: Settings) -> str:
+    reports = [
+        monthly_benchmark_report_view(report) for report in monthly_benchmark_reports()
+    ]
+    return (
+        _env()
+        .get_template("public/benchmark_reports_index.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/benchmarks/reports",
+            title="Monthly LLM Provider Benchmark Reports | TrustedRouter",
+            heading="Monthly benchmark reports",
+            description=(
+                "Stable monthly reports of measured LLM provider availability, time to first "
+                "token, throughput, and model-route performance from TrustedRouter production."
+            ),
+            reports=reports,
+            json_ld_blob=_json_ld_graph(
+                _breadcrumb_node(
+                    settings,
+                    (
+                        ("Home", "/"),
+                        ("Benchmarks", "/benchmarks"),
+                        ("Monthly reports", "/benchmarks/reports"),
+                    ),
+                ),
+                _item_list_node(
+                    name="TrustedRouter monthly benchmark reports",
+                    items=[
+                        {
+                            "name": f"{report['period_label']} benchmark report",
+                            "url": (
+                                f"https://{settings.trusted_domain}/benchmarks/reports/"
+                                f"{report['period']}"
+                            ),
+                        }
+                        for report in reports
+                    ],
+                ),
+            ),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
+    )
+
+
+def public_benchmark_report_html(settings: Settings, period: str) -> str | None:
+    report = monthly_benchmark_report(period)
+    if report is None:
+        return None
+    view = monthly_benchmark_report_view(report)
+    site_path = f"/benchmarks/reports/{period}"
+    return (
+        _env()
+        .get_template("public/benchmark_report.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}{site_path}",
+            title=f"{view['period_label']} LLM Provider Benchmark Report | TrustedRouter",
+            heading=f"{view['period_label']} LLM provider benchmark report",
+            description=(
+                f"Measured availability, TTFT, throughput, and route results across "
+                f"{view['provider_count_label']} providers and {view['model_count_label']} "
+                f"models during {view['period_label']}, with reproducible methodology and JSON."
+            ),
+            report=view,
+            json_ld_blob=json.dumps(
+                {
+                    "@context": "https://schema.org",
+                    "@type": "Dataset",
+                    "name": f"TrustedRouter {view['period_label']} LLM provider benchmarks",
+                    "description": (
+                        "Privacy-safe production route measurements for provider availability, "
+                        "time to first token, throughput, and model-route performance."
+                    ),
+                    "temporalCoverage": period,
+                    "measurementTechnique": (
+                        "Organic route observations and synthetic probes with exact nearest-rank "
+                        "percentiles, failure-owner classification, and Wilson confidence ranking."
+                    ),
+                    "url": f"https://{settings.trusted_domain}{site_path}",
+                    "distribution": {
+                        "@type": "DataDownload",
+                        "encodingFormat": "application/json",
+                        "contentUrl": f"https://{settings.trusted_domain}{site_path}.json",
+                    },
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
             static_version=_static_version(settings),
