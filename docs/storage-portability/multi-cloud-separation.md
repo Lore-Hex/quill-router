@@ -27,6 +27,24 @@ cloud-local.
 An API key issued on AWS authenticates only on AWS. Credit bought on GCP is
 spendable only on GCP.
 
+### Cloud-local security migrations
+
+Schema and cryptographic-envelope migrations repeat independently in every
+cloud. A successful GCP migration says nothing about the AWS or Azure database
+or enclave. The canonical BYOK AAD v2 procedure and completion evidence live in
+[`docs/design/byok-aad-v2-migration.md`](../design/byok-aad-v2-migration.md).
+
+As of 2026-08-15, GCP, AWS, and Azure are complete through that plan's step 3:
+
+| Cloud | v1/v2 readers | v2 writers | Step 3 result |
+|---|---|---|---|
+| GCP | deployed | deployed | 7 BYOK envelopes migrated; 0 v1 remain |
+| AWS | deployed | deployed | 0 eligible rows; no write required |
+| Azure | deployed | deployed | 0 eligible rows; no write required |
+
+Step 4 is not complete. V1 read support remains in every cloud until the
+retention-window condition in the migration plan is satisfied.
+
 ---
 
 ## 2. Why identity federates and money does not
