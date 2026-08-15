@@ -307,6 +307,125 @@ def validated_aws_metadata(payload: object) -> Mapping[str, Any]:
     return {"pcr0": pcr0, "accepted_pcr0s": accepted}
 
 
+#: Optional descriptions a region entry may carry, copied verbatim and not
+#: interpreted here. attestation_url, hostdata and attestation_issuer are
+#: required of every entry and are validated individually below; everything
+#: else an upstream record sends is dropped, because mirroring whatever arrives
+#: would let the plane's record inject arbitrary fields into ours.
+_AZURE_REGION_OPTIONAL = ("launch_measurement", "compliance_status")
+#: An upper bound on how many serving regions a record may claim. The payload is
+#: already capped at _MAX_RELEASE_BYTES, which still leaves room for hundreds of
+#: entries — and every entry is an endpoint scripts/verify_trust_measurements.py
+#: will fetch, so an unbounded array is a fetch-amplification lever for anyone
+#: who can write the upstream record. Two regions are in service; sixteen is
+#: room to grow and still a refusal long before it becomes a load generator.
+_MAX_AZURE_REGIONS = 16
+
+
+def _endpoint_identity(url: str) -> tuple[str, str, int | None, str] | None:
+    """What actually gets contacted, or None if this is not a plain https URL.
+
+    A region entry's attestation_url is a coverage claim, so what makes two of
+    them the same has to be what a client would end up talking to — scheme,
+    host, port and path — and not the string. Fragments are never transmitted
+    and a query is not an endpoint, so an entry may carry neither: two entries
+    that differ only there would inflate the region count while contacting one
+    place. Userinfo is refused because `https://a@b/` names host b while reading
+    as host a.
+    """
+    parsed = httpx.URL(url)
+    if parsed.scheme != "https" or not parsed.host:
+        return None
+    if parsed.query or parsed.fragment or parsed.userinfo:
+        return None
+    path = parsed.path or "/"
+    return ("https", parsed.host.lower(), parsed.port, path)
+
+
+def _validated_azure_regions(
+    payload: dict[str, object], accepted: Sequence[str], issuers: Sequence[str]
+) -> list[dict[str, str]]:
+    """The per-region endpoint array, validated rather than dropped.
+
+    WHY THIS EXISTS AT ALL. accepted_hostdata is a union and cannot say which
+    endpoint serves which value, so a reader holding only the union can verify
+    whichever region anycast happens to give them and has no way to reach the
+    others. This array is the only thing in the record that names WHERE each
+    region answers, and it is what scripts/verify_trust_measurements.py
+    enumerates. Until this function existed the mirror whitelisted three scalar
+    keys and dropped it, so the checker read a record with no endpoints to
+    enumerate and could reach exactly one of the two Azure regions.
+
+    WHY A CONTRADICTORY ENTRY RAISES INSTEAD OF BEING DROPPED. A region whose
+    hostdata or issuer the rest of the record disowns is a self-inconsistent
+    record, the same class as an AWS record whose accepted set excludes its own
+    pcr0 — and that one is refused here rather than repaired. Dropping the entry
+    instead would erase a live serving region from the published record with no
+    trace: the region simply stops existing, the drift check contacts what is
+    left and goes green, and the plane we quietly stopped covering is the one
+    nobody is looking at. It is also the only choice that keeps this layer and
+    trust._azure_regions agreeing — that one drops an entry missing a required
+    field, because azure_release has no error channel, so accepting an
+    incomplete entry here would just move the silent erasure one function later.
+
+    THE BLAST RADIUS, STATED PLAINLY. A refused record makes the mirror fall
+    back to the embedded Azure measurement, and rollout.sh does not set
+    TR_TRUST_AZURE_HOSTDATA — so in the current production configuration that
+    fallback is unconfigured and /trust/azure-release.json answers 503. Loud, on
+    purpose, and the same blast radius the existing rules above already carry
+    (an AWS pcr0 outside its own accepted set, an Azure record naming no MAA
+    issuer). Serving no Azure record is a state a verifier can act on; serving
+    one that has quietly lost a serving region is not.
+    """
+    if "regions" not in payload:
+        return []
+    raw = payload["regions"]
+    if not isinstance(raw, list):
+        # An explicit JSON null lands here rather than being read as "absent".
+        # "The key is missing" and "the key is present and says nothing" are
+        # different upstream states and must not collapse into each other.
+        raise ValueError("Azure regions must be a list when present")
+    if len(raw) > _MAX_AZURE_REGIONS:
+        raise ValueError("Azure record claims more serving regions than we would publish")
+    regions: list[dict[str, str]] = []
+    seen_urls: set[tuple[str, str, int | None, str]] = set()
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise ValueError("Azure region entry must be an object")
+        url = entry.get("attestation_url")
+        if not isinstance(url, str) or _endpoint_identity(url) is None:
+            raise ValueError("Azure region entry must name a plain https attestation_url")
+        # Compared on IDENTITY, not on the raw string. Two URLs differing only
+        # by fragment or query — .../attestation#a and .../attestation#b — are
+        # distinct strings that fetch the same endpoint, so a raw-string
+        # comparison here would let a record claim two regions on the strength
+        # of one, which is the coverage count this whole change exists to stop.
+        identity = _endpoint_identity(url)
+        assert identity is not None  # noqa: S101 - refused above; narrows for the type checker
+        if identity in seen_urls:
+            raise ValueError("Azure regions name the same attestation endpoint twice")
+        seen_urls.add(identity)
+        hostdata = entry.get("hostdata")
+        if not isinstance(hostdata, str) or _HOSTDATA_RE.fullmatch(hostdata) is None:
+            raise ValueError("invalid hostdata in Azure region entry")
+        if hostdata not in accepted:
+            raise ValueError("Azure region hostdata is absent from the record's accepted set")
+        issuer = entry.get("attestation_issuer")
+        if not isinstance(issuer, str) or not issuer.startswith("https://"):
+            raise ValueError("invalid MAA issuer in Azure region entry")
+        if issuer not in issuers:
+            raise ValueError("Azure region issuer is absent from the record's issuer list")
+        region = {"attestation_url": url, "hostdata": hostdata, "attestation_issuer": issuer}
+        for field in _AZURE_REGION_OPTIONAL:
+            value = entry.get(field)
+            if value is not None and (not isinstance(value, str) or not value):
+                raise ValueError(f"invalid {field} in Azure region entry")
+            if isinstance(value, str):
+                region[field] = value
+        regions.append(region)
+    return regions
+
+
 def validated_azure_metadata(payload: object) -> Mapping[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Azure trust record must be an object")
@@ -328,6 +447,7 @@ def validated_azure_metadata(payload: object) -> Mapping[str, Any]:
         "hostdata": hostdata,
         "accepted_hostdata": accepted,
         "attestation_issuers": list(issuers),
+        "regions": _validated_azure_regions(payload, accepted, issuers),
     }
 
 

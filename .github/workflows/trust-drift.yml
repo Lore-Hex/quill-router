@@ -68,12 +68,27 @@ jobs:
       # EXPECT THE FIRST RUN AFTER THIS MERGES TO BE RED, until the control
       # plane deploy lands. Measured 2026-08-15 against production: the mirror
       # was still dropping azure-release.json's `regions` array, so the checker
-      # could reach UAE North and not Southeast Asia and reported
-      #   [GAP] azure: 1 published MAA issuer(s) belong to no enumerated region
-      # That is the correct verdict for that state, not a flake. The same
-      # commit fixes trusted_router.trust.azure_release, so the deploy this
-      # workflow_run triggers on is what turns it green — verified end to end
-      # against the real planes by serving the patched mirror's output locally.
+      # could reach UAE North and not Southeast Asia and reported a [GAP] for
+      # the MAA issuer no contacted endpoint presented. That is the correct
+      # verdict for that state, not a flake.
+      #
+      # What turns it green is the deploy this workflow_run triggers on. Stated
+      # as precisely as it was actually established, because the first version
+      # of this comment overclaimed here: the fix is in TWO places, and only one
+      # of them is on the serving route. trusted_router.trust.azure_release
+      # mirrors the array through, and
+      # trusted_router.services.trust_release.validated_azure_metadata — the
+      # validator the route interposes ahead of it, which used to whitelist
+      # three scalar keys — validates and carries it. With only the former, the
+      # served record was byte-identical to before the change and this job would
+      # have been red forever.
+      #
+      # The evidence is offline and reproducible, NOT a live measurement:
+      # tests/test_trust_measurement_drift.py drives the real FastAPI route with
+      # a mocked upstream, asserts the served record carries both region URLs,
+      # then feeds that served record to the checker and asserts both endpoints
+      # were fetched. Nobody has yet observed the deployed control plane serving
+      # a regions[] array; that is what the first green run of this job will be.
       - name: Published measurements vs live attestations
         run: >
           uv run python scripts/verify_trust_measurements.py

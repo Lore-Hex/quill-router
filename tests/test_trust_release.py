@@ -418,6 +418,18 @@ def test_gcp_record_describes_the_gcp_plane_from_every_deployment() -> None:
         # The two fields must never disagree about which host terminates the
         # prompt path; that disagreement is what makes the record unverifiable.
         assert record["api_base_url"] == f"https://{record['tls']['hostname']}/v1"
+        # The PLURAL had the same leak and kept it after the scalar was fixed:
+        # api_base_urls was built with api_base_url_for_domain(), which returns
+        # settings.api_base_url for the canonical domain — per-deployment — so
+        # entry 0 of a gcp-confidential-space record served from the AWS-hosted
+        # control plane named api-aws.trustedrouter.com. Every entry is a
+        # property of the GCP plane, and must pair with tls.hostnames entry for
+        # entry.
+        assert record["api_base_urls"] == [
+            f"https://{hostname}/v1" for hostname in record["tls"]["hostnames"]
+        ]
+        assert record["api_base_urls"][0] == record["api_base_url"]
+        assert not any("api-aws" in url or "api-azure" in url for url in record["api_base_urls"])
 
 
 def test_gcp_endpoint_fields_are_derived_from_the_domain_not_hardcoded() -> None:
@@ -590,6 +602,18 @@ def test_azure_mirror_requires_an_issuer_and_carries_every_region(
                 "https://trquilluaen.uaen.attest.azure.net",
                 "https://trquillsea.sasia.attest.azure.net",
             ],
+            "regions": [
+                {
+                    "attestation_url": "https://api-azure.trustedrouter.com/attestation",
+                    "hostdata": uaen,
+                    "attestation_issuer": "https://trquilluaen.uaen.attest.azure.net",
+                },
+                {
+                    "attestation_url": "https://api-azure-sea.trustedrouter.com/attestation",
+                    "hostdata": sea,
+                    "attestation_issuer": "https://trquillsea.sasia.attest.azure.net",
+                },
+            ],
         },
     )
     settings = Settings(
@@ -603,6 +627,15 @@ def test_azure_mirror_requires_an_issuer_and_carries_every_region(
     # region conclude tampering.
     assert record["accepted_hostdata"] == [uaen, sea]
     assert len(record["attestation_issuers"]) == 2
+    # ...and WHERE each of them answers has to survive the trip too. This
+    # assertion used to be absent while the test's name promised it: the
+    # validator whitelisted three scalar keys, so the array never reached
+    # trust.azure_release and the drift check had one endpoint to enumerate.
+    assert [region["attestation_url"] for region in record["regions"]] == [
+        "https://api-azure.trustedrouter.com/attestation",
+        "https://api-azure-sea.trustedrouter.com/attestation",
+    ]
+    assert record["regions"][1]["hostdata"] == sea
 
 
 def test_azure_record_without_an_issuer_is_rejected(httpx_mock: HTTPXMock) -> None:

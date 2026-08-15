@@ -110,10 +110,15 @@ def gcp_release(
         # A mirror serves a record; it does not rewrite it. Every field here is
         # a property of the plane.
         "api_base_url": gcp_api_base_url(settings),
-        "api_base_urls": [
-            api_base_url_for_domain(settings, domain)
-            for domain in configured_control_domains(settings)
-        ],
+        # Derived from api_hostnames, not from api_base_url_for_domain(), for
+        # the same reason the scalar above is: that helper returns
+        # settings.api_base_url for the canonical domain, which is
+        # per-DEPLOYMENT. The scalar was fixed and the plural was not, so on the
+        # AWS- and Azure-hosted control planes entry 0 of this list named THEIR
+        # gateway inside a gcp-confidential-space record — the exact leak the
+        # comment above describes, still open one field over. Every entry here
+        # is now api.<control domain>, which is a property of the GCP plane.
+        "api_base_urls": [f"https://{hostname}/v1" for hostname in api_hostnames],
         "tls": {
             "mode": "acme-inside-confidential-space",
             # Derived from the same source as api_base_url so the two cannot
@@ -193,47 +198,46 @@ def aws_release(settings: Settings, *, metadata: Mapping[str, Any] | None = None
     }
 
 
-#: The only keys copied out of an upstream region entry. Mirroring whatever
-#: arrives would let the plane's record inject arbitrary fields into ours.
-_AZURE_REGION_FIELDS = (
-    "attestation_url",
-    "hostdata",
-    "attestation_issuer",
-    "launch_measurement",
-    "compliance_status",
-)
+#: The only keys copied out of a region entry. Mirroring whatever arrives would
+#: let the plane's record inject arbitrary fields into ours. The first three are
+#: required of every entry; the last two are optional descriptions the plane may
+#: carry and this control plane does not interpret.
+_AZURE_REGION_REQUIRED = ("attestation_url", "hostdata", "attestation_issuer")
+_AZURE_REGION_OPTIONAL = ("launch_measurement", "compliance_status")
 
 
 def _azure_regions(metadata: Mapping[str, Any]) -> tuple[dict[str, str], ...]:
-    """Per-region endpoints from the plane's record, or nothing.
+    """Per-region endpoints from the plane's record, whitelisted to known keys.
 
-    A region entry is kept only when it is self-consistent with the rest of the
-    record: it names an endpoint, and its hostdata and issuer both appear in the
-    union sets published alongside it. An entry that fails that is DROPPED
-    rather than corrected, which is deliberate — a dropped region shows up
-    downstream as an issuer with no endpoint, and
-    scripts/verify_trust_measurements.py reports that as an uncovered region
-    instead of comparing a live attestation against a value the record itself
-    contradicts.
+    This is a SHAPE filter and nothing more. Reconciling a region entry against
+    the record's own accepted sets happens one layer up, in
+    services.trust_release.validated_azure_metadata, which REFUSES a record
+    whose region entries contradict it rather than editing them — see that
+    function for why a silent drop was the wrong instrument. Every entry that
+    reaches production has already been through it.
+
+    An entry that does not name all three required fields as non-empty strings
+    is not a region this record can vouch for and is dropped here, because
+    azure_release has no error channel to refuse one through. That drop is not
+    load-bearing for coverage and this docstring does not claim it is:
+    scripts/verify_trust_measurements.py grounds Azure coverage in the MAA
+    issuer each contacted endpoint presents LIVE, so a dropped region whose
+    issuer the record still publishes is reported as an unreached issuer, while
+    a region the record never listed an issuer for is invisible to it either
+    way. Refusing the record upstream is what closes that second case.
     """
-    accepted = {str(v) for v in metadata.get("accepted_hostdata", [])}
-    issuers = {str(v) for v in metadata.get("attestation_issuers", [])}
     regions: list[dict[str, str]] = []
     for entry in metadata.get("regions") or []:
         if not isinstance(entry, Mapping):
             continue
-        url = str(entry.get("attestation_url") or "")
-        hostdata = str(entry.get("hostdata") or "")
-        issuer = str(entry.get("attestation_issuer") or "")
-        if not url or hostdata not in accepted or (issuers and issuer not in issuers):
+        values = {
+            field: str(entry[field])
+            for field in (*_AZURE_REGION_REQUIRED, *_AZURE_REGION_OPTIONAL)
+            if isinstance(entry.get(field), str) and entry[field]
+        }
+        if any(field not in values for field in _AZURE_REGION_REQUIRED):
             continue
-        regions.append(
-            {
-                field: str(entry[field])
-                for field in _AZURE_REGION_FIELDS
-                if isinstance(entry.get(field), str)
-            }
-        )
+        regions.append(values)
     return tuple(regions)
 
 
@@ -279,6 +283,13 @@ def azure_release(
         # has no way to reach the others. Dropping this array on the way through
         # the mirror is what let scripts/verify_trust_measurements.py check one
         # of two Azure regions and report success for the plane.
+        #
+        # This function is the LAST layer, not the only one. On the serving
+        # route the array has to survive
+        # services.trust_release.validated_azure_metadata first, which is where
+        # it was actually being dropped — that validator whitelisted three
+        # scalar keys, so mirroring it here alone changed nothing anyone could
+        # fetch. Both layers, or neither.
         "regions": [dict(region) for region in regions],
         "api_base_url": f"https://{AZURE_API_HOSTNAME}/v1",
         "tls": {

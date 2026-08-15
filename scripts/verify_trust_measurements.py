@@ -18,7 +18,13 @@ prompt is sent; every endpoint used is an unauthenticated attestation route.
 WHAT THIS ANSWERS
     "Is what we publish what is running, on every plane we serve from?"
 Exit status is 0 only if every published measurement matched a live attestation
-AND every endpoint the record says exists was actually contacted.
+AND every SERVING ENDPOINT the record enumerates was actually contacted. Named
+exactly, because the sweeping version of this sentence was false: the endpoints
+enumerated are gcp `api_base_url`, aws `api_base_url`, and azure `api_base_url`
+plus every `regions[].attestation_url`. Two published lists are NOT contacted —
+gcp `api_base_urls[]` and `tls.hostnames[]`. The attestation routes derived from
+`api_base_urls[]` are printed under the gcp result, so the limit is visible where
+the verdict is and not only here.
 
 WHAT THIS VERSION CLOSES, AND ONE CLAIM IT REFUTES
 Measured 2026-08-15 by running the previous version of this file (82be9cdf)
@@ -61,10 +67,36 @@ ENDPOINTS COME FROM THE RECORD, NOT FROM CONSTANTS HERE
     read from record["regions"]; the per-plane constants below survive only as
     the fallback for a record that names no api_base_url.
 
-    A corollary that has teeth: if the record lists an MAA issuer that belongs to
-    no enumerated region, there is a serving region we publish measurements for
-    and cannot reach. That is reported as [GAP] and fails the run, because an
-    "ok" printed under it would be the same overclaim as hole 4.
+    A corollary that has teeth: if the record publishes an MAA issuer that NONE
+    of the endpoints this run contacted presented, there is a serving region we
+    publish measurements for and cannot reach. That is reported as [GAP] and
+    fails the run, because an "ok" printed under it would be the same overclaim
+    as hole 4. The attribution is from the issuers observed live, not from the
+    issuer the record attributes to an entry and never by list position — an
+    earlier revision sliced the issuer list by count and could name as unreached
+    the very issuer whose region HAD answered.
+
+    That corollary rests on an OPTIONAL field, which is its weak point and is
+    handled rather than assumed. A record that publishes no `attestation_issuers`
+    has no region census in it at all, and a record that publishes no `regions[]`
+    array while naming more than one accepted hostdata value cannot distinguish a
+    second serving region from a bind window. Both are [GAP], not [ok]: coverage
+    that cannot be established is not coverage. Before that, deleting one
+    optional field from the record turned off both halves of the multi-region
+    guarantee and a two-region plane passed --strict having contacted one region.
+
+THE MIRROR BOUNDS THIS SCRIPT, AND THE VALIDATOR BOUNDS THE MIRROR
+    Endpoints can only come from the record if the record still has them when it
+    is served. trusted_router.trust.azure_release mirrors the plane's `regions[]`
+    array through, and trusted_router.services.trust_release.validated_azure_metadata
+    — the validator the serving route interposes ahead of it — validates and
+    carries that array rather than whitelisting three scalar keys and dropping
+    it. Fixing only the former is dead code on the production route; that is
+    exactly what the first version of this change did, and the record served was
+    byte-identical to before it. A region entry the rest of the record
+    contradicts is refused whole there, not dropped: dropping erases a live
+    serving region from the published record with nothing left downstream to
+    notice, which is this script's failure mode wearing the mirror's clothes.
 
 WHY A SKIP IS LENIENT BY DEFAULT AND FATAL UNDER --strict
     Locally this script is a diagnostic: it is run against staging mirrors, a
@@ -108,6 +140,33 @@ WHAT THIS DOES NOT ESTABLISH
       reported; only set membership is enforced, because a rolling deploy
       legitimately serves the outgoing measurement while the record already
       names the incoming one.
+    * The GCP record's `api_base_urls[]` and `tls.hostnames[]` are NOT contacted.
+      They are alias hostnames (api.allyrouter.com, api.uptimerouter.com) for
+      the one Confidential Space workload the scalar `api_base_url` names, and
+      the record attributes no separate measurement to them — so fetching them
+      would re-verify the same image digest. Whether each alias still RESOLVES
+      to that workload is a different question, endpoint hijack rather than
+      measurement drift, and .github/workflows/deploy.yml's alias smoke is what
+      asks it. This run prints those endpoints under the gcp result rather than
+      leaving the gap to be inferred from silence. Azure's `regions[]` is not
+      the same case and is enumerated: those entries name DIFFERENT CCE policies
+      and therefore different measurements at different endpoints.
+    * An Azure record naming ONE region, ONE issuer and TWO accepted hostdata
+      values is accepted as covered. That shape is a one-region plane mid-roll
+      and a two-region plane whose second region was never published, and the
+      record does not distinguish them — accepted_hostdata rolls when a CCE
+      policy changes, so it cannot be read as a region count. Closing this needs
+      the plane to publish the region; it is not closeable from this side, and
+      the gap rules above deliberately do not guess.
+    * The three planes are a constant here, not read from the record. There is
+      no index endpoint listing them; gcp, aws and azure are the only release
+      records that exist. A fourth plane would have to be added to this file by
+      hand, and nothing in this file would notice if it were not.
+    * NetworkTransport accepts a literal `http://127.0.0.1:` prefix so a local
+      fixture plane can be pointed at. `http://127.0.0.1:80@evil.com/x` passes
+      that prefix check through the URL userinfo trick — reachable only by
+      passing a hostile --control-plane, and the guard's stated purpose
+      (refusing file://) is unaffected.
 """
 
 from __future__ import annotations
@@ -301,6 +360,45 @@ def _attestation_url(record: dict[str, Any], fallback: str) -> str:
     return urllib.parse.urlunsplit((parts.scheme, parts.netloc, "/attestation", "", ""))
 
 
+def _alias_attestation_urls(record: dict[str, Any], contacted: str) -> list[str]:
+    """Endpoints the record also publishes in api_base_urls[] and does not get contacted.
+
+    Returned so the GCP result can PRINT them rather than leave the reader to
+    infer coverage from silence. They are deliberately not fetched — see the
+    scope limit in the module docstring for why alias hostnames are a different
+    question from measurement drift — and this is the mechanism that keeps the
+    limit visible in every run instead of only in a docstring.
+    """
+    raw = record.get("api_base_urls")
+    if not isinstance(raw, list):
+        return []
+    urls: list[str] = []
+    for value in raw:
+        if not isinstance(value, str) or not value:
+            continue
+        url = _attestation_url({"api_base_url": value}, "")
+        if url and url != contacted and url not in urls:
+            urls.append(url)
+    return urls
+
+
+def _endpoint_identity(url: str) -> tuple[str, str, str | None, str]:
+    """What a client would actually talk to, for counting purposes.
+
+    Coverage is a count of PLACES CONTACTED, so what makes two published URLs
+    the same has to be what the request lands on — scheme, host, port, path —
+    and never the raw string. `.../attestation#a` and `.../attestation#b` are
+    different strings; the fragment is not transmitted, so they are one
+    endpoint, and counting them as two is this file's own defect rebuilt out of
+    punctuation. Query strings are folded in for the same reason: an attestation
+    route is not made into a second region by a parameter.
+    """
+    parts = urllib.parse.urlsplit(url)
+    host = (parts.hostname or parts.netloc).lower()
+    port = str(parts.port) if parts.port else None
+    return (parts.scheme.lower(), host, port, parts.path or "/")
+
+
 def _jwt_claims(token_bytes: bytes, plane: str) -> dict[str, Any]:
     token = token_bytes.decode("ascii").strip()
     parts = token.split(".")
@@ -374,11 +472,23 @@ def check_gcp(control_plane: str, transport: Transport) -> Result:
         # which of the two is stale. Both are published, so both must be true.
         problems.append("running image reference is not in the published accepted set")
 
+    aliases = _alias_attestation_urls(record, url)
     extra = [
         f"endpoint:  {url}",
         f"running:   {running}",
         *(f"published: {value}" for value in accepted),
         f"reference: {running_reference or '(absent)'}",
+        *(
+            [
+                "scope:     api_base_urls[] also publishes "
+                + ", ".join(aliases)
+                + " — NOT contacted by this run; these are alias hostnames for the same "
+                "workload, and whether each resolves to it is deploy.yml's alias smoke, "
+                "not measurement drift"
+            ]
+            if aliases
+            else []
+        ),
     ]
     if problems:
         return Result("gcp", ok=False, detail="; ".join(problems), endpoints=(url,), extra=extra)
@@ -519,51 +629,89 @@ def check_aws(control_plane: str, transport: Transport, samples: int) -> Result:
 @dataclass(frozen=True)
 class AzureRegion:
     url: str
-    hostdata: str  # "" when the record enumerates no per-region expectation
-    issuer: str
+    hostdata: str  # "" when the record's entry named none
+    issuer: str  # "" when the record's entry named none
 
 
-def azure_regions(record: dict[str, Any]) -> tuple[list[AzureRegion], list[str]]:
-    """(endpoints to contact, issuers that belong to no endpoint).
+@dataclass(frozen=True)
+class AzurePlan:
+    """What the record SAYS this plane is, before anything has been contacted.
 
-    The record is the authority on how many places this plane serves from.
-    One MAA instance is provisioned per serving region, so attestation_issuers
-    is a region count that cannot be confused with a bind window the way
-    accepted_hostdata can: hostdata rolls when a CCE policy changes, issuers do
-    not. An issuer with no endpoint is therefore a region we publish a
-    measurement for and never check.
+    Kept separate from what was observed so the two can be compared rather than
+    conflated. The defect this whole file exists to remove was a count of
+    RECORD ENTRIES being printed as if it were a count of endpoints reached.
     """
-    issuers = [value for value in record.get("attestation_issuers", []) if isinstance(value, str)]
+
+    regions: tuple[AzureRegion, ...]
+    issuers: tuple[str, ...]
+    enumerated: bool  # True when regions[] supplied the endpoints, not the fallback
+    defects: tuple[str, ...]  # ways the record's own regions[] cannot ground coverage
+
+
+def azure_plan(record: dict[str, Any]) -> AzurePlan:
+    """Read the record's own account of where this plane serves from.
+
+    The record is the authority on how many places this plane serves from, and
+    it carries exactly TWO census signals:
+
+      * regions[] — the endpoints themselves. Authoritative when present.
+      * attestation_issuers — one MAA instance is provisioned per serving
+        region, and issuers do not roll the way hostdata does.
+
+    accepted_hostdata is deliberately NOT a third. It rolls when a CCE policy
+    changes, so a two-value accepted set is a two-region plane or a one-region
+    plane mid-roll and the record does not say which. check_azure uses it for
+    the one thing it can support: a record that gives no endpoint array at all
+    while naming more than one accepted value has left this run unable to tell
+    those two cases apart, which is a hole in coverage rather than a pass.
+    """
+    issuers = tuple(
+        value for value in record.get("attestation_issuers", []) if isinstance(value, str) and value
+    )
+    raw = record.get("regions")
+    entries = [entry for entry in raw if isinstance(entry, dict)] if isinstance(raw, list) else []
+    defects: list[str] = []
     regions: list[AzureRegion] = []
-    for entry in record.get("regions") or []:
-        if not isinstance(entry, dict):
-            continue
+    seen: set[tuple[str, str, str | None, str]] = set()
+    for entry in entries:
         url = entry.get("attestation_url")
         if not isinstance(url, str) or not url:
+            defects.append("a regions[] entry names no attestation_url, so it cannot be contacted")
             continue
+        identity = _endpoint_identity(url)
+        if identity in seen:
+            # Counting entries rather than distinct endpoints is how a success
+            # line claims two regions on the strength of one fetch. Compared on
+            # endpoint identity, so two entries differing only by fragment or
+            # query cannot buy a second region either.
+            defects.append(
+                f"regions[] names the endpoint behind {url} more than once, so it counts more "
+                "regions than it has places to contact"
+            )
+            continue
+        seen.add(identity)
         hostdata = entry.get("hostdata")
         issuer = entry.get("attestation_issuer")
-        regions.append(
-            AzureRegion(
-                url,
-                hostdata if isinstance(hostdata, str) else "",
-                issuer if isinstance(issuer, str) else "",
+        if not isinstance(hostdata, str) or not hostdata:
+            defects.append(
+                f"regions[] entry for {url} names no hostdata, so what it serves could only be "
+                "compared against the union of every region's accepted values"
             )
-        )
-    if not regions:
+            hostdata = ""
+        if not isinstance(issuer, str) or not issuer:
+            defects.append(
+                f"regions[] entry for {url} names no attestation_issuer, so the issuer it "
+                "presents cannot be attributed to it"
+            )
+            issuer = ""
+        regions.append(AzureRegion(url, hostdata, issuer))
+    enumerated = bool(regions)
+    if not enumerated:
         # A single-region record — or a mirror that dropped the array — still
-        # gets checked at its canonical endpoint. The unreached issuers below
-        # are what says out loud when that is less than the whole plane.
+        # gets checked at its canonical endpoint. The coverage rules in
+        # check_azure are what say out loud when that is less than the plane.
         regions = [AzureRegion(_attestation_url(record, AZURE_ATTESTATION_URL), "", "")]
-    reached_issuers = {region.issuer for region in regions if region.issuer}
-    if reached_issuers:
-        unreached = [issuer for issuer in issuers if issuer not in reached_issuers]
-    else:
-        # No region names its issuer, so attribution is by count alone: a record
-        # listing more MAA instances than it gives endpoints for is short by the
-        # difference, whichever ones those are.
-        unreached = issuers[len(regions) :]
-    return regions, unreached
+    return AzurePlan(tuple(regions), issuers, enumerated, tuple(defects))
 
 
 def live_azure_hostdata(url: str, transport: Transport) -> tuple[str, str]:
@@ -584,12 +732,44 @@ def live_azure_hostdata(url: str, transport: Transport) -> tuple[str, str]:
 
 
 def check_azure(control_plane: str, transport: Transport) -> Result:
-    """Contact EVERY region the record enumerates, not the first one.
+    """Contact every region the record enumerates, and count what was reached.
 
     Southeast Asia runs a different CCE policy from UAE North, so it has a
-    permanently different hostdata. The previous version compared UAE North's
-    hostdata against the union of both and printed success — a check that would
-    have stayed green through any drift in the region it never contacted.
+    permanently different hostdata. The version before this file was rewritten
+    compared UAE North's hostdata against the union of both and printed success
+    — a check that would have stayed green through any drift in the region it
+    never contacted.
+
+    COVERAGE IS COMPUTED FROM WHAT ANSWERED, NOT FROM WHAT THE RECORD LISTS.
+    Every count printed below is over the DISTINCT endpoints actually fetched,
+    and the issuer census is matched against the issuers those endpoints
+    presented live — not against the issuer the record attributes to an entry,
+    and never by list position. An earlier revision of this function did both:
+    it printed len(regions[]) as an endpoint count (two entries naming one URL
+    read as two regions covered) and, when no entry named an issuer, attributed
+    non-coverage by slicing the issuer list, which could name as unreached the
+    very issuer whose region HAD been contacted.
+
+    Each of the following is a coverage gap. None of them can produce an "ok" or
+    a zero exit; each is printed as a `gap:` line beside the verdict. The plane
+    is marked [GAP] when they are the only thing wrong, and [DRIFT] when a
+    measurement also mismatched — drift is the more serious verdict and takes
+    the mark, while the gap lines and the unreached issuers are still reported
+    under it. Stated this way because the shorter version of this sentence
+    ("a [GAP] is raised when any of these hold") was false for exactly that case.
+      1. a published MAA issuer was presented by none of the endpoints reached;
+      2. the record publishes no attestation_issuers at all, so nothing in it
+         says how many regions this plane serves from;
+      3. the record publishes no usable regions[] array while naming more than
+         one accepted hostdata value, so this run cannot tell a second region
+         from a bind window;
+      4. the regions[] array itself cannot ground a count — duplicate URLs, an
+         entry with no URL, or an entry naming no hostdata or issuer to
+         attribute what it serves.
+    Rules 2 and 3 exist because coverage used to hang entirely on the optional
+    attestation_issuers field: dropping it from the record turned off both the
+    gap detection and the live-issuer check, and a two-region plane passed
+    --strict having contacted one region.
     """
     record = _published(control_plane, "/trust/azure-release.json", transport)
     if record is None:
@@ -597,13 +777,21 @@ def check_azure(control_plane: str, transport: Transport) -> Result:
     accepted = _accepted(record, "accepted_hostdata", "hostdata")
     if not accepted:
         return Result("azure", ok=True, detail="no measurement published", skipped=True)
-    issuers = [value for value in record.get("attestation_issuers", []) if isinstance(value, str)]
-    regions, unreached = azure_regions(record)
+    plan = azure_plan(record)
 
     problems: list[str] = []
     extra: list[str] = []
-    for region in regions:
+    contacted: list[str] = []
+    live_issuers: list[str] = []
+    for region in plan.regions:
         running, issuer = live_azure_hostdata(region.url, transport)
+        # Appended after the fetch returned, so this is a list of endpoints that
+        # ANSWERED. azure_plan guarantees the URLs are distinct — a record
+        # naming one twice loses the duplicate there and gains a defect — so
+        # len(contacted) is an endpoint count and never an entry count.
+        contacted.append(region.url)
+        if issuer not in live_issuers:
+            live_issuers.append(issuer)
         extra.append(f"endpoint:  {region.url}")
         extra.append(f"  running:   {running}")
         extra.append(f"  issuer:    {issuer}")
@@ -615,35 +803,67 @@ def check_azure(control_plane: str, transport: Transport) -> Result:
             # policy, which is a real misconfiguration and not a bind window.
             problems.append(f"{region.url} serves hostdata the record attributes to another region")
             extra.append(f"  expected:  {region.hostdata}")
-        if issuers and issuer not in issuers:
+        if plan.issuers and issuer not in plan.issuers:
             # A region we serve from but never listed. A verifier following our
             # record would reject a token that is in fact genuine.
             problems.append(f"live MAA issuer {issuer} is not in the published issuer list")
         elif region.issuer and issuer != region.issuer:
             problems.append(f"{region.url} is signed by {issuer}, not the record's {region.issuer}")
 
-    endpoints = tuple(region.url for region in regions)
+    # Attribution by evidence: an issuer counts as reached only if an endpoint
+    # this run actually contacted presented it.
+    unreached = tuple(issuer for issuer in plan.issuers if issuer not in live_issuers)
+    gaps = [
+        f"published MAA issuer {issuer} was presented by none of the "
+        f"{len(contacted)} endpoint(s) this run contacted"
+        for issuer in unreached
+    ]
+    if not plan.issuers:
+        gaps.append(
+            "the record publishes no attestation_issuers, so nothing in it says how many "
+            "regions this plane serves from and this run cannot know what it did not reach"
+        )
+    if not plan.enumerated and len(accepted) > 1:
+        gaps.append(
+            f"the record publishes no regions[] array, so its {len(accepted)} accepted hostdata "
+            f"values share the one endpoint this run could derive from it — a second serving "
+            "region and a bind window are indistinguishable from here"
+        )
+    gaps.extend(plan.defects)
+
+    endpoints = tuple(contacted)
+    reached = (
+        f"{len(contacted)} endpoint(s) contacted, "
+        f"{len(live_issuers)} distinct MAA issuer(s) presented"
+    )
     if problems:
         return Result(
-            "azure", ok=False, detail="; ".join(problems), endpoints=endpoints, extra=extra
+            "azure",
+            ok=False,
+            detail="; ".join(problems),
+            endpoints=endpoints,
+            unreached=unreached,
+            extra=[*extra, *(f"gap:       {gap}" for gap in gaps)],
         )
-    if unreached:
+    if gaps:
         return Result(
             "azure",
             ok=False,
             gap=True,
-            detail=(
-                f"{len(unreached)} published MAA issuer(s) belong to no enumerated region, so "
-                "part of this plane was never contacted"
-            ),
+            detail=f"{len(gaps)} coverage gap(s) over {reached}: " + "; ".join(gaps),
             endpoints=endpoints,
-            unreached=tuple(unreached),
-            extra=[*extra, *(f"unreached: {issuer}" for issuer in unreached)],
+            unreached=unreached,
+            extra=[*extra, *(f"gap:       {gap}" for gap in gaps)],
         )
     return Result(
         "azure",
         ok=True,
-        detail=f"hostdata and issuer match in all {len(regions)} enumerated region(s)",
+        # Counted from the fetch list and the live tokens, so this sentence
+        # cannot describe more of the plane than answered.
+        detail=(
+            f"hostdata and issuer match at every one of {reached}, "
+            f"covering all {len(plan.issuers)} published MAA issuer(s)"
+        ),
         endpoints=endpoints,
         extra=extra,
     )
@@ -659,12 +879,15 @@ REMEDIATION = (
     "control plane mirrors those records, so there is nothing to change here."
 )
 GAP_REMEDIATION = (
-    "A [GAP] is not drift: the measurements that were compared matched. It means\n"
-    "the record names a serving region this run could not reach, so the run\n"
-    "covered less of the plane than the record describes. Fix it by publishing\n"
-    "that region in the record's `regions` array — quill-cloud-proxy's\n"
-    "tools/capture-plane-measurements.py writes it, and quill-router's\n"
-    "trusted_router.trust.azure_release mirrors it through."
+    "A [GAP] is not drift: every measurement that was compared matched. It means\n"
+    "this run could not establish that it covered the whole plane — either a\n"
+    "published MAA issuer was presented by none of the endpoints reached, or the\n"
+    "record carries no census to check coverage against. Fix it by publishing\n"
+    "every serving region in the record's `regions` array, each with its own\n"
+    "attestation_url, hostdata and attestation_issuer: quill-cloud-proxy's\n"
+    "tools/capture-plane-measurements.py writes it, quill-router's\n"
+    "trusted_router.services.trust_release.validated_azure_metadata validates and\n"
+    "carries it, and trusted_router.trust.azure_release publishes it."
 )
 
 
