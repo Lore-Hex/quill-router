@@ -33,6 +33,22 @@ quoted forward reference and a subclass as the one type they all are, and
 no longer decides whether it is seen. Both variants were re-run against this
 version: each now fails the central law by name.
 
+One shape of that evasion still WORKS, and it is the same attack with the class
+moved one level in. Reflection reaches classes through `vars(module)`, so a
+dataclass defined inside a FUNCTION BODY is not a module attribute and
+`envelope_fields` never sees it — alias or no alias. Rebuilt and re-measured at
+this commit: the `TypeAlias` model, unchanged except for being declared inside
+`def load_signing(...)`, is invisible to the law. Whether anything else fires
+depends on the writer, not on the model: with the `encrypt_control_secret` call
+in the same function as the `write_entity`, the adjacency guard still names the
+unregistered kind (2 failed); with the sealing hoisted into a helper and the
+write taking the record as `Any`, the whole file passes at 25. And spelling the
+envelope out in full inside that function-local class trips only the convention
+check `test_every_envelope_typed_attribute_lives_in_storage_models` — never the
+law. So the type-indirection class is narrowed, not eliminated: what remains is
+a function-local class whose writer mentions no envelope vocabulary. The scope
+limit below states the general form.
+
 What IS restated, in full, because a hand-maintained list this file did not
 disclose was itself a review finding:
 
@@ -45,14 +61,46 @@ disclose was itself a review finding:
   - `NON_ENVELOPE_KINDS`, one entry today, and `LOOSELY_TYPED_FIELDS`, two.
     Both are declarations with reasons and both are asserted in both
     directions, so an entry that stops being true fails the build.
+  - `_OPAQUE_CONTAINERS`, the five builtin container types `_admits_any` calls
+    opaque when they carry no parameters. A container outside it is neither
+    flagged as loosely typed nor reflected as an envelope: measured, both
+    `_admits_any(collections.deque)` and `_admits_any(types.SimpleNamespace)`
+    are False, so a persisted field annotated with either is invisible the way
+    a bare `dict` was before the third review. Named here because the previous
+    version of this paragraph claimed to be complete and was not.
+  - the AST shapes each scan understands, enumerated in `_bound_names`,
+    `_kind_argument` and `_admits_envelope` rather than gathered in one place.
+    Each is a floor on what a name scan can see and each says so where it is
+    written. An expression outside those shapes yields None. In the kind and
+    family derivations that fails the build — an unplaced kind, an unsealed
+    field, an unresolvable call site. In `persisted_dataclasses` it does not: a
+    model whose read cannot be resolved simply drops out of the domain of the
+    loosely typed check, which narrows that check rather than failing it.
   - the pin in `test_the_derivation_reproduces_todays_registry`, a guard
     against a derivation that quietly stops finding anything.
 
-`ENVELOPE_ADAPTER_MODULES`, a third hand-maintained list, used to be here too:
+`ENVELOPE_ADAPTER_MODULES`, one more hand-maintained list, used to be here too:
 two file names, so the identical write-only-kind defect in storage_postgres.py
 was invisible. Review was right that this file criticised `_MIGRATED_KINDS` for
 exactly that and then did it. It is gone — `envelope_adjacent_kinds` derives its
 own scope, package-wide — and what replaced it is pinned rather than trusted.
+
+That replacement is a TRADE, not a pure gain, and the first version of this
+paragraph presented it as a pure gain. The old list took every kind named
+anywhere in those two files; the new derivation takes only the kinds named by a
+scope that mentions envelope vocabulary. It is wider in file scope — any module
+in the package now qualifies — and narrower within the two original files. Two
+real kinds left coverage that way: `broadcast_delivery` and
+`broadcast_delivery_due`, both written by `_write_delivery` in
+storage_gcp_broadcast.py, a method that names no envelope model, field, sealer
+or id helper. That is why `NON_ENVELOPE_KINDS` shrank from three entries to one
+— the two that went are out of scope, not proven safe — and why a new
+`write_entity("broadcast_delivery_archive", ...)` beside them passes this file
+today where the old list would have caught it. Measured both ways against both
+versions, not reasoned about. The cost is bounded by what those functions
+handle: `BroadcastDeliveryJob` has no envelope-typed field, but its `settle_body`
+is the loosely typed field `LOOSELY_TYPED_FIELDS` documents, so this is the same
+hole as the settle_body refutation approached from the other side.
 
 Why this is a proof and not a test. The registry is exactly right today — every
 caller of the two encrypt functions was walked by hand and maps to precisely
@@ -119,7 +167,8 @@ claim. Reflection follows types, and `dict[str, Any]` is the absence of one.
 directly, not argued. So the claim "an envelope reaching storage must be a
 field this reflection finds" is false, and the law proves totality over typed
 fields, not over persisted bytes. `test_every_loosely_typed_persisted_field_is_classified`
-holds the list of such shapes at two so it cannot grow in silence; closing
+holds the list of such shapes at two so it cannot grow in silence — as far as
+`_OPAQUE_CONTAINERS` reaches, which is the five builtins and no further; closing
 the hole properly needs the backfill to walk bodies rather than named fields,
 which is a change to the migration, not to a test.
 
@@ -144,17 +193,27 @@ sealing call sites. It does NOT establish:
     the backfill alike, and no reflection over today's source can see it.
   - totality over loosely typed bodies, per the refutation above.
   - that every kind an envelope-bearing model can be WRITTEN to is registered.
-    `envelope_adjacent_kinds` sees an entity-IO call when the function around it
-    mentions an envelope-bearing model class, an envelope field name, a sealing
-    function, or an id helper reached from one of those. That is enough for the
-    two write-only-kind attacks review landed — a kind hoisted to a module
-    constant, and the same write moved to storage_postgres.py, which the id
-    helper `byok_id` pulls in — and both were re-run against this version and
-    fail. It is NOT enough for a function that persists an envelope-bearing
-    object while mentioning none of that vocabulary: taking the object as `Any`
-    and building the row id inline still passes, verified by construction. That
-    residue is a name scan's floor, not an oversight; closing it needs the type
-    of each written value, which is dataflow.
+    `envelope_adjacent_kinds` sees an entity-IO call when the SCOPE around it —
+    a function, or the per-file `<module>` scope that owns class bodies and
+    module-level lambdas — mentions an envelope-bearing model class, an envelope
+    field name, a sealing function, or an id helper reached from one of those.
+    That is enough for the three write-only-kind attacks review landed: a kind
+    hoisted to a module constant, the same write moved to storage_postgres.py
+    (which the id helper `byok_id` pulls in), and a write inside a module-level
+    `lambda` in a dispatch dict. All three were re-run against this version and
+    fail with the site named. It is NOT enough for a scope that persists an
+    envelope-bearing object while mentioning none of that vocabulary: taking the
+    object as `Any` and building the row id inline still passes, verified by
+    construction. That residue is a name scan's floor, not an oversight; closing
+    it needs the type of each written value, which is dataflow. And per the
+    trade recorded above, it is a real loss against the module-scoped list this
+    replaced, which would have caught such a write inside its two files.
+  - that a kind resolved from a NAME is the kind that call site really uses,
+    beyond the shadowing `_shadowed_names` rejects. A name bound in the calling
+    scope now resolves to None and the site is reported unresolvable; a name
+    rebound at module level between definition and call, or one that arrives
+    through `import *`, is still read as whatever the imported module holds at
+    test time.
   - that every WRITER of a field agrees on its family. `sealed_families`
     aggregates by bare field name, so if one of the two modules writing
     `encrypted_secret` began sealing through a wrapper with the other family,
@@ -163,7 +222,11 @@ sealing call sites. It does NOT establish:
   - anything about a class that is not a module attribute. Resolved reflection
     reaches classes through `vars(module)`, so a dataclass defined inside a
     function body is seen only by the text scan beside it, and therefore only
-    if its annotation spells the envelope out.
+    if its annotation spells the envelope out — and even then it fails only the
+    convention check, never the law. This is the surviving half of the critical
+    finding review opened this rework with, described in full at the top of this
+    docstring; it is the reason that finding is called narrowed rather than
+    closed.
   - anything about the AAD *context* component (the provider slug, the
     broadcast purpose) beyond the three-way identity pinned in
     `test_the_broadcast_context_helper_matches_the_service`. Context
@@ -479,7 +542,52 @@ def _python_sources(root: pathlib.Path) -> list[pathlib.Path]:
     return sorted(p for p in root.rglob("*.py") if p.name != BACKFILL_MODULE)
 
 
-def _kind_argument(node: ast.Call, index: int, module: types.ModuleType) -> str | None:
+def _shadowed_names(nodes: Iterable[ast.AST], *, module_level: bool) -> frozenset[str]:
+    """The names in this scope that a module-namespace lookup would resolve WRONGLY.
+
+    `_kind_argument` resolves a bare name through the module namespace, and that
+    lookup is wrong whenever the name is a local. Adversarial review found the
+    fail-open it opens: with a module-level `KIND = "byok"` and a
+    function-local `KIND = "byok_archive"` above the write, the scan resolved
+    the archive write to the registered kind 'byok' and reported nothing at all.
+    A name bound in the scope is therefore treated as unresolvable, so the call
+    site surfaces in `UNRESOLVABLE_KIND_CALL_SITES` and fails the build instead
+    of being silently mis-attributed to whatever the module happens to hold.
+
+    What counts as a binding here is a `Store` name or a parameter: assignments,
+    `for` and `with` targets, walrus, comprehension targets, and — because a
+    function scope is passed as its full walk — the same inside any nested def
+    or lambda. A `def`, `class` or `import` statement also binds a name, and
+    those three are NOT read, so a kind argument shadowed by one of them still
+    resolves through the module. In the module scope a binding IS the module
+    namespace and the lookup is right, so only a nested scope inside it — a
+    lambda, a comprehension target — shadows.
+    """
+    shadowed: set[str] = set()
+    for node in nodes:
+        if module_level:
+            if isinstance(node, ast.Lambda):
+                inner: Iterable[ast.AST] = ast.walk(node)
+            elif isinstance(node, ast.comprehension):
+                inner = ast.walk(node.target)
+            else:
+                continue
+        else:
+            inner = (node,)
+        for child in inner:
+            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
+                shadowed.add(child.id)
+            elif isinstance(child, ast.arg):
+                shadowed.add(child.arg)
+    return frozenset(shadowed)
+
+
+def _kind_argument(
+    node: ast.Call,
+    index: int,
+    module: types.ModuleType,
+    shadowed: frozenset[str] = frozenset(),
+) -> str | None:
     """The kind at its declared argument position, or None if it is not a constant.
 
     Resolved through the calling module's own namespace, not just matched as a
@@ -488,6 +596,16 @@ def _kind_argument(node: ast.Call, index: int, module: types.ModuleType) -> str 
     the variant adversarial review used — made the call site invisible to every
     scan here. `getattr` on the module covers a constant defined in the module,
     one imported into it by name, and `other_module.CONST`.
+
+    That lookup can be WRONG rather than merely absent, which is the third
+    review's finding: a local of the same name resolves to the module-level
+    object and the scan then reports a real write under a different, possibly
+    registered, kind. `shadowed` — the names the surrounding scope binds, from
+    `_shadowed_names` — is what stops that; a shadowed name resolves to None
+    here whatever the module happens to hold. Omitting it restores the old,
+    trusting behaviour, so every scan below passes its scope's set; the single
+    call that omits it is in the negative control, where the fail-open is pinned
+    so this guard cannot be dropped in silence.
 
     None means "not resolvable to a string constant", which callers must treat
     as unknown rather than as absent; see `envelope_adjacent_kinds`.
@@ -498,37 +616,44 @@ def _kind_argument(node: ast.Call, index: int, module: types.ModuleType) -> str 
     if isinstance(argument, ast.Constant):
         return argument.value if isinstance(argument.value, str) else None
     if isinstance(argument, ast.Name):
+        if argument.id in shadowed:
+            return None
         value = getattr(module, argument.id, None)
         return value if isinstance(value, str) else None
     if isinstance(argument, ast.Attribute) and isinstance(argument.value, ast.Name):
+        if argument.value.id in shadowed:
+            return None
         base = getattr(module, argument.value.id, None)
         value = getattr(base, argument.attr, None) if base is not None else None
         return value if isinstance(value, str) else None
     return None
 
 
+def _read_call_classes(node: ast.Call) -> list[str]:
+    """The names passed to a typed read that could be the model class."""
+    named = [arg.id for arg in node.args if isinstance(arg, ast.Name)]
+    named += [
+        keyword.value.id
+        for keyword in node.keywords
+        if keyword.arg == "cls" and isinstance(keyword.value, ast.Name)
+    ]
+    return named
+
+
 def entity_kinds(root: pathlib.Path, model_names: frozenset[str]) -> dict[str, set[str]]:
-    """Model name -> the entity kinds it is read back under."""
+    """Model name -> the entity kinds it is read back under.
+
+    By scope rather than by file, because the kind is resolved through a
+    namespace and only the scope knows which names in it are locals.
+    """
     found: dict[str, set[str]] = {}
-    for path in _python_sources(root):
-        module = _module_for(path)
-        tree = ast.parse(path.read_text(), filename=str(path))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            index = ENTITY_READ_FUNCTIONS.get(_called_name(node) or "")
-            if index is None:
-                continue
-            kind = _kind_argument(node, index, module)
+    for scope in _package_scopes(root):
+        for node, _index, kind in _entity_io_calls(
+            scope.nodes, scope.module, scope.shadowed, ENTITY_READ_FUNCTIONS
+        ):
             if kind is None:
                 continue
-            named = [arg.id for arg in node.args if isinstance(arg, ast.Name)]
-            named += [
-                keyword.value.id
-                for keyword in node.keywords
-                if keyword.arg == "cls" and isinstance(keyword.value, ast.Name)
-            ]
-            for name in named:
+            for name in _read_call_classes(node):
                 if name in model_names:
                     found.setdefault(name, set()).add(kind)
     return found
@@ -545,32 +670,23 @@ def persisted_dataclasses(root: pathlib.Path) -> set[type]:
     so widening the domain cost no new declarations.
     """
     found: set[type] = set()
-    for path in _python_sources(root):
-        module = _module_for(path)
-        tree = ast.parse(path.read_text(), filename=str(path))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
+    for scope in _package_scopes(root):
+        for node, _index, kind in _entity_io_calls(
+            scope.nodes, scope.module, scope.shadowed, ENTITY_READ_FUNCTIONS
+        ):
+            if kind is None:
                 continue
-            index = ENTITY_READ_FUNCTIONS.get(_called_name(node) or "")
-            if index is None or _kind_argument(node, index, module) is None:
-                continue
-            named = [arg.id for arg in node.args if isinstance(arg, ast.Name)]
-            named += [
-                keyword.value.id
-                for keyword in node.keywords
-                if keyword.arg == "cls" and isinstance(keyword.value, ast.Name)
-            ]
-            for name in named:
-                obj = getattr(module, name, None)
+            for name in _read_call_classes(node):
+                obj = getattr(scope.module, name, None)
                 if isinstance(obj, type) and dataclasses.is_dataclass(obj):
                     found.add(obj)
     return found
 
 
-def _names_mentioned(node: ast.AST) -> set[str]:
-    """Every bare name, attribute name and parameter name appearing under `node`."""
+def _names_mentioned(nodes: Iterable[ast.AST]) -> set[str]:
+    """Every bare name, attribute name and parameter name appearing in `nodes`."""
     mentioned: set[str] = set()
-    for child in ast.walk(node):
+    for child in nodes:
         if isinstance(child, ast.Name):
             mentioned.add(child.id)
         elif isinstance(child, ast.Attribute):
@@ -580,31 +696,100 @@ def _names_mentioned(node: ast.AST) -> set[str]:
     return mentioned
 
 
-def _package_functions(
-    root: pathlib.Path,
-) -> list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef, types.ModuleType]]:
-    found: list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef, types.ModuleType]] = []
+class _Scope(typing.NamedTuple):
+    """One place an entity-IO call can live, with what it takes to read it.
+
+    `site` is "path:scope-name", `nodes` the AST nodes the scope owns, `module`
+    the imported module the names in it resolve through, and `shadowed` the
+    names this scope binds, which a lookup in that module would answer wrongly.
+    """
+
+    site: str
+    nodes: list[ast.AST]
+    module: types.ModuleType
+    shadowed: frozenset[str]
+
+
+def _outside_functions(tree: ast.Module) -> list[ast.AST]:
+    """The nodes of `tree` that no function or method definition contains.
+
+    Module level, class bodies, and any lambda in either: a lambda is not an
+    `ast.FunctionDef`, so the walk stops at real defs only and a lambda body
+    stays in this scope. A function's decorators, annotations and argument
+    defaults hang off its own `ast.FunctionDef` node and therefore belong to
+    that function's scope, not to this one.
+    """
+    nodes: list[ast.AST] = []
+    stack: list[ast.AST] = list(ast.iter_child_nodes(tree))
+    while stack:
+        child = stack.pop()
+        nodes.append(child)
+        if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        stack.extend(ast.iter_child_nodes(child))
+    return nodes
+
+
+def _package_scopes(root: pathlib.Path) -> list[_Scope]:
+    """Every scope in the package that an entity-IO call can appear in.
+
+    Functions and methods, plus one synthetic `<module>` scope per file for
+    everything outside them. The previous version collected only
+    `ast.FunctionDef` / `ast.AsyncFunctionDef`, and adversarial review put a
+    real write in the gap:
+
+        ARCHIVERS = {"byok": lambda io, config, workspace_id, provider:
+            io.write_entity("byok_archive2", byok_id(workspace_id, provider), config)}
+
+    at module level, mentioning the full envelope vocabulary and seen by
+    nothing. The `<module>` scope closes exactly that: it is the file's nodes
+    minus the function bodies, so a class-body or module-level call is judged by
+    the names around it the same way a function's is.
+    """
+    found: list[_Scope] = []
     for path in _python_sources(root):
         module = _module_for(path)
         relative = path.relative_to(root).as_posix()
         tree = ast.parse(path.read_text(), filename=str(path))
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-                found.append((relative, node, module))
+                nodes = list(ast.walk(node))
+                found.append(
+                    _Scope(
+                        f"{relative}:{node.name}",
+                        nodes,
+                        module,
+                        _shadowed_names(nodes, module_level=False),
+                    )
+                )
+        outside = _outside_functions(tree)
+        found.append(
+            _Scope(
+                f"{relative}:<module>",
+                outside,
+                module,
+                _shadowed_names(outside, module_level=True),
+            )
+        )
     return found
 
 
 def _entity_io_calls(
-    scope: ast.AST, module: types.ModuleType
+    nodes: Iterable[ast.AST],
+    module: types.ModuleType,
+    shadowed: frozenset[str] = frozenset(),
+    recognised: dict[str, int] | None = None,
 ) -> list[tuple[ast.Call, int, str | None]]:
     calls: list[tuple[ast.Call, int, str | None]] = []
-    for node in ast.walk(scope):
+    for node in nodes:
         if not isinstance(node, ast.Call):
             continue
-        index = ENTITY_IO_FUNCTIONS.get(_called_name(node) or "")
+        index = (ENTITY_IO_FUNCTIONS if recognised is None else recognised).get(
+            _called_name(node) or ""
+        )
         if index is None:
             continue
-        calls.append((node, index, _kind_argument(node, index, module)))
+        calls.append((node, index, _kind_argument(node, index, module, shadowed)))
     return calls
 
 
@@ -615,36 +800,48 @@ def envelope_adjacent_kinds(
     sealer_names: frozenset[str],
     registry_kinds: frozenset[str],
 ) -> tuple[dict[str, set[str]], list[str]]:
-    """Every kind named by a function that handles envelope material.
+    """Every kind named by a scope that handles envelope material.
 
     Returns (kind -> the call sites naming it, unresolvable call sites).
 
     This replaces a hand-written two-entry list of adapter modules. Adversarial
     review was right that such a list is the same maintenance hazard the module
     docstring criticises `_MIGRATED_KINDS` for, and proved it by putting the
-    same defect in a third module the list did not name. The scope is now
+    same defect in a third module the list did not name. The file scope is now
     derived and package-wide.
 
-    A function is envelope-adjacent when it mentions a derived envelope-bearing
+    It is not strictly wider than what it replaced, and the module docstring
+    records the trade. The old list took every kind named anywhere in those two
+    files; this takes only the kinds named by a scope that mentions envelope
+    vocabulary, so a function in one of those same two files that mentions none
+    of it is no longer covered. `broadcast_delivery` and
+    `broadcast_delivery_due`, written by `_write_delivery` in
+    storage_gcp_broadcast.py, are the two real kinds that left scope this way.
+
+    A scope is envelope-adjacent when it mentions a derived envelope-bearing
     model class, a derived envelope field name, a sealing function, or an id
-    helper that an already-adjacent function uses to build the entity id of a
+    helper that an already-adjacent scope uses to build the entity id of a
     registry kind. That last clause is a fixed point, not a guess: it is how
     `byok_id` enters the vocabulary, and with it every function that builds a
     byok row id — including one that takes the config as an untyped parameter.
+
+    Scope, not function: `_package_scopes` adds a `<module>` scope per file, so
+    a write inside a module-level lambda or a class body is judged too. That was
+    a hole review found after the function-scoped version landed.
 
     Reads and writes both, because the gap this closes is a kind that is only
     ever written. A config archived under a second kind by a plain
     `write_entity` leaves `entity_kinds` unchanged and every other assertion
     green, while the archived row keeps its v1 envelope.
     """
-    functions = _package_functions(root)
+    scopes = _package_scopes(root)
     vocabulary = set(model_names) | set(field_names) | set(sealer_names)
-    for _ in range(len(functions) + 1):
+    for _ in range(len(scopes) + 1):
         widened = set(vocabulary)
-        for _relative, function, module in functions:
-            if not (_names_mentioned(function) & vocabulary):
+        for scope in scopes:
+            if not (_names_mentioned(scope.nodes) & vocabulary):
                 continue
-            for node, index, kind in _entity_io_calls(function, module):
+            for node, index, kind in _entity_io_calls(scope.nodes, scope.module, scope.shadowed):
                 if kind not in registry_kinds or len(node.args) <= index + 1:
                     continue
                 widened |= {
@@ -658,11 +855,11 @@ def envelope_adjacent_kinds(
 
     found: dict[str, set[str]] = {}
     unresolvable: list[str] = []
-    for relative, function, module in functions:
-        if not (_names_mentioned(function) & vocabulary):
+    for scope in scopes:
+        if not (_names_mentioned(scope.nodes) & vocabulary):
             continue
-        for node, _index, kind in _entity_io_calls(function, module):
-            site = f"{relative}:{function.name}:{node.lineno}"
+        for node, _index, kind in _entity_io_calls(scope.nodes, scope.module, scope.shadowed):
+            site = f"{scope.site}:{node.lineno}"
             if kind is None:
                 unresolvable.append(f"{site} -> {ast.unparse(node)[:90]}")
             else:
@@ -916,14 +1113,25 @@ def test_every_envelope_typed_attribute_lives_in_storage_models() -> None:
     assert not stray, (
         "EncryptedSecretEnvelope is declared outside storage_models: "
         + ", ".join(f"{module}:{cls}.{attribute}" for module, cls, attribute in stray)
-        + ". The law still covers them — `envelope_fields` reflects the whole package "
-        "— but this codebase keeps persisted secret material in one file. Move the "
-        "field onto a storage_models dataclass, or record here why it cannot be."
+        + ". `envelope_fields` reflects the whole package, so the law covers a stray "
+        "class that is a module attribute; one defined inside a function body it does "
+        "NOT cover, and this message is then the only thing that fires. Either way "
+        "this codebase keeps persisted secret material in one file: move the field "
+        "onto a storage_models dataclass, or record here why it cannot be."
     )
 
 
-# Kinds an envelope-adjacent function names that carry no envelope. Both
-# directions are asserted, so an entry that stops being named fails too.
+# Kinds an envelope-adjacent scope names that carry no envelope. Both directions
+# are asserted, so an entry that stops being named fails too.
+#
+# This was three entries when the scan took every kind named in two hand-listed
+# adapter modules. `broadcast_delivery` and `broadcast_delivery_due` are not here
+# any more because they are OUT OF SCOPE, not because they were shown to be
+# safe: the method that writes them, `_write_delivery` in
+# storage_gcp_broadcast.py, mentions no envelope model, field, sealer or id
+# helper, so the scope-based derivation never reaches it. Read the shrink from
+# three to one as a coverage trade, recorded in the module docstring, rather
+# than as two fewer risks.
 NON_ENVELOPE_KINDS = {
     # Index row written as a dict literal: {"destination_id": ...}. See
     # SpannerBroadcastDestinations.create in storage_gcp_broadcast.py.
@@ -960,6 +1168,13 @@ def _admits_any(annotation: Any) -> bool:
     only the second, so the "frozen at two" claim next door was false for the
     first. A parameterized container is judged by its parameters, so
     `dict[str, str]` is not opaque and `dict[str, Any]` is.
+
+    `_OPAQUE_CONTAINERS` is itself a hand-written list, and the fourth one in
+    this file — the module docstring names it with the other three. It holds the
+    five builtins, so `_admits_any(collections.deque)` and
+    `_admits_any(types.SimpleNamespace)` are both False (measured): a persisted
+    field annotated with either is neither classified here nor reflected as an
+    envelope, exactly as a bare `dict` was before this correction.
     """
     if annotation is Any or annotation is object:
         return True
@@ -1007,7 +1222,9 @@ def test_every_loosely_typed_persisted_field_is_classified() -> None:
 
     unclassified = sorted(loose - set(LOOSELY_TYPED_FIELDS))
     assert not unclassified, (
-        f"storage_models gained loosely typed field(s) {unclassified}. An "
+        f"persisted dataclass(es) gained loosely typed field(s) {unclassified} — the "
+        "domain is every model the package reads back under an entity kind, not just "
+        "storage_models, so the class named may live anywhere. An "
         "EncryptedSecretEnvelope nested inside one reaches storage without being "
         "a typed field, so neither this module's reflection nor the backfill can "
         "see it. Classify each: say why it cannot carry secret material, or make "
@@ -1027,27 +1244,34 @@ def test_every_kind_an_envelope_handling_function_names_is_registered_or_declare
     leaves every other assertion green while the archived row keeps its v1
     envelope.
 
-    Two rounds of adversarial review found three ways past the previous version
-    of this test, and all three are why it now looks like this. The kind had to
-    be an inline string, so a module constant escaped: kinds are now resolved
-    through the calling module's namespace. The scan covered two hand-listed
-    adapter modules, so the same write in storage_postgres.py escaped: the scope
-    is now derived, package-wide and function-scoped. And a dynamic kind used
-    to be skipped in silence: it now fails.
+    Three rounds of adversarial review found five ways past earlier versions of
+    this test, and all five are why it now looks like this. The kind had to be
+    an inline string, so a module constant escaped: kinds are now resolved
+    through the calling module's namespace. That resolution then read a
+    function-local of the same name as the module constant, reporting a real
+    write under the wrong, registered kind: a shadowed name is now unresolvable
+    and the site is reported. The scan covered two hand-listed adapter modules,
+    so the same write in storage_postgres.py escaped: the scope is now derived
+    and package-wide. It collected function definitions only, so a write inside
+    a module-level `lambda` escaped: there is now a `<module>` scope per file.
+    And a dynamic kind used to be skipped in silence: it now fails.
 
-    Scope, precisely. This sees an entity-IO call when the function around it
-    mentions an envelope-bearing model, an envelope field, a sealing function,
-    or an id helper reached from one of those. A function that persists an
-    envelope-bearing object while mentioning none of them — one that takes it as
-    `Any` and builds the row id itself — is not seen. That residue is named in
-    the module scope limit; it is not claimed to be covered.
+    Scope, precisely, including what it LOST. This sees an entity-IO call when
+    the scope around it mentions an envelope-bearing model, an envelope field, a
+    sealing function, or an id helper reached from one of those. A scope that
+    persists an envelope-bearing object while mentioning none of them — one that
+    takes it as `Any` and builds the row id itself — is not seen; nor, for the
+    same reason, are `broadcast_delivery` and `broadcast_delivery_due`, which
+    the hand-listed-module version of this test did cover. Both residues are
+    named in the module scope limit; neither is claimed to be covered.
     """
     assert not UNRESOLVABLE_KIND_CALL_SITES, (
         "these envelope-handling call sites pass a kind this scan cannot resolve to a "
         "constant, so it cannot be checked against the registry: "
         + "; ".join(sorted(UNRESOLVABLE_KIND_CALL_SITES))
-        + ". Bind the kind to a module-level constant, or make the helper generic "
-        "enough that no envelope-bearing model reaches it."
+        + ". Bind the kind to a module-level constant that no local in the same scope "
+        "shadows, or make the helper generic enough that no envelope-bearing model "
+        "reaches it."
     )
     named = set(DERIVED_ADJACENT_KINDS)
     unaccounted = sorted(named - set(_MIGRATED_KINDS) - set(NON_ENVELOPE_KINDS))
@@ -1505,6 +1729,13 @@ def test_a_kind_bound_to_a_module_constant_is_resolved(
     `ast.Constant`, so the call site vanished from every scan. The kind is now
     looked up in the calling module's namespace, and a name that resolves to no
     string still resolves to None so the caller can fail rather than skip.
+
+    `shadow` is the fail-open the third review found in that lookup: a local
+    `PROBE_KIND = "probe_archive"` would otherwise resolve through the module to
+    "probe_kind" and the archive write would be reported as the registered kind.
+    It must come back None — unresolvable, therefore reported — and the read in
+    `load` must keep resolving, because a file that binds the name in one
+    function still has a real module constant everywhere else.
     """
     source = tmp_path / "adapter.py"
     source.write_text(
@@ -1512,15 +1743,66 @@ def test_a_kind_bound_to_a_module_constant_is_resolved(
         "    return io.read_entity(PROBE_KIND, probe_id, ProbeModel)\n"
         "def stash(io, probe_id, probe):\n"
         "    io.write_entity(runtime_kind(), probe_id, probe)\n"
+        "def shadow(io, probe_id, probe):\n"
+        "    PROBE_KIND = 'probe_archive'\n"
+        "    io.write_entity(PROBE_KIND, probe_id, probe)\n"
     )
     module = types.ModuleType("tests._synthetic_adapter")
     module.PROBE_KIND = "probe_kind"  # type: ignore[attr-defined]
     monkeypatch.setitem(MODULES_BY_PATH, source.resolve(), module)
 
-    tree = ast.parse(source.read_text())
-    calls = _entity_io_calls(tree, module)
-    assert [kind for _node, _index, kind in calls] == ["probe_kind", None]
+    by_scope = {
+        scope.site: [kind for _n, _i, kind in _entity_io_calls(scope.nodes, module, scope.shadowed)]
+        for scope in _package_scopes(tmp_path)
+    }
+    assert by_scope["adapter.py:load"] == ["probe_kind"]
+    assert by_scope["adapter.py:stash"] == [None]
+    assert by_scope["adapter.py:shadow"] == [None]
+    # Without the scope's shadow set the archive write resolves to the module
+    # constant instead — the fail-open itself, pinned so that the guard cannot
+    # be dropped in silence.
+    unguarded = _package_scopes(tmp_path)
+    assert [
+        kind
+        for scope in unguarded
+        if scope.site == "adapter.py:shadow"
+        for _n, _i, kind in _entity_io_calls(scope.nodes, module)
+    ] == ["probe_kind"]
     assert entity_kinds(tmp_path, frozenset({"ProbeModel"})) == {"ProbeModel": {"probe_kind"}}
+
+
+def test_a_write_outside_any_function_is_in_scope(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Negative control for the `<module>` scope.
+
+    `_package_scopes` used to collect function definitions only, so adversarial
+    review moved the write into a module-level dispatch dict — a lambda, which
+    is not an `ast.FunctionDef` — and the whole adjacency scan walked past it
+    while it still mentioned every envelope name. The scope that owns everything
+    outside a function body is what closes it.
+    """
+    source = tmp_path / "adapter.py"
+    source.write_text(
+        "ARCHIVERS = {\n"
+        "    'probe': lambda io, probe: io.write_entity(\n"
+        "        'probe_archive', probe_id(probe), ProbeModel\n"
+        "    ),\n"
+        "}\n"
+    )
+    module = types.ModuleType("tests._synthetic_module_scope")
+    monkeypatch.setitem(MODULES_BY_PATH, source.resolve(), module)
+
+    kinds, unresolvable = envelope_adjacent_kinds(
+        tmp_path,
+        frozenset({"ProbeModel"}),
+        frozenset(),
+        frozenset(),
+        frozenset({"probe_kind"}),
+    )
+    assert not unresolvable
+    assert kinds == {"probe_archive": {"adapter.py:<module>:2"}}
 
 
 def test_the_derivation_reproduces_todays_registry() -> None:
