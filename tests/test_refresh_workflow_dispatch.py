@@ -47,7 +47,7 @@ def test_model_discovery_gap_alerts_without_freezing_safe_provider_updates() -> 
     )
     coverage_step = "- name: Price-source coverage audit"
     commit_step = "- name: Commit and push if changed"
-    final_alert = "- name: Fail for unresolved model-discovery gaps"
+    final_alert = "- name: Reconcile model-discovery coverage issue"
 
     assert workflow.index(coverage_step) < workflow.index(commit_step)
     assert workflow.index(commit_step) < workflow.index(final_alert)
@@ -57,9 +57,15 @@ def test_model_discovery_gap_alerts_without_freezing_safe_provider_updates() -> 
     assert "id: coverage_audit" in coverage
     assert "continue-on-error: true" in coverage
     assert "--strict-model-discovery" in coverage
+    assert "tee /tmp/coverage-summary.txt" in coverage
     alert = workflow[workflow.index(final_alert) :]
-    assert "steps.coverage_audit.outcome == 'failure'" in alert
-    assert "exit 1" in alert
+    assert "COVERAGE_OUTCOME: ${{ steps.coverage_audit.outcome }}" in alert
+    assert 'title="[bot] Model discovery coverage gaps"' in alert
+    assert "gh issue create" in alert
+    assert "gh issue edit" in alert
+    assert "gh issue close" in alert
+    assert "exit 1" not in alert
+    assert "issues: write" in workflow
 
     spike_gate = workflow[
         workflow.index("- name: Sanity-check for price spikes + record deltas") :
