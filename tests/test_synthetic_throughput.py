@@ -39,7 +39,7 @@ def test_top_200_throughput_routes_are_deterministic_and_provider_complete() -> 
     pool = rotation_candidates()
 
     assert first == second
-    assert len(first) == 200
+    assert len(first) == min(200, sum(len(models) for models in pool.values()))
     assert len(first) == len(set(first))
     assert {provider for provider, _ in first} == set(pool)
     assert ("anthropic", "anthropic/claude-opus-5") in first

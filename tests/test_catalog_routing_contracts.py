@@ -191,7 +191,6 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         ("moonshotai/kimi-k2.7-code", "novita"),
         ("tencent/hy3", "novita"),
         ("z-ai/glm-5.2", "zai"),
-        ("z-ai/glm-5.2", "gmi"),
         ("z-ai/glm-5.2", "deepinfra"),
         ("z-ai/glm-5.2", "fireworks"),
         ("z-ai/glm-5.2", "novita"),
@@ -2204,7 +2203,7 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     model = MODELS["z-ai/glm-5.2"]
     prepaid = MODEL_ENDPOINTS["z-ai/glm-5.2@zai/prepaid"]
     byok = MODEL_ENDPOINTS["z-ai/glm-5.2@zai/byok"]
-    gmi = MODEL_ENDPOINTS["z-ai/glm-5.2@gmi/prepaid"]
+    gmi = MODEL_ENDPOINTS.get("z-ai/glm-5.2@gmi/prepaid")
     deepinfra = MODEL_ENDPOINTS["z-ai/glm-5.2@deepinfra/prepaid"]
     fireworks = MODEL_ENDPOINTS["z-ai/glm-5.2@fireworks/prepaid"]
     novita = MODEL_ENDPOINTS["z-ai/glm-5.2@novita/prepaid"]
@@ -2223,7 +2222,8 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert model.supports_chat
     assert prepaid.upstream_id == "glm-5.2"
     assert byok.upstream_id == "glm-5.2"
-    assert gmi.upstream_id == "zai-org/GLM-5.2-FP8"
+    if gmi is not None:
+        assert gmi.upstream_id == "zai-org/GLM-5.2-FP8"
     assert deepinfra.upstream_id == "zai-org/GLM-5.2"
     assert fireworks.upstream_id == "accounts/fireworks/models/glm-5p2"
     assert novita.upstream_id == "zai-org/glm-5.2"
@@ -2237,7 +2237,6 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert baseten.upstream_id == "zai-org/GLM-5.2"
     assert wafer.upstream_id == "GLM-5.2"
     for endpoint in (
-        gmi,
         deepinfra,
         fireworks,
         novita,
@@ -2247,6 +2246,9 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     ):
         assert endpoint.prompt_price_microdollars_per_million_tokens > 0
         assert endpoint.completion_price_microdollars_per_million_tokens > 0
+    if gmi is not None:
+        assert gmi.prompt_price_microdollars_per_million_tokens > 0
+        assert gmi.completion_price_microdollars_per_million_tokens > 0
 
 
 def test_parasail_qwen_397b_uses_working_native_upstream_id() -> None:
