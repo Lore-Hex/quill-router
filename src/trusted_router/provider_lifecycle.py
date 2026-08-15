@@ -19,6 +19,7 @@ FRIENDLI_QWEN3_235B_RETIREMENT_AT = datetime(2026, 8, 5, 0, 0, tzinfo=UTC)
 FRIENDLI_K_EXAONE_236B_RETIREMENT_AT = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
 CRUSOE_NEMOTRON_3_ULTRA_RETIREMENT_AT = datetime(2026, 7, 28, 18, 0, tzinfo=UTC)
 WAFER_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
+DEEPINFRA_TERMINUS_RETIREMENT_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
 NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
 ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
@@ -190,6 +191,17 @@ _RETIREMENTS = (
         model_ids=frozenset({"inclusionai/ling-3.0-tiny"}),
         upstream_ids=frozenset({"inclusionai/ling-3.0-tiny"}),
         effective_at=NOVITA_LING_30_TINY_RETIREMENT_AT,
+    ),
+    # DeepInfra announced that its DeepSeek V3.1 Terminus route retires on
+    # 2026-08-17 and that subsequent requests will be redirected to DeepSeek
+    # V4 Flash 0731. TrustedRouter must not silently substitute a different
+    # model, so retire only DeepInfra's endpoint at the conservative 00:00 UTC
+    # boundary. Terminus routes on other providers remain eligible.
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"deepseek/deepseek-v3.1-terminus"}),
+        upstream_ids=frozenset({"deepseek-ai/DeepSeek-V3.1-Terminus"}),
+        effective_at=DEEPINFRA_TERMINUS_RETIREMENT_AT,
     ),
     # Wafer announced that GLM 5.1, GLM 5.2 Fast, and Kimi K3 Fast retire on
     # 2026-08-17. Standard GLM 5.2 replaces both GLM routes, while Kimi K3
