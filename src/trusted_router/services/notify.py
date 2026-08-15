@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from trusted_router.config import Settings
+from trusted_router.phone_verification import CODE_TTL_SECONDS
 from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.services.telephony import get_telephony_service
 from trusted_router.storage_models import User
@@ -93,6 +94,56 @@ def _refuse(channel: NotifyChannel, reason: RefusalReason, detail: str) -> Notif
     return NotifyOutcome(
         delivered=False, channel=channel, price_microdollars=0, detail=detail, refusal=reason
     )
+
+
+def spoken_code(code: str) -> str:
+    """A verification code as a phone call says it.
+
+    Digits are spaced so a speech engine reads "1 2 3 4 5 6" rather than "one
+    hundred twenty-three thousand", and the whole thing is repeated because the
+    listener is usually reaching for a pen the first time.
+    """
+    spaced = " ".join(code.strip())
+    return f"Your verification code is {spaced}. Again, {spaced}."
+
+
+def send_verification_code(
+    settings: Settings,
+    phone: str,
+    code: str,
+    *,
+    channel: Literal["sms", "voice"] = "sms",
+    preferred_carrier: str | None = None,
+) -> tuple[bool, str]:
+    """Deliver a verification code to a number nobody has proved yet.
+
+    This is the ONE place TrustedRouter messages an unverified number, which is
+    unavoidable — proving a number requires contacting it. What keeps it from
+    being an open SMS relay is upstream, in phone_verification: a resend floor,
+    a short expiry, and an attempt cap that burns the code. Nothing here should
+    be reachable without those.
+
+    Voice matters more than it looks. A2P 10DLC registration is per carrier and
+    takes days, and an unregistered sender's SMS is rejected outright — but a
+    phone call needs no registration at all. So voice is the delivery path that
+    works while registration is pending, and the only reason the rest of the
+    notify gate is reachable at all in that window.
+
+    The code is never logged: the return detail is the carrier's, and callers
+    log that rather than the message.
+    """
+    service = get_telephony_service(settings)
+    if not service.enabled:
+        return False, "no carrier is configured for verification codes"
+
+    if channel == "voice":
+        body = spoken_code(code)
+    else:
+        minutes = max(1, CODE_TTL_SECONDS // 60)
+        body = f"your verification code is {code}. It expires in {minutes} minutes."
+
+    result = service.send(channel, phone, body, preferred_carrier=preferred_carrier)
+    return result.delivered, result.detail
 
 
 def check_owner_reachable(user: User | None, channel: NotifyChannel) -> NotifyOutcome | None:

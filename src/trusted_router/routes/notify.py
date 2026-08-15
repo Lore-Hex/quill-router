@@ -14,19 +14,27 @@ not reached — and it must not make an outage look like revenue.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
 
-from trusted_router.auth import InferencePrincipal, Principal, SettingsDep
+from trusted_router import phone_verification as pv
+from trusted_router.auth import (
+    AuthenticatedPrincipal,
+    InferencePrincipal,
+    Principal,
+    SettingsDep,
+)
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
+from trusted_router.phone_verification import CODE_TTL_SECONDS
 from trusted_router.services.notify import (
     CHANNELS,
     NotifyOutcome,
     get_notify_service,
     price_for,
+    send_verification_code,
 )
 from trusted_router.services.telephony import branded, spoken_text
 from trusted_router.storage import STORE
@@ -83,6 +91,76 @@ def register_notify_routes(router: APIRouter) -> None:
         if not outcome.delivered:
             return JSONResponse(_body(outcome), status_code=_status_for(outcome))
         return JSONResponse(_body(outcome), status_code=200)
+
+    @router.post("/notify/phone/start")
+    async def start_phone_verification(
+        payload: dict[str, Any],
+        principal: AuthenticatedPrincipal,
+        settings: SettingsDep,
+    ) -> JSONResponse:
+        """Send a code to a number the user claims. Session only.
+
+        Not available to an api key: adding a phone changes who the account can
+        page, so it belongs to whoever can log in, not to any key they minted.
+        """
+        user = principal.user
+        if user is None:
+            raise api_error(403, "sign in to manage your phone number", ErrorType.FORBIDDEN)
+
+        requested = str(payload.get("channel") or "sms").strip().lower()
+        if requested not in {"sms", "voice"}:
+            raise api_error(400, "channel must be sms or voice", ErrorType.BAD_REQUEST)
+        channel: Literal["sms", "voice"] = "voice" if requested == "voice" else "sms"
+
+        allowed, wait = pv.can_resend(user)
+        if not allowed:
+            # A floor here is what stops "start verification" from being a way
+            # to ring someone else's phone repeatedly.
+            raise api_error(
+                429,
+                f"a code was just sent; try again in {wait} seconds",
+                ErrorType.RATE_LIMITED,
+                headers={"retry-after": str(wait)},
+            )
+
+        try:
+            phone = pv.normalize_phone(str(payload.get("phone") or ""))
+        except pv.PhoneNumberError as exc:
+            raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
+
+        started = STORE.begin_phone_verification(user.id, phone)
+        if started is None:
+            raise api_error(404, "user not found", ErrorType.NOT_FOUND)
+        code, _updated = started
+
+        delivered, detail = send_verification_code(settings, phone, code, channel=channel)
+        if not delivered:
+            # Leave the pending code in place: the user may retry on the other
+            # channel, and clearing it would make a carrier blip look like a
+            # rejected number.
+            return JSONResponse(
+                {"sent": False, "channel": channel, "detail": detail}, status_code=502
+            )
+        return JSONResponse({"sent": True, "channel": channel, "expires_in": CODE_TTL_SECONDS})
+
+    @router.post("/notify/phone/confirm")
+    async def confirm_phone_verification(
+        payload: dict[str, Any],
+        principal: AuthenticatedPrincipal,
+    ) -> JSONResponse:
+        user = principal.user
+        if user is None:
+            raise api_error(403, "sign in to manage your phone number", ErrorType.FORBIDDEN)
+
+        status, updated = STORE.confirm_phone_verification(
+            user.id, str(payload.get("code") or "")
+        )
+        if status == "ok":
+            return JSONResponse({"verified": True, "phone": updated.phone if updated else None})
+
+        # 400 for a wrong code, 409 for a state problem the user must restart.
+        code = 400 if status == "mismatch" else 409
+        return JSONResponse({"verified": False, "status": status}, status_code=code)
 
     @router.get("/notify/texml")
     async def notify_texml(text: str = "") -> Response:
