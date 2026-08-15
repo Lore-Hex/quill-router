@@ -34,6 +34,7 @@ scheduler is alive" from sample age alone.
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import logging
 import time
 import uuid
@@ -214,6 +215,14 @@ def record_heartbeat(name: str, *, settings: Settings) -> None:
             return
         from trusted_router.storage import STORE
 
+        bucket_start = (
+            dt.datetime.fromtimestamp(
+                bucket * HEARTBEAT_BUCKET_SECONDS,
+                tz=dt.UTC,
+            )
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
         STORE.record_synthetic_probe_sample(
             SyntheticProbeSample(
                 id=f"syn_hb_{name.replace(':', '_')}_{bucket}",
@@ -222,6 +231,7 @@ def record_heartbeat(name: str, *, settings: Settings) -> None:
                 target_url="",
                 monitor_region=settings.synthetic_monitor_region or settings.primary_region,
                 status="up",
+                created_at=bucket_start,
             )
         )
         _HEARTBEAT_MARKS[name] = bucket

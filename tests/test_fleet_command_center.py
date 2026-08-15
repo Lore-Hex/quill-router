@@ -143,6 +143,18 @@ def test_run_synthetic_once_gates_peer_probes_off_in_test_env(
 def test_record_heartbeat_and_liveness_rows() -> None:
     settings = _settings()
     record_heartbeat("scheduler:test-loop", settings=settings)
+    stored = STORE.synthetic_probe_samples(
+        target="scheduler:test-loop",
+        probe_type="heartbeat",
+        limit=1,
+    )[0]
+    bucket = int(stored.id.rsplit("_", 1)[1])
+    created_at = dt.datetime.fromisoformat(stored.created_at.replace("Z", "+00:00"))
+    assert created_at == dt.datetime.fromtimestamp(
+        bucket * fleet.HEARTBEAT_BUCKET_SECONDS,
+        tz=dt.UTC,
+    )
+
     snapshot = asyncio.run(fleet_snapshot(settings))
     beats = {row["name"]: row for row in snapshot["heartbeats"]}
     assert "scheduler:test-loop" in beats

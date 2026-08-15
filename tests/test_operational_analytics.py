@@ -553,6 +553,33 @@ def test_synthetic_rollups_preserve_exact_counts_histograms_and_costs() -> None:
         assert rollup.cost_microdollars == 4
 
 
+def test_synthetic_rollups_count_repeated_sample_id_once() -> None:
+    first = _synthetic_sample(
+        "shared-heartbeat",
+        status="down",
+        created_at="2026-07-31T12:01:00Z",
+        latency=30,
+        error_type="timeout",
+    )
+    latest = _synthetic_sample(
+        "shared-heartbeat",
+        status="up",
+        created_at="2026-07-31T12:04:00Z",
+        latency=10,
+    )
+
+    rollups = build_raw_rollups([first, latest], periods={"hour", "day"})
+
+    assert rollups
+    for rollup in rollups:
+        assert rollup.sample_count == 1
+        assert rollup.up_count == 1
+        assert rollup.down_count == 0
+        assert rollup.latency_histogram == {"10": 1}
+        assert rollup.error_counts == {}
+        assert rollup.cost_microdollars == 2
+
+
 def test_synthetic_monthly_rollups_merge_daily_without_losing_dimensions() -> None:
     day_one = build_raw_rollups(
         [

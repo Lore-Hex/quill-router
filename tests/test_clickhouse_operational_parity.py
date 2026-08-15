@@ -142,6 +142,16 @@ def test_rollup_parity_rebuilds_from_bounded_raw_bigtable_samples() -> None:
         value=json.dumps(dataclasses.asdict(sample)).encode("utf-8")
     )
     row = SimpleNamespace(cells={"synthetic": {b"body": [cell]}})
+    duplicate = dataclasses.replace(
+        sample,
+        created_at=(created_at + dt.timedelta(minutes=2)).isoformat().replace(
+            "+00:00", "Z"
+        ),
+    )
+    duplicate_cell = SimpleNamespace(
+        value=json.dumps(dataclasses.asdict(duplicate)).encode("utf-8")
+    )
+    duplicate_row = SimpleNamespace(cells={"synthetic": {b"body": [duplicate_cell]}})
 
     class Table:
         start_key: bytes = b""
@@ -150,7 +160,7 @@ def test_rollup_parity_rebuilds_from_bounded_raw_bigtable_samples() -> None:
         def read_rows(self, *, start_key: bytes, end_key: bytes, filter_: object) -> list[object]:
             self.start_key = start_key
             self.end_key = end_key
-            return [row]
+            return [row, duplicate_row]
 
     table = Table()
     rollups = _source_rollups_from_raw(table, limit=10, grace_seconds=600)
