@@ -155,6 +155,56 @@ async def test_live_release_rejects_invalid_or_expired_metadata(
 
 
 @pytest.mark.asyncio
+async def test_a_validator_raising_an_unforeseen_class_is_still_unavailable_not_a_crash(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """The resolver cannot know its validator's exception vocabulary.
+
+    `validator` is a constructor parameter, so the set of exceptions it can
+    raise is not knowable here — and this used to be an enumeration,
+    `except (httpx.HTTPError, TypeError, ValueError)`. The enumeration was
+    wrong: validated_azure_metadata was widened to parse region URLs with
+    httpx.URL, which raises httpx.InvalidURL, a plain Exception outside
+    httpx.HTTPError. It escaped resolve(), sailed past the route's
+    `except TrustReleaseUnavailable`, and /trust/azure-release.json answered 500
+    with no fallback and no backoff.
+
+    Asserted with a validator raising a class nothing in this repo raises,
+    because the point is not that InvalidURL is handled now — it is that a
+    failure to produce a validated record is ONE outcome for a mirror however it
+    arrives. The backoff is asserted too: an escape skips the whole failure
+    path, so every subsequent request went back to the upstream.
+    """
+
+    class UnforeseenValidatorError(Exception):
+        pass
+
+    def hostile_validator(payload: object) -> dict[str, object]:
+        raise UnforeseenValidatorError("a class this layer was never told about")
+
+    httpx_mock.add_response(
+        url="https://trust.example/release.json?tr_cache_bucket=10",
+        json=release_payload(),
+    )
+    resolver = TrustReleaseResolver(
+        Settings(trust_gcp_release_url="https://trust.example/release.json"),
+        monotonic=lambda: 0.0,
+        wall_clock=lambda: 600.0,
+        validator=hostile_validator,
+    )
+
+    with pytest.raises(TrustReleaseUnavailable) as first:
+        await resolver.resolve()
+    with pytest.raises(TrustReleaseUnavailable):
+        await resolver.resolve()
+
+    assert isinstance(first.value.__cause__, UnforeseenValidatorError), (
+        "the cause has to travel with it, or a real bug becomes an untraceable 503"
+    )
+    assert len(httpx_mock.get_requests()) == 1, "the second resolve must be inside the backoff"
+
+
+@pytest.mark.asyncio
 async def test_live_release_rejects_oversized_response(httpx_mock: HTTPXMock) -> None:
     httpx_mock.add_response(
         url="https://trust.example/large.json?tr_cache_bucket=10",

@@ -807,6 +807,11 @@ def test_an_unreached_issuer_is_named_by_evidence_not_by_list_position() -> None
     assert result.endpoints == (UAEN_URL,), "UAE North is the endpoint that answered"
     assert result.unreached == (SEA_ISSUER,), "the issuer that answered must not be blamed"
     assert UAEN_ISSUER not in "".join(result.unreached)
+    # And the sentence carrying that verdict counts what ANSWERED, not what the
+    # record listed: two issuers are published here and one was presented. A
+    # census read off the record would print "2 distinct MAA issuer(s)
+    # presented" beside a gap saying one of them was presented by nobody.
+    assert "over 1 endpoint(s) contacted, 1 distinct MAA issuer(s) presented" in result.detail
 
 
 def test_coverage_does_not_hang_on_the_optional_issuer_list(
@@ -1001,6 +1006,135 @@ def test_a_region_entry_naming_no_hostdata_cannot_be_attributed_and_is_a_gap() -
     assert result.endpoints == (UAEN_URL, SEA_URL), "both were still contacted"
 
 
+def test_a_regions_entry_with_no_attestation_url_is_a_gap_on_its_own() -> None:
+    """The fourth coverage rule, isolated so that deleting it cannot stay green.
+
+    Found by an adversarial pass that deleted this rule and watched the whole
+    suite stay green: every fixture that carried a URL-less entry also tripped
+    the issuer census, so two rules were covering each other and neither was
+    pinned. Here nothing else can fire — one accepted hostdata value, one
+    issuer, and that issuer is presented by the endpoint that answers — so the
+    single gap reported is this rule or the rule is gone.
+    """
+    record = azure_record(
+        accepted_hostdata=[UAEN_HOSTDATA],
+        attestation_issuers=[UAEN_ISSUER],
+        regions=[
+            {
+                "attestation_url": UAEN_URL,
+                "hostdata": UAEN_HOSTDATA,
+                "attestation_issuer": UAEN_ISSUER,
+            },
+            {"hostdata": UAEN_HOSTDATA, "attestation_issuer": UAEN_ISSUER},
+        ],
+    )
+    result = drift.check_azure(CONTROL_PLANE, whole_fleet(azure=record))
+
+    assert result.gap
+    assert "1 coverage gap(s)" in result.detail, "no other rule may be propping this one up"
+    assert "names no attestation_url" in result.detail
+    assert result.endpoints == (UAEN_URL,)
+
+
+def test_a_regions_entry_that_names_no_reachable_place_is_a_gap_and_is_not_fetched() -> None:
+    """A URL the checker cannot honour is a coverage claim, not an endpoint.
+
+    The checker reads records the mirror never validated, so it meets strings
+    the mirror would have refused: a malformed authority, a non-http scheme, or
+    `https://a@b/`, which reads as host a and contacts host b. Counting one as
+    an endpoint would be a coverage claim on a place this run cannot reach, and
+    FETCHING one would let whoever writes the record aim the hourly job. It is
+    reported and skipped. Isolated like the rule above so nothing props it up.
+    """
+    hostile = "https://someone@api-azure-sea.trustedrouter.com/attestation"
+    record = azure_record(
+        accepted_hostdata=[UAEN_HOSTDATA],
+        attestation_issuers=[UAEN_ISSUER],
+        regions=[
+            {
+                "attestation_url": UAEN_URL,
+                "hostdata": UAEN_HOSTDATA,
+                "attestation_issuer": UAEN_ISSUER,
+            },
+            {
+                "attestation_url": hostile,
+                "hostdata": UAEN_HOSTDATA,
+                "attestation_issuer": UAEN_ISSUER,
+            },
+        ],
+    )
+    transport = whole_fleet(azure=record)
+    result = drift.check_azure(CONTROL_PLANE, transport)
+
+    assert result.gap
+    assert "1 coverage gap(s)" in result.detail, "no other rule may be propping this one up"
+    assert "not a plain http(s) endpoint" in result.detail
+    assert result.endpoints == (UAEN_URL,)
+    assert hostile not in transport.fetched, "a record must not be able to aim this run"
+
+
+def test_the_endpoint_the_record_advertises_is_contacted_even_when_regions_omits_it(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """regions[] was an ELSE for api_base_url, so publishing one hid the other.
+
+    api_base_url is the address the record hands a verifier. Reading regions[]
+    INSTEAD of it — which is what azure_plan did — means a record enumerating
+    only Southeast Asia leaves the UAE North gateway it advertises uncontacted,
+    and the run prints the full success sentence over a plane whose front door
+    was never knocked on. Here that door is serving a hostdata published
+    nowhere: before, exit 0 and "Every published measurement ..."; now the
+    endpoint is contacted and the drift is caught.
+    """
+    record = azure_record(
+        accepted_hostdata=[SEA_HOSTDATA],
+        attestation_issuers=[SEA_ISSUER],
+        regions=[
+            {
+                "attestation_url": SEA_URL,
+                "hostdata": SEA_HOSTDATA,
+                "attestation_issuer": SEA_ISSUER,
+            }
+        ],
+    )
+    transport = whole_fleet(azure=record)
+
+    code = drift.main(["--control-plane", CONTROL_PLANE, "--strict"], transport=transport)
+    out = capsys.readouterr().out
+
+    assert code == 1
+    assert UAEN_URL in transport.fetched, "the record's own api_base_url was never contacted"
+    assert "[DRIFT] azure" in out
+    assert "Every published measurement" not in out
+
+
+def test_an_advertised_endpoint_missing_from_the_region_census_is_a_gap_even_when_healthy() -> None:
+    """Contacting it is half the fix; the record still disagrees with itself.
+
+    A record that tells verifiers to go to one endpoint and lists a different
+    set of serving regions cannot ground a region count, whichever of the two is
+    stale. Separated from the test above because there the drift verdict would
+    have masked a deleted gap rule: here every measurement matches and every
+    published issuer is presented, so the one gap reported is this rule alone.
+    """
+    record = azure_record(
+        regions=[
+            {
+                "attestation_url": SEA_URL,
+                "hostdata": SEA_HOSTDATA,
+                "attestation_issuer": SEA_ISSUER,
+            }
+        ],
+    )
+    result = drift.check_azure(CONTROL_PLANE, whole_fleet(azure=record))
+
+    assert result.gap
+    assert "1 coverage gap(s)" in result.detail
+    assert "api_base_url advertises" in result.detail
+    assert set(result.endpoints) == {SEA_URL, UAEN_URL}
+    assert result.unreached == (), "both published issuers answered; this is the other rule"
+
+
 # ---------------------------------------------------------------------------
 # The PRODUCTION route bounds the checker's coverage
 # ---------------------------------------------------------------------------
@@ -1014,7 +1148,14 @@ def test_a_region_entry_naming_no_hostdata_cannot_be_attributed_and_is_a_gap() -
 
 
 def _served_azure_record(upstream: dict[str, Any], httpx_mock: Any) -> dict[str, Any]:
-    """The azure-release.json a real control plane would serve for this upstream."""
+    """The azure-release.json a real control plane would serve for this upstream.
+
+    raise_server_exceptions=False on purpose: an exception that escapes the
+    route must show up here as the 500 a client would receive, not as a test
+    error. Every refusal below is documented as a 503 carrying the embedded
+    fallback, and the only way to hold that documentation to account is to let
+    the wrong status code be asserted against.
+    """
     import re
 
     from fastapi.testclient import TestClient
@@ -1029,9 +1170,18 @@ def _served_azure_record(upstream: dict[str, Any], httpx_mock: Any) -> dict[str,
     settings = Settings(
         environment="test", trust_azure_release_url="https://trust.example/azure.json"
     )
-    with TestClient(create_app(settings, init_observability=False)) as client:
+    with TestClient(
+        create_app(settings, init_observability=False), raise_server_exceptions=False
+    ) as client:
         response = client.get("/trust/azure-release.json")
-    return {"status_code": response.status_code, **response.json()}
+    try:
+        payload = response.json()
+    except ValueError:
+        # A 500 from an escaped exception carries no JSON body. Reporting the
+        # status alone keeps the failure readable as "the route answered 500"
+        # rather than as a decode error two frames away from the cause.
+        payload = {}
+    return {"status_code": response.status_code, **payload}
 
 
 def test_the_serving_route_carries_the_region_array_and_the_check_covers_both_regions(
@@ -1172,3 +1322,186 @@ def test_the_route_refuses_two_region_entries_at_one_endpoint(httpx_mock: Any) -
     served = _served_azure_record(upstream, httpx_mock)
 
     assert served["status_code"] == 503
+
+
+# ---------------------------------------------------------------------------
+# A malformed field in a remote record must not take the public route down
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "attestation_url",
+    [
+        "https://[::1",  # unterminated IPv6 literal
+        "https://api-azure.trustedrouter.com:notaport/attestation",
+        "https://api-azure.trustedrouter.com:99999/attestation",
+    ],
+)
+def test_a_malformed_region_url_answers_503_and_not_500(
+    attestation_url: str, httpx_mock: Any
+) -> None:
+    """The widening that carried regions[] through also widened the input surface.
+
+    /trust/azure-release.json is public and the record behind it is FETCHED FROM
+    A REMOTE MIRROR, so a malformed field in it is an ordinary input and not a
+    hypothetical. The first version of the validator parsed these with
+    httpx.URL, which raises httpx.InvalidURL — a plain Exception, not an
+    httpx.HTTPError — so it escaped TrustReleaseResolver.resolve(), sailed past
+    the route's `except TrustReleaseUnavailable`, and the endpoint answered 500:
+    no embedded fallback, no retry backoff, no stale-if-error serving, and a
+    stack trace on the one route whose whole job is to be a dependable answer
+    about what is running. The documented behaviour is a 503 carrying the
+    embedded measurement, and that is what is asserted here.
+    """
+    upstream = azure_record()
+    upstream["regions"][0] = dict(upstream["regions"][0], attestation_url=attestation_url)
+    served = _served_azure_record(upstream, httpx_mock)
+
+    assert served["status_code"] == 503, "a malformed region URL must not be a 500"
+    assert served["release_metadata_status"] == "not-configured"
+
+
+def test_a_malformed_region_url_backs_off_rather_than_refetching_every_request(
+    httpx_mock: Any,
+) -> None:
+    """Failing closed is not enough if it fails closed once per request.
+
+    An exception that escapes resolve() skips the whole failure path, not just
+    the fallback: `_retry_after` is never set, so every subsequent request goes
+    back to the upstream mirror, and a previously cached good record is never
+    served stale. A public route that re-fetches an upstream on every request
+    during an incident is a load amplifier pointed at the plane we are trying to
+    describe. One upstream fetch for two requests is what the backoff means.
+    """
+    import re
+
+    from fastapi.testclient import TestClient
+
+    from trusted_router.config import Settings
+    from trusted_router.main import create_app
+
+    upstream = azure_record()
+    upstream["regions"][0] = dict(upstream["regions"][0], attestation_url="https://[::1")
+    httpx_mock.add_response(
+        url=re.compile(r"https://trust\.example/azure\.json\?tr_cache_bucket=\d+"),
+        json=upstream,
+    )
+    settings = Settings(
+        environment="test", trust_azure_release_url="https://trust.example/azure.json"
+    )
+    with TestClient(
+        create_app(settings, init_observability=False), raise_server_exceptions=False
+    ) as client:
+        first = client.get("/trust/azure-release.json")
+        second = client.get("/trust/azure-release.json")
+
+    assert first.status_code == 503
+    assert second.status_code == 503
+    assert len(httpx_mock.get_requests()) == 1, "the second request must be inside the backoff"
+
+
+def test_the_identity_parser_answers_with_a_value_for_every_hostile_string() -> None:
+    """The invariant the 500 came from, asserted directly.
+
+    Every caller of parse_endpoint treats None as "this names no place" and has
+    no handler for an exception, because its contract is that there is never one
+    to handle. Written as its own test because the two route tests above only
+    cover the inputs someone already thought of, and the defect was not that a
+    particular string was mishandled — it was that the parser had an exit nobody
+    upstream knew about.
+    """
+    from trusted_router.endpoint_identity import parse_endpoint
+
+    hostile = [
+        "https://[::1",
+        "https://h:notaport/x",
+        "https://h:99999/x",
+        "https://",
+        "http://",
+        "",
+        "not a url at all",
+        "file:///etc/passwd",
+        "//api-azure.trustedrouter.com/attestation",
+        "https://a@b/attestation",
+        "\x00",
+        "https://h:-1/x",
+        None,
+        42,
+        {"attestation_url": UAEN_URL},
+    ]
+
+    assert [parse_endpoint(value) for value in hostile] == [None] * len(hostile)
+
+
+# ---------------------------------------------------------------------------
+# One implementation of "the same endpoint", used by the mirror and the checker
+# ---------------------------------------------------------------------------
+
+#: Pairs that name ONE place. Every one of these was accepted as two regions by
+#: at least one of the two normalizers that used to exist: the checker's kept an
+#: explicit ':443' and the validator's dropped it, and neither folded a trailing
+#: slash, a trailing dot on the host, or a doubled path slash.
+ENDPOINT_TWINS = [
+    (UAEN_URL, "https://api-azure.trustedrouter.com:443/attestation"),
+    (UAEN_URL, UAEN_URL + "/"),
+    (UAEN_URL, "https://api-azure.trustedrouter.com./attestation"),
+    (UAEN_URL, "https://api-azure.trustedrouter.com//attestation"),
+    (UAEN_URL, "https://api-azure.trustedrouter.com/./attestation"),
+    (UAEN_URL, "https://API-AZURE.TrustedRouter.com/attestation"),
+]
+
+
+@pytest.mark.parametrize(("first", "second"), ENDPOINT_TWINS)
+def test_the_mirror_refuses_two_spellings_of_one_endpoint(
+    first: str, second: str, httpx_mock: Any
+) -> None:
+    """Two spellings of one place are a region count the record cannot support.
+
+    Same rule as the duplicate-URL test above; these are the spellings that slip
+    past a comparison that is nearly-but-not-quite endpoint identity.
+    """
+    upstream = azure_record()
+    upstream["regions"][0] = dict(upstream["regions"][0], attestation_url=first)
+    upstream["regions"][1] = dict(
+        upstream["regions"][1], attestation_url=second, hostdata=UAEN_HOSTDATA
+    )
+    served = _served_azure_record(upstream, httpx_mock)
+
+    assert served["status_code"] == 503
+
+
+@pytest.mark.parametrize(("first", "second"), ENDPOINT_TWINS)
+def test_the_checker_counts_two_spellings_of_one_endpoint_as_one(first: str, second: str) -> None:
+    """And the checker has to agree, or the record is safe in one place only.
+
+    The checker reads records the mirror never validated — --control-plane takes
+    any URL, and the workflow exposes it as a dispatch input — so a fold the
+    mirror refuses and the checker accepts still buys a false coverage count in
+    the run output. This is the same function on both sides now; these two
+    parametrized tests are what says so out loud.
+    """
+    record = azure_record(
+        regions=[
+            {
+                "attestation_url": first,
+                "hostdata": UAEN_HOSTDATA,
+                "attestation_issuer": UAEN_ISSUER,
+            },
+            {
+                "attestation_url": second,
+                "hostdata": UAEN_HOSTDATA,
+                "attestation_issuer": UAEN_ISSUER,
+            },
+        ]
+    )
+    transport = FakeTransport(
+        {
+            f"{CONTROL_PLANE}/trust/azure-release.json": record,
+            first: azure_token(UAEN_HOSTDATA, UAEN_ISSUER),
+        }
+    )
+    result = drift.check_azure(CONTROL_PLANE, transport)
+
+    assert result.gap
+    assert len(result.endpoints) == 1, "one place was contacted, so the count must say one"
+    assert "more than once" in result.detail

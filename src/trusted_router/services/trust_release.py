@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 
 from trusted_router.config import Settings
+from trusted_router.endpoint_identity import Identity, parse_endpoint
 
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 _COMMIT_RE = re.compile(r"[0-9a-f]{7,40}")
@@ -108,7 +109,26 @@ class TrustReleaseResolver:
                 try:
                     metadata = await self._fetch(release_url)
                     break
-                except (httpx.HTTPError, TypeError, ValueError) as exc:
+                except Exception as exc:  # noqa: BLE001 - see below
+                    # ANY failure to obtain a validated record is the same
+                    # outcome for a mirror: there is nothing trustworthy to
+                    # serve, so fall back, back off, and let the route answer
+                    # 503. This was an enumeration of exception classes
+                    # (httpx.HTTPError, TypeError, ValueError) and the
+                    # enumeration was wrong: `_validator` is a constructor
+                    # PARAMETER, so this layer cannot know what its vocabulary
+                    # is, and a validator built on httpx.URL raised
+                    # httpx.InvalidURL — outside httpx.HTTPError — which escaped
+                    # onto a public trust route as a 500 with no fallback, no
+                    # retry backoff and no stale-if-error serving, for a
+                    # malformed field in a record fetched from a remote mirror.
+                    #
+                    # The cost, stated plainly: a genuine bug in the fetch or
+                    # validate path now looks like an upstream outage instead of
+                    # a 500. It is chained into the TrustReleaseUnavailable
+                    # raised below (`from last_error`), so the cause travels
+                    # with it. BaseException is deliberately not caught, so
+                    # asyncio.CancelledError still propagates.
                     last_error = exc
             if metadata is None:
                 self._retry_after = now + _RETRY_SECONDS
@@ -322,24 +342,32 @@ _AZURE_REGION_OPTIONAL = ("launch_measurement", "compliance_status")
 _MAX_AZURE_REGIONS = 16
 
 
-def _endpoint_identity(url: str) -> tuple[str, str, int | None, str] | None:
+def _endpoint_identity(url: object) -> Identity | None:
     """What actually gets contacted, or None if this is not a plain https URL.
 
     A region entry's attestation_url is a coverage claim, so what makes two of
     them the same has to be what a client would end up talking to — scheme,
-    host, port and path — and not the string. Fragments are never transmitted
-    and a query is not an endpoint, so an entry may carry neither: two entries
-    that differ only there would inflate the region count while contacting one
-    place. Userinfo is refused because `https://a@b/` names host b while reading
-    as host a.
+    host, port and path — and not the string. That comparison lives in
+    trusted_router.endpoint_identity because the drift checker has to make it
+    the same way: it counts distinct endpoints contacted, so a pair this layer
+    accepts as two places and that one folds into one (or the reverse) is a
+    false coverage count with a mirror's signature on it.
+
+    Refused here, on top of "does not name a place at all": a scheme other than
+    https, and a URL carrying a query or a fragment. Neither is part of the
+    place, so two entries differing only there would inflate the region count
+    while contacting one endpoint.
+
+    Returns a value for every input, including malformed ones. The version this
+    replaces called httpx.URL(), which RAISES httpx.InvalidURL on a bad
+    authority — an exception outside httpx.HTTPError's hierarchy, so it escaped
+    TrustReleaseResolver.resolve() and made the public /trust/azure-release.json
+    route answer 500 for an upstream record naming a region at `https://[::1`.
     """
-    parsed = httpx.URL(url)
-    if parsed.scheme != "https" or not parsed.host:
+    endpoint = parse_endpoint(url)
+    if endpoint is None or endpoint.scheme != "https" or not endpoint.bare:
         return None
-    if parsed.query or parsed.fragment or parsed.userinfo:
-        return None
-    path = parsed.path or "/"
-    return ("https", parsed.host.lower(), parsed.port, path)
+    return endpoint.identity
 
 
 def _validated_azure_regions(
@@ -368,14 +396,25 @@ def _validated_azure_regions(
     field, because azure_release has no error channel, so accepting an
     incomplete entry here would just move the silent erasure one function later.
 
-    THE BLAST RADIUS, STATED PLAINLY. A refused record makes the mirror fall
-    back to the embedded Azure measurement, and rollout.sh does not set
-    TR_TRUST_AZURE_HOSTDATA — so in the current production configuration that
-    fallback is unconfigured and /trust/azure-release.json answers 503. Loud, on
-    purpose, and the same blast radius the existing rules above already carry
-    (an AWS pcr0 outside its own accepted set, an Azure record naming no MAA
-    issuer). Serving no Azure record is a state a verifier can act on; serving
-    one that has quietly lost a serving region is not.
+    THE BLAST RADIUS, STATED PLAINLY. Every refusal here is a ValueError, which
+    TrustReleaseResolver.resolve() turns into TrustReleaseUnavailable, so the
+    mirror falls back to the embedded Azure measurement — and rollout.sh does
+    not set TR_TRUST_AZURE_HOSTDATA, so in the current production configuration
+    that fallback is unconfigured and /trust/azure-release.json answers 503.
+    Loud, on purpose, and the same blast radius the existing rules above already
+    carry (an AWS pcr0 outside its own accepted set, an Azure record naming no
+    MAA issuer). Serving no Azure record is a state a verifier can act on;
+    serving one that has quietly lost a serving region is not.
+
+    That paragraph was false for one input class when it was first written, and
+    the shape of the mistake is worth keeping: _endpoint_identity was built on
+    httpx.URL, which RAISES rather than returning None for a malformed
+    authority, and httpx.InvalidURL is not an httpx.HTTPError — so a region
+    named `https://[::1` escaped the resolver entirely and the route answered
+    500 with no fallback, no backoff and no stale serving. A refusal that is
+    documented as one status code and delivered as another is worse than no
+    documentation. It is closed twice over: the identity parser returns a value
+    for every input, and resolve() no longer enumerates exception classes.
     """
     if "regions" not in payload:
         return []
@@ -388,7 +427,7 @@ def _validated_azure_regions(
     if len(raw) > _MAX_AZURE_REGIONS:
         raise ValueError("Azure record claims more serving regions than we would publish")
     regions: list[dict[str, str]] = []
-    seen_urls: set[tuple[str, str, int | None, str]] = set()
+    seen_urls: set[Identity] = set()
     for entry in raw:
         if not isinstance(entry, dict):
             raise ValueError("Azure region entry must be an object")
