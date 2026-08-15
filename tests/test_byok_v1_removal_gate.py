@@ -642,7 +642,10 @@ def _full_ledger() -> dict[str, Any]:
             "census_migrated_kind_counts": {"byok": 12},
             "census_sampled_kinds": ["byok", "workspace"],
             "census_v1_literal_rows": 0,
-            "census_source": f"spanner:projects/tr-{cloud}/instances/i/databases/d",
+            "census_source": (
+                f"spanner:projects/tr-{cloud}/instances/i/databases/d"
+                " (from CLI arguments, not asked of the server)"
+            ),
             "operator": "release-engineer@lorehex.co",
             "note": "step 4 precondition",
         }

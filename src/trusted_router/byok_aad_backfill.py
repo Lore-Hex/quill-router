@@ -832,8 +832,8 @@ def check_no_v1_envelopes(
                 "migrated kinds, and found ZERO rows anywhere in the table carrying "
                 f"{V1_ALGORITHM_LITERAL!r} — a search that filters on no kind and assumes no "
                 "field name, so a renamed kind or a renamed body field cannot hide from it. "
-                "This does not establish that this was the right database; the one that "
-                f"answered was {census.source!r}."
+                "This does not establish that this was the right database; the census "
+                f"records it as {census.source!r}."
             ),
             stats=stats,
             census=census,
@@ -844,7 +844,7 @@ def check_no_v1_envelopes(
         detail=(
             f"{stats.envelopes_seen} envelopes examined across {stats.rows_scanned} rows; "
             f"all {stats.v2_envelopes} are v2, and no row anywhere in the table carries "
-            f"{V1_ALGORITHM_LITERAL!r}. The database that answered was {census.source!r}."
+            f"{V1_ALGORITHM_LITERAL!r}. The census records the database as {census.source!r}."
         ),
         stats=stats,
         census=census,

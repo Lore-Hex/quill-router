@@ -597,8 +597,9 @@ def test_a_hand_written_pass_that_counted_v1_rows_is_reported_as_a_defect() -> N
 
 def test_an_attestation_that_does_not_name_the_database_it_read_is_a_defect() -> None:
     """Since a wrong-but-populated database passes, the one mitigation is that
-    the ledger says which database answered. An entry without it removes the
-    only thing a reviewer could have checked."""
+    the ledger says which database was read — the server's own answer on
+    Postgres, the CLI's own arguments echoed back on Spanner. An entry without
+    it removes the only thing a reviewer could have checked."""
     ledger = empty_ledger()
     ledger["attestations"]["gcp"] = _passing_attestation("gcp", census_source="  ").to_dict()
 

@@ -252,13 +252,13 @@ AWS or Azure:
 
 The enclave code needs no per-cloud change: the file carrying the v1/v2
 algorithm dispatch, `internal/byokcache/cache.go` (`Algorithm` at :26,
-`AlgorithmV2` at :32, the `switch` at :346-348), has no `//go:build` tag, so v2
-read support is already compiled into the `cloud_aws` and `cloud_azure`
-variants and CI exercises all of them. The *package* is not tag-free — it also
-holds `kms_http_aws.go` (`cloud_aws`), `kms_http_gcp.go` (`!cloud_aws`) and
-`confidential_space_token{,_other}.go` (`cloud_gcp` / `!cloud_gcp`) — but none
-of those touch the envelope format, so the conclusion holds and the earlier
-package-level phrasing of it did not. What is missing is a
+`AlgorithmV2` at :32, the `switch` in `envelopeAAD` at :345-352), has no
+`//go:build` tag, so v2 read support is already compiled into the `cloud_aws`
+and `cloud_azure` variants and CI exercises all of them. The *package* is not
+tag-free — it also holds `kms_http_aws.go` (`cloud_aws`), `kms_http_gcp.go`
+(`!cloud_aws`) and `confidential_space_token{,_other}.go` (`cloud_gcp` /
+`!cloud_gcp`) — but none of those touch the envelope format, so the conclusion
+holds and the earlier package-level phrasing of it did not. What is missing is a
 **deploy and rollout** of a build containing it. As of writing,
 `quill-cloud-proxy` has `deploy-enclave-gcp.yml` and a `workflow_dispatch`-only
 `deploy.yml` ("Deploy AWS legacy"); there is no Azure deploy workflow in that
