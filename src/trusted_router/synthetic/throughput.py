@@ -15,6 +15,15 @@ from trusted_router.synthetic.probes import rotation_candidates
 _RECENT_MODEL_COUNT = 24
 _RECENT_MODEL_BONUS = 5_000
 _RECENT_MODEL_STEP = 50
+# Keep a small cross-family baseline in the sustained benchmark while each
+# model is callable. Catalog growth must not silently crowd these comparison
+# anchors out, and a real retirement must not freeze the whole refresh.
+THROUGHPUT_ANCHOR_MODELS = (
+    "anthropic/claude-opus-5",
+    "moonshotai/kimi-k3",
+    "z-ai/glm-5.2",
+    "google/gemini-3.6-flash",
+)
 THROUGHPUT_INTERVAL_SECONDS = 60
 
 
@@ -59,6 +68,16 @@ def throughput_candidates(*, limit: int = 200) -> list[tuple[str, str]]:
         provider_routes = [(provider, model) for model in pool[provider]]
         if provider_routes:
             selected.append(min(provider_routes, key=route_key))
+
+    # Preserve one route for each reviewed comparison anchor. Use the same
+    # deterministic scoring as the main selection so provider choice remains
+    # stable, and skip anchors that no longer have a callable Credits route.
+    for model in THROUGHPUT_ANCHOR_MODELS:
+        model_routes = [route for route in routes if route[1] == model]
+        if model_routes:
+            anchor = min(model_routes, key=route_key)
+            if anchor not in selected:
+                selected.append(anchor)
 
     for route in sorted(routes, key=route_key):
         if route not in selected:
