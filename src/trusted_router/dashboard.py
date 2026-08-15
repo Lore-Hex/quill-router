@@ -333,6 +333,7 @@ class PublicPage:
     # /og.png. Generate the files per docs/marketing/og-card-spec.md.
     og_card: str | None = None
     faq_items: tuple[tuple[str, str], ...] = ()
+    og_alt: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1221,7 +1222,11 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "badge": PublicPage(
         template="public/confidential_ai_badge.html",
-        og_card="confidential-computing-llm.png",
+        og_card="confidential-ai-badge.png",
+        og_alt=(
+            "TrustedRouter Confidential AI trust seal with hardware attestation "
+            "and live verification"
+        ),
         title="Confidential AI Badge",
         description=(
             "A hardware-attested Confidential AI trust seal for products using "
@@ -1900,6 +1905,7 @@ def _render_public_page(
             # each card auto-activates the moment its image is generated into
             # static/og/, with zero risk of a 404 unfurl in the meantime.
             og_image=_og_image_url(settings, page.og_card),
+            og_image_alt=page.og_alt or "TrustedRouter, end-to-end encrypted AI routing",
             robots_meta=robots_meta,
             faq_items=page.faq_items,
             catalog_evidence=catalog_evidence,
