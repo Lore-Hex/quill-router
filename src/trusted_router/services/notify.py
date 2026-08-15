@@ -243,6 +243,13 @@ class NotifyService:
                 subject=subject or "Notification",
                 text_body=body,
                 mail_class="transactional",
+                # The ALERT identity, not the default one. It sends from the
+                # alerts subdomain under its own SES configuration set, which
+                # keeps operational paging on separate reputation from
+                # receipts and password resets. A bounce storm from one must
+                # not degrade delivery of the other, and paging is the half
+                # that has to arrive at 3am.
+                sender_profile="alerts",
             )
         )
         if not sent:

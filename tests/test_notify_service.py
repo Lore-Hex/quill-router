@@ -194,3 +194,50 @@ class _FakeTelephony:
         if self._delivered:
             return TelephonyResult(True, "telnyx", "queued")
         return TelephonyResult(False, None, "telnyx=500; twilio=500")
+
+
+class TestEmailIdentity:
+    """Notify pages from the ALERT identity, not the default sender."""
+
+    def test_it_sends_from_the_alert_profile(self, monkeypatch):
+        # Operational paging and receipts must not share SES reputation: a
+        # bounce storm from one would degrade delivery of the other, and
+        # paging is the half that has to arrive at 3am.
+        captured = {}
+
+        class _Email:
+            enabled = True
+
+            def send(self, message):
+                captured["profile"] = message.sender_profile
+                captured["to"] = message.to
+                return True
+
+        monkeypatch.setattr(notify_module, "get_email_service", lambda settings: _Email())
+
+        outcome = NotifyService(_settings()).send(
+            owner=_verified_owner(), channel="email", subject="region down", body="six minutes"
+        )
+
+        assert outcome.delivered
+        assert captured["profile"] == "alerts"
+        assert captured["to"] == "owner@example.com"
+
+    def test_a_suppressed_address_is_reported_undelivered_and_unbilled(self, monkeypatch):
+        # SES refuses addresses on our bounce/complaint suppression list. That
+        # is a real non-delivery, so it must not be charged.
+        class _Email:
+            enabled = True
+
+            def send(self, message):
+                return False
+
+        monkeypatch.setattr(notify_module, "get_email_service", lambda settings: _Email())
+
+        outcome = NotifyService(_settings()).send(
+            owner=_verified_owner(), channel="email", subject="s", body="b"
+        )
+
+        assert not outcome.delivered
+        assert not outcome.billable
+        assert outcome.price_microdollars == 0
