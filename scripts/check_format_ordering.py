@@ -21,8 +21,14 @@ REPORT-ONLY BY DEFAULT — READ THIS BEFORE WIRING IT ANYWHERE
 `DEFAULT_MODE` below is REPORT_ONLY. In that mode `main()` returns 0 on every
 path there is. Not "0 unless something is seriously wrong" — 0. A run where
 every cloud blocked, a run where the write side could not be derived, a run
-where this script raised an exception of its own: all of them print loudly and
-return 0, so a caller that treats a non-zero exit as "stop" never stops. In
+where this script raised an `Exception` of its own: all of them print loudly and
+return 0, so a caller that treats a non-zero exit as "stop" does not stop for
+any of them. Two things are not `main()` returning, and a caller DOES stop for
+both: a `BaseException` out of a probed import — `SystemExit`,
+`KeyboardInterrupt` — propagates through the `except Exception` below, and an
+argparse usage error exits 2 before a mode has been chosen at all. Neither is
+reachable by ordinary refactoring; both are stated here rather than left to be
+discovered, and only flipping `DEFAULT_MODE` closes them. In
 ENFORCING mode any blocked region, and any failure to compute a verdict, exits
 1 instead.
 

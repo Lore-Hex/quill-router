@@ -159,9 +159,13 @@ log(){ printf '\n=== %s\n' "$*" >&2; }
 # gate's output before answering any deploy prompt; do not read its exit code
 # as a verdict.
 #
-# "Exits 0" has no exceptions: main() returns 0 in report-only whatever
-# happened, including a run that could not derive what this build writes and a
-# run in which the script raised. So this script will also deploy a build whose
+# "Exits 0" covers every path main() RETURNS from: in report-only it returns 0
+# whatever happened, including a run that could not derive what this build
+# writes and a run in which the script raised an Exception. Two things are not
+# main() returning, and both still reach the branch below: `uv` failing to
+# start the gate exits non-zero before main() runs at all, and a BaseException
+# out of a probed import (SystemExit, KeyboardInterrupt) propagates through
+# main()'s `except Exception`. So this script will also deploy a build whose
 # written formats are UNKNOWN, printing that it knows nothing. That is the cost
 # of the mode and it is stated here rather than left to be discovered; what
 # catches an underivable write side before this point is quill-router's CI,
@@ -187,11 +191,12 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 log "checking BYOK envelope format ordering against the live aws enclave"
 log "  (report-only until DEFAULT_MODE is flipped: read the verdict, not the exit code)"
 # In report-only mode the gate's own main() returns 0 on every path it has --
-# every region blocked, a write side it could not derive, an exception of its
-# own -- so the only ways to reach this branch today are `uv run` failing to
-# start the gate at all (no interpreter, an unresolvable lockfile) and the
-# ENFORCING flip. Neither of those is "the ordering is violated", which is why
-# the first paragraph below asks what got printed before assuming it was.
+# every region blocked, a write side it could not derive, an Exception of its
+# own -- so the ways to reach this branch today are `uv run` failing to start
+# the gate at all (no interpreter, an unresolvable lockfile), a BaseException
+# raised out of a probed import, and the ENFORCING flip. None of those is "the
+# ordering is violated", which is why the first paragraph below asks what got
+# printed before assuming it was.
 if ! (cd "$REPO_ROOT" && uv run python -m scripts.check_format_ordering --cloud aws); then
   cat >&2 <<'NOTRUN'
 
@@ -205,8 +210,10 @@ remedy below is about the wrong thing. Two causes:
     file and the line. Fix it in quill-router; no cloud is involved.
   * uv could not start the gate at all. Nothing was checked, and nothing is
     known to be wrong with the ordering. Fix the toolchain and re-run.
-Neither of those can reach this branch while DEFAULT_MODE is report-only: both
-exit 0 there.
+While DEFAULT_MODE is report-only these two are not symmetric. The first exits
+0 and CANNOT reach this branch: it prints its banner and the deploy continues.
+The second is the cause that does reach it -- uv fails before the gate runs, so
+there is no table above because there was no run.
 NOTRUN
   echo "" >&2
   echo "OTHERWISE -- REFUSING TO DEPLOY: this build may write a BYOK envelope format" >&2

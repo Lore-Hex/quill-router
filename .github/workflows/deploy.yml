@@ -145,9 +145,12 @@ jobs:
         # exits 0. It does not stop this deploy, and until it is flipped this
         # job's green tick means "the gate ran", not "the ordering holds".
         #
-        # "Exits 0" has no exceptions. main() returns 0 in report-only on every
-        # path: every cloud blocked, the write side underivable, the script
-        # raising on its own. That is deliberate and it was not true when this
+        # "Exits 0" covers every path main() RETURNS from in report-only: every
+        # cloud blocked, the write side underivable, the script raising an
+        # Exception on its own. It does not cover the two paths where main()
+        # never returns — a BaseException out of a probed import, and an
+        # argparse usage error exiting 2 — and this step would fail on those.
+        # Neither is reachable by ordinary refactoring. That is deliberate and it was not true when this
         # job first landed — an underivable write side exited 1 in both modes,
         # and an underivable write side is reachable by ordinary refactoring
         # (any assignment to an `algorithm` attribute under src/trusted_router,
