@@ -90,6 +90,24 @@ def _perform(
         return 0, f"{type(exc).__name__}: {exc}"
 
 
+BRAND = "Trusted Router"
+
+
+def branded(body: str) -> str:
+    """Every SMS and call opens by naming who is calling.
+
+    A number nobody recognizes, at three in the morning, reading an unattributed
+    sentence is indistinguishable from a scam — the recipient hangs up on the
+    page they asked for. It is also what A2P registration expects of a sender.
+
+    Idempotent: a caller that already branded its text is not branded twice.
+    """
+    text = (body or "").strip()
+    if text.lower().startswith(BRAND.lower()):
+        return text
+    return f"{BRAND}: {text}"
+
+
 def spoken_text(body: str) -> str:
     """What a voice call actually says.
 
@@ -99,7 +117,13 @@ def spoken_text(body: str) -> str:
     delivered.
     """
     cleaned = body[:400].replace("&", " and ").replace("<", " ").replace(">", " ")
-    return f"Trusted Router notification. {cleaned}. Again. {cleaned}."
+    # Spoken, not written: the colon is silent, so the brand becomes a sentence.
+    spoken = cleaned
+    if spoken.lower().startswith(BRAND.lower() + ":"):
+        spoken = spoken[len(BRAND) + 1 :].strip()
+    elif spoken.lower().startswith(BRAND.lower()):
+        spoken = spoken[len(BRAND) :].strip()
+    return f"{BRAND} notification. {spoken}. Again. {spoken}."
 
 
 class TelephonyService:
@@ -172,8 +196,15 @@ class TelephonyService:
         # them inline, so this depends on our own endpoint being reachable —
         # which is why Twilio is tried first for voice.
         settings = self._settings
-        if not settings.telnyx_texml_account_id or not settings.api_base_url:
-            return 0, "telnyx voice needs TR_TELNYX_TEXML_ACCOUNT_ID and an api base url"
+        if (
+            not settings.telnyx_texml_account_id
+            or not settings.telnyx_texml_application_id
+            or not settings.api_base_url
+        ):
+            return 0, (
+                "telnyx voice needs TR_TELNYX_TEXML_ACCOUNT_ID, "
+                "TR_TELNYX_TEXML_APPLICATION_ID and an api base url"
+            )
         url = (
             settings.api_base_url.rstrip("/")
             + "/notify/texml?text="
@@ -181,7 +212,15 @@ class TelephonyService:
         )
         return _post_form(
             f"https://api.telnyx.com/v2/texml/Accounts/{settings.telnyx_texml_account_id}/Calls",
-            {"From": settings.telnyx_from_number or "", "To": to, "Url": url},
+            {
+                "From": settings.telnyx_from_number or "",
+                "To": to,
+                "Url": url,
+                # Required. Omitting it is a 422 every time, and it is also what
+                # carries the outbound voice profile that authorizes
+                # origination — an application without one answers 403 D38.
+                "ApplicationSid": settings.telnyx_texml_application_id,
+            },
             {"Authorization": f"Bearer {settings.telnyx_api_key}"},
         )
 
@@ -201,6 +240,12 @@ class TelephonyService:
         arrive, and silently honouring "telnyx only" would turn a preference
         into a single point of failure the caller did not ask for.
         """
+        # Branded once, here, rather than in each carrier method: this is the
+        # only path every channel and every caller passes through, so it is the
+        # only place the brand cannot be forgotten. spoken_text() re-reads it
+        # and speaks it as a sentence rather than a colon.
+        body = branded(body)
+
         if channel == "sms":
             chain = [
                 ("telnyx", self.telnyx_enabled, self._telnyx_sms),

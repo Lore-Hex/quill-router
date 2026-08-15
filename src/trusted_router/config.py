@@ -521,7 +521,11 @@ class Settings(BaseSettings):
     notify_enabled: bool = False
     telnyx_api_key: str | None = None
     telnyx_from_number: str | None = None
+    # The ORGANIZATION id from Telnyx /v2/whoami — not the number's connection
+    # id and not the TeXML application id, both of which answer 404 here.
     telnyx_texml_account_id: str | None = None
+    # The TeXML application, which is where the outbound voice profile hangs.
+    telnyx_texml_application_id: str | None = None
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
     twilio_api_key_sid: str | None = None

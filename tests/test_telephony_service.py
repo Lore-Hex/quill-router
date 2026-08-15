@@ -77,7 +77,9 @@ def test_voice_prefers_telnyx_but_falls_back_to_inline_twiml(monkeypatch, calls)
     # instructions FROM US — so when TrustedRouter is unreachable (the very
     # situation being called about) it cannot build the call, and Twilio's
     # inline TwiML, which needs nothing of ours, has to catch it.
-    service = telephony.TelephonyService(_settings(telnyx_texml_account_id="acct-1"))
+    service = telephony.TelephonyService(
+        _settings(telnyx_texml_account_id="acct-1", telnyx_texml_application_id="app-1")
+    )
     assert service.send("voice", "+15551234567", "fire").carrier == "telnyx"
 
     monkeypatch.setattr(service, "_telnyx_voice", lambda to, body: (0, "texml unreachable"))
@@ -175,3 +177,68 @@ def test_spoken_text_repeats_and_strips_xml_metacharacters():
 def test_spoken_text_repeats_the_message():
     # A ringing phone is answered mid-sentence; the first pass is half heard.
     assert telephony.spoken_text("region two is down").count("region two is down") == 2
+
+
+class TestTelnyxVoiceRequestShape:
+    """Both of these were found by placing a real call, not by a test."""
+
+    def test_the_call_carries_an_application_sid(self, calls):
+        # Telnyx answers 422 "Missing required parameter ApplicationSid" without
+        # it, so a voice path that omits it never rings anyone — and the failure
+        # only shows up against the live API.
+        service = telephony.TelephonyService(
+            _settings(telnyx_texml_account_id="acct-1", telnyx_texml_application_id="app-1")
+        )
+
+        result = service.send("voice", "+15551234567", "disk full")
+
+        assert result.carrier == "telnyx"
+        url, payload, _headers = calls[0]
+        assert "/texml/Accounts/acct-1/Calls" in url
+        assert payload["ApplicationSid"] == "app-1"
+
+    def test_voice_is_unconfigured_without_the_application(self):
+        # Better to report unconfigured and fall through to the other carrier
+        # than to spend a request learning it from a 422.
+        service = telephony.TelephonyService(_settings(telnyx_texml_account_id="acct-1"))
+        status, detail = service._telnyx_voice("+15551234567", "hi")
+
+        assert status == 0
+        assert "TR_TELNYX_TEXML_APPLICATION_ID" in detail
+
+
+class TestBranding:
+    """A number nobody recognizes reading an unattributed sentence at 3am is
+    indistinguishable from a scam, and gets hung up on."""
+
+    def test_every_sms_opens_with_the_brand(self, calls):
+        telephony.TelephonyService(_settings()).send("sms", "+15551234567", "disk full")
+
+        _url, payload, _headers = calls[0]
+        assert payload["text"].startswith("Trusted Router: ")
+        assert "disk full" in payload["text"]
+
+    def test_every_call_opens_with_the_brand(self, calls):
+        telephony.TelephonyService(_settings()).send("voice", "+15551234567", "disk full")
+
+        _url, payload, _headers = calls[0]
+        assert payload["Twiml"].index("Trusted Router") < payload["Twiml"].index("disk full")
+
+    def test_branding_is_not_applied_twice(self, calls):
+        # Agents that already brand their own text must not produce
+        # "Trusted Router: Trusted Router: ...".
+        telephony.TelephonyService(_settings()).send(
+            "sms", "+15551234567", "Trusted Router: disk full"
+        )
+
+        _url, payload, _headers = calls[0]
+        assert payload["text"].lower().count("trusted router") == 1
+
+    def test_the_brand_is_spoken_as_a_sentence_not_a_colon(self):
+        # "Trusted Router colon disk full" is what a naive prefix would produce
+        # through a speech engine.
+        spoken = telephony.spoken_text(telephony.branded("disk full"))
+
+        assert spoken.startswith("Trusted Router notification.")
+        assert ":" not in spoken
+        assert spoken.count("disk full") == 2
