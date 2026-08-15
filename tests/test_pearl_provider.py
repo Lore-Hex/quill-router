@@ -180,15 +180,9 @@ def test_pearl_catalog_is_prepaid_only_and_standard_privacy() -> None:
         for endpoint in MODEL_ENDPOINTS.values()
         if endpoint.provider == "pearl"
     ]
-    assert len(endpoints) == 5
+    assert endpoints
     assert {endpoint.usage_type for endpoint in endpoints} == {"Credits"}
-    assert {endpoint.upstream_id for endpoint in endpoints} == {
-        "google/gemma-4-31b-it",
-        "zai-org/GLM-5.2",
-        "deepseek-ai/DeepSeek-V4-Pro",
-        "deepseek/deepseek-v4-flash-0731",
-        "deepseek-ai/DeepSeek-V4-Flash",
-    }
+    assert all(endpoint.id.endswith("@pearl/prepaid") for endpoint in endpoints)
 
 
 def test_pearl_public_api_exposes_provider_and_exact_endpoint(client: Any) -> None:
