@@ -552,6 +552,17 @@ class Settings(BaseSettings):
     # fixed monthly 10DLC campaign fee needs volume to amortize, and a sustained
     # Telnyx outage pushes every send onto the thin path at once.
     notify_price_microdollars: int = 20_000  # $0.02 per notification
+    # PUSH IS FREE, deliberately.
+    #
+    # Push costs us essentially nothing (APNs is free), and it is delivered by
+    # our own SREChat app — so a free push channel is distribution: the cheapest
+    # way for a customer's agent to reach them is to install our client. Charging
+    # two cents to send an APNs payload would be pricing away the funnel.
+    #
+    # It is also the only channel with no carrier and no regulator in the path,
+    # which makes it the one we can offer on day one without 10DLC or a
+    # sandbox exit.
+    notify_push_price_microdollars: int = 0
     # Per-workspace ceilings. The pager equivalent of the leash: an agent in a
     # loop must not be able to spend a customer's balance overnight.
     notify_max_per_hour: int = 30
