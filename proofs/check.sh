@@ -15,10 +15,18 @@
 # not a deliberate choice — it is just TLC's default. RegionalQuotaLease grew a
 # succession action and about a quarter more states (4,634,802 -> 5,844,105),
 # and at the default one worker it had not finished after fifteen minutes on
-# the machine this was measured on; at -workers auto on eight cores it takes
-# under three. Nothing about the result changes — an exhaustive breadth-first
-# search visits the same states whatever the worker count, and the counts
-# reported at four and at eight workers were identical.
+# the machine this was measured on. With workers it completes, in a few
+# minutes rather than the "under three" this comment used to promise: the
+# four -workers auto runs behind this commit (JDK 21) took between 1m26s and
+# 4m06s, and one -workers 2 run (JDK 17) took 3m47s, all on an 8-core Apple
+# M2, all 5,844,105 states / 1,292,173 distinct. The spread is machine load
+# rather than the search. Nothing about the
+# RESULT changes with the worker count — an exhaustive breadth-first search
+# visits the same states either way, and the counts above are identical.
+#
+# One thing does change: a parallel search reports the first counterexample
+# any worker hands back, which need not be a shortest one. Re-run a failing
+# mutant at -workers 1 before quoting a trace length anywhere.
 set -euo pipefail
 
 cd "$(dirname "$0")"

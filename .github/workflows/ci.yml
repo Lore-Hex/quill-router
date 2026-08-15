@@ -125,13 +125,21 @@ jobs:
   # against one workspace escrow before the billing path delegates real spend
   # to it; its first run produced a liveness counterexample in six states.
   #
-  # Runtime is a minute or two per spec at the bounds in each .cfg — it was a
-  # few seconds until RegionalQuotaLease grew a lease-succession action and
-  # check.sh started passing -workers auto. If a spec ever gets slow enough to
-  # matter, tighten its constants rather than dropping the job — an unchecked
+  # Runtime, measured rather than guessed, and NOT measured on this runner:
+  # RegionalQuotaLease at the bounds in its .cfg took between 1m26s and 4m06s
+  # across four -workers auto runs on an 8-core Apple M2 (JDK 21), and 3m47s
+  # at -workers 2 (JDK 17) — 5,844,105 states every time, so the spread is
+  # load, not the search. A GitHub runner has fewer and slower cores than
+  # that — 2 vCPUs on a private repo, 4 on a public one, per GitHub's docs
+  # at the time of writing — so budget several minutes for this job, not the
+  # "minute or two" this comment used to claim, which was an eight-core figure
+  # wearing a two-vCPU label. timeout-minutes below is a runaway guard, set at several
+  # times the local figure rather than at a target. If a spec ever nears it,
+  # tighten that spec's constants rather than dropping the job — an unchecked
   # spec is worse than no spec, because it reads as evidence.
   proofs:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4

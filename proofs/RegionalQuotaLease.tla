@@ -6,7 +6,7 @@
 (* WHY THIS EXISTS AS A MODEL AND NOT ONLY AS A TEST                        *)
 (*                                                                          *)
 (* The Python module is a pure state machine, so property tests can drive it *)
-(* well and do (tests/test_regional_quota_lease_property.py is the           *)
+(* well and do (tests/test_regional_quota_leases.py is the                   *)
 (* executable shadow of this spec). What tests cannot reach is the part that *)
 (* is not implemented yet: multiple regional planes holding leases against   *)
 (* ONE workspace escrow, a granter handing out new leases, and a reclaimer   *)
@@ -34,14 +34,16 @@
 (*     when it took the reservation, not a token freshly read from the row.  *)
 (*                                                                           *)
 (* ======================================================================== *)
-(* THE FENCING TOKEN: THREE ROUNDS, AND THE ANSWER IS NOT THE ONE THE LAST   *)
+(* THE FENCING TOKEN: FOUR ROUNDS, AND THE ANSWER IS NOT THE ONE ANY EARLIER *)
 (* ROUND PREDICTED                                                          *)
 (* ======================================================================== *)
 (*                                                                           *)
 (* This section is the history of a claim this file made, had refuted, made  *)
-(* again, and had refuted again. The history is kept because it is the most  *)
-(* useful thing in the file: it is a record of three different ways to write *)
-(* a check that proves nothing, and of a prediction that turned out wrong.   *)
+(* again, and had refuted again — four times now. The history is kept        *)
+(* because it is the most useful thing in the file: it is a record of three  *)
+(* different ways to write a check that proves nothing, of a prediction that *)
+(* turned out wrong, and of a decomposition that was stated one guard too    *)
+(* coarse and hid a real gap in the Python for a round.                      *)
 (*                                                                           *)
 (* ROUND 1 — the vacuous adversary. The original StaleWrite action was       *)
 (* `UNCHANGED vars`. An action that does nothing is trivially safe, so the   *)
@@ -77,17 +79,25 @@
 (* twice over.                                                               *)
 (*                                                                           *)
 (*   (a) The hazard is not succession. The trace that needs the fence is     *)
-(*       seven states long and contains no Regrant at all. It is: grant a    *)
+(*       six states long and contains no Regrant at all. It is: grant a      *)
 (*       lease, reserve a hold against it, tick past expiry, sweep it — the  *)
 (*       sweep returns the whole grant to escrow, because nothing has been   *)
 (*       spent yet — and then let the holder settle the hold it still        *)
 (*       believes it owns. The money is now back in escrowFree AND recorded  *)
 (*       as spent: reclaimed[l] + SpentIn(l) = 3 against granted[l] = 2.     *)
-(*       Minted. (TLC's shortest path also grants the second lease on the    *)
-(*       way past; that step is incidental to the hazard.) What              *)
-(*       the fence guards is a hold OUTLIVING THE SWEEP OF THE GENERATION    *)
-(*       THAT AUTHORISED IT. Succession is one way to notice that; it is not *)
-(*       necessary for it, and plain expire-and-sweep gets there first.      *)
+(*       Minted. What the fence guards is a hold OUTLIVING THE SWEEP OF THE  *)
+(*       GENERATION THAT AUTHORISED IT. Succession is one way to notice      *)
+(*       that; it is not necessary for it, and plain expire-and-sweep gets   *)
+(*       there first.                                                        *)
+(*                                                                           *)
+(*       (This paragraph used to say SEVEN states, with a second Grant on    *)
+(*       the way past. That length came from a -workers auto run, and a      *)
+(*       parallel breadth-first search reports the first counterexample any  *)
+(*       worker hands back, which need not be a shortest one. Re-run at      *)
+(*       -workers 1 the trace is six states and the second Grant is gone.    *)
+(*       Every trace length quoted in this file is now from a single-worker  *)
+(*       re-run of the same mutant, for that reason; the state COUNTS are    *)
+(*       still from -workers auto.)                                          *)
 (*                                                                           *)
 (*   (b) Adding succession did not change the fence answer at all. With the  *)
 (*       sweep intact, deleting the fence from Settle explores 7,008,021     *)
@@ -102,10 +112,44 @@
 (*       superseded plane reserved, and those land in states an honest       *)
 (*       reserve already reaches.                                            *)
 (*                                                                           *)
-(* So what the fence is, in this design, is one of TWO guards on ONE hole.   *)
-(* The other is the reclaimer cancelling outstanding holds inside the        *)
-(* transaction that closes the lease. Remove either and nothing breaks.      *)
-(* Remove both and money is minted in seven states.                          *)
+(*       That argument is only available for a GUARD deletion. Three rows in *)
+(*       the table below delete an ASSIGNMENT instead (a token bump), which  *)
+(*       does not widen anything, and two of them also report exactly        *)
+(*       1,292,173 distinct states. Those equalities are NOT the same proof, *)
+(*       and must not be quoted as one. The reachable sets are not nested,   *)
+(*       so equal size says nothing about equality; what they most likely    *)
+(*       reflect is a relabelling — at these bounds a lease's token is a     *)
+(*       function of its own history, so dropping a bump plausibly maps the  *)
+(*       state graph onto an isomorphic copy with smaller numbers in it —    *)
+(*       but no run here establishes that isomorphism. What those rows DO    *)
+(*       establish is the weaker and sufficient statement: no invariant and  *)
+(*       no property in the .cfg fires.                                      *)
+(*                                                                           *)
+(* ROUND 4 — the decomposition round 3 wrote down was wrong, and getting it  *)
+(* right is the difference between a footnote and a live defect.             *)
+(*                                                                           *)
+(* Round 3 said: the fence and the reclaimer's hold cancellation are TWO     *)
+(* GUARDS on one hole, remove either and nothing breaks. The first clause    *)
+(* is right; the second is not, because "the fence" is not one guard. The    *)
+(* hole — a hold outliving the sweep of the generation that authorised it —  *)
+(* is closed by EITHER of:                                                   *)
+(*                                                                           *)
+(*     (i)  the reclaimer cancelling outstanding holds inside the            *)
+(*          transaction that closes the lease; or                            *)
+(*     (ii) the PAIR { fence at settle, token bump at close }.               *)
+(*                                                                           *)
+(* (i) and (ii) are alternatives: either alone closes the hole and neither   *)
+(* is necessary, which is what round 3 measured. The two HALVES of (ii) are  *)
+(* not alternatives, which round 3 never measured:                           *)
+(*                                                                           *)
+(*     drop (i), delete the fence, keep the bump    VIOLATED, six states     *)
+(*     drop (i), keep the fence, delete the bump    VIOLATED, six states,    *)
+(*                                                  with the fence passing   *)
+(*                                                  on every step            *)
+(*                                                                           *)
+(* The second row is the one that matters, because it is the shape the       *)
+(* Python is in today: `_require_fence` exists and nothing ever advances     *)
+(* `fencing_token`. See scope limit 2.                                       *)
 (*                                                                           *)
 (* What succession DID add is an obligation of its own, and it is the one    *)
 (* guard here that nothing else covers. Regrant overwrites granted[l] and    *)
@@ -115,55 +159,101 @@
 (* EscrowConserved fires in seven states: escrow that a regional plane       *)
 (* genuinely spent silently reappears as unspent.                            *)
 (*                                                                           *)
+(* What succession did NOT add is any load on the token bump in Regrant      *)
+(* itself. Deleting that bump — a plain token REUSE at succession — is       *)
+(* caught by nothing here. The note on TokensNeverGoBackwards below says so  *)
+(* with the counts, and says what is and is not caught instead. The bump     *)
+(* that carries weight is Reclaim's, at close.                               *)
+(*                                                                           *)
 (* MEASURED, at the constants in RegionalQuotaLease.cfg. Every row is an     *)
-(* edit to this spec — to the source, never to an invariant — re-run to      *)
-(* completion:                                                               *)
+(* edit to this spec — to the source, never to an invariant and never to     *)
+(* the .cfg — re-run to completion for this commit.                          *)
+(*                                                                           *)
+(* The table is exhaustive over one class of edit and silent outside it. It  *)
+(* covers every fencing-token guard (Reserve, Settle, Refund), every token   *)
+(* bump (Reclaim's and Regrant's), the reclaimer's hold cancellation, and    *)
+(* Regrant's retiredSpend carry. The other guards in this spec — expiry,     *)
+(* lease state, `HoldAmount <= AvailableIn(l)` — have NO deletion            *)
+(* experiment here, and nothing below should be read as one.                 *)
 (*                                                                           *)
 (*   this file, unmodified            no error   5,844,105 / 1,292,173 dist. *)
 (*   - fence in Settle                no error   7,008,021 / 1,292,173 dist. *)
-(*   - hold cancellation in Reclaim   no error   7,213,297 / 1,780,589 dist. *)
+(*   - fence in Refund                no error   6,232,077 / 1,292,173 dist. *)
 (*   - fence in Reserve, faithfully   no error   7,204,605 / 1,609,117 dist. *)
-(*   - fence in Reserve, literally    VIOLATED   TokenStampsAreWellFormed at *)
-(*                                               30 states — a model         *)
-(*                                               artifact, not money; see 5  *)
-(*   - BOTH Settle fence AND the      VIOLATED   SpendIsCoveredByCommitment, *)
-(*     Reclaim hold cancellation                 7-state trace               *)
+(*   - fence in Reserve, literally    VIOLATED   TokenStampsAreWellFormed,   *)
+(*                                               3-state trace — a           *)
+(*                                               model artifact, not money;  *)
+(*                                               see scope limit 5           *)
+(*   - hold cancellation in Reclaim   no error   7,213,297 / 1,780,589 dist. *)
+(*   - token bump in Reclaim          no error   5,844,105 / 1,292,173 dist. *)
+(*   - token bump in Regrant (reuse)  no error   5,844,105 / 1,292,173 dist. *)
+(*   - hold cancellation in Reclaim   VIOLATED   SpendIsCoveredByCommitment, *)
+(*     AND the fence in Settle                   6-state trace               *)
+(*   - hold cancellation in Reclaim   VIOLATED   SpendIsCoveredByCommitment, *)
+(*     AND the token bump in Reclaim             6-state trace; the fence    *)
+(*                                               passes on every step        *)
+(*   Regrant's bump RESET to 1        VIOLATED   TokensNeverGoBackwards,     *)
+(*     rather than deleted                       5-state trace               *)
 (*   - retiredSpend carry in Regrant  VIOLATED   EscrowConserved,            *)
 (*                                               7-state trace               *)
 (*                                                                           *)
 (* WHAT THIS DOES *NOT* ESTABLISH — read this before citing the file          *)
 (*                                                                           *)
-(*   1. It does not establish that the fence is NECESSARY, only that it is   *)
-(*      SUFFICIENT. In this model the reclaimer refunds every outstanding    *)
-(*      hold in the same atomic action that closes the lease, and that alone *)
-(*      closes the hole too. Nobody should delete `_require_fence` from      *)
-(*      regional_quota_leases.py on the strength of this file; they would be *)
-(*      leaning on a reclaimer that has not been written.                    *)
+(*   1. It does not establish that the fence is NECESSARY, and it does not   *)
+(*      establish that the fence ALONE is sufficient either. What it         *)
+(*      establishes is that the fence is sufficient IN COMPANY WITH a token  *)
+(*      bump in the closing transaction — round 4 above, measured both ways. *)
+(*      The fence is not necessary because in this model the reclaimer       *)
+(*      refunds every outstanding hold in the same atomic action that closes *)
+(*      the lease, and that alone closes the hole too. Nobody should delete  *)
+(*      `_require_fence` from regional_quota_leases.py on the strength of    *)
+(*      this file; they would be leaning on a reclaimer that has not been    *)
+(*      written. Nobody should keep it and stop there either.                *)
 (*                                                                           *)
 (*   2. And that reclaimer is exactly the thing to worry about. A lease has  *)
 (*      an unbounded number of holds and a Spanner transaction has a         *)
 (*      mutation limit, so the durable sweep very likely CANNOT refund every *)
 (*      hold in the transaction that closes the lease; it will close the     *)
-(*      lease row and let hold cleanup trail. The moment it does, the fence  *)
-(*      is the only guard left and the seven-state trace is a live           *)
-(*      double-charge. Whoever writes the reclaimer must either cancel the   *)
-(*      holds atomically with the close, or make the settle path compare the *)
-(*      presented token against the lease row INSIDE the settling            *)
-(*      transaction. Today's pure `settle()` does both — it calls            *)
-(*      `_require_fence` and it rejects a REFUNDED hold — but it compares    *)
-(*      against the lease object the caller happened to load, and a durable  *)
-(*      version that settles by hold_id without re-reading the lease row in  *)
-(*      the same transaction would lose the guard without deleting a line.   *)
+(*      lease row and let hold cleanup trail. The moment it does, guard (i)  *)
+(*      is gone and the pair (ii) is all that is left — and (ii) is two      *)
+(*      things, not one. Whoever writes the reclaimer must do EITHER:        *)
 (*                                                                           *)
-(*      Two things about the current code lean the right way and are worth   *)
-(*      recording so nobody re-derives them. `close()` refuses to close a    *)
-(*      lease that still has open reservations, so the GRACEFUL path can     *)
-(*      never strand a reserved hold behind a token bump; the whole hazard   *)
-(*      lives in the forced sweep, which does not exist yet. And `settle()`  *)
-(*      has no lease-state guard at all — a CLOSED lease can still be        *)
-(*      settled against — which is why Settle here has none either, and is   *)
-(*      why the fence and the hold state are the only two things standing    *)
-(*      between the sweep and a late settlement.                             *)
+(*        (a) cancel the holds atomically with the close; or                 *)
+(*        (b) BOTH advance the lease row's fencing token in the transaction  *)
+(*            that closes it AND make the settle path compare the presented  *)
+(*            token against that row INSIDE the settling transaction.        *)
+(*                                                                           *)
+(*      (b) with either conjunct missing is the six-state double-charge in   *)
+(*      the table above. This corrects what this item said before, which     *)
+(*      offered the settle-side comparison ALONE as the alternative to (a).  *)
+(*      That was false, and false in the direction that costs money.         *)
+(*                                                                           *)
+(*      FINDING (from reading the module, not from TLC): the bump that (b)   *)
+(*      requires does not exist. `fencing_token` occurs seventeen times in   *)
+(*      src/, and every occurrence is a field declaration, a keyword         *)
+(*      parameter, a `_require_fence` comparison, or the `<= 0` check in     *)
+(*      `__post_init__`. Nothing assigns it: `close()` returns               *)
+(*      `replace(self, state=LeaseState.CLOSED)` with the token untouched,   *)
+(*      and `begin_drain()` and `quarantine()` do the same for their         *)
+(*      states. So regional_quota_leases.py today IS the mutant in the       *)
+(*      "keep the fence, delete the token bump" row — the fence is honoured  *)
+(*      on every call and the hold from the retired generation settles       *)
+(*      anyway, because its token still matches the row it is compared       *)
+(*      against. Closing that is a code change (advance the token in the     *)
+(*      transaction that closes or supersedes a lease, and make the sweep    *)
+(*      the only writer of it); it is NOT made in this commit, and this      *)
+(*      file's job is only to establish that it is needed.                   *)
+(*                                                                           *)
+(*      One thing in the current code does lean the right way and is worth   *)
+(*      recording so nobody re-derives it. `close()` refuses to close a      *)
+(*      lease that still has open reservations, so the GRACEFUL path cannot  *)
+(*      strand a reserved hold behind a close at all — which is also why     *)
+(*      the missing bump has not cost anything yet. The whole hazard lives   *)
+(*      in the forced sweep, which does not exist yet. And `settle()` has    *)
+(*      no lease-state guard at all — a CLOSED lease can still be settled    *)
+(*      against — which is why Settle here has none either, and is why the   *)
+(*      fence and the hold state are the only two things standing between    *)
+(*      the sweep and a late settlement.                                     *)
 (*                                                                           *)
 (*   3. FINDING, from reading docs/design/regional-quota-leases.md rather    *)
 (*      than from TLC: the schema sketch keys holds by                       *)
@@ -185,17 +275,25 @@
 (*      than added to make the fence look busy.                              *)
 (*                                                                           *)
 (*   5. The reserve-side fence still has no honest deletion experiment.      *)
-(*      Deleting `token = leaseToken[l]` from Reserve literally now fails in *)
-(*      30 states — but on TokenStampsAreWellFormed, because it lets a plane *)
-(*      present a token that has not been issued yet. That is a model        *)
-(*      artifact, not money. Weakened to the faithful reading, "accept any   *)
-(*      token this lease has ever had" (`token <= leaseToken[l]`), the run   *)
-(*      is clean. Which is what StaleWrite already says: the fence-free      *)
-(*      reserve is in Next unconditionally, in every run above, and the      *)
-(*      accounting guard `HoldAmount <= AvailableIn(l)` is what bounds it.   *)
+(*      Deleting `token = leaseToken[l]` from Reserve literally now fails    *)
+(*      in three states (22 generated) — but on TokenStampsAreWellFormed,    *)
+(*      because it lets a plane present a token that has not been issued     *)
+(*      yet. That is a model artifact, not money. Weakened to the faithful   *)
+(*      reading, "accept any token this lease has ever had"                  *)
+(*      (`token <= leaseToken[l]`), the run is clean. Which is what          *)
+(*      StaleWrite already says: the fence-free reserve is in Next           *)
+(*      unconditionally, in every run above, and the accounting guard        *)
+(*      `HoldAmount <= AvailableIn(l)` is what bounds it.                    *)
 (*                                                                           *)
 (*   6. The bounds are small (see the .cfg). One regrant per lease means     *)
 (*      this checks succession, not a chain of successions.                  *)
+(*                                                                           *)
+(*   7. Nothing here catches a token REUSE at succession, and the note on    *)
+(*      TokensNeverGoBackwards records the measurement rather than hiding    *)
+(*      it. The reason is item 3's assumption: Regrant clears the hold rows, *)
+(*      so a reused token has no retired holder to let back in. A reader     *)
+(*      who implements the OTHER schema — hold rows not cleared at           *)
+(*      succession — is outside everything this file checks about reuse.     *)
 (***************************************************************************)
 
 EXTENDS Naturals, FiniteSets, TLC
@@ -414,6 +512,13 @@ Regrant(l, amount, expiry) ==
     /\ holdActual' = [holdActual EXCEPT ![l] = [h \in HoldIds |-> 0]]
     /\ holdToken' = [holdToken EXCEPT ![l] = [h \in HoldIds |-> 0]]
     /\ leaseState' = [leaseState EXCEPT ![l] = "active"]
+    \* MEASURED AS INERT at these bounds: delete this bump and nothing in the
+    \* .cfg fires. It is kept because it is what a real succession does and
+    \* because a RESET here — token back to 1 rather than left alone — is
+    \* caught, by TokensNeverGoBackwards and by nothing else. The note on
+    \* that property has both runs and says why the reuse case is invisible
+    \* to this model (the holdState/holdActual/holdToken lines above have
+    \* already wiped every hold this lease had).
     /\ leaseToken' = [leaseToken EXCEPT ![l] = leaseToken[l] + 1]
     /\ leaseExpiry' = [leaseExpiry EXCEPT ![l] = expiry]
     /\ regrants' = [regrants EXCEPT ![l] = regrants[l] + 1]
@@ -459,6 +564,16 @@ Settle(l, h, actual) ==
     /\ UNCHANGED << escrowFree, granted, leaseState, leaseToken, leaseExpiry,
                     reclaimed, retiredSpend, regrants, clock >>
 
+\* Refund consults the stamp for the same reason Settle does, and mirrors
+\* `refund()`'s own `_require_fence` call.
+\*
+\* MEASURED: deleting this guard alone changes nothing — no error, 6,232,077
+\* generated / 1,292,173 distinct, the same DISTINCT count as the unmutated
+\* model, so by the widening argument in the header it removes no reachable
+\* state. It is the third inert token guard in this file, and it is in the
+\* header's table for that reason: the table is a record of which guards are
+\* load-bearing, and a guard that is not has to appear there too or the table
+\* reads as a list of the ones that are.
 Refund(l, h) ==
     /\ holdState[l][h] = "reserved"
     /\ holdToken[l][h] = leaseToken[l]
@@ -516,21 +631,32 @@ Reclaim(l) ==
     /\ LET returnable == granted[l] - SpentIn(l)
        IN /\ escrowFree' = escrowFree + returnable
           /\ reclaimed' = [reclaimed EXCEPT ![l] = returnable]
-    \* FINDING (from this model, 2026-08-15): this cancellation is the second
-    \* of the two redundant guards described in the header. The reserved money
-    \* is returned to escrow on the line above, so if a hold could survive the
-    \* sweep in "reserved" state and be settled afterwards, that money would be
-    \* spent as well as returned. Cancelling the holds closes the hole; so does
-    \* the fence in Settle; removing both mints money in seven states. A
-    \* durable reclaimer that cannot cancel every hold in the closing
-    \* transaction — and it probably cannot, because a lease's hold count is
-    \* unbounded — is relying entirely on the fence.
+    \* FINDING (from this model, 2026-08-15): this cancellation is guard (i)
+    \* of the header's round 4. The reserved money is returned to escrow on
+    \* the line above, so if a hold could survive the sweep in "reserved"
+    \* state and be settled afterwards, that money would be spent as well as
+    \* returned. Cancelling the holds closes the hole; so does the PAIR
+    \* {fence at settle, token bump below}; dropping this cancellation and
+    \* either half of that pair mints money in six states.
+    \*
+    \* CORRECTION (2026-08-15, from review): an earlier version of this
+    \* comment said a reclaimer that cannot cancel every hold "is relying
+    \* entirely on the fence". It is relying on the fence AND on the bump
+    \* below, and regional_quota_leases.py has only the first.
+    \* Scope limit 2 in the header has the measurement and the consequence.
     /\ holdState' = [holdState EXCEPT ![l] =
                         [h \in HoldIds |->
                             IF holdState[l][h] = "reserved" THEN "refunded"
                             ELSE holdState[l][h]]]
     /\ holdToken' = [holdToken EXCEPT ![l] = [h \in HoldIds |-> 0]]
     /\ leaseState' = [leaseState EXCEPT ![l] = "closed"]
+    \* The close-time bump: the other half of guard (ii). It is what makes a
+    \* stamp from the swept generation stale, and therefore what makes the
+    \* fence in Settle able to fail at all. Delete it and keep the
+    \* cancellation above and nothing in the .cfg fires (5,844,105 /
+    \* 1,292,173); delete it and the cancellation together,
+    \* fence intact, and SpendIsCoveredByCommitment fires in six states.
+    \* `close()` in regional_quota_leases.py does not do this.
     /\ leaseToken' = [leaseToken EXCEPT ![l] = leaseToken[l] + 1]
     /\ UNCHANGED << granted, leaseExpiry, holdActual, retiredSpend, regrants,
                     clock >>
@@ -712,10 +838,31 @@ ExpiredLeasesAreEventuallyReclaimed ==
 \* L2 — an ACTION property, not a state invariant: a lease's fencing token
 \* never goes backwards. Every result in the header rests on this, because the
 \* whole reason a superseded stamp stays superseded is that the row's token
-\* only climbs. It is stated here rather than assumed in a comment because a
-\* succession action that reused or reset a token — a plausible mistake when
-\* Regrant is implemented against a Spanner row — would leave every safety
-\* invariant above intact while quietly reviving retired holders.
+\* only climbs; the soundness argument for StaleToken cites it by name.
+\*
+\* MEASURED, and the result is half negative. Two mutations of Regrant's token
+\* handling, at the .cfg bounds:
+\*
+\*   RESET — `leaseToken' = [leaseToken EXCEPT ![l] = 1]`, the plausible "a new
+\*   generation starts at token 1" mistake. This property is violated in five
+\*   states. It is the ONLY check that catches it: re-run with L2 struck from
+\*   PROPERTIES and nothing else fires (no error, 5,844,105 / 1,292,173). So L2
+\*   earns its place, and this is what it earns it against.
+\*
+\*   REUSE — delete the bump, leaving leaseToken unchanged across succession.
+\*   Nothing fires. Not this property, which is stated with >= and so admits
+\*   equality, and no invariant either: no error, 5,844,105 / 1,292,173.
+\*
+\* An earlier version of this comment asserted that a reuse would be caught
+\* here and would "quietly revive retired holders". Both halves were wrong, and
+\* the second is why: Regrant wipes holdState, holdActual and holdToken three
+\* lines before it touches the token, so this model has no retired holder left
+\* to revive. That is the model's own choice, recorded as scope limit 3 — under
+\* the schema the design doc actually sketches, hold rows keyed
+\* (lease_id, hold_id) and NOT cleared at succession, a reuse would leave a
+\* retired generation's stamp matching the live token, and nothing here checks
+\* that. Stated plainly: at these bounds the succession-side bump is inert, and
+\* L2 covers a reset and nothing else.
 TokensNeverGoBackwards ==
     [][\A l \in LeaseIds : leaseToken'[l] >= leaseToken[l]]_vars
 
