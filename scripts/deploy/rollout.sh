@@ -49,6 +49,15 @@ add_secret_env_if_exists() {
     return 1
   fi
 }
+# Carrier credentials for /v1/notify. Optional bindings: if the secrets are
+# absent the notify channels report themselves unconfigured rather than the
+# revision failing to start, which is the right failure for a feature nobody
+# has enabled yet.
+add_secret_env_if_exists "TR_TELNYX_API_KEY" "trustedrouter-telnyx-api-key"
+add_secret_env_if_exists "TR_TWILIO_ACCOUNT_SID" "trustedrouter-twilio-account-sid"
+add_secret_env_if_exists "TR_TWILIO_API_KEY_SID" "trustedrouter-twilio-api-key-sid"
+add_secret_env_if_exists "TR_TWILIO_API_KEY_SECRET" "trustedrouter-twilio-api-key-secret"
+add_secret_env_if_exists "TR_TWILIO_AUTH_TOKEN" "trustedrouter-twilio-auth-token"
 add_secret_env_if_exists "ANTHROPIC_API_KEY" "trustedrouter-anthropic-api-key"
 add_secret_env_if_exists "OPENAI_API_KEY" "trustedrouter-openai-api-key"
 add_secret_env_if_exists "GEMINI_API_KEY" "trustedrouter-gemini-api-key"
@@ -320,6 +329,21 @@ ENV_VARS=(
   # accounts stay at $0. Keep this explicit so stale env cannot change policy.
   "TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=300000"
   "TR_GCP_PROJECT_ID=${PROJECT_ID}"
+  # Owner notifications. The identifiers here are not secrets — the numbers are
+  # public and the ids name resources, not authorise them — so they live in
+  # plain env alongside the credentials in Secret Manager.
+  #
+  # Telnyx voice needs BOTH ids: the account id is the ORGANISATION id from
+  # /v2/whoami (the connection id and application id both 404 there), and the
+  # application id is what carries the outbound voice profile. Missing either
+  # one is a 422 or a 403 on every call.
+  "TR_NOTIFY_ENABLED=true"
+  "TR_TELNYX_FROM_NUMBER=+17869471547"
+  "TR_TELNYX_TEXML_ACCOUNT_ID=1eea716a-02e0-4d4f-96fa-36d1f556edca"
+  "TR_TELNYX_TEXML_APPLICATION_ID=3026758434193146987"
+  # The 10DLC-registered sender. SMS defaults to Twilio because registration is
+  # per carrier and Telnyx is not registered — it rejects US SMS outright.
+  "TR_TWILIO_FROM_NUMBER=+15055313623"
   "TR_SPANNER_INSTANCE_ID=${SPANNER_INSTANCE_ID}"
   "TR_SPANNER_DATABASE_ID=${SPANNER_DATABASE_ID}"
   "TR_BIGTABLE_INSTANCE_ID=${BIGTABLE_INSTANCE_ID}"
