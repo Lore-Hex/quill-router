@@ -1012,6 +1012,14 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "credits, docs, and safe test inference over MCP."
         ),
     ),
+    "docs/notify": PublicPage(
+        template="public/notify.html",
+        title="Notify API \u2014 Reach a Human From Your Agent",
+        description=(
+            "Send a push, email, SMS, or phone call to your own account owner from an agent, "
+            "using the same TrustedRouter API key. Push is free; delivery-only billing."
+        ),
+    ),
     "docs/evals": PublicPage(
         template="public/evals.html",
         title="TrustedRouter Evals Guide",

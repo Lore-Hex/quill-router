@@ -513,6 +513,73 @@ class Settings(BaseSettings):
     # exact typed Spanner counters remain the only production authority until
     # a durable regional ledger and reconciliation worker have passed the
     # rollout gates in docs/design/regional-quota-leases.md.
+    # ---- notifications (email / sms / voice to the account owner) ----------
+    # Delivery credentials. TrustedRouter is the registered A2P 10DLC brand and
+    # every customer's notification sends from these numbers, so a customer
+    # never registers anything — and sender reputation becomes a shared asset,
+    # which is why notify requires a verified phone and is metered.
+    notify_enabled: bool = False
+    telnyx_api_key: str | None = None
+    telnyx_from_number: str | None = None
+    # The ORGANIZATION id from Telnyx /v2/whoami — not the number's connection
+    # id and not the TeXML application id, both of which answer 404 here.
+    # Which carrier leads, per channel. These differ because A2P 10DLC
+    # registration is PER CARRIER: an unregistered carrier cannot deliver a US
+    # SMS at all (Telnyx answers 40010, Twilio 30034), while voice needs no
+    # registration and simply goes to whoever is cheaper. Preference only
+    # reorders — the other carrier is still tried, so a wrong value here costs
+    # a wasted attempt, never a lost page.
+    notify_sms_primary_carrier: str = "twilio"
+    notify_voice_primary_carrier: str = "telnyx"
+    telnyx_texml_account_id: str | None = None
+    # The TeXML application, which is where the outbound voice profile hangs.
+    telnyx_texml_application_id: str | None = None
+    twilio_account_sid: str | None = None
+    twilio_auth_token: str | None = None
+    twilio_api_key_sid: str | None = None
+    twilio_api_key_secret: str | None = None
+    twilio_from_number: str | None = None
+    # ONE price per notification, whatever the channel.
+    #
+    # Email costs us far less than a phone call, but pricing it lower makes it
+    # the obvious channel to abuse, and a customer reasoning about "which
+    # notification is cheap" is a customer being trained to route around the
+    # expensive one. Uniform pricing keeps the product explainable.
+    #
+    # Set from the WORST case, not the typical one. Approximate carrier cost per
+    # notification (verify against current rate cards before launch):
+    #
+    #     email via SES        ~$0.0001
+    #     sms via Telnyx       ~$0.004 + ~$0.003 A2P carrier pass-through
+    #     sms via Twilio       ~$0.008 + pass-through
+    #     voice, 1-min minimum ~$0.007 Telnyx, ~$0.014 Twilio
+    #
+    # A price set on the typical case loses money exactly when it matters: the
+    # expensive path is the FALLBACK, which fires during an incident, when
+    # volume spikes.
+    #
+    # $0.02 is positive on every path, thinnest on a Twilio VOICE fallback
+    # (~$0.006 margin on a one-minute minimum). That is a deliberate choice, not
+    # an oversight — the cheap path is the common one. Two things to watch: the
+    # fixed monthly 10DLC campaign fee needs volume to amortize, and a sustained
+    # Telnyx outage pushes every send onto the thin path at once.
+    notify_price_microdollars: int = 20_000  # $0.02 per notification
+    # PUSH IS FREE, deliberately.
+    #
+    # Push costs us essentially nothing (APNs is free), and it is delivered by
+    # our own SREChat app — so a free push channel is distribution: the cheapest
+    # way for a customer's agent to reach them is to install our client. Charging
+    # two cents to send an APNs payload would be pricing away the funnel.
+    #
+    # It is also the only channel with no carrier and no regulator in the path,
+    # which makes it the one we can offer on day one without 10DLC or a
+    # sandbox exit.
+    notify_push_price_microdollars: int = 0
+    # Per-workspace ceilings. The pager equivalent of the leash: an agent in a
+    # loop must not be able to spend a customer's balance overnight.
+    notify_max_per_hour: int = 30
+    notify_max_voice_per_hour: int = 4
+
     regional_quota_leases_enabled: bool = False
     regional_quota_lease_pilot_workspace_ids: str = ""
     regional_quota_lease_ttl_seconds: int = 60

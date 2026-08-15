@@ -11,6 +11,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any, TypeVar
 
+from trusted_router import phone_verification
 from trusted_router import storage_gcp_credit_transfer as spanner_credit_transfer
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.operational_analytics import (
@@ -861,6 +862,51 @@ class SpannerBigtableStore:
             if user is None:
                 return None
             user.email_verified = True
+            self._write_entity_tx(transaction, "user", user.id, user)
+            return user
+
+        return self._run_in_transaction(txn)
+
+    def begin_phone_verification(self, user_id: str, phone: str) -> tuple[str, User] | None:
+        # The code is generated inside the transaction and returned to the
+        # caller to send; only its hash is persisted.
+        holder: dict[str, str] = {}
+
+        def txn(transaction: Any) -> User | None:
+            user = self._read_entity_tx(transaction, "user", user_id, User)
+            if user is None:
+                return None
+            holder["code"] = phone_verification.begin(user, phone)
+            self._write_entity_tx(transaction, "user", user.id, user)
+            return user
+
+        user = self._run_in_transaction(txn)
+        if user is None:
+            return None
+        return holder["code"], user
+
+    def confirm_phone_verification(self, user_id: str, code: str) -> tuple[str, User | None]:
+        holder: dict[str, str] = {}
+
+        def txn(transaction: Any) -> User | None:
+            user = self._read_entity_tx(transaction, "user", user_id, User)
+            if user is None:
+                return None
+            # The attempt counter must be written whether or not the code
+            # matched, or a failed guess would be free and the cap meaningless.
+            holder["status"] = phone_verification.confirm(user, code).status
+            self._write_entity_tx(transaction, "user", user.id, user)
+            return user
+
+        user = self._run_in_transaction(txn)
+        return holder.get("status", "no_pending"), user
+
+    def clear_user_phone(self, user_id: str) -> User | None:
+        def txn(transaction: Any) -> User | None:
+            user = self._read_entity_tx(transaction, "user", user_id, User)
+            if user is None:
+                return None
+            phone_verification.clear(user)
             self._write_entity_tx(transaction, "user", user.id, user)
             return user
 
