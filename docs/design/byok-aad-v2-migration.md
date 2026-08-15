@@ -8,7 +8,9 @@ whole difficulty — **and it repeats per cloud deployment**, see §4.0.
 
 **Progress:** steps 1 and 2 are done **for the GCP deployment only**
 (quill-cloud-proxy#162, quill-router#560). AWS and Azure have not been
-sequenced. Steps 3 and 4 are not started anywhere.
+sequenced — verified 2026-08-15: both control planes 404 on a blog post that
+merged *before* the step-2 commit, so both are still writing v1. Steps 3 and 4
+are not started anywhere. Execution steps for the remaining clouds: §4.6.
 
 ---
 
@@ -194,6 +196,30 @@ picked the change up.
 
 Step 3's backfill is likewise per-deployment: it walks one cloud's database.
 
+#### The failover path — why "separate databases" is not the whole story
+
+An earlier version of this section argued that a GCP-written v2 envelope can
+never reach another cloud's enclave, because the databases are separate. That
+is true of *routing* and false in general, and the difference matters.
+
+The Azure enclaves are deployed with
+
+    TR_CONTROL_PLANE_BASE_URL="https://azure.trustedrouter.com/v1,https://trustedrouter.com/v1"
+
+and `internal/trustedrouter/client.go` fails over to the next endpoint on a dial
+failure. So if the Azure control plane is undialable, an Azure enclave will ask
+the **GCP** control plane to authorize — and a GCP authorization carries a
+GCP-database BYOK envelope, which is now v2.
+
+The exposure is narrow: `api-azure` is not in the canonical `api.trustedrouter.com`
+DNS pool, so a caller has to target it explicitly, and the Azure control plane
+has to be down. But it is exactly the conjunction that shows up during an
+incident — the Azure control plane fails, failover works as designed, and BYOK
+breaks on top of the outage it was meant to survive.
+
+Treat step 1 on the Azure enclaves as a prerequisite for that failover path
+being safe, not only for Azure's own step 2.
+
 ### Step 1 — enclave learns to read v2 (`quill-cloud-proxy`)
 
 Teach `byokcache` both formats, dispatching on `envelope.Algorithm`:
@@ -261,6 +287,59 @@ backfill has been idle for at least one full retention window.
 - delete `test_aad_encoding_is_not_injective_in_general`
 - keep a v1-shaped envelope in a test fixture asserting it is now **rejected**,
   so the removal is deliberate rather than silent
+
+---
+
+## 4.6 Executing the remaining clouds
+
+Neither deploy can be driven from a laptop with repo access alone. Both need
+cloud credentials, and the AWS one needs a host.
+
+### Azure (`uaenorth`, `southeastasia`)
+
+Full procedure and rationale: `quill-cloud-proxy/docs/runbooks/azure-enclave.md`.
+The enclave image already contains v2 read support (`internal/byokcache` has no
+build tag), so this is a redeploy of current `main`, not a code change.
+
+    LOCATION=<region> RESOURCE_GROUP=TR-TEE-<REGION> MAA_ENDPOINT=<attest host> \
+    API_HOST=<api host> QUILL_AZURE_BUNDLE_VERSION=<version> \
+    QUILL_ACME_CACHE_GCS_BUCKET=quill-acme-cache \
+    TR_CONTROL_PLANE_BASE_URL="https://azure.trustedrouter.com/v1,https://trustedrouter.com/v1" \
+    ./tools/deploy-azure-aci.sh --apply all
+
+Read the ORDERING TRAP header in that script before running it. The CCE policy
+hash is a function of the entire container-group definition, and the Key Vault
+release policy must be widened *before* the new group is created or the enclave
+attests correctly, is refused by Key Vault, and exits. `--apply` is required;
+dry run is the default.
+
+Both regions must be done. `api-azure-sea` is a separate container group.
+
+### AWS (`eu-west-1`)
+
+`quill-cloud-proxy/.github/workflows/deploy.yml` ("Deploy AWS legacy",
+`workflow_dispatch` only) does **not** complete this. It builds and pushes
+images, signs trust files, and syncs the static trust page to S3 — there is no
+instance rollout step in it. The actual enclave update is host-side:
+`build-eif` → capture PCR0 → `make deploy-trust QUILL_PCR0=…`, per the comment
+in that workflow.
+
+Dispatching it without doing the host-side half publishes trust artifacts for a
+build that is not running, which is the "stale trust artifacts" failure its own
+header warns about. Do the host-side rollout first, or do both together.
+
+### Verifying, for either cloud
+
+Do not trust the workflow's exit code. Check that the *running* enclave attests
+a build containing quill-cloud-proxy#162, the way GCP was verified:
+
+    curl -s https://trust.trustedrouter.com/gcp-release.json | jq -r .source_commit
+    git merge-base --is-ancestor 79254bb <that commit> && echo ok
+
+`aws-release.json` and `azure-release.json` are published by quill-router#564
+but were not yet serving as of 2026-08-15, and both planes' `source_commit` is
+`NOT_CONFIGURED` — so wire `TRUST_AWS_SOURCE_COMMIT` / `TRUST_AZURE_SOURCE_COMMIT`
+during this work, or there is nothing to verify against afterwards.
 
 ---
 
