@@ -4,7 +4,11 @@
 **Owner:** unassigned
 **Blocks on:** nothing. The reachable exploit path is already closed (#544).
 **Spans:** `quill-router` and `quill-cloud-proxy`. Ordering between them is the
-whole difficulty.
+whole difficulty — **and it repeats per cloud deployment**, see §4.0.
+
+**Progress:** steps 1 and 2 are done **for the GCP deployment only**
+(quill-cloud-proxy#162, quill-router#560). AWS and Azure have not been
+sequenced. Steps 3 and 4 are not started anywhere.
 
 ---
 
@@ -144,6 +148,52 @@ formats and is already persisted, so no storage migration is needed.
 
 Each step ships and bakes independently. **Do not compress steps 1 and 2.**
 
+### 4.0 — this whole sequence runs once PER CLOUD DEPLOYMENT
+
+This was missing from the first version of this plan and it is the most
+dangerous thing in it.
+
+AWS and Azure are not regions of the GCP deployment. Per
+`docs/storage-portability/multi-cloud-separation.md`, each cloud is a
+**standalone TrustedRouter with its own database** — its own credits, API keys,
+workspaces, and therefore **its own BYOK envelopes**. Only identity federates.
+
+Two consequences:
+
+1. **Steps 1 and 2 on GCP did not migrate AWS or Azure.** A v2 envelope written
+   by the GCP control plane lands in the GCP database and is read by the GCP
+   enclave. It never reaches another cloud's enclave. That is why merging step
+   2 for GCP was safe with only the GCP enclave upgraded.
+
+2. **The ordering constraint reappears on every deployment.** The moment an
+   AWS or Azure control plane is updated to a `quill-router` build containing
+   the step-2 commit, it starts writing v2 envelopes into *that* cloud's
+   database. If that cloud's enclave has not already shipped step 1, every BYOK
+   key there breaks.
+
+   This is a trap, because the step-2 change arrives on those deployments as an
+   ordinary version bump rather than as a deliberate migration step. **Nobody
+   has to decide to run it.**
+
+So, before any `quill-router` build containing quill-router#560 is deployed to
+AWS or Azure:
+
+- ship the enclave step-1 change for that cloud and roll it out fully
+- verify the running build attests the right source commit, the same way GCP
+  was verified against `trust.trustedrouter.com`
+- only then let that cloud's control plane take the step-2 build
+
+The enclave code needs no per-cloud change: `internal/byokcache` carries no
+`//go:build` tag, so v2 read support is already compiled into the `cloud_aws`
+and `cloud_azure` variants and CI exercises all of them. What is missing is a
+**deploy and rollout** of a build containing it. As of writing,
+`quill-cloud-proxy` has `deploy-enclave-gcp.yml` and a `workflow_dispatch`-only
+`deploy.yml` ("Deploy AWS legacy"); there is no Azure deploy workflow in that
+repo, so find the Azure enclave's actual deploy path before assuming it has
+picked the change up.
+
+Step 3's backfill is likewise per-deployment: it walks one cloud's database.
+
 ### Step 1 — enclave learns to read v2 (`quill-cloud-proxy`)
 
 Teach `byokcache` both formats, dispatching on `envelope.Algorithm`:
@@ -222,6 +272,10 @@ backfill has been idle for at least one full retention window.
 | 2 | revert the control plane. Rows written as v2 in the interim will **not** decrypt on a v1-only control plane — so keep the read side of v2 in place and revert only the write side. Plan the revert as "stop writing v2", not "remove v2". |
 | 3 | none needed; the job is non-destructive. Stop it and leave mixed v1/v2, which both planes read. |
 | 4 | do not attempt this step until you are willing not to roll it back. |
+
+Per-cloud: rolling back step 2 on one deployment does not affect the others,
+since the databases are separate. But a cloud whose control plane has written
+even one v2 envelope needs its enclave to keep v2 read support permanently.
 
 The asymmetry in step 2 is the one to internalise: **v2 read support is
 permanent from the moment it ships; v2 write support is the reversible part.**
