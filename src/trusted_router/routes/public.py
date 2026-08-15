@@ -715,6 +715,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def evals() -> str:
         return public_page_html(settings, "docs/evals")
 
+    @public_html_route("/docs/provider-conformance")
+    async def provider_conformance_docs() -> str:
+        return public_page_html(settings, "docs/provider-conformance")
+
     @public_html_route("/docs/synth")
     async def synth_docs() -> str:
         return public_page_html(settings, "docs/synth")

@@ -44,6 +44,10 @@ def test_provider_onboarding_page_has_machine_readable_requirements(
     assert "No separate pricing endpoint is required." in response.text
     assert "per_1m_tokens" in response.text
     assert "Do not invent a second format." in response.text
+    assert "uvx trustedrouter-provider-check \\" in response.text
+    assert "--base-url https://api.provider.com/v1" in response.text
+    assert 'href="https://github.com/Lore-Hex/trustedrouter-provider-check"' in response.text
+    assert 'href="/docs/provider-conformance"' in response.text
     assert "Featured partnership" in response.text
     assert "Neurometric AI is live on TrustedRouter." in response.text
     assert 'href="/providers/neurometric"' in response.text
@@ -70,10 +74,12 @@ def test_provider_onboarding_page_links_the_open_source_checker(
     response = client.get("/providers/marketplace")
 
     assert response.status_code == 200
-    assert "Check your integration before you apply." in response.text
+    assert "Run the conformance suite before you apply." in response.text
     assert 'href="https://github.com/Lore-Hex/trustedrouter-provider-check"' in response.text
-    assert "git clone \\" in response.text
-    assert "https://github.com/Lore-Hex/trustedrouter-provider-check.git" in response.text
+    # Installed from PyPI rather than cloned. A provider who has to clone and
+    # build before they can check conformance mostly does not check conformance.
+    assert "uvx trustedrouter-provider-check \\" in response.text
+    assert "git clone" not in response.text
     assert "TR_PROVIDER_API_KEY" in response.text
     assert "--tier 4" in response.text
     assert "--json provider-report.json" in response.text

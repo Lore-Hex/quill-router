@@ -187,6 +187,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/blog",
     "/docs/agent-setup",
     "/docs/evals",
+    "/docs/provider-conformance",
     "/docs/synth",
     "/docs/mcp",
     "/docs/migrate-from-openrouter",
@@ -1013,6 +1014,14 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         description=(
             "Run repeatable model evaluations through one OpenAI-compatible API and compare "
             "providers, privacy posture, latency, reliability, token usage, quality, and cost."
+        ),
+    ),
+    "docs/provider-conformance": PublicPage(
+        template="public/provider_conformance.html",
+        title="Provider Conformance Suite",
+        description=(
+            "Run the public TrustedRouter provider conformance suite against an "
+            "OpenAI-compatible endpoint before applying to the marketplace."
         ),
     ),
     "docs/synth": PublicPage(
@@ -3082,6 +3091,7 @@ def llms_txt(settings: Settings) -> str:
         "- Raw agent playbook: https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md",
         f"- MCP server: https://{domain}/docs/mcp",
         f"- Evals guide: https://{domain}/docs/evals",
+        f"- Provider conformance suite: https://{domain}/docs/provider-conformance",
         f"- Synth guide: https://{domain}/docs/synth",
         f"- Responses web search: https://{domain}/docs/web-search",
         f"- Prompt caching: https://{domain}/docs/prompt-caching",
@@ -3171,6 +3181,7 @@ def docs_llms_txt(settings: Settings) -> str:
             "- Agent playbook source: https://github.com/Lore-Hex/LLM-advisor",
             "- Raw agent playbook: https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md",
             f"- Evals guide: https://{domain}/docs/evals",
+            f"- Provider conformance suite: https://{domain}/docs/provider-conformance",
             f"- Synth guide: https://{domain}/docs/synth",
             f"- Responses web search: https://{domain}/docs/web-search",
             f"- Prompt caching: https://{domain}/docs/prompt-caching",
@@ -3282,6 +3293,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- Agent playbook source: https://github.com/Lore-Hex/LLM-advisor",
         "- Raw agent playbook: https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md",
         f"- Evals guide: https://{domain}/docs/evals",
+        f"- Provider conformance suite: https://{domain}/docs/provider-conformance",
         f"- Synth guide: https://{domain}/docs/synth",
         f"- Responses web search: https://{domain}/docs/web-search",
         f"- Prompt caching: https://{domain}/docs/prompt-caching",

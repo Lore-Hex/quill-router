@@ -169,8 +169,9 @@ API key: DO NOT INCLUDE</code></pre>
 <section class="marketing-split" aria-labelledby="provider-check-heading">
   <div class="marketing-copy">
     <span class="eyebrow">Open-source preflight</span>
-    <h2 id="provider-check-heading">Check your integration before you apply.</h2>
-    <p>Run the <a href="https://github.com/Lore-Hex/trustedrouter-provider-check" target="_blank" rel="noopener noreferrer">TrustedRouter provider checker</a> against the same production API base you plan to submit. It validates catalog discovery, advertised model callability, non-streaming chat semantics, and streaming behavior against the contract consumed by TrustedRouter.</p>
+    <h2 id="provider-check-heading">Run the conformance suite before you apply.</h2>
+    <p>Run the <a href="https://github.com/Lore-Hex/trustedrouter-provider-check" target="_blank" rel="noopener noreferrer">TrustedRouter provider checker</a> against the same production API base you plan to submit. It tests catalog discovery, advertised model callability, chat completions, streaming, usage, tool calls, errors, and first-token behavior against the contract expected by TrustedRouter's attested gateway translator.</p>
+    <p>The suite is open source under Apache-2.0 and works with any conformant serving stack.</p>
     <ul class="check-list">
       <li><strong>Tiers 1&ndash;4 are the conformance gate.</strong> A hard failure exits with status <code>1</code>, so the checker works in CI.</li>
       <li><strong>Credentials stay local.</strong> Use <code>TR_PROVIDER_API_KEY</code> to keep the key out of shell history. Reports recursively redact it.</li>
@@ -179,17 +180,14 @@ API key: DO NOT INCLUDE</code></pre>
     </ul>
     <div class="hero-actions">
       <a class="btn primary" href="https://github.com/Lore-Hex/trustedrouter-provider-check" target="_blank" rel="noopener noreferrer">Open the provider checker <span aria-hidden="true">&nearr;</span></a>
+      <a class="btn" href="/docs/provider-conformance">Read the conformance guide</a>
     </div>
   </div>
   <div class="copy-terminal" aria-label="Run the TrustedRouter provider checker">
-    <div class="code-head"><span>Provider preflight</span><span>Tiers 1&ndash;4</span></div>
-    <pre><code>git clone \
-  https://github.com/Lore-Hex/trustedrouter-provider-check.git
-cd trustedrouter-provider-check
+    <div class="code-head"><span>Provider preflight</span><span>uvx</span></div>
+    <pre><code>export TR_PROVIDER_API_KEY='your-provider-key'
 
-export TR_PROVIDER_API_KEY='your-provider-key'
-
-uv run trustedrouter-provider-check \
+uvx trustedrouter-provider-check \
   --base-url https://api.provider.com/v1 \
   --model provider/model-name \
   --tier 4 \

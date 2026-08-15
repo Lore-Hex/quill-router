@@ -18,6 +18,7 @@ CONTROL_PLANE_REPO = "https://github.com/Lore-Hex/quill-router"
 QUILL_REPO = "https://github.com/Lore-Hex/quill"
 PYTHON_SDK_REPO = "https://github.com/Lore-Hex/trusted-router-py"
 JAVASCRIPT_SDK_REPO = "https://github.com/Lore-Hex/trusted-router-js"
+PROVIDER_CHECK_REPO = "https://github.com/Lore-Hex/trustedrouter-provider-check"
 
 
 def gcp_release(
@@ -42,6 +43,7 @@ def gcp_release(
             "quill": QUILL_REPO,
             "python_sdk": PYTHON_SDK_REPO,
             "javascript_sdk": JAVASCRIPT_SDK_REPO,
+            "provider_check": PROVIDER_CHECK_REPO,
         },
         "source_commit": metadata["source_commit"],
         "image_reference": metadata["image_reference"],
@@ -121,6 +123,7 @@ def trust_html(
     quill_repo = html.escape(QUILL_REPO)
     python_sdk_repo = html.escape(PYTHON_SDK_REPO)
     javascript_sdk_repo = html.escape(JAVASCRIPT_SDK_REPO)
+    provider_check_repo = html.escape(PROVIDER_CHECK_REPO)
     if release_metadata_status == "stale":
         release_warning = (
             '<section class="panel warn"><h2>Release record temporarily stale</h2>'
@@ -257,6 +260,7 @@ def trust_html(
           <div><a href="{quill_repo}">Lore-Hex/quill</a><p>Open-source Quill client, device, bootstrap, and attestation-facing code.</p></div>
           <div><a href="{python_sdk_repo}">Lore-Hex/trusted-router-py</a><p>Python SDK repository for attestation-aware client helpers.</p></div>
           <div><a href="{javascript_sdk_repo}">Lore-Hex/trusted-router-js</a><p>JavaScript SDK repository for browser and Node integrations.</p></div>
+          <div><a href="{provider_check_repo}">Lore-Hex/trustedrouter-provider-check</a><p>Public provider conformance suite for validating the attested gateway translator contract.</p></div>
         </div>
       </div>
       <div class="panel"><h2>Fail Closed</h2><p>If attestation, billing authorization, or the gateway contract is unavailable, the prompt path should fail rather than silently downgrade to a non-attested route.</p></div>
