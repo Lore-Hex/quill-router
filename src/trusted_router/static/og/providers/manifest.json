@@ -145,10 +145,10 @@
   },
   "gmi": {
     "card_version": 2,
-    "model_count": 73,
+    "model_count": 74,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 78,
+    "route_count": 79,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },

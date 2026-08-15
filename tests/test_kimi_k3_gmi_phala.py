@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -20,40 +23,37 @@ KIMI_K3 = "moonshotai/kimi-k3"
 def test_gmi_hourly_parser_discovers_kimi_k3_exact_prices(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    payload = {
+    catalog_payload = {
         "data": [
             {
                 "id": KIMI_K3,
-                "pricing": {
-                    "prompt": "0.000003",
-                    "completion": "0.000015",
-                    "input_cache_read": "0.0000003",
-                },
+            }
+        ]
+    }
+    price_payload = {
+        "modelPrices": [
+            {
+                "billingType": "llm",
+                "modelName": KIMI_K3,
+                "pricePer1mPromptToken": 3_000_000,
+                "pricePer1mCompletionToken": 15_000_000,
+                "tiers": [
+                    {
+                        "threshold": 0,
+                        "inputPrice": 3_000_000,
+                        "outputPrice": 15_000_000,
+                        "cacheReadPrice": 300_000,
+                    }
+                ],
             }
         ]
     }
 
-    class FakeResponse:
-        def raise_for_status(self) -> None:
-            return None
+    def fake_fetch_json(url: str, **_kwargs: object) -> object:
+        return price_payload if url == gmi.PRICE_URL else catalog_payload
 
-        def json(self) -> dict[str, object]:
-            return payload
-
-    class FakeClient:
-        def __init__(self, **_kwargs: object) -> None:
-            return None
-
-        def __enter__(self) -> FakeClient:
-            return self
-
-        def __exit__(self, *_exc: object) -> None:
-            return None
-
-        def get(self, *_args: object, **_kwargs: object) -> FakeResponse:
-            return FakeResponse()
-
-    monkeypatch.setattr(gmi.httpx, "Client", FakeClient)
+    monkeypatch.setenv("GMI_API_KEY", "test-gmi-key")
+    monkeypatch.setattr(gmi, "fetch_json", fake_fetch_json)
 
     result = gmi.fetch()
 
@@ -61,6 +61,118 @@ def test_gmi_hourly_parser_discovers_kimi_k3_exact_prices(
     assert result.prices[KIMI_K3].completion_micro_per_m == 15_000_000
     assert result.prices[KIMI_K3].tiers[0].prompt_cached_micro_per_m == 300_000
     assert gmi.UPSTREAM_ID_MAP[KIMI_K3] == KIMI_K3
+
+
+def test_gmi_recovers_live_model_omitted_from_authenticated_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "gmi.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "provider": "gmi",
+                "models": [
+                    {
+                        "id": "z-ai/glm-5.2",
+                        "upstream_id": "zai-org/GLM-5.2-FP8",
+                        "display_name": "GMI Cloud GLM 5.2",
+                        "model_type": "chat",
+                        "context_length": 1_048_576,
+                        "max_output_tokens": 131_072,
+                        "input_modalities": ["text"],
+                        "output_modalities": ["text"],
+                        "endpoints": ["chat/completions"],
+                        "status": 1,
+                        "input_token_price_per_m": 980_000,
+                        "output_token_price_per_m": 3_080_000,
+                        "cached_input_token_price_per_m": 182_000,
+                        "missing_since": "2026-08-13",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    price_payload = {
+        "modelPrices": [
+            {
+                "billingType": "llm",
+                "modelName": "zai-org/GLM-5.2-FP8",
+                "pricePer1mPromptToken": 742_000,
+                "pricePer1mCompletionToken": 2_332_000,
+                "tiers": [
+                    {
+                        "threshold": 0,
+                        "inputPrice": 742_000,
+                        "outputPrice": 2_332_000,
+                        "cacheReadPrice": 137_800,
+                    }
+                ],
+            }
+        ]
+    }
+    canary_calls: list[dict[str, object]] = []
+
+    def fake_fetch_json(url: str, **_kwargs: object) -> object:
+        return price_payload if url == gmi.PRICE_URL else {"data": []}
+
+    def fake_probe(**kwargs: object) -> bool:
+        canary_calls.append(kwargs)
+        return True
+
+    monkeypatch.setenv("GMI_API_KEY", "test-gmi-key")
+    monkeypatch.setattr(gmi, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(gmi, "fetch_json", fake_fetch_json)
+    monkeypatch.setattr(gmi, "probe_openai_chat", fake_probe)
+
+    result = gmi.fetch()
+    gmi.write_provider_manifest(result)
+
+    assert result.prices["z-ai/glm-5.2"].prompt_micro_per_m == 742_000
+    assert result.prices["z-ai/glm-5.2"].completion_micro_per_m == 2_332_000
+    assert canary_calls == [
+        {
+            "base_url": gmi.BASE_URL,
+            "api_key": "test-gmi-key",
+            "model": "zai-org/GLM-5.2-FP8",
+            "expected_content": "PONG",
+            "max_tokens": 256,
+        }
+    ]
+    written = json.loads(manifest_path.read_text(encoding="utf-8"))
+    row = next(item for item in written["models"] if item["id"] == "z-ai/glm-5.2")
+    assert row["input_token_price_per_m"] == 742_000
+    assert row["output_token_price_per_m"] == 2_332_000
+    assert row["cached_input_token_price_per_m"] == 137_800
+    assert "missing_since" not in row
+
+
+def test_gmi_does_not_recover_an_omitted_model_when_canary_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    price_payload = {
+        "modelPrices": [
+            {
+                "billingType": "llm",
+                "modelName": "zai-org/GLM-5.2-FP8",
+                "pricePer1mPromptToken": 742_000,
+                "pricePer1mCompletionToken": 2_332_000,
+            }
+        ]
+    }
+
+    def fake_fetch_json(url: str, **_kwargs: object) -> object:
+        return price_payload if url == gmi.PRICE_URL else {"data": []}
+
+    monkeypatch.setenv("GMI_API_KEY", "test-gmi-key")
+    monkeypatch.setattr(gmi, "fetch_json", fake_fetch_json)
+    monkeypatch.setattr(gmi, "probe_openai_chat", lambda **_kwargs: False)
+
+    result = gmi.fetch()
+
+    assert "z-ai/glm-5.2" not in result.prices
+    assert "z-ai/glm-5.2" not in gmi._DISCOVERED_MANIFEST_ROWS
 
 
 def test_gmi_kimi_k3_is_a_verified_prepaid_route() -> None:
