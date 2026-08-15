@@ -2042,6 +2042,34 @@ def public_privacy_html(settings: Settings) -> str:
     )
 
 
+def public_sms_html(settings: Settings) -> str:
+    """The SMS program disclosure page.
+
+    Exists because A2P campaign vetting has to VERIFY an opt-in it cannot reach:
+    ours happens in account settings, behind a sign-in, so a reviewer sees
+    nothing. This page publishes the exact consent language and the steps, which
+    is the only way a web-form opt-in behind auth can be checked from outside.
+    """
+    return (
+        _env()
+        .get_template("public/sms.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/sms",
+            title="SMS Program | TrustedRouter",
+            heading="SMS alerts and verification",
+            description=(
+                "How TrustedRouter SMS alerts and one-time verification codes work: who receives "
+                "them, the exact opt-in consent language, opt-out keywords, frequency, and cost."
+            ),
+            entity=legal_entity(settings),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
+    )
+
+
 def public_terms_html(settings: Settings) -> str:
     return (
         _env()

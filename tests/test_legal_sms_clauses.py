@@ -15,7 +15,11 @@ import re
 import pytest
 
 from trusted_router.config import Settings
-from trusted_router.dashboard import public_privacy_html, public_terms_html
+from trusted_router.dashboard import (
+    public_privacy_html,
+    public_sms_html,
+    public_terms_html,
+)
 
 
 def _text(html: str) -> str:
@@ -68,3 +72,46 @@ class TestTerms:
         # We page people about outages over networks that drop messages; saying
         # so is both honest and what keeps this out of life-safety reliance.
         assert "not a guaranteed delivery channel" in terms
+
+
+class TestSmsProgramPage:
+    """Campaign vetting must VERIFY an opt-in it cannot reach.
+
+    Ours happens in account settings, behind a sign-in, so a reviewer sees
+    nothing at all. Publishing the exact consent language is the only way a
+    web-form opt-in behind auth can be checked from outside.
+    """
+
+    @pytest.fixture
+    def sms(self) -> str:
+        return _text(public_sms_html(Settings()))
+
+    def test_publishes_the_exact_consent_language(self, sms: str) -> None:
+        assert "i agree to receive account alerts" in sms
+        assert "reply stop to unsubscribe or help for help" in sms
+
+    def test_names_both_sending_numbers(self, sms: str) -> None:
+        # A recipient checking who texted them should find the number here.
+        assert "505 531 3623" in sms
+        assert "505 421 5808" in sms
+
+    def test_states_the_checkbox_is_not_pre_ticked(self, sms: str) -> None:
+        # Pre-checked consent is not consent, and vetting asks.
+        assert "unticked by default" in sms
+
+    @pytest.mark.parametrize(
+        "clause",
+        ["message and data rates may apply", "message frequency varies",
+         "no mobile information will be shared with third parties",
+         "not a condition of purchas"],
+    )
+    def test_repeats_the_required_disclosures(self, sms: str, clause: str) -> None:
+        assert clause in sms
+
+
+class TestDiscoverability:
+    def test_the_legal_pages_link_to_the_programme_page(self) -> None:
+        # A page nothing links to is a page a crawler does not find, which is
+        # the failure mode this whole exercise is about.
+        assert '/sms' in public_privacy_html(Settings())
+        assert '/sms' in public_terms_html(Settings())

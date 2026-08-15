@@ -1,0 +1,47 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="public-proof-strip">
+  <div><strong>Program</strong><span>TrustedRouter Alerts &amp; Verification</span></div>
+  <div><strong>Who receives</strong><span>Account owners only</span></div>
+  <div><strong>Frequency</strong><span>Varies; alert-driven</span></div>
+  <div><strong>Cost</strong><span>Msg &amp; data rates may apply</span></div>
+</section>
+
+<section class="model-catalog legal-copy">
+  <div class="model-catalog-head"><div><span class="eyebrow">Overview</span><h2>What these messages are</h2></div></div>
+  <p>{{ entity.name }} operates two SMS programs for TrustedRouter, and you receive messages only if you add your own mobile number to your own account and consent.</p>
+  <ul>
+    <li><strong>TrustedRouter Alerts</strong> — operational notifications about your account and the services your automated monitoring watches. Sent from +1 505 531 3623.</li>
+    <li><strong>TrustedRouter Verification</strong> — one-time codes proving you control a mobile number before it can receive alerts. Sent from +1 505 421 5808.</li>
+  </ul>
+  <p>Messages go only to the account owner's own verified number. We do not accept phone numbers from third parties, and we do not buy, rent, or append phone numbers. Consent to receive these messages is not a condition of purchasing any goods or services.</p>
+
+  <h2>How you opt in</h2>
+  <p>Opt-in happens inside your own TrustedRouter account, which requires signing in. These are the exact steps and the exact consent language shown:</p>
+  <ol>
+    <li>Create an account at <a href="https://trustedrouter.com">trustedrouter.com</a> and sign in.</li>
+    <li>Open <strong>Settings &rarr; Notifications</strong>.</li>
+    <li>Enter your own mobile number and tick the consent checkbox, which reads:</li>
+  </ol>
+  <blockquote>
+    <p>I agree to receive account alerts and one-time verification codes from Trusted Router at this number. Message frequency varies. Message and data rates may apply. Reply STOP to unsubscribe or HELP for help. See the <a href="/terms">Terms of Service</a> and <a href="/privacy">Privacy Policy</a>.</p>
+  </blockquote>
+  <ol start="4">
+    <li>We call or text a one-time code to that number; entering it confirms you control the number and completes enrolment.</li>
+  </ol>
+  <p>The checkbox is unticked by default, and the number is not reachable until the code is confirmed.</p>
+
+  <h2>How you opt out</h2>
+  <p>Reply <strong>STOP</strong> to any message to stop all messages from that program, or remove the number in Settings &rarr; Notifications. Reply <strong>START</strong> to resubscribe. Reply <strong>HELP</strong>, or email <a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a>, for help.</p>
+
+  <h2>Frequency, cost, and carriers</h2>
+  <p>Message frequency varies and depends on the alerts you configure; verification codes are sent only when you add or change a number. <strong>Message and data rates may apply.</strong> Mobile carriers are not liable for delayed or undelivered messages.</p>
+  <p>These notifications are a convenience and not a guaranteed delivery channel. Carriers, handset settings, and network conditions can delay or drop messages, so they must not be relied upon as the sole safeguard where a missed alert could cause harm.</p>
+
+  <h2>Privacy</h2>
+  <p><strong>No mobile information will be shared with third parties or affiliates for marketing or promotional purposes.</strong> Information sharing with subcontractors who support the service, such as our telecommunications carriers, is limited to what is necessary to deliver the message you requested. Text messaging originator opt-in data and consent are never shared with any third party for any other purpose, and are never sold. Full detail is in the <a href="/privacy">Privacy Policy</a>.</p>
+
+  <h2>Contact</h2>
+  <p>{{ entity.name }}<br>{{ entity.address }}<br>{{ entity.phone }}<br><a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a></p>
+</section>
+{% endblock %}
