@@ -201,6 +201,11 @@ def test_confidential_ai_badge_is_embeddable_and_scoped(client: TestClient) -> N
     assert "https://trustedrouter.com/static/badges/confidential-ai-light.svg" in response.text
     assert "https://trustedrouter.com/static/badges/confidential-ai-dark.svg" in response.text
     assert "certified confidential" not in response.text.casefold()
+    card = "https://trustedrouter.com/static/og/confidential-ai-badge.png"
+    assert f'property="og:image" content="{card}"' in response.text
+    assert f'name="twitter:image" content="{card}"' in response.text
+    assert "TrustedRouter Confidential AI trust seal with hardware attestation" in response.text
+    assert client.get("/static/og/confidential-ai-badge.png").status_code == 200
 
     for asset in (
         "/static/badges/confidential-ai-light.svg",
@@ -213,6 +218,14 @@ def test_confidential_ai_badge_is_embeddable_and_scoped(client: TestClient) -> N
         badge = client.get(asset)
         assert badge.status_code == 200, asset
         assert "public" in badge.headers["cache-control"]
+
+    canonical_mark = 'd="M1.4 7.5H6.5L11 12M1.4 16.5H4L8.5 12M1.4 12H15.5"'
+    for asset in (
+        "/static/badges/confidential-ai-light.svg",
+        "/static/badges/confidential-ai-dark.svg",
+        "/static/badges/confidential-ai-seal.svg",
+    ):
+        assert canonical_mark in client.get(asset).text
 
     homepage = client.get("/")
     assert 'href="/badge">Confidential AI badge</a>' in homepage.text

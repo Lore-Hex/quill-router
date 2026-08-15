@@ -5,10 +5,10 @@
   <text x="68" y="20" text-anchor="middle" fill="#ede8db" font-family="Arial, Helvetica, sans-serif" font-size="10.5" font-weight="700" letter-spacing="0">CONFIDENTIAL AI</text>
   <line x1="18" y1="29.5" x2="118" y2="29.5" stroke="#29302a"/>
   <path d="M68 38 91 46.5v18.2c0 15.6-9.8 27-23 32.1-13.2-5.1-23-16.5-23-32.1V46.5L68 38Z" fill="#121813" stroke="#a9cdb9" stroke-width="1.5"/>
-  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M51 58h10l8 8.5M51 75h5l8.5-8.5M51 58v17m13.5-8.5H77" stroke="#ede8db" stroke-width="2.2"/>
-    <circle cx="77.5" cy="66.5" r="2.4" fill="#a9cdb9" stroke="none"/>
-    <path d="M80 66.5h6" stroke="#a9cdb9" stroke-width="2.2"/>
+  <g transform="translate(48 45) scale(1.8)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M1.4 7.5H6.5L11 12M1.4 16.5H4L8.5 12M1.4 12H15.5" stroke="#ede8db" stroke-width="1.25"/>
+    <circle cx="15.5" cy="12" r="1.9" fill="#a9cdb9" stroke="none"/>
+    <path d="M17.4 12H22.6" stroke="#a9cdb9" stroke-width="1.25"/>
   </g>
   <text x="68" y="111" text-anchor="middle" fill="#a9cdb9" font-family="Arial, Helvetica, sans-serif" font-size="8.5" font-weight="700" letter-spacing="0">HARDWARE ATTESTED</text>
   <text x="68" y="125" text-anchor="middle" fill="#d6d9cc" font-family="Arial, Helvetica, sans-serif" font-size="9" font-weight="700" letter-spacing="0">TRUSTEDROUTER</text>
