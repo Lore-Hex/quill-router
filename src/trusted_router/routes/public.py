@@ -79,6 +79,7 @@ from trusted_router.dashboard import (
     public_provider_performance_html,
     public_providers_html,
     public_rankings_html,
+    public_sms_html,
     public_soc2_readiness_html,
     public_subprocessors_html,
     public_support_html,
@@ -1052,6 +1053,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/privacy")
     async def privacy() -> str:
         return public_privacy_html(settings)
+
+    @public_html_route("/sms")
+    async def sms_program() -> str:
+        return public_sms_html(settings)
 
     @public_html_route("/terms")
     async def terms() -> str:
