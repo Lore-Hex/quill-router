@@ -8,7 +8,7 @@
 </section>
 
 <section class="panel">
-  <div class="panel-head"><h2>Practical read</h2></div>
+  <div class="panel-head"><h2>Practical read</h2><a href="/benchmarks/reports">Monthly evidence</a></div>
   <div class="panel-body">
     <p class="lead">{{ comparison.summary }}</p>
     <div class="public-proof-strip">
@@ -17,6 +17,7 @@
       <div><strong>{{ comparison.left_ttft }}</strong><span>{{ left.name }} fastest measured p50 TTFT{% if comparison.left_ttft_provider %} via {{ comparison.left_ttft_provider }}{% endif %}</span></div>
       <div><strong>{{ comparison.right_ttft }}</strong><span>{{ right.name }} fastest measured p50 TTFT{% if comparison.right_ttft_provider %} via {{ comparison.right_ttft_provider }}{% endif %}</span></div>
     </div>
+    <p class="muted">Prices and live route measurements can change. Use the <a href="/benchmarks/reports">monthly reports</a> when you need a stable evidence window, then run a small <a href="/docs/evals">task-specific eval</a> before choosing a production default.</p>
   </div>
 </section>
 

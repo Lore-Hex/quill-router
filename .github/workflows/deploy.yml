@@ -244,6 +244,8 @@ jobs:
           SPANNER_INSTANCE_ID: trusted-router-nam6
           SPANNER_DATABASE_ID: trusted-router
         run: scripts/deploy/migrate_operational_analytics_outbox.sh
+      - name: Sync shared public analytics snapshots
+        run: scripts/deploy/sync_public_analytics_snapshots.sh --apply
 
   sync-runtime-secrets:
     # Validate the small set of runtime credentials while the image build and
@@ -663,6 +665,9 @@ jobs:
             service_url=$(jq -r '.status.url' <<<"${service_json}")
             check_url "ready_${region}" "${service_url}/ready"
             check_url "status_${region}" "${service_url}/status.json"
+            check_url "status_page_${region}" "${service_url}/status"
+            check_url "leaderboard_${region}" "${service_url}/leaderboard"
+            check_url "video_leaderboard_${region}" "${service_url}/leaderboard/video"
 
             latest_ready=$(jq -r '.status.latestReadyRevisionName // ""' \
               <<<"${service_json}")

@@ -218,12 +218,18 @@ def test_clickhouse_balanced_benchmark_reader_uses_one_window_query() -> None:
     ]
 
 
-def test_public_snapshot_reads_newest_revision_across_month_partitions() -> None:
+@pytest.mark.parametrize(
+    "snapshot_name",
+    ["leaderboard", "apps", "video_leaderboard", "status_inputs"],
+)
+def test_public_snapshot_reads_newest_revision_across_month_partitions(
+    snapshot_name: str,
+) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         sql = request.content.decode()
         assert "WHERE name = {name:String}" in sql
         assert "ORDER BY generated_at DESC" in sql
-        assert request.url.params["param_name"] == "leaderboard"
+        assert request.url.params["param_name"] == snapshot_name
         return httpx.Response(
             200,
             json={"data": [{"payload": '{"generated_at":"2026-08-01T00:00:00Z"}'}]},
@@ -236,9 +242,20 @@ def test_public_snapshot_reads_newest_revision_across_month_partitions() -> None
         transport=httpx.MockTransport(handler),
     )
 
-    assert client.public_snapshot("leaderboard") == {
+    assert client.public_snapshot(snapshot_name) == {
         "generated_at": "2026-08-01T00:00:00Z"
     }
+
+
+def test_public_snapshot_rejects_unknown_products_without_querying() -> None:
+    client = OperationalAnalyticsClient(
+        base_url="http://clickhouse",
+        user="reader",
+        password="secret",  # noqa: S106 - inert test credential.
+    )
+
+    with pytest.raises(ValueError, match="unsupported public analytics snapshot"):
+        client.public_snapshot("prompt_contents")
 
 
 def test_public_snapshot_uses_a_short_optional_read_timeout(monkeypatch) -> None:

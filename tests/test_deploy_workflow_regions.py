@@ -24,6 +24,12 @@ def test_prod_smoke_checks_each_control_plane_region_directly() -> None:
     )
     assert 'check_url "ready_${region}" "${service_url}/ready"' in workflow
     assert 'check_url "status_${region}" "${service_url}/status.json"' in workflow
+    assert 'check_url "status_page_${region}" "${service_url}/status"' in workflow
+    assert 'check_url "leaderboard_${region}" "${service_url}/leaderboard"' in workflow
+    assert (
+        'check_url "video_leaderboard_${region}" "${service_url}/leaderboard/video"'
+        in workflow
+    )
     assert 'active_revision=$(jq -r' in workflow
     assert '[ "${active_count}" != "1" ]' in workflow
     assert '[ "${active_revision}" != "${latest_ready}" ]' in workflow
@@ -31,6 +37,26 @@ def test_prod_smoke_checks_each_control_plane_region_directly() -> None:
     assert 'gcloud run revisions describe "${active_revision}"' in workflow
     assert '[ "${active_release}" != "${SHA}" ]' in workflow
     assert '[ "${retired_secret_count}" != "0" ]' in workflow
+
+
+def test_deploy_syncs_the_shared_public_snapshot_worker() -> None:
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+
+    assert "- name: Sync shared public analytics snapshots" in workflow
+    assert "scripts/deploy/sync_public_analytics_snapshots.sh --apply" in workflow
+
+
+def test_public_snapshot_worker_swap_is_verified_and_rollbackable() -> None:
+    script = (
+        ROOT / "scripts/deploy/sync_public_analytics_snapshots.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "systemctl stop tr-clickhouse-public-snapshots.timer" in script
+    assert "tr-clickhouse-public-snapshots.service" in script
+    assert "previous_builder=" in script
+    assert "rollback()" in script
+    assert r'if [ \"\$count\" != 4 ]; then' in script
+    assert r'mv \"\$previous_builder\" \"\$builder\"' in script
 
 
 def test_warm_secondary_regions_roll_in_parallel_after_primary_canary() -> None:

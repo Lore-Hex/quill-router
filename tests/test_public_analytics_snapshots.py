@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import datetime as dt
 
+from clickhouse.build_public_snapshots import _clickhouse_string_array, build_snapshots
+from trusted_router.config import Settings
 from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
+from trusted_router.routes import public as public_routes
+from trusted_router.storage_models import (
+    ProviderBenchmarkSample,
+    SyntheticProbeSample,
+    SyntheticRollup,
+)
 
 
 def test_current_public_analytics_snapshot_accepts_fresh_utc_payload() -> None:
@@ -36,3 +44,125 @@ def test_current_public_analytics_snapshot_rejects_stale_future_and_malformed_pa
             )
             is None
         )
+
+
+def test_snapshot_builder_precomputes_video_and_status_inputs() -> None:
+    generated_at = "2026-08-15T09:00:00Z"
+    video_sample = ProviderBenchmarkSample(
+        id="video-1",
+        model="minimax/hailuo-3",
+        provider="minimax",
+        provider_name="MiniMax",
+        status="success",
+        usage_type="Credits",
+        streamed=False,
+        route_type="videos",
+        elapsed_milliseconds=12_000,
+        created_at=generated_at,
+    )
+    status_sample = SyntheticProbeSample(
+        id="status-1",
+        probe_type="tls_health",
+        target="canonical",
+        target_url="https://api.trustedrouter.com/health",
+        monitor_region="us-central1",
+        status="up",
+        created_at=generated_at,
+    )
+    rollup = SyntheticRollup(
+        id="rollup-1",
+        period="hour",
+        period_start="2026-08-15T08:00:00Z",
+        component="canonical_api",
+        target="canonical",
+        probe_type="tls_health",
+        monitor_region="us-central1",
+        sample_count=1,
+        up_count=1,
+    )
+
+    snapshots = build_snapshots(
+        [],
+        generated_at=generated_at,
+        video_samples=[video_sample],
+        status_samples=[status_sample],
+        status_rollups=[rollup],
+    )
+
+    assert set(snapshots) == {
+        "apps",
+        "leaderboard",
+        "status_inputs",
+        "video_leaderboard",
+    }
+    assert snapshots["video_leaderboard"]["total_samples"] == 1
+    assert snapshots["status_inputs"]["samples"][0]["id"] == "status-1"
+    assert snapshots["status_inputs"]["rollups"][0]["id"] == "rollup-1"
+
+
+def test_snapshot_builder_encodes_clickhouse_array_parameters() -> None:
+    assert _clickhouse_string_array(["model/a", "model/o'clock", r"model\b"]) == (
+        r"['model/a','model/o\'clock','model\\b']"
+    )
+
+
+def test_video_page_uses_shared_snapshot_without_raw_scan(monkeypatch) -> None:
+    payload = {
+        "generated_at": dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z"),
+        "models": [],
+        "providers": [],
+        "model_count": 0,
+        "provider_count": 0,
+        "total_samples": 0,
+    }
+    monkeypatch.setattr(public_routes, "_VIDEO_LEADERBOARD_CACHE", None)
+    monkeypatch.setattr(
+        public_routes,
+        "_precomputed_public_analytics_snapshot",
+        lambda name: payload if name == "video_leaderboard" else None,
+    )
+
+    def raw_scan(**_kwargs):
+        raise AssertionError("fresh shared snapshot must avoid a raw video scan")
+
+    monkeypatch.setattr(public_routes, "public_video_benchmark_samples", raw_scan)
+
+    assert public_routes._video_leaderboard_snapshot(Settings(environment="local")) is payload
+
+
+def test_status_page_uses_shared_inputs_without_raw_scan(monkeypatch) -> None:
+    now = dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z")
+    payload = {
+        "generated_at": now,
+        "samples": [
+            SyntheticProbeSample(
+                id="status-live",
+                probe_type="tls_health",
+                target="canonical",
+                target_url="https://api.trustedrouter.com/health",
+                monitor_region="us-central1",
+                status="up",
+                latency_milliseconds=12,
+                created_at=now,
+            ).public_dict()
+        ],
+        "rollups": [],
+    }
+    monkeypatch.setattr(public_routes, "_STATUS_CACHE", None)
+    monkeypatch.setattr(
+        public_routes,
+        "_precomputed_public_analytics_snapshot",
+        lambda name: payload if name == "status_inputs" else None,
+    )
+    monkeypatch.setattr(
+        public_routes,
+        "_status_samples",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("fresh shared snapshot must avoid a raw status scan")
+        ),
+    )
+
+    snapshot = public_routes._status_snapshot(Settings(environment="local"))
+
+    assert snapshot["monitor_freshness"]["is_stale"] is False
+    assert any(sample["id"] == "status-live" for sample in snapshot["samples"])
