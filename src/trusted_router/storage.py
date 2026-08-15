@@ -6,7 +6,7 @@ import threading
 import uuid
 from typing import Any, cast
 
-from trusted_router import credit_transfer
+from trusted_router import credit_transfer, phone_verification
 from trusted_router.analytics_sink import AnalyticsSink, NullAnalyticsSink
 from trusted_router.credit_transfer import (
     CreditTransferConflict,
@@ -530,6 +530,30 @@ class InMemoryStore:
             if user is None:
                 return None
             user.email_verified = True
+            return user
+
+    def begin_phone_verification(self, user_id: str, phone: str) -> tuple[str, User] | None:
+        with self._lock:
+            user = self.users.get(user_id)
+            if user is None:
+                return None
+            code = phone_verification.begin(user, phone)
+            return code, user
+
+    def confirm_phone_verification(self, user_id: str, code: str) -> tuple[str, User | None]:
+        with self._lock:
+            user = self.users.get(user_id)
+            if user is None:
+                return "no_pending", None
+            result = phone_verification.confirm(user, code)
+            return result.status, user
+
+    def clear_user_phone(self, user_id: str) -> User | None:
+        with self._lock:
+            user = self.users.get(user_id)
+            if user is None:
+                return None
+            phone_verification.clear(user)
             return user
 
     def _resolve_user_identifier(self, identifier: str) -> str | None:

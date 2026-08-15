@@ -948,6 +948,15 @@ class PostgresStore:
     def mark_user_email_verified(self, user_id: str) -> User | None:
         self._not_implemented("mark_user_email_verified")
 
+    def begin_phone_verification(self, user_id: str, phone: str) -> tuple[str, User] | None:
+        self._not_implemented("begin_phone_verification")
+
+    def confirm_phone_verification(self, user_id: str, code: str) -> tuple[str, User | None]:
+        self._not_implemented("confirm_phone_verification")
+
+    def clear_user_phone(self, user_id: str) -> User | None:
+        self._not_implemented("clear_user_phone")
+
     # Auth sessions ----------------------------------------------------------
 
     def create_auth_session(
