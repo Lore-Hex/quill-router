@@ -12,13 +12,26 @@ broadcast_destination.encrypted_headers — and tag each with the AAD namespace
         the namespace of the encrypt_* function that actually seals f,
     and the registry names no (kind, field) pair that is not such a pair.
 
-Both sides are derived here, never restated. The field set comes from
+The right-hand side is derived, not restated. The field set comes from
 `dataclasses.fields` + `typing.get_type_hints` over storage_models; the entity
-`kind` from an AST scan of the storage adapters' read/list call sites; the
-family from an AST scan of the `encrypt_byok_secret` / `encrypt_control_secret`
-call sites. Reflection over the dataclasses is the load-bearing half: a row
-body is written from a dataclass, so an envelope reaching storage through any
-helper still has to be a field on one of those classes.
+`kind` from an AST scan of the storage adapters' typed read call sites; the
+family from an AST scan of the sealing call sites, where the sealing functions
+and the namespace each one uses are themselves read off `byok_crypto`'s AST
+rather than written down here. What IS restated: the names of the entity-IO
+primitives, and the pin in `test_the_derivation_reproduces_todays_registry`.
+Both are deliberate — the first is the vocabulary the scan needs, the second is
+a guard against a scan that quietly stops finding anything.
+
+Reflection over the dataclasses is the load-bearing half, but its reach is
+narrower than "any envelope that reaches storage": see the settle_body finding
+below.
+
+That reflection is scoped to storage_models, which makes its scope a claim in
+its own right, so the scope is checked too:
+`test_every_envelope_typed_attribute_lives_in_storage_models` scans every class
+annotation in the package and fails if an `EncryptedSecretEnvelope` is declared
+anywhere else. Without it the law would be a true statement about the wrong
+universe — the most comfortable way for a totality proof to be worthless.
 
 Why this is a proof and not a test. The registry is exactly right today — every
 caller of the two encrypt functions was walked by hand and maps to precisely
@@ -32,14 +45,21 @@ finished with v1 envelopes still in storage is the entire reason this module
 exists.
 
 The family half is the same defect class in a sharper form. A wrong family does
-not skip the field, it re-seals it under the wrong namespace. The v1 unwrap
-still succeeds (v1 AAD has no namespace component at all — see
-`_envelope_aad`), so the backfill sees a successful decrypt, a successful
-re-encrypt, and a successful verification, and reports the row migrated. The
-application then reads it back through the other namespace and gets InvalidTag
-for a secret that is now unrecoverable. Cross-family substitution is precisely
-what this whole migration exists to remove, so writing it back in during the
-migration would be the worst available outcome.
+not skip the field, it re-seals it under the wrong namespace: the v1 unwrap
+still succeeds, because v1 AAD has no namespace component at all (see
+`_envelope_aad`), so nothing inside the backfill objects and the application
+later reads the row back through the other namespace and gets InvalidTag for a
+secret that is now unrecoverable.
+
+Measured rather than assumed, because the first draft of this paragraph
+asserted that outcome as inevitable and it is not. Both family flips were run
+against this module: with today's two body shapes each one fails CLOSED inside
+`_migrate_envelope` — the provider branch demands a `provider` field the
+broadcast body has not got, and the control branch demands a purpose suffix
+`_broadcast_context` has no entry for. So today the `envelopes_migrated`
+assertion is what catches a wrong family, and the decrypt beside it is the
+guard for a future body carrying both context fields, where the silent
+corruption above becomes reachable.
 
 Near-miss recorded against this module's own first draft, because it is the
 same mistake in miniature. `_derived_pairs` originally built its set by
@@ -60,22 +80,48 @@ references the registry; `PostgresEntityStore.scan` binds `_MIGRATED_KINDS[0],
 _MIGRATED_KINDS[1]` positionally against a two-placeholder IN list. Adding a
 third kind to the registry today updates neither scan, so the backfill would
 never fetch the rows it had just been taught to migrate, and would once again
-report clean. The two store tests below pin scan coverage behaviourally,
-against fakes that capture the statement actually issued, so that drift stops
-the build. The source is deliberately left as it is: this module records the
+report clean. The two store tests below capture the statement each scan
+actually issues and check the registry kinds against it. Calling that
+"behavioural" would be an overclaim, and the first draft did: the fakes return
+no rows, so nothing about retrieval, decoding or pagination is exercised. What
+they establish is narrower and still worth having — adding a kind to the
+registry without editing the SQL text and the placeholder count stops the
+build. The source is deliberately left as it is: this module records the
 coupling rather than burying it in a refactor.
+
+Refutation, from an adversarial review of this module, of its own central
+claim. Reflection follows types, and `dict[str, Any]` is the absence of one.
+`BroadcastDeliveryJob.settle_body` is `dict[str, Any]`, is persisted under kind
+'broadcast_delivery', and is NOT scanned by the backfill. An
+`EncryptedSecretEnvelope` nested inside it serialises straight through
+`storage_codec.json_body`'s recursive `asdict` into the stored row — verified
+directly, not argued. So the claim "an envelope reaching storage must be a
+field this reflection finds" is false, and the law proves totality over typed
+fields, not over persisted bytes. `test_every_loosely_typed_persisted_field_is_classified`
+freezes the list of such shapes at two so it cannot grow in silence; closing
+the hole properly needs the backfill to walk bodies rather than named fields,
+which is a change to the migration, not to a test.
 
 Scope limit, stated plainly. This establishes that the registry's (kind, field,
 family) set equals the set derivable from the storage dataclasses and the
-sealing call sites. It does NOT establish that the derived set is the set of
-envelopes that exist in production — a row written by an older schema, by a
-non-Python writer, or under a kind whose dataclass has since been deleted is
-invisible to this module and to the backfill alike, and no amount of reflection
-over today's source can see it. It also does not check the AAD *context*
-component (the provider slug, the broadcast purpose) beyond the one identity
-pinned in `test_the_broadcast_context_helper_matches_the_service`; a context
-mismatch is a different defect and has its own proof in
-test_byok_aad_namespace_property.py.
+sealing call sites. It does NOT establish:
+
+  - that the derived set is the set of envelopes that exist in production. A
+    row written by an older schema, by a non-Python writer, or under a kind
+    whose dataclass has since been deleted is invisible to this module and to
+    the backfill alike, and no reflection over today's source can see it.
+  - totality over loosely typed bodies, per the refutation above.
+  - that every WRITER of a field agrees on its family. `sealed_families`
+    aggregates by bare field name, so if one of the two modules writing
+    `encrypted_secret` began sealing through a wrapper with the other family,
+    the wrapper would contribute nothing and the union would still read
+    {provider}. Detecting that needs dataflow analysis, not a name scan.
+  - anything about the AAD *context* component (the provider slug, the
+    broadcast purpose) beyond the three-way identity pinned in
+    `test_the_broadcast_context_helper_matches_the_service`. Context
+    separation is a different defect with its own partial proof in
+    test_byok_aad_namespace_property.py; neither module proves a context is
+    correct, only that the copies of it agree.
 """
 
 from __future__ import annotations
@@ -93,7 +139,7 @@ import pytest
 
 import trusted_router
 from tests.test_byok_aad_backfill import MemoryEntityStore, _v1_envelope
-from trusted_router import storage_models
+from trusted_router import byok_crypto, storage_models
 from trusted_router.byok_aad_backfill import (
     _MIGRATED_KINDS,
     BackfillRunner,
@@ -111,6 +157,7 @@ from trusted_router.byok_crypto import (
 )
 from trusted_router.config import Settings
 from trusted_router.services.broadcast import broadcast_secret_context
+from trusted_router.services.broadcast_adapters import _secret_context as adapter_secret_context
 from trusted_router.storage_models import EncryptedSecretEnvelope
 
 SRC = pathlib.Path(trusted_router.__file__).parent
@@ -120,25 +167,37 @@ SRC = pathlib.Path(trusted_router.__file__).parent
 BACKFILL_MODULE = "byok_aad_backfill.py"
 
 # The entity-IO primitives that pair a literal `kind` with a storage_models
-# class. Reads and lists name the class explicitly; writes pass an already-built
-# instance, so they carry no class name to match on and are not scanned.
-ENTITY_IO_FUNCTIONS = frozenset(
-    {
-        "read_entity",
-        "read_entity_tx",
-        "read_entity_from",
-        "list_entities",
-        "_read_entity",
-        "_read_entity_tx",
-        "_read_entity_from",
-        "_list_entities",
-    }
-)
+# class, and the argument position the kind occupies. Reads and lists name the
+# class explicitly; writes pass an already-built instance, so they carry no
+# class name to match on and are not scanned here.
+#
+# The position matters. The first draft accepted any positional string literal
+# as the kind, so `read_entity(SOME_KIND, "byok", Cls)` would have derived the
+# entity *id* as a kind. Adversarial review named that; pinning the index is
+# the fix.
+ENTITY_READ_FUNCTIONS = {
+    "read_entity": 0,
+    "list_entities": 0,
+    "_read_entity": 0,
+    "_list_entities": 0,
+    "read_entity_tx": 1,
+    "read_entity_from": 1,
+    "_read_entity_tx": 1,
+    "_read_entity_from": 1,
+}
 
-# The sealing functions and the AAD namespace each one writes.
-SEALING_FUNCTIONS = {
-    "encrypt_byok_secret": NAMESPACE_PROVIDER,
-    "encrypt_control_secret": NAMESPACE_CONTROL,
+# Every primitive that names a kind, reads and writes alike. Used only for the
+# adapter-kind classification below, which needs to see a kind an envelope is
+# written to even when nothing ever reads it back through a typed call.
+ENTITY_IO_FUNCTIONS = ENTITY_READ_FUNCTIONS | {
+    "write_entity": 0,
+    "delete_entities": 0,
+    "_write_entity": 0,
+    "write_entity_tx": 1,
+    "write_entity_batch": 1,
+    "delete_entities_tx": 1,
+    "_write_entity_tx": 1,
+    "_write_entity_batch": 1,
 }
 
 
@@ -159,6 +218,35 @@ def _admits_envelope(annotation: Any) -> bool:
     if annotation is EncryptedSecretEnvelope:
         return True
     return any(_admits_envelope(arg) for arg in typing.get_args(annotation))
+
+
+def envelope_annotated_attributes(root: pathlib.Path) -> set[tuple[str, str, str]]:
+    """(module path, class name, attribute) for every envelope-typed attribute.
+
+    A textual scan over annotations, not reflection, precisely because its job
+    is to police reflection's domain: `envelope_fields` only ever looks inside
+    storage_models, so an envelope declared on a dataclass in some other module
+    would be invisible to it and the law would hold over the wrong universe.
+    Nothing here is skipped, including the backfill module itself.
+    """
+    found: set[tuple[str, str, str]] = set()
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for statement in node.body:
+                if not isinstance(statement, ast.AnnAssign):
+                    continue
+                if "EncryptedSecretEnvelope" in ast.unparse(statement.annotation):
+                    found.add(
+                        (
+                            path.relative_to(root).as_posix(),
+                            node.name,
+                            ast.unparse(statement.target),
+                        )
+                    )
+    return found
 
 
 def envelope_fields(module: types.ModuleType) -> dict[str, tuple[str, ...]]:
@@ -196,6 +284,16 @@ def _python_sources(root: pathlib.Path) -> list[pathlib.Path]:
     return sorted(p for p in root.rglob("*.py") if p.name != BACKFILL_MODULE)
 
 
+def _literal_kind(node: ast.Call, index: int) -> str | None:
+    """The kind literal at its declared argument position, or None."""
+    if len(node.args) <= index:
+        return None
+    argument = node.args[index]
+    if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+        return argument.value
+    return None
+
+
 def entity_kinds(root: pathlib.Path, model_names: frozenset[str]) -> dict[str, set[str]]:
     """Model name -> the literal entity kinds it is read back under."""
     found: dict[str, set[str]] = {}
@@ -204,13 +302,12 @@ def entity_kinds(root: pathlib.Path, model_names: frozenset[str]) -> dict[str, s
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
-            if _called_name(node) not in ENTITY_IO_FUNCTIONS:
+            index = ENTITY_READ_FUNCTIONS.get(_called_name(node) or "")
+            if index is None:
                 continue
-            literals = [
-                arg.value
-                for arg in node.args
-                if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
-            ]
+            kind = _literal_kind(node, index)
+            if kind is None:
+                continue
             named = [arg.id for arg in node.args if isinstance(arg, ast.Name)]
             named += [
                 keyword.value.id
@@ -219,7 +316,31 @@ def entity_kinds(root: pathlib.Path, model_names: frozenset[str]) -> dict[str, s
             ]
             for name in named:
                 if name in model_names:
-                    found.setdefault(name, set()).update(literals)
+                    found.setdefault(name, set()).add(kind)
+    return found
+
+
+def kinds_named_by(root: pathlib.Path, module_names: tuple[str, ...]) -> set[str]:
+    """Every literal kind any entity-IO call in these modules names.
+
+    Reads and writes both, because the gap this closes is a kind that is only
+    ever written. An envelope-bearing config archived under a second kind by a
+    plain `write_entity` would leave `entity_kinds` unchanged and every other
+    assertion green, while the archived row kept its v1 envelope.
+    """
+    found: set[str] = set()
+    for name in module_names:
+        path = root / name
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            index = ENTITY_IO_FUNCTIONS.get(_called_name(node) or "")
+            if index is None:
+                continue
+            kind = _literal_kind(node, index)
+            if kind is not None:
+                found.add(kind)
     return found
 
 
@@ -252,24 +373,61 @@ def _bound_names(targets: list[ast.expr]) -> list[str]:
     return names
 
 
-def _families_sealed_in(expression: ast.expr) -> set[str]:
+def sealing_functions(module: types.ModuleType) -> dict[str, str]:
+    """encrypt_* function name -> the AAD namespace it passes to `_aad_v2`.
+
+    Derived, not written down. The first draft of this module hardcoded
+    {encrypt_byok_secret: provider, encrypt_control_secret: control}, which made
+    the family half of the law a restatement of the very assumption it exists to
+    check — if someone swapped the namespace constant inside one of these
+    functions, a hand-written oracle would agree with the registry and disagree
+    with reality. Adversarial review named it; reading the constant each
+    function actually seals with is the fix.
+    """
+    source = pathlib.Path(module.__file__ or "")
+    tree = ast.parse(source.read_text(), filename=str(source))
+    found: dict[str, str] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef) or not node.name.startswith("encrypt_"):
+            continue
+        for call in ast.walk(node):
+            if not (isinstance(call, ast.Call) and _called_name(call) == "_aad_v2"):
+                continue
+            if call.args and isinstance(call.args[0], ast.Name):
+                found[node.name] = getattr(module, call.args[0].id)
+    return found
+
+
+def _families_sealed_in(expression: ast.expr, sealers: dict[str, str]) -> set[str]:
     families: set[str] = set()
     for node in ast.walk(expression):
         if isinstance(node, ast.Call):
-            family = SEALING_FUNCTIONS.get(_called_name(node) or "")
+            family = sealers.get(_called_name(node) or "")
             if family is not None:
                 families.add(family)
     return families
 
 
-def sealed_families(root: pathlib.Path, field_names: frozenset[str]) -> dict[str, set[str]]:
+def sealed_families(
+    root: pathlib.Path,
+    field_names: frozenset[str],
+    sealers: dict[str, str] | None = None,
+) -> dict[str, set[str]]:
     """Field name -> the AAD namespaces its value is actually sealed under.
 
     A value counts as sealing `f` when a call to one of the two encrypt
     functions appears anywhere inside the expression bound to `f` — which is
     what makes the `encrypt_control_secret(...) if headers else None` shape in
     the broadcast routes visible rather than a blind spot.
+
+    It aggregates by bare field name across every writer, which is a real
+    limit and not a rounding error: two modules already write
+    `encrypted_secret`, and if one of them started sealing through a wrapper
+    with the other family, the wrapper would contribute nothing to this union
+    and the aggregate would still read {provider}. Detecting that needs
+    dataflow, not a name scan. Stated in the module scope limit.
     """
+    sealers = SEALING_FUNCTIONS if sealers is None else sealers
     found: dict[str, set[str]] = {}
     for path in _python_sources(root):
         tree = ast.parse(path.read_text(), filename=str(path))
@@ -290,7 +448,7 @@ def sealed_families(root: pathlib.Path, field_names: frozenset[str]) -> dict[str
             for name, expression in bindings:
                 if name not in field_names:
                     continue
-                families = _families_sealed_in(expression)
+                families = _families_sealed_in(expression, sealers)
                 if families:
                     found.setdefault(name, set()).update(families)
     return found
@@ -300,6 +458,7 @@ def sealed_families(root: pathlib.Path, field_names: frozenset[str]) -> dict[str
 # The derived source of truth, and the registry restated from the module.
 # ---------------------------------------------------------------------------
 
+SEALING_FUNCTIONS = sealing_functions(byok_crypto)
 DERIVED_MODEL_FIELDS = envelope_fields(storage_models)
 DERIVED_FIELD_NAMES = frozenset(name for fields in DERIVED_MODEL_FIELDS.values() for name in fields)
 DERIVED_KINDS = entity_kinds(SRC, frozenset(DERIVED_MODEL_FIELDS))
@@ -371,6 +530,147 @@ def _registry_kind_literals() -> set[str]:
 # ---------------------------------------------------------------------------
 # The law.
 # ---------------------------------------------------------------------------
+
+STORAGE_MODELS_MODULE = "storage_models.py"
+
+
+def test_every_envelope_typed_attribute_lives_in_storage_models() -> None:
+    """The reflection's domain is storage_models. This checks that is the whole
+    domain.
+
+    Found by attacking this module rather than by writing it: `envelope_fields`
+    skips any class whose `__module__` is not storage_models, so an envelope
+    declared on a dataclass in storage_broadcast.py or a route module would
+    contribute no field, no pair, and no failure. The law would then be a true
+    statement about the wrong universe — the most comfortable way for a
+    totality proof to be worthless.
+    """
+    stray = sorted(
+        (module, cls, attribute)
+        for module, cls, attribute in envelope_annotated_attributes(SRC)
+        if module != STORAGE_MODELS_MODULE
+    )
+    assert not stray, (
+        "EncryptedSecretEnvelope is declared outside storage_models: "
+        + ", ".join(f"{module}:{cls}.{attribute}" for module, cls, attribute in stray)
+        + ". The reflection this module's law is built on only sees storage_models, "
+        "so these envelopes are invisible to it and to the backfill. Move the field "
+        "onto a storage_models dataclass, or widen `envelope_fields` and this guard "
+        "together."
+    )
+
+
+# The adapters dedicated to the two envelope-bearing models. Every kind they
+# name must be either a registry kind or a declared non-envelope one.
+ENVELOPE_ADAPTER_MODULES = ("storage_gcp_byok.py", "storage_gcp_broadcast.py")
+
+NON_ENVELOPE_KINDS = {
+    # Index rows. Body is {"destination_id": ...} — no secret material.
+    "broadcast_destination_by_workspace": "pointer row",
+    "broadcast_delivery_due": "pointer row",
+    # BroadcastDeliveryJob. No envelope-typed field, but see
+    # LOOSELY_TYPED_FIELDS: its `settle_body` is dict[str, Any] and would carry
+    # a nested envelope into storage unscanned.
+    "broadcast_delivery": "delivery job, loosely typed body",
+}
+
+# Fields on a persisted dataclass whose annotation admits Any, and so could
+# carry an envelope the reflection cannot see. Reflection follows types; `Any`
+# is the absence of one. Verified: an EncryptedSecretEnvelope nested under
+# BroadcastDeliveryJob.settle_body serialises straight through
+# storage_codec.json_body's recursive asdict into the persisted row.
+LOOSELY_TYPED_FIELDS = {
+    ("BroadcastDeliveryJob", "settle_body"): (
+        "persisted under kind 'broadcast_delivery', which the backfill does not "
+        "scan. A serialised envelope echoed into a settle body would keep its v1 "
+        "algorithm with nothing to report it."
+    ),
+    ("Generation", "tool_calls"): (
+        "model-produced content, excluded from the persisted generation record "
+        "by generation_record_body — see test_egress_projection_closure_property."
+    ),
+}
+
+
+def _admits_any(annotation: Any) -> bool:
+    if annotation is Any or annotation is object:
+        return True
+    return any(_admits_any(arg) for arg in typing.get_args(annotation))
+
+
+def test_every_loosely_typed_persisted_field_is_classified() -> None:
+    """Reflection follows types, and `Any` is the absence of one.
+
+    This is the sharpest limit adversarial review found on the law, and it is
+    not hypothetical: an `EncryptedSecretEnvelope` placed inside
+    `BroadcastDeliveryJob.settle_body` is serialised into the row body by
+    `storage_codec.json_body`, lands under kind 'broadcast_delivery', and is
+    invisible both to `envelope_fields` here and to the backfill's scan. The
+    module docstring's claim that any envelope reaching storage must be a
+    reflected dataclass field is FALSE for that shape, and this test exists to
+    stop the list of such shapes from growing silently rather than to close the
+    hole — closing it needs the backfill to walk bodies, not fields.
+    """
+    loose = {
+        (model.__name__, field.name)
+        for model in vars(storage_models).values()
+        if isinstance(model, type)
+        and dataclasses.is_dataclass(model)
+        and model.__module__ == storage_models.__name__
+        for field in dataclasses.fields(model)
+        if _admits_any(typing.get_type_hints(model)[field.name])
+    }
+
+    unclassified = sorted(loose - set(LOOSELY_TYPED_FIELDS))
+    assert not unclassified, (
+        f"storage_models gained loosely typed field(s) {unclassified}. An "
+        "EncryptedSecretEnvelope nested inside one reaches storage without being "
+        "a typed field, so neither this module's reflection nor the backfill can "
+        "see it. Classify each: say why it cannot carry secret material, or make "
+        "the backfill walk it."
+    )
+    assert not sorted(set(LOOSELY_TYPED_FIELDS) - loose), (
+        f"LOOSELY_TYPED_FIELDS names fields that are no longer loosely typed: "
+        f"{sorted(set(LOOSELY_TYPED_FIELDS) - loose)}"
+    )
+
+
+def test_every_kind_the_envelope_adapters_touch_is_registered_or_declared() -> None:
+    """A kind an envelope-bearing model is WRITTEN to, that nothing reads back.
+
+    `entity_kinds` derives from typed reads, so archiving a `ByokProviderConfig`
+    under a second kind with a bare `write_entity` would change nothing it sees
+    and leave every other assertion green while the archived row kept its v1
+    envelope. Adversarial review constructed that case. Enumerating the kinds
+    these two adapters name at all — reads and writes — is what closes it.
+    """
+    named = kinds_named_by(SRC, ENVELOPE_ADAPTER_MODULES)
+    unaccounted = sorted(named - set(_MIGRATED_KINDS) - set(NON_ENVELOPE_KINDS))
+    assert not unaccounted, (
+        f"the envelope adapters name kind(s) {unaccounted} that are neither in the "
+        "backfill registry nor declared secret-free. If such a row can hold an "
+        "envelope the backfill will never scan it; if it cannot, say so in "
+        "NON_ENVELOPE_KINDS with the reason."
+    )
+    stale = sorted(set(NON_ENVELOPE_KINDS) - named)
+    assert not stale, f"NON_ENVELOPE_KINDS names kinds these adapters no longer touch: {stale}"
+
+
+def test_the_sealing_oracle_is_read_off_byok_crypto() -> None:
+    """The family oracle must come from the crypto module, not from memory.
+
+    A hardcoded {encrypt_byok_secret: provider} pairing would keep agreeing with
+    the registry even if someone swapped the namespace constant inside
+    `encrypt_byok_secret` itself — the oracle and the registry would be wrong
+    together, which is the one way a two-sided equality check learns nothing.
+    """
+    assert SEALING_FUNCTIONS == {
+        "encrypt_byok_secret": NAMESPACE_PROVIDER,
+        "encrypt_control_secret": NAMESPACE_CONTROL,
+    }, (
+        "the namespace each encrypt_* function seals with has changed: "
+        f"{SEALING_FUNCTIONS}. That is an AAD-format change, not a refactor."
+    )
 
 
 def test_every_envelope_bearing_model_resolves_to_exactly_one_kind() -> None:
@@ -562,14 +862,23 @@ def test_each_derived_location_round_trips_through_the_backfill(
     ),
 )
 def test_the_broadcast_context_helper_matches_the_service(field: str) -> None:
-    """`_broadcast_context` is a copy of `broadcast_secret_context`, kept so an
-    offline migration need not import the application-global STORE. The comment
-    in the source claims the two are byte-identical; a copy nobody compares is
-    a divergence waiting to happen, and a divergent purpose re-seals a control
-    secret against an AAD the reader will never reconstruct."""
+    """There are THREE copies of this format string, not two.
+
+    `_broadcast_context` in the backfill, `broadcast_secret_context` on the
+    write side, and `_secret_context` in broadcast_adapters on the READ side.
+    The backfill's source comment claims byte-identity with the write-side copy
+    only; adversarial review pointed out the read-side copy is the one that has
+    to reconstruct the AAD after migration, and it was never compared. All
+    three are pinned here — a divergence re-seals a control secret against a
+    purpose the reader cannot rebuild.
+    """
     destination_id = "bdst_context_identity"
+    suffix = field.removeprefix("encrypted_")
     assert _broadcast_context(destination_id, field) == broadcast_secret_context(
-        destination_id, field.removeprefix("encrypted_")
+        destination_id, suffix
+    )
+    assert _broadcast_context(destination_id, field) == adapter_secret_context(
+        destination_id, suffix
     )
 
 
@@ -667,14 +976,25 @@ def test_the_postgres_scan_binds_every_registered_kind() -> None:
         else:
             sys.modules["psycopg"] = original
 
-    placeholders = _kind_in_clause(captured["sql"]).count("%s")
+    sql = captured["sql"]
+    placeholders = _kind_in_clause(sql).count("%s")
     assert placeholders == len(_MIGRATED_KINDS), (
         f"the Postgres scan has {placeholders} kind placeholder(s) for a registry of "
         f"{len(_MIGRATED_KINDS)} kind(s); the surplus kinds are never fetched"
     )
-    bound = set(captured["params"])
-    unbound = sorted(set(_MIGRATED_KINDS) - bound)
-    assert not unbound, f"registered kind(s) {unbound} are never bound into the scan"
+    # Positionally, not "somewhere in the tuple". The first draft asserted only
+    # that each registered kind appeared among the parameters, which adversarial
+    # review pointed out would still pass if the kinds were bound to the
+    # pagination placeholders and the IN list got the cursor values.
+    assert sql[: sql.index("kind IN (")].count("%s") == 0, (
+        "the kind IN clause is no longer the first bound group, so the parameter "
+        "positions checked below no longer line up with it"
+    )
+    bound = tuple(captured["params"][: len(_MIGRATED_KINDS)])
+    assert bound == tuple(_MIGRATED_KINDS), (
+        f"the Postgres scan binds {bound} into its kind filter, but the registry "
+        f"covers {tuple(_MIGRATED_KINDS)}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -720,9 +1040,19 @@ def test_the_ast_scans_detect_a_new_kind_and_a_new_sealing_site(
         "    return patch\n"
     )
 
+    (tmp_path / "stray_model.py").write_text(
+        "@dataclass\n"
+        "class StrayModel:\n"
+        "    encrypted_probe: EncryptedSecretEnvelope | None = None\n"
+        "    plain: str = ''\n"
+    )
+
     assert entity_kinds(tmp_path, frozenset({"ProbeModel"})) == {"ProbeModel": {"probe_kind"}}
     assert sealed_families(tmp_path, frozenset({"encrypted_probe"})) == {
         "encrypted_probe": {NAMESPACE_CONTROL}
+    }
+    assert envelope_annotated_attributes(tmp_path) == {
+        ("stray_model.py", "StrayModel", "encrypted_probe")
     }
 
 
