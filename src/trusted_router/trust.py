@@ -32,6 +32,19 @@ AZURE_API_HOSTNAME = "api-azure.trustedrouter.com"
 AWS_ATTESTATION_ROOT = "https://aws-nitro-enclaves.amazonaws.com/AWS_NitroEnclaves_Root-G1.zip"
 
 
+def gcp_api_hostname(settings: Settings) -> str:
+    """The hostname that terminates the GCP prompt path.
+
+    A property of the plane, not of whoever is serving the record. Any control
+    plane — GCP, AWS or Azure hosted — describing the GCP plane must name this.
+    """
+    return f"api.{configured_control_domains(settings)[0]}"
+
+
+def gcp_api_base_url(settings: Settings) -> str:
+    return f"https://{gcp_api_hostname(settings)}/v1"
+
+
 def _source_repositories() -> dict[str, str]:
     return {
         "control_plane": CONTROL_PLANE_REPO,
@@ -47,13 +60,18 @@ def _source_repositories() -> dict[str, str]:
 def gcp_release(
     settings: Settings,
     *,
-    release_metadata: Mapping[str, str] | None = None,
+    release_metadata: Mapping[str, Any] | None = None,
     release_metadata_status: str = "embedded",
 ) -> dict[str, Any]:
+    digest = settings.trust_gcp_image_digest or NOT_CONFIGURED
+    reference = settings.trust_gcp_image_reference or NOT_CONFIGURED
     metadata = release_metadata or {
         "source_commit": settings.trust_gcp_source_commit or NOT_CONFIGURED,
-        "image_reference": settings.trust_gcp_image_reference or NOT_CONFIGURED,
-        "image_digest": settings.trust_gcp_image_digest or NOT_CONFIGURED,
+        "image_reference": reference,
+        "image_digest": digest,
+        "accepted_image_digests": [digest],
+        "accepted_image_references": [reference],
+        "release_state": "current",
     }
     api_hostnames = [f"api.{domain}" for domain in configured_control_domains(settings)]
     return {
@@ -63,17 +81,44 @@ def gcp_release(
         "source_commit": metadata["source_commit"],
         "image_reference": metadata["image_reference"],
         "image_digest": metadata["image_digest"],
+        # Published as SETS. During a roll the fleet still serves the outgoing
+        # digest while this record already names the incoming one, so a verifier
+        # given only the scalar concludes the enclave answering them does not
+        # match its measurement. Carried through from upstream rather than
+        # recomputed here — a mirror serves a record, it does not narrow it.
+        "accepted_image_digests": list(
+            metadata.get("accepted_image_digests") or [metadata["image_digest"]]
+        ),
+        "accepted_image_references": list(
+            metadata.get("accepted_image_references") or [metadata["image_reference"]]
+        ),
+        "release_state": metadata.get("release_state", "current"),
         "release_metadata_status": release_metadata_status,
         "attestation_issuer": "https://confidentialcomputing.googleapis.com",
         "attestation_audience": "quill-cloud",
-        "api_base_url": settings.api_base_url,
+        # Describes the GCP PLANE, never the deployment that happens to serve
+        # this record. settings.api_base_url is per-deployment, so the AWS- and
+        # Azure-hosted control planes were serving a gcp-confidential-space
+        # record — Google issuer and audience intact — whose api_base_url
+        # pointed at their own gateway. Verified live on 2026-08-15:
+        # aws.trustedrouter.com advertised api-aws.trustedrouter.com. A verifier
+        # following that would fetch COSE_Sign1 CBOR over a self-signed cert
+        # while expecting a Confidential Space JWT, and correctly conclude the
+        # measurement did not match — an accusation of tampering manufactured
+        # entirely by us.
+        #
+        # A mirror serves a record; it does not rewrite it. Every field here is
+        # a property of the plane.
+        "api_base_url": gcp_api_base_url(settings),
         "api_base_urls": [
             api_base_url_for_domain(settings, domain)
             for domain in configured_control_domains(settings)
         ],
         "tls": {
             "mode": "acme-inside-confidential-space",
-            "hostname": "api.trustedrouter.com",
+            # Derived from the same source as api_base_url so the two cannot
+            # drift into disagreeing about which host terminates the prompt path.
+            "hostname": gcp_api_hostname(settings),
             "hostnames": api_hostnames,
         },
         "data_policy": {
@@ -87,7 +132,7 @@ def gcp_release_json(settings: Settings) -> str:
     return json.dumps(gcp_release(settings), indent=2, sort_keys=True) + "\n"
 
 
-def aws_release(settings: Settings) -> dict[str, Any]:
+def aws_release(settings: Settings, *, metadata: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Publish the AWS Nitro serving plane's measurement.
 
     Deploy-time configured rather than resolved live: the enclave answers
@@ -96,7 +141,15 @@ def aws_release(settings: Settings) -> dict[str, Any]:
     CBOR on a public route. The staleness that trade buys is checked out of band
     by scripts/verify_trust_measurements.py instead.
     """
-    accepted = settings.trust_aws_accepted_pcr0_list
+    # Mirrored from the plane's own published record when available. The
+    # settings are only the offline fallback — the control plane is not the
+    # author of what the AWS enclave is running.
+    if metadata is not None:
+        pcr0 = str(metadata.get("pcr0") or NOT_CONFIGURED)
+        accepted = tuple(str(v) for v in metadata.get("accepted_pcr0s", []) if v != NOT_CONFIGURED)
+    else:
+        pcr0 = settings.trust_aws_pcr0 or NOT_CONFIGURED
+        accepted = settings.trust_aws_accepted_pcr0_list
     return {
         "platform": "aws-nitro-enclaves",
         "source_repo": ATTESTED_GATEWAY_REPO,
@@ -106,7 +159,7 @@ def aws_release(settings: Settings) -> dict[str, Any]:
         # PCR0 measures the enclave image file: kernel, ramdisk, and
         # application, as built by nitro-cli build-enclave.
         "measurement_type": "nitro-pcr0-sha384",
-        "pcr0": settings.trust_aws_pcr0 or NOT_CONFIGURED,
+        "pcr0": pcr0,
         "accepted_pcr0s": list(accepted),
         "release_metadata_status": ("configured" if accepted else NOT_CONFIGURED),
         "attestation_format": "cose-sign1-nitro-attestation-document",
@@ -130,14 +183,25 @@ def aws_release(settings: Settings) -> dict[str, Any]:
     }
 
 
-def azure_release(settings: Settings) -> dict[str, Any]:
+def azure_release(
+    settings: Settings, *, metadata: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
     """Publish the Azure SEV-SNP serving plane's measurement.
 
     hostdata is sha256 over the decoded CCE policy, which is what the released
     key is bound to; it is the value a verifier compares against
     x-ms-sevsnpvm-hostdata in an MAA token.
     """
-    accepted = settings.trust_azure_accepted_hostdata_list
+    if metadata is not None:
+        hostdata = str(metadata.get("hostdata") or NOT_CONFIGURED)
+        accepted = tuple(
+            str(v) for v in metadata.get("accepted_hostdata", []) if v != NOT_CONFIGURED
+        )
+        issuers = tuple(str(v) for v in metadata.get("attestation_issuers", []))
+    else:
+        hostdata = settings.trust_azure_hostdata or NOT_CONFIGURED
+        accepted = settings.trust_azure_accepted_hostdata_list
+        issuers = settings.trust_azure_attestation_issuer_list
     return {
         "platform": "azure-confidential-containers-sev-snp",
         "source_repo": ATTESTED_GATEWAY_REPO,
@@ -145,14 +209,14 @@ def azure_release(settings: Settings) -> dict[str, Any]:
         "source_commit": settings.trust_azure_source_commit or NOT_CONFIGURED,
         "image_reference": settings.trust_azure_image_reference or NOT_CONFIGURED,
         "measurement_type": "sev-snp-hostdata-sha256",
-        "hostdata": settings.trust_azure_hostdata or NOT_CONFIGURED,
+        "hostdata": hostdata,
         "accepted_hostdata": list(accepted),
         "release_metadata_status": ("configured" if accepted else NOT_CONFIGURED),
         "attestation_format": "microsoft-azure-attestation-jwt",
         "attestation_type": "sevsnpvm",
         # One MAA instance per serving region, so which issuer signs depends on
         # which region answered. A verifier should accept any of them.
-        "attestation_issuers": list(settings.trust_azure_attestation_issuer_list),
+        "attestation_issuers": list(issuers),
         "api_base_url": f"https://{AZURE_API_HOSTNAME}/v1",
         "tls": {
             "mode": "acme-inside-confidential-container",
@@ -178,7 +242,7 @@ def trust_html(
     *,
     public_domain: str | None = None,
     api_base_url: str | None = None,
-    release_metadata: Mapping[str, str] | None = None,
+    release_metadata: Mapping[str, Any] | None = None,
     release_metadata_status: str = "embedded",
 ) -> str:
     release = gcp_release(

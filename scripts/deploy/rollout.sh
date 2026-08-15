@@ -23,15 +23,6 @@ if [ -n "$TRUST_JSON" ]; then
   TRUST_IMAGE_DIGEST="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("image_digest", ""))' <<<"$TRUST_JSON")"
 fi
 
-# AWS and Azure serving-plane measurements. Unlike the GCP record above there is
-# no published release file to read them from, so they are pinned here and
-# checked against live attestations by scripts/verify_trust_measurements.py.
-# Verified against live attestations on 2026-08-15.
-TRUST_AWS_PCR0="${TRUST_AWS_PCR0:-aef48a453944b35a6cdf472c51a704c1cce185feba75e54538f62f9a0ec54243a1a55fb2c4bddde23b4ea0d0e5e855e1}"
-TRUST_AWS_ACCEPTED_PCR0S="${TRUST_AWS_ACCEPTED_PCR0S:-}"
-TRUST_AZURE_HOSTDATA="${TRUST_AZURE_HOSTDATA:-44e44a55fa76e7e970319777f0e0814c3757908c8fc2a4165ff586d9ef4b1334}"
-TRUST_AZURE_ACCEPTED_HOSTDATA="${TRUST_AZURE_ACCEPTED_HOSTDATA:-}"
-TRUST_AZURE_ATTESTATION_ISSUERS="${TRUST_AZURE_ATTESTATION_ISSUERS:-https://trquilluaen.uaen.attest.azure.net}"
 
 SECRET_ENVS=(
   "TR_SENTRY_DSN=trustedrouter-sentry-dsn:latest"
@@ -345,22 +336,15 @@ ENV_VARS=(
   "TR_TRUST_GCP_IMAGE_DIGEST=${TRUST_IMAGE_DIGEST}"
   "TR_TRUST_GCP_RELEASE_URL=${TRUST_FILE_URL}"
   "TR_TRUST_GCP_RELEASE_FALLBACK_URLS=https://raw.githubusercontent.com/Lore-Hex/quill-cloud-proxy/main/trust-page/gcp-release.json"
-  # AWS and Azure measurements are deploy-time values, not resolved live. They
-  # change when those enclaves are rebuilt, NOT when the control plane deploys,
-  # so a stale value here is silent by construction. Before changing either one,
-  # and periodically regardless, run:
-  #
-  #   uv run python scripts/verify_trust_measurements.py
-  #
-  # which fetches a live attestation from each plane and fails if what we
-  # publish is not what is running. During a bind window put both the outgoing
-  # and incoming measurement in the ACCEPTED list and the incoming one in the
-  # primary; drop the outgoing value only after the old enclave is retired.
-  "TR_TRUST_AWS_PCR0=${TRUST_AWS_PCR0}"
-  "TR_TRUST_AWS_ACCEPTED_PCR0S=${TRUST_AWS_ACCEPTED_PCR0S}"
-  "TR_TRUST_AZURE_HOSTDATA=${TRUST_AZURE_HOSTDATA}"
-  "TR_TRUST_AZURE_ACCEPTED_HOSTDATA=${TRUST_AZURE_ACCEPTED_HOSTDATA}"
-  "TR_TRUST_AZURE_ATTESTATION_ISSUERS=${TRUST_AZURE_ATTESTATION_ISSUERS}"
+  # AWS and Azure measurements are NOT injected here any more. Each plane
+  # publishes its own record, produced from a live attestation by
+  # quill-cloud-proxy's tools/capture-plane-measurements.py, and the control
+  # plane mirrors it from the URL below. Pinning them here made this one
+  # GCP-region rollout script the authority for what three independent planes
+  # were running — one place to falsify, one place to fail, and one more value
+  # to remember to update on every enclave rebuild.
+  "TR_TRUST_AWS_RELEASE_URL=https://trust.trustedrouter.com/trust/aws-release.json"
+  "TR_TRUST_AZURE_RELEASE_URL=https://trust.trustedrouter.com/trust/azure-release.json"
   "TR_GOOGLE_OAUTH_REDIRECT_URL=https://trustedrouter.com/google_oauth_callback"
   "TR_GITHUB_OAUTH_REDIRECT_URL=https://trustedrouter.com/github_oauth_callback"
   "TR_SIWE_DOMAIN=trustedrouter.com"
