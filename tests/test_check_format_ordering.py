@@ -19,9 +19,26 @@ path is one test out of many, and it is the least interesting one.
 The subset relation also has to be DERIVED on both sides, and that is asserted
 too. A gate that hardcodes "writes V2, needs V2" is correct until the day a V3
 write lands, at which point it keeps passing while asserting a fact about a
-format the build no longer writes. `test_written_formats_follow_the_source_not_a
-_constant_in_this_file` and `test_accepted_set_comes_from_the_switch_not_the
-_const_block` are the two that keep it from rotting into that.
+format the build no longer writes.
+
+BOTH SIDES OF THAT DERIVATION WERE DEFEATED ONCE
+------------------------------------------------
+An adversarial review broke the first version of both halves, and the tests it
+produced are kept here as the ones that matter most:
+
+* ACCEPTS came from parsing case labels out of the switch in `envelopeAAD`.
+  Four compiling, gofmt-clean edits kept `case AlgorithmV2:` in cache.go while
+  rejecting v2 at run time — an erroring case body, a kill switch ahead of the
+  switch, a rejection in the caller, a renamed live dispatch with the old
+  function left as dead code — and all four passed with exit 0. The gate now
+  reads a declaration the enclave repo GENERATES from a round trip through
+  (*Cache).Resolve, and binds it to that commit's package by sha256.
+  `test_a_case_label_is_not_acceptance` and
+  `test_a_declaration_that_no_longer_matches_the_package_blocks` are that fix.
+* WRITES came from calls spelled `EncryptedSecretEnvelope` in one hardcoded
+  file. An alias, a subclass, dataclasses.replace, an assignment to
+  `.algorithm`, and a write site in any other module were all invisible. The
+  five tests in `test_written_formats_sees_a_v3_written_through_*` are that fix.
 
 THE REAL DEFECT THIS COMES FROM
 -------------------------------
@@ -40,7 +57,7 @@ SCOPE LIMIT, stated plainly
 ---------------------------
 * Nothing here touches the network, so nothing here proves the live attestation
   endpoints answer, that the published records are reachable, or that
-  raw.githubusercontent.com serves cache.go at an arbitrary commit. Those are
+  raw.githubusercontent.com serves a file at an arbitrary commit. Those are
   the gate's real failure modes in production and they are covered only by the
   gate failing closed on any exception, which IS asserted, on fabricated
   exceptions.
@@ -52,23 +69,26 @@ SCOPE LIMIT, stated plainly
   measurement. These tests prove the gate refuses when it is absent. They cannot
   prove — and neither can the gate — that a present one is the commit that built
   the running enclave.
+* The accepted-formats declaration is proved here to be bound to the package
+  source at the same commit. It is NOT proved to have been generated rather than
+  hand-written; that is quill-cloud-proxy's CI running the generating test, and
+  the property that the generator measures behaviour is proved there, in
+  enclave-go/internal/byokcache/accepted_formats_test.go, not here.
 * The subset check is over algorithm STRINGS. It does not prove the two
   implementations of a shared format agree byte for byte; that is
   tests/test_byok_aad_namespace_property.py's pinned hex vector, and the two
   proofs are independent.
-* Region coverage is only as wide as the record the gate reads. These fixtures
-  hand it a record with two Azure regions and prove both get checked; they do
-  not prove the published record has two. The control-plane mirror dropped the
-  `regions` array until the fix in services/trust_release.py — see
-  test_trust_release.py's provenance-and-regions block — so against a plane
-  predating that fix the gate checks one Azure region of two and reports a
-  green result it is entitled to. That is a coverage limit, not a false pass,
-  and it is the reason the checker prints the region list it used.
+* Region coverage: the gate now refuses when the record accepts a measurement
+  this run never observed, and `test_an_accepted_measurement_no_region_served
+  _blocks` fabricates exactly the shape the live Azure mirror had. What no test
+  and no gate can see is an enclave serving a cloud while appearing in neither
+  the record's `regions` array nor its accepted set.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from typing import Any
 
@@ -76,18 +96,25 @@ import cbor2
 import pytest
 
 from scripts.check_format_ordering import (
+    DECLARATION_PATH,
+    DECLARATION_SCHEMA,
+    ENCLAVE_PACKAGE,
     PLANES,
     RegionResult,
     accepted_formats,
     check_plane,
     gather,
+    read_write_surface,
     regions_of,
     render,
+    scan_write_surface,
     written_formats,
 )
 
 V1 = "TR-BYOK-ENVELOPE-AES-256-GCM-V1"
 V2 = "TR-BYOK-ENVELOPE-AES-256-GCM-V2"
+V3 = "TR-BYOK-ENVELOPE-AES-256-GCM-V3"
+CONTROL = "TR-BYOK-ENVELOPE-AES-256-GCM-PROBE-NOT-A-FORMAT"
 
 COMMIT_V1_ONLY = "1111111"
 COMMIT_V1_AND_V2 = "2222222"
@@ -152,20 +179,21 @@ def aws_attestation(pcr0: str = AWS_PCR0) -> bytes:
     return bytes(cbor2.dumps([b"", {}, document, b""]))
 
 
-def cache_go(*, accepts_v2: bool, declares_v2: bool = True) -> str:
+def cache_go(*, accepts_v2: bool) -> bytes:
     """cache.go as the enclave really shapes it.
 
-    `declares_v2` and `accepts_v2` are separate on purpose: the pre-step-1
-    enclave is exactly the build that can declare AlgorithmV2 in its const block
-    while envelopeAAD still rejects it.
+    Present in these fixtures so the `case AlgorithmV2:` label can be varied
+    INDEPENDENTLY of the declaration. The label is what the old gate read; the
+    tests below require that varying it changes nothing on its own, and that
+    changing the file at all invalidates a declaration generated from the
+    previous one.
     """
-    const_v2 = f'\tAlgorithmV2 = "{V2}"\n' if declares_v2 else ""
     case_v2 = "\tcase AlgorithmV2:\n\t\treturn aadV2(namespaceProvider, workspaceID, provider)\n"
     return (
         "package byokcache\n\n"
         "const (\n"
         f'\tAlgorithm = "{V1}"\n'
-        f"{const_v2}"
+        f'\tAlgorithmV2 = "{V2}"\n'
         '\tnamespaceProvider = "provider"\n'
         ")\n\n"
         "func envelopeAAD(algorithm, workspaceID, provider string) ([]byte, error) {\n"
@@ -177,7 +205,55 @@ def cache_go(*, accepts_v2: bool, declares_v2: bool = True) -> str:
         '\t\treturn nil, fmt.Errorf("byokcache: unsupported envelope algorithm %q", algorithm)\n'
         "\t}\n"
         "}\n"
-    )
+    ).encode()
+
+
+def declaration(
+    accepted: list[str], sources: dict[str, bytes], overrides: dict[str, Any] | None = None
+) -> bytes:
+    """The generated declaration, in the shape the Go test writes it."""
+    record: dict[str, Any] = {
+        "schema": DECLARATION_SCHEMA,
+        "package": ENCLAVE_PACKAGE,
+        "accepted": accepted,
+        "rejected_control": CONTROL,
+        "probe": "seal an envelope, then require (*Cache).Resolve to return the plaintext",
+        "generator": "go test ./internal/byokcache -run TestAcceptedFormatsDeclaration",
+        "source_sha256": {name: hashlib.sha256(body).hexdigest() for name, body in sources.items()},
+    }
+    record.update(overrides or {})
+    return json.dumps(record, indent=2).encode()
+
+
+def enclave_tree(accepted: list[str], *, accepts_v2_label: bool | None = None) -> dict[str, bytes]:
+    """One commit's worth of the enclave package: the sources and the declaration.
+
+    `accepts_v2_label` controls only the case label in cache.go and defaults to
+    agreeing with the declaration. The gate must not read it either way.
+    """
+    label = accepts_v2_label if accepts_v2_label is not None else (V2 in accepted)
+    sources = {"cache.go": cache_go(accepts_v2=label)}
+    files = {f"{ENCLAVE_PACKAGE}/{name}": body for name, body in sources.items()}
+    files[DECLARATION_PATH] = declaration(accepted, sources)
+    return files
+
+
+ENCLAVE: dict[str, dict[str, bytes]] = {
+    COMMIT_V1_ONLY: enclave_tree([V1]),
+    COMMIT_V1_AND_V2: enclave_tree([V1, V2]),
+}
+
+
+def source_from(trees: dict[str, dict[str, bytes]] | None = None):  # noqa: ANN201 - test helper
+    table = ENCLAVE if trees is None else trees
+
+    def _read(commit: str, path: str) -> bytes:
+        if commit not in table or path not in table[commit]:
+            # The real reader raises on a 404 exactly like this.
+            raise ValueError(f"cannot read {path} at {commit} (HTTP 404)")
+        return table[commit][path]
+
+    return _read
 
 
 def gcp_record(**overrides: Any) -> dict[str, Any]:
@@ -229,15 +305,6 @@ def azure_record(**overrides: Any) -> dict[str, Any]:
     return record
 
 
-def enclave_source(commit: str) -> str:
-    """Injected stand-in for the raw.githubusercontent.com fetch."""
-    if commit == COMMIT_V1_ONLY:
-        return cache_go(accepts_v2=False)
-    if commit == COMMIT_V1_AND_V2:
-        return cache_go(accepts_v2=True)
-    raise ValueError(f"no fixture for commit {commit}")
-
-
 LIVE: dict[str, bytes] = {
     "https://api.trustedrouter.com/attestation": gcp_attestation(),
     "https://api-aws.trustedrouter.com/attestation": aws_attestation(),
@@ -263,13 +330,17 @@ def run(spec_name: str, record: dict[str, Any], written: frozenset[str], **kwarg
         record,
         written,
         attest=kwargs.pop("attest", attest_from()),
-        source=kwargs.pop("source", enclave_source),
+        source=kwargs.pop("source", source_from()),
         **kwargs,
     )
 
 
 def problems(results: list[RegionResult]) -> str:
     return " | ".join(problem for result in results for problem in result.problems)
+
+
+def module(source: str, path: str = "src/trusted_router/byok_crypto.py") -> dict[str, str]:
+    return {path: source}
 
 
 # --------------------------------------------------------------------------
@@ -288,7 +359,7 @@ def test_every_cloud_clears_when_every_enclave_reads_what_the_plane_writes() -> 
             "/trust/azure-release.json": azure_record(),
         }[path],
         attest=attest_from(),
-        source=enclave_source,
+        source=source_from(),
     )
 
     assert [result.host for result in results] == [
@@ -408,7 +479,9 @@ def test_a_measurement_outside_the_accepted_set_blocks() -> None:
     # Drift. verify_trust_measurements.py already reports this; here it must
     # also STOP a deploy, because a running build the record does not list is a
     # build whose accepted formats the record cannot describe.
-    results = run("gcp", gcp_record(accepted_image_digests=["sha256:" + "0b" * 32]), frozenset({V2}))
+    results = run(
+        "gcp", gcp_record(accepted_image_digests=["sha256:" + "0b" * 32]), frozenset({V2})
+    )
 
     assert not results[0].ok
     assert "not in the published accepted set" in problems(results)
@@ -431,6 +504,47 @@ def test_an_accepted_but_unmapped_measurement_blocks_mid_roll() -> None:
 
     assert not results[0].ok
     assert "bind window" in problems(results)
+
+
+def test_an_accepted_measurement_no_region_served_blocks() -> None:
+    """The live Azure mirror's exact shape: two accepted hostdata, no regions array.
+
+    The gate probes api-azure.trustedrouter.com, is never routed to the
+    Southeast Asia enclave, and used to print "Every enclave serving azure
+    accepts every format this build writes" over a sample of one. The second
+    accepted measurement belongs to a build nothing here checked, so the run is
+    a refusal, not a green with a footnote.
+    """
+    record = azure_record()
+    del record["regions"]
+
+    results = run("azure", record, frozenset({V2}))
+
+    assert [result.host for result in results] == ["api-azure.trustedrouter.com", "-"]
+    assert results[0].ok, "the region that did answer is fine; the coverage is not"
+    assert not results[-1].ok
+    assert "never checked" in problems(results)
+    assert AZURE_SEA in problems(results)
+
+
+def test_the_bind_window_refusal_does_not_depend_on_probe_routing() -> None:
+    """The reviewer's narrowing of the bind-window claim, closed.
+
+    `test_an_accepted_but_unmapped_measurement_blocks_mid_roll` fires only when
+    the probe happens to be routed to the un-mapped build. Routed to the mapped
+    one — the normal Traffic Manager or NLB primary — the record maps what is
+    running and that check says nothing. The coverage refusal is what makes the
+    outcome a property of the RECORD rather than of routing: the second accepted
+    measurement was still never observed.
+    """
+    outgoing = "sha256:" + "99" * 32
+    record = gcp_record(accepted_image_digests=[GCP_DIGEST, outgoing])
+
+    results = run("gcp", record, frozenset({V2}))
+
+    assert results[0].ok, "the live probe hit the mapped measurement, so this row clears"
+    assert not results[-1].ok
+    assert outgoing in problems(results)
 
 
 def test_a_region_serving_outside_the_record_blocks() -> None:
@@ -463,14 +577,29 @@ def test_an_unreachable_region_blocks_rather_than_being_skipped() -> None:
     assert "cannot read a live attestation" in problems(results)
 
 
-def test_an_unfetchable_enclave_source_blocks() -> None:
-    def exploding(commit: str) -> str:
-        raise ValueError(f"HTTP 404 for {commit}")
+def test_an_unfetchable_declaration_blocks() -> None:
+    def exploding(commit: str, path: str) -> bytes:
+        raise ValueError(f"HTTP 404 for {path} at {commit}")
 
     results = run("gcp", gcp_record(), frozenset({V2}), source=exploding)
 
     assert not results[0].ok
     assert "404" in problems(results)
+
+
+def test_a_commit_that_predates_the_declaration_blocks() -> None:
+    """Every enclave released before this mechanism existed.
+
+    There is no declaration to read at those commits, and the honest answer is
+    that what they accept was never measured. The gate refuses; the remedy is
+    to roll an enclave built from a commit that carries one.
+    """
+    tree = {COMMIT_V1_AND_V2: {f"{ENCLAVE_PACKAGE}/cache.go": cache_go(accepts_v2=True)}}
+
+    results = run("gcp", gcp_record(), frozenset({V2}), source=source_from(tree))
+
+    assert not results[0].ok
+    assert DECLARATION_PATH in problems(results)
 
 
 def test_a_record_with_no_accepted_set_blocks() -> None:
@@ -492,7 +621,7 @@ def test_a_malformed_regions_array_blocks_the_whole_cloud() -> None:
         frozenset({V2}),
         records=lambda path: record,  # noqa: ARG005
         attest=attest_from(),
-        source=enclave_source,
+        source=source_from(),
     )
 
     assert not results[0].ok
@@ -506,7 +635,7 @@ def test_an_unreadable_record_blocks_the_whole_cloud() -> None:
         frozenset({V2}),
         records=lambda path: (_ for _ in ()).throw(ValueError(f"HTTP 404 for {path}")),
         attest=attest_from(),
-        source=enclave_source,
+        source=source_from(),
     )
 
     assert not results[0].ok
@@ -514,7 +643,117 @@ def test_an_unreadable_record_blocks_the_whole_cloud() -> None:
 
 
 # --------------------------------------------------------------------------
-# Both sides of the subset must be DERIVED, or the gate rots
+# ACCEPTS is behaviour the enclave repo measured, not syntax this file reads
+# --------------------------------------------------------------------------
+
+
+def test_a_case_label_is_not_acceptance() -> None:
+    """The reviewer's four evasions, as one assertion at this boundary.
+
+    An erroring case body, a kill switch ahead of the switch, a rejection in
+    decryptEnvelope, and a renamed dispatch all produce the same pair: cache.go
+    still contains `case AlgorithmV2:`, and a round trip through
+    (*Cache).Resolve still fails. This fabricates that pair directly. The old
+    parser read the label and returned {V1, V2}; the declaration says what the
+    probe observed, and the deploy is blocked.
+    """
+    tree = {COMMIT_V1_ONLY: enclave_tree([V1], accepts_v2_label=True)}
+    assert b"case AlgorithmV2:" in tree[COMMIT_V1_ONLY][f"{ENCLAVE_PACKAGE}/cache.go"]
+
+    assert accepted_formats(COMMIT_V1_ONLY, source_from(tree)) == frozenset({V1})
+
+    results = run(
+        "aws",
+        aws_record(source_commit=COMMIT_V1_ONLY),
+        frozenset({V2}),
+        source=source_from(tree),
+    )
+    assert not results[0].ok
+    assert "ACCEPTS only" in problems(results)
+
+
+def test_a_declaration_that_no_longer_matches_the_package_blocks() -> None:
+    """A declaration is evidence about the package it was generated from.
+
+    Edit cache.go without re-running the generator — which is what every one of
+    the four evasions does — and the declaration describes a build that is not
+    this one. The enclave repo's own test fails on that, and so does this: the
+    pinned sha256 no longer matches the file at the same commit.
+    """
+    tampered = dict(ENCLAVE[COMMIT_V1_AND_V2])
+    tampered[f"{ENCLAVE_PACKAGE}/cache.go"] = cache_go(accepts_v2=True).replace(
+        b"return aadV2(namespaceProvider, workspaceID, provider)",
+        b'return nil, errors.New("byokcache: v2 reads are not enabled in this build")',
+    )
+
+    with pytest.raises(ValueError, match="different build"):
+        accepted_formats(COMMIT_V1_AND_V2, source_from({COMMIT_V1_AND_V2: tampered}))
+
+
+def test_a_declaration_is_read_for_every_file_it_pins() -> None:
+    # The pin is worth nothing if a pinned file that cannot be fetched is
+    # treated as unchanged.
+    incomplete = {COMMIT_V1_AND_V2: {DECLARATION_PATH: ENCLAVE[COMMIT_V1_AND_V2][DECLARATION_PATH]}}
+
+    with pytest.raises(ValueError, match="cache.go"):
+        accepted_formats(COMMIT_V1_AND_V2, source_from(incomplete))
+
+
+@pytest.mark.parametrize(
+    ("overrides", "reason"),
+    [
+        pytest.param({"schema": "something/else"}, "schema", id="unknown-schema"),
+        pytest.param({"package": "enclave-go/internal/other"}, "package", id="wrong-package"),
+        pytest.param({"accepted": []}, "no accepted formats", id="empty-accepted"),
+        pytest.param({"accepted": [""]}, "non-empty strings", id="blank-format"),
+        pytest.param({"accepted": [V1, 7]}, "non-empty strings", id="non-string-format"),
+        pytest.param({"rejected_control": ""}, "rejected_control", id="no-control-value"),
+        pytest.param({"source_sha256": {}}, "pins no source files", id="no-pins"),
+        pytest.param(
+            {"source_sha256": {"../../etc/passwd": "0" * 64}}, "not a .go file", id="path-escape"
+        ),
+        pytest.param({"source_sha256": {"cache.go": "nope"}}, "not a sha256", id="bad-digest"),
+    ],
+)
+def test_a_declaration_this_script_cannot_read_blocks(
+    overrides: dict[str, Any], reason: str
+) -> None:
+    # Never assume a superset. A declaration in a shape this script does not
+    # understand is a build whose accepted set is unknown, and unknown blocks.
+    sources = {"cache.go": cache_go(accepts_v2=True)}
+    files = {f"{ENCLAVE_PACKAGE}/cache.go": sources["cache.go"]}
+    files[DECLARATION_PATH] = declaration([V1, V2], sources, overrides)
+
+    with pytest.raises(ValueError, match=reason):
+        accepted_formats(COMMIT_V1_AND_V2, source_from({COMMIT_V1_AND_V2: files}))
+
+
+def test_a_probe_that_accepted_its_own_control_value_blocks() -> None:
+    """`accepted` means something only if the probe could have said no.
+
+    A generator that accepts everything would list the control value too. That
+    is not a build that accepts everything; it is a measurement of nothing.
+    """
+    sources = {"cache.go": cache_go(accepts_v2=True)}
+    files = {f"{ENCLAVE_PACKAGE}/cache.go": sources["cache.go"]}
+    files[DECLARATION_PATH] = declaration([V1, V2, CONTROL], sources)
+
+    with pytest.raises(ValueError, match="cannot distinguish"):
+        accepted_formats(COMMIT_V1_AND_V2, source_from({COMMIT_V1_AND_V2: files}))
+
+
+def test_a_declaration_that_is_not_json_blocks() -> None:
+    files = {
+        f"{ENCLAVE_PACKAGE}/cache.go": cache_go(accepts_v2=True),
+        DECLARATION_PATH: b"404: Not Found",
+    }
+
+    with pytest.raises(ValueError, match="not JSON"):
+        accepted_formats(COMMIT_V1_AND_V2, source_from({COMMIT_V1_AND_V2: files}))
+
+
+# --------------------------------------------------------------------------
+# WRITES is derived from the whole write surface, or the gate rots
 # --------------------------------------------------------------------------
 
 
@@ -526,14 +765,12 @@ def test_written_formats_follow_the_source_not_a_constant_in_this_file() -> None
     in the codebase, and the parser must report it.
     """
     source = (
-        'ALGORITHM_V3 = "TR-BYOK-ENVELOPE-AES-256-GCM-V3"\n'
+        f'ALGORITHM_V3 = "{V3}"\n'
         "def seal():\n"
         "    return EncryptedSecretEnvelope(algorithm=ALGORITHM_V3, key_ref='k')\n"
     )
 
-    assert written_formats(source, origin="fabricated") == frozenset(
-        {"TR-BYOK-ENVELOPE-AES-256-GCM-V3"}
-    )
+    assert written_formats(module(source)) == frozenset({V3})
 
 
 def test_written_formats_reports_every_format_the_module_writes() -> None:
@@ -546,7 +783,110 @@ def test_written_formats_reports_every_format_the_module_writes() -> None:
         "    return EncryptedSecretEnvelope(algorithm=B)\n"
     )
 
-    assert written_formats(source, origin="fabricated") == frozenset({V1, V2})
+    assert written_formats(module(source)) == frozenset({V1, V2})
+
+
+@pytest.mark.parametrize(
+    ("body", "label"),
+    [
+        pytest.param(
+            "_Envelope = EncryptedSecretEnvelope\n"
+            "def seal():\n"
+            "    return _Envelope(algorithm=ALGORITHM_V3)\n",
+            "a module-level alias",
+            id="alias",
+        ),
+        pytest.param(
+            "def seal():\n"
+            "    Envelope = EncryptedSecretEnvelope\n"
+            "    return Envelope(algorithm=ALGORITHM_V3)\n",
+            "an alias bound inside the function",
+            id="local-alias",
+        ),
+        pytest.param(
+            "class V3Envelope(EncryptedSecretEnvelope):\n"
+            "    pass\n"
+            "def seal():\n"
+            "    return V3Envelope(algorithm=ALGORITHM_V3)\n",
+            "a subclass",
+            id="subclass",
+        ),
+        pytest.param(
+            "import dataclasses\n"
+            "def seal(envelope):\n"
+            "    return dataclasses.replace(envelope, algorithm=ALGORITHM_V3)\n",
+            "dataclasses.replace",
+            id="replace",
+        ),
+        pytest.param(
+            "from dataclasses import replace\n"
+            "def seal(envelope):\n"
+            "    return replace(envelope, algorithm=ALGORITHM_V3)\n",
+            "an imported replace",
+            id="bare-replace",
+        ),
+    ],
+)
+def test_written_formats_sees_a_v3_written_through_an_indirection(body: str, label: str) -> None:
+    """Each of these returned {V2} while the build wrote V3.
+
+    The reviewer wrote all of them against the first version of this parser,
+    which matched a callee spelled exactly EncryptedSecretEnvelope. A gate that
+    can be stepped around by renaming a local is a gate about spelling.
+    """
+    source = f'ALGORITHM_V3 = "{V3}"\n' + body
+
+    assert written_formats(module(source)) == frozenset({V3}), label
+
+
+def test_written_formats_sees_a_write_site_in_any_module() -> None:
+    # The first version opened src/trusted_router/byok_crypto.py and nothing
+    # else, so a V3 write in a new module was invisible.
+    sources = {
+        "src/trusted_router/byok_crypto.py": (
+            f'ALGORITHM_V2 = "{V2}"\n'
+            "def seal():\n"
+            "    return EncryptedSecretEnvelope(algorithm=ALGORITHM_V2)\n"
+        ),
+        "src/trusted_router/broadcast_crypto.py": (
+            f'ALGORITHM_V3 = "{V3}"\n'
+            "def seal():\n"
+            "    return EncryptedSecretEnvelope(algorithm=ALGORITHM_V3)\n"
+        ),
+    }
+
+    assert written_formats(sources) == frozenset({V2, V3})
+
+
+def test_written_formats_refuses_a_format_assigned_after_construction() -> None:
+    """`envelope.algorithm = ALGORITHM_V3` writes V3 and no constructor says so.
+
+    EncryptedSecretEnvelope is a plain, non-frozen dataclass, so this runs. The
+    format written is not derivable from any call, so the answer is a refusal
+    rather than a set that quietly omits it.
+    """
+    source = (
+        f'ALGORITHM_V3 = "{V3}"\n'
+        "def seal(envelope):\n"
+        "    envelope.algorithm = ALGORITHM_V3\n"
+        "    return envelope\n"
+    )
+
+    with pytest.raises(ValueError, match="assigns .algorithm"):
+        written_formats(module(source))
+
+
+def test_written_formats_refuses_the_constructor_used_as_a_value() -> None:
+    # functools.partial, a factory table, a registry: the format written
+    # through one of those is chosen somewhere this parser does not look.
+    source = (
+        "import functools\n"
+        f'ALGORITHM_V3 = "{V3}"\n'
+        "make = functools.partial(EncryptedSecretEnvelope, algorithm=ALGORITHM_V3)\n"
+    )
+
+    with pytest.raises(ValueError, match="indirection"):
+        written_formats(module(source))
 
 
 @pytest.mark.parametrize(
@@ -558,11 +898,20 @@ def test_written_formats_reports_every_format_the_module_writes() -> None:
         ),
         pytest.param(
             "def seal(kw):\n    return EncryptedSecretEnvelope(**kw)\n",
-            id="kwargs-splat",
+            id="kwargs-splat-outside-the-rehydration-modules",
+        ),
+        pytest.param(
+            "def seal(stored, alg):\n"
+            "    return EncryptedSecretEnvelope(**{**stored, 'algorithm': alg})\n",
+            id="mapping-display-splat",
         ),
         pytest.param(
             "def seal():\n    return EncryptedSecretEnvelope(key_ref='k')\n",
             id="no-algorithm-at-all",
+        ),
+        pytest.param(
+            "def seal(alg):\n    return EncryptedSecretEnvelope(alg, key_ref='k')\n",
+            id="positional",
         ),
         pytest.param("X = 1\n", id="constructor-gone"),
     ],
@@ -572,101 +921,51 @@ def test_written_formats_fails_closed_when_it_cannot_derive_the_format(source: s
     # would make every subset check pass trivially, which is the worst possible
     # way for this to fail.
     with pytest.raises(ValueError):
-        written_formats(source, origin="fabricated")
+        written_formats(module(source))
 
 
-def test_the_real_byok_crypto_module_writes_exactly_v2_today() -> None:
-    # Pins the current answer so a change to the write side is visible in a
-    # diff, without the gate itself depending on that answer.
-    from scripts.check_format_ordering import BYOK_CRYPTO
+def test_a_rehydration_site_is_allowed_only_where_it_rebuilds_a_stored_row() -> None:
+    """`EncryptedSecretEnvelope(**stored)` reads a format, it does not choose one.
 
-    assert written_formats(BYOK_CRYPTO.read_text(encoding="utf-8")) == frozenset({V2})
-
-
-def test_accepted_set_comes_from_the_switch_not_the_const_block() -> None:
-    """Declaring AlgorithmV2 is not the same as accepting it.
-
-    This is the exact shape of the pre-step-1 enclave: the constant exists in
-    cache.go, the dispatch does not handle it. A parser that read the const
-    block would call this build v2-capable and wave through the deploy that
-    breaks every BYOK key in that cloud.
+    Two modules do this today and both are rebuilding a database row. The
+    allowlist is a refusal boundary, not a rule: the same shape anywhere else
+    blocks until someone decides which kind it is. This asserts both halves.
     """
-    source = cache_go(accepts_v2=False, declares_v2=True)
+    rebuild = "def rebuild(stored):\n    return EncryptedSecretEnvelope(**stored)\n"
+    write = f'ALGORITHM_V2 = "{V2}"\ndef seal():\n    return EncryptedSecretEnvelope(algorithm=ALGORITHM_V2)\n'  # noqa: E501
 
-    assert V2 in source, "the fixture must declare the constant, or it proves nothing"
-    assert accepted_formats(source, origin="fabricated") == frozenset({V1})
+    scan = scan_write_surface(
+        {
+            "src/trusted_router/storage_models.py": rebuild,
+            "src/trusted_router/byok_crypto.py": write,
+        }
+    )
+    assert scan.formats == frozenset({V2})
+    assert scan.rehydration_sites == ("src/trusted_router/storage_models.py:2",)
 
-
-@pytest.mark.parametrize(
-    "source",
-    [
-        pytest.param("package byokcache\n", id="no-envelopeAAD"),
-        pytest.param(
-            "package byokcache\n"
-            "func envelopeAAD(algorithm string) ([]byte, error) {\n"
-            "\tswitch algorithm {\n"
-            "\tcase somethingUndeclared:\n"
-            "\t\treturn nil, nil\n"
-            "\t}\n"
-            "}\n",
-            id="unresolvable-case",
-        ),
-        pytest.param(
-            "package byokcache\n"
-            "func envelopeAAD(algorithm string) ([]byte, error) {\n"
-            "\tif algorithm == Algorithm {\n"
-            "\t\treturn nil, nil\n"
-            "\t}\n"
-            "\treturn nil, nil\n"
-            "}\n",
-            id="not-a-switch",
-        ),
-        pytest.param(
-            "package byokcache\n"
-            "func envelopeAAD(algorithm string) ([]byte, error) {\n"
-            "\tswitch other {\n"
-            "\tcase Algorithm:\n"
-            "\t\treturn nil, nil\n"
-            "\t}\n"
-            "}\n",
-            id="switch-on-something-else",
-        ),
-        pytest.param(
-            "package byokcache\n"
-            "func envelopeAAD(algorithm string) ([]byte, error) {\n"
-            "\tswitch algorithm {\n"
-            "\tdefault:\n"
-            "\t\treturn nil, nil\n"
-            "\t}\n"
-            "}\n",
-            id="default-only",
-        ),
-    ],
-)
-def test_accepted_formats_fails_closed_on_anything_it_cannot_read(source: str) -> None:
-    # Never assume a superset. A cache.go this parser cannot read is a build
-    # whose accepted set is unknown, and unknown must block.
-    with pytest.raises(ValueError):
-        accepted_formats(source, origin="fabricated")
+    with pytest.raises(ValueError, match="_REHYDRATION_MODULES"):
+        written_formats({"src/trusted_router/storage_gcp.py": rebuild, **module(write)})
 
 
-def test_accepted_formats_handles_a_combined_case_clause() -> None:
-    # gofmt permits `case A, B:` and a future cache.go may collapse the two
-    # branches. Reading only the first token would silently narrow the accepted
-    # set and block a legal deploy.
-    source = (
-        "package byokcache\n"
-        f'const Algorithm = "{V1}"\n'
-        f'const AlgorithmV2 = "{V2}"\n'
-        "func envelopeAAD(algorithm, workspaceID string) ([]byte, error) {\n"
-        "\tswitch algorithm {\n"
-        "\tcase Algorithm, AlgorithmV2:\n"
-        "\t\treturn nil, nil\n"
-        "\t}\n"
-        "}\n"
+def test_the_real_write_surface_writes_exactly_v2_today() -> None:
+    # Pins the current answer so a change to the write side is visible in a
+    # diff, without the gate itself depending on that answer. Also pins the
+    # rehydration sites: a new one appears here before it appears in
+    # production, and it is the one shape the scan reads no format from.
+    scan = scan_write_surface(read_write_surface())
+
+    assert scan.formats == frozenset({V2})
+    assert scan.rehydration_sites == (
+        "src/trusted_router/byok_aad_backfill.py:210",
+        "src/trusted_router/storage_models.py:217",
+        "src/trusted_router/storage_models.py:252",
+        "src/trusted_router/storage_models.py:254",
     )
 
-    assert accepted_formats(source, origin="fabricated") == frozenset({V1, V2})
+
+def test_an_unparseable_module_blocks() -> None:
+    with pytest.raises(ValueError, match="cannot parse"):
+        written_formats(module("def seal(:\n"))
 
 
 # --------------------------------------------------------------------------
@@ -685,3 +984,20 @@ def test_the_table_names_the_blocked_region_and_the_reason() -> None:
     assert "api-aws.trustedrouter.com" in table
     assert COMMIT_V1_ONLY in table
     assert "V1" in table
+
+
+def test_a_measurement_that_was_read_never_renders_as_unknown() -> None:
+    """ "-" in this table means NOT READ.
+
+    The column elided anything 20 characters or shorter to "-", so a short
+    measurement that was successfully read printed identically to one that was
+    never obtained — in the operator-facing table of a fail-closed gate, where
+    every other "-" means unknown.
+    """
+    short = RegionResult(cloud="gcp", host="api.example.com", measurement="sha256:abc")
+    unread = RegionResult(cloud="gcp", host="api.example.com", problems=["cannot read"])
+
+    table = render([short, unread], frozenset({V2}))
+
+    assert "sha256:abc" in table
+    assert table.count("-  ") >= 1, "the unread row still renders its measurement as -"

@@ -199,8 +199,20 @@ enclave cannot read. Nothing has been built or deployed.
 If the block is a missing source_commit, the Azure release record cannot be
 mapped to the enclave source and the answer is unknowable rather than bad.
 In quill-cloud-proxy:
-  python3 tools/capture-plane-measurements.py --write --keep-accepted
+  python3 tools/capture-plane-measurements.py --write --keep-accepted \
+      --source-commit <sha that built the RUNNING enclave>
   # then commit trust-page/, which fires publish-trust-azure.yml
+--source-commit has no default: HEAD is the released build only by coincidence,
+and a real-but-wrong commit makes this gate read a real file for the wrong build.
+
+If the block is a missing accepted_formats.json, the enclave at that commit
+predates the generated declaration and what it accepts was never measured. Roll
+an enclave built from a commit that carries
+enclave-go/internal/byokcache/accepted_formats.json.
+
+If the block names a measurement that was never served, the record accepts a
+build no region answered with. Either a region is missing from the record's
+regions array or the accepted set still names a retired build.
 
 If the block is a real format mismatch, ship and fully roll the enclave step-1
 build to BOTH regions first. See docs/design/byok-aad-v2-migration.md

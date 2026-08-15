@@ -167,8 +167,21 @@ if ! (cd "$REPO_ROOT" && uv run python -m scripts.check_format_ordering --cloud 
   echo "If the block is a missing source_commit, the AWS release record cannot be" >&2
   echo "mapped to the enclave source and the answer is unknowable rather than bad." >&2
   echo "In quill-cloud-proxy:" >&2
-  echo "  python3 tools/capture-plane-measurements.py --write --keep-accepted" >&2
+  echo "  python3 tools/capture-plane-measurements.py --write --keep-accepted \\" >&2
+  echo "      --source-commit <sha that built the RUNNING enclave>" >&2
   echo "  # then commit trust-page/, which fires publish-trust-aws.yml" >&2
+  echo "  # --source-commit has no default: HEAD is the released build only by" >&2
+  echo "  # coincidence, and a real-but-wrong commit makes this gate read a real" >&2
+  echo "  # file for the wrong build." >&2
+  echo "" >&2
+  echo "If the block is a missing accepted_formats.json, the enclave at that commit" >&2
+  echo "predates the generated declaration and what it accepts was never measured." >&2
+  echo "Roll an enclave built from a commit that carries" >&2
+  echo "enclave-go/internal/byokcache/accepted_formats.json." >&2
+  echo "" >&2
+  echo "If the block names a measurement that was never served, the record accepts a" >&2
+  echo "build no region answered with: either a region is missing from the record or" >&2
+  echo "the accepted set still names a retired build." >&2
   echo "" >&2
   echo "If the block is a real format mismatch, ship and fully roll the enclave" >&2
   echo "step-1 build for this cloud first. See docs/design/byok-aad-v2-migration.md" >&2
