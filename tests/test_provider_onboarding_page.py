@@ -64,6 +64,23 @@ def test_provider_onboarding_page_has_machine_readable_requirements(
     )
 
 
+def test_provider_onboarding_page_links_the_open_source_checker(
+    client: TestClient,
+) -> None:
+    response = client.get("/providers/marketplace")
+
+    assert response.status_code == 200
+    assert "Check your integration before you apply." in response.text
+    assert 'href="https://github.com/Lore-Hex/trustedrouter-provider-check"' in response.text
+    assert "git clone \\" in response.text
+    assert "https://github.com/Lore-Hex/trustedrouter-provider-check.git" in response.text
+    assert "TR_PROVIDER_API_KEY" in response.text
+    assert "--tier 4" in response.text
+    assert "--json provider-report.json" in response.text
+    assert "Tiers 1&ndash;4" in response.text
+    assert "real, billable completion" in response.text
+
+
 def test_provider_catalog_schema_is_public_and_matches_documented_example(
     client: TestClient,
 ) -> None:

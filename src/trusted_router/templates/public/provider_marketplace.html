@@ -166,6 +166,37 @@ API key: DO NOT INCLUDE</code></pre>
   </div>
 </section>
 
+<section class="marketing-split" aria-labelledby="provider-check-heading">
+  <div class="marketing-copy">
+    <span class="eyebrow">Open-source preflight</span>
+    <h2 id="provider-check-heading">Check your integration before you apply.</h2>
+    <p>Run the <a href="https://github.com/Lore-Hex/trustedrouter-provider-check" target="_blank" rel="noopener noreferrer">TrustedRouter provider checker</a> against the same production API base you plan to submit. It validates catalog discovery, advertised model callability, non-streaming chat semantics, and streaming behavior against the contract consumed by TrustedRouter.</p>
+    <ul class="check-list">
+      <li><strong>Tiers 1&ndash;4 are the conformance gate.</strong> A hard failure exits with status <code>1</code>, so the checker works in CI.</li>
+      <li><strong>Credentials stay local.</strong> Use <code>TR_PROVIDER_API_KEY</code> to keep the key out of shell history. Reports recursively redact it.</li>
+      <li><strong>Checks make real requests.</strong> The model sweep and chat probes use real, billable completion calls. The default sweep is bounded to 25 advertised models.</li>
+      <li><strong>Keep the report.</strong> Attach the redacted JSON artifact to your application so failures can be reproduced quickly.</li>
+    </ul>
+    <div class="hero-actions">
+      <a class="btn primary" href="https://github.com/Lore-Hex/trustedrouter-provider-check" target="_blank" rel="noopener noreferrer">Open the provider checker <span aria-hidden="true">&nearr;</span></a>
+    </div>
+  </div>
+  <div class="copy-terminal" aria-label="Run the TrustedRouter provider checker">
+    <div class="code-head"><span>Provider preflight</span><span>Tiers 1&ndash;4</span></div>
+    <pre><code>git clone \
+  https://github.com/Lore-Hex/trustedrouter-provider-check.git
+cd trustedrouter-provider-check
+
+export TR_PROVIDER_API_KEY='your-provider-key'
+
+uv run trustedrouter-provider-check \
+  --base-url https://api.provider.com/v1 \
+  --model provider/model-name \
+  --tier 4 \
+  --json provider-report.json</code></pre>
+  </div>
+</section>
+
 <section class="marketing-split" aria-labelledby="validation-heading">
   <div class="copy-terminal" aria-label="Provider contract validation requests">
     <div class="code-head"><span>Two required requests</span><span>curl</span></div>
