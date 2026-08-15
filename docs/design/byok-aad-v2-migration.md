@@ -189,6 +189,57 @@ Two consequences:
    ordinary version bump rather than as a deliberate migration step. **Nobody
    has to decide to run it.**
 
+#### This is now machine-checked, and the check is the enforcement
+
+`scripts/check_format_ordering.py` refuses a deploy whose written envelope
+formats are not a subset of what every enclave serving that cloud accepts. Both
+sides are derived, not hardcoded — the write side from the `algorithm=` argument
+of every `EncryptedSecretEnvelope` in `byok_crypto.py`, the read side from the
+switch in `envelopeAAD` in `enclave-go/internal/byokcache/cache.go` **at the
+commit the published release record names** — so a future v3 is covered without
+editing the checker. It is wired into three places, because there are three
+deploy paths and the workflow only covers one of them:
+
+| path | where the gate lives |
+|---|---|
+| GCP (auto, Cloud Run) | `gate-on-envelope-ordering` in `.github/workflows/deploy.yml` |
+| AWS EU (hand-run) | `scripts/deploy/aws_eu_control_plane.sh`, before the build |
+| Azure (hand-run) | `scripts/deploy/azure_control_plane.sh`, before the build |
+
+The hand-run scripts are the path this section describes, and they were the
+unguarded one.
+
+Two things it deliberately does NOT do. It does not verify the enclave build
+really came from `source_commit` — nothing can, since neither PCR0 nor hostdata
+carries a commit; the field is an assertion, and the check's value is that a
+wrong assertion is falsifiable where an absent one was not. And it blocks during
+a bind window rather than reasoning about it: two enclave builds behind one
+hostname with one published commit means one of them is unverified, and §4.0's
+own instruction is to roll the enclave out fully first.
+
+**Known state as of this change:** `aws-release.json` and `azure-release.json`
+carry no `source_commit`, so the gate blocks those two clouds today. That is the
+designed fail-closed behaviour, not a bug — quill-cloud-proxy's
+`tools/capture-plane-measurements.py` now writes the field, and the block clears
+on the next capture-and-publish. No value was backfilled, because the commit
+that built the running AWS enclave is not derivable from anything we hold and a
+guess would make the gate read a real file at the wrong commit.
+
+**Two mirror defects found while wiring this**, both against the live records
+rather than fixtures, both fixed in `services/trust_release.py` and `trust.py`:
+
+1. `source_commit` was served from the deployment's own
+   `TR_TRUST_{AWS,AZURE}_SOURCE_COMMIT` setting and never from the mirrored
+   record, so `trustedrouter.com` answered `not-configured` regardless of what
+   upstream published. Publishing the field upstream alone would have changed
+   nothing on the surface every verifier and every gate actually reads.
+2. the `regions` array was dropped in transit. Upstream's `azure-release.json`
+   names two serving regions with their own attestation URLs; the mirror named
+   none, so `api-azure-sea.trustedrouter.com` was undiscoverable from
+   `trustedrouter.com` and anything enumerating regions from the mirror checked
+   one of two while looking complete. The gate inherits that limit until a
+   control plane carrying the fix is serving.
+
 So, before any `quill-router` build containing quill-router#560 is deployed to
 AWS or Azure:
 

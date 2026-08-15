@@ -32,6 +32,19 @@ AZURE_API_HOSTNAME = "api-azure.trustedrouter.com"
 AWS_ATTESTATION_ROOT = "https://aws-nitro-enclaves.amazonaws.com/AWS_NitroEnclaves_Root-G1.zip"
 
 
+def _mirrored_commit(metadata: Mapping[str, Any] | None) -> str:
+    """source_commit from the plane's own record, or "" to fall back.
+
+    Already validated as a git object id by
+    services.trust_release._mirrored_source_commit; this only decides
+    precedence, and mirrored beats configured.
+    """
+    if metadata is None:
+        return ""
+    value = metadata.get("source_commit")
+    return value if isinstance(value, str) and value and value != NOT_CONFIGURED else ""
+
+
 def gcp_api_hostname(settings: Settings) -> str:
     """The hostname that terminates the GCP prompt path.
 
@@ -154,7 +167,15 @@ def aws_release(settings: Settings, *, metadata: Mapping[str, Any] | None = None
         "platform": "aws-nitro-enclaves",
         "source_repo": ATTESTED_GATEWAY_REPO,
         "source_repositories": _source_repositories(),
-        "source_commit": settings.trust_aws_source_commit or NOT_CONFIGURED,
+        # The plane's own commit wins over this deployment's setting, for the
+        # same reason its measurement does: the control plane mirrors what the
+        # AWS plane published and is not the author of it. Reading the setting
+        # first meant the mirror served "not-configured" no matter what the
+        # upstream record said, which makes a published measurement unmappable
+        # to source through the surface everyone actually reads.
+        "source_commit": (
+            _mirrored_commit(metadata) or settings.trust_aws_source_commit or NOT_CONFIGURED
+        ),
         "image_reference": settings.trust_aws_image_reference or NOT_CONFIGURED,
         # PCR0 measures the enclave image file: kernel, ramdisk, and
         # application, as built by nitro-cli build-enclave.
@@ -202,15 +223,25 @@ def azure_release(
         hostdata = settings.trust_azure_hostdata or NOT_CONFIGURED
         accepted = settings.trust_azure_accepted_hostdata_list
         issuers = settings.trust_azure_attestation_issuer_list
+    regions = list(metadata.get("regions", [])) if metadata is not None else []
     return {
         "platform": "azure-confidential-containers-sev-snp",
         "source_repo": ATTESTED_GATEWAY_REPO,
         "source_repositories": _source_repositories(),
-        "source_commit": settings.trust_azure_source_commit or NOT_CONFIGURED,
+        "source_commit": (
+            _mirrored_commit(metadata) or settings.trust_azure_source_commit or NOT_CONFIGURED
+        ),
         "image_reference": settings.trust_azure_image_reference or NOT_CONFIGURED,
         "measurement_type": "sev-snp-hostdata-sha256",
         "hostdata": hostdata,
         "accepted_hostdata": list(accepted),
+        # Which endpoint attests which hostdata. Azure serves from more than one
+        # region and each runs its own CCE policy, so the set alone does not say
+        # where to go to check a given value. This mirror used to drop the array
+        # entirely, which left a reader of trustedrouter.com unable to discover
+        # api-azure-sea.trustedrouter.com at all — a whole serving region
+        # invisible on the surface published as the place to verify us.
+        **({"regions": regions} if regions else {}),
         "release_metadata_status": ("configured" if accepted else NOT_CONFIGURED),
         "attestation_format": "microsoft-azure-attestation-jwt",
         "attestation_type": "sevsnpvm",

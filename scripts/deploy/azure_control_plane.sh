@@ -153,6 +153,61 @@ else
 fi
 DSN="postgresql://${PG_ADMIN}:${PG_PASSWORD}@${PG_HOST}:5432/${PG_DB}?sslmode=require"
 
+# BYOK envelope format ordering. FIRST, before the build, because everything
+# after this line costs money or mutates a service.
+#
+# This control plane writes BYOK envelopes into the Flexible Server database
+# that belongs to THIS cloud, and the SEV-SNP enclaves in front of it are the
+# only things that ever read them back. If this build writes a format they
+# cannot read, every BYOK key in this cloud stops working at the next inference
+# request.
+#
+# docs/design/byok-aad-v2-migration.md §4.0 is where the rule lives, and it
+# names its own weak point: the write-side change reaches this cloud "as an
+# ordinary version bump rather than as a deliberate migration step. Nobody has
+# to decide to run it." This script IS the path where nobody decided, and the
+# gate in .github/workflows/deploy.yml cannot cover it — that workflow deploys
+# Cloud Run and never touches Azure.
+#
+# Regions are enumerated from the published record rather than from
+# GATEWAY_REGION_TARGETS above. UAE North and Southeast Asia run their own CCE
+# policies, so they attest different hostdata and could in principle be running
+# different builds; a check that read one region would be the same shape of
+# mistake as a probe that measures one region — see the comment on
+# GATEWAY_REGION_TARGETS.
+#
+# Be precise about what that buys TODAY: the checker reads the control plane's
+# mirror at trustedrouter.com/trust/azure-release.json, and until this change
+# that mirror dropped the upstream `regions` array entirely, so only the
+# canonical endpoint was discoverable and only it got checked. The mirror fix
+# ships in this same change (src/trusted_router/services/trust_release.py), but
+# it takes effect for this script only once a control plane carrying it is
+# serving. Until then this line checks one of two Azure regions.
+#
+# There is no skip flag on purpose. Rolling back a control plane un-ships bad
+# code; it does not un-write an envelope. §5: a cloud whose control plane has
+# written even one v2 envelope needs its enclave to keep v2 read support
+# permanently.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+log "checking BYOK envelope format ordering against both live azure regions"
+if ! (cd "$REPO_ROOT" && uv run python -m scripts.check_format_ordering --cloud azure); then
+  cat >&2 <<'BLOCKED'
+
+REFUSING TO DEPLOY: this build may write a BYOK envelope format an Azure
+enclave cannot read. Nothing has been built or deployed.
+
+If the block is a missing source_commit, the Azure release record cannot be
+mapped to the enclave source and the answer is unknowable rather than bad.
+In quill-cloud-proxy:
+  python3 tools/capture-plane-measurements.py --write --keep-accepted
+  # then commit trust-page/, which fires publish-trust-azure.yml
+
+If the block is a real format mismatch, ship and fully roll the enclave step-1
+build to BOTH regions first. See docs/design/byok-aad-v2-migration.md
+BLOCKED
+  exit 1
+fi
+
 log "building linux/amd64 image in ACR ${ACR}"
 az acr build --registry "$ACR" --platform linux/amd64 \
   --image "trusted-router:${IMAGE_TAG}" . >/dev/null

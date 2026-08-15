@@ -108,6 +108,51 @@ jobs:
             sleep 20
           done
 
+  gate-on-envelope-ordering:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Gate on BYOK envelope format ordering
+        # A control plane that writes an envelope format its enclave cannot
+        # read breaks every BYOK key in that cloud at the next inference
+        # request. docs/design/byok-aad-v2-migration.md §4.0 states the
+        # ordering rule and then names its own weak point: the write-side
+        # change arrives on a deployment "as an ordinary version bump rather
+        # than as a deliberate migration step. Nobody has to decide to run
+        # it." Until this job existed, nothing decided anything — on AWS and
+        # Azure the order was not enforced, and it was harmless only because
+        # those databases had no BYOK rows.
+        #
+        # --cloud gcp, deliberately. This workflow deploys Cloud Run only
+        # (us-central1, europe-west4, us-east4, southamerica-east1), and each
+        # cloud is a standalone TrustedRouter with its OWN database
+        # (docs/storage-portability/multi-cloud-separation.md), so a v2
+        # envelope written here never reaches an AWS or Azure enclave.
+        # Blocking a GCP rollout on Azure's enclave would be a gate that fires
+        # for reasons the operator cannot act on, which is the fastest way to
+        # get a gate deleted. AWS and Azure control planes are deployed by
+        # hand and carry the same check in
+        # scripts/deploy/aws_eu_control_plane.sh and azure_control_plane.sh —
+        # the hand-run path is the one that skipped the ordering before.
+        #
+        # NOT skippable by hotfix, unlike the CI-green gate above. That
+        # asymmetry is the point: a hotfix that ships a broken build is undone
+        # by rolling back, but a hotfix that writes an unreadable envelope is
+        # not. §5 of the migration doc is explicit — a cloud whose control
+        # plane has written even one v2 envelope needs its enclave to keep v2
+        # read support permanently. The write is one-way, so the escape hatch
+        # cannot be a flag on the deploy; it is to stop the build writing the
+        # format, which is code.
+        run: |
+          set -euo pipefail
+          uv sync --frozen --no-dev
+          uv run python -m scripts.check_format_ordering --cloud gcp
+
   build-image:
     runs-on: ubuntu-latest
     outputs:
@@ -317,7 +362,15 @@ jobs:
           fi
 
   deploy:
-    needs: [build-image, migrate-schema, sync-runtime-secrets, confirm-current-main]
+    needs:
+      - build-image
+      - migrate-schema
+      - sync-runtime-secrets
+      - confirm-current-main
+      # Blocks the rollout, not just the image build: an envelope format the
+      # enclave cannot read is only harmful once a revision serving traffic
+      # writes one.
+      - gate-on-envelope-ordering
     if: ${{ needs.confirm-current-main.outputs.proceed == 'true' }}
     runs-on: ubuntu-latest
     env:

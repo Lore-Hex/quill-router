@@ -278,6 +278,76 @@ _PCR0_RE = re.compile(r"[0-9a-f]{96}")
 _HOSTDATA_RE = re.compile(r"[0-9a-f]{64}")
 
 
+def _mirrored_source_commit(payload: dict[str, object]) -> str | None:
+    """The plane's own source_commit, or None when it publishes none.
+
+    Carried through rather than recomputed, because the control plane is not
+    the author of what any enclave is running — the same reason the accepted
+    set is mirrored. Before this, the mirror always served its OWN
+    TR_TRUST_{AWS,AZURE}_SOURCE_COMMIT setting, which is unset, so
+    trustedrouter.com/trust/aws-release.json reported `not-configured` even
+    when the upstream record named a commit. Anything reading the mirror to map
+    a measurement back to source therefore could not, no matter what
+    quill-cloud-proxy published.
+    """
+    value = payload.get("source_commit")
+    if not isinstance(value, str) or _COMMIT_RE.fullmatch(value) is None:
+        return None
+    return value
+
+
+def _validated_regions(payload: dict[str, object], accepted: list[str]) -> list[dict[str, str]]:
+    """Per-region entries, when the plane publishes them.
+
+    Azure serves from more than one region and each runs its own CCE policy, so
+    hostdata genuinely differs per region and the record says which endpoint
+    attests which value. Dropping that on the way through — which the mirror did
+    — leaves a reader of trustedrouter.com unable to discover that
+    api-azure-sea.trustedrouter.com exists at all, so a checker enumerating
+    regions from the mirror silently checks one of two.
+
+    Every field is validated and unknown keys are dropped: republishing is an
+    assertion, and a mirror that forwards unvalidated structure is a way to get
+    us to assert something we never looked at.
+    """
+    raw = payload.get("regions")
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("regions must be a non-empty list when present")
+    regions: list[dict[str, str]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise ValueError("each region must be an object")
+        url = entry.get("attestation_url")
+        hostdata = entry.get("hostdata")
+        issuer = entry.get("attestation_issuer")
+        if not isinstance(url, str) or not url.startswith("https://"):
+            raise ValueError("region has no https attestation_url")
+        if not isinstance(hostdata, str) or _HOSTDATA_RE.fullmatch(hostdata) is None:
+            raise ValueError("region has no valid hostdata")
+        if hostdata not in accepted:
+            # A region attesting a value the record does not accept would have
+            # a verifier routed there conclude the enclave is tampered with.
+            raise ValueError("region hostdata is absent from the accepted set")
+        if not isinstance(issuer, str) or not issuer.startswith("https://"):
+            raise ValueError("region has no https attestation_issuer")
+        region = {
+            "attestation_url": url,
+            "hostdata": hostdata,
+            "attestation_issuer": issuer,
+        }
+        for optional in ("launch_measurement", "compliance_status"):
+            value = entry.get(optional)
+            if isinstance(value, str):
+                region[optional] = value
+        commit = _mirrored_source_commit(entry)
+        if commit is not None:
+            region["source_commit"] = commit
+        regions.append(region)
+    return regions
+
+
 def _validated_set_of(payload: dict[str, object], key: str, pattern: re.Pattern[str]) -> list[str]:
     raw = payload.get(key)
     if not isinstance(raw, list) or not raw:
@@ -304,7 +374,11 @@ def validated_aws_metadata(payload: object) -> Mapping[str, Any]:
         # A record whose accepted set excludes its own current measurement would
         # have a verifier reject the enclave that is answering them.
         raise ValueError("AWS pcr0 is absent from its own accepted set")
-    return {"pcr0": pcr0, "accepted_pcr0s": accepted}
+    metadata: dict[str, Any] = {"pcr0": pcr0, "accepted_pcr0s": accepted}
+    commit = _mirrored_source_commit(payload)
+    if commit is not None:
+        metadata["source_commit"] = commit
+    return metadata
 
 
 def validated_azure_metadata(payload: object) -> Mapping[str, Any]:
@@ -324,11 +398,18 @@ def validated_azure_metadata(payload: object) -> Mapping[str, Any]:
     for issuer in issuers:
         if not isinstance(issuer, str) or not issuer.startswith("https://"):
             raise ValueError("invalid MAA issuer")
-    return {
+    metadata: dict[str, Any] = {
         "hostdata": hostdata,
         "accepted_hostdata": accepted,
         "attestation_issuers": list(issuers),
     }
+    regions = _validated_regions(payload, accepted)
+    if regions:
+        metadata["regions"] = regions
+    commit = _mirrored_source_commit(payload)
+    if commit is not None:
+        metadata["source_commit"] = commit
+    return metadata
 
 
 def embedded_aws_metadata(settings: Settings) -> Mapping[str, Any]:

@@ -130,6 +130,51 @@ fi
 
 log(){ printf '\n=== %s\n' "$*" >&2; }
 
+# BYOK envelope format ordering. FIRST, before the build, because everything
+# after this line costs money or mutates a service.
+#
+# This control plane writes BYOK envelopes into the Aurora DSQL database that
+# belongs to THIS cloud, and the Nitro enclave in front of it is the only thing
+# that ever reads them back. If this build writes a format that enclave cannot
+# read, every BYOK key in this cloud stops working at the next inference
+# request — `unsupported envelope algorithm` from byokcache, on the prompt path.
+#
+# docs/design/byok-aad-v2-migration.md §4.0 is where this rule is written down,
+# and it names its own weak point: the write-side change reaches this cloud "as
+# an ordinary version bump rather than as a deliberate migration step. Nobody
+# has to decide to run it." This script IS the path where nobody decided. It
+# ran the v2-writing build against an enclave nobody had checked, and the only
+# reason that was survivable is that the audit found zero BYOK rows in this
+# database. A gate in .github/workflows/deploy.yml would not have caught it —
+# that workflow deploys Cloud Run and never touches this cloud.
+#
+# --cloud aws: the databases are separate, so GCP's and Azure's enclaves have
+# no say over this rollout, and blocking on them would fire for reasons the
+# operator here cannot act on.
+#
+# There is no skip flag on purpose. Rolling back a control plane un-ships bad
+# code; it does not un-write an envelope. §5: a cloud whose control plane has
+# written even one v2 envelope needs its enclave to keep v2 read support
+# permanently. The way past this gate is to fix the ordering, not to pass an
+# argument.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+log "checking BYOK envelope format ordering against the live aws enclave"
+if ! (cd "$REPO_ROOT" && uv run python -m scripts.check_format_ordering --cloud aws); then
+  echo "" >&2
+  echo "REFUSING TO DEPLOY: this build may write a BYOK envelope format the AWS" >&2
+  echo "enclave cannot read. Nothing has been built or pushed." >&2
+  echo "" >&2
+  echo "If the block is a missing source_commit, the AWS release record cannot be" >&2
+  echo "mapped to the enclave source and the answer is unknowable rather than bad." >&2
+  echo "In quill-cloud-proxy:" >&2
+  echo "  python3 tools/capture-plane-measurements.py --write --keep-accepted" >&2
+  echo "  # then commit trust-page/, which fires publish-trust-aws.yml" >&2
+  echo "" >&2
+  echo "If the block is a real format mismatch, ship and fully roll the enclave" >&2
+  echo "step-1 build for this cloud first. See docs/design/byok-aad-v2-migration.md" >&2
+  exit 1
+fi
+
 log "building linux/amd64 image and pushing to ${ECR}:${TAG}"
 aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com" >/dev/null
 docker buildx build --platform linux/amd64 -t "${ECR}:${TAG}" --push .

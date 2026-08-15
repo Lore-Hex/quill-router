@@ -631,3 +631,193 @@ def test_azure_record_without_an_issuer_is_rejected(httpx_mock: HTTPXMock) -> No
 
     assert record["hostdata"] == configured, "an issuer-less upstream record was republished"
     assert record["attestation_issuers"] == ["https://trquilluaen.uaen.attest.azure.net"]
+
+
+# --- Provenance and regions must survive the mirror --------------------------
+#
+# Two things the mirror silently dropped, both found while wiring
+# scripts/check_format_ordering.py against the LIVE published records rather
+# than against fixtures. Verified against https://trustedrouter.com on
+# 2026-08-15, with the upstream quill-cloud-proxy records open beside them:
+#
+#   * source_commit was read from THIS deployment's TR_TRUST_{AWS,AZURE}_
+#     SOURCE_COMMIT setting and never from the mirrored record, so the mirror
+#     answered "not-configured" for both planes no matter what upstream said.
+#     Publishing source_commit upstream would therefore have changed nothing on
+#     the surface every verifier and every deploy gate actually reads.
+#   * the `regions` array was dropped entirely. Upstream's azure-release.json
+#     names two serving regions with their own attestation URLs; the mirror
+#     named none, so api-azure-sea.trustedrouter.com was undiscoverable from
+#     trustedrouter.com and anything enumerating regions from the mirror
+#     checked one of two while reporting complete coverage.
+#
+# Neither is a measurement being wrong, which is why neither showed up in the
+# drift check. They are a measurement being unusable, which is a different
+# failure and needs its own assertions.
+
+
+def _azure_upstream_with_regions(uaen: str, sea: str, commit: str) -> dict[str, object]:
+    return {
+        "platform": "azure-confidential-containers-sev-snp",
+        "hostdata": uaen,
+        "accepted_hostdata": [uaen, sea],
+        "attestation_issuers": [
+            "https://trquilluaen.uaen.attest.azure.net",
+            "https://trquillsea.sasia.attest.azure.net",
+        ],
+        "source_commit": commit,
+        "regions": [
+            {
+                "attestation_url": "https://api-azure.trustedrouter.com/attestation",
+                "hostdata": uaen,
+                "attestation_issuer": "https://trquilluaen.uaen.attest.azure.net",
+                "launch_measurement": "dc" * 24,
+                "compliance_status": "azure-compliant-uvm",
+            },
+            {
+                "attestation_url": "https://api-azure-sea.trustedrouter.com/attestation",
+                "hostdata": sea,
+                "attestation_issuer": "https://trquillsea.sasia.attest.azure.net",
+            },
+        ],
+    }
+
+
+def test_mirrored_source_commit_beats_local_configuration(httpx_mock: HTTPXMock) -> None:
+    # Same rule as the measurement: the plane authors its own provenance. A
+    # commit read from local settings describes whatever this deployment was
+    # told, not what that enclave was built from.
+    upstream = "ab" * 48
+    record_json = _aws_upstream(upstream, [upstream])
+    record_json["source_commit"] = "1a2b3c4"
+    httpx_mock.add_response(
+        url=re.compile(r"https://trust\.example/aws\.json\?tr_cache_bucket=\d+"),
+        json=record_json,
+    )
+    settings = Settings(
+        environment="test",
+        trust_aws_release_url="https://trust.example/aws.json",
+        trust_aws_source_commit="9999999",  # stale local config, deliberately different
+    )
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        record = client.get("/trust/aws-release.json").json()
+
+    assert record["source_commit"] == "1a2b3c4"
+
+
+def test_a_source_commit_that_is_not_an_object_id_does_not_pass_the_mirror(
+    httpx_mock: HTTPXMock,
+) -> None:
+    # Republishing "main" or "latest" would be publishing a provenance claim
+    # that resolves to something different tomorrow. Refuse it and fall back,
+    # exactly as a malformed measurement is refused.
+    upstream = "ab" * 48
+    record_json = _aws_upstream(upstream, [upstream])
+    record_json["source_commit"] = "main"
+    httpx_mock.add_response(
+        url=re.compile(r"https://trust\.example/aws\.json\?tr_cache_bucket=\d+"),
+        json=record_json,
+    )
+    settings = Settings(
+        environment="test",
+        trust_aws_release_url="https://trust.example/aws.json",
+        trust_aws_source_commit="9999999",
+    )
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        record = client.get("/trust/aws-release.json").json()
+
+    assert record["source_commit"] == "9999999"
+
+
+def test_missing_upstream_source_commit_reports_not_configured_rather_than_a_guess(
+    httpx_mock: HTTPXMock,
+) -> None:
+    # This is the state the live AWS and Azure records are in today: a true
+    # measurement with no provenance. It must read as "we do not know", because
+    # scripts/check_format_ordering.py refuses to deploy on exactly that string
+    # and a plausible-looking guess would defeat the refusal.
+    upstream = "ab" * 48
+    httpx_mock.add_response(
+        url=re.compile(r"https://trust\.example/aws\.json\?tr_cache_bucket=\d+"),
+        json=_aws_upstream(upstream, [upstream]),
+    )
+    settings = Settings(environment="test", trust_aws_release_url="https://trust.example/aws.json")
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        record = client.get("/trust/aws-release.json").json()
+
+    assert record["pcr0"] == upstream
+    assert record["source_commit"] == "not-configured"
+
+
+def test_every_azure_region_survives_the_mirror_with_its_own_endpoint(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """The mirror must publish WHERE to check each hostdata, not just the set.
+
+    accepted_hostdata alone tells a verifier which values are legitimate and
+    nothing about which endpoint attests which. With the array dropped, a reader
+    of trustedrouter.com had no way to learn that a second Azure region exists,
+    let alone reach it — and a deploy gate enumerating regions from this record
+    checked UAE North twice as often as it checked Southeast Asia, which is to
+    say never.
+    """
+    uaen, sea = "44" * 32, "26" * 32
+    httpx_mock.add_response(
+        url=re.compile(r"https://trust\.example/azure\.json\?tr_cache_bucket=\d+"),
+        json=_azure_upstream_with_regions(uaen, sea, "1a2b3c4"),
+    )
+    settings = Settings(
+        environment="test", trust_azure_release_url="https://trust.example/azure.json"
+    )
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        record = client.get("/trust/azure-release.json").json()
+
+    assert [region["attestation_url"] for region in record["regions"]] == [
+        "https://api-azure.trustedrouter.com/attestation",
+        "https://api-azure-sea.trustedrouter.com/attestation",
+    ]
+    assert [region["hostdata"] for region in record["regions"]] == [uaen, sea]
+    assert record["regions"][0]["compliance_status"] == "azure-compliant-uvm"
+    assert record["source_commit"] == "1a2b3c4"
+
+
+def test_a_region_attesting_outside_the_accepted_set_is_refused(httpx_mock: HTTPXMock) -> None:
+    # A region entry naming a hostdata the record does not accept is
+    # self-contradictory in the same way a pcr0 outside its own accepted set is:
+    # a verifier routed there would reject an enclave this record vouches for.
+    # Refuse the whole record rather than republish half of it.
+    uaen, sea = "44" * 32, "26" * 32
+    upstream = _azure_upstream_with_regions(uaen, sea, "1a2b3c4")
+    upstream["accepted_hostdata"] = [uaen]
+    httpx_mock.add_response(
+        url=re.compile(r"https://trust\.example/azure\.json\?tr_cache_bucket=\d+"),
+        json=upstream,
+    )
+    configured = "99" * 32
+    settings = Settings(
+        environment="test",
+        trust_azure_release_url="https://trust.example/azure.json",
+        trust_azure_hostdata=configured,
+        trust_azure_attestation_issuers="https://trquilluaen.uaen.attest.azure.net",
+    )
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        record = client.get("/trust/azure-release.json").json()
+
+    assert record["hostdata"] == configured
+    assert "regions" not in record
+
+
+def test_a_record_without_regions_publishes_no_empty_array(httpx_mock: HTTPXMock) -> None:
+    # An empty `regions: []` reads as "we checked and there are none", which is
+    # a stronger claim than "this plane does not publish per-region detail".
+    # GCP and AWS publish no array at all, and the mirror must not invent one.
+    upstream = "ab" * 48
+    httpx_mock.add_response(
+        url=re.compile(r"https://trust\.example/aws\.json\?tr_cache_bucket=\d+"),
+        json=_aws_upstream(upstream, [upstream]),
+    )
+    settings = Settings(environment="test", trust_aws_release_url="https://trust.example/aws.json")
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        record = client.get("/trust/aws-release.json").json()
+
+    assert "regions" not in record

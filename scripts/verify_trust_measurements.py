@@ -77,13 +77,20 @@ def _fetch(url: str, *, verify_tls: bool = True) -> bytes:
         return response.read()
 
 
-def live_aws_pcr0() -> str:
-    """PCR0 from the running Nitro enclave.
+# The three parsers below are split from their fetch wrappers so that
+# scripts/check_format_ordering.py can run them over a per-region attestation
+# without a second implementation of COSE and MAA shape checking. Two copies of
+# a fail-closed parser is one copy that stops failing closed and nobody
+# notices, which is the same class of defect as the two paths that let
+# trust-page/pcr0.txt drift. Import them; do not re-derive them.
+def pcr0_from_nitro_attestation(payload: bytes) -> str:
+    """PCR0 out of a Nitro COSE_Sign1 attestation document.
 
     Fails closed: anything unexpected in the document shape raises rather than
-    returning a value that might silently be the wrong 48 bytes.
+    returning a value that might silently be the wrong 48 bytes. The signature
+    is NOT checked here; see the module docstring.
     """
-    envelope = cbor2.loads(_fetch(AWS_ATTESTATION_URL, verify_tls=False))
+    envelope = cbor2.loads(payload)
     if not isinstance(envelope, list) or len(envelope) != 4:
         raise ValueError("AWS attestation is not a 4-element COSE_Sign1 envelope")
     document = cbor2.loads(envelope[2])
@@ -100,12 +107,17 @@ def live_aws_pcr0() -> str:
     return pcr0.hex()
 
 
-def live_azure_hostdata() -> tuple[str, str]:
-    """(hostdata, MAA issuer) from the running confidential container.
+def live_aws_pcr0() -> str:
+    """PCR0 from the running Nitro enclave."""
+    return pcr0_from_nitro_attestation(_fetch(AWS_ATTESTATION_URL, verify_tls=False))
+
+
+def hostdata_from_maa_token(payload: bytes) -> tuple[str, str]:
+    """(hostdata, MAA issuer) out of a Microsoft Azure Attestation JWT.
 
     The token's signature is not checked here; see the module docstring.
     """
-    token = _fetch(AZURE_ATTESTATION_URL).decode("ascii").strip()
+    token = payload.decode("ascii").strip()
     parts = token.split(".")
     if len(parts) != 3:
         raise ValueError("Azure attestation is not a three-part JWT")
@@ -120,6 +132,11 @@ def live_azure_hostdata() -> tuple[str, str]:
     if not isinstance(issuer, str) or not issuer:
         raise ValueError("Azure attestation has no issuer")
     return hostdata, issuer
+
+
+def live_azure_hostdata() -> tuple[str, str]:
+    """(hostdata, MAA issuer) from the running confidential container."""
+    return hostdata_from_maa_token(_fetch(AZURE_ATTESTATION_URL))
 
 
 # 503 is what the control plane returns for a record it has no measurement for.
@@ -147,9 +164,9 @@ def _published(control_plane: str, path: str) -> dict[str, Any] | None:
         raise ValueError(f"{url} returned a non-JSON body: {exc}") from exc
 
 
-def live_gcp_digest() -> str:
-    """Container image digest from the running Confidential Space workload."""
-    token = _fetch(GCP_ATTESTATION_URL).decode("ascii").strip()
+def image_digest_from_confidential_space_token(payload: bytes) -> str:
+    """Container image digest out of a Confidential Space attestation JWT."""
+    token = payload.decode("ascii").strip()
     parts = token.split(".")
     if len(parts) != 3:
         raise ValueError("GCP attestation is not a three-part JWT")
@@ -161,6 +178,11 @@ def live_gcp_digest() -> str:
     if not isinstance(digest, str) or not digest.startswith("sha256:"):
         raise ValueError("GCP attestation has no container image digest")
     return digest
+
+
+def live_gcp_digest() -> str:
+    """Container image digest from the running Confidential Space workload."""
+    return image_digest_from_confidential_space_token(_fetch(GCP_ATTESTATION_URL))
 
 
 def check_gcp(control_plane: str) -> Result:
