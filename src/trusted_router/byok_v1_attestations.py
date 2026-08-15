@@ -85,12 +85,12 @@ THE NEAR-MISS THIS ENCODES
                            not classify. **Never a pass.**
 
     The literal census is what makes the last two of those reachable. An
-    earlier revision of this module derived both the scan's WHERE clause and
-    the census's WHERE clause from `MIGRATED_KINDS`, and read envelopes only
-    out of the field names in `MIGRATED_SURFACES` — so a renamed entity kind or
-    a renamed body field hid the same rows from both halves and produced a
-    corroborated-looking `empty_witnessed` over live v1 envelopes. The literal
-    search assumes neither.
+    earlier revision of this module restricted both the scan's WHERE clause and
+    the census's WHERE clause to the same migrated kind list, and read
+    envelopes only out of the field names in `MIGRATED_SURFACES` — so a renamed
+    entity kind or a renamed body field hid the same rows from both halves and
+    produced a corroborated-looking `empty_witnessed` over live v1 envelopes.
+    The literal search assumes neither.
 
 SCOPE LIMIT — what a full ledger does NOT establish
     * It does not prove the enclave side is ready. `quill-cloud-proxy` has its
@@ -99,10 +99,41 @@ SCOPE LIMIT — what a full ledger does NOT establish
       credential pointed at some other project's `tr_entities` — one that is
       reachable, non-empty, and holds no v1 envelope — produces a genuine
       `empty_witnessed`. Nothing offline can close that. What is done instead
-      is to record `census_source`, the server's own description of the
-      database it answered from, in the attestation, so the mismatch is
-      visible to a reviewer rather than invisible. Compare it against the
-      cloud the entry claims.
+      is to record `census_source` — which database the census was taken from
+      — in the attestation, so the mismatch is visible to a reviewer rather
+      than invisible. Compare it against the cloud the entry claims.
+
+      Read that field knowing how each adapter obtains it, because they are
+      not equally strong. `PostgresEntityStore` asks the server
+      (`current_database()`, `current_user`, `inet_server_addr()`), so its
+      value is the server's own answer. `SpannerEntityStore` does not: it
+      composes the name client-side out of the `--project`,
+      `--spanner-instance` and `--spanner-database` the CLI was given —
+      `Database.name` is `Instance.name + "/databases/" + database_id` and
+      issues no RPC — so it records the database that was ADDRESSED and would
+      read identically against a local emulator. Its value says so in the
+      string.
+      GCP is the Spanner deployment and the home plane every cloud fails over
+      to, so this is the weaker half exactly where it matters most; treat a
+      GCP `census_source` as a restatement of the operator's arguments, not as
+      evidence, and corroborate it against the run's own environment.
+    * **A row that only mentions the v1 literal blocks the cloud.**
+      `census_v1_literal_rows` counts rows whose body TEXT contains
+      `TR-BYOK-ENVELOPE-AES-256-GCM-V1` — any row, any kind, any field. A
+      captured upstream error string or a stored audit line containing that
+      name is counted, produces `scan_disagrees_with_census`, and keeps the
+      cloud unattestable until someone removes or rewrites the row. This is
+      fail-closed and the outcome message says where to look, but it is a real
+      way for a deployment holding no v1 envelope to be unable to attest. The
+      match is deliberately not narrowed to a JSON-shaped one
+      (`"algorithm":"TR-…"`), because the two backends do not render the same
+      bytes: Spanner stores `body` as a STRING written by
+      `storage_codec.json_body`, `separators=(",", ":")`, so there is no space
+      after the colon; Postgres stores `body` as JSONB
+      (`storage_postgres_schema.sql:4`) and `::text` re-renders it with one. A
+      pattern tuned to either one silently stops matching on the other, and a
+      literal search that stops matching fails OPEN — the one direction this
+      module must never fail in.
     * The census is issued through the same store object as the scan, so it
       shares the table name. It does NOT prove `tr_entities` is where envelopes
       actually live, and it cannot see a surface that no code path here knows
@@ -280,8 +311,10 @@ class Attestation:
     #: found without a kind filter and without assuming a body field name. The
     #: one count in here that is not downstream of `MIGRATED_SURFACES`.
     census_v1_literal_rows: int
-    #: The server's own description of the database that answered. Not proof of
-    #: the right deployment; the thing a reviewer compares against `cloud`.
+    #: Which database the census was taken from: the server's own answer on
+    #: Postgres, the database the CLI was pointed at on Spanner (the string
+    #: says which). Not proof of the right deployment; the thing a reviewer
+    #: compares against `cloud`. See SCOPE LIMIT in the module docstring.
     census_source: str
     operator: str
     note: str = ""
@@ -452,7 +485,7 @@ def ledger_defects(ledger: dict[str, Any]) -> list[str]:
         if not isinstance(entry["census_source"], str) or not entry["census_source"].strip():
             defects.append(
                 f"{cloud}: attestation has no census_source, so nobody can check which "
-                "database answered"
+                "database was read"
             )
     return defects
 

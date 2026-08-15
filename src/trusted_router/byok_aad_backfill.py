@@ -70,19 +70,39 @@ class EntityCensus:
     from "the audit could not have found anything".
 
     `v1_literal_rows` is the one that does not share the scan's assumptions.
-    Both of the above filter on `MIGRATED_KINDS`, and the scan reads envelopes
-    only out of the field names in `MIGRATED_SURFACES` — so a renamed entity
-    kind or a renamed body field hides the same rows from the walk AND from the
-    count, and the disagreement they exist to expose never happens. This one
-    searches whole row bodies for `V1_ALGORITHM_LITERAL` with no kind filter and
-    no field-name assumption, which is why it is the clause `empty_witnessed`
-    actually rests on.
+    The count and the walk restrict to the same two kinds — the count from
+    `MIGRATED_KINDS` on both adapters, the walk from `MIGRATED_KINDS` on
+    Postgres and from those same two names written out as SQL text on Spanner
+    (`SpannerEntityStore.scan`, which predates this check) — and the walk reads
+    envelopes only out of the field names in `MIGRATED_SURFACES`. So a renamed
+    entity kind or a renamed body field hides the same rows from the walk AND
+    from the count, and the disagreement they exist to expose never happens.
+    This one searches whole row bodies for `V1_ALGORITHM_LITERAL` with no kind
+    filter and no field-name assumption, which is why it is the clause
+    `empty_witnessed` actually rests on.
 
-    `source` is whatever the server says it is — instance and database, or
-    database/user/host. It is not a proof of anything. It is recorded so that a
-    reviewer of the ledger can see which database answered and compare it
-    against the cloud the entry claims to speak for, since nothing offline can
-    tell a correct database from a wrong-but-populated one.
+    That breadth is also its one false positive: it counts any row whose body
+    text merely CONTAINS the literal, including a row of a kind nothing here
+    migrates that only mentions it — a captured upstream error string, a stored
+    audit line. Such a row makes the cloud report `scan_disagrees_with_census`
+    until it is dealt with, even though no v1 envelope exists. That is
+    fail-closed and the message says where to look, but it is a real way for a
+    healthy deployment to be unattestable, and it is named as a scope limit in
+    `byok_v1_attestations` rather than narrowed: narrowing the pattern to a
+    JSON-shaped match would tie it to the exact serialisation each adapter
+    happens to store, and a pattern that stops matching fails OPEN.
+
+    `source` names the database the census was taken from, and the two adapters
+    know it to different depths. Postgres asks the server — `current_database()`,
+    `current_user`, `inet_server_addr()` — so its value is the server's own
+    answer. Spanner composes `projects/…/instances/…/databases/…` client-side
+    from the arguments the CLI was given: `Database.name` is string
+    concatenation in `google.cloud.spanner` and issues no RPC, so that value
+    records what was ASKED FOR, not what answered, and reads identically against
+    an emulator. Neither is a proof of anything. Both are recorded so a reviewer
+    of the ledger can compare the database against the cloud the entry claims to
+    speak for, since nothing offline can tell a correct database from a
+    wrong-but-populated one.
     """
 
     migrated_kind_counts: dict[str, int]
@@ -399,6 +419,13 @@ class SpannerEntityStore:
         renamed entity kind or a renamed body field cannot hide from. This runs
         once, before an irreversible step, on a snapshot read; it is not on any
         request path. On a large table expect it to take a while and let it.
+
+        Unlike the Postgres adapter, `source` here is NOT asked of the server.
+        `Database.name` is assembled locally from `--project`,
+        `--spanner-instance` and `--spanner-database`, so it names the database
+        that was addressed and would read the same against an emulator. The
+        returned string says so out loud, because the reviewer comparing the
+        ledger against the cloud it claims is the person that distinction is for.
         """
         counts: dict[str, int] = {}
         sampled: set[str] = set()
@@ -417,18 +444,30 @@ class SpannerEntityStore:
             )
             for (kind,) in sample:
                 sampled.add(kind)
-            literal_rows = 0
+            # Not initialised to zero: an aggregate that returned no row at all
+            # must raise, exactly as the Postgres adapter does. "The server told
+            # me nothing" must never become "there is nothing", and zero is the
+            # passing value. A GROUP BY or a LIMIT peek may legitimately be
+            # empty — those fail closed on their own, via `reachable` and via
+            # the undercount check — but a COUNT(*) returning no row is broken.
+            literal_rows: int | None = None
             for (count,) in snapshot.execute_sql(
                 "SELECT COUNT(*) FROM tr_entities WHERE STRPOS(body, @literal) > 0",
                 params={"literal": V1_ALGORITHM_LITERAL},
                 param_types={"literal": self._param_types.STRING},
             ):
                 literal_rows = int(count)
+            if literal_rows is None:
+                raise ValueError("the v1 literal count returned no row")
         return EntityCensus(
             migrated_kind_counts=counts,
             sampled_kinds=tuple(sorted(sampled)),
             v1_literal_rows=literal_rows,
-            source=f"spanner:{self._database.name}",
+            # Spelled out because it is not what it looks like: `Database.name`
+            # is built by concatenating the project, instance and database the
+            # CLI was told to use, with no RPC. This says which database was
+            # addressed, not which one answered.
+            source=f"spanner:{self._database.name} (from CLI arguments, not asked of the server)",
         )
 
     def compare_and_swap(self, row: EntityRow, new_body: dict[str, Any]) -> bool:
@@ -656,17 +695,30 @@ def check_no_v1_envelopes(
           same kind list.
         * A renamed entity kind, or an envelope moved to a differently named
           body field — caught by `census.v1_literal_rows`, and by nothing else
-          here. The per-kind counts cannot catch either: both halves derive
-          their predicate from `MIGRATED_KINDS`, so a renamed kind is renamed
-          in both, and neither reads a field name the surface map does not
-          list. An earlier revision of this docstring claimed the per-kind
-          census covered a renamed kind. It did not, and a live v1 envelope
-          under a renamed field passed as `empty_witnessed`.
+          here. The per-kind counts cannot catch either: the count and the walk
+          restrict to the same two kind names, so a renamed kind is hidden from
+          both, and neither reads a field name the surface map does not list.
+          (The count takes those names from `MIGRATED_KINDS` on both adapters;
+          the walk takes them from `MIGRATED_KINDS` on Postgres and from
+          hardcoded SQL text on Spanner. Identical today, and a divergence
+          would show up as an undercount, which is a refusal.) An earlier
+          revision of this docstring claimed the per-kind census covered a
+          renamed kind. It did not, and a live v1 envelope under a renamed
+          field passed as `empty_witnessed`.
         * A credential pointed at a wrong-but-populated database — NOT caught,
           and not catchable from here. Such a database is reachable, non-empty,
           and holds no v1 envelope, which is indistinguishable from success.
           `census.source` is recorded so the mismatch is at least visible in
-          the ledger afterwards.
+          the ledger afterwards — on Postgres that string is the server's own
+          answer, on Spanner it is the database the CLI was pointed at, and it
+          says which it is.
+
+    The literal search is a text search, so it also counts rows that only
+    MENTION `V1_ALGORITHM_LITERAL` — a stored upstream error message, an audit
+    line — and one of those blocks the cloud with `scan_disagrees_with_census`
+    until that row is removed or rewritten. Fail-closed, and a real reason a
+    deployment holding no v1 envelope can be unattestable. See the scope limits
+    in `byok_v1_attestations` for why it is not narrowed.
 
     The census is taken FIRST, on purpose. Taken last, a BYOK key registered
     while the scan was running would be counted by the census and missed by the
@@ -710,13 +762,15 @@ def check_no_v1_envelopes(
             outcome=OUTCOME_SCAN_DISAGREES,
             detail=(
                 f"{census.v1_literal_rows} rows in the table carry the v1 algorithm literal "
-                f"{V1_ALGORITHM_LITERAL!r} but the audit classified only {stats.rows_with_v1} "
-                "rows as v1. The literal search uses no kind filter and no field-name map, so "
-                "the walk is blind to at least "
-                f"{census.v1_literal_rows - stats.rows_with_v1} rows holding a v1 envelope — a "
-                "renamed entity kind, an envelope under a body field this repository does not "
-                "know, or a surface missing from MIGRATED_SURFACES. Find those rows before "
-                "believing anything else this reported."
+                f"{V1_ALGORITHM_LITERAL!r} somewhere in their body, but the audit classified "
+                f"only {stats.rows_with_v1} rows as v1. The literal search uses no kind filter "
+                "and no field-name map, so at least "
+                f"{census.v1_literal_rows - stats.rows_with_v1} rows carry that string where the "
+                "walk cannot see it: a renamed entity kind, an envelope under a body field this "
+                "repository does not know, or a surface missing from MIGRATED_SURFACES. It can "
+                "also be free text that merely mentions the literal — a stored provider error, "
+                "an audit line — which is not a v1 envelope but is not distinguishable from "
+                "here. Find those rows before believing anything else this reported."
             ),
             stats=stats,
             census=census,

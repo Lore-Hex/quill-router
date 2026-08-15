@@ -53,8 +53,20 @@ SCOPE LIMIT — what these tests do NOT establish
       at some other project's `tr_entities`: it is reachable, non-empty, and
       holds no v1 envelope, which is exactly what success looks like. Nothing
       offline distinguishes them. What the run does instead is record
-      `census_source` — the server's own answer to "which database am I?" — so
-      a reviewer can compare it against the cloud the entry claims.
+      `census_source` — which database the census was taken from — so a
+      reviewer can compare it against the cloud the entry claims. On Postgres
+      that is the server's own answer to "which database am I?"; on Spanner it
+      is only the database the CLI was pointed at, composed client-side with no
+      RPC, and GCP is the Spanner deployment. The value says which it is. These
+      tests use a Postgres-shaped `SOURCE` string and therefore prove nothing
+      about either adapter's value; see `byok_v1_attestations`, SCOPE LIMIT.
+    * **A row that only mentions the v1 literal makes a cloud unattestable.**
+      The literal census is a text search over whole bodies, so a stored
+      upstream error string containing `TR-BYOK-ENVELOPE-AES-256-GCM-V1` is
+      counted like an envelope and blocks the cloud until it is dealt with.
+      Fail-closed, deliberate, and covered by
+      `test_a_row_that_only_mentions_the_v1_literal_blocks_the_cloud` below,
+      which exists so that the cost is visible rather than discovered at 2am.
     * A passing precondition is about one moment on one cloud's database. It
       says nothing about the enclave side (`quill-cloud-proxy` has its own v1
       branch), and nothing about a surface no code path in this repo knows
@@ -129,9 +141,14 @@ class FakeCloudDatabase:
 
     The important fidelity here is what the two halves SHARE, because that is
     where an earlier version of these tests lied. Both `scan` and the per-kind
-    census filter on `MIGRATED_KINDS`, exactly as `SpannerEntityStore` and
-    `PostgresEntityStore` do, and the walk reads envelopes only out of the
-    field names in `MIGRATED_SURFACES`. So a test cannot make those two
+    census restrict to the same kind list, as both real adapters do — the
+    per-kind census from `MIGRATED_KINDS` on each, the scan from
+    `MIGRATED_KINDS` on `PostgresEntityStore` and from the same two names
+    hardcoded in SQL text on `SpannerEntityStore` — and the walk reads
+    envelopes only out of the field names in `MIGRATED_SURFACES`. This fixture
+    models the shared list, which is the property that matters; it does not
+    model Spanner's duplicate copy of it, whose only failure mode is an
+    undercount, which is a refusal. So a test cannot make those two
     disagree by renaming a kind — renaming it renames it in both — and any
     fixture that pretends otherwise is testing a decoupling production cannot
     exhibit. `scan_returns_nothing` is kept for the one class where they really
@@ -328,7 +345,7 @@ def test_a_broken_cursor_is_caught_by_the_per_kind_census() -> None:
     The scan returns nothing — a bad cursor, an ordering bug, a page boundary
     mishandled — while the rows are sitting right there. Note what this does
     NOT cover: a renamed kind in the WHERE clause cannot be modelled this way,
-    because both queries build that clause from `MIGRATED_KINDS` and a rename
+    because both queries restrict to the same migrated kind list and a rename
     renames it in both. See the next two tests for the check that does cover it.
     """
     store = FakeCloudDatabase(
@@ -390,9 +407,9 @@ def test_a_renamed_entity_kind_is_not_an_empty_deployment() -> None:
     """The other half of the same blindness, and the one the docstrings claimed.
 
     The rows are under `byok_provider_config` rather than `byok`. Both the walk
-    and the per-kind census filter on `MIGRATED_KINDS`, so BOTH miss them and
-    corroborate each other's silence — the exact shape a census is supposed to
-    break. It does not break it; the literal search does.
+    and the per-kind census are restricted to the migrated kinds, so BOTH miss
+    them and corroborate each other's silence — the exact shape a census is
+    supposed to break. It does not break it; the literal search does.
     """
     store = FakeCloudDatabase(
         {
@@ -408,6 +425,43 @@ def test_a_renamed_entity_kind_is_not_an_empty_deployment() -> None:
     assert result.outcome == OUTCOME_SCAN_DISAGREES
     assert not result.passed
     assert "1 rows in the table carry the v1 algorithm literal" in result.detail
+
+
+def test_a_row_that_only_mentions_the_v1_literal_blocks_the_cloud() -> None:
+    """The price of the literal search, paid here so nobody pays it at 2am.
+
+    `STRPOS(body, …)` / `body::text LIKE` know nothing about envelopes. A
+    generation row that captured an upstream error naming the v1 algorithm is
+    counted exactly like a v1 envelope, and this cloud cannot attest until that
+    row is removed or rewritten — even though every envelope it holds is v2.
+
+    This is the deliberate direction. A search narrowed to a JSON-shaped match
+    would have to assume a serialisation, and the two adapters store different
+    ones; a literal search that stops matching fails OPEN, which is how a
+    customer's key gets deleted. So: fail closed, say where to look, and write
+    the cost down. If someone later narrows the match, this test is what has to
+    change, and changing it is the moment to re-argue the direction.
+    """
+    store = FakeCloudDatabase(
+        {
+            ("byok", "a"): _byok_row(V2),
+            ("generation", "g"): {
+                "model": "gpt",
+                "error": f"unsupported algorithm {V1_ALGORITHM_LITERAL}",
+            },
+        }
+    )
+
+    result = check_no_v1_envelopes(store, cloud="gcp", reporter=lambda _m: None)
+
+    assert result.stats.v1_envelopes == 0, "no v1 envelope exists on this deployment"
+    assert result.census.v1_literal_rows == 1
+    assert result.outcome == OUTCOME_SCAN_DISAGREES
+    assert not result.passed
+    assert "free text that merely mentions the literal" in result.detail
+
+    with pytest.raises(ValueError, match="does not attest zero v1"):
+        attestation_for(result, backend="postgres", operator="you@lorehex.co")
 
 
 def test_a_wrong_but_populated_database_still_passes_and_says_which_one_it_read() -> None:

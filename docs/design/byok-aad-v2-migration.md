@@ -218,9 +218,9 @@ Three consequences:
    So an AWS or Azure enclave whose own control plane is undialable is served
    by the **home (GCP) plane**, out of the **GCP database**. Envelopes do cross
    clouds. What actually made the GCP step-2 merge survivable is the sentence
-   further down this section: `internal/byokcache` carries no `//go:build` tag,
-   so v2 *read* support was already compiled into the `cloud_aws` and
-   `cloud_azure` variants — not isolation.
+   further down this section: `byokcache/cache.go`, which holds the algorithm
+   dispatch, carries no `//go:build` tag, so v2 *read* support was already
+   compiled into the `cloud_aws` and `cloud_azure` variants — not isolation.
 
 2. **Therefore step 4 is a fleet-wide decision, not a per-cloud one.** If one
    cloud drops v1 read support while any other cloud's database still holds a
@@ -250,9 +250,15 @@ AWS or Azure:
   was verified against `trust.trustedrouter.com`
 - only then let that cloud's control plane take the step-2 build
 
-The enclave code needs no per-cloud change: `internal/byokcache` carries no
-`//go:build` tag, so v2 read support is already compiled into the `cloud_aws`
-and `cloud_azure` variants and CI exercises all of them. What is missing is a
+The enclave code needs no per-cloud change: the file carrying the v1/v2
+algorithm dispatch, `internal/byokcache/cache.go` (`Algorithm` at :26,
+`AlgorithmV2` at :32, the `switch` at :346-348), has no `//go:build` tag, so v2
+read support is already compiled into the `cloud_aws` and `cloud_azure`
+variants and CI exercises all of them. The *package* is not tag-free — it also
+holds `kms_http_aws.go` (`cloud_aws`), `kms_http_gcp.go` (`!cloud_aws`) and
+`confidential_space_token{,_other}.go` (`cloud_gcp` / `!cloud_gcp`) — but none
+of those touch the envelope format, so the conclusion holds and the earlier
+package-level phrasing of it did not. What is missing is a
 **deploy and rollout** of a build containing it. As of writing,
 `quill-cloud-proxy` has `deploy-enclave-gcp.yml` and a `workflow_dispatch`-only
 `deploy.yml` ("Deploy AWS legacy"); there is no Azure deploy workflow in that
@@ -348,9 +354,11 @@ recorded:
   the literal `TR-BYOK-ENVELOPE-AES-256-GCM-V1` over whole row bodies — no kind
   filter, no assumption about which field holds an envelope — found nothing.
   That last clause is the one carrying the weight: the per-kind census and the
-  walk both derive their predicate from `MIGRATED_KINDS`, so a renamed entity
-  kind or a renamed body field hides rows from both and they corroborate each
-  other's silence. The literal search is a full table scan and is meant to be.
+  walk restrict to the same two kinds (`MIGRATED_KINDS` on both counts and on
+  the Postgres walk; the same two names hardcoded in SQL text on the Spanner
+  walk), so a renamed entity kind or a renamed body field hides rows from both
+  and they corroborate each other's silence. The literal search is a full table
+  scan and is meant to be.
 
 An empty result with nothing behind it is `zero_scan`, a loud refusal. A scan
 that misses rows either census question can see is `scan_disagrees_with_census`.
@@ -358,9 +366,26 @@ that misses rows either census question can see is `scan_disagrees_with_census`.
 **What it cannot tell you:** whether the credential pointed at the right
 database. A wrong-but-populated `tr_entities` is reachable, non-empty and holds
 no v1 envelope, which is what success looks like. The run records
-`census_source` — the server's own answer to "which database am I?" — so check
-it against the cloud the entry claims. See the module docstrings in
-`src/trusted_router/byok_v1_attestations.py` and
+`census_source` — which database the census was taken from — so check it
+against the cloud the entry claims. **Read that field knowing which adapter
+produced it.** On `--backend postgres` it is the server's own answer
+(`current_database()`, `current_user`, `inet_server_addr()`). On `--backend
+spanner` — i.e. the GCP invocation in the code block above — it is not: the
+client builds `projects/…/instances/…/databases/…` by concatenating the
+`--project`, `--spanner-instance` and `--spanner-database` you passed, with no
+RPC, so it echoes your own arguments back and would look the same against a
+local emulator. The recorded string says so. For GCP, corroborate the database
+some other way before treating that line as evidence.
+
+**One false positive worth knowing about:** the literal search is a text search
+over whole row bodies, so any row that merely *mentions*
+`TR-BYOK-ENVELOPE-AES-256-GCM-V1` — a captured provider error, a stored audit
+line — counts and blocks that cloud with `scan_disagrees_with_census` until it
+is removed or rewritten. That is on purpose: narrowing the pattern to a
+JSON-shaped match would tie it to each adapter's serialisation, and a literal
+search that stops matching fails open.
+
+See the module docstrings in `src/trusted_router/byok_v1_attestations.py` and
 `tests/test_byok_v1_precondition.py` for the rest of the scope limits.
 
 Then, and only then:
