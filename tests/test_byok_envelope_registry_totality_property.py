@@ -210,11 +210,17 @@ sealing call sites. It does NOT establish:
     a function, or the per-file `<module>` scope that owns class bodies and
     module-level lambdas — mentions an envelope-bearing model class, an envelope
     field name, a sealing function, or an id helper reached from one of those.
-    That is enough for the three write-only-kind attacks review landed: a kind
+    That is enough for the three write-only-kind evasions review found: a kind
     hoisted to a module constant, the same write moved to storage_postgres.py
     (which the id helper `byok_id` pulls in), and a write inside a module-level
     `lambda` in a dispatch dict. All three were re-run against this version and
-    fail with the site named. It is NOT enough for a scope that persists an
+    fail with the site named. Three is the count for THIS bullet only: four
+    rounds of review found six ways past earlier versions of this module
+    altogether, and the other three were about the envelope-field derivation
+    rather than the write-only-kind scope. All six are enumerated in the
+    docstring of
+    `test_every_kind_an_envelope_handling_function_names_is_registered_or_declared`.
+    It is NOT enough for a scope that persists an
     envelope-bearing object while mentioning none of that vocabulary: taking the
     object as `Any` and building the row id inline still passes, verified by
     construction. That residue is a name scan's floor, not an oversight; closing
