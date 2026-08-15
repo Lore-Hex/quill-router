@@ -91,10 +91,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 96,
+    "model_count": 95,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 186,
+    "route_count": 184,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -154,10 +154,10 @@
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 12,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 20,
+    "route_count": 22,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },
@@ -316,10 +316,10 @@
   },
   "pearl": {
     "card_version": 2,
-    "model_count": 5,
+    "model_count": 3,
     "name": "Pearl Research Labs",
     "privacy": "Policy documented",
-    "route_count": 5,
+    "route_count": 3,
     "route_mode": "Prepaid",
     "slug": "pearl"
   },

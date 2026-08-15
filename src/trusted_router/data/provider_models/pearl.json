@@ -41,11 +41,12 @@
         "seed",
         "max_tokens"
       ],
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 110000,
       "output_token_price_per_m": 200000,
       "cached_input_token_price_per_m": 20000,
-      "missing_since": "2026-08-15"
+      "missing_since": "2026-08-15",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "DeepSeek: DeepSeek V4 Flash 0731",
@@ -85,11 +86,12 @@
         "seed",
         "max_tokens"
       ],
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 280000,
       "cached_input_token_price_per_m": 28000,
-      "missing_since": "2026-08-15"
+      "missing_since": "2026-08-15",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "DeepSeek: V4 Pro",
@@ -220,6 +222,6 @@
       "cached_input_token_price_per_m": 200000
     }
   ],
-  "generated_at": "2026-08-15T17:16:20Z",
+  "generated_at": "2026-08-15T20:49:51Z",
   "model_count": 5
 }
