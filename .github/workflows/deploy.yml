@@ -145,6 +145,25 @@ jobs:
         # exits 0. It does not stop this deploy, and until it is flipped this
         # job's green tick means "the gate ran", not "the ordering holds".
         #
+        # "Exits 0" has no exceptions. main() returns 0 in report-only on every
+        # path: every cloud blocked, the write side underivable, the script
+        # raising on its own. That is deliberate and it was not true when this
+        # job first landed — an underivable write side exited 1 in both modes,
+        # and an underivable write side is reachable by ordinary refactoring
+        # (any assignment to an `algorithm` attribute under src/trusted_router,
+        # any signature change to a probed write entry point), so an unrelated
+        # change could have hard-red this non-skippable dependency and stopped
+        # every control-plane deploy on all three clouds. A mode that can stop
+        # a deploy is not report-only.
+        #
+        # WHAT THAT COSTS, so nobody has to find out: a build whose written
+        # formats cannot be derived now deploys, and this job stays green while
+        # printing that it checked nothing. The check on that is the CI-green
+        # gate above, which runs tests/test_check_format_ordering.py against
+        # the real tree — and that gate IS skippable by hotfix. A hotfix that
+        # skips CI and lands an underivable write side deploys unmeasured.
+        # Flipping DEFAULT_MODE is what closes it.
+        #
         # Why it ships that way. The evidence the gate needs is a generated
         # enclave-go/internal/byokcache/accepted_formats.json at the commit
         # each release record names, and no cloud has ever published one —
@@ -162,15 +181,6 @@ jobs:
         # scripts/check_format_ordering.py. That is one line and it changes
         # this job and both hand-run deploy scripts at once. Nothing else here
         # needs editing.
-        #
-        # --cloud gcp, deliberately. This workflow deploys Cloud Run only
-        # (us-central1, europe-west4, us-east4, southamerica-east1), and each
-        # cloud is a standalone TrustedRouter with its OWN database
-        # (docs/storage-portability/multi-cloud-separation.md), so a v2
-        # envelope written here never reaches an AWS or Azure enclave.
-        # Blocking a GCP rollout on Azure's enclave would be a gate that fires
-        # for reasons the operator cannot act on, which is the fastest way to
-        # get a gate deleted.
         #
         # ONCE ENFORCING, not skippable by hotfix, unlike the CI-green gate
         # above. That asymmetry is the point: a hotfix that ships a broken
@@ -403,10 +413,19 @@ jobs:
       # format the enclave cannot read is only harmful once a revision serving
       # traffic writes one. While the gate is REPORT-ONLY this dependency only
       # means the deploy waits for the job, not that a bad ordering stops it —
-      # the job exits 0 either way. It becomes a real block when
-      # DEFAULT_MODE in scripts/check_format_ordering.py is flipped to
-      # ENFORCING; the wiring is already correct for that day, which is why it
-      # is here now.
+      # the job exits 0 either way, including when it could not work out what
+      # this build writes and including when the script itself raised. That is
+      # a property of main(), pinned by
+      # tests/test_check_format_ordering.py::test_report_only_has_no_non_zero_exit_path,
+      # not an accident of which failures happen to be caught. It becomes a
+      # real block when DEFAULT_MODE in scripts/check_format_ordering.py is
+      # flipped to ENFORCING; the wiring is already correct for that day, which
+      # is why it is here now.
+      #
+      # There is no `if:` on this dependency and there should not be: on the
+      # day of the flip, an `if:` is exactly what would let a red gate through.
+      # What makes that safe to wire up TODAY is the paragraph above — that
+      # this job cannot fail while the default holds.
       - gate-on-envelope-ordering
     if: ${{ needs.confirm-current-main.outputs.proceed == 'true' }}
     runs-on: ubuntu-latest

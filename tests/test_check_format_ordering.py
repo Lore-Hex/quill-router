@@ -64,6 +64,26 @@ including that three named pass-shaped strings are absent from the report-only
 output. That is a check on three specific phrasings, not a proof that no
 sentence anywhere could ever be misread as a pass.
 
+"Exits 0" is UNCONDITIONAL, and that took two attempts. The first version kept
+one refusal fatal in both modes — a write side it could not derive — which made
+a mode advertised in four files as stopping nothing able to stop every
+control-plane deploy on all three clouds, reachable by any assignment to an
+`algorithm` attribute under src/trusted_router or any signature change to a
+probed entry point. `test_an_underivable_write_side_stops_nothing_in_report_only`
+and `test_an_unrelated_algorithm_assignment_cannot_stop_a_default_mode_deploy`
+are that regression, and `test_report_only_has_no_non_zero_exit_path` pins the
+general form over three unrelated blow-ups. What none of them cover, because
+`main()` catches `Exception` and not `BaseException`: `KeyboardInterrupt`,
+`SystemExit`, and an argparse usage error, which exits 2 before there is a mode
+to honour.
+
+What report-only therefore does NOT do, and no test here pretends otherwise: it
+does not stop a build whose written formats are underivable. That build deploys
+unmeasured. The check on that condition is
+`test_the_real_tree_writes_exactly_v2_by_both_derivations` in CI, plus the
+CI-green gate in deploy.yml that depends on this suite — and that gate is
+skippable by hotfix, so a hotfix which skips CI closes nothing.
+
 THE REAL DEFECT THIS COMES FROM
 -------------------------------
 docs/design/byok-aad-v2-migration.md §4.0 warns, in its own words, that the
@@ -1293,6 +1313,41 @@ def test_the_probe_refuses_when_its_recorder_is_blind() -> None:
         )
 
 
+def test_the_probe_reads_the_value_the_entry_point_returned() -> None:
+    """The one cover for an entry point that builds a LOOK-ALIKE, not the patched class.
+
+    `probe_write_entry_points`' own docstring says so in as many words: the
+    control proves the recorder fires for constructions of the class this
+    function patched, and it does NOT prove an entry point builds that class —
+    "what covers that is reading the value each entry point returns as well".
+
+    That read was decorative when it landed. Deleting `returned_algorithm` from
+    the probe left the whole file green, so the sentence above was an
+    unenforced claim about the code. This is the world it describes: an entry
+    point that constructs something else entirely, so `constructed` is empty
+    and the returned object is the only witness. Without the return read this
+    raises "produced no envelope"; with it, V3.
+    """
+
+    class LookAlikeEnvelope:
+        def __init__(self, algorithm: str) -> None:
+            self.algorithm = algorithm
+
+    def builds_a_look_alike(settings: Any) -> object:  # noqa: ARG001 - matches the probe signature
+        return LookAlikeEnvelope(algorithm=V3)
+
+    observed = probe_write_entry_points({"fabricated:look-alike": builds_a_look_alike})
+
+    assert observed.formats == frozenset({V3})
+    assert observed.by_entry_point == (("fabricated:look-alike", (V3,)),)
+
+    # And it is not a way to smuggle the control value past the sentinel check.
+    with pytest.raises(ValueError, match="produced the probe's own control value"):
+        probe_write_entry_points(
+            {"fabricated:look-alike": lambda settings: LookAlikeEnvelope(PROBE_CONTROL_FORMAT)}  # noqa: ARG005
+        )
+
+
 def test_a_probe_that_cannot_call_its_entry_point_refuses() -> None:
     # A probe that raises is not evidence that the path writes nothing; it is a
     # path whose written format was not measured, and deleting the probe to
@@ -1515,12 +1570,31 @@ def test_enforcing_blocks_the_same_run(
     assert "REPORT-ONLY" not in out
 
 
-def test_the_default_mode_is_the_one_documented_as_the_flip() -> None:
-    # The module docstring tells the next engineer that flipping this gate is a
-    # one-line change to DEFAULT_MODE. That sentence is only true while
-    # DEFAULT_MODE is what --mode falls back to.
+def test_the_default_mode_is_the_one_documented_as_the_flip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one-line flip is `DEFAULT_MODE = ENFORCING`, and this is what pins it.
+
+    Four files tell the next engineer that editing DEFAULT_MODE arms deploy.yml
+    and both hand-run scripts at once. That is true only while --mode actually
+    falls back to DEFAULT_MODE at call time. An earlier version of this test
+    asserted the constant's value and claimed to check the fallback; it did not,
+    and replacing `default=DEFAULT_MODE` in main() with a literal `REPORT_ONLY`
+    left the whole file green — the flip was pinned by nothing.
+
+    So drive the real main() with NO --mode over a world that blocks, once per
+    mode, by moving the constant. Read at call time it blocks; read at import
+    time or hardcoded, the enforcing run returns 0 and this fails.
+    """
     assert gate.DEFAULT_MODE == REPORT_ONLY
-    assert gate.main.__module__ == "scripts.check_format_ordering"
+    assert drive_main(monkeypatch, ["--cloud", "aws"]) == 0
+
+    monkeypatch.setattr(gate, "DEFAULT_MODE", ENFORCING)
+
+    assert drive_main(monkeypatch, ["--cloud", "aws"]) == 1, (
+        "main() no longer reads DEFAULT_MODE when --mode is absent, so the "
+        "one-line flip documented in deploy.yml and both deploy scripts is a lie"
+    )
 
 
 def test_a_clear_run_says_so_in_both_modes(
@@ -1541,20 +1615,98 @@ def test_a_clear_run_says_so_in_both_modes(
     assert "REPORT-ONLY (nothing would have blocked)" in report_only
 
 
-def test_an_underivable_write_side_refuses_in_report_only_too(
-    monkeypatch: pytest.MonkeyPatch,
+def test_an_underivable_write_side_stops_nothing_in_report_only(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Report-only is about the ENCLAVE evidence, not about this build.
+    """The regression this file exists to prevent from coming back.
 
-    Not knowing what this build writes is a defect in this repository, which
-    whoever is deploying can fix here and now. It exits 1 in both modes, and
-    that asymmetry is deliberate rather than an oversight.
+    This condition used to exit 1 in BOTH modes, on the reasoning that not
+    knowing what a build writes is a defect in THIS repository rather than
+    missing evidence from another one. Right about the defect, wrong about the
+    mode: `scan_write_surface` refuses on any assignment to an `algorithm`
+    attribute anywhere under src/trusted_router, and `probe_write_entry_points`
+    refuses when a probed entry point's signature changes. Both are ordinary
+    refactors, and this program is a non-skippable `needs:` of deploy plus a
+    hard gate in both hand-run cloud scripts — so an unrelated change could
+    stop every control-plane deploy on all three clouds, under a message about
+    enclave evidence that named none of the cause.
+
+    It still exits 1 under --mode enforcing. What report-only owes the operator
+    is a printout as loud as a block, and a zero.
     """
     monkeypatch.setattr(
         gate, "read_write_surface", lambda: {"src/trusted_router/x.py": "def f(:\n"}
     )
 
-    assert drive_main(monkeypatch, ["--cloud", "gcp", "--mode", REPORT_ONLY]) == 1
+    assert drive_main(monkeypatch, ["--cloud", "gcp", "--mode", REPORT_ONLY]) == 0
+    report_only = capsys.readouterr().err
+    assert drive_main(monkeypatch, ["--cloud", "gcp", "--mode", ENFORCING]) == 1
+    enforcing = capsys.readouterr().err
+
+    assert "REPORT-ONLY: THE GATE DID NOT RUN" in report_only
+    assert "cannot determine what this build writes" in report_only
+    assert "NOTHING WAS VERIFIED" in report_only and "NOTHING WAS STOPPED" in report_only
+    assert "STOPPED, and not by a cloud" in enforcing
+    # It must not read as a clear run in either mode.
+    for reads_like_a_pass in ("region(s) checked for", "every format this build writes"):
+        assert reads_like_a_pass not in report_only, reads_like_a_pass
+
+
+def test_an_unrelated_algorithm_assignment_cannot_stop_a_default_mode_deploy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The concrete outage, run against the real scan with no --mode at all.
+
+    `_mutates_an_algorithm_attribute` is deliberately over-broad: it fires on
+    `.algorithm` on ANY object across ~240 modules, because the scan cannot
+    tell an envelope from a JWT signing header. That breadth is the right
+    trade only while the refusal it produces cannot stop a deploy in the
+    shipped mode. So: a plausible unrelated module, the REAL
+    scan_write_surface, and the default mode.
+    """
+    surface = dict(read_write_surface())
+    surface["src/trusted_router/jwt_helper.py"] = (
+        'class SigningHeader:\n    def __init__(self) -> None:\n        self.algorithm = "RS256"\n'
+    )
+    monkeypatch.setattr(gate, "read_write_surface", lambda: surface)
+
+    # Refusing is correct; the scan genuinely cannot read this. What must not
+    # follow from it is a stopped deploy.
+    with pytest.raises(ValueError, match="assigns an `algorithm` attribute"):
+        scan_write_surface(surface)
+
+    assert drive_main(monkeypatch, ["--cloud", "gcp"]) == 0
+    assert drive_main(monkeypatch, ["--cloud", "gcp", "--mode", ENFORCING]) == 1
+
+
+def test_report_only_has_no_non_zero_exit_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Named in deploy.yml, which relies on this being unconditional.
+
+    deploy.yml lists this job in `deploy`'s `needs` with no `if:` guard, and
+    its comment says the job exits 0 either way. That sentence is only safe if
+    report-only returns 0 for failures nobody enumerated in advance — including
+    a bug in the gate itself — so main() catches `Exception`, not a hand-picked
+    tuple. Three unrelated blow-ups, one per stage of the run.
+
+    Not covered, and not claimed: `KeyboardInterrupt` and `SystemExit` are
+    BaseExceptions and still propagate (an operator pressing Ctrl-C is the
+    operator stopping the deploy), and an argparse usage error exits 2 before
+    main() has a mode to honour.
+    """
+    blow_ups = {
+        "read_write_surface": lambda: (_ for _ in ()).throw(RuntimeError("boom in the write side")),
+        "gather": lambda *a, **k: (_ for _ in ()).throw(  # noqa: ARG005
+            ZeroDivisionError("boom mid-flight")
+        ),
+        "render": lambda *a, **k: (_ for _ in ()).throw(  # noqa: ARG005
+            AttributeError("boom in the output")
+        ),
+    }
+    for name, blow_up in blow_ups.items():
+        with monkeypatch.context() as patched:
+            patched.setattr(gate, name, blow_up)
+            assert drive_main(patched, ["--cloud", "gcp"]) == 0, name
+            assert drive_main(patched, ["--cloud", "gcp", "--mode", ENFORCING]) == 1, name
 
 
 # --------------------------------------------------------------------------

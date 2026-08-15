@@ -193,9 +193,34 @@ Two consequences:
 
 `scripts/check_format_ordering.py` computes whether this build's written
 envelope formats are a subset of what every enclave serving that cloud accepts,
-and prints a verdict. **It ships with `DEFAULT_MODE = REPORT_ONLY`: it exits 0
-whatever it finds, so no deploy is stopped by it today.** A green step in
-`deploy.yml` means the gate ran, not that the ordering holds. Read its verdict.
+and prints a verdict. **It ships with `DEFAULT_MODE = REPORT_ONLY`: `main()`
+returns 0 on every path it has, so no deploy is stopped by it today.** A green
+step in `deploy.yml` means the gate ran, not that the ordering holds. Read its
+verdict.
+
+"Every path" is literal and it is the part that took two attempts. The first
+version kept one refusal fatal in both modes — a write side it could not
+derive — reasoning that not knowing what this build writes is a defect in
+`quill-router` rather than missing evidence from `quill-cloud-proxy`. The
+reasoning is right about the defect and wrong about the mode: that refusal
+fires on any assignment to an `algorithm` attribute anywhere under
+`src/trusted_router` (deliberately over-broad, because the scan cannot tell an
+envelope from a JWT header) and on any signature change to a probed write entry
+point. With the job wired as a non-skippable `needs:` of `deploy` and into both
+hand-run cloud scripts, an unrelated refactor could stop every control-plane
+deploy on all three clouds, under a "REFUSING TO DEPLOY … the enclave cannot
+read" message that described none of the cause. A mode that can stop a deploy
+is not report-only, and staging this gate is worthless if the enforcing half
+arrives early through a side door.
+
+**What report-only therefore does not do:** it does not stop a build whose
+written formats are underivable. That build deploys unmeasured, with a banner
+saying nothing was checked. What catches that condition is `quill-router`'s CI
+— `tests/test_check_format_ordering.py` runs the real derivation against the
+real tree on every push — and the CI-green gate in `deploy.yml` that depends on
+it. That gate *is* skippable by hotfix, so a hotfix which skips CI and lands an
+underivable write side deploys unmeasured. Flipping `DEFAULT_MODE` is what
+closes that, and nothing short of it does.
 
 Why it lands unarmed. The evidence it consumes —
 `enclave-go/internal/byokcache/accepted_formats.json` at the commit each release
@@ -225,8 +250,13 @@ Both sides of the subset relation are derived, not hardcoded:
   write entry point in this tree for real against a local test key wrapper and
   reads `algorithm` off the envelope objects those calls produced. Aliases,
   subclasses, `dataclasses.replace`, post-construction assignment and factories
-  in other modules all converge on that object, so none of them is a way past
-  it. The entry points are enumerated from the source — every function under
+  in other modules all converge on that object, so none of them is a *spelling*
+  the probe can be walked past. One shape is not covered and the script's own
+  LIMITS block says so: a subclass that overrides `__init__` without calling
+  `super().__init__` never reaches the recorder, and is seen only if it is the
+  value an entry point returns. That shape is refused by the syntactic scan, so
+  the union still fails closed on it — but "none of them is a way past it" was
+  too strong and this is the exception. The entry points are enumerated from the source — every function under
   `src/trusted_router` annotated `-> EncryptedSecretEnvelope` — and one with no
   probe is a refusal. A syntactic AST scan of the whole surface still runs
   alongside it, to cover write paths no probe exercises, and the gate uses the

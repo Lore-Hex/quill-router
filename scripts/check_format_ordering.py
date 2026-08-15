@@ -18,14 +18,39 @@ for exactly the customers who took the trouble to bring their own keys.
 
 REPORT-ONLY BY DEFAULT — READ THIS BEFORE WIRING IT ANYWHERE
 ------------------------------------------------------------
-`DEFAULT_MODE` below is REPORT_ONLY. In that mode this program prints the full
-table and a loud verdict and then exits 0 no matter what the clouds said, so a
-caller that treats a non-zero exit as "stop" does not stop. In ENFORCING mode a
-run with any blocked region exits 1 instead. The one refusal that exits 1 in
-BOTH modes is an underivable write side, because that is a defect in this
-repository rather than missing evidence from another one.
+`DEFAULT_MODE` below is REPORT_ONLY. In that mode `main()` returns 0 on every
+path there is. Not "0 unless something is seriously wrong" — 0. A run where
+every cloud blocked, a run where the write side could not be derived, a run
+where this script raised an exception of its own: all of them print loudly and
+return 0, so a caller that treats a non-zero exit as "stop" never stops. In
+ENFORCING mode any blocked region, and any failure to compute a verdict, exits
+1 instead.
 
-That default is not timidity, it is the same rule this gate enforces, applied to
+That is a change from how this first landed, and the reasoning is worth keeping
+because it is the same reasoning as the gate's. The first version made one
+refusal fatal in both modes — an underivable write side — on the argument that
+not knowing what this build writes is a defect in THIS repository rather than
+missing evidence from another one. The argument is correct about the defect and
+wrong about the mode. `scan_write_surface` refuses on any assignment to an
+`algorithm` attribute anywhere under src/trusted_router (deliberately: see
+`_mutates_an_algorithm_attribute`), and `probe_write_entry_points` refuses when
+a probed entry point's signature changes. Both are ordinary refactors. With
+this program wired as a non-skippable dependency of the deploy job and into
+both hand-run cloud scripts, an unrelated JWT-header change could therefore
+stop control-plane deploys on all three clouds, under a refusal message about
+enclave evidence that described none of the actual cause. A mode whose entire
+promise is that it stops nothing cannot have an exception to that promise.
+
+WHAT REPORT-ONLY THEREFORE DOES NOT DO, said here rather than discovered later:
+it does not stop a deploy whose written formats are underivable. That build
+deploys unmeasured. Two other things catch it, both before this gate and
+neither of them this gate: `tests/test_check_format_ordering.py` runs the real
+derivation against the real tree on every push, and `deploy.yml`'s CI-green
+gate depends on that suite. The residue is a hotfix that skips CI — which
+deploy.yml permits by design — landing an underivable write side. Flipping
+DEFAULT_MODE to ENFORCING is what closes that. Nothing else in this file does.
+
+The default is not timidity, it is the same rule this gate enforces, applied to
 this gate. The evidence it needs — a generated `accepted_formats.json` at the
 commit each cloud's release record names — has never been published for AWS or
 Azure, and the currently released GCP enclave predates the declaration too. An
@@ -268,10 +293,23 @@ ENVELOPE_TYPE = "EncryptedSecretEnvelope"
 PROBE_CONTROL_FORMAT = "TR-BYOK-ENVELOPE-AES-256-GCM-PROBE-NOT-A-FORMAT"
 
 # Calls that receive the envelope type as an ARGUMENT rather than calling it.
-# Anything else that receives it — bare `EncryptedSecretEnvelope` or dotted
-# `storage_models.EncryptedSecretEnvelope`, positionally or by keyword — is
-# building envelopes through an indirection this parser cannot follow
-# (functools.partial, a registry, a factory table), so it fails closed instead.
+# Any OTHER call that receives it as a DIRECT argument — bare
+# `EncryptedSecretEnvelope` or dotted `storage_models.EncryptedSecretEnvelope`,
+# positionally or by keyword — is building envelopes through an indirection
+# this parser cannot follow, so it fails closed instead. `functools.partial(E)`
+# and `register(storage_models.E)` are the shapes that reach it (both verified
+# to refuse).
+#
+# What that is NOT is a rule about indirection in general, and an earlier
+# version of this comment said "a registry, a factory table" as though it were.
+# It is a rule about one syntactic position: the type appearing as a direct
+# argument of a call. A registry that never puts it in that position walks
+# past — `_REGISTRY = {"v3": EncryptedSecretEnvelope}` then `_REGISTRY["v3"](…)`
+# returns cleanly with the V2 answer, and so do a constructor inside a list
+# argument, a tuple-unpacking alias, and `getattr(storage_models, "…")`. All
+# four are verified, all four are in this scan's KNOWN BLIND SPOTS block, and
+# all four are seen by the behavioural probe on any path a probe calls, which
+# is why the probe and not this is the primary derivation.
 _TYPE_USES = frozenset({"isinstance", "issubclass", "cast", "get_type_hints", "TypeVar"})
 
 # Modules allowed to construct an envelope from a `**mapping`. Such a call
@@ -624,9 +662,11 @@ def scan_write_surface(sources: Mapping[str, str]) -> WriteScan:
     constant. An expression there is not evidence of safety; it is a build whose
     written format is unknown, and unknown is the case the enclave breaks on.
     It also refuses outright, rather than returning a set, when it sees the
-    constructor handed to another call as a value (bare or dotted), or any
-    `.algorithm` assigned after construction — including through `setattr`,
-    `object.__setattr__` and `obj.__dict__["algorithm"]`.
+    constructor appear as a DIRECT ARGUMENT of another call (bare or dotted),
+    or any `.algorithm` assigned after construction — including through
+    `setattr`, `object.__setattr__` and `obj.__dict__["algorithm"]`. "Direct
+    argument" is the exact scope of the first of those: a constructor handed
+    onward some other way is a blind spot, listed below.
 
     KNOWN BLIND SPOTS OF THIS SCAN, named rather than implied. Several are
     covered by the behavioural probe and are marked; the ones marked NOT COVERED
@@ -642,9 +682,21 @@ def scan_write_surface(sources: Mapping[str, str]) -> WriteScan:
       * a format chosen at run time from configuration. This scan refuses to
         resolve it; the probe reports whichever branch its environment selects.
         Neither sees the other branch. NOT COVERED.
-      * a spelling nobody has thought of. Two reviews found eight between them,
-        and the honest expectation is that a third would find more — which is
-        why the probe, not this, is the primary derivation.
+      * the constructor reaching a call site through an indirection that never
+        puts the type in a call's argument list. The refusal above catches
+        `functools.partial(E)` and `register(module.E)` because the type is a
+        direct argument there; it catches nothing when the type is a dict
+        value, a list element, one side of a tuple assignment, or the result of
+        `getattr`. All four were demonstrated by a third review and each
+        returns the V2 answer over a V3 write:
+        `_REGISTRY = {"v3": E}` / `_REGISTRY["v3"](algorithm=V3, …)`;
+        `cls = register([E])`; `_A, _B = E, None`;
+        `cls = getattr(storage_models, "EncryptedSecretEnvelope")`.
+        Covered by the probe on any path a probe calls, and by nothing on a
+        path no probe calls.
+      * a spelling nobody has thought of. Three reviews found twelve between
+        them, and the honest expectation is that a fourth would find more —
+        which is why the probe, not this, is the primary derivation.
     An `algorithm=` computed at run time is NOT a silent omission here: it
     raises. Being unable to read a format is a refusal.
     """
@@ -671,7 +723,7 @@ def scan_write_surface(sources: Mapping[str, str]) -> WriteScan:
                     unresolved.append(f"{origin}:{getattr(node, 'lineno', 0)} {mutation}")
 
     if unresolved:
-        raise ValueError("cannot derive what this build writes: " + "; ".join(sorted(unresolved)))
+        raise ValueError("the syntactic scan cannot read " + "; ".join(sorted(unresolved)))
     if not written:
         raise ValueError(
             f"found no {ENVELOPE_TYPE}(algorithm=...) under {WRITE_SURFACE}. Either the "
@@ -1622,47 +1674,36 @@ def verdict(
     )
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--control-plane", default=DEFAULT_CONTROL_PLANE)
-    parser.add_argument(
-        "--mode",
-        choices=[REPORT_ONLY, ENFORCING],
-        default=DEFAULT_MODE,
-        help=(
-            f"{ENFORCING} exits 1 when any region blocks; {REPORT_ONLY} prints the same table "
-            f"and verdict and exits 0. Default: {DEFAULT_MODE}. See this module's docstring for "
-            "the precondition on flipping DEFAULT_MODE."
-        ),
-    )
-    parser.add_argument(
-        "--cloud",
-        action="append",
-        choices=sorted(PLANES),
-        help=(
-            "cloud to gate on; repeatable. Default: all of them. A deploy should pass its OWN "
-            "cloud -- the databases are separate, so Azure's enclave has no say over a GCP "
-            "rollout and blocking one on the other only teaches people to bypass the gate."
-        ),
-    )
-    args = parser.parse_args(argv)
-    clouds = args.cloud or sorted(PLANES)
+class CheckDidNotRun(Exception):
+    """No verdict could be computed at all.
 
+    Different in kind from a BLOCKED verdict. "BLOCKED" is a fact about the
+    clouds: the check ran and the ordering does not hold. This is the check
+    failing to produce a fact — an underivable write side, an unparseable
+    module, a probe entry point that cannot be called. The remedies are
+    different (this one is always a change in THIS repository), the output is
+    different, and in REPORT_ONLY both of them exit 0.
+    """
+
+
+def run_check(control_plane: str, clouds: Sequence[str], mode: str) -> bool:
+    """Print the full report; return True if any serving region blocked.
+
+    Raises `CheckDidNotRun` when no verdict exists to print. Deciding what to
+    do about either outcome is `main`'s job, because that decision is the whole
+    of the mode and keeping it in one place is what makes the mode checkable.
+    """
     try:
         derivation = derive_written_formats(read_write_surface())
     except (OSError, ValueError) as exc:
-        # An underivable write side is a refusal in BOTH modes. Report-only is a
-        # statement about the enclave evidence this gate cannot get yet, not a
-        # licence to run with no idea what this build writes.
-        print(f"cannot determine what this build writes: {exc}", file=sys.stderr)
-        return 1
+        raise CheckDidNotRun(f"cannot determine what this build writes: {exc}") from exc
     written = derivation.formats
 
     results = gather(
-        args.control_plane,
+        control_plane,
         clouds,
         written,
-        records=lambda path: fetch_record(args.control_plane, path),
+        records=lambda path: fetch_record(control_plane, path),
         attest=lambda url, verify_tls: _fetch(url, verify_tls=verify_tls),
         source=fetch_enclave_file,
         list_package=fetch_enclave_package_files,
@@ -1682,10 +1723,121 @@ def main(argv: Sequence[str] | None = None) -> int:
             "Not read as writes (an envelope rebuilt from a stored mapping): "
             + ", ".join(derivation.rehydration_sites)
         )
-    print(verdict(results, written, clouds, args.mode))
-    if any(not result.ok for result in results) and args.mode == ENFORCING:
-        return 1
-    return 0
+    print(verdict(results, written, clouds, mode))
+    return any(not result.ok for result in results)
+
+
+def did_not_run_report(reason: str, mode: str) -> str:
+    """What an operator sees when the gate could not compute a verdict.
+
+    Printed as loudly as a block, because it is the same amount of ignorance
+    about the deploy: no cloud was checked. It shares no vocabulary with the
+    clear verdict, for the same reason the WOULD BLOCK banner does not.
+
+    In REPORT_ONLY it is followed by exit 0, and it says so in as many words.
+    Saying "nothing was checked" and then stopping the deploy anyway is the
+    contradiction this text exists to not be.
+    """
+    if mode == ENFORCING:
+        return (
+            f"\n{_BANNER}\n"
+            f"STOPPED, and not by a cloud: {reason}\n"
+            "No release record was read and no enclave was checked, so nothing here says\n"
+            "the ordering holds or that it fails. This is a defect in quill-router and it\n"
+            "is fixed in quill-router.\n"
+            f"{_BANNER}"
+        )
+    return (
+        f"\n{_BANNER}\n"
+        f"REPORT-ONLY: THE GATE DID NOT RUN. {reason}\n"
+        "No release record was read and no enclave was checked. NOTHING WAS VERIFIED\n"
+        "and NOTHING WAS STOPPED, and this deploy continues, because DEFAULT_MODE is\n"
+        f"{REPORT_ONLY!r} in scripts/check_format_ordering.py.\n"
+        "\n"
+        "This one is a defect in THIS repository -- an entry point the probe can no\n"
+        "longer call, an `algorithm` attribute assigned under src/trusted_router, a\n"
+        "module that will not parse -- so whoever is deploying can fix it here. Under\n"
+        "--mode enforcing the same condition exits 1. CI catches it first and\n"
+        "independently: tests/test_check_format_ordering.py drives this derivation\n"
+        "against the real tree on every push.\n"
+        f"{_BANNER}"
+    )
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Exit code: 1 only in ENFORCING mode. REPORT_ONLY returns 0 from here always.
+
+    That is the entire contract of the default mode and it is stated in five
+    places an operator reads (this docstring, the module docstring, deploy.yml,
+    and both hand-run deploy scripts), so it holds for EVERY failure, not only
+    for a cloud that blocked. It previously did not: an underivable write side
+    returned 1 in both modes on the argument that not knowing what this build
+    writes is a repository-local defect. That argument is right about the
+    defect and wrong about the mode. A mode that can stop a deploy is not
+    report-only, and this one could be tripped by an ordinary refactor — any
+    assignment to an `algorithm` attribute anywhere under src/trusted_router,
+    or any signature change to a probed entry point — while being wired as a
+    non-skippable `needs:` of the deploy job and into both hand-run scripts.
+    An unrelated JWT-header refactor could therefore stop control-plane deploys
+    on all three clouds, with a refusal message about enclave evidence that
+    named none of the actual cause. That is a worse failure than the one the
+    gate prevents, and it is the same shape: an enforcing half arriving before
+    the half it depends on.
+
+    What that costs, stated rather than hidden: in REPORT_ONLY a build whose
+    written formats cannot be derived is reported and deployed. Nothing in this
+    program stops it. What does stop it is CI —
+    tests/test_check_format_ordering.py::test_the_real_tree_writes_exactly_v2_by_both_derivations
+    runs the real derivation against the real tree on every push — and the
+    CI-green gate in deploy.yml, which unlike this one is skippable by hotfix.
+    A hotfix that skips CI and lands an underivable write side deploys
+    unmeasured. Flipping DEFAULT_MODE to ENFORCING closes that; nothing else
+    here does.
+
+    The one thing report-only does NOT promise is a zero exit from the process
+    for arguments it never parsed: `--cloud nonsense` is an argparse usage
+    error and exits 2 before this function has a mode to honour. Callers hand
+    it a fixed argument list, so that is a broken caller, not a blocked deploy.
+    """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--control-plane", default=DEFAULT_CONTROL_PLANE)
+    parser.add_argument(
+        "--mode",
+        choices=[REPORT_ONLY, ENFORCING],
+        default=DEFAULT_MODE,
+        help=(
+            f"{ENFORCING} exits 1 when any region blocks OR when no verdict could be computed; "
+            f"{REPORT_ONLY} prints the same output and exits 0 in every one of those cases. "
+            f"Default: {DEFAULT_MODE}. See this module's docstring for the precondition on "
+            "flipping DEFAULT_MODE."
+        ),
+    )
+    parser.add_argument(
+        "--cloud",
+        action="append",
+        choices=sorted(PLANES),
+        help=(
+            "cloud to gate on; repeatable. Default: all of them. A deploy should pass its OWN "
+            "cloud -- the databases are separate, so Azure's enclave has no say over a GCP "
+            "rollout and blocking one on the other only teaches people to bypass the gate."
+        ),
+    )
+    args = parser.parse_args(argv)
+    clouds = args.cloud or sorted(PLANES)
+
+    try:
+        blocked = run_check(args.control_plane, clouds, args.mode)
+    except Exception as exc:  # noqa: BLE001 - see the docstring: report-only stops nothing
+        # `Exception`, not `(OSError, ValueError)`. The promise this mode makes
+        # is unconditional, so a bug in this file must not stop a deploy either.
+        # KeyboardInterrupt and SystemExit are BaseExceptions and still
+        # propagate: an operator pressing Ctrl-C is the operator stopping the
+        # deploy, which is the one interruption that should be honoured.
+        reason = str(exc) if isinstance(exc, CheckDidNotRun) else f"the gate itself failed: {exc!r}"
+        print(did_not_run_report(reason, args.mode), file=sys.stderr)
+        return 1 if args.mode == ENFORCING else 0
+
+    return 1 if blocked and args.mode == ENFORCING else 0
 
 
 if __name__ == "__main__":

@@ -191,6 +191,14 @@ DSN="postgresql://${PG_ADMIN}:${PG_PASSWORD}@${PG_HOST}:5432/${PG_DB}?sslmode=re
 # gate's output before answering any deploy prompt; do not read its exit code
 # as a verdict.
 #
+# "Exits 0" has no exceptions: main() returns 0 in report-only whatever
+# happened, including a run that could not derive what this build writes and a
+# run in which the script raised. So this script will also deploy a build whose
+# written formats are UNKNOWN, printing that it knows nothing. That is the cost
+# of the mode and it is stated here rather than left to be discovered; what
+# catches an underivable write side before this point is quill-router's CI,
+# which runs the same derivation against the real tree on every push.
+#
 # The reason is the ordering rule applied to the gate itself: what the gate
 # reads is a generated accepted_formats.json at the released enclave commit,
 # and Azure has never published a source_commit, let alone one carrying that
@@ -209,13 +217,30 @@ DSN="postgresql://${PG_ADMIN}:${PG_PASSWORD}@${PG_HOST}:5432/${PG_DB}?sslmode=re
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 log "checking BYOK envelope format ordering against both live azure regions"
 log "  (report-only until DEFAULT_MODE is flipped: read the verdict, not the exit code)"
-# This branch is reachable only in ENFORCING mode; in report-only the command
-# exits 0 whatever it found, and the verdict it printed is the whole output.
+# In report-only mode the gate's own main() returns 0 on every path it has --
+# every region blocked, a write side it could not derive, an exception of its
+# own -- so the only ways to reach this branch today are `uv run` failing to
+# start the gate at all (no interpreter, an unresolvable lockfile) and the
+# ENFORCING flip. Neither of those is "the ordering is violated", which is why
+# the first paragraph below asks what got printed before assuming it was.
 if ! (cd "$REPO_ROOT" && uv run python -m scripts.check_format_ordering --cloud azure); then
   cat >&2 <<'BLOCKED'
 
-REFUSING TO DEPLOY: this build may write a BYOK envelope format an Azure
-enclave cannot read. Nothing has been built or deployed.
+FIRST, look at what the gate printed above.
+
+If there is no CLOUD/REGION table, the gate never reached an enclave and every
+remedy below is about the wrong thing. Two causes:
+  * it could not determine what THIS build writes -- an "algorithm" attribute
+    assigned somewhere under src/trusted_router, a probed write entry point
+    whose signature changed, a module that will not parse. Its banner names the
+    file and the line. Fix it in quill-router; no cloud is involved.
+  * uv could not start the gate at all. Nothing was checked, and nothing is
+    known to be wrong with the ordering. Fix the toolchain and re-run.
+Neither of those can reach this branch while DEFAULT_MODE is report-only: both
+exit 0 there.
+
+OTHERWISE -- REFUSING TO DEPLOY: this build may write a BYOK envelope format an
+Azure enclave cannot read. Nothing has been built or deployed.
 
 If the block is a missing source_commit, the Azure release record cannot be
 mapped to the enclave source and the answer is unknowable rather than bad.
