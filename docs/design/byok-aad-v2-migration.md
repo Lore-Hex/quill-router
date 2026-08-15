@@ -10,11 +10,11 @@ whole difficulty — **and it repeats per cloud deployment**, see §4.0.
 Step 4 remains deliberately undone, so every enclave and control plane still
 reads v1 envelopes during the retention window.
 
-| Cloud | Step 1: enclave reads v1/v2 | Step 2: control plane writes v2 | Step 3: database backfill |
-|---|---|---|---|
-| GCP | complete in every serving region | complete | 7 BYOK envelopes migrated; 7 v2, 0 v1 after an independent audit |
-| AWS | complete in Paris and Ireland | complete on both Fargate services and both App Runner services | clean audit: no BYOK or Broadcast secret rows existed |
-| Azure | complete in UAE North and Southeast Asia | complete | clean audit: no BYOK or Broadcast secret rows existed |
+| Cloud | Step 1: enclave reads v1/v2 | Step 2: control plane writes v2 | Step 3: database backfill | Step-4 attestation |
+|---|---|---|---|---|
+| GCP | complete in every serving region | complete | 7 BYOK envelopes migrated; 7 v2, 0 v1 after an independent audit | **not recorded** |
+| AWS | complete in Paris and Ireland | complete on both Fargate services and both App Runner services | read-only audit returned zero rows; nothing was rewritten | **not recorded** |
+| Azure | complete in UAE North and Southeast Asia | complete | read-only audit returned zero rows; nothing was rewritten | **not recorded** |
 
 The backfill implementation landed in quill-router#573. The standalone
 operator configuration and mandatory explicit-KMS apply gate landed in
@@ -23,6 +23,19 @@ identity key-scoped encrypt/decrypt access, then removed it automatically; the
 post-migration IAM audit found no remaining operator binding. AWS and Azure
 were read-only audits because their independent databases contained nothing to
 rewrite.
+
+**Read the AWS and Azure cells carefully, because an earlier revision of this
+table did not let you.** They previously read "clean audit: no BYOK or Broadcast
+secret rows existed", which renders as the same green check as GCP's migration
+and is a different claim. "The audit found no rows" is also what a wrong resume
+cursor, a renamed entity kind, a wrong database, or a credential scoped to the
+wrong project produces — with exit code 0 and identical output. From inside the
+audit those cases are indistinguishable, which means **no cell in this table,
+however carefully worded, is a precondition for step 4.** The last column is,
+because it is a file that a test reads: `byok-aad-v2-attestations.json`, written
+only by `scripts/check_no_v1_envelopes.py`, which pairs the audit with a census
+computed by different SQL and refuses to call an uncorroborated empty result an
+attestation. It is empty today. Nobody has run it against a real database.
 
 ---
 
@@ -74,7 +87,10 @@ wrong, and it is the kind of wrong that becomes reachable the moment someone
 adds a customer-chosen identifier anywhere in the tuple.
 
 `test_aad_encoding_is_not_injective_in_general` asserts the collision today so
-this is not rediscovered. **That test should be deleted as part of this work.**
+this is not rediscovered. **That test should be deleted as part of this work** —
+in step 4, with v1 itself, and not before. `tests/test_byok_v1_removal_gate.py`
+holds those two together in both directions: while v1 envelopes are still
+readable, that test is the only standing record of why any of this exists.
 
 ---
 
@@ -269,12 +285,46 @@ enclave cache entries expire on their own. No cache flush needed.
 ### Step 4 — drop v1
 
 Only when a query proves zero v1 rows remain across every surface **and** the
-backfill has been idle for at least one full retention window.
+backfill has been idle for at least one full retention window. This is the one
+step with no rollback row in §5, so its precondition is executable rather than
+written down:
+
+```bash
+# once per standalone cloud — they are separate databases (§4.0)
+uv run python scripts/check_no_v1_envelopes.py --backend spanner \
+    --cloud gcp --record --operator you@lorehex.co
+uv run python scripts/check_no_v1_envelopes.py --status-only   # what is still owed
+```
+
+The check is read-only and needs no KMS access: it classifies envelopes by
+their stored `algorithm`. It reports one of six outcomes and only two of them —
+`clean` (envelopes were seen, all v2) and `empty_witnessed` (no envelopes, and
+an independently shaped census proves the table was reachable, non-empty, and
+holds zero rows of the migrated kinds) — may be recorded. An empty result with
+nothing behind it is `zero_scan`, which is a loud refusal, not a pass; a scan
+that misses rows the census can count is `scan_disagrees_with_census`. See the
+module docstrings in `src/trusted_router/byok_v1_attestations.py` and
+`tests/test_byok_v1_precondition.py` for the reasoning and its scope limits.
+
+Then, and only then:
 
 - remove `_aad`, `ALGORITHM`, and the v1 branches from both repos
 - delete `test_aad_encoding_is_not_injective_in_general`
 - keep a v1-shaped envelope in a test fixture asserting it is now **rejected**,
   so the removal is deliberate rather than silent
+
+`tests/test_byok_v1_removal_gate.py` fails CI if the first of those happens
+while `docs/design/byok-aad-v2-attestations.json` does not attest zero v1 on
+every cloud, and prints the commands above. It is silent while v1 support is
+present, and it permits the removal once the ledger is complete — it sequences
+the work rather than forbidding it. It also holds that the collision record and
+v1 are deleted together: removing that test earlier drops the only standing
+evidence that the v1 encoding is not injective.
+
+Two things the gate deliberately does not do. It cannot see `quill-cloud-proxy`,
+whose enclave carries its own v1 branch and its own removal decision, so
+ordering across the two repos is still a human responsibility. And it reads one
+module's source: a v1 branch reimplemented somewhere else would leave it quiet.
 
 ---
 
@@ -306,7 +356,12 @@ permanent from the moment it ships; v2 write support is the reversible part.**
 2. **Are there envelopes outside the three surfaces in §3?** The list came from
    grepping `encrypt_byok_secret` / `encrypt_control_secret` call sites in
    `quill-router`. If another service writes envelopes, the backfill misses them
-   and they break at step 4.
+   and they break at step 4. Still open — a grep cannot answer it. What is now
+   handled is the *second* half of the risk: the surface list lives in one place
+   (`byok_v1_attestations.MIGRATED_SURFACES`, from which the backfill's field map
+   is derived) and is fingerprinted into every attestation, so adding a fourth
+   surface invalidates every zero-v1 attestation taken before it existed rather
+   than silently inheriting them.
 3. **Is `provider` the right context for a BYOK key**, or should it be the
    storage slug from `byok_storage_provider_candidates`? They differ for aliased
    providers, and picking the wrong one produces envelopes that decrypt in

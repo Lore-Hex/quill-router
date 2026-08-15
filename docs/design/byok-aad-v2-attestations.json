@@ -1,0 +1,5 @@
+{
+  "schema": "trustedrouter/byok-aad-v1-zero-attestation/v1",
+  "about": "Recorded output of scripts/check_no_v1_envelopes.py, one entry per standalone cloud. Read by tests/test_byok_v1_removal_gate.py, which refuses the removal of v1 BYOK envelope support until every cloud here attests zero v1 envelopes. An entry asserts that a run happened against that cloud's database; writing one by hand asserts a run that did not. The gate can check the shape, not the truth.",
+  "attestations": {}
+}
