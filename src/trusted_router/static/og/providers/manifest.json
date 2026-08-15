@@ -48,7 +48,7 @@
     "card_version": 2,
     "model_count": 10,
     "name": "Chutes",
-    "privacy": "Zero retention",
+    "privacy": "E2EE + confidential",
     "route_count": 20,
     "route_mode": "Prepaid + BYOK",
     "slug": "chutes"

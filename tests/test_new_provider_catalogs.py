@@ -126,7 +126,8 @@ def test_new_provider_privacy_and_gateway_registration() -> None:
     )
     assert PROVIDERS["chutes"].provider_zero_data_retention is True
     assert PROVIDERS["chutes"].provider_confidential_compute is True
-    assert PROVIDERS["chutes"].provider_e2ee is False
+    assert PROVIDERS["chutes"].provider_e2ee is True
+    assert "Verification fails closed" in PROVIDERS["chutes"].provider_policy
     assert PROVIDERS["cloudflare-workers-ai"].supports_byok is False
 
 

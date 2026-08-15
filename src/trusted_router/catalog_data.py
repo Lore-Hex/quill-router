@@ -711,11 +711,12 @@ PROVIDERS: dict[str, Provider] = {
         stores_content=False,
         provider_zero_data_retention=True,
         provider_confidential_compute=True,
-        provider_e2ee=False,
+        provider_e2ee=True,
         provider_policy=(
-            "Chutes documents no prompt/output storage or training and serves "
-            "these routes in confidential-compute TEEs. Standard API calls are "
-            "not marked provider end-to-end encrypted."
+            "TrustedRouter encrypts each request to an attested Chutes workload "
+            "and verifies Intel TDX plus NVIDIA GPU attestation inside the "
+            "TrustedRouter enclave before sending content. Verification fails "
+            "closed. Chutes also documents no prompt/output storage or training."
         ),
         provider_policy_url="https://chutes.ai/docs/core-concepts/security-architecture",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
