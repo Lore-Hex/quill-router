@@ -42,6 +42,37 @@ destination.
 6. Add complete social metadata and WebPage structured data to the standalone
    trust page.
 
+## Same-day recrawl
+
+The completed Ahrefs crawl at 10:10 AM covered 4,597 internal URLs and reported
+a 100 Health Score. It found three errors, 443 warnings, and 4,485 notices.
+
+The three errors were narrow crawl-graph defects:
+
+1. The independently published trust site still linked to the authenticated API
+   root, which correctly returns 401 to a crawler. Link to the public API
+   reference instead.
+2. `/trust` was self-canonical but had no ordinary internal href. Link the
+   shared public footer to `/trust`, then let that page link to the live trust
+   evidence.
+3. `/api/reference` had no server-rendered outgoing links. Add a compact
+   server-rendered reference header with an H1, explanatory text, language
+   declaration, and links to docs, models, security, and the homepage.
+
+The remaining warning queue should be handled by value, not by raw count:
+
+1. Investigate the 19 slow public pages and fix only repeatable origin latency;
+   do not optimize one-off crawl noise.
+2. Replace internal links to the final destinations behind the 83 redirects.
+   Keep intentional compatibility redirects themselves.
+3. Review the two remaining missing-H1 pages and the one low-word-count page
+   after the API-reference fix is deployed and recrawled.
+4. Treat the 337 noindex pages as an allowlist audit. Console, authentication,
+   and filtered/empty catalog pages should stay noindex and out of sitemaps.
+5. Submit changed public URLs through IndexNow after releases. Ahrefs identified
+   3,919 currently eligible URLs; submit only new or materially changed URLs,
+   not the full catalog on every deploy.
+
 ## Rank Tracker groups
 
 Track the United States and United Kingdom on desktop. Add Germany as the first

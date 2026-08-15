@@ -582,9 +582,30 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             '<meta property="og:image" content="https://trustedrouter.com/og.png">\n'
             '<meta name="twitter:card" content="summary_large_image">\n'
         )
+        reference_header = (
+            '<header style="padding:16px 24px;background:#101820;color:#fff;font-family:'
+            'ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">'
+            '<h1 style="font-size:18px;line-height:1.2;margin:0 0 6px;color:#fff">'
+            "TrustedRouter API reference</h1>"
+            '<p style="max-width:900px;margin:0 0 10px;color:#d7e6f5;font-size:14px;line-height:1.45">'
+            "Explore the OpenAI-compatible endpoints, request schemas, authentication, model "
+            "routing, billing, observability, and stable compatibility errors used by "
+            "TrustedRouter clients. Start with the integration guide, browse the live model "
+            "catalog, and review how the attested gateway keeps prompt traffic separate from "
+            "the control plane. Requests use one base URL and standard bearer authentication."
+            "</p>"
+            '<nav aria-label="TrustedRouter API reference links" '
+            'style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">'
+            '<a href="/docs" style="color:#fff;font-weight:700;text-decoration:none">Docs</a>'
+            '<a href="/models" style="color:#d7e6f5;text-decoration:none">Models</a>'
+            '<a href="/security" style="color:#d7e6f5;text-decoration:none">Security</a>'
+            '<a href="/" style="color:#d7e6f5;text-decoration:none">TrustedRouter</a>'
+            "</nav></header>"
+        )
         body = (
             bytes(response.body)
             .decode()
+            .replace("<html>", '<html lang="en">', 1)
             .replace(
                 f"<title>{html.escape(app.title)} API reference</title>",
                 f"<title>{html.escape(title)}</title>",
@@ -595,6 +616,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 f"{metadata}</head>",
                 1,
             )
+            .replace("<body>", f"<body>{reference_header}", 1)
         )
         return HTMLResponse(body)
 

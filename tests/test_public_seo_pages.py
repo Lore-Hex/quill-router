@@ -160,6 +160,20 @@ def test_api_reference_declares_one_query_independent_canonical(
     assert "<title>TrustedRouter API Reference: Endpoints and Schemas</title>" in response.text
     assert '<meta name="description"' in response.text
     assert 'property="og:title"' in response.text
+    assert '<html lang="en">' in response.text
+    assert 'aria-label="TrustedRouter API reference links"' in response.text
+    assert "<h1" in response.text
+    assert "TrustedRouter API reference</h1>" in response.text
+    for path in ["/docs", "/models", "/security", "/"]:
+        assert f'href="{path}"' in response.text
+
+
+def test_public_footer_links_to_canonical_trust_page(client: TestClient) -> None:
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert '<a href="/trust">Attestation</a>' in response.text
+    assert '<a href="https://trust.trustedrouter.com">Attestation</a>' not in response.text
 
 
 @pytest.mark.parametrize(
