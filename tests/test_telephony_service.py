@@ -29,6 +29,13 @@ def _settings(**overrides) -> Settings:
     return Settings(**base)
 
 
+def _sms_text(call) -> str:
+    """The message body, whichever carrier sent it: Telnyx says `text`,
+    Twilio says `Body`."""
+    _url, payload, _headers = call
+    return payload.get("text") or payload.get("Body") or ""
+
+
 @pytest.fixture
 def calls(monkeypatch):
     seen: list[tuple[str, dict, dict]] = []
@@ -46,30 +53,44 @@ def calls(monkeypatch):
     return seen
 
 
-def test_sms_prefers_telnyx(calls):
+def test_sms_prefers_the_registered_carrier(calls):
+    # A2P 10DLC registration is PER CARRIER, so for SMS the default is whoever
+    # is actually registered — an unregistered carrier cannot deliver a US
+    # message at all, no matter how cheap it is.
     service = telephony.TelephonyService(_settings())
-    result = service.send("sms", "+15551234567", "disk full")
-
-    assert result.delivered
-    assert result.carrier == "telnyx"
-    assert not result.failed_primary
-    url, payload, _headers = calls[0]
-    assert "api.telnyx.com" in url
-    assert payload["to"] == "+15551234567"
-
-
-def test_sms_falls_over_to_twilio_and_flags_it(monkeypatch, calls):
-    service = telephony.TelephonyService(_settings())
-    monkeypatch.setattr(service, "_telnyx_sms", lambda to, body: (500, "telnyx down"))
-
     result = service.send("sms", "+15551234567", "disk full")
 
     assert result.delivered
     assert result.carrier == "twilio"
+    assert not result.failed_primary
+    url, payload, _headers = calls[0]
+    assert "api.twilio.com" in url
+    assert payload["To"] == "+15551234567"
+
+
+def test_voice_still_prefers_the_cheaper_carrier(calls):
+    # Voice needs no registration, so it goes to whoever costs less.
+    service = telephony.TelephonyService(
+        _settings(telnyx_texml_account_id="acct-1", telnyx_texml_application_id="app-1")
+    )
+
+    assert service.send("voice", "+15551234567", "fire").carrier == "telnyx"
+
+
+def test_sms_falls_over_to_the_other_carrier_and_flags_it(monkeypatch, calls):
+    service = telephony.TelephonyService(_settings())
+    monkeypatch.setattr(service, "_twilio_sms", lambda to, body: (500, "twilio down"))
+
+    result = service.send("sms", "+15551234567", "disk full")
+
+    assert result.delivered
+    assert result.carrier == "telnyx"
     # A send that only worked because of the fallback is NOT the same as a
-    # healthy send, and the caller must be able to tell them apart.
+    # healthy send, and the caller must be able to tell them apart. It matters
+    # more for SMS: the fallback carrier may not be registered, so a delivered
+    # flag here can still mean the message was dropped downstream.
     assert result.failed_primary
-    assert any("telnyx=500" in attempt for attempt in result.attempts)
+    assert any("twilio=500" in attempt for attempt in result.attempts)
 
 
 def test_voice_prefers_telnyx_but_falls_back_to_inline_twiml(monkeypatch, calls):
@@ -214,9 +235,9 @@ class TestBranding:
     def test_every_sms_opens_with_the_brand(self, calls):
         telephony.TelephonyService(_settings()).send("sms", "+15551234567", "disk full")
 
-        _url, payload, _headers = calls[0]
-        assert payload["text"].startswith("Trusted Router: ")
-        assert "disk full" in payload["text"]
+        text = _sms_text(calls[0])
+        assert text.startswith("Trusted Router: ")
+        assert "disk full" in text
 
     def test_every_call_opens_with_the_brand(self, calls):
         telephony.TelephonyService(_settings()).send("voice", "+15551234567", "disk full")
@@ -231,8 +252,7 @@ class TestBranding:
             "sms", "+15551234567", "Trusted Router: disk full"
         )
 
-        _url, payload, _headers = calls[0]
-        assert payload["text"].lower().count("trusted router") == 1
+        assert _sms_text(calls[0]).lower().count("trusted router") == 1
 
     def test_the_brand_is_spoken_as_a_sentence_not_a_colon(self):
         # "Trusted Router colon disk full" is what a naive prefix would produce
@@ -242,3 +262,24 @@ class TestBranding:
         assert spoken.startswith("Trusted Router notification.")
         assert ":" not in spoken
         assert spoken.count("disk full") == 2
+
+
+class TestPerChannelCarrierDefaults:
+    def test_the_defaults_differ_by_channel(self, calls):
+        # Not a style choice: SMS must go to the 10DLC-registered carrier or it
+        # is rejected outright, while voice is free to chase price.
+        settings = _settings(telnyx_texml_account_id="a", telnyx_texml_application_id="b")
+        service = telephony.TelephonyService(settings)
+
+        assert service.send("sms", "+1555", "x").carrier == "twilio"
+        assert service.send("voice", "+1555", "x").carrier == "telnyx"
+
+    def test_an_explicit_preference_still_wins(self, calls):
+        service = telephony.TelephonyService(_settings())
+        assert service.send("sms", "+1555", "x", preferred_carrier="telnyx").carrier == "telnyx"
+
+    def test_the_default_is_a_preference_not_an_exclusion(self, monkeypatch, calls):
+        service = telephony.TelephonyService(_settings())
+        monkeypatch.setattr(service, "_twilio_sms", lambda to, body: (500, "down"))
+
+        assert service.send("sms", "+1555", "x").delivered

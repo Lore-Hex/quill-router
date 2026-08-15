@@ -257,8 +257,17 @@ class TelephonyService:
                 ("twilio", self.twilio_enabled, self._twilio_voice),
             ]
 
-        if preferred_carrier:
-            wanted = preferred_carrier.strip().lower()
+        # An explicit request wins; otherwise the per-channel default decides,
+        # because the carrier that can legally deliver is not the same for SMS
+        # and voice.
+        wanted = (preferred_carrier or "").strip().lower()
+        if not wanted:
+            wanted = (
+                self._settings.notify_sms_primary_carrier
+                if channel == "sms"
+                else self._settings.notify_voice_primary_carrier
+            ).strip().lower()
+        if wanted:
             chain.sort(key=lambda entry: entry[0] != wanted)
 
         attempts: list[str] = []

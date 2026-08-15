@@ -523,6 +523,14 @@ class Settings(BaseSettings):
     telnyx_from_number: str | None = None
     # The ORGANIZATION id from Telnyx /v2/whoami — not the number's connection
     # id and not the TeXML application id, both of which answer 404 here.
+    # Which carrier leads, per channel. These differ because A2P 10DLC
+    # registration is PER CARRIER: an unregistered carrier cannot deliver a US
+    # SMS at all (Telnyx answers 40010, Twilio 30034), while voice needs no
+    # registration and simply goes to whoever is cheaper. Preference only
+    # reorders — the other carrier is still tried, so a wrong value here costs
+    # a wasted attempt, never a lost page.
+    notify_sms_primary_carrier: str = "twilio"
+    notify_voice_primary_carrier: str = "telnyx"
     telnyx_texml_account_id: str | None = None
     # The TeXML application, which is where the outbound voice profile hangs.
     telnyx_texml_application_id: str | None = None
