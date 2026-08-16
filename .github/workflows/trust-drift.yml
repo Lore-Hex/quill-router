@@ -71,18 +71,16 @@ jobs:
       # bring-up branches), but on a schedule "we stopped publishing a
       # measurement" and "everything matches" must not be the same green tick.
       #
-      # EXPECT RUNS TO BE RED UNTIL THE CONTROL PLANE DEPLOYS, and as of
-      # 2026-08-16 that is blocked on something unrelated to this check: the
-      # "Deploy TR control plane" workflow has failed every run since 07:50 UTC
-      # on 2026-08-15 at the "Sync shared public analytics snapshots" step,
-      # which #574 added to migrate-schema. It runs `gcloud compute ssh
-      # --tunnel-through-iap` as tr-deploy@, which has no IAP tunnel access, so
-      # every deploy dies at 4033 and `deploy` needs `migrate-schema`. Until
-      # that clears, this job cannot go green no matter what it is pointed at.
-      # That is also why this runs daily rather than hourly: a check that
-      # cannot pass yet should not say so 24 times a day.
+      # HISTORY, kept because the sequencing lesson is the point: this check
+      # merged while the control-plane deploy pipeline had been red for a day
+      # (an IAP permission on a step #574 added to migrate-schema), so for its
+      # first hours no run of it could pass — the code fix was on main and the
+      # serving fix it produces was stuck behind a broken deploy. An enforcing
+      # check must not merge ahead of the thing that lets it pass. The deploy
+      # was repaired on 2026-08-16 and the first strict run against production
+      # then exited 0 with all four endpoints contacted.
       #
-      # Measured 2026-08-15 against production: the mirror
+      # Measured 2026-08-15 against production, before that deploy: the mirror
       # was still dropping azure-release.json's `regions` array, so the checker
       # could reach UAE North and not Southeast Asia and reported a [GAP] for
       # the MAA issuer no contacted endpoint presented. That is the correct
