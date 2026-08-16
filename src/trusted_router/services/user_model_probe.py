@@ -35,6 +35,8 @@ class ProbeResult:
 async def probe_user_model(
     model: UserProvidedModel,
     settings: Settings,
+    *,
+    store: Any = STORE,
 ) -> ProbeResult:
     checked_at = datetime.now(UTC)
     try:
@@ -53,6 +55,7 @@ async def probe_user_model(
                 ok=False,
                 detail="Endpoint response was not an OpenAI chat completion",
                 checked_at=checked_at,
+                store=store,
             )
         if model.supports_streaming:
             streamed = await _probe_once(
@@ -68,6 +71,7 @@ async def probe_user_model(
                     ok=False,
                     detail="Endpoint response was not a valid chat completion stream",
                     checked_at=checked_at,
+                    store=store,
                 )
     except httpx.TimeoutException:
         return _recorded_result(
@@ -75,6 +79,7 @@ async def probe_user_model(
             ok=False,
             detail="Endpoint probe timed out",
             checked_at=checked_at,
+            store=store,
         )
     except httpx.HTTPError:
         return _recorded_result(
@@ -82,6 +87,7 @@ async def probe_user_model(
             ok=False,
             detail="Endpoint probe failed",
             checked_at=checked_at,
+            store=store,
         )
     except Exception as exc:  # fail closed without echoing secret-bearing details
         return _recorded_result(
@@ -89,12 +95,14 @@ async def probe_user_model(
             ok=False,
             detail=f"Endpoint probe failed ({type(exc).__name__})",
             checked_at=checked_at,
+            store=store,
         )
     return _recorded_result(
         model,
         ok=True,
         detail="Probe succeeded",
         checked_at=checked_at,
+        store=store,
     )
 
 
@@ -240,8 +248,9 @@ def _recorded_result(
     ok: bool,
     detail: str,
     checked_at: datetime,
+    store: Any,
 ) -> ProbeResult:
-    STORE.record_user_model_probe(
+    store.record_user_model_probe(
         model.id,
         status="ok" if ok else "failed",
         checked_at=checked_at.isoformat().replace("+00:00", "Z"),

@@ -139,7 +139,7 @@ def test_user_earnings_seed_and_payout_are_idempotent(
         "total_transferred": 0,
         "available": 0,
     }
-    event_id = f"evt-payout-{unique}"
+    event_id = f"custom_model_payout:auth-{unique}"
     assert store.credit_user_earnings(
         user_id,
         75,
@@ -158,6 +158,7 @@ def test_user_earnings_seed_and_payout_are_idempotent(
     assert movement.amount_microdollars == 75
     assert movement.counterparty_account_id == "ws-payer"
     assert movement.custom_model_id == "model-a"
+    assert movement.authorization_id == f"auth-{unique}"
 
 
 def test_user_earnings_credit_seeds_an_absent_account(

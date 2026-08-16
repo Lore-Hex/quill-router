@@ -203,6 +203,24 @@ body.console {
   max-width: 100%;
 }
 
+.earnings-copy {
+  text-wrap: pretty;
+}
+
+.earnings-money {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.earnings-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.earnings-transfer-submit {
+  min-height: 40px;
+}
+
 .form-gate {
   min-inline-size: 0;
   margin: 0;

@@ -236,6 +236,12 @@ class UserModelPatchRequest(_Strict):
     completion_price_microdollars_per_million_tokens: int | None = Field(default=None, ge=0)
 
 
+class EarningsTransferRequest(_Strict):
+    workspace_id: str = Field(min_length=1, max_length=80)
+    amount_microdollars: int
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=64)
+
+
 class GatewayAuthorizeRequest(_Lenient):
     api_key_hash: str | None = Field(default=None, min_length=1)
     api_key_lookup_hash: str | None = Field(default=None, min_length=1)

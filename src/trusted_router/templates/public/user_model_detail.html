@@ -13,6 +13,7 @@
   <div class="public-hero-metrics" aria-label="User-provided model facts">
     <div><strong>{{ model.kind }}</strong><span>operator kind</span></div>
     <div><strong>{{ 'On' if model.on_the_clock else 'Off' }}</strong><span>the clock</span></div>
+    <div><strong>{{ model.health|capitalize }}</strong><span>health</span></div>
     <div><strong>No</strong><span>attestation or ZDR</span></div>
   </div>
 </section>
@@ -25,6 +26,7 @@
       <span class="pill warn">user-provided</span>
       <span class="pill">{{ model.kind }}</span>
       <span class="pill {{ 'good' if model.on_the_clock else 'warn' }}">{{ 'on the clock' if model.on_the_clock else 'off the clock' }}</span>
+      <span class="pill {{ 'good' if model.health == 'ok' else 'warn' }}">{{ model.health }}</span>
       {% if model.kind == 'human' and model.operator.human_verified %}<span class="pill good">✓ verified human</span>{% endif %}
     </div>
   </div>

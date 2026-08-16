@@ -14,6 +14,9 @@ from trusted_router.credit_transfer import (
     validate_outcome,
     validate_transfer_id,
 )
+from trusted_router.custom_model_billing import (
+    user_model_authorization_id_from_payout_event_id,
+)
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.storage_attribution import InMemoryAcquisitionAttribution
 from trusted_router.storage_auth_sessions import InMemoryAuthSessions
@@ -1288,6 +1291,9 @@ class InMemoryStore:
                 amount_microdollars=amount,
                 counterparty_account_id=payer_workspace_id,
                 custom_model_id=custom_model_id,
+                authorization_id=(
+                    user_model_authorization_id_from_payout_event_id(event_id)
+                ),
             )
             return True
 

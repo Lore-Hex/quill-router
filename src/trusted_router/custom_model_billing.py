@@ -17,6 +17,14 @@ def user_model_payout_event_id(authorization_id: str) -> str:
     return f"custom_model_payout:{authorization_id}"
 
 
+def user_model_authorization_id_from_payout_event_id(event_id: str) -> str | None:
+    prefix = "custom_model_payout:"
+    if not event_id.startswith(prefix):
+        return None
+    authorization_id = event_id.removeprefix(prefix)
+    return authorization_id or None
+
+
 def validate_custom_model_price(
     prompt_price: int,
     completion_price: int,

@@ -200,6 +200,11 @@ def user_model_public_shape(
         "on_the_clock": user_model_is_on_the_clock(
             model, now or datetime.now(UTC)
         ),
+        "health": (
+            "degraded"
+            if model.consecutive_dispatch_failures > 0 or model.probe_status == "failed"
+            else "ok"
+        ),
         "pricing": {
             "prompt_microdollars_per_million_tokens": (
                 model.prompt_price_microdollars_per_million_tokens

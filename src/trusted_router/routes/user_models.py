@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, NoReturn
 
@@ -11,7 +12,12 @@ from trusted_router.auth import ManagementPrincipal, Principal, SettingsDep
 from trusted_router.custom_model_billing import validate_custom_model_price
 from trusted_router.custom_model_rules import assert_user_can_create_custom_models
 from trusted_router.errors import api_error
-from trusted_router.schemas import UserModelCreateRequest, UserModelPatchRequest
+from trusted_router.money import format_money_display
+from trusted_router.schemas import (
+    EarningsTransferRequest,
+    UserModelCreateRequest,
+    UserModelPatchRequest,
+)
 from trusted_router.serialization import user_model_owner_shape
 from trusted_router.services.user_model_probe import probe_user_model
 from trusted_router.services.user_model_secrets import (
@@ -35,6 +41,65 @@ def register_user_model_routes(router: APIRouter) -> None:
     async def list_user_models(principal: ManagementPrincipal) -> dict[str, Any]:
         models = STORE.list_user_models_for_user(_owner_user_id(principal))
         return {"data": [user_model_owner_shape(model) for model in models]}
+
+    @router.get("/user-models/earnings")
+    async def get_user_model_earnings(
+        principal: ManagementPrincipal,
+        before: str | None = None,
+    ) -> dict[str, Any]:
+        return {"data": _earnings_data(_owner_user_id(principal), before=before)}
+
+    @router.post("/user-models/earnings/transfer")
+    async def transfer_user_model_earnings(
+        body: EarningsTransferRequest,
+        principal: ManagementPrincipal,
+    ) -> dict[str, Any]:
+        owner_user_id = _owner_user_id(principal)
+        if body.amount_microdollars <= 0:
+            raise api_error(
+                400,
+                "Transfer amount must be positive",
+                ErrorType.BAD_REQUEST,
+            )
+        workspace = next(
+            (
+                candidate
+                for candidate in STORE.list_workspaces_for_user(owner_user_id)
+                if candidate.id == body.workspace_id
+            ),
+            None,
+        )
+        if workspace is None:
+            # Membership and existence deliberately collapse to the same answer.
+            raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)
+        if workspace.federated_home:
+            raise api_error(
+                400,
+                "Earnings cannot be transferred to a federated workspace",
+                ErrorType.BAD_REQUEST,
+            )
+        event_suffix = body.idempotency_key or str(uuid.uuid4())
+        outcome = STORE.transfer_earnings_to_workspace(
+            owner_user_id,
+            workspace.id,
+            body.amount_microdollars,
+            f"earnings_transfer:{owner_user_id}:{event_suffix}",
+        )
+        if outcome == "insufficient":
+            available = STORE.earnings_summary(owner_user_id)["available"]
+            raise api_error(
+                402,
+                "Insufficient earnings",
+                ErrorType.INSUFFICIENT_CREDITS,
+                extra={"available": available},
+            )
+        summary = _earnings_summary_shape(STORE.earnings_summary(owner_user_id))
+        return {
+            "data": {
+                "deduplicated": outcome == "duplicate",
+                "summary": summary,
+            }
+        }
 
     @router.post("/user-models")
     async def create_user_model(
@@ -288,6 +353,55 @@ def _owner_user_id(principal: Principal) -> str:
         "A user-owned management session or key is required",
         ErrorType.FORBIDDEN,
     )
+
+
+def _earnings_data(user_id: str, *, before: str | None = None) -> dict[str, Any]:
+    since = (datetime.now(UTC) - timedelta(days=30)).isoformat().replace("+00:00", "Z")
+    by_model = STORE.custom_model_earnings_by_model(user_id, since=since)
+    recent = STORE.list_credit_movements(
+        f"user:{user_id}",
+        limit=50,
+        before=before,
+    )
+    return {
+        "summary": _earnings_summary_shape(STORE.earnings_summary(user_id)),
+        "by_model_30d": [
+            {"model_id": model_id, "earned_microdollars": amount}
+            for model_id, amount in sorted(
+                by_model.items(),
+                key=lambda item: (-item[1], item[0]),
+            )
+        ],
+        "recent": [
+            {
+                "account_id": movement.account_id,
+                "movement_id": movement.movement_id,
+                "kind": movement.kind,
+                "amount_microdollars": movement.amount_microdollars,
+                "amount_display": format_money_display(
+                    movement.amount_microdollars
+                ),
+                "counterparty_account_id": movement.counterparty_account_id,
+                "custom_model_id": movement.custom_model_id,
+                "authorization_id": movement.authorization_id,
+                "created_at": movement.created_at,
+            }
+            for movement in recent
+        ],
+    }
+
+
+def _earnings_summary_shape(summary: dict[str, int]) -> dict[str, int | str]:
+    return {
+        "total_earned": summary["total_earned"],
+        "total_earned_display": format_money_display(summary["total_earned"]),
+        "total_transferred": summary["total_transferred"],
+        "total_transferred_display": format_money_display(
+            summary["total_transferred"]
+        ),
+        "available": summary["available"],
+        "available_display": format_money_display(summary["available"]),
+    }
 
 
 def _require_owner_user_model(

@@ -22,6 +22,7 @@ from trusted_router.routes.console import (
     byok,
     credits,
     custom_models,
+    earnings,
     preferences,
     root,
     routing_page,
@@ -44,6 +45,7 @@ def register_console_routes(app: FastAPI) -> None:
     credits.register(app)
     custom_models.register(app)
     user_models.register(app)
+    earnings.register(app)
     activity.register(app)
     broadcast.register(app)
     byok.register(app)
