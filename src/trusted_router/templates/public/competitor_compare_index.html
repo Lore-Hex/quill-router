@@ -1,0 +1,57 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="panel" aria-labelledby="comparison-directory-heading">
+  <div class="panel-head">
+    <div>
+      <span class="eyebrow">Gateway comparison directory</span>
+      <h2 id="comparison-directory-heading">Choose by architecture, not by logo.</h2>
+    </div>
+    <a href="/best-llm-router">Selection guide</a>
+  </div>
+  <div class="panel-body">
+    <p class="lead">A hosted marketplace, a self-hosted proxy, a cloud model platform, and an intelligent selector solve different problems. These comparisons use official product sources and separate documented facts from TrustedRouter's own architecture.</p>
+    <div class="public-proof-strip">
+      <div><strong>{{ comparison_count }}</strong><span>gateway comparisons</span></div>
+      <div><strong>{{ category_count }}</strong><span>architecture categories</span></div>
+      <div><strong>{{ source_count }}</strong><span>official source links</span></div>
+      <div><strong>{{ verified_on_label }}</strong><span>evidence checked</span></div>
+    </div>
+  </div>
+</section>
+
+{% for category, comparisons in comparisons_by_category %}
+<section class="panel" aria-labelledby="comparison-category-{{ loop.index }}">
+  <div class="panel-head">
+    <h2 id="comparison-category-{{ loop.index }}">{{ category }}</h2>
+    <span>{{ comparisons|length }} {% if comparisons|length == 1 %}comparison{% else %}comparisons{% endif %}</span>
+  </div>
+  <div class="panel-body">
+    <ul class="link-list comparison-directory-list">
+      {% for comparison in comparisons %}
+      <li>
+        <a href="{{ comparison.href }}">TrustedRouter vs {{ comparison.name }}</a>
+        <span>{{ comparison.summary }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+</section>
+{% endfor %}
+
+<section class="marketing-split" aria-label="How comparisons are maintained">
+  <div class="marketing-copy">
+    <span class="eyebrow">Evidence policy</span>
+    <h2>Every factual claim should have somewhere to go.</h2>
+    <p>Each page links the official product documentation used for the comparison and shows when it was checked. Product capabilities change, so the source links matter more than a permanent verdict.</p>
+    <p>TrustedRouter performance claims link to first-party monthly reports and live route measurements. We do not turn another company's missing documentation into a negative claim.</p>
+  </div>
+  <div class="marketing-card featured">
+    <span class="card-label">Test your workload</span>
+    <h3>Run the same three prompts.</h3>
+    <p>A comparison page narrows the field. A small eval on your actual task makes the decision.</p>
+    <a class="btn" href="/docs/evals">Open the eval guide</a>
+  </div>
+</section>
+
+{% endblock %}

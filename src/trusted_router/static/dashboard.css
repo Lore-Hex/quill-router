@@ -311,6 +311,13 @@ a.table-note { color:var(--accent); }
 .link-list li { border:1px solid var(--line); border-radius:8px; padding:10px 12px; background:var(--panel); }
 .link-list a { display:block; font-weight:800; }
 .link-list span { display:block; margin-top:3px; color:var(--muted); font-size:12px; }
+.comparison-directory-list li { padding:14px 16px; }
+.comparison-directory-list a { font-size:16px; line-height:1.3; }
+.comparison-directory-list span { margin-top:6px; font-size:14px; line-height:1.5; }
+.comparison-hero .kicker { overflow-wrap:anywhere; }
+.comparison-decision .marketing-copy { box-shadow:none; }
+.competitor-matrix { scroll-margin-top:96px; }
+#comparison-sources-heading + a, .link-list span { overflow-wrap:anywhere; }
 .muted-copy { color:var(--muted); line-height:1.5; }
 .code-block { overflow:auto; margin:0; border:1px solid var(--code-line); border-radius:8px; padding:16px; background:var(--code-pre-bg); color:#e2e8f0; font-size:13px; line-height:1.45; }
 .band { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; }
@@ -606,6 +613,8 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
   .matrix-row > * { border-left:0; border-top:1px solid var(--line2); }
   .matrix-row > *:first-child { border-top:0; background:var(--panel2); }
   .matrix-head > *:first-child { background:var(--code-bg); }
+  .competitor-matrix .matrix-head { display:none; }
+  .matrix-row > [data-label]::before { content:attr(data-label); display:block; margin-bottom:7px; color:var(--muted); font:700 11px/1.25 var(--mono); text-transform:uppercase; }
   .limitation-band { grid-template-columns:1fr; }
   .console-title { align-items:flex-start; flex-direction:column; }
   .status-hero, .status-banner, .status-section-head, .component-main, .slo-card-head, .burn-row { align-items:flex-start; flex-direction:column; }
