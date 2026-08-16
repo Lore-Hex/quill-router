@@ -978,6 +978,7 @@ def test_public_shape_is_secret_free_and_resolves_operator_identities(
     assert verified_public["attested"] is False
     assert verified_public["zero_data_retention"] is False
     assert verified_public["privacy_tier"] == "standard"
+    assert verified_public["health"] == "ok"
     assert "private-owner-key" not in response.text
     assert "endpoint_url" not in response.text
     assert "encrypted_" not in response.text
@@ -997,6 +998,195 @@ def test_public_shape_is_secret_free_and_resolves_operator_identities(
     chat = client.get(f"/user-chat?model={human['id']}")
     assert chat.status_code == 200
     assert "User-provided model" in chat.text
+
+
+def test_public_user_model_health_reports_dispatch_and_probe_degradation(
+    client: TestClient,
+) -> None:
+    created = _create(client, body=_body(slug="health-signal"))
+    STORE.record_user_model_dispatch_result(created["id"], success=False)
+
+    degraded = client.get(f"/v1/models/user-provided/{created['id']}")
+    assert degraded.status_code == 200
+    assert degraded.json()["data"]["health"] == "degraded"
+    page = client.get(f"/models/{created['id']}")
+    assert page.status_code == 200
+    assert "Degraded" in page.text
+
+    STORE.record_user_model_dispatch_result(created["id"], success=True)
+    STORE.record_user_model_probe(
+        created["id"],
+        status="failed",
+        checked_at="2026-08-16T00:00:00Z",
+    )
+    assert (
+        client.get(f"/v1/models/user-provided/{created['id']}").json()["data"][
+            "health"
+        ]
+        == "degraded"
+    )
+
+
+def test_owner_earnings_api_lists_summary_models_movements_and_transfers(
+    client: TestClient,
+) -> None:
+    created = _create(client, body=_body(slug="earnings-api"))
+    owner_user_id = created["owner_user_id"]
+    workspace = STORE.list_workspaces_for_user(owner_user_id)[0]
+    assert STORE.credit_user_earnings(
+        owner_user_id,
+        2_500_000,
+        "custom_model_payout:earnings-api-auth",
+        custom_model_id=created["id"],
+        payer_workspace_id=workspace.id,
+    )
+
+    response = client.get("/v1/user-models/earnings", headers=HEADERS)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["summary"] == {
+        "total_earned": 2_500_000,
+        "total_earned_display": "$2.50",
+        "total_transferred": 0,
+        "total_transferred_display": "$0.00",
+        "available": 2_500_000,
+        "available_display": "$2.50",
+    }
+    assert data["by_model_30d"] == [
+        {"model_id": created["id"], "earned_microdollars": 2_500_000}
+    ]
+    assert data["recent"][0]["kind"] == "custom_model_payout"
+    assert data["recent"][0]["amount_display"] == "$2.50"
+
+    body = {
+        "workspace_id": workspace.id,
+        "amount_microdollars": 1_000_000,
+        "idempotency_key": "earnings-api-transfer",
+    }
+    accepted = client.post(
+        "/v1/user-models/earnings/transfer",
+        headers=HEADERS,
+        json=body,
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["data"] == {
+        "deduplicated": False,
+        "summary": {
+            "total_earned": 2_500_000,
+            "total_earned_display": "$2.50",
+            "total_transferred": 1_000_000,
+            "total_transferred_display": "$1.00",
+            "available": 1_500_000,
+            "available_display": "$1.50",
+        },
+    }
+    duplicate = client.post(
+        "/v1/user-models/earnings/transfer",
+        headers=HEADERS,
+        json=body,
+    )
+    assert duplicate.status_code == 200
+    assert duplicate.json()["data"]["deduplicated"] is True
+
+    insufficient = client.post(
+        "/v1/user-models/earnings/transfer",
+        headers=HEADERS,
+        json={"workspace_id": workspace.id, "amount_microdollars": 2_000_000},
+    )
+    assert insufficient.status_code == 402
+    assert insufficient.json()["error"]["type"] == "insufficient_credits"
+    assert insufficient.json()["error"]["available"] == 1_500_000
+
+
+def test_owner_earnings_transfer_hides_membership_and_refuses_invalid_targets(
+    client: TestClient,
+) -> None:
+    _create(client, body=_body(slug="earnings-targets"))
+    user = STORE.find_user_by_email(HEADERS["x-trustedrouter-user"])
+    assert user is not None
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+
+    for amount in (0, -1):
+        invalid = client.post(
+            "/v1/user-models/earnings/transfer",
+            headers=HEADERS,
+            json={"workspace_id": workspace.id, "amount_microdollars": amount},
+        )
+        assert invalid.status_code == 400
+
+    stranger = STORE.ensure_user("earnings-stranger@example.com")
+    stranger_workspace = STORE.list_workspaces_for_user(stranger.id)[0]
+    hidden = client.post(
+        "/v1/user-models/earnings/transfer",
+        headers=HEADERS,
+        json={"workspace_id": stranger_workspace.id, "amount_microdollars": 1},
+    )
+    assert hidden.status_code == 404
+
+    workspace.federated_home = "https://home.example"
+    federated = client.post(
+        "/v1/user-models/earnings/transfer",
+        headers=HEADERS,
+        json={"workspace_id": workspace.id, "amount_microdollars": 1},
+    )
+    assert federated.status_code == 400
+
+
+def test_earnings_console_renders_and_transfers_with_idempotent_flash(
+    client: TestClient,
+) -> None:
+    user = STORE.ensure_user("earnings-console@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    raw_session, _session = STORE.create_auth_session(
+        user_id=user.id,
+        provider="test",
+        label="earnings console",
+        ttl_seconds=3600,
+        workspace_id=workspace.id,
+    )
+    client.cookies.set("tr_session", raw_session)
+    model = STORE.create_user_model(
+        owner_user_id=user.id,
+        owner_workspace_id=workspace.id,
+        name="Earning model",
+        kind="machine",
+        display_name="earner",
+        endpoint_url="https://owner.example/v1",
+        slug="earnings-console",
+    )
+    assert STORE.credit_user_earnings(
+        user.id,
+        3_000_000,
+        "custom_model_payout:earnings-console-auth",
+        custom_model_id=model.id,
+        payer_workspace_id=workspace.id,
+    )
+
+    page = client.get("/console/earnings")
+    assert page.status_code == 200
+    assert "You earn 70% of every charge in TrustedRouter credits" in page.text
+    assert "Earning model" in page.text
+    assert 'href="/console/earnings" class="sidebar-link active"' in page.text
+
+    form = {
+        "workspace_id": workspace.id,
+        "amount": "1.25",
+        "idempotency_key": "console-transfer",
+    }
+    accepted = client.post(
+        "/console/earnings/transfer",
+        data=form,
+        follow_redirects=False,
+    )
+    assert accepted.status_code == 303
+    assert accepted.headers["location"] == "/console/earnings?saved=transferred"
+    duplicate = client.post(
+        "/console/earnings/transfer",
+        data=form,
+        follow_redirects=False,
+    )
+    assert duplicate.headers["location"] == "/console/earnings?saved=duplicate"
+    assert STORE.earnings_summary(user.id)["available"] == 1_750_000
 
 
 def test_https_is_required_outside_local_and_test() -> None:

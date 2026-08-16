@@ -1481,6 +1481,28 @@ def _execute_sql(
     params: dict[str, Any],
 ) -> list[list[str]]:
     kind = params.get("kind", "")
+    if (
+        "FROM tr_credit_movement " in sql
+        and "WHERE kind='custom_model_payout' AND created_at>=@since" in sql
+    ):
+        movements = [
+            dict(rec)
+            for rec in db.typed.get("tr_credit_movement", {}).values()
+            if rec["kind"] == "custom_model_payout"
+            and rec["created_at"] >= params["since"]
+        ]
+        movements.sort(
+            key=lambda rec: (
+                rec["created_at"],
+                rec["account_id"],
+                rec["movement_id"],
+            )
+        )
+        columns = [
+            column.strip()
+            for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
+        return [[rec.get(column) for column in columns] for rec in movements]
     if "FROM tr_credit_movement@{FORCE_INDEX=tr_credit_movement_by_time}" in sql:
         records = list(db.typed.get("tr_credit_movement", {}).items())
         visible = [
@@ -1539,6 +1561,16 @@ def _execute_sql(
     if sql.startswith("SELECT payload FROM tr_generation"):
         generation = db.generation_records.get(str(params["generation_id"]))
         return [[str(generation["payload"])]] if generation is not None else []
+    if sql.startswith("SELECT payload FROM tr_gateway_authorization "):
+        rows = [
+            rec
+            for rec in db.gateway_authorizations.values()
+            if rec.get("settled")
+            and rec.get("created_at") >= params["since"]
+            and rec.get("payload")
+        ]
+        rows.sort(key=lambda rec: (rec["created_at"], rec["authorization_id"]))
+        return [[str(rec["payload"])] for rec in rows]
     # Guarded legacy terminal_at backfill. These narrow handlers intentionally
     # assert every real predicate they model (MF6); a production SQL regression
     # must fail tests instead of being repaired by the fake's Python filtering.
