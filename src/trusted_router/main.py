@@ -233,11 +233,21 @@ def create_app(
             async def loop() -> None:
                 await _asyncio.sleep(_random.uniform(5, min(60, interval)))  # noqa: S311
                 while True:
+                    # Publish liveness before reading the eventually
+                    # consistent analytics copy. During a rolling deploy a
+                    # fresh instance must not page on the retired instance's
+                    # heartbeat before announcing itself.
+                    await _asyncio.to_thread(
+                        record_heartbeat, "scheduler:remediator", settings=settings
+                    )
                     try:
                         await _asyncio.to_thread(run_remediator_pass, settings)
                     except Exception:
                         # The watcher must be the last thing to die quietly.
                         log.exception("remediator pass failed")
+                    # A pass can cross a five-minute heartbeat bucket. The
+                    # completion write records that progress without adding a
+                    # duplicate row when it stayed in the same bucket.
                     await _asyncio.to_thread(
                         record_heartbeat, "scheduler:remediator", settings=settings
                     )
