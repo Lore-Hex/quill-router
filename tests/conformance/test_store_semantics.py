@@ -316,6 +316,21 @@ def test_lifetime_topup_is_part_of_the_grant_claim(
     assert store.get_lifetime_topup_microdollars(user_id) == 35
 
 
+def test_lifetime_topup_support_override_is_idempotent_without_crediting(
+    store: Store,
+    workspace_id: str,
+    user_id: str,
+    unique: str,
+) -> None:
+    before = live_credit_summary(workspace_id, store=store)
+    event_id = f"evt-lifetime-override-{unique}"
+
+    assert store.add_lifetime_topup(user_id, 25, event_id)
+    assert not store.add_lifetime_topup(user_id, 25, event_id)
+    assert store.get_lifetime_topup_microdollars(user_id) == 25
+    assert live_credit_summary(workspace_id, store=store) == before
+
+
 def _credit_and_key(
     store: Store,
     workspace_id: str,

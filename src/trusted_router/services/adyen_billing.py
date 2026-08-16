@@ -331,10 +331,17 @@ def apply_adyen_notification(
     if prepared.reference is None or prepared.merchant_reference is None:
         return result
 
+    # The signed merchant reference carries no initiating user (its shape is
+    # fixed by the HMAC scheme), so a real Adyen purchase accrues lifetime
+    # top-up to the workspace owner — the same fallback every other payment
+    # path uses when the initiator is unknown. Without this an Adyen payer
+    # would stay funding-gated for phone verification.
+    workspace = STORE.get_workspace(prepared.reference.workspace_id)
     credited = STORE.credit_workspace_typed_direct(
         prepared.reference.workspace_id,
         result.amount_microdollars,
         f"adyen_checkout:{prepared.merchant_reference}",
+        lifetime_topup_user_id=(workspace.owner_user_id if workspace is not None else None),
     )
     if credited:
         record_credit_purchase(

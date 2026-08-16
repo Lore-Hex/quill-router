@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 import time
 import uuid
@@ -52,12 +53,14 @@ class _PayPalCreditReference:
     workspace_id: str
     credit_amount_cents: int | None = None
     charge_amount_cents: int | None = None
+    initiating_user_id: str | None = None
 
 
 def create_paypal_checkout_session(
     *,
     body: CheckoutRequest,
     workspace_id: str,
+    initiating_user_id: str,
     customer_email: str | None,
     settings: Settings,
 ) -> dict[str, Any]:
@@ -103,7 +106,11 @@ def create_paypal_checkout_session(
             "purchase_units": [
                 {
                     "reference_id": workspace_id,
-                    "custom_id": _paypal_checkout_reference(workspace_id, fee),
+                    "custom_id": _paypal_checkout_reference(
+                        workspace_id,
+                        fee,
+                        initiating_user_id=initiating_user_id,
+                    ),
                     "description": "TrustedRouter prepaid credits",
                     "amount": {
                         "currency_code": "USD",
@@ -190,6 +197,7 @@ def credit_paypal_capture(
         raise api_error(403, "PayPal order belongs to a different workspace", ErrorType.FORBIDDEN)
     if STORE.get_credit_account(workspace_id) is None:
         raise api_error(404, "Credit account not found", ErrorType.NOT_FOUND)
+    workspace = STORE.get_workspace(workspace_id)
     amount_microdollars = parsed["amount_microdollars"]
     processing_fee_microdollars = parsed["processing_fee_microdollars"]
     charge_amount_microdollars = parsed["charge_amount_microdollars"]
@@ -198,6 +206,10 @@ def credit_paypal_capture(
         workspace_id,
         amount_microdollars,
         f"paypal_capture:{capture_id}",
+        lifetime_topup_user_id=(
+            parsed["initiating_user_id"]
+            or (workspace.owner_user_id if workspace is not None else None)
+        ),
     )
     if credited:
         record_credit_purchase(
@@ -322,14 +334,21 @@ def _paypal_amount_value(cents: int) -> str:
     return f"{sign}{cents // 100}.{cents % 100:02d}"
 
 
-def _paypal_checkout_reference(workspace_id: str, fee: ProcessingFee) -> str:
-    return "|".join(
-        (
-            _CHECKOUT_REFERENCE_VERSION,
-            workspace_id,
-            str(fee.credit_amount_cents),
-            str(fee.charge_amount_cents),
-        )
+def _paypal_checkout_reference(
+    workspace_id: str,
+    fee: ProcessingFee,
+    *,
+    initiating_user_id: str,
+) -> str:
+    return json.dumps(
+        {
+            "w": workspace_id,
+            "u": initiating_user_id,
+            "c": fee.credit_amount_cents,
+            "t": fee.charge_amount_cents,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
     )
 
 
@@ -425,6 +444,7 @@ def _paypal_capture_payload(
         "order_id": order_id,
         "capture_id": capture_id,
         "workspace_id": reference.workspace_id,
+        "initiating_user_id": reference.initiating_user_id,
         "amount_microdollars": amount_microdollars,
         "processing_fee_microdollars": processing_fee_microdollars,
         "charge_amount_microdollars": charge_amount_microdollars,
@@ -442,10 +462,40 @@ def _paypal_credit_reference(
         raw_reference = fallback.get("custom_id") or fallback.get("reference_id")
     if not isinstance(raw_reference, str) or not raw_reference:
         raise api_error(400, "PayPal capture has no workspace reference", ErrorType.BAD_REQUEST)
+    if raw_reference.startswith("{"):
+        try:
+            payload = json.loads(raw_reference)
+        except json.JSONDecodeError as exc:
+            raise api_error(400, "PayPal capture reference is invalid", ErrorType.BAD_REQUEST) from exc
+        if not isinstance(payload, dict):
+            raise api_error(400, "PayPal capture reference is invalid", ErrorType.BAD_REQUEST)
+        workspace_id = payload.get("w")
+        initiating_user_id = payload.get("u")
+        credit_amount_cents = payload.get("c")
+        charge_amount_cents = payload.get("t")
+        if (
+            not isinstance(workspace_id, str)
+            or not workspace_id
+            or not isinstance(initiating_user_id, str)
+            or not initiating_user_id
+            or not isinstance(credit_amount_cents, int)
+            or isinstance(credit_amount_cents, bool)
+            or not isinstance(charge_amount_cents, int)
+            or isinstance(charge_amount_cents, bool)
+            or credit_amount_cents <= 0
+            or charge_amount_cents < credit_amount_cents
+        ):
+            raise api_error(400, "PayPal capture reference is invalid", ErrorType.BAD_REQUEST)
+        return _PayPalCreditReference(
+            workspace_id=workspace_id,
+            credit_amount_cents=credit_amount_cents,
+            charge_amount_cents=charge_amount_cents,
+            initiating_user_id=initiating_user_id,
+        )
     if not raw_reference.startswith(f"{_CHECKOUT_REFERENCE_VERSION}|"):
         return _PayPalCreditReference(workspace_id=raw_reference)
     parts = raw_reference.split("|")
-    if len(parts) != 4 or not parts[1]:
+    if len(parts) not in {4, 5} or not parts[1]:
         raise api_error(400, "PayPal capture reference is invalid", ErrorType.BAD_REQUEST)
     try:
         credit_amount_cents = int(parts[2])
@@ -458,6 +508,7 @@ def _paypal_credit_reference(
         workspace_id=parts[1],
         credit_amount_cents=credit_amount_cents,
         charge_amount_cents=charge_amount_cents,
+        initiating_user_id=parts[4] if len(parts) == 5 and parts[4] else None,
     )
 
 

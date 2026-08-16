@@ -22,6 +22,7 @@ def create_checkout_session(
     *,
     body: CheckoutRequest,
     workspace_id: str,
+    initiating_user_id: str | None,
     customer_email: str | None,
     customer_id: str | None,
     settings: Settings,
@@ -66,6 +67,7 @@ def create_checkout_session(
     payment_metadata = fee.metadata(
         workspace_id=workspace_id,
         payment_method=payment_method,
+        initiating_user_id=initiating_user_id,
     )
     if settings.stripe_secret_key:
         stripe.api_key = settings.stripe_secret_key

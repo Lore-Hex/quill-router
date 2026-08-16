@@ -519,6 +519,7 @@ class Settings(BaseSettings):
     # never registers anything — and sender reputation becomes a shared asset,
     # which is why notify requires a verified phone and is metered.
     notify_enabled: bool = False
+    phone_verification_requires_funding: bool | None = None
     # Flip to True once A2P 10DLC is approved on the primary SMS carrier;
     # voice needs no registration.
     notify_sms_available: bool = False
@@ -1222,6 +1223,12 @@ class Settings(BaseSettings):
     @property
     def paypal_enabled(self) -> bool:
         return bool(self.paypal_client_id and self.paypal_client_secret)
+
+    @property
+    def phone_verification_funding_enforced(self) -> bool:
+        if self.phone_verification_requires_funding is not None:
+            return self.phone_verification_requires_funding
+        return self.environment.lower() not in {"local", "test"}
 
     @property
     def adyen_checkout_ready(self) -> bool:

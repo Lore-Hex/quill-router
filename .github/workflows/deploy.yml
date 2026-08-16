@@ -222,6 +222,16 @@ jobs:
           SPANNER_INSTANCE_ID: trusted-router-nam6
           SPANNER_DATABASE_ID: trusted-router
         run: scripts/deploy/migrate_typed_counters.sh
+      - name: Apply money primitives schema (earnings, movements, lifetime top-ups)
+        # tr_user_lifetime_topup is written INSIDE the credit-grant transaction
+        # by every purchase webhook, so a missing table would abort the grant
+        # and stop payments crediting. This job runs before `deploy`, so the
+        # table exists before any revision that needs it can serve.
+        env:
+          GCP_PROJECT_ID: quill-cloud-proxy
+          SPANNER_INSTANCE_ID: trusted-router-nam6
+          SPANNER_DATABASE_ID: trusted-router
+        run: scripts/deploy/migrate_money_primitives.sh
       - name: Apply bounded request-retention schema
         env:
           TR_GCP_PROJECT_ID: quill-cloud-proxy

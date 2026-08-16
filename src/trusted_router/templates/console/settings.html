@@ -29,6 +29,8 @@
     {% elif phone_error == 'too_many_attempts' %}<p class="notice bad">Too many attempts — that code is now dead. Send a new one.</p>
     {% elif phone_error == 'no_pending' %}<p class="notice bad">No code is waiting. Send one first.</p>
     {% elif phone_error == 'rate' %}<p class="notice bad">A code was just sent. Wait a moment before asking for another.</p>{% endif %}
+    {% if phone_error == 'funding' %}<p class="notice bad">Add credits first — phone verification is available after your first top-up. <a href="/console/credits?purpose=identity_verification">Add credits</a></p>
+    {% elif phone_error == 'email' %}<p class="notice bad">Add an email address before verifying a phone. <a href="/console/account/preferences">Add email</a></p>{% endif %}
     {% if phone_sent == 'voice' %}<p class="notice ok">We're calling {{ phone_pending }} now — pick up to hear your code. It expires in 10 minutes.</p>
     {% elif phone_sent == 'sms' %}<p class="notice ok">Code texted to {{ phone_pending }}. It expires in 10 minutes.</p>{% endif %}
     {% if phone_saved %}<p class="notice ok">Number verified.</p>{% endif %}
@@ -73,6 +75,9 @@
       <form class="form" method="post" action="/console/settings/phone/cancel">
         <button class="btn" type="submit">Use a different number</button>
       </form>
+    {% elif phone_missing_requirements %}
+      {% if phone_missing_requirements[0] == 'email' and phone_error != 'email' %}<p class="notice bad">Add an email address before verifying a phone. <a href="/console/account/preferences">Add email</a></p>
+      {% elif phone_missing_requirements[0] == 'funding' and phone_error != 'funding' %}<p class="notice bad">Add credits first — phone verification is available after your first top-up. <a href="/console/credits?purpose=identity_verification">Add credits</a></p>{% endif %}
     {% else %}
       <p>Add a mobile number so your agents can reach you when something breaks. Verifying it is what unlocks every notification channel, email included.</p>
       <form class="form" method="post" action="/console/settings/phone/start">

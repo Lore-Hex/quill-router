@@ -40,6 +40,7 @@ from trusted_router.services.telephony import branded, spoken_text
 from trusted_router.storage import STORE
 from trusted_router.storage_models import User
 from trusted_router.types import ErrorType, UsageType
+from trusted_router.verification_gates import missing_phone_verification_requirements
 
 log = logging.getLogger(__name__)
 
@@ -106,6 +107,18 @@ def register_notify_routes(router: APIRouter) -> None:
         user = principal.user
         if user is None:
             raise api_error(403, "sign in to manage your phone number", ErrorType.FORBIDDEN)
+
+        missing_requirements = missing_phone_verification_requirements(user, settings)
+        if missing_requirements:
+            raise api_error(
+                403,
+                "Phone verification requirements are not met",
+                ErrorType.VERIFICATION_REQUIRED,
+                extra={
+                    "missing_requirements": missing_requirements,
+                    "verification_url": "/console/settings",
+                },
+            )
 
         requested = str(payload.get("channel") or "sms").strip().lower()
         if requested not in {"sms", "voice"}:

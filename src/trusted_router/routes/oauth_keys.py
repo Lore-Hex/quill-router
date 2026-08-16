@@ -97,6 +97,7 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         data = create_checkout_session(
             body=body,
             workspace_id=principal.workspace.id,
+            initiating_user_id=_principal_user_id(principal),
             customer_email=(
                 principal.user.email
                 if principal.user and principal.user.email and "@" in principal.user.email
@@ -415,6 +416,7 @@ def _identity_payload(user: Any) -> dict[str, Any] | None:
         "sub": user.id,
         "email": user.email,
         "email_verified": user.email_verified,
+        "phone_verified": user.phone_verified,
         "wallet_address": user.wallet_address,
     }
 

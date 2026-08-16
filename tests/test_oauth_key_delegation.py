@@ -87,6 +87,7 @@ def test_oauth_code_exchange_returns_signed_in_identity(
     assert identity["sub"] == alice.id
     assert identity["email"] == "alice@example.com"
     assert "email_verified" in identity
+    assert identity["phone_verified"] is False
 
 
 def test_userinfo_returns_identity_for_delegated_key(

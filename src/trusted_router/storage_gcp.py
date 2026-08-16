@@ -1863,6 +1863,36 @@ class SpannerBigtableStore:
             )
         return 0 if not rows else int(rows[0][0])
 
+    def add_lifetime_topup(
+        self,
+        user_id: str,
+        amount_microdollars: int,
+        event_id: str,
+    ) -> bool:
+        amount = self._positive_money_amount(amount_microdollars)
+
+        def txn(transaction: Any) -> bool:
+            if self._read_entity_tx(transaction, "stripe_event", event_id, dict) is not None:
+                return False
+            now = dt.datetime.now(dt.UTC).replace(microsecond=0)
+            self._increment_lifetime_topup_tx(transaction, user_id, amount, now=now)
+            insert_entity_dml_at(
+                transaction,
+                self._param_types,
+                "stripe_event",
+                event_id,
+                _json_body(
+                    {
+                        "created_at": now.isoformat().replace("+00:00", "Z"),
+                        "lifetime_topup_user_id": user_id,
+                    }
+                ),
+                now,
+            )
+            return True
+
+        return self._run_in_transaction(txn)
+
     def update_auto_refill_settings(
         self,
         workspace_id: str,

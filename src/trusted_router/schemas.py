@@ -42,6 +42,7 @@ class SignupRequest(_Strict):
 class CheckoutRequest(_Lenient):
     amount: Decimal | str | int | float = Decimal("20")
     workspace_id: str | None = None
+    purpose: Literal["identity_verification"] | None = None
     success_url: str | None = None
     cancel_url: str | None = None
     payment_method: Literal[

@@ -24,6 +24,7 @@ def error_body(
     type_: str,
     *,
     source: str | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "error": {
@@ -31,6 +32,7 @@ def error_body(
             "message": message,
             "type": type_,
             "source": source or default_error_source(type_),
+            **(extra or {}),
         }
     }
 
@@ -42,10 +44,11 @@ def api_error(
     *,
     source: str | None = None,
     headers: dict[str, str] | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> HTTPException:
     return HTTPException(
         status_code=code,
-        detail=error_body(code, message, type_, source=source),
+        detail=error_body(code, message, type_, source=source, extra=extra),
         headers=headers,
     )
 

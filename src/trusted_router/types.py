@@ -42,6 +42,7 @@ class ErrorType(StrEnum):
     BAD_REQUEST = "bad_request"
     UNAUTHORIZED = "unauthorized"
     FORBIDDEN = "forbidden"
+    VERIFICATION_REQUIRED = "verification_required"
     NOT_FOUND = "not_found"
     CONFLICT = "conflict"
     ALREADY_REGISTERED = "already_registered"

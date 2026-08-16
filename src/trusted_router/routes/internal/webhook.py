@@ -130,7 +130,10 @@ def register(router: APIRouter) -> None:
                     payment_method=payment_method,
                 )
                 credited = STORE.credit_workspace_typed_direct(
-                    workspace_id, amount_microdollars, credit_event_id
+                    workspace_id,
+                    amount_microdollars,
+                    credit_event_id,
+                    lifetime_topup_user_id=_lifetime_topup_user_id(workspace_id, metadata),
                 )
                 if credited:
                     record_credit_purchase(
@@ -229,7 +232,10 @@ def register(router: APIRouter) -> None:
                     payment_intent_amount_cents=obj.get("amount"),
                 )
                 credited = STORE.credit_workspace_typed_direct(
-                    workspace_id, amount_microdollars, event_id
+                    workspace_id,
+                    amount_microdollars,
+                    event_id,
+                    lifetime_topup_user_id=_lifetime_topup_user_id(workspace_id, metadata),
                 )
                 if credited:
                     record_credit_purchase(
@@ -329,6 +335,14 @@ def register(router: APIRouter) -> None:
                 }
 
         return {"data": {"ignored": True, "event_id": event_id}}
+
+
+def _lifetime_topup_user_id(workspace_id: str, metadata: dict[str, Any]) -> str | None:
+    initiating_user_id = metadata.get("initiating_user_id")
+    if isinstance(initiating_user_id, str) and initiating_user_id:
+        return initiating_user_id
+    workspace = STORE.get_workspace(workspace_id)
+    return workspace.owner_user_id if workspace is not None else None
 
 
 def _checkout_credit_event_id(

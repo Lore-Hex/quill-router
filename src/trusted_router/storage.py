@@ -1206,6 +1206,20 @@ class InMemoryStore:
         with self._lock:
             return self.lifetime_topups.get(user_id, 0)
 
+    def add_lifetime_topup(
+        self,
+        user_id: str,
+        amount_microdollars: int,
+        event_id: str,
+    ) -> bool:
+        amount = self._positive_money_amount(amount_microdollars)
+        with self._lock:
+            if event_id in self.stripe_events:
+                return False
+            self.stripe_events.add(event_id)
+            self.lifetime_topups[user_id] = self.lifetime_topups.get(user_id, 0) + amount
+            return True
+
     def update_auto_refill_settings(
         self,
         workspace_id: str,

@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.fakes.spanner import make_fake_store
-from trusted_router.storage import CreditAccount, InMemoryStore
+from trusted_router.storage import STORE, CreditAccount, InMemoryStore
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
 
 
@@ -115,12 +115,19 @@ def test_stripe_checkout_webhook_routes_topup_through_typed_direct(
     monkeypatch,
 ) -> None:
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
-    calls: list[tuple[str, int, str]] = []
+    workspace = STORE.get_workspace(workspace_id)
+    assert workspace is not None
+    calls: list[tuple[str, int, str, str | None]] = []
 
     def typed_direct(
-        _store: InMemoryStore, workspace_id_arg: str, amount: int, event_id: str
+        _store: InMemoryStore,
+        workspace_id_arg: str,
+        amount: int,
+        event_id: str,
+        *,
+        lifetime_topup_user_id: str | None = None,
     ) -> bool:
-        calls.append((workspace_id_arg, amount, event_id))
+        calls.append((workspace_id_arg, amount, event_id, lifetime_topup_user_id))
         return True
 
     def old_path(_store: InMemoryStore, *_args, **_kwargs) -> bool:
@@ -148,7 +155,9 @@ def test_stripe_checkout_webhook_routes_topup_through_typed_direct(
     )
 
     assert resp.status_code == 200, resp.text
-    assert calls == [(workspace_id, 1_230_000, "evt_checkout_typed_direct")]
+    assert calls == [
+        (workspace_id, 1_230_000, "evt_checkout_typed_direct", workspace.owner_user_id)
+    ]
 
 
 def test_stripe_auto_refill_webhook_routes_topup_through_typed_direct(
@@ -157,12 +166,19 @@ def test_stripe_auto_refill_webhook_routes_topup_through_typed_direct(
     monkeypatch,
 ) -> None:
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
-    calls: list[tuple[str, int, str]] = []
+    workspace = STORE.get_workspace(workspace_id)
+    assert workspace is not None
+    calls: list[tuple[str, int, str, str | None]] = []
 
     def typed_direct(
-        _store: InMemoryStore, workspace_id_arg: str, amount: int, event_id: str
+        _store: InMemoryStore,
+        workspace_id_arg: str,
+        amount: int,
+        event_id: str,
+        *,
+        lifetime_topup_user_id: str | None = None,
     ) -> bool:
-        calls.append((workspace_id_arg, amount, event_id))
+        calls.append((workspace_id_arg, amount, event_id, lifetime_topup_user_id))
         return True
 
     def old_path(_store: InMemoryStore, *_args, **_kwargs) -> bool:
@@ -191,4 +207,6 @@ def test_stripe_auto_refill_webhook_routes_topup_through_typed_direct(
     )
 
     assert resp.status_code == 200, resp.text
-    assert calls == [(workspace_id, 2_000_000, "evt_auto_refill_typed_direct")]
+    assert calls == [
+        (workspace_id, 2_000_000, "evt_auto_refill_typed_direct", workspace.owner_user_id)
+    ]
