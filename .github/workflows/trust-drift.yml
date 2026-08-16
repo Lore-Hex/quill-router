@@ -13,20 +13,26 @@ name: Trust Measurement Drift
 # is invisible from the inside. It only ever shows up as a stranger concluding
 # our gateway was tampered with.
 on:
-  # Hourly, offset off the top of the hour. Cadence reasoning, deliberately not
-  # copied from prod-smoke's */30:
-  #   * This is not an uptime check. A drifted record is a STICKY failure — it
-  #     stays wrong until somebody republishes — so what matters is a bounded
-  #     detection latency, not fast resolution. One hour bounds it.
-  #   * Polling faster would mostly sample bind windows. A roll legitimately
-  #     serves the outgoing measurement while the record already names the
-  #     incoming one; the accepted set covers that, but every extra run is more
-  #     unauthenticated fetches against three planes for a value that changes
-  #     only on an enclave rebuild.
-  #   * :23 keeps it clear of the top-of-hour price-refresh + deploy rush, the
-  #     same reasoning as daily-embeddings-probe.yml's 13:17.
+  # DAILY, plus the events that can actually cause drift. This shipped hourly
+  # and that was wrong. The reasoning written here at the time argued that a
+  # drifted record is a STICKY failure and that the value "changes only on an
+  # enclave rebuild" — both true, and both arguments for a LONGER interval than
+  # the one they were used to justify. Nothing was gained by sampling a
+  # weekly-scale signal 24 times a day except a runner boot and a `uv sync` per
+  # run, and it was copied off prod-smoke's */30 without noticing that
+  # prod-smoke watches liveness, which genuinely changes minute to minute.
+  #
+  # Drift is created by exactly two things: a control-plane deploy that changes
+  # how records are mirrored, and an enclave rebuild republishing a
+  # measurement. The first is covered by the `workflow_run` trigger below. The
+  # second happens in quill-cloud-proxy, which cannot trigger a workflow here,
+  # and is what the daily run is for — it bounds detection latency for the one
+  # cause no event reaches.
+  #
+  # 07:23 UTC keeps it clear of the top-of-hour price-refresh and deploy rush,
+  # the same reasoning as daily-embeddings-probe.yml's 13:17.
   schedule:
-    - cron: "23 * * * *"
+    - cron: "23 7 * * *"
   # A control-plane deploy can change how the records are MIRRORED (that is
   # exactly what added the Azure `regions` array the checker enumerates), so
   # re-check as soon as one lands rather than waiting up to an hour.
@@ -65,8 +71,18 @@ jobs:
       # bring-up branches), but on a schedule "we stopped publishing a
       # measurement" and "everything matches" must not be the same green tick.
       #
-      # EXPECT THE FIRST RUN AFTER THIS MERGES TO BE RED, until the control
-      # plane deploy lands. Measured 2026-08-15 against production: the mirror
+      # EXPECT RUNS TO BE RED UNTIL THE CONTROL PLANE DEPLOYS, and as of
+      # 2026-08-16 that is blocked on something unrelated to this check: the
+      # "Deploy TR control plane" workflow has failed every run since 07:50 UTC
+      # on 2026-08-15 at the "Sync shared public analytics snapshots" step,
+      # which #574 added to migrate-schema. It runs `gcloud compute ssh
+      # --tunnel-through-iap` as tr-deploy@, which has no IAP tunnel access, so
+      # every deploy dies at 4033 and `deploy` needs `migrate-schema`. Until
+      # that clears, this job cannot go green no matter what it is pointed at.
+      # That is also why this runs daily rather than hourly: a check that
+      # cannot pass yet should not say so 24 times a day.
+      #
+      # Measured 2026-08-15 against production: the mirror
       # was still dropping azure-release.json's `regions` array, so the checker
       # could reach UAE North and not Southeast Asia and reported a [GAP] for
       # the MAA issuer no contacted endpoint presented. That is the correct
