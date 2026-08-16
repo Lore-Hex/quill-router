@@ -141,12 +141,17 @@ def test_chat_activity_generation_and_no_content_storage(
     assert sample.provider_name == "Cerebras"
     assert sample.elapsed_milliseconds is not None
     assert sample.total_cost_microdollars == generation_data["total_cost_microdollars"]
-    assert "workspace_id" not in safe_sample
+    # `workspace_id` IS carried, deliberately. ClickHouse keeps these rows for
+    # 400 days while Spanner's tr_generation deletes after 30, so this is the
+    # only durable per-customer usage record. The table is VPC-internal; the
+    # public surfaces that read these samples aggregate them and must never
+    # project the tenant id — pinned by tests/test_analytics_workspace_id.py.
+    assert safe_sample["workspace_id"], "sample must carry tenant attribution"
+    # Credential material and prompt bodies remain excluded — those guarantees
+    # are unchanged and are the ones that actually matter here.
     assert "key_hash" not in safe_sample
     # `app` is the caller's public, opt-in self-reported title (X-Title): it
-    # powers the /apps directory and is NOT tenant / credential / prompt data.
-    # It is intentionally carried on the benchmark sample; the real privacy
-    # guarantees below (no workspace, no key, no prompt body) still hold.
+    # powers the /apps directory and is NOT credential / prompt data.
     assert isinstance(safe_sample["app"], str)
     assert prompt not in str(safe_sample)
 

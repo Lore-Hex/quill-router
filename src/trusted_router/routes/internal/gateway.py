@@ -1732,6 +1732,7 @@ def _settle_gateway_authorization(
                 error_type=body.error_type or "provider_error",
                 region=authorization.region,
                 provider=selected_endpoint.provider,
+                workspace_id=authorization.workspace_id,
             )
         )
 
