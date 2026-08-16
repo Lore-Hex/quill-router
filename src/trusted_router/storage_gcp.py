@@ -13,6 +13,9 @@ from typing import Any, TypeVar
 
 from trusted_router import phone_verification
 from trusted_router import storage_gcp_credit_transfer as spanner_credit_transfer
+from trusted_router.custom_model_billing import (
+    user_model_authorization_id_from_payout_event_id,
+)
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.operational_analytics import (
     OperationalAnalyticsClient,
@@ -1836,6 +1839,9 @@ class SpannerBigtableStore:
                 amount_microdollars=amount,
                 counterparty_account_id=payer_workspace_id,
                 custom_model_id=custom_model_id,
+                authorization_id=(
+                    user_model_authorization_id_from_payout_event_id(event_id)
+                ),
                 created_at=now,
             )
             insert_entity_dml_at(
