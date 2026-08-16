@@ -74,12 +74,16 @@ def test_deploy_wires_veriff_config_and_secrets() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
     secrets = (ROOT / "scripts/deploy/secrets.sh").read_text()
 
-    # Ships dark, as a PAIR: enabling the custom-model gate without a reachable
-    # Veriff would 403 every create/edit with an unsatisfiable requirement.
-    # Both flip to true in one step once the secrets exist in Secret Manager.
-    assert '"TR_VERIFF_ENABLED=false"' in rollout
-    assert '"TR_CUSTOM_MODELS_REQUIRE_VERIFICATION=false"' in rollout
-    assert '"TR_VERIFF_ENABLED=true"' not in rollout
+    # A PAIR that must agree: enabling the custom-model gate without a
+    # reachable Veriff would 403 every create/edit with an unsatisfiable
+    # requirement. Activated together 2026-08-16 (secrets exist); if either
+    # ever flips back, the other must flip with it in the same commit.
+    veriff_enabled = '"TR_VERIFF_ENABLED=true"' in rollout
+    gate_enabled = '"TR_CUSTOM_MODELS_REQUIRE_VERIFICATION=true"' in rollout
+    assert veriff_enabled == gate_enabled, (
+        "TR_VERIFF_ENABLED and TR_CUSTOM_MODELS_REQUIRE_VERIFICATION must flip together"
+    )
+    assert veriff_enabled, "identity verification is meant to be live in prod"
     assert '"TR_VERIFF_BASE_URL=https://stationapi.veriff.com"' in rollout
     assert (
         'add_secret_env_if_exists "TR_VERIFF_API_KEY" "trustedrouter-veriff-api-key"'
