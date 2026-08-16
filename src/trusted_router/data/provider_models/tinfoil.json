@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Tinfoil models whose live API is ahead of the snapshot. Tinfoil announced GLM 5.2 prompt caching on 2026-07-14 at a 75% cached-input discount. Deprecated Tinfoil routes are filtered in catalog.py.",
   "provider": "tinfoil",
   "source": "https://inference.tinfoil.sh/v1/models",
-  "generated_at": "2026-08-16T14:24:55Z",
+  "generated_at": "2026-08-16T15:24:13Z",
   "model_count": 3,
   "models": [
     {
