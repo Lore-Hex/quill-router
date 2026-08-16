@@ -49,6 +49,7 @@ _DEFAULT_THROUGHPUT_MINIMUM_OUTPUT_TOKENS = 128
 _DEFAULT_THROUGHPUT_TIMEOUT_SECONDS = 90.0
 _DEFAULT_THROUGHPUT_TIMEOUT_CEILING_SECONDS = 210.0
 _DEFAULT_THROUGHPUT_INTERVAL_SECONDS = THROUGHPUT_INTERVAL_SECONDS
+_DEFAULT_REMEDIATOR_TIMEOUT_SECONDS = 90.0
 
 
 def _env_flag(name: str, *, default: bool = False) -> bool:
@@ -362,12 +363,14 @@ async def _post_remediator(
     *,
     url: str,
     internal_token: str,
+    timeout_seconds: float = _DEFAULT_REMEDIATOR_TIMEOUT_SECONDS,
 ) -> bool:
     """Run the control-plane remediator and make scheduler failures visible."""
     try:
         response = await client.post(
             url,
             headers={"x-trustedrouter-internal-token": internal_token},
+            timeout=httpx.Timeout(timeout_seconds),
         )
         response.raise_for_status()
         payload = response.json()
@@ -377,7 +380,7 @@ async def _post_remediator(
         print(f"remediator decisions: {decisions}")
         return True
     except Exception as exc:
-        print(f"remediator check failed: {exc}", file=sys.stderr)
+        print(f"remediator check failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return False
 
 
@@ -595,11 +598,21 @@ async def run() -> int:
                 )
         remediator_url = os.environ.get("TR_SYNTHETIC_REMEDIATOR_URL")
         if remediator_url:
+            remediator_timeout_seconds = max(
+                30.0,
+                float(
+                    os.environ.get(
+                        "TR_SYNTHETIC_REMEDIATOR_TIMEOUT_SECONDS",
+                        str(_DEFAULT_REMEDIATOR_TIMEOUT_SECONDS),
+                    )
+                ),
+            )
             ok = (
                 await _post_remediator(
                     client,
                     url=remediator_url,
                     internal_token=internal_token,
+                    timeout_seconds=remediator_timeout_seconds,
                 )
                 and ok
             )
