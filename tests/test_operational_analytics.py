@@ -220,7 +220,13 @@ def test_clickhouse_balanced_benchmark_reader_uses_one_window_query() -> None:
 
 @pytest.mark.parametrize(
     "snapshot_name",
-    ["leaderboard", "apps", "video_leaderboard", "status_inputs"],
+    [
+        "leaderboard",
+        "apps",
+        "video_leaderboard",
+        "status_inputs",
+        "client_reliability",
+    ],
 )
 def test_public_snapshot_reads_newest_revision_across_month_partitions(
     snapshot_name: str,
@@ -288,15 +294,13 @@ def _outbox_row() -> OperationalOutboxRow:
 
 
 def test_operational_normalizer_adds_commit_version_and_rejects_unknown_kind() -> None:
-    event = normalise_operational_event(_outbox_row())
+    [event] = normalise_operational_event(_outbox_row())
     assert event.event_kind == "activity"
     assert event.row["generation_id"] == _generation().id
     assert event.row["ingest_version"].startswith("2026-07-31T12:35:00")
 
     with pytest.raises(ValueError, match="unsupported operational event kind"):
-        normalise_operational_event(
-            dataclasses.replace(_outbox_row(), event_kind="prompt")
-        )
+        normalise_operational_event(dataclasses.replace(_outbox_row(), event_kind="prompt"))
 
 
 class _Source:

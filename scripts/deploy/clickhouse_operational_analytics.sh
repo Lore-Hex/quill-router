@@ -11,6 +11,7 @@ source "${SCRIPT_DIR}/_lib.sh"
 NAMES=(tr-clickhouse-1 tr-clickhouse-2 tr-clickhouse-3)
 ZONES=(us-central1-a us-central1-b us-central1-c)
 SCHEMA="${ROOT}/clickhouse/004_operational_analytics_replicated.sql"
+CLIENT_SCHEMA="${ROOT}/clickhouse/008_client_events_replicated.sql"
 BENCHMARK_WORKSPACE_SCHEMA="${ROOT}/clickhouse/007_benchmark_samples_workspace_id.sql"
 BENCHMARK_WORKSPACE_BACKFILL_LIMIT="${TR_CLICKHOUSE_BENCHMARK_WORKSPACE_BACKFILL_LIMIT:-200000}"
 CONTROL_SECRET="trustedrouter-clickhouse-control-read-password"
@@ -26,6 +27,7 @@ fi
 if [ "$APPLY" -eq 0 ]; then
   log "dry-run: would create the bounded Spanner operational analytics queue"
   log "dry-run: would create three-replica activity and synthetic tables"
+  log "dry-run: would create client telemetry, rollup, and quarantine tables"
   log "dry-run: would backfill bounded Bigtable history and verify replica parity"
   log "dry-run: would install the ingester, rollup worker, and private reader"
   log "dry-run: would migrate and replay bounded benchmark workspace attribution"
@@ -83,8 +85,9 @@ SPANNER_DATABASE_ID="$SPANNER_DATABASE_ID" \
 
 log "creating replicated operational tables"
 schema="$(cat "$SCHEMA")"
+client_schema="$(cat "$CLIENT_SCHEMA")"
 for index in 0 1 2; do
-  node_query "$index" "CREATE DATABASE IF NOT EXISTS tr; ${schema}"
+  node_query "$index" "CREATE DATABASE IF NOT EXISTS tr; ${schema} ${client_schema}"
 done
 
 archive="$(mktemp "${TMPDIR:-/tmp}/tr-clickhouse-operational.XXXXXX.tar.gz")"
@@ -113,6 +116,10 @@ node_ssh 0 --command="sudo sh -c '
     /etc/systemd/system/tr-clickhouse-synthetic-rollup.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-synthetic-rollup.timer \
     /etc/systemd/system/tr-clickhouse-synthetic-rollup.timer
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-client-rollup.service \
+    /etc/systemd/system/tr-clickhouse-client-rollup.service
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-client-rollup.timer \
+    /etc/systemd/system/tr-clickhouse-client-rollup.timer
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-operational-parity.service \
     /etc/systemd/system/tr-clickhouse-operational-parity.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-operational-parity.timer \
@@ -188,16 +195,18 @@ node_ssh 0 --command="sudo sh -c '
     /opt/tr-clickhouse/venv/bin/python -m clickhouse.rollup_synthetic
 '"
 
-node_ssh 0 --command="sudo systemctl enable tr-clickhouse-operational-ingest.service tr-clickhouse-synthetic-rollup.timer tr-clickhouse-operational-parity.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer"
+node_ssh 0 --command="sudo systemctl enable tr-clickhouse-operational-ingest.service tr-clickhouse-synthetic-rollup.timer tr-clickhouse-client-rollup.timer tr-clickhouse-operational-parity.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer"
 
 log "verifying exact replica identity after synchronization"
-for table in activity_generations synthetic_probe_samples synthetic_status_rollups public_analytics_snapshots; do
+for table in activity_generations synthetic_probe_samples synthetic_status_rollups public_analytics_snapshots client_request_events client_minute_counters client_availability_rollups operational_outbox_quarantine; do
   expected=""
   id_column="id"
   if [ "$table" = "activity_generations" ]; then
     id_column="generation_id"
   elif [ "$table" = "public_analytics_snapshots" ]; then
     id_column="name"
+  elif [ "$table" = "client_request_events" ] || [ "$table" = "client_minute_counters" ] || [ "$table" = "operational_outbox_quarantine" ]; then
+    id_column="event_id"
   fi
   for index in 0 1 2; do
     node_query "$index" "SYSTEM SYNC REPLICA ${table}"
@@ -230,7 +239,7 @@ for index in 0 1 2; do
 done
 
 node_ssh 0 --command="sudo systemctl start tr-clickhouse-operational-ingest.service"
-node_ssh 0 --command="sudo systemctl start tr-clickhouse-public-snapshots.timer tr-clickhouse-public-snapshots.service tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer tr-clickhouse-spanner-delivery.service"
+node_ssh 0 --command="sudo systemctl start tr-clickhouse-client-rollup.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-public-snapshots.service tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer tr-clickhouse-spanner-delivery.service"
 
 log "operational analytics infrastructure is ready; Bigtable is still authoritative"
 log "deploy the operational outbox producer, then run clickhouse_operational_analytics_finalize.sh --apply"

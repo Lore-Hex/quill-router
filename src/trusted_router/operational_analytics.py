@@ -306,6 +306,7 @@ FORMAT JSON
             "apps",
             "video_leaderboard",
             "status_inputs",
+            "client_reliability",
         }:
             raise ValueError("unsupported public analytics snapshot")
         rows = self._query(

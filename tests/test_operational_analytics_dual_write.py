@@ -144,6 +144,9 @@ class _Fleet:
     def stored(self, host: str) -> list[dict[str, Any]]:
         collapsed: dict[tuple[Any, ...], dict[str, Any]] = {}
         for call in self.accepted(host):
+            query = call.command[call.command.index("--query") + 1]
+            if "INSERT INTO activity_generations" not in query:
+                continue
             for row in call.rows:
                 # activity_generations ORDER BY (tenant_id, created_at, generation_id)
                 key = (row["tenant_id"], row["created_at"], row["generation_id"])
@@ -238,7 +241,8 @@ def _dual_writer() -> Any:
 
 
 def _event(event_id: str = "gen-1") -> Any:
-    return normalise_operational_event(_row(event_id))
+    [event] = normalise_operational_event(_row(event_id))
+    return event
 
 
 # --------------------------------------------------------------------------
@@ -666,16 +670,13 @@ def test_the_backlog_is_delivered_and_deleted_once_the_node_returns(
     assert len(fleet.stored("local")) == 6
 
 
-def test_a_poison_batch_no_longer_blocks_the_rest_of_its_shard(
+def test_a_poison_batch_is_quarantined_and_does_not_block_its_shard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Same root cause, non-ClickHouse trigger.
 
-    A payload this build cannot normalise fails its batch, so the batch is
-    never deleted -- and with an unpaged read that one row blocked its shard's
-    window permanently, taking every well-formed row behind it with it. The
-    cursor steps over the bad batch; the bad rows stay queued for a build that
-    can read them.
+    A payload this build cannot normalise is written to the quarantine table
+    and deleted with the healthy rows, so it cannot crash-loop the drainer.
     """
     fleet = _Fleet()
     fleet.install(monkeypatch)
@@ -690,18 +691,19 @@ def test_a_poison_batch_no_longer_blocks_the_rest_of_its_shard(
     source = _Source([poison, *healthy])
     cursors: dict[int, tuple[str, str]] = {}
 
-    # Progress is not free: a delivered batch resets the cursor to the head, so
-    # the unreadable batch is re-attempted before each good one. That is the
-    # deliberate trade -- the healthy path must read from the head exactly as it
-    # always did -- and it is bounded work, not a block. Before the cursor, the
-    # good rows behind this one were delivered NEVER, at any sweep count.
     for _ in range(8):
         drain_once(source, _dual_writer(), batch_size=1, shard_count=1, cursors=cursors)
 
     delivered = {row["generation_id"] for row in fleet.stored("local")}
     assert delivered == {f"gen-{index:04d}" for index in range(1, 4)}
-    # The unreadable row is still queued -- not delivered, and not dropped.
-    assert [row.event_id for row in source.rows] == ["gen-0000-poison"]
+    assert source.rows == []
+    quarantine_calls = [
+        call
+        for call in fleet.accepted("local")
+        if "INSERT INTO operational_outbox_quarantine"
+        in call.command[call.command.index("--query") + 1]
+    ]
+    assert quarantine_calls[0].rows[0]["event_id"] == "gen-0000-poison"
 
 
 def test_a_hard_down_target_is_skipped_after_a_few_failures_in_one_sweep(

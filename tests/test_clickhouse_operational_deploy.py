@@ -41,6 +41,19 @@ def test_operational_deploy_backfills_before_starting_live_ingest() -> None:
     assert "clickhouse_replicate_rollups.sh" in script
     assert "clickhouse_operational_analytics_finalize.sh --apply" in script
     assert "systemctl start tr-clickhouse-operational-parity.service" not in script
+    assert "008_client_events_replicated.sql" in script
+    assert "tr-clickhouse-client-rollup.service" in script
+    assert "tr-clickhouse-client-rollup.timer" in script
+    assert "systemctl enable" in script
+    assert 'id_column="event_id"' in script
+
+
+def test_client_telemetry_single_node_schema_is_applied_with_operational_schema() -> None:
+    script = (ROOT / "scripts/deploy/aws_eu_north_clickhouse.sh").read_text()
+
+    assert "006_operational_analytics_single_node.sql" in script
+    assert "009_client_events_single_node.sql" in script
+    assert "${CLIENT_SCHEMA}" in script
 
 
 def test_operational_finalize_requires_live_outbox_before_closing_gap() -> None:

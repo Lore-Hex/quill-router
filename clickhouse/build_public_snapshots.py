@@ -1,5 +1,9 @@
 """Precompute small public analytics payloads from bounded ClickHouse data."""
 
+# ruff: noqa: S608
+# Client rollup cutoffs are rendered only from typed UTC datetimes; every
+# table name and limit is a module constant.
+
 from __future__ import annotations
 
 import dataclasses
@@ -11,6 +15,7 @@ from typing import Any
 
 from trusted_router.apps import aggregate_apps
 from trusted_router.catalog import MODELS, endpoints_for_model
+from trusted_router.client_reliability import build_client_reliability
 from trusted_router.storage_models import (
     ProviderBenchmarkSample,
     SyntheticProbeSample,
@@ -24,6 +29,7 @@ PER_PROVIDER_LIMIT = 500
 STATUS_LIVE_SAMPLE_LIMIT = 500
 STATUS_HOUR_ROLLUP_LIMIT = 5_000
 VIDEO_SAMPLE_LIMIT = 5_000
+CLIENT_ROLLUP_LIMIT = 100_000
 
 
 def _query(
@@ -164,6 +170,53 @@ FORMAT JSONEachRow
     return samples, rollups
 
 
+def _client_reliability_rows(password: str, *, now: dt.datetime) -> list[dict[str, Any]]:
+    cutoff_48h = (now - dt.timedelta(hours=48)).strftime("%Y-%m-%d %H:%M:%S")
+    cutoff_7d = (now - dt.timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+    cutoff_30d = (now - dt.timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+    output = _query(
+        password,
+        f"""
+SELECT * EXCEPT computed_at
+FROM client_availability_rollups FINAL
+WHERE scope = 'fleet'
+  AND (
+    (period = '5m' AND period_start >= toDateTime('{cutoff_48h}', 'UTC'))
+    OR (period = 'hour' AND period_start >= toDateTime('{cutoff_7d}', 'UTC'))
+    OR (period = 'day' AND period_start >= toDateTime('{cutoff_30d}', 'UTC'))
+  )
+ORDER BY period_start DESC, period, id
+LIMIT {CLIENT_ROLLUP_LIMIT}
+FORMAT JSONEachRow
+""",
+    )
+    return [json.loads(line) for line in output.splitlines() if line.strip()]
+
+
+def _client_rows_by_window(
+    rows: list[dict[str, Any]],
+    *,
+    now: dt.datetime,
+) -> dict[str, list[dict[str, Any]]]:
+    def parsed(row: dict[str, Any]) -> dt.datetime:
+        value = dt.datetime.fromisoformat(
+            str(row["period_start"]).replace(" ", "T").replace("Z", "+00:00")
+        )
+        return value.replace(tzinfo=dt.UTC) if value.tzinfo is None else value.astimezone(dt.UTC)
+
+    definitions = {
+        "5m": ("5m", dt.timedelta(minutes=5)),
+        "1h": ("5m", dt.timedelta(hours=1)),
+        "24h": ("hour", dt.timedelta(hours=24)),
+        "7d": ("hour", dt.timedelta(days=7)),
+        "30d": ("day", dt.timedelta(days=30)),
+    }
+    return {
+        name: [row for row in rows if row.get("period") == period and parsed(row) >= now - lookback]
+        for name, (period, lookback) in definitions.items()
+    }
+
+
 def build_snapshots(
     samples: list[ProviderBenchmarkSample],
     *,
@@ -171,6 +224,7 @@ def build_snapshots(
     video_samples: list[ProviderBenchmarkSample] | None = None,
     status_samples: list[SyntheticProbeSample] | None = None,
     status_rollups: list[SyntheticRollup] | None = None,
+    client_reliability_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     leaderboard = aggregate_leaderboard(
         samples,
@@ -222,11 +276,17 @@ def build_snapshots(
         "samples": [dataclasses.asdict(sample) for sample in status_samples or []],
         "rollups": [dataclasses.asdict(rollup) for rollup in status_rollups or []],
     }
+    snapshot_now = dt.datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+    client_reliability = build_client_reliability(
+        _client_rows_by_window(client_reliability_rows or [], now=snapshot_now),
+        snapshot_now,
+    )
     return {
         "leaderboard": leaderboard,
         "apps": apps,
         "video_leaderboard": video,
         "status_inputs": status_inputs,
+        "client_reliability": client_reliability,
     }
 
 
@@ -243,6 +303,7 @@ def main() -> int:
         video_samples=_video_samples(password),
         status_samples=status_samples,
         status_rollups=status_rollups,
+        client_reliability_rows=_client_reliability_rows(password, now=now),
     )
     rows = [
         {

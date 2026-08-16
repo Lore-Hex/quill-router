@@ -154,7 +154,7 @@ def _source_rows(
             generation = _parse(Generation, raw)
             if generation is None:
                 continue
-            event = normalise_operational_event(
+            [event] = normalise_operational_event(
                 OperationalOutboxRow(
                     shard=0,
                     commit_ts=dt.datetime.now(dt.UTC),

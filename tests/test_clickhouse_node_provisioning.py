@@ -320,23 +320,22 @@ def test_stockholm_backfill_runs_in_the_direction_that_is_actually_open() -> Non
 
 
 def test_stockholm_states_which_tables_the_second_copy_covers() -> None:
-    """The drain replicates the two tables it drains, not all four in the DDL.
-
-    006 creates activity_generations, synthetic_probe_samples,
-    synthetic_status_rollups and public_analytics_snapshots; EVENT_TABLES maps
-    only the first two. Nothing on this cloud writes the other two today, but
-    "a second, independent copy of that history" is a claim that has to name
-    its own edges rather than let a reader assume all four.
-    """
+    """The drain names every ingested table and excludes derived products."""
     from clickhouse.ingest_operational_outbox import EVENT_TABLES
 
     script = STOCKHOLM.read_text()
 
     assert "COVERAGE:" in script
-    for table in EVENT_TABLES.values():
+    tables = {
+        table
+        for value in EVENT_TABLES.values()
+        for table in ((value,) if isinstance(value, str) else value)
+    }
+    for table in tables:
         assert table in script
     assert "does NOT write" in script
     assert "synthetic_status_rollups" in script
+    assert "client_availability_rollups" in script
     assert "public_analytics_snapshots" in script
 
 

@@ -66,6 +66,7 @@ SECRET_ID="${SECRET_ID:-quill/tr-eu-north-clickhouse-password}"
 INSTANCE_PROFILE="${INSTANCE_PROFILE:-quill-enclave-instance-profile}"
 PEER_WITH_PARIS="${PEER_WITH_PARIS:-1}"            # 0 to bring your own path.
 SCHEMA_FILE="${SCHEMA_FILE:-$(dirname "$0")/../../clickhouse/006_operational_analytics_single_node.sql}"
+CLIENT_SCHEMA_FILE="${CLIENT_SCHEMA_FILE:-$(dirname "$0")/../../clickhouse/009_client_events_single_node.sql}"
 
 log(){ printf '\n=== %s\n' "$*" >&2; }
 
@@ -123,6 +124,7 @@ if [ "$REGION" = "$PARIS_REGION" ]; then
   exit 1
 fi
 [ -r "$SCHEMA_FILE" ] || { echo "schema file not readable: $SCHEMA_FILE" >&2; exit 1; }
+[ -r "$CLIENT_SCHEMA_FILE" ] || { echo "schema file not readable: $CLIENT_SCHEMA_FILE" >&2; exit 1; }
 
 PARIS_VPC_CIDR="$(aws ec2 describe-vpcs --region "$PARIS_REGION" --vpc-ids "$PARIS_VPC_ID" \
   --query 'Vpcs[0].CidrBlock' --output text)"
@@ -249,6 +251,7 @@ log "security group: $SG_ID"
 #    manual step that someone forgets.
 # ---------------------------------------------------------------------------
 OPERATIONAL_SCHEMA="$(cat "$SCHEMA_FILE")"
+CLIENT_SCHEMA="$(cat "$CLIENT_SCHEMA_FILE")"
 
 EXISTING="$(aws ec2 describe-instances --region "$REGION" \
   --filters "Name=tag:Name,Values=$NAME" "Name=instance-state-name,Values=running,pending" \
@@ -320,6 +323,7 @@ systemctl restart clickhouse-server
 # Keeper: this node does not replicate with Paris, the drain writes both.
 cat > /root/operational_schema.sql <<'SQLEOF'
 ${OPERATIONAL_SCHEMA}
+${CLIENT_SCHEMA}
 SQLEOF
 for attempt in \$(seq 1 60); do
   if CLICKHOUSE_PASSWORD='${CH_PASSWORD}' clickhouse-client --user default --database default --query 'SELECT 1' >/dev/null 2>&1; then
@@ -559,12 +563,15 @@ echo "  clickhouse-client --user default --database default --query \\"
 echo "    \"INSERT INTO FUNCTION remote('${PRIVATE_IP}:9000','default','activity_generations','default','<stockholm password>') \\"
 echo "     SELECT * FROM activity_generations\""
 echo
-echo "and again for synthetic_probe_samples. ingest_version is carried through,"
+echo "and again for synthetic_probe_samples, client_request_events, and"
+echo "client_minute_counters. ingest_version is carried through,"
 echo "so re-running it collapses instead of double-counting."
 echo
-echo "COVERAGE: the drain replicates the two tables it drains --"
-echo "activity_generations and synthetic_probe_samples. It does NOT write"
-echo "synthetic_status_rollups or public_analytics_snapshots; on this cloud"
-echo "nothing does today (those are GCP timers), so both nodes hold them empty."
+echo "COVERAGE: the drain replicates activity_generations,"
+echo "synthetic_probe_samples, client_request_events, client_minute_counters,"
+echo "and operational_outbox_quarantine. It does NOT write"
+echo "synthetic_status_rollups, client_availability_rollups, or"
+echo "public_analytics_snapshots; on this cloud nothing does today"
+echo "(those are GCP timers), so both nodes hold them empty."
 echo "If a rollup or snapshot job is ever run against Paris, its output is NOT"
 echo "on this node and this node is not a complete copy until it is."

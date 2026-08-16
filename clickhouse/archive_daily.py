@@ -27,6 +27,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
+from clickhouse.ingest_operational_outbox import ACTIVITY_COLUMNS
+
 PROJECT = "quill-cloud-proxy"
 DATABASE = "tr"
 TABLE = "provider_benchmark_samples"
@@ -83,6 +85,8 @@ class DatasetSpec:
     shard_column: str
 
 
+# Raw client_request_events and client_minute_counters are deliberately absent:
+# the telemetry contract retains their rollups, not raw client tables, in Parquet.
 DATASETS: dict[str, DatasetSpec] = {
     "provider_benchmark_samples": DatasetSpec(
         columns=_BENCHMARK_COLUMNS,
@@ -90,37 +94,7 @@ DATASETS: dict[str, DatasetSpec] = {
         shard_column="id",
     ),
     "activity_generations": DatasetSpec(
-        columns=(
-            "generation_id",
-            "request_id",
-            "tenant_id",
-            "key_id",
-            "model",
-            "provider",
-            "provider_name",
-            "app",
-            "tokens_prompt",
-            "tokens_completion",
-            "cached_input_tokens",
-            "reasoning_tokens",
-            "total_cost_microdollars",
-            "usage_type",
-            "speed_tokens_per_second",
-            "finish_reason",
-            "status",
-            "streamed",
-            "usage_estimated",
-            "elapsed_milliseconds",
-            "first_token_milliseconds",
-            "ttfb_milliseconds",
-            "region",
-            "user",
-            "session_id",
-            "http_referer",
-            "app_categories",
-            "tags",
-            "created_at",
-        ),
+        columns=ACTIVITY_COLUMNS,
         time_column="created_at",
         shard_column="generation_id",
     ),
@@ -649,6 +623,11 @@ def archive_day(
         "revision": revision,
         "exported_at": exported_at.isoformat().replace("+00:00", "Z"),
         "source_fingerprint": source.as_dict(),
+        # The exact column list the fingerprint was computed over. Column
+        # additions (activity_generations grew client_* columns) change the
+        # fingerprint expression, so a verifier must recompute against the
+        # columns of THIS revision, not whatever the current schema says.
+        "columns": list(DATASETS[dataset].columns),
         "parts": manifest_parts,
         "parquet_rows": sum(int(part["rows"]) for part in manifest_parts),
     }

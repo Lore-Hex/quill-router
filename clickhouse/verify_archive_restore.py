@@ -14,7 +14,7 @@ import json
 import logging
 import os
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -70,16 +70,24 @@ class RestoreResult:
     revision: str
 
 
-def verify_parquet_part(path: Path, *, dataset: str) -> ExportedPart:
+def verify_parquet_part(
+    path: Path,
+    *,
+    dataset: str,
+    columns: Sequence[str] | None = None,
+) -> ExportedPart:
     try:
         spec = DATASETS[dataset]
     except KeyError:
         raise ValueError(f"unsupported archive dataset: {dataset}") from None
+    # A revision exported before a column was added must be fingerprinted
+    # over the columns it was exported with (recorded in its manifest), or
+    # the recomputation reads columns the Parquet file does not have.
     query = _fingerprint_query(
         f"file({_sql_string(str(path))}, Parquet)",
         where=None,
         final=False,
-        columns=spec.columns,
+        columns=tuple(columns) if columns else spec.columns,
         time_column=spec.time_column,
     )
     fingerprint = _parse_fingerprint(_run_clickhouse_local(query))
@@ -123,6 +131,14 @@ def verify_archived_day(
     if not isinstance(parts_value, list):
         raise RuntimeError("archive manifest parts must be a list")
 
+    manifest_columns = manifest.get("columns")
+    if manifest_columns is not None and not (
+        isinstance(manifest_columns, list)
+        and manifest_columns
+        and all(isinstance(column, str) for column in manifest_columns)
+    ):
+        raise RuntimeError("archive manifest columns must be a non-empty list of names")
+
     verified: list[ExportedPart] = []
     with tempfile.TemporaryDirectory(prefix=f"tr-restore-{dataset}-") as temporary:
         for index, raw_part in enumerate(parts_value):
@@ -135,9 +151,14 @@ def verify_archived_day(
             store.download_file(key, path)
             if _sha256(path) != str(raw_part.get("sha256") or ""):
                 raise RuntimeError(f"archive SHA-256 mismatch: {key}")
-            part = (verifier or (lambda value: verify_parquet_part(value, dataset=dataset)))(
-                path
-            )
+            part = (
+                verifier
+                or (
+                    lambda value: verify_parquet_part(
+                        value, dataset=dataset, columns=manifest_columns
+                    )
+                )
+            )(path)
             expected = (
                 int(raw_part.get("rows", -1)),
                 int(raw_part.get("hash_sum", -1)),
