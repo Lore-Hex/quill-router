@@ -43,6 +43,7 @@ from trusted_router.storage import (
     SyntheticProbeSample,
     SyntheticRollup,
     User,
+    UserProvidedModel,
     VerificationToken,
     VideoJob,
     WalletChallenge,
@@ -122,6 +123,7 @@ from trusted_router.storage_gcp_synthetic_index import (
 from trusted_router.storage_gcp_synthetic_rollups import (
     synthetic_rollups as _bt_synthetic_rollups,
 )
+from trusted_router.storage_gcp_user_models import SpannerUserProvidedModels
 from trusted_router.storage_gcp_verification_tokens import SpannerVerificationTokens
 from trusted_router.storage_gcp_video_jobs import SpannerVideoJobs
 from trusted_router.storage_gcp_wallet_challenges import SpannerWalletChallenges
@@ -378,6 +380,7 @@ class SpannerBigtableStore:
         )
         self.byok_store = SpannerByok(io)
         self.custom_model_store = SpannerCustomModels(io)
+        self.user_model_store = SpannerUserProvidedModels(io)
         self.broadcast_store = SpannerBroadcastDestinations(io)
         self.video_job_store = SpannerVideoJobs(io)
         # Durable settle outbox (docs/design/durable-settle-outbox.md). Native
@@ -1262,6 +1265,130 @@ class SpannerBigtableStore:
     def delete_custom_model(self, model_id: str, *, owner_user_id: str) -> bool:
         return self.custom_model_store.delete(model_id, owner_user_id=owner_user_id)
 
+    def create_user_model(
+        self,
+        *,
+        owner_user_id: str,
+        owner_workspace_id: str,
+        name: str,
+        kind: str,
+        description: str = "",
+        display_identity: str = "handle",
+        display_name: str = "",
+        endpoint_url: str,
+        upstream_model_id: str | None = None,
+        encrypted_endpoint_api_key: EncryptedSecretEnvelope | None = None,
+        endpoint_key_hint: str | None = None,
+        encrypted_signing_secret: EncryptedSecretEnvelope | None = None,
+        supports_streaming: bool = True,
+        heartbeat_interval_seconds: int | None = None,
+        max_concurrency: int = 4,
+        prompt_price_microdollars_per_million_tokens: int = 0,
+        completion_price_microdollars_per_million_tokens: int = 0,
+        human_verified: bool = False,
+        enabled: bool = True,
+        status: str = "active",
+        slug: str | None = None,
+    ) -> UserProvidedModel:
+        return self.user_model_store.create(
+            owner_user_id=owner_user_id,
+            owner_workspace_id=owner_workspace_id,
+            name=name,
+            kind=kind,
+            description=description,
+            display_identity=display_identity,
+            display_name=display_name,
+            endpoint_url=endpoint_url,
+            upstream_model_id=upstream_model_id,
+            encrypted_endpoint_api_key=encrypted_endpoint_api_key,
+            endpoint_key_hint=endpoint_key_hint,
+            encrypted_signing_secret=encrypted_signing_secret,
+            supports_streaming=supports_streaming,
+            heartbeat_interval_seconds=heartbeat_interval_seconds,
+            max_concurrency=max_concurrency,
+            prompt_price_microdollars_per_million_tokens=(
+                prompt_price_microdollars_per_million_tokens
+            ),
+            completion_price_microdollars_per_million_tokens=(
+                completion_price_microdollars_per_million_tokens
+            ),
+            human_verified=human_verified,
+            enabled=enabled,
+            status=status,
+            slug=slug,
+        )
+
+    def list_user_models_for_user(self, owner_user_id: str) -> list[UserProvidedModel]:
+        return self.user_model_store.list_for_user(owner_user_id)
+
+    def get_user_model(self, model_id: str) -> UserProvidedModel | None:
+        return self.user_model_store.get(model_id)
+
+    def update_user_model(
+        self,
+        model_id: str,
+        *,
+        owner_user_id: str,
+        patch: dict[str, Any],
+    ) -> UserProvidedModel:
+        return self.user_model_store.update(
+            model_id,
+            owner_user_id=owner_user_id,
+            patch=patch,
+        )
+
+    def delete_user_model(self, model_id: str, *, owner_user_id: str) -> bool:
+        return self.user_model_store.delete(model_id, owner_user_id=owner_user_id)
+
+    def set_user_model_online(
+        self,
+        model_id: str,
+        *,
+        owner_user_id: str,
+        online: bool,
+    ) -> UserProvidedModel:
+        return self.user_model_store.set_online(
+            model_id,
+            owner_user_id=owner_user_id,
+            online=online,
+        )
+
+    def record_user_model_heartbeat(
+        self,
+        model_id: str,
+        *,
+        expires_at: str,
+    ) -> UserProvidedModel:
+        return self.user_model_store.record_heartbeat(model_id, expires_at=expires_at)
+
+    def record_user_model_probe(
+        self,
+        model_id: str,
+        *,
+        status: str,
+        checked_at: str,
+    ) -> UserProvidedModel:
+        return self.user_model_store.record_probe(
+            model_id,
+            status=status,
+            checked_at=checked_at,
+        )
+
+    def record_user_model_dispatch_result(
+        self,
+        model_id: str,
+        *,
+        success: bool,
+    ) -> UserProvidedModel:
+        return self.user_model_store.record_dispatch_result(model_id, success=success)
+
+    def list_public_user_models(
+        self,
+        *,
+        kind: str | None = None,
+    ) -> list[UserProvidedModel]:
+        return self.user_model_store.list_public(kind=kind)
+
     def create_broadcast_destination(
         self,
         *,
@@ -2041,6 +2168,11 @@ class SpannerBigtableStore:
         idempotency_fingerprint: str | None = None,
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
+        user_provided_model_id: str | None = None,
+        user_provided_model_revision: int | None = None,
+        user_model_prompt_price_microdollars_per_m: int | None = None,
+        user_model_completion_price_microdollars_per_m: int | None = None,
+        user_model_owner_user_id: str | None = None,
         additional_cost_reservation_microdollars: int = 0,
         native_batch_eligible: bool = False,
         settlement: str = "local",
@@ -2065,6 +2197,15 @@ class SpannerBigtableStore:
             idempotency_fingerprint=idempotency_fingerprint,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
+            user_provided_model_id=user_provided_model_id,
+            user_provided_model_revision=user_provided_model_revision,
+            user_model_prompt_price_microdollars_per_m=(
+                user_model_prompt_price_microdollars_per_m
+            ),
+            user_model_completion_price_microdollars_per_m=(
+                user_model_completion_price_microdollars_per_m
+            ),
+            user_model_owner_user_id=user_model_owner_user_id,
             additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
             native_batch_eligible=native_batch_eligible,
             settlement=settlement,
@@ -2265,6 +2406,11 @@ class SpannerBigtableStore:
         tags: dict[str, str] | None = None,
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
+        user_provided_model_id: str | None = None,
+        user_provided_model_revision: int | None = None,
+        user_model_prompt_price_microdollars_per_m: int | None = None,
+        user_model_completion_price_microdollars_per_m: int | None = None,
+        user_model_owner_user_id: str | None = None,
         additional_cost_reservation_microdollars: int = 0,
         native_batch_eligible: bool = False,
         expires_at: Any = None,
@@ -2313,6 +2459,15 @@ class SpannerBigtableStore:
                 idempotency_fingerprint=idempotency_fingerprint,
                 custom_model_id=custom_model_id,
                 custom_model_revision=custom_model_revision,
+                user_provided_model_id=user_provided_model_id,
+                user_provided_model_revision=user_provided_model_revision,
+                user_model_prompt_price_microdollars_per_m=(
+                    user_model_prompt_price_microdollars_per_m
+                ),
+                user_model_completion_price_microdollars_per_m=(
+                    user_model_completion_price_microdollars_per_m
+                ),
+                user_model_owner_user_id=user_model_owner_user_id,
                 additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
                 native_batch_eligible=native_batch_eligible,
             )

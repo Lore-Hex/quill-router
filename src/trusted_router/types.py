@@ -65,6 +65,8 @@ class ErrorType(StrEnum):
     UNAUTHORIZED = "unauthorized"
     FORBIDDEN = "forbidden"
     VERIFICATION_REQUIRED = "verification_required"
+    MODEL_OFF_THE_CLOCK = "model_off_the_clock"
+    USER_MODEL_TIMEOUT = "user_model_timeout"
     NOT_FOUND = "not_found"
     CONFLICT = "conflict"
     ALREADY_REGISTERED = "already_registered"

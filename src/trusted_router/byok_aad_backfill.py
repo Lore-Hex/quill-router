@@ -27,9 +27,13 @@ from trusted_router.byok_crypto import (
     encrypt_control_secret,
 )
 from trusted_router.key_management import KeyWrapperSettings
+from trusted_router.services.user_model_secrets import (
+    USER_MODEL_ENDPOINT_KEY_PURPOSE,
+    USER_MODEL_SIGNING_PURPOSE,
+)
 from trusted_router.storage_models import EncryptedSecretEnvelope
 
-_MIGRATED_KINDS = ("broadcast_destination", "byok")
+_MIGRATED_KINDS = ("broadcast_destination", "byok", "user_provided_model")
 
 
 @dataclass(frozen=True)
@@ -206,7 +210,10 @@ class BackfillRunner:
         raw_envelope: dict[str, Any],
     ) -> dict[str, str]:
         assert self._settings is not None
-        workspace_id = _required_string(row.body, "workspace_id")
+        workspace_id = _required_string(
+            row.body,
+            "owner_workspace_id" if row.kind == "user_provided_model" else "workspace_id",
+        )
         envelope = EncryptedSecretEnvelope(**raw_envelope)
         if envelope_family == "provider":
             provider = _required_string(row.body, "provider")
@@ -274,7 +281,7 @@ class SpannerEntityStore:
         after_kind, after_id = after or ("", "")
         sql = (
             "SELECT kind, id, body FROM tr_entities "
-            "WHERE kind IN ('broadcast_destination', 'byok') "
+            "WHERE kind IN ('broadcast_destination', 'byok', 'user_provided_model') "
             "AND (kind > @after_kind OR (kind = @after_kind AND id > @after_id)) "
             "ORDER BY kind, id LIMIT @limit"
         )
@@ -346,12 +353,13 @@ class PostgresEntityStore:
         with psycopg.connect(self._dsn) as conn:
             rows = conn.execute(
                 "SELECT kind, id, body FROM tr_entities "
-                "WHERE kind IN (%s, %s) "
+                "WHERE kind IN (%s, %s, %s) "
                 "AND (kind > %s OR (kind = %s AND id > %s)) "
                 "ORDER BY kind, id LIMIT %s",
                 (
                     _MIGRATED_KINDS[0],
                     _MIGRATED_KINDS[1],
+                    _MIGRATED_KINDS[2],
                     after_kind,
                     after_kind,
                     after_id,
@@ -396,10 +404,19 @@ def _fields_for_kind(kind: str) -> tuple[tuple[str, str], ...]:
             ("encrypted_api_key", "control"),
             ("encrypted_headers", "control"),
         )
+    if kind == "user_provided_model":
+        return (
+            ("encrypted_endpoint_api_key", "control"),
+            ("encrypted_signing_secret", "control"),
+        )
     raise ValueError(f"unsupported entity kind: {kind}")
 
 
 def _broadcast_context(destination_id: str, field: str) -> str:
+    if field == "encrypted_endpoint_api_key":
+        return USER_MODEL_ENDPOINT_KEY_PURPOSE
+    if field == "encrypted_signing_secret":
+        return USER_MODEL_SIGNING_PURPOSE
     suffix = {"encrypted_api_key": "api_key", "encrypted_headers": "headers"}[field]
     # Byte-identical to services.broadcast.broadcast_secret_context. Keeping
     # this tiny helper here avoids importing the application-global STORE into

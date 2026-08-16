@@ -41,6 +41,7 @@ from trusted_router.storage_models import (
     SyntheticProbeSample,
     SyntheticRollup,
     User,
+    UserProvidedModel,
     VerificationToken,
     VideoJob,
     WalletChallenge,
@@ -399,6 +400,74 @@ class Store(Protocol):
     ) -> CustomModel | None: ...
     def delete_custom_model(self, model_id: str, *, owner_user_id: str) -> bool: ...
 
+    # User-provided models ----------------------------------------------------
+    def create_user_model(
+        self,
+        *,
+        owner_user_id: str,
+        owner_workspace_id: str,
+        name: str,
+        kind: str,
+        description: str = ...,
+        display_identity: str = ...,
+        display_name: str = ...,
+        endpoint_url: str,
+        upstream_model_id: str | None = ...,
+        encrypted_endpoint_api_key: EncryptedSecretEnvelope | None = ...,
+        endpoint_key_hint: str | None = ...,
+        encrypted_signing_secret: EncryptedSecretEnvelope | None = ...,
+        supports_streaming: bool = ...,
+        heartbeat_interval_seconds: int | None = ...,
+        max_concurrency: int = ...,
+        prompt_price_microdollars_per_million_tokens: int = ...,
+        completion_price_microdollars_per_million_tokens: int = ...,
+        human_verified: bool = ...,
+        enabled: bool = ...,
+        status: str = ...,
+        slug: str | None = ...,
+    ) -> UserProvidedModel: ...
+    def list_user_models_for_user(self, owner_user_id: str) -> list[UserProvidedModel]: ...
+    def get_user_model(self, model_id: str) -> UserProvidedModel | None: ...
+    def update_user_model(
+        self,
+        model_id: str,
+        *,
+        owner_user_id: str,
+        patch: dict[str, Any],
+    ) -> UserProvidedModel: ...
+    def delete_user_model(self, model_id: str, *, owner_user_id: str) -> bool: ...
+    def set_user_model_online(
+        self,
+        model_id: str,
+        *,
+        owner_user_id: str,
+        online: bool,
+    ) -> UserProvidedModel: ...
+    def record_user_model_heartbeat(
+        self,
+        model_id: str,
+        *,
+        expires_at: str,
+    ) -> UserProvidedModel: ...
+    def record_user_model_probe(
+        self,
+        model_id: str,
+        *,
+        status: str,
+        checked_at: str,
+    ) -> UserProvidedModel: ...
+    def record_user_model_dispatch_result(
+        self,
+        model_id: str,
+        *,
+        success: bool,
+    ) -> UserProvidedModel: ...
+    def list_public_user_models(
+        self,
+        *,
+        kind: str | None = ...,
+    ) -> list[UserProvidedModel]: ...
+
     # Broadcast destinations -------------------------------------------------
     def create_broadcast_destination(
         self,
@@ -600,6 +669,11 @@ class Store(Protocol):
         idempotency_fingerprint: str | None = ...,
         custom_model_id: str | None = ...,
         custom_model_revision: int | None = ...,
+        user_provided_model_id: str | None = ...,
+        user_provided_model_revision: int | None = ...,
+        user_model_prompt_price_microdollars_per_m: int | None = ...,
+        user_model_completion_price_microdollars_per_m: int | None = ...,
+        user_model_owner_user_id: str | None = ...,
         additional_cost_reservation_microdollars: int = ...,
         native_batch_eligible: bool = ...,
         # Deferred settlement. `settlement="deferred_home"` records that this
@@ -764,6 +838,11 @@ class TypedBillingStore(Protocol):
         tags: dict[str, str] | None = ...,
         custom_model_id: str | None = ...,
         custom_model_revision: int | None = ...,
+        user_provided_model_id: str | None = ...,
+        user_provided_model_revision: int | None = ...,
+        user_model_prompt_price_microdollars_per_m: int | None = ...,
+        user_model_completion_price_microdollars_per_m: int | None = ...,
+        user_model_owner_user_id: str | None = ...,
         additional_cost_reservation_microdollars: int = ...,
         native_batch_eligible: bool = ...,
         expires_at: Any = ...,

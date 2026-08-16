@@ -428,6 +428,7 @@ def test_gateway_resolves_custom_model_without_authorizing_outer_hold(
     assert data["custom_model"] == {
         "id": custom["id"],
         "name": "Private Prometheus",
+        "kind": "prompt_wrapper",
         "base_model_id": "trustedrouter/prometheus-1.0",
         "hidden_prompt": "private synthesis policy",
         "revision": 1,

@@ -259,6 +259,50 @@ class CustomModel:
 
 
 @dataclass
+class UserProvidedModel:
+    id: str
+    owner_user_id: str
+    owner_workspace_id: str
+    name: str
+    kind: str
+    description: str = ""
+    display_identity: str = "handle"
+    display_name: str = ""
+    endpoint_url: str = ""
+    upstream_model_id: str | None = None
+    encrypted_endpoint_api_key: EncryptedSecretEnvelope | None = None
+    endpoint_key_hint: str | None = None
+    encrypted_signing_secret: EncryptedSecretEnvelope | None = None
+    supports_streaming: bool = True
+    online: bool = False
+    online_changed_at: str | None = None
+    heartbeat_interval_seconds: int | None = None
+    heartbeat_expires_at: str | None = None
+    consecutive_dispatch_failures: int = 0
+    max_concurrency: int = 4
+    prompt_price_microdollars_per_million_tokens: int = 0
+    completion_price_microdollars_per_million_tokens: int = 0
+    human_verified: bool = False
+    enabled: bool = True
+    status: str = "active"
+    revision: int = 1
+    probe_status: str = "unprobed"
+    probe_checked_at: str | None = None
+    created_at: str = field(default_factory=iso_now)
+    updated_at: str | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.encrypted_endpoint_api_key, dict):
+            self.encrypted_endpoint_api_key = EncryptedSecretEnvelope(
+                **self.encrypted_endpoint_api_key
+            )
+        if isinstance(self.encrypted_signing_secret, dict):
+            self.encrypted_signing_secret = EncryptedSecretEnvelope(
+                **self.encrypted_signing_secret
+            )
+
+
+@dataclass
 class BroadcastDestination:
     id: str
     workspace_id: str
@@ -461,6 +505,11 @@ class GatewayAuthorization:
     idempotency_fingerprint: str | None = None
     custom_model_id: str | None = None
     custom_model_revision: int | None = None
+    user_provided_model_id: str | None = None
+    user_provided_model_revision: int | None = None
+    user_model_prompt_price_microdollars_per_m: int | None = None
+    user_model_completion_price_microdollars_per_m: int | None = None
+    user_model_owner_user_id: str | None = None
     additional_cost_reservation_microdollars: int = 0
     # Frozen at authorization time. Settlement must never infer this from a
     # caller-supplied route_type because native provider Batch APIs retain
