@@ -9,7 +9,10 @@ NOT appear in any public response.
 If you add a public consumer of benchmark samples, add it to
 `test_public_surfaces_never_expose_workspace_id`.
 """
+
 from __future__ import annotations
+
+import dataclasses
 
 from fastapi.testclient import TestClient
 
@@ -49,6 +52,18 @@ def _sample() -> ProviderBenchmarkSample:
 
 def test_sample_carries_workspace_id_from_generation() -> None:
     assert _sample().workspace_id == WORKSPACE
+
+
+def test_sample_does_not_copy_private_client_context_from_generation() -> None:
+    generation = _generation()
+    generation.gateway_request_id = f"rlog_{'a' * 32}"
+    generation.client_sdk = "tr-py"
+    generation.client_attempt = 2
+
+    sample = ProviderBenchmarkSample.from_generation(generation)
+
+    assert not hasattr(sample, "gateway_request_id")
+    assert not any(field.name.startswith("client_") for field in dataclasses.fields(sample))
 
 
 def test_clickhouse_row_includes_workspace_id() -> None:
