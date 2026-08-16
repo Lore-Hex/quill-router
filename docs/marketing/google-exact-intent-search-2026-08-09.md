@@ -58,7 +58,7 @@ Switch From OpenRouter
 OpenRouter Alternative
 Keep Your OpenAI SDK
 Change One Base URL
-5% Platform Fee
+5.5% Platform Fee
 No Subscription Required
 No Prompt Or Output Logs
 Automatic Provider Failover
@@ -73,7 +73,7 @@ Descriptions:
 ```text
 Keep your SDK and model IDs. Change one base URL to migrate from OpenRouter.
 Route hundreds of models through an attested open source gateway with zero content logs.
-Automatic provider failover, a 5% fee, prepaid credits, and BYOK. No subscription.
+Automatic provider failover, a 5.5% fee, prepaid credits, and BYOK. No subscription.
 Create a key, use your existing code, and run the first request with starter credit.
 ```
 

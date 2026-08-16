@@ -1372,10 +1372,10 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "pricing": PublicPage(
         template="public/pricing.html",
         og_card="pricing.png",
-        title="Pricing: 5% Markup, No Subscription",
+        title="Pricing: 5.5% Markup, No Subscription",
         description=(
             "Prepaid credits, BYOK, or usage-based billing. Pay the provider "
-            "price plus 5%, with no monthly plan. Per-model "
+            "price plus 5.5%, with no monthly plan. Per-model "
             "prices are published on the models page."
         ),
     ),
@@ -3381,7 +3381,7 @@ def llms_txt(settings: Settings) -> str:
         "## Catalog",
         f"- Public model pages: {model_count}",
         f"- Provider pages: {provider_count}",
-        "- Text and embedding prepaid pricing is provider cost + 5%, with a $0.01 per million token floor. Video generation is the direct provider quote + 20%. There is no subscription.",
+        "- Text and embedding prepaid pricing is provider cost + 5.5%, with a $0.01 per million token floor. Video generation is the direct provider quote + 20%. There is no subscription.",
         (
             "- Model pages include providers, pricing, performance, uptime, AI IQ links, "
             "API quickstarts, and benchmark links."

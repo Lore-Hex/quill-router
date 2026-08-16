@@ -451,9 +451,9 @@ def test_novita_hy3_uses_live_provider_id_and_price_floor() -> None:
     assert model.context_length == 262_144
     assert prepaid.upstream_id == "tencent/hy3"
     assert byok.upstream_id == "tencent/hy3"
-    assert prepaid.prompt_price_microdollars_per_million_tokens == 147_000
-    assert prepaid.completion_price_microdollars_per_million_tokens == 609_000
-    assert prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 36_750
+    assert prepaid.prompt_price_microdollars_per_million_tokens == 147_700
+    assert prepaid.completion_price_microdollars_per_million_tokens == 611_900
+    assert prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 36_925
 
 
 def test_minimax_empty_operator_routes_are_not_prepaid() -> None:
@@ -512,16 +512,16 @@ def test_minimax_m3_uses_provider_native_context_tiers() -> None:
     assert [tier.max_prompt_tokens for tier in prepaid.price_tiers] == [512_000, None]
 
     low, high = prepaid.price_tiers
-    assert low.prompt_price_microdollars_per_million_tokens == 315_000
-    assert low.completion_price_microdollars_per_million_tokens == 1_260_000
-    assert low.prompt_cached_price_microdollars_per_million_tokens == 63_000
-    assert high.prompt_price_microdollars_per_million_tokens == 630_000
-    assert high.completion_price_microdollars_per_million_tokens == 2_520_000
-    assert high.prompt_cached_price_microdollars_per_million_tokens == 126_000
+    assert low.prompt_price_microdollars_per_million_tokens == 316_500
+    assert low.completion_price_microdollars_per_million_tokens == 1_266_000
+    assert low.prompt_cached_price_microdollars_per_million_tokens == 63_300
+    assert high.prompt_price_microdollars_per_million_tokens == 633_000
+    assert high.completion_price_microdollars_per_million_tokens == 2_532_000
+    assert high.prompt_cached_price_microdollars_per_million_tokens == 126_600
 
 
 def test_prompt_price_equals_published_under_uniform_markup() -> None:
-    """Under the uniform pricing formula (cost+5%, $0.01/M floor), TR no
+    """Under the uniform pricing formula (cost+5.5%, $0.01/M floor), TR no
     longer carries a separate 1¢/M discount. `prompt_price_*` and
     `published_*` are the same number — the customer pays the headline
     price. Any model where they differ is either pre-formula leftover
@@ -785,10 +785,10 @@ def test_deepseek_v4_pro_release_routes_are_keyed_and_credits_only() -> None:
     baseten = next(
         endpoint for endpoint in current_routes if endpoint.provider == "baseten"
     )
-    # Public prepaid rates include the normal 5% TrustedRouter markup over the
+    # Public prepaid rates include the normal 5.5% TrustedRouter markup over the
     # exact provider-native $1.32 / $3.96 prices asserted in the parser test.
-    assert baseten.prompt_price_microdollars_per_million_tokens == 1_386_000
-    assert baseten.completion_price_microdollars_per_million_tokens == 4_158_000
+    assert baseten.prompt_price_microdollars_per_million_tokens == 1_392_600
+    assert baseten.completion_price_microdollars_per_million_tokens == 4_177_800
     assert endpoint_zero_data_retention(baseten) is True
     assert endpoint_privacy_tier(baseten) >= PRIVACY_TIER_ZERO_RETENTION
     assert MODELS[DEEPSEEK_V4_PRO_0423_MODEL_ID].byok_available is False
@@ -1289,8 +1289,8 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
         "image",
     ]
     assert inkling_small_shape["trustedrouter"]["open_weights"] is True
-    assert inkling_small.prompt_price_microdollars_per_million_tokens == 315_000
-    assert inkling_small.completion_price_microdollars_per_million_tokens == 1_260_000
+    assert inkling_small.prompt_price_microdollars_per_million_tokens == 316_500
+    assert inkling_small.completion_price_microdollars_per_million_tokens == 1_266_000
     inkling_small_routes = {
         (endpoint.provider, endpoint.upstream_id)
         for endpoint in endpoints_for_model(inkling_small.id)
@@ -1952,20 +1952,20 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
     # capability rather than freezing one representation.
     assert 1_000_000 <= pro.context_length <= 1_050_000
     pro_xiaomi = xiaomi_credits["xiaomi/mimo-v2.5-pro"]
-    assert pro_xiaomi.prompt_price_microdollars_per_million_tokens == 456_750
-    assert pro_xiaomi.completion_price_microdollars_per_million_tokens == 913_500
+    assert pro_xiaomi.prompt_price_microdollars_per_million_tokens == 458_925
+    assert pro_xiaomi.completion_price_microdollars_per_million_tokens == 917_850
     # The model headline is the cheapest healthy route across every provider,
     # so a reseller may legitimately undercut Xiaomi's first-party endpoint.
-    assert pro.prompt_price_microdollars_per_million_tokens <= 456_750
-    assert pro.completion_price_microdollars_per_million_tokens <= 913_500
+    assert pro.prompt_price_microdollars_per_million_tokens <= 458_925
+    assert pro.completion_price_microdollars_per_million_tokens <= 917_850
 
     # UltraSpeed is the 1T-param speed-serving tier with its own ¥9/¥18
-    # ($1.305/$2.61) cost, marked up by the manifest loader (cost x 1.05,
+    # ($1.305/$2.61) cost, marked up by the manifest loader (cost x 1.055,
     # $0.01/M floor). Guard the exact prices so a regen can't silently
     # collapse them onto the regular v2.5-pro numbers.
     ultraspeed_xiaomi = xiaomi_credits["xiaomi/mimo-v2.5-pro-ultraspeed"]
-    assert ultraspeed_xiaomi.prompt_price_microdollars_per_million_tokens == 1_370_250
-    assert ultraspeed_xiaomi.completion_price_microdollars_per_million_tokens == 2_740_500
+    assert ultraspeed_xiaomi.prompt_price_microdollars_per_million_tokens == 1_376_775
+    assert ultraspeed_xiaomi.completion_price_microdollars_per_million_tokens == 2_753_550
     # ...and that it is genuinely a distinct row from regular v2.5-pro.
     assert (
         ultraspeed_xiaomi.completion_price_microdollars_per_million_tokens
@@ -2258,5 +2258,5 @@ def test_parasail_qwen_397b_uses_working_native_upstream_id() -> None:
     assert MODELS["qwen/qwen3.5-397b-a17b"].context_length == 262_144
     assert prepaid.upstream_id == "parasail-qwen35-397b-a17b"
     assert byok.upstream_id == "parasail-qwen35-397b-a17b"
-    assert prepaid.prompt_price_microdollars_per_million_tokens == 525_000
-    assert prepaid.completion_price_microdollars_per_million_tokens == 3_780_000
+    assert prepaid.prompt_price_microdollars_per_million_tokens == 527_500
+    assert prepaid.completion_price_microdollars_per_million_tokens == 3_798_000

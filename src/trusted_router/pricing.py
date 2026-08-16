@@ -13,7 +13,7 @@ and prompt/completion rate resolution must go through resolve_request_rates.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from typing import Any, TypedDict
 
 from trusted_router.money import (
@@ -120,14 +120,16 @@ class ModelPricingKwargs(TypedDict):
     published_prompt_price_microdollars_per_million_tokens: int
     published_completion_price_microdollars_per_million_tokens: int
 
-_PRICE_MARKUP_RATIO = Decimal("1.05")
+_PRICE_MARKUP_RATIO = Decimal("1.055")
 
 _PRICE_FLOOR_MICRODOLLARS_PER_M = 10_000  # $0.01 per million tokens.
 
 def _customer_price(cost_microdollars_per_million: int) -> int:
     """Apply the markup formula. Input/output in microdollars per million tokens."""
     marked_up = int(
-        (Decimal(cost_microdollars_per_million) * _PRICE_MARKUP_RATIO).to_integral_value()
+        (
+            Decimal(cost_microdollars_per_million) * _PRICE_MARKUP_RATIO
+        ).to_integral_value(rounding=ROUND_CEILING)
     )
     return max(marked_up, _PRICE_FLOOR_MICRODOLLARS_PER_M)
 

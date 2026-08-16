@@ -252,10 +252,12 @@ def test_blog_has_no_phd_hiring_banner(client: TestClient) -> None:
         assert "We're hiring" not in response.text
 
 
-def test_public_pricing_matches_five_percent_billing_policy(client: TestClient) -> None:
+def test_public_pricing_matches_five_point_five_percent_billing_policy(
+    client: TestClient,
+) -> None:
     pricing = client.get("/pricing")
     assert pricing.status_code == 200
-    assert "provider cost + 5%" in pricing.text
+    assert "provider cost + 5.5%" in pricing.text
     assert "direct provider quote + 20%" in pricing.text
     assert "Cheaper. Smarter. More reliable. More secure." in pricing.text
     assert "5.5% pay as you go fee on credit purchases" in pricing.text
@@ -264,14 +266,14 @@ def test_public_pricing_matches_five_percent_billing_policy(client: TestClient) 
 
     comparison = client.get("/compare/openrouter")
     assert comparison.status_code == 200
-    assert "5% on prepaid model cost" in comparison.text
+    assert "5.5% on prepaid model cost" in comparison.text
     assert "5.5% on credit purchases" in comparison.text
-    assert "Provider cost + 5% markup" in comparison.text
+    assert "Provider cost + 5.5% markup" in comparison.text
     assert "10% markup" not in comparison.text
 
     llms = client.get("/llms.txt")
     assert llms.status_code == 200
-    assert "Text and embedding prepaid pricing is provider cost + 5%" in llms.text
+    assert "Text and embedding prepaid pricing is provider cost + 5.5%" in llms.text
     assert "Video generation is the direct provider quote + 20%" in llms.text
 
 

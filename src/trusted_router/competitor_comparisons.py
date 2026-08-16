@@ -66,7 +66,7 @@ def _rows(
             verification,
             "Live gateway attestation bound to published source and release evidence",
         ),
-        ("Billing", billing, "Prepaid credits at provider price plus 5%, or BYOK"),
+        ("Billing", billing, "Prepaid credits at provider price plus 5.5%, or BYOK"),
     )
 
 

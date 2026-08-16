@@ -179,8 +179,8 @@ def test_gmi_kimi_k3_is_a_verified_prepaid_route() -> None:
     endpoint = MODEL_ENDPOINTS[f"{KIMI_K3}@gmi/prepaid"]
 
     assert endpoint.upstream_id == "moonshotai/kimi-k3"
-    assert endpoint.prompt_price_microdollars_per_million_tokens == 3_150_000
-    assert endpoint.completion_price_microdollars_per_million_tokens == 15_750_000
+    assert endpoint.prompt_price_microdollars_per_million_tokens == 3_165_000
+    assert endpoint.completion_price_microdollars_per_million_tokens == 15_825_000
 
 
 def test_phala_kimi_k3_pass_through_is_standard_not_confidential() -> None:
