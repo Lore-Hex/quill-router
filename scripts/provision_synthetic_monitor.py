@@ -33,6 +33,72 @@ DEFAULT_FUNDING_EVENT = "synthetic_monitor_workspace_funding_v1"
 DEFAULT_TARGET_SHARDS = 16
 
 
+def validate_synthetic_monitor_key(
+    store: Any,
+    raw_key: str,
+    *,
+    email: str = DEFAULT_EMAIL,
+    workspace_name: str = DEFAULT_WORKSPACE_NAME,
+    key_name: str = DEFAULT_KEY_NAME,
+    target_shards: int = DEFAULT_TARGET_SHARDS,
+) -> dict[str, Any]:
+    """Fail closed unless ``raw_key`` is the isolated production monitor key."""
+
+    if not raw_key or raw_key != raw_key.strip():
+        raise ValueError("synthetic monitor key is empty or contains whitespace")
+
+    api_key = store.get_key_by_raw(raw_key)
+    if api_key is None:
+        raise ValueError("synthetic monitor key is not registered")
+    if api_key.disabled:
+        raise ValueError("synthetic monitor key is disabled")
+    if api_key.name != key_name:
+        raise ValueError("synthetic monitor key has the wrong name")
+
+    user = store.find_user_by_email(email)
+    if user is None:
+        raise ValueError("synthetic monitoring user is missing")
+    workspace = store.get_workspace(api_key.workspace_id)
+    if workspace is None or workspace.deleted:
+        raise ValueError("synthetic monitoring workspace is missing")
+    if workspace.name != workspace_name:
+        raise ValueError("synthetic monitor key belongs to the wrong workspace")
+    if workspace.owner_user_id != user.id or api_key.creator_user_id != user.id:
+        raise ValueError("synthetic monitor key has the wrong owner")
+
+    if (
+        api_key.management
+        or api_key.limit_microdollars is not None
+        or api_key.limit_daily_microdollars is not None
+        or api_key.limit_weekly_microdollars is not None
+        or api_key.limit_monthly_microdollars is not None
+        or api_key.expires_at is not None
+        or api_key.tags.get("purpose") != "synthetic_monitoring"
+        or api_key.tags.get("analytics") != "excluded"
+        or api_key.tags.get("spend_control") != "workspace_funding_only"
+    ):
+        raise ValueError("synthetic monitor key has unsafe configuration")
+
+    account = store.get_credit_account(workspace.id)
+    if account is None:
+        raise ValueError("synthetic monitoring credit account is missing")
+    if account.auto_refill_enabled:
+        raise ValueError("synthetic monitoring workspace must not use auto-refill")
+    if account.shard_count != target_shards:
+        raise ValueError("synthetic monitoring credit account has the wrong shard count")
+    if api_key.usage_shard_count != target_shards:
+        raise ValueError("synthetic monitor key has the wrong usage shard count")
+
+    return {
+        "key_id": api_key.hash,
+        "workspace_id": workspace.id,
+        "workspace_name": workspace.name,
+        "credit_shards": account.shard_count,
+        "key_shards": api_key.usage_shard_count,
+        "valid": True,
+    }
+
+
 def provision(
     store: Any,
     *,
