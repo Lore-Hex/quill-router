@@ -110,7 +110,9 @@ def register_notify_routes(router: APIRouter) -> None:
         requested = str(payload.get("channel") or "sms").strip().lower()
         if requested not in {"sms", "voice"}:
             raise api_error(400, "channel must be sms or voice", ErrorType.BAD_REQUEST)
-        channel: Literal["sms", "voice"] = "voice" if requested == "voice" else "sms"
+        channel: Literal["sms", "voice"] = (
+            "sms" if requested == "sms" and settings.notify_sms_available else "voice"
+        )
 
         allowed, wait = pv.can_resend(user)
         if not allowed:
@@ -128,7 +130,7 @@ def register_notify_routes(router: APIRouter) -> None:
         except pv.PhoneNumberError as exc:
             raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
 
-        started = STORE.begin_phone_verification(user.id, phone)
+        started = STORE.begin_phone_verification(user.id, phone, channel)
         if started is None:
             raise api_error(404, "user not found", ErrorType.NOT_FOUND)
         code, _updated = started

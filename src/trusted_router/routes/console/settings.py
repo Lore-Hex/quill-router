@@ -44,24 +44,30 @@ def register(app: FastAPI) -> None:
         # verified moments ago on this same page would otherwise still render
         # as unverified and invite the visitor to start over.
         user = STORE.get_user(ctx.user.id) or ctx.user
-        return HTMLResponse(render(
-            "console/settings.html",
-            settings=settings,
-            ctx=ctx,
-            active="settings",
-            page_title="Workspace settings",
-            page_subtitle="Names, content storage, integrations.",
-            can_manage=STORE.user_can_manage(ctx.user.id, ctx.workspace.id),
-            saved=bool(saved),
-            error=error,
-            phone=user.phone,
-            phone_verified=bool(user.phone_verified),
-            phone_pending=user.pending_phone,
-            phone_sent=sent,
-            phone_saved=bool(phone_saved),
-            phone_error=error,
-            phone_error_detail=detail,
-        ))
+        _resend_allowed, resend_wait_seconds = pv.can_resend(user)
+        return HTMLResponse(
+            render(
+                "console/settings.html",
+                settings=settings,
+                ctx=ctx,
+                active="settings",
+                page_title="Workspace settings",
+                page_subtitle="Names, content storage, integrations.",
+                can_manage=STORE.user_can_manage(ctx.user.id, ctx.workspace.id),
+                saved=bool(saved),
+                error=error,
+                phone=user.phone,
+                phone_verified=bool(user.phone_verified),
+                phone_pending=user.pending_phone,
+                phone_code_channel=user.phone_code_channel,
+                resend_wait_seconds=resend_wait_seconds if user.pending_phone else 0,
+                notify_sms_available=settings.notify_sms_available,
+                phone_sent=sent,
+                phone_saved=bool(phone_saved),
+                phone_error=error,
+                phone_error_detail=detail,
+            )
+        )
 
     @app.post("/console/settings/phone/start")
     async def console_phone_start(
@@ -82,19 +88,21 @@ def register(app: FastAPI) -> None:
         except pv.PhoneNumberError as exc:
             return _back(f"error=phone&detail={quote(str(exc))}")
 
-        started = STORE.begin_phone_verification(ctx.user.id, normalized)
+        wanted: Literal["sms", "voice"] = (
+            "sms" if channel == "sms" and settings.notify_sms_available else "voice"
+        )
+        started = STORE.begin_phone_verification(ctx.user.id, normalized, wanted)
         if started is None:
             return _back("error=phone&detail=account+not+found")
         code, _updated = started
 
-        wanted: Literal["sms", "voice"] = "sms" if channel == "sms" else "voice"
         delivered, detail = send_verification_code(settings, normalized, code, channel=wanted)
         if not delivered:
             # The pending code is left in place deliberately: a carrier blip is
             # not a rejected number, and clearing it would send the visitor
             # back to the start for nothing.
             return _back(f"error=send&detail={quote(detail[:120])}")
-        return _back(f"sent={'a phone call' if wanted == 'voice' else 'text message'}")
+        return _back(f"sent={wanted}")
 
     @app.post("/console/settings/phone/confirm")
     async def console_phone_confirm(ctx: ConsoleDep, code: str = Form("")) -> Response:
@@ -102,6 +110,11 @@ def register(app: FastAPI) -> None:
         if status == "ok":
             return _back("phone_saved=1")
         return _back(f"error={status}")
+
+    @app.post("/console/settings/phone/cancel")
+    async def console_phone_cancel(ctx: ConsoleDep) -> Response:
+        STORE.cancel_phone_verification(ctx.user.id)
+        return _back("")
 
     @app.post("/console/settings/phone/remove")
     async def console_phone_remove(ctx: ConsoleDep) -> Response:

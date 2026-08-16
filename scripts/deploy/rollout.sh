@@ -341,6 +341,7 @@ ENV_VARS=(
   # application id is what carries the outbound voice profile. Missing either
   # one is a 422 or a 403 on every call.
   "TR_NOTIFY_ENABLED=true"
+  "TR_NOTIFY_SMS_AVAILABLE=false"
   "TR_TELNYX_FROM_NUMBER=+17869471547"
   "TR_TELNYX_TEXML_ACCOUNT_ID=1eea716a-02e0-4d4f-96fa-36d1f556edca"
   "TR_TELNYX_TEXML_APPLICATION_ID=3026758434193146987"
