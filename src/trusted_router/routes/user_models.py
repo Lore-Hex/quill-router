@@ -16,7 +16,11 @@ from trusted_router.auth import (
 )
 from trusted_router.byok_crypto import decrypt_user_model_secret
 from trusted_router.config import Settings
-from trusted_router.custom_model_billing import validate_custom_model_price
+from trusted_router.custom_model_billing import (
+    HUMAN_PRICE_MAX_MICRODOLLARS_PER_M,
+    MACHINE_PRICE_MAX_MICRODOLLARS_PER_M,
+    validate_custom_model_price,
+)
 from trusted_router.custom_model_rules import assert_user_can_create_custom_models
 from trusted_router.errors import api_error
 from trusted_router.money import format_money_display
@@ -473,9 +477,15 @@ def _validate_price(prompt_price: int, completion_price: int, *, kind: str) -> N
     try:
         validate_custom_model_price(prompt_price, completion_price, kind=kind)
     except ValueError as exc:
+        cap = (
+            HUMAN_PRICE_MAX_MICRODOLLARS_PER_M
+            if kind == "human"
+            else MACHINE_PRICE_MAX_MICRODOLLARS_PER_M
+        )
         raise api_error(
             400,
-            "Custom model price is outside the allowed range for this kind",
+            f"A {kind} model prices between 0 and {cap} microdollars per million "
+            f"tokens; got {prompt_price} prompt and {completion_price} completion",
             ErrorType.BAD_REQUEST,
         ) from exc
 

@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.custom_model_billing import (
+    HUMAN_PRICE_MAX_MICRODOLLARS_PER_M,
+    MACHINE_PRICE_MAX_MICRODOLLARS_PER_M,
     custom_model_cost_microdollars,
     owner_share_microdollars,
     user_model_payout_event_id,
@@ -1474,3 +1476,51 @@ def test_editing_a_model_still_requires_the_owner_account(client: TestClient) ->
         json={"endpoint_url": "https://attacker.example/v1"},
     )
     assert response.status_code in {401, 403}
+
+
+def test_console_form_states_the_price_bounds_and_explains_the_id_fields(
+    client: TestClient,
+) -> None:
+    """A price the API will reject must not be submittable, and the three
+    id-ish fields have to say which is which — 'price is outside the allowed
+    range' after a round trip is the worst possible way to learn the rule."""
+    user = STORE.ensure_user("console-help@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    raw_session, _ = STORE.create_auth_session(
+        user_id=user.id,
+        provider="test",
+        label="user model console help",
+        ttl_seconds=3600,
+        workspace_id=workspace.id,
+    )
+    client.cookies.set("tr_session", raw_session)
+
+    page = client.get("/console/user-models")
+    assert page.status_code == 200
+    # the caps the API enforces, available to the form before submit
+    assert str(HUMAN_PRICE_MAX_MICRODOLLARS_PER_M) in page.text
+    assert str(MACHINE_PRICE_MAX_MICRODOLLARS_PER_M) in page.text
+    assert 'id="price-bounds"' in page.text
+    assert "data-price-echo" in page.text
+    # slug vs handle vs upstream model id
+    assert "The last part of the id callers type" in page.text
+    assert "Who callers see as the operator" in page.text
+    assert "Callers never see it" in page.text
+
+
+def test_a_human_model_can_be_registered_for_free(client: TestClient) -> None:
+    """Pricing a human model at zero is the first thing anyone does to test one."""
+    body = _body(slug="free-human", kind="human")
+    body["prompt_price_microdollars_per_million_tokens"] = 0
+    body["completion_price_microdollars_per_million_tokens"] = 0
+    created = _create(client, body=body)
+    assert created["prompt_price_microdollars_per_million_tokens"] == 0
+
+    over = _body(slug="too-expensive-human", kind="human")
+    over["prompt_price_microdollars_per_million_tokens"] = (
+        HUMAN_PRICE_MAX_MICRODOLLARS_PER_M + 1
+    )
+    response = client.post("/v1/user-models", headers=HEADERS, json=over)
+    assert response.status_code == 400
+    # the message says the rule, not just that a rule exists
+    assert str(HUMAN_PRICE_MAX_MICRODOLLARS_PER_M) in response.json()["error"]["message"]
