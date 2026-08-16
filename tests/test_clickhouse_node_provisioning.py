@@ -49,6 +49,8 @@ def test_cluster_migration_is_parity_gated_and_keeps_local_backup() -> None:
     assert "source and replicated fingerprints differ" in script
     assert "timedelta(minutes=5)" in script
     assert "service account did not become visible" in script
+    assert "roles/spanner.databaseUser" in script
+    assert "spanner databases add-iam-policy-binding" in script
     assert "provider_benchmark_samples_local_backup" in script
     assert "RENAME TABLE provider_benchmark_samples TO" in script
     assert "DROP TABLE provider_benchmark_samples_local_backup" not in script

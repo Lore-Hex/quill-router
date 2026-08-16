@@ -21,6 +21,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
+from trusted_router.main import create_app
 from trusted_router.storage import STORE
 from trusted_router.storage_models import iso_now, utcnow
 from trusted_router.synthetic import fleet
@@ -55,6 +56,19 @@ def _peer_transport(responses: dict[str, object]) -> httpx.MockTransport:
         return httpx.Response(200, json={"data": spec})
 
     return httpx.MockTransport(handler)
+
+
+def test_remediator_background_loop_can_be_disabled_for_request_cpu() -> None:
+    app = create_app(
+        _settings(
+            remediator_mode="observe",
+            remediator_in_process_enabled=False,
+            sentry_dsn=None,
+        ),
+        init_observability=False,
+    )
+
+    assert "_start_remediator_loop" not in {handler.__name__ for handler in app.router.on_startup}
 
 
 def test_fleet_peers_parsing_skips_junk() -> None:

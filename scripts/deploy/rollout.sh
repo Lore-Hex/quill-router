@@ -320,6 +320,9 @@ fi
 ENV_VARS=(
   "TR_ENVIRONMENT=production"
   "TR_RELEASE=$(git rev-parse --short HEAD 2>/dev/null || echo local)"
+  # Request-based Cloud Run CPU can pause background coroutines. The scheduled
+  # synthetic job invokes /internal/synthetic/remediate instead.
+  "TR_REMEDIATOR_IN_PROCESS_ENABLED=false"
   "TR_ENABLE_LIVE_PROVIDERS=false"
   "TR_API_BASE_URL=https://api.trustedrouter.com/v1"
   "TR_TRUSTED_DOMAIN=trustedrouter.com"

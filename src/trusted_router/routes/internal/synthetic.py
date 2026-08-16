@@ -19,11 +19,13 @@ from trusted_router.storage import STORE, ProviderBenchmarkSample, SyntheticProb
 from trusted_router.storage_models import FUTURE_SAMPLE_SKEW_SECONDS, scrub_provider_error_message
 from trusted_router.synthetic.alerts import alert_on_failure_streak
 from trusted_router.synthetic.cli import rotation_pass
+from trusted_router.synthetic.fleet import record_heartbeat
 from trusted_router.synthetic.probes import (
     gateway_billing_probe,
     gateway_fallback_probe,
     run_synthetic_once,
 )
+from trusted_router.synthetic.remediator import run_remediator_pass
 from trusted_router.synthetic.route_health import (
     evaluate_route_health,
     report_image_generation_failures,
@@ -165,6 +167,28 @@ def register(router: APIRouter) -> None:
         flags = await run_in_threadpool(evaluate_route_health, STORE)
         await run_in_threadpool(report_route_health, flags)
         return {"data": {"flagged": [asdict(flag) for flag in flags]}}
+
+    @router.post("/internal/synthetic/remediate")
+    async def synthetic_remediate(request: Request, settings: SettingsDep) -> dict[str, Any]:
+        """Run one remediation pass under request CPU.
+
+        GCP's scheduled synthetic worker calls this endpoint. Publishing the
+        heartbeat before detection gives the pass read-your-write liveness
+        even while the durable analytics copy catches up.
+        """
+        require_internal_gateway(request, settings)
+        await run_in_threadpool(
+            record_heartbeat,
+            "scheduler:remediator",
+            settings=settings,
+        )
+        decisions = await run_in_threadpool(run_remediator_pass, settings)
+        await run_in_threadpool(
+            record_heartbeat,
+            "scheduler:remediator",
+            settings=settings,
+        )
+        return {"data": {"decisions": len(decisions)}}
 
     @router.post("/internal/synthetic/run")
     async def synthetic_run(
