@@ -115,6 +115,7 @@ def _console_path_for_active(active: str) -> str:
         "byok": "/console/byok",
         "custom-models": "/console/custom-models",
         "user-models": "/console/user-models",
+        "earnings": "/console/earnings",
         "routing": "/console/routing",
         "activity": "/console/activity",
         "broadcast": "/console/broadcast",
