@@ -1373,3 +1373,104 @@ def test_local_user_model_streaming_bills_from_the_usage_chunk_and_pays_owner(
     generation = next(iter(STORE.target.generation_store.generations.values()))
     assert generation.custom_model_id == created["id"]
     assert generation.tokens_completion == 20
+
+
+def _clock_signature(secret: str, body: bytes = b"") -> str:
+    import hashlib
+    import hmac
+    import time
+
+    timestamp = int(time.time())
+    digest = hmac.new(
+        secret.encode("utf-8"),
+        str(timestamp).encode("ascii") + b"." + body,
+        hashlib.sha256,
+    ).hexdigest()
+    return f"t={timestamp},v1={digest}"
+
+
+def test_clock_calls_accept_the_models_own_signing_secret(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A laptop that clocks one model in should not hold a key that can mint
+    API keys or spend the workspace's credits."""
+
+    async def passing_probe(*_args: Any, **_kwargs: Any) -> ProbeResult:
+        return ProbeResult(ok=True, detail="ok")
+
+    monkeypatch.setattr("trusted_router.routes.user_models.probe_user_model", passing_probe)
+    created = _create(client)
+    secret = created["signing_secret"]
+    signed = {"TR-Signature": _clock_signature(secret)}
+
+    clocked_in = client.post(f"/v1/user-models/{created['id']}/clock-in", headers=signed)
+    assert clocked_in.status_code == 200, clocked_in.text
+    assert clocked_in.json()["data"]["online"] is True
+
+    beat = client.post(f"/v1/user-models/{created['id']}/heartbeat", headers=signed)
+    assert beat.status_code == 200, beat.text
+    assert beat.json()["data"]["heartbeat_expires_at"]
+
+    clocked_out = client.post(f"/v1/user-models/{created['id']}/clock-out", headers=signed)
+    assert clocked_out.status_code == 200, clocked_out.text
+    assert clocked_out.json()["data"]["online"] is False
+
+
+def test_clock_signature_is_rejected_when_wrong_stale_or_for_another_model(
+    client: TestClient,
+) -> None:
+    import hashlib
+    import hmac
+
+    created = _create(client)
+    other = _create(client, body=_body(slug="second-signed-model"))
+    secret = created["signing_secret"]
+    model = created["id"]
+
+    wrong = client.post(
+        f"/v1/user-models/{model}/heartbeat",
+        headers={"TR-Signature": _clock_signature("not-the-secret")},
+    )
+    assert wrong.status_code == 401
+
+    stale_timestamp = 1_700_000_000
+    stale_digest = hmac.new(
+        secret.encode("utf-8"),
+        str(stale_timestamp).encode("ascii") + b".",
+        hashlib.sha256,
+    ).hexdigest()
+    stale = client.post(
+        f"/v1/user-models/{model}/heartbeat",
+        headers={"TR-Signature": f"t={stale_timestamp},v1={stale_digest}"},
+    )
+    assert stale.status_code == 401
+
+    # A signature valid for one model must not clock in a different one.
+    crossed = client.post(
+        f"/v1/user-models/{other['id']}/heartbeat",
+        headers={"TR-Signature": _clock_signature(secret)},
+    )
+    assert crossed.status_code == 401
+
+    malformed = client.post(
+        f"/v1/user-models/{model}/heartbeat",
+        headers={"TR-Signature": "garbage"},
+    )
+    assert malformed.status_code == 401
+
+    # No credential at all is still a management-auth failure, not a 401 bypass.
+    none = client.post(f"/v1/user-models/{model}/heartbeat")
+    assert none.status_code in {401, 403}
+
+
+def test_editing_a_model_still_requires_the_owner_account(client: TestClient) -> None:
+    """The signing secret buys availability, not control: whoever holds it must
+    not be able to re-point endpoint_url and take the traffic."""
+    created = _create(client)
+    response = client.patch(
+        f"/v1/user-models/{created['id']}",
+        headers={"TR-Signature": _clock_signature(created["signing_secret"])},
+        json={"endpoint_url": "https://attacker.example/v1"},
+    )
+    assert response.status_code in {401, 403}
