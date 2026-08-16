@@ -165,6 +165,25 @@ class TestVerifying:
         assert "error=rate" in second.headers["location"]
         assert len(carrier.sent) == 1
 
+    def test_cancelling_and_starting_again_cannot_dodge_the_floor(self, client, carrier) -> None:
+        # "Use a different number" must not be a way around the resend floor:
+        # cancel, start, cancel, start would otherwise ring any number as fast
+        # as the two forms can be submitted.
+        body = {"phone": "+13059511381", "channel": "voice"}
+        client.post("/console/settings/phone/start", data=body)
+        client.post("/console/settings/phone/cancel")
+
+        again = client.post(
+            "/console/settings/phone/start",
+            data={"phone": "+13059511382", "channel": "voice"},
+        )
+
+        assert "error=rate" in again.headers["location"]
+        assert len(carrier.sent) == 1
+        # And the entry form tells the visitor how long, instead of a bare error.
+        page = client.get("/console/settings")
+        assert "You can request a code in" in page.text
+
     def test_sms_is_defensively_delivered_as_voice_while_unavailable(self, client, carrier) -> None:
         response = client.post(
             "/console/settings/phone/start",
@@ -265,22 +284,35 @@ class TestCancellation:
         assert user.phone == "+13059511381"
         assert user.phone_verified
         assert user.pending_phone is None
-        assert user.phone_code_sent_at is None
         assert user.phone_code_channel is None
+        # The floor survives a cancel on purpose — see cancel_pending's docstring.
+        assert user.phone_code_sent_at is not None
 
-    def test_cancel_allows_a_typo_to_be_replaced_immediately(self, client, carrier) -> None:
+    def test_cancel_lets_a_typo_be_replaced_once_the_floor_lapses(
+        self, client, carrier, monkeypatch
+    ) -> None:
+        # Cancel is immediate; the NEXT send still waits out the floor, because
+        # otherwise cancel-then-start is a way to ring any number continuously.
+        import datetime as dt
+
+        from trusted_router import phone_verification as pv
+        from trusted_router.storage_models import utcnow
+
         client.post(
             "/console/settings/phone/start",
             data={"phone": "+13059511381", "channel": "voice"},
         )
-
         cancelled = client.post("/console/settings/phone/cancel")
+        assert cancelled.status_code == 303
+        assert _user().pending_phone is None
+
+        later = utcnow() + dt.timedelta(seconds=pv.RESEND_FLOOR_SECONDS + 1)
+        monkeypatch.setattr(pv, "utcnow", lambda: later)
         restarted = client.post(
             "/console/settings/phone/start",
             data={"phone": "+442071838750", "channel": "voice"},
         )
 
-        assert cancelled.status_code == 303
         assert restarted.headers["location"].endswith("sent=voice")
         assert len(carrier.sent) == 2
         assert _user().pending_phone == "+442071838750"

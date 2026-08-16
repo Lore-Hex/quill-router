@@ -60,7 +60,10 @@ def register(app: FastAPI) -> None:
                 phone_verified=bool(user.phone_verified),
                 phone_pending=user.pending_phone,
                 phone_code_channel=user.phone_code_channel,
-                resend_wait_seconds=resend_wait_seconds if user.pending_phone else 0,
+                # Not gated on pending_phone: after "use a different number"
+                # the entry form is back but the floor still applies, and the
+                # visitor should see the countdown rather than a rate error.
+                resend_wait_seconds=resend_wait_seconds,
                 notify_sms_available=settings.notify_sms_available,
                 phone_sent=sent,
                 phone_saved=bool(phone_saved),
@@ -77,7 +80,11 @@ def register(app: FastAPI) -> None:
         channel: str = Form("voice"),
     ) -> Response:
         """Send a verification code to a number the visitor claims."""
-        allowed, wait = pv.can_resend(ctx.user)
+        # Fresh read, not the session snapshot: the floor must see the send
+        # that happened seconds ago on this same page, or a fast retry loop
+        # (or cancel-then-start) rings the number again before it applies.
+        current = STORE.get_user(ctx.user.id) or ctx.user
+        allowed, wait = pv.can_resend(current)
         if not allowed:
             # Without a floor, this form is a way to ring someone else's phone
             # repeatedly by typing their number.

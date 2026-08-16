@@ -89,7 +89,7 @@
           <p><strong>Phone call</strong></p>
           <p class="muted">We'll call this number and read you a 6-digit code. (Text messages are coming once carrier registration completes.)</p>
         {% endif %}
-        <button class="btn primary" type="submit">Send code</button>
+        <button class="btn primary" type="submit" {% if resend_wait_seconds %}disabled{% endif %}>{% if resend_wait_seconds %}You can request a code in {{ resend_wait_seconds }}s{% else %}Send code{% endif %}</button>
       </form>
       <p class="muted">A phone call works on any number, including landlines and desk phones, and needs no carrier registration. <a href="/docs/notify">What we send</a>.</p>
     {% endif %}

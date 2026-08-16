@@ -190,4 +190,17 @@ class TestClear:
         assert user.phone_verified
         assert user.pending_phone is None
         assert user.phone_code_channel is None
-        assert user.phone_code_sent_at is None
+
+    def test_cancel_does_not_reset_the_resend_floor(self) -> None:
+        # The floor bounds how often this account can make a phone ring. If
+        # cancel cleared it, "cancel, start, cancel, start" would ring any
+        # number continuously — precisely the loop the floor exists to stop.
+        user = _user()
+        pv.begin(user, "+13059511381", channel="voice")
+
+        pv.cancel_pending(user)
+        allowed, wait = pv.can_resend(user)
+
+        assert user.phone_code_sent_at is not None
+        assert not allowed
+        assert 0 < wait <= pv.RESEND_FLOOR_SECONDS

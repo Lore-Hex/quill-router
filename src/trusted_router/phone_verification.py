@@ -170,7 +170,14 @@ def clear(user: User) -> None:
 
 
 def cancel_pending(user: User) -> None:
-    """Discard an in-flight proof without changing a verified number."""
+    """Discard an in-flight proof without changing a verified number.
+
+    Deliberately keeps `phone_code_sent_at`: the resend floor is a floor on
+    how often this account may make a phone ring, not on how long a code
+    stays pending. If cancelling reset it, "cancel, then start again" would
+    be a way to ring any number continuously — the exact loop the floor
+    exists to stop.
+    """
     _clear_pending(user)
 
 
@@ -180,5 +187,4 @@ def _clear_pending(user: User) -> None:
     user.phone_code_salt = None
     user.phone_code_expires_at = None
     user.phone_code_attempts = 0
-    user.phone_code_sent_at = None
     user.phone_code_channel = None
