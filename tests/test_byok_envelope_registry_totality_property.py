@@ -291,8 +291,10 @@ from trusted_router.byok_crypto import (
     ALGORITHM_V2,
     NAMESPACE_CONTROL,
     NAMESPACE_PROVIDER,
+    NAMESPACE_USER_MODEL,
     decrypt_byok_secret,
     decrypt_control_secret,
+    decrypt_user_model_secret,
 )
 from trusted_router.config import Settings
 from trusted_router.services.broadcast import broadcast_secret_context
@@ -1353,6 +1355,7 @@ def test_the_sealing_oracle_is_read_off_byok_crypto() -> None:
     assert SEALING_FUNCTIONS == {
         "encrypt_byok_secret": NAMESPACE_PROVIDER,
         "encrypt_control_secret": NAMESPACE_CONTROL,
+        "encrypt_user_model_secret": NAMESPACE_USER_MODEL,
     }, (
         "the namespace each encrypt_* function seals with has changed: "
         f"{SEALING_FUNCTIONS}. That is an AAD-format change, not a refactor."
@@ -1541,6 +1544,10 @@ def test_each_derived_location_round_trips_through_the_backfill(
     envelope = EncryptedSecretEnvelope(**raw)
     if family == NAMESPACE_PROVIDER:
         opened = decrypt_byok_secret(envelope, settings, workspace_id=WORKSPACE, provider=context)
+    elif family == NAMESPACE_USER_MODEL:
+        opened = decrypt_user_model_secret(
+            envelope, settings, workspace_id=WORKSPACE, purpose=context
+        )
     else:
         opened = decrypt_control_secret(envelope, settings, workspace_id=WORKSPACE, purpose=context)
     assert opened == secret, (
@@ -1918,8 +1925,8 @@ def test_the_derivation_reproduces_todays_registry() -> None:
         "encrypted_secret": {NAMESPACE_PROVIDER},
         "encrypted_api_key": {NAMESPACE_CONTROL},
         "encrypted_headers": {NAMESPACE_CONTROL},
-        "encrypted_endpoint_api_key": {NAMESPACE_CONTROL},
-        "encrypted_signing_secret": {NAMESPACE_CONTROL},
+        "encrypted_endpoint_api_key": {NAMESPACE_USER_MODEL},
+        "encrypted_signing_secret": {NAMESPACE_USER_MODEL},
     }
     # The derived scope of the adapter-kind guard. Pinned because it replaced a
     # hand-written module list: a fixed point that quietly stopped widening

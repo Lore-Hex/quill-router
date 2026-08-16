@@ -48,12 +48,15 @@ from trusted_router.byok_crypto import (
     ALGORITHM_V2,
     NAMESPACE_CONTROL,
     NAMESPACE_PROVIDER,
+    NAMESPACE_USER_MODEL,
     _aad,
     _aad_v2,
     decrypt_byok_secret,
     decrypt_control_secret,
+    decrypt_user_model_secret,
     encrypt_byok_secret,
     encrypt_control_secret,
+    encrypt_user_model_secret,
 )
 from trusted_router.catalog import PROVIDERS
 from trusted_router.config import Settings
@@ -235,7 +238,7 @@ def test_the_v2_vector_matches_the_enclave() -> None:
 
 
 @given(
-    namespace=st.sampled_from([NAMESPACE_PROVIDER, NAMESPACE_CONTROL]),
+    namespace=st.sampled_from([NAMESPACE_PROVIDER, NAMESPACE_CONTROL, NAMESPACE_USER_MODEL]),
     workspace=st.text(alphabet=":/abc\x00", max_size=6),
     context=st.text(alphabet=":/abc\x00", max_size=6),
 )
@@ -322,6 +325,53 @@ def test_a_provider_key_does_not_open_as_a_control_secret() -> None:
         decrypt_control_secret(
             provider, _settings(), workspace_id=WORKSPACE, purpose=shared_context
         )
+
+
+def test_the_user_model_v2_vector_matches_the_enclave() -> None:
+    """Third namespace, same pinning discipline as `provider`.
+
+    quill-cloud-proxy's byokcache must open user-model envelopes with exactly
+    aadV2("user_model", owner_workspace_id, purpose); pin the bytes here so a
+    divergence is a test failure on the plane that changed, not a prod outage.
+    """
+    assert _aad_v2(NAMESPACE_USER_MODEL, "ws-1", "user_model_signing").hex() == (
+        "0000001574727573746564726f757465722f62796f6b2f7632"
+        "0000000a757365725f6d6f64656c0000000477732d31"
+        "00000012757365725f6d6f64656c5f7369676e696e67"
+    )
+
+
+def test_user_model_secrets_are_v2_and_open_only_in_their_namespace() -> None:
+    """Owner secrets are consumed by BOTH the control plane and the enclave,
+    so they must not be sealed as `control` (never shipped to the enclave) nor
+    as `provider` (BYOK keys). Every cross-namespace open must fail."""
+    purpose = "user_model_signing"
+    sealed = encrypt_user_model_secret(
+        "owner-signing-secret", _settings(), workspace_id=WORKSPACE, purpose=purpose
+    )
+    assert sealed.algorithm == ALGORITHM_V2
+    assert (
+        decrypt_user_model_secret(sealed, _settings(), workspace_id=WORKSPACE, purpose=purpose)
+        == "owner-signing-secret"
+    )
+    with pytest.raises(InvalidTag):
+        decrypt_control_secret(sealed, _settings(), workspace_id=WORKSPACE, purpose=purpose)
+    with pytest.raises(InvalidTag):
+        decrypt_byok_secret(sealed, _settings(), workspace_id=WORKSPACE, provider=purpose)
+    # and neither of the other families opens as a user-model secret
+    control = encrypt_control_secret(
+        "control-secret", _settings(), workspace_id=WORKSPACE, purpose=purpose
+    )
+    with pytest.raises(InvalidTag):
+        decrypt_user_model_secret(control, _settings(), workspace_id=WORKSPACE, purpose=purpose)
+    provider = encrypt_byok_secret(
+        "sk-provider-key", _settings(), workspace_id=WORKSPACE, provider=purpose
+    )
+    with pytest.raises(InvalidTag):
+        decrypt_user_model_secret(provider, _settings(), workspace_id=WORKSPACE, purpose=purpose)
+    # a wrong owner workspace is a wrong binding too
+    with pytest.raises(InvalidTag):
+        decrypt_user_model_secret(sealed, _settings(), workspace_id="ws-other", purpose=purpose)
 
 
 def test_v1_envelopes_still_decrypt() -> None:

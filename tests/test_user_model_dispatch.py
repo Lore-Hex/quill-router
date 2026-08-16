@@ -10,7 +10,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
-from trusted_router.byok_crypto import encrypt_control_secret
+from trusted_router.byok_crypto import encrypt_user_model_secret
 from trusted_router.config import Settings
 from trusted_router.services.user_model_dispatch import (
     dispatch_user_model,
@@ -69,13 +69,13 @@ def _model(
         display_name="dispatch-owner",
         endpoint_url="https://owner.example/v1",
         upstream_model_id="owner-upstream",
-        encrypted_endpoint_api_key=encrypt_control_secret(
+        encrypted_endpoint_api_key=encrypt_user_model_secret(
             _ENDPOINT_KEY,
             settings,
             workspace_id=workspace.id,
             purpose=USER_MODEL_ENDPOINT_KEY_PURPOSE,
         ),
-        encrypted_signing_secret=encrypt_control_secret(
+        encrypted_signing_secret=encrypt_user_model_secret(
             _SIGNING_FIXTURE,
             settings,
             workspace_id=workspace.id,

@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 from fastapi import HTTPException
 
-from trusted_router.byok_crypto import decrypt_control_secret
+from trusted_router.byok_crypto import decrypt_user_model_secret
 from trusted_router.config import Settings
 from trusted_router.errors import api_error, error_body
 from trusted_router.services.safe_egress import aassert_public_url
@@ -644,7 +644,7 @@ def _sse_json(body: dict[str, Any]) -> bytes:
 def _decrypt_signing_secret(model: UserProvidedModel, settings: Settings) -> str:
     if model.encrypted_signing_secret is None:
         raise ValueError("missing user-model signing secret")
-    return decrypt_control_secret(
+    return decrypt_user_model_secret(
         model.encrypted_signing_secret,
         settings,
         workspace_id=model.owner_workspace_id,
@@ -658,7 +658,7 @@ def _decrypt_endpoint_key(
 ) -> str | None:
     if model.encrypted_endpoint_api_key is None:
         return None
-    return decrypt_control_secret(
+    return decrypt_user_model_secret(
         model.encrypted_endpoint_api_key,
         settings,
         workspace_id=model.owner_workspace_id,

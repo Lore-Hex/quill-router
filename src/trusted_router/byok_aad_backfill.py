@@ -23,8 +23,10 @@ from trusted_router.byok_crypto import (
     ALGORITHM_V2,
     decrypt_byok_secret,
     decrypt_control_secret,
+    decrypt_user_model_secret,
     encrypt_byok_secret,
     encrypt_control_secret,
+    encrypt_user_model_secret,
 )
 from trusted_router.key_management import KeyWrapperSettings
 from trusted_router.services.user_model_secrets import (
@@ -235,6 +237,30 @@ class BackfillRunner:
                 workspace_id=workspace_id,
                 provider=provider,
             )
+        elif envelope_family == "user_model":
+            purpose = _broadcast_context(row.entity_id, field)
+            # A v1 envelope has no namespace: its AAD is the same bytes for
+            # every family, so the control opener reads it. Re-seal under the
+            # user_model namespace and verify with the strict (v2-only) opener
+            # the application uses.
+            plaintext = decrypt_control_secret(
+                envelope,
+                self._settings,
+                workspace_id=workspace_id,
+                purpose=purpose,
+            )
+            migrated = encrypt_user_model_secret(
+                plaintext,
+                self._settings,
+                workspace_id=workspace_id,
+                purpose=purpose,
+            )
+            verified = decrypt_user_model_secret(
+                migrated,
+                self._settings,
+                workspace_id=workspace_id,
+                purpose=purpose,
+            )
         else:
             purpose = _broadcast_context(row.entity_id, field)
             plaintext = decrypt_control_secret(
@@ -405,9 +431,14 @@ def _fields_for_kind(kind: str) -> tuple[tuple[str, str], ...]:
             ("encrypted_headers", "control"),
         )
     if kind == "user_provided_model":
+        # Owner secrets are read on both sides of the trust boundary (control
+        # plane probe/local dispatch AND the enclave), so they are sealed under
+        # their own namespace rather than "control" (never shipped to the
+        # enclave) or "provider" (BYOK keys). Written v2 from birth; the branch
+        # below exists so the registry stays total, not because v1 rows exist.
         return (
-            ("encrypted_endpoint_api_key", "control"),
-            ("encrypted_signing_secret", "control"),
+            ("encrypted_endpoint_api_key", "user_model"),
+            ("encrypted_signing_secret", "user_model"),
         )
     raise ValueError(f"unsupported entity kind: {kind}")
 

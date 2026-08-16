@@ -98,6 +98,7 @@ from trusted_router.services.settle_outbox_drain import (
 )
 from trusted_router.services.user_model_secrets import (
     USER_MODEL_ENDPOINT_KEY_PURPOSE,
+    USER_MODEL_SECRET_NAMESPACE,
     USER_MODEL_SIGNING_PURPOSE,
 )
 from trusted_router.storage import (
@@ -880,8 +881,10 @@ def _gateway_resolve_custom_model_sync(
                     "kind": "user_provided",
                     "user_model_kind": user_model.kind,
                     # The envelopes below are bound (AAD) to the OWNER's
-                    # workspace and a per-secret purpose, not to the caller's
-                    # workspace above; the enclave must decrypt with these.
+                    # workspace, a per-secret purpose, and the user_model
+                    # namespace — not to the caller's workspace above; the
+                    # enclave must decrypt with exactly these.
+                    "secret_namespace": USER_MODEL_SECRET_NAMESPACE,
                     "owner_workspace_id": user_model.owner_workspace_id,
                     "owner_user_id": user_model.owner_user_id,
                     "endpoint_url": user_model.endpoint_url,

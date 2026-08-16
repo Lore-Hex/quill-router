@@ -12,6 +12,7 @@ from trusted_router.services.user_model_dispatch import BufferedUserModelDispatc
 from trusted_router.services.user_model_probe import ProbeResult
 from trusted_router.services.user_model_secrets import (
     USER_MODEL_ENDPOINT_KEY_PURPOSE,
+    USER_MODEL_SECRET_NAMESPACE,
     USER_MODEL_SIGNING_PURPOSE,
 )
 from trusted_router.storage import STORE
@@ -339,6 +340,7 @@ def test_gateway_resolves_user_model_dispatch_block(dispatch_client: TestClient)
     assert dispatch["user_model_kind"] == "machine"
     assert dispatch["endpoint_secret_purpose"] == USER_MODEL_ENDPOINT_KEY_PURPOSE
     assert dispatch["signing_secret_purpose"] == USER_MODEL_SIGNING_PURPOSE
+    assert dispatch["secret_namespace"] == USER_MODEL_SECRET_NAMESPACE
 
 
 def test_gateway_hides_user_models_until_dispatch_is_enabled(client: TestClient) -> None:
