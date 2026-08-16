@@ -1194,6 +1194,9 @@ NON_ENVELOPE_KINDS = {
     "broadcast_destination_by_workspace": "pointer row, dict literal body",
     "custom_model": "prompt-wrapper row, no encrypted envelope fields",
     "custom_model_by_user": "pointer row, dict literal body",
+    "user_model_slot": (
+        "concurrency lease row containing only model/authorization ids and created_at"
+    ),
     "user_provided_model_by_user": "pointer row, dict literal body",
 }
 
@@ -1959,6 +1962,7 @@ def test_the_derivation_reproduces_todays_registry() -> None:
         "broadcast_destination_by_workspace",
         "custom_model",
         "custom_model_by_user",
+        "user_model_slot",
         "user_provided_model",
         "user_provided_model_by_user",
     }

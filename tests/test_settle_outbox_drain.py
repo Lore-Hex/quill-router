@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from tests.fakes.spanner import _FakeTransaction, make_fake_store
 from trusted_router.config import Settings
+from trusted_router.custom_model_billing import user_model_payout_event_id
 from trusted_router.main import create_app
 from trusted_router.services import settle_outbox_apply as apply_mod
 from trusted_router.services import settle_outbox_drain as drain_mod
@@ -25,11 +26,18 @@ from trusted_router.storage_gcp_authorize import (
 )
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
 from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
-from trusted_router.storage_models import CreditAccount, GatewayAuthorization, SettleOutboxRow
+from trusted_router.storage_models import (
+    CreditAccount,
+    GatewayAuthorization,
+    SettleOutboxRow,
+    TypedFinalizeResult,
+)
 
 MODEL_ID = "anthropic/claude-haiku-4.5"
 PROVIDER = "anthropic"
 ENDPOINT_ID = "anthropic/claude-haiku-4.5@anthropic/prepaid"
+USER_MODEL_ID = "trustedrouter/user-outbox-repair"
+USER_MODEL_ENDPOINT_ID = f"{USER_MODEL_ID}@trustedrouter/credits"
 ESTIMATE = 1_000_000
 TOTAL_CREDIT = 5_000_000
 NOW = "2026-07-04T12:00:00Z"
@@ -122,6 +130,39 @@ def _typed_authorization(
         idempotency_key=None,
         idempotency_fingerprint=None,
         expires_at=expires_at,
+    )
+    assert outcome == AuthorizeOutcome.ACCEPTED
+    assert auth is not None
+    return auth
+
+
+def _typed_user_model_authorization(
+    store: Any,
+    *,
+    workspace_id: str,
+    key_hash: str,
+) -> GatewayAuthorization:
+    outcome, auth = store.authorize_gateway_typed(
+        workspace_id=workspace_id,
+        key_hash=key_hash,
+        estimate=ESTIMATE,
+        has_credit_candidate=True,
+        reservation_usage_type="Credits",
+        model_id=USER_MODEL_ID,
+        provider="trustedrouter",
+        requested_model_id=USER_MODEL_ID,
+        candidate_model_ids=[USER_MODEL_ID],
+        region="us",
+        endpoint_id=USER_MODEL_ENDPOINT_ID,
+        candidate_endpoint_ids=[USER_MODEL_ENDPOINT_ID],
+        idempotency_key="typed-user-model-outbox-repair",
+        idempotency_fingerprint="typed-user-model-outbox-repair-fingerprint",
+        user_provided_model_id=USER_MODEL_ID,
+        user_provided_model_revision=4,
+        user_model_prompt_price_microdollars_per_m=2_000_000,
+        user_model_completion_price_microdollars_per_m=3_000_000,
+        user_model_owner_user_id="owner-outbox-repair",
+        expires_at="2026-01-01T00:00:00Z",
     )
     assert outcome == AuthorizeOutcome.ACCEPTED
     assert auth is not None
@@ -1479,6 +1520,58 @@ def test_lost_charge_recovery_end_to_end(
     assert db.reservations[auth.credit_reservation_id]["actual_micro"] == row.actual_cost_micro
     assert _typed_credit(db, ws)["total_usage"] == row.actual_cost_micro
     assert reap_expired_reservations(store._database, store._param_types, now=NOW) == 0
+
+
+def test_user_model_inline_finalize_loss_repairs_one_payout_from_frozen_outbox(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, _db, _bt = fake_store
+    ws = "ws-user-model-outbox-repair"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_user_model_authorization(store, workspace_id=ws, key_hash=key.hash)
+    original = store.typed_finalize_gateway_authorization_result
+
+    def lose_inline_finalize(*_args: Any, **_kwargs: Any) -> TypedFinalizeResult:
+        return TypedFinalizeResult(finalized=False, activity_indexed=False)
+
+    store.typed_finalize_gateway_authorization_result = lose_inline_finalize
+    client = _client(Settings(environment="test", settle_outbox_enabled=True))
+    response = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": auth.id,
+            "actual_input_tokens": 1_000,
+            "actual_output_tokens": 2_000,
+            "request_id": "req-user-model-outbox-repair",
+            "finish_reason": "stop",
+            "status": "success",
+            "elapsed_seconds": 0.2,
+            "selected_model": USER_MODEL_ID,
+            "selected_endpoint": USER_MODEL_ENDPOINT_ID,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["already_settled"] is True
+    row = _outbox(store).get(auth.id, "settle")
+    assert row is not None
+    assert row.status == "pending"
+    assert row.settle_body is not None
+
+    store.typed_finalize_gateway_authorization_result = original
+    assert apply_mod.apply_frozen_settle(row) == ApplyOutcome.SETTLED_NOW
+    assert (
+        apply_mod.apply_frozen_settle(row)
+        == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
+    )
+    payout = 5_600
+    assert store.earnings_summary("owner-outbox-repair")["total_earned"] == payout
+    movements = store.list_credit_movements("user:owner-outbox-repair")
+    assert len(movements) == 1
+    assert movements[0].movement_id == user_model_payout_event_id(auth.id)
+    assert movements[0].amount_microdollars == payout
+    assert movements[0].custom_model_id == USER_MODEL_ID
+    assert movements[0].counterparty_account_id == ws
 
 
 def test_charged_settle_then_sibling_refund_resolves_and_arms_retention(

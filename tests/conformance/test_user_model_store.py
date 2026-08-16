@@ -183,6 +183,21 @@ def test_gateway_authorization_round_trips_frozen_user_model_fields(
     assert loaded.user_model_owner_user_id == "owner"
 
 
+def test_user_model_slots_are_idempotent_and_release_capacity(
+    user_model_store: Store,
+) -> None:
+    store = user_model_store
+    model_id = "trustedrouter/user-slots"
+
+    assert store.acquire_user_model_slot(model_id, "gwa-first", limit=1)
+    assert store.acquire_user_model_slot(model_id, "gwa-first", limit=1)
+    assert not store.acquire_user_model_slot(model_id, "gwa-second", limit=1)
+
+    store.release_user_model_slot(model_id, "gwa-first")
+    store.release_user_model_slot(model_id, "gwa-first")
+    assert store.acquire_user_model_slot(model_id, "gwa-second", limit=1)
+
+
 def test_user_model_coerces_secret_envelope_dicts() -> None:
     raw = {
         "algorithm": "test",

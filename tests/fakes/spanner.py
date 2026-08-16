@@ -644,7 +644,7 @@ class _FakeTransaction:
             new = dict(
                 rec,
                 total_earned=rec["total_earned"] + p["amount"],
-                updated_at=p["now"],
+                updated_at=p.get("now", dt.datetime.now(dt.UTC)),
             )
             self.pending_writes.append(("update_typed", "tr_earnings_balance", pk, new))
             return 1
@@ -674,7 +674,7 @@ class _FakeTransaction:
                 user_id=p["user_id"],
                 shard=0,
                 total_earned=p.get("amount", 0),
-                updated_at=p["now"],
+                updated_at=p.get("now", dt.datetime.now(dt.UTC)),
             )
             self.pending_writes.append(("insert_typed_dml", "tr_earnings_balance", pk, record))
             return 1
@@ -701,19 +701,23 @@ class _FakeTransaction:
             }
             self.pending_writes.append(("insert_typed_dml", "tr_user_lifetime_topup", pk, record))
             return 1
-        if sql.startswith("INSERT INTO tr_credit_movement"):
+        if sql.startswith(("INSERT INTO tr_credit_movement", "INSERT OR IGNORE INTO tr_credit_movement")):
             pk = (p["account_id"], p["movement_id"])
             if self._typed_current("tr_credit_movement", pk) is not None:
+                if sql.startswith("INSERT OR IGNORE"):
+                    return 0
                 raise FakeAlreadyExists(f"tr_credit_movement/{pk}")
             record = {
                 "account_id": p["account_id"],
                 "movement_id": p["movement_id"],
-                "kind": p["kind"],
+                "kind": p.get("kind", "custom_model_payout"),
                 "amount_microdollars": p["amount"],
-                "counterparty_account_id": p["counterparty"],
+                "counterparty_account_id": p.get(
+                    "counterparty", p.get("payer_workspace_id")
+                ),
                 "custom_model_id": p["custom_model_id"],
                 "authorization_id": p["authorization_id"],
-                "created_at": p["created_at"],
+                "created_at": p.get("created_at", dt.datetime.now(dt.UTC)),
             }
             self.pending_writes.append(("insert_typed_dml", "tr_credit_movement", pk, record))
             return 1
@@ -2158,6 +2162,7 @@ def make_fake_store(
     io = SpannerIO(
         database=db,
         spanner_module=_SpannerModule,
+        param_types=_ParamTypes,
         write_entity_batch=store._write_entity_batch,
         read_entity_tx=store._read_entity_tx,
         write_entity_tx=store._write_entity_tx,
