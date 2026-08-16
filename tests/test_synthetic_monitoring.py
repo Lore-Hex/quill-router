@@ -2691,6 +2691,7 @@ async def test_remediator_caller_reports_success_and_failure(
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["x-trustedrouter-internal-token"] == "internal"
+        assert request.extensions["timeout"]["read"] == 90.0
         if request.url.path.endswith("/failure"):
             return httpx.Response(503, json={"error": "unavailable"})
         return httpx.Response(200, json={"data": {"decisions": 2}})
@@ -2711,7 +2712,7 @@ async def test_remediator_caller_reports_success_and_failure(
     assert succeeded is True
     assert failed is False
     assert "remediator decisions: 2" in output.out
-    assert "remediator check failed:" in output.err
+    assert "remediator check failed: HTTPStatusError:" in output.err
 
 
 @pytest.mark.asyncio
@@ -2747,6 +2748,7 @@ async def test_primary_synthetic_job_invokes_scheduled_remediator(
 
         async def post(self, url: str, **kwargs: Any) -> _Response:
             assert kwargs["headers"]["x-trustedrouter-internal-token"] == "internal"
+            assert kwargs["timeout"].read == 75.0
             seen_urls.append(url)
             return _Response()
 
@@ -2762,6 +2764,7 @@ async def test_primary_synthetic_job_invokes_scheduled_remediator(
         "TR_SYNTHETIC_REMEDIATOR_URL",
         "https://trustedrouter.com/v1/internal/synthetic/remediate",
     )
+    monkeypatch.setenv("TR_SYNTHETIC_REMEDIATOR_TIMEOUT_SECONDS", "75")
     monkeypatch.delenv("TR_SYNTHETIC_THROUGHPUT_ONLY", raising=False)
     monkeypatch.delenv("TR_SYNTHETIC_THROUGHPUT_ENABLED", raising=False)
 
