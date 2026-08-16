@@ -24,6 +24,10 @@ def _settings(**overrides) -> Settings:
         twilio_api_key_sid="SKtest",
         twilio_api_key_secret="secret",  # noqa: S106
         twilio_from_number="+15550000002",
+        # Most tests exercise only the synchronous carrier request. Leaving
+        # repeats enabled starts a 45-second daemon thread that outlives the
+        # per-test HTTP mocks and can leak requests into unrelated tests.
+        notify_voice_repeat_unanswered=False,
     )
     base.update(overrides)
     return Settings(**base)
@@ -325,7 +329,11 @@ class TestUnansweredVoiceRepeats:
 
     def test_a_voice_page_schedules_one_repeat(self, monkeypatch, calls):
         service = telephony.TelephonyService(
-            _settings(telnyx_texml_account_id="a", telnyx_texml_application_id="b")
+            _settings(
+                telnyx_texml_account_id="a",
+                telnyx_texml_application_id="b",
+                notify_voice_repeat_unanswered=True,
+            )
         )
         scheduled: list[tuple] = []
         monkeypatch.setattr(
@@ -387,7 +395,9 @@ class TestUnansweredVoiceRepeats:
 
     def test_the_repeat_runs_off_the_request_path(self, monkeypatch):
         # A voice page must not hold its caller for the length of a ring.
-        service = telephony.TelephonyService(_settings())
+        service = telephony.TelephonyService(
+            _settings(notify_voice_repeat_unanswered=True)
+        )
         made: list[dict] = []
         monkeypatch.setattr(telephony.threading, "Thread",
                             lambda **kw: made.append(kw) or _NeverStarts())
