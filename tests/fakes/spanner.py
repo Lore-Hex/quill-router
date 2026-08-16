@@ -2019,7 +2019,13 @@ def _execute_sql(
         rows.sort(key=lambda item: item[0])
         if "LIMIT @limit" in sql:
             rows = rows[: int(params["limit"])]
-        return [[body] for _, body in rows]
+        columns = [
+            column.strip() for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
+        return [
+            [(entity_id if column == "id" else body) for column in columns]
+            for entity_id, body in rows
+        ]
     if "ENDS_WITH" in sql:
         suffix = params.get("suffix", "")
         rows = [
