@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import socket
 from typing import Any
 
@@ -1086,3 +1087,99 @@ def test_console_verification_disables_user_model_forms() -> None:
     assert page.status_code == 200
     assert "Verification required" in page.text
     assert '<fieldset class="form-gate" disabled>' in page.text
+
+
+def test_local_user_model_streaming_bills_from_the_usage_chunk_and_pays_owner(
+    client: TestClient,
+    inference_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The streaming quadrant of local billing: the owner streams SSE with
+    the OpenAI usage-only final chunk; the caller is charged the owner-priced
+    usage (capped at the hold), the owner is paid 70%, and no strike lands."""
+    body = _body(slug="local-stream-billing")
+    body["supports_streaming"] = True
+    body["prompt_price_microdollars_per_million_tokens"] = 2_000_000
+    body["completion_price_microdollars_per_million_tokens"] = 3_000_000
+    created = _create(client, body=body)
+
+    async def passing_probe(*_args: Any, **_kwargs: Any) -> ProbeResult:
+        return ProbeResult(ok=True, detail="ok")
+
+    monkeypatch.setattr("trusted_router.routes.user_models.probe_user_model", passing_probe)
+    assert (
+        client.post(f"/v1/user-models/{created['id']}/clock-in", headers=HEADERS).status_code
+        == 200
+    )
+
+    def chunk(**payload: Any) -> bytes:
+        base = {
+            "id": "chatcmpl-local-stream",
+            "object": "chat.completion.chunk",
+            "created": 1_700_000_000,
+            "model": "owner-model",
+        }
+        base.update(payload)
+        return b"data: " + json.dumps(base, separators=(",", ":")).encode() + b"\n\n"
+
+    sse = (
+        chunk(choices=[{"index": 0, "delta": {"role": "assistant", "content": "streamed "}}])
+        + chunk(choices=[{"index": 0, "delta": {"content": "reply"}, "finish_reason": "stop"}])
+        + chunk(choices=[], usage={"prompt_tokens": 3, "completion_tokens": 20, "total_tokens": 23})
+        + b"data: [DONE]\n\n"
+    )
+
+    async def owner_stream(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=sse)
+
+    from trusted_router.services.user_model_dispatch import stream_user_model
+
+    def patched_stream(model: Any, request_body: dict[str, Any], settings: Settings) -> Any:
+        return stream_user_model(
+            model, request_body, settings, transport=httpx.MockTransport(owner_stream)
+        )
+
+    monkeypatch.setattr("trusted_router.routes.inference.stream_user_model", patched_stream)
+    payer = STORE.find_user_by_email("alice@example.com")
+    assert payer is not None
+    payer_workspace = STORE.list_workspaces_for_user(payer.id)[0]
+    payer_money = STORE.credit_money[payer_workspace.id]
+    usage_before = payer_money.total_usage_microdollars
+
+    with client.stream(
+        "POST",
+        "/v1/chat/completions",
+        headers=inference_headers,
+        json={
+            "model": created["id"],
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 100,
+            "stream": True,
+        },
+    ) as response:
+        assert response.status_code == 200
+        raw = b"".join(response.iter_bytes())
+    assert b"streamed " in raw and b"reply" in raw and b'"error"' not in raw
+    assert raw.rstrip().endswith(b"data: [DONE]")
+
+    reported = custom_model_cost_microdollars(
+        input_tokens=3, output_tokens=20, prompt_price=2_000_000, completion_price=3_000_000
+    )
+    hold = custom_model_cost_microdollars(
+        input_tokens=estimate_tokens_from_messages([{"role": "user", "content": "hello"}]),
+        output_tokens=100,
+        prompt_price=2_000_000,
+        completion_price=3_000_000,
+    )
+    charged = min(reported, hold)
+    assert payer_money.total_usage_microdollars - usage_before == charged
+    assert payer_money.reserved_microdollars == 0
+    assert STORE.earnings_summary(created["owner_user_id"])["total_earned"] == (
+        owner_share_microdollars(charged)
+    )
+    stored = STORE.get_user_model(created["id"])
+    assert stored is not None
+    assert stored.consecutive_dispatch_failures == 0
+    generation = next(iter(STORE.target.generation_store.generations.values()))
+    assert generation.custom_model_id == created["id"]
+    assert generation.tokens_completion == 20

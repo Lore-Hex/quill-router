@@ -1957,6 +1957,10 @@ def test_user_model_inline_typed_finalize_pays_owner_once_and_replay_is_a_noop(
     movements = store.list_credit_movements("user:owner-outbox-repair")
     assert [m.movement_id for m in movements] == [user_model_payout_event_id(auth.id)]
     assert movements[0].created_at  # client timestamp landed (not a commit-ts write)
+    # Payer ledger: exactly the owner-priced charge booked, hold fully released.
+    payer = store._database.typed[CREDIT_BALANCE_TABLE][(ws, 0)]
+    assert payer["total_usage"] == 8_000
+    assert payer["reserved"] == 0
 
     replay = client.post("/v1/internal/gateway/settle", json=_typed_settle_body(auth))
     assert replay.status_code == 200, replay.text
