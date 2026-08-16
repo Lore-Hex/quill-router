@@ -14,6 +14,17 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
+from trusted_router.client_context import (
+    ClientArch,
+    ClientContextSource,
+    ClientContextVersion,
+    ClientLang,
+    ClientOs,
+    ClientPrevErrorClass,
+    ClientPrevHost,
+    ClientPrevOutcome,
+    ClientSdk,
+)
 from trusted_router.money import (
     MAX_CHECKOUT_DOLLARS,
     MICRODOLLARS_PER_CENT,
@@ -371,6 +382,30 @@ class ReconcileGenerationActivityRequest(_Strict):
     limit: int = Field(default=1000, ge=1, le=10_000)
 
 
+class GatewayClientContext(_Strict):
+    v: ClientContextVersion | None = None
+    source: ClientContextSource | None = None
+    sdk: ClientSdk | None = None
+    sdk_version: str | None = Field(
+        default=None,
+        pattern=r"^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}([-+][0-9A-Za-z.]{0,20})?$",
+        max_length=32,
+    )
+    lang: ClientLang | None = None
+    runtime: str | None = Field(default=None, pattern=r"^[a-z]{1,10}/[0-9A-Za-z.+-]{1,24}$")
+    os: ClientOs | None = None
+    arch: ClientArch | None = None
+    timeout_ms: int | None = Field(default=None, ge=1, le=3_600_000)
+    attempt: int | None = Field(default=None, ge=0, le=99)
+    prev_outcome: ClientPrevOutcome | None = None
+    prev_error_class: ClientPrevErrorClass | None = None
+    prev_host: ClientPrevHost | None = None
+    prev_elapsed_ms: int | None = Field(default=None, ge=0, le=3_600_000)
+    since_first_ms: int | None = Field(default=None, ge=0, le=3_600_000)
+    stream: bool | None = None
+    failover_used: bool | None = None
+
+
 class GatewaySettleRequest(_Lenient):
     authorization_id: str = Field(min_length=1)
     actual_input_tokens: int | None = Field(default=None, ge=0)
@@ -407,6 +442,8 @@ class GatewaySettleRequest(_Lenient):
     http_referer: str | None = Field(default=None, max_length=2048)
     app_categories: list[str] | None = None
     route_type: str | None = None
+    client: dict[str, Any] | None = None
+    gateway_request_id: str | None = Field(default=None, max_length=64)
     additional_cost_microdollars: int = Field(default=0, ge=0, le=100_000_000)
     video_input_mode: str | None = Field(default=None, pattern="^(text|image|reference|video)$")
     video_duration_seconds: int | None = Field(default=None, ge=0, le=60)

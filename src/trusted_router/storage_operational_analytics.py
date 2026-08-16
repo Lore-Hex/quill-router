@@ -72,6 +72,26 @@ def activity_payload(generation: Generation) -> dict[str, Any]:
         "http_referer": generation.http_referer,
         "app_categories": list(generation.app_categories),
         "tags": dict(generation.tags),
+        # R-PR2 declares these as node-side columns. Until then the ingester
+        # projects only its declared columns and safely ignores these extras.
+        "gateway_request_id": generation.gateway_request_id,
+        "synthetic": generation.synthetic,
+        "client_source": generation.client_source,
+        "client_sdk": generation.client_sdk,
+        "client_sdk_version": generation.client_sdk_version,
+        "client_lang": generation.client_lang,
+        "client_runtime": generation.client_runtime,
+        "client_os": generation.client_os,
+        "client_arch": generation.client_arch,
+        "client_timeout_ms": generation.client_timeout_ms,
+        "client_attempt": generation.client_attempt,
+        "client_prev_outcome": generation.client_prev_outcome,
+        "client_prev_error_class": generation.client_prev_error_class,
+        "client_prev_host": generation.client_prev_host,
+        "client_prev_elapsed_ms": generation.client_prev_elapsed_ms,
+        "client_since_first_ms": generation.client_since_first_ms,
+        "client_stream": generation.client_stream,
+        "client_failover_used": generation.client_failover_used,
         "created_at": generation.created_at,
     }
 

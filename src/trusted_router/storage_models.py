@@ -6,6 +6,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from trusted_router.client_context import parse_client_context, parse_gateway_request_id
 from trusted_router.money import microdollars_to_float
 from trusted_router.types import UsageType
 
@@ -631,6 +632,24 @@ class Generation:
     http_referer: str | None = None
     app_categories: list[str] = field(default_factory=list)
     tags: dict[str, str] = field(default_factory=dict)
+    gateway_request_id: str | None = None
+    synthetic: bool = False
+    client_source: str | None = None
+    client_sdk: str | None = None
+    client_sdk_version: str | None = None
+    client_lang: str | None = None
+    client_runtime: str | None = None
+    client_os: str | None = None
+    client_arch: str | None = None
+    client_timeout_ms: int | None = None
+    client_attempt: int | None = None
+    client_prev_outcome: str | None = None
+    client_prev_error_class: str | None = None
+    client_prev_host: str | None = None
+    client_prev_elapsed_ms: int | None = None
+    client_since_first_ms: int | None = None
+    client_stream: bool | None = None
+    client_failover_used: bool | None = None
     # Internal provider COGS for fixed-price orchestration leaves. This is
     # intentionally omitted from public generation/activity response shapes.
     operator_cost_microdollars: int | None = None
@@ -763,8 +782,13 @@ class Generation:
         first_token = max(float(first_token_raw), 0.001) if first_token_raw is not None else None
         first_byte_raw = body.get("first_byte_seconds") or body.get("time_to_first_byte_seconds")
         first_byte = max(float(first_byte_raw), 0.001) if first_byte_raw is not None else None
+        client_context = parse_client_context(body.get("client"))
+        gateway_request_id = parse_gateway_request_id(body.get("gateway_request_id"))
+        synthetic = _is_synthetic_metadata(body.get("metadata")) or (
+            body.get("app") == "TrustedRouter Synthetic"
+        )
         app = str(body.get("app") or "TrustedRouter Gateway")
-        if _is_synthetic_metadata(body.get("metadata")):
+        if synthetic:
             app = "TrustedRouter Synthetic"
         return cls(
             id=generation_id_for_authorization(authorization.id),
@@ -819,6 +843,34 @@ class Generation:
             ),
             app_categories=[str(item) for item in body.get("app_categories") or []],
             tags=dict(authorization.tags),
+            gateway_request_id=gateway_request_id,
+            synthetic=synthetic,
+            client_source=client_context.source if client_context is not None else None,
+            client_sdk=client_context.sdk if client_context is not None else None,
+            client_sdk_version=(client_context.sdk_version if client_context is not None else None),
+            client_lang=client_context.lang if client_context is not None else None,
+            client_runtime=client_context.runtime if client_context is not None else None,
+            client_os=client_context.os if client_context is not None else None,
+            client_arch=client_context.arch if client_context is not None else None,
+            client_timeout_ms=client_context.timeout_ms if client_context is not None else None,
+            client_attempt=client_context.attempt if client_context is not None else None,
+            client_prev_outcome=(
+                client_context.prev_outcome if client_context is not None else None
+            ),
+            client_prev_error_class=(
+                client_context.prev_error_class if client_context is not None else None
+            ),
+            client_prev_host=client_context.prev_host if client_context is not None else None,
+            client_prev_elapsed_ms=(
+                client_context.prev_elapsed_ms if client_context is not None else None
+            ),
+            client_since_first_ms=(
+                client_context.since_first_ms if client_context is not None else None
+            ),
+            client_stream=client_context.stream if client_context is not None else None,
+            client_failover_used=(
+                client_context.failover_used if client_context is not None else None
+            ),
             operator_cost_microdollars=operator_cost_microdollars,
             custom_model_id=authorization.user_provided_model_id,
             route_type=(str(body["route_type"]) if body.get("route_type") else None),

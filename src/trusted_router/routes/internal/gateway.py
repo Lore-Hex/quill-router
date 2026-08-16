@@ -42,6 +42,7 @@ from trusted_router.catalog import (
     endpoint_for_id,
     endpoint_zero_data_retention,
 )
+from trusted_router.client_context import parse_client_context, parse_gateway_request_id
 from trusted_router.config import Settings, get_settings
 from trusted_router.custom_model_billing import (
     USER_MODEL_ID_SETTLE_FIELD,
@@ -172,6 +173,8 @@ _NATIVE_BATCH_PROVIDER_FIELDS = frozenset(
 _SETTLE_REPAIR_FIELDS = frozenset(
     {
         "authorization_id",
+        "client",
+        "gateway_request_id",
         "actual_input_tokens",
         "actual_output_tokens",
         "input_tokens",
@@ -1594,6 +1597,24 @@ def _settle_gateway_authorization(
             )
 
     settle_body = _settle_body_with_safe_attribution(body, authorization.id)
+    settle_body = _settle_body_with_safe_client_context(settle_body, authorization.id)
+    if not success:
+        client_context = settle_body.get("client")
+        client_fields = client_context if isinstance(client_context, dict) else {}
+        logger.info(
+            "gateway.refund_client_context authorization_id=%s gateway_request_id=%s "
+            "sdk=%s sdk_version=%s attempt=%s prev_outcome=%s prev_error_class=%s "
+            "prev_host=%s failover_used=%s",
+            authorization.id,
+            settle_body.get("gateway_request_id"),
+            client_fields.get("sdk"),
+            client_fields.get("sdk_version"),
+            client_fields.get("attempt"),
+            client_fields.get("prev_outcome"),
+            client_fields.get("prev_error_class"),
+            client_fields.get("prev_host"),
+            client_fields.get("failover_used"),
+        )
     # This field is control-plane-owned. Never trust a caller-supplied value;
     # only the selected endpoint and frozen price history may set operator COGS.
     settle_body.pop(PARTNER_OPERATOR_COST_SETTLE_FIELD, None)
@@ -2010,7 +2031,11 @@ def _settle_gateway_authorization(
                 settings=settings,
             )
     if success and generation is not None:
-        enqueue_metadata_broadcast(generation, settle_body=settle_body)
+        # Customers' webhooks must not gain a new object silently: the
+        # correlation id is useful to them, the client telemetry object is not.
+        broadcast_settle_body = dict(settle_body)
+        broadcast_settle_body.pop("client", None)
+        enqueue_metadata_broadcast(generation, settle_body=broadcast_settle_body)
         if should_drain_inline(settings) and background_tasks is not None:
             background_tasks.add_task(
                 drain_broadcast_queue,
@@ -2215,6 +2240,37 @@ def _settle_body_with_safe_attribution(
     for key in attribution_keys:
         settle_body.pop(key, None)
     settle_body.update(attribution.body_fields())
+    return settle_body
+
+
+def _settle_body_with_safe_client_context(
+    settle_body: dict[str, Any], authorization_id: str
+) -> dict[str, Any]:
+    """Soft-validate the enclave's client telemetry; drop it rather than 4xx.
+
+    Telemetry may never fail settlement. Anything that does not match the
+    closed vocabulary in ``client_context`` is removed and logged; the money
+    path continues unchanged.
+    """
+    if "client" in settle_body:
+        client_context = parse_client_context(settle_body.get("client"))
+        if client_context is None:
+            settle_body.pop("client", None)
+            logger.warning(
+                "invalid gateway settlement client context dropped "
+                "authorization_id=%s error_class=%s",
+                authorization_id,
+                "ValidationError",
+            )
+        else:
+            settle_body["client"] = client_context.model_dump(exclude_none=True)
+
+    if "gateway_request_id" in settle_body:
+        gateway_request_id = parse_gateway_request_id(settle_body.get("gateway_request_id"))
+        if gateway_request_id is None:
+            settle_body.pop("gateway_request_id", None)
+        else:
+            settle_body["gateway_request_id"] = gateway_request_id
     return settle_body
 
 
