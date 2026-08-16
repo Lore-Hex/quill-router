@@ -529,6 +529,12 @@ class Store(Protocol):
         *,
         since: str,
     ) -> dict[str, int]: ...
+    def add_lifetime_topup(
+        self,
+        user_id: str,
+        amount_microdollars: int,
+        event_id: str,
+    ) -> bool: ...
     def get_lifetime_topup_microdollars(self, user_id: str) -> int: ...
 
     def reserve(

@@ -2736,6 +2736,37 @@ class PostgresStore:
 
         return self._run_transaction(read)
 
+    def add_lifetime_topup(
+        self,
+        user_id: str,
+        amount_microdollars: int,
+        event_id: str,
+    ) -> bool:
+        amount = self._positive_money_amount(amount_microdollars)
+
+        def add(conn: Any) -> bool:
+            won = self._insert_entity_once_tx(
+                conn,
+                "stripe_event",
+                event_id,
+                {"created_at": iso_now(), "lifetime_topup_user_id": user_id},
+            )
+            if not won:
+                return False
+            conn.execute(
+                "INSERT INTO tr_user_lifetime_topup "
+                "(user_id, total_microdollars, updated_at) "
+                "VALUES (%s, %s, CURRENT_TIMESTAMP) "
+                "ON CONFLICT (user_id) DO UPDATE SET "
+                "total_microdollars = "
+                "tr_user_lifetime_topup.total_microdollars + EXCLUDED.total_microdollars, "
+                "updated_at = CURRENT_TIMESTAMP",
+                (user_id, amount),
+            )
+            return True
+
+        return self._run_transaction(add)
+
     def typed_credit_snapshot(self, workspace_id: str) -> tuple[int, int, int] | None:
         def read(conn: Any) -> tuple[int, int, int] | None:
             account = self._read_entity_tx(conn, "credit", workspace_id, CreditAccount)
