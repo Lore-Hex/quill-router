@@ -1,7 +1,7 @@
 """Proof that the BYOK AAD v2 backfill's envelope registry is total.
 
 `byok_aad_backfill` decides what to migrate from two hand-written tables:
-`_MIGRATED_KINDS` and `_fields_for_kind`. Between them they name three
+`MIGRATED_KINDS` and `_fields_for_kind`. Between them they name three
 locations — byok.encrypted_secret, broadcast_destination.encrypted_api_key and
 broadcast_destination.encrypted_headers — and tag each with the AAD namespace
 ("provider" or "control") its envelope was sealed under. The law:
@@ -94,7 +94,7 @@ disclose was itself a review finding:
 
 `ENVELOPE_ADAPTER_MODULES`, one more hand-maintained list, used to be here too:
 two file names, so the identical write-only-kind defect in storage_postgres.py
-was invisible. Review was right that this file criticised `_MIGRATED_KINDS` for
+was invisible. Review was right that this file criticised `MIGRATED_KINDS` for
 exactly that and then did it. It is gone — `envelope_adjacent_kinds` derives its
 own scope, package-wide — and what replaced it is pinned rather than trusted.
 
@@ -155,11 +155,11 @@ a proof, so unresolvable halves now surface as the `UNPLACED_KIND` /
 `UNSEALED_FAMILY` sentinels and read as locations the registry does not cover.
 
 Finding recorded here because it refutes the assumption this module started
-from — that `_MIGRATED_KINDS` is the one place a kind is listed. It is not, and
+from — that `MIGRATED_KINDS` is the one place a kind is listed. It is not, and
 neither entity store reads it as a set. `SpannerEntityStore.scan` hardcodes
 `kind IN ('broadcast_destination', 'byok')` into its SQL text and never
-references the registry; `PostgresEntityStore.scan` binds `_MIGRATED_KINDS[0],
-_MIGRATED_KINDS[1]` positionally against a two-placeholder IN list. Adding a
+references the registry; `PostgresEntityStore.scan` binds `MIGRATED_KINDS[0],
+MIGRATED_KINDS[1]` positionally against a two-placeholder IN list. Adding a
 third kind to the registry today updates neither scan, so the backfill would
 never fetch the rows it had just been taught to migrate, and would once again
 report clean. The two store tests below capture the statement each scan
@@ -267,7 +267,6 @@ import dataclasses
 import importlib
 import pathlib
 import pkgutil
-import re
 import sys
 import types
 import typing
@@ -278,9 +277,9 @@ import pytest
 
 import trusted_router
 from tests.test_byok_aad_backfill import MemoryEntityStore, _v1_envelope
+from trusted_router import byok_aad_backfill as backfill
 from trusted_router import byok_crypto, storage_models
 from trusted_router.byok_aad_backfill import (
-    _MIGRATED_KINDS,
     BackfillRunner,
     PostgresEntityStore,
     SpannerEntityStore,
@@ -294,6 +293,7 @@ from trusted_router.byok_crypto import (
     decrypt_byok_secret,
     decrypt_control_secret,
 )
+from trusted_router.byok_v1_attestations import MIGRATED_KINDS
 from trusted_router.config import Settings
 from trusted_router.services.broadcast import broadcast_secret_context
 from trusted_router.services.broadcast_adapters import _secret_context as adapter_secret_context
@@ -848,7 +848,7 @@ def envelope_adjacent_kinds(
 
     This replaces a hand-written two-entry list of adapter modules. Adversarial
     review was right that such a list is the same maintenance hazard the module
-    docstring criticises `_MIGRATED_KINDS` for, and proved it by putting the
+    docstring criticises `MIGRATED_KINDS` for, and proved it by putting the
     same defect in a third module the list did not name. The file scope is now
     derived and package-wide.
 
@@ -1028,7 +1028,7 @@ DERIVED_MODEL_FIELDS = envelope_fields(MODULES_BY_PATH.values())
 DERIVED_FIELD_NAMES = frozenset(name for fields in DERIVED_MODEL_FIELDS.values() for name in fields)
 DERIVED_KINDS = entity_kinds(SRC, frozenset(DERIVED_MODEL_FIELDS))
 DERIVED_FAMILIES = sealed_families(SRC, DERIVED_FIELD_NAMES)
-# Seeded with the DERIVED kinds, never with `_MIGRATED_KINDS`: a scope that
+# Seeded with the DERIVED kinds, never with `MIGRATED_KINDS`: a scope that
 # widens by reading the registry it audits would narrow again if a kind were
 # dropped from the registry, which is the direction that must never fail open.
 DERIVED_ADJACENT_KINDS, UNRESOLVABLE_KIND_CALL_SITES = envelope_adjacent_kinds(
@@ -1043,7 +1043,7 @@ DERIVED_ADJACENT_KINDS, UNRESOLVABLE_KIND_CALL_SITES = envelope_adjacent_kinds(
 def _registry_pairs() -> set[tuple[str, str, str]]:
     return {
         (kind, field, family)
-        for kind in _MIGRATED_KINDS
+        for kind in MIGRATED_KINDS
         for field, family in _fields_for_kind(kind)
     }
 
@@ -1081,25 +1081,33 @@ def _resolved_pairs() -> set[tuple[str, str, str]]:
 
 
 def _registry_kind_literals() -> set[str]:
-    """The kinds `_fields_for_kind` will answer for, read off its own source.
+    """The kinds `_fields_for_kind` will answer for, by CALLING it.
 
-    Calling it cannot enumerate them — it raises for everything else — so the
-    "no stale kind" direction needs the literals it compares against.
+    This read the function's source with an AST scan until `_fields_for_kind`
+    stopped comparing `kind` against inline string literals and started
+    deriving its answer from `MIGRATED_SURFACES`. The scan then found no
+    literals and reported that the registry answered for nothing, which is a
+    test measuring how a function is spelled rather than what it does.
+
+    Calling it cannot enumerate the whole universe — it raises for anything
+    unregistered — so the candidates are every kind this module already knows
+    about from another direction. A stale kind outside that set is not caught
+    here; that is what `test_every_kind_an_envelope_handling_function_names_is_registered_or_declared`
+    is for.
     """
-    source = pathlib.Path(trusted_router.__file__).parent / BACKFILL_MODULE
-    tree = ast.parse(source.read_text(), filename=str(source))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "_fields_for_kind":
-            return {
-                comparator.value
-                for compare in ast.walk(node)
-                if isinstance(compare, ast.Compare)
-                and isinstance(compare.left, ast.Name)
-                and compare.left.id == "kind"
-                for comparator in compare.comparators
-                if isinstance(comparator, ast.Constant) and isinstance(comparator.value, str)
-            }
-    raise AssertionError("_fields_for_kind is no longer a module-level function")
+    candidates = (
+        set(MIGRATED_KINDS)
+        | {kind for kinds in DERIVED_KINDS.values() for kind in kinds}
+        | set(NON_ENVELOPE_KINDS)
+    )
+    answered: set[str] = set()
+    for kind in sorted(candidates):
+        try:
+            if _fields_for_kind(kind):
+                answered.add(kind)
+        except ValueError:
+            continue
+    return answered
 
 
 # ---------------------------------------------------------------------------
@@ -1319,7 +1327,7 @@ def test_every_kind_an_envelope_handling_function_names_is_registered_or_declare
         "reaches it."
     )
     named = set(DERIVED_ADJACENT_KINDS)
-    unaccounted = sorted(named - set(_MIGRATED_KINDS) - set(NON_ENVELOPE_KINDS))
+    unaccounted = sorted(named - set(MIGRATED_KINDS) - set(NON_ENVELOPE_KINDS))
     assert not unaccounted, (
         f"envelope-handling code names kind(s) {unaccounted} that are neither in the "
         "backfill registry nor declared secret-free — at "
@@ -1429,19 +1437,19 @@ def test_the_registry_covers_every_envelope_location_exactly() -> None:
 def test_migrated_kinds_agrees_with_fields_for_kind_and_with_the_models() -> None:
     """The two hand-written tables must name the same kinds as each other.
 
-    They are independent literals: `_MIGRATED_KINDS` drives the Postgres scan,
+    They are independent literals: `MIGRATED_KINDS` drives the Postgres scan,
     `_fields_for_kind` drives what gets migrated. A kind in one and not the
     other is a scan that fetches rows nothing knows how to process, or a
     processor for rows nothing fetches.
     """
     derived = {kind for kinds in DERIVED_KINDS.values() for kind in kinds}
-    assert set(_MIGRATED_KINDS) == derived, (
-        f"_MIGRATED_KINDS is {sorted(_MIGRATED_KINDS)} but the storage dataclasses "
+    assert set(MIGRATED_KINDS) == derived, (
+        f"MIGRATED_KINDS is {sorted(MIGRATED_KINDS)} but the storage dataclasses "
         f"live under {sorted(derived)}"
     )
-    assert _registry_kind_literals() == set(_MIGRATED_KINDS), (
+    assert _registry_kind_literals() == set(MIGRATED_KINDS), (
         f"_fields_for_kind answers for {sorted(_registry_kind_literals())} but "
-        f"_MIGRATED_KINDS lists {sorted(_MIGRATED_KINDS)}"
+        f"MIGRATED_KINDS lists {sorted(MIGRATED_KINDS)}"
     )
 
 
@@ -1594,6 +1602,10 @@ class _FakeParamTypes:
     STRING = "STRING"
     INT64 = "INT64"
 
+    @staticmethod
+    def Array(inner: str) -> str:  # noqa: N802 - mirrors the Spanner param_types API
+        return f"ARRAY<{inner}>"
+
 
 class _FakeCursor:
     def fetchall(self) -> list[Any]:
@@ -1616,33 +1628,30 @@ class _FakeConnection:
         return _FakeCursor()
 
 
-def _kind_in_clause(sql: str) -> str:
-    match = re.search(r"kind IN \(([^)]*)\)", sql)
-    assert match is not None, f"no `kind IN (...)` filter in the scan statement: {sql}"
-    return match.group(1)
+def _restricted_kinds(captured: dict[str, Any]) -> set[str]:
+    """The kinds a captured scan actually restricts to, whatever the dialect.
+
+    Read out of the BOUND PARAMETERS, not the SQL text. The two adapters spell
+    the same restriction differently — Spanner `kind IN UNNEST(@kinds)`,
+    Postgres `kind = ANY(%s)` — and an earlier version of these tests matched
+    `kind IN (...)` with a regex and counted its `%s` placeholders. That
+    version went red when the adapters were FIXED to read the registry, which
+    is the wrong direction for a test to fail in.
+    """
+    params = captured["params"]
+    if isinstance(params, dict):
+        return set(params["kinds"])
+    for value in params:
+        if isinstance(value, (list, tuple)) and value and all(isinstance(v, str) for v in value):
+            return set(value)
+    raise AssertionError(f"no bound kind collection in {params!r}")
 
 
-def test_the_spanner_scan_fetches_every_registered_kind() -> None:
-    """`SpannerEntityStore.scan` embeds its kind filter as SQL text and never
-    reads `_MIGRATED_KINDS`. Registering a kind without editing that literal
-    means the backfill never sees the rows — and reports clean, because a row
-    it never scanned cannot be counted as a v1 envelope."""
-    captured: dict[str, Any] = {}
+def _scan_spanner(captured: dict[str, Any]) -> None:
     SpannerEntityStore(_FakeSpannerDatabase(captured), _FakeParamTypes()).scan(after=None, limit=10)
 
-    filtered = set(re.findall(r"'([^']*)'", _kind_in_clause(captured["sql"])))
-    assert filtered == set(_MIGRATED_KINDS), (
-        f"the Spanner scan filters on {sorted(filtered)} but the registry covers "
-        f"{sorted(_MIGRATED_KINDS)}"
-    )
 
-
-def test_the_postgres_scan_binds_every_registered_kind() -> None:
-    """`PostgresEntityStore.scan` binds `_MIGRATED_KINDS[0], _MIGRATED_KINDS[1]`
-    positionally against a two-placeholder IN list. It is correct only because
-    the registry happens to hold exactly two kinds; a third would be dropped in
-    silence. This test is what makes that arity a checked property."""
-    captured: dict[str, Any] = {}
+def _scan_postgres(captured: dict[str, Any]) -> None:
     fake_psycopg = types.ModuleType("psycopg")
     fake_psycopg.connect = lambda _dsn: _FakeConnection(captured)  # type: ignore[attr-defined]
     original = sys.modules.get("psycopg")
@@ -1655,24 +1664,36 @@ def test_the_postgres_scan_binds_every_registered_kind() -> None:
         else:
             sys.modules["psycopg"] = original
 
-    sql = captured["sql"]
-    placeholders = _kind_in_clause(sql).count("%s")
-    assert placeholders == len(_MIGRATED_KINDS), (
-        f"the Postgres scan has {placeholders} kind placeholder(s) for a registry of "
-        f"{len(_MIGRATED_KINDS)} kind(s); the surplus kinds are never fetched"
-    )
-    # Positionally, not "somewhere in the tuple". The first draft asserted only
-    # that each registered kind appeared among the parameters, which adversarial
-    # review pointed out would still pass if the kinds were bound to the
-    # pagination placeholders and the IN list got the cursor values.
-    assert sql[: sql.index("kind IN (")].count("%s") == 0, (
-        "the kind IN clause is no longer the first bound group, so the parameter "
-        "positions checked below no longer line up with it"
-    )
-    bound = tuple(captured["params"][: len(_MIGRATED_KINDS)])
-    assert bound == tuple(_MIGRATED_KINDS), (
-        f"the Postgres scan binds {bound} into its kind filter, but the registry "
-        f"covers {tuple(_MIGRATED_KINDS)}"
+
+@pytest.mark.parametrize("scan", [_scan_spanner, _scan_postgres], ids=["spanner", "postgres"])
+def test_the_scan_fetches_exactly_the_registered_kinds(scan: Any) -> None:
+    captured: dict[str, Any] = {}
+    scan(captured)
+    assert _restricted_kinds(captured) == set(MIGRATED_KINDS)
+
+
+@pytest.mark.parametrize("scan", [_scan_spanner, _scan_postgres], ids=["spanner", "postgres"])
+def test_a_newly_registered_kind_is_actually_fetched(scan: Any, monkeypatch: Any) -> None:
+    """The finding this file was written for, as a live property.
+
+    Both adapters once derived their filter from something other than the
+    registry: Spanner embedded the two kinds as SQL text, Postgres bound
+    `MIGRATED_KINDS[0], MIGRATED_KINDS[1]` positionally against a
+    two-placeholder list. Registering a third kind would have left both
+    fetching the old two, and the backfill would have reported clean over rows
+    it never scanned — correct only by arity coincidence.
+
+    Asserting today's two kinds cannot see that, because today there are
+    exactly two. Adding a third and requiring it to be fetched can.
+    """
+    widened = (*MIGRATED_KINDS, "totality_probe_kind")
+    monkeypatch.setattr(backfill, "MIGRATED_KINDS", widened, raising=True)
+
+    captured: dict[str, Any] = {}
+    scan(captured)
+    assert "totality_probe_kind" in _restricted_kinds(captured), (
+        "a kind added to the registry is not fetched by this scan; the filter is "
+        "derived from something other than MIGRATED_KINDS"
     )
 
 

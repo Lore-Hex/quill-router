@@ -70,10 +70,10 @@ class EntityCensus:
     from "the audit could not have found anything".
 
     `v1_literal_rows` is the one that does not share the scan's assumptions.
-    The count and the walk restrict to the same two kinds — the count from
-    `MIGRATED_KINDS` on both adapters, the walk from `MIGRATED_KINDS` on
-    Postgres and from those same two names written out as SQL text on Spanner
-    (`SpannerEntityStore.scan`, which predates this check) — and the walk reads
+    The count and the walk restrict to the same two kinds — both from
+    `MIGRATED_KINDS`, on both adapters, since `SpannerEntityStore.scan` now
+    binds `@kinds` the way its own census already did rather than writing the
+    two names out as SQL text — and the walk reads
     envelopes only out of the field names in `MIGRATED_SURFACES`. So a renamed
     entity kind or a renamed body field hides the same rows from the walk AND
     from the count, and the disagreement they exist to expose never happens.
@@ -377,7 +377,7 @@ class SpannerEntityStore:
         after_kind, after_id = after or ("", "")
         sql = (
             "SELECT kind, id, body FROM tr_entities "
-            "WHERE kind IN ('broadcast_destination', 'byok') "
+            "WHERE kind IN UNNEST(@kinds) "
             "AND (kind > @after_kind OR (kind = @after_kind AND id > @after_id)) "
             "ORDER BY kind, id LIMIT @limit"
         )
@@ -385,11 +385,13 @@ class SpannerEntityStore:
             rows = snapshot.execute_sql(
                 sql,
                 params={
+                    "kinds": list(MIGRATED_KINDS),
                     "after_kind": after_kind,
                     "after_id": after_id,
                     "limit": limit,
                 },
                 param_types={
+                    "kinds": self._param_types.Array(self._param_types.STRING),
                     "after_kind": self._param_types.STRING,
                     "after_id": self._param_types.STRING,
                     "limit": self._param_types.INT64,
