@@ -54,6 +54,10 @@ add_secret_env_if_exists() {
 # revision failing to start, which is the right failure for a feature nobody
 # has enabled yet.
 add_secret_env_if_exists "TR_TELNYX_API_KEY" "trustedrouter-telnyx-api-key"
+add_secret_env_if_exists "TR_VERIFF_API_KEY" "trustedrouter-veriff-api-key"
+add_secret_env_if_exists \
+  "TR_VERIFF_SHARED_SECRET_KEY" \
+  "trustedrouter-veriff-shared-secret-key"
 add_secret_env_if_exists "TR_TWILIO_ACCOUNT_SID" "trustedrouter-twilio-account-sid"
 add_secret_env_if_exists "TR_TWILIO_API_KEY_SID" "trustedrouter-twilio-api-key-sid"
 add_secret_env_if_exists "TR_TWILIO_API_KEY_SECRET" "trustedrouter-twilio-api-key-secret"
@@ -342,6 +346,18 @@ ENV_VARS=(
   # one is a 422 or a 403 on every call.
   "TR_NOTIFY_ENABLED=true"
   "TR_NOTIFY_SMS_AVAILABLE=false"
+  # Identity verification ships DARK and the custom-model gate ships OFF, as a
+  # pair. They must flip together: enabling the gate without a reachable
+  # Veriff would 403 every custom-model create/edit with an unsatisfiable
+  # "identity_verified" — a silent lockout, not a boot failure. Activation
+  # (once trustedrouter-veriff-{api-key,shared-secret-key} exist in Secret
+  # Manager — the deploy SA can read them but not create them):
+  #   TR_VERIFF_ENABLED=true and TR_CUSTOM_MODELS_REQUIRE_VERIFICATION=true.
+  # The config validator refuses TR_VERIFF_ENABLED=true without both secrets,
+  # so a premature flip fails loud at boot rather than serving broken.
+  "TR_VERIFF_ENABLED=false"
+  "TR_CUSTOM_MODELS_REQUIRE_VERIFICATION=false"
+  "TR_VERIFF_BASE_URL=https://stationapi.veriff.com"
   "TR_TELNYX_FROM_NUMBER=+17869471547"
   "TR_TELNYX_TEXML_ACCOUNT_ID=1eea716a-02e0-4d4f-96fa-36d1f556edca"
   "TR_TELNYX_TEXML_APPLICATION_ID=3026758434193146987"

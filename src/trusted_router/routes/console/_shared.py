@@ -120,6 +120,7 @@ def _console_path_for_active(active: str) -> str:
         "settings": "/console/settings",
         "credits": "/console/credits",
         "preferences": "/console/account/preferences",
+        "verification": "/console/account/verification",
     }.get(active, "/console/api-keys")
 
 

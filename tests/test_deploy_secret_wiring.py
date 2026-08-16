@@ -70,6 +70,31 @@ def test_deploy_wires_three_cloud_ops_chat_support_fanout() -> None:
     )
 
 
+def test_deploy_wires_veriff_config_and_secrets() -> None:
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+    secrets = (ROOT / "scripts/deploy/secrets.sh").read_text()
+
+    # Ships dark, as a PAIR: enabling the custom-model gate without a reachable
+    # Veriff would 403 every create/edit with an unsatisfiable requirement.
+    # Both flip to true in one step once the secrets exist in Secret Manager.
+    assert '"TR_VERIFF_ENABLED=false"' in rollout
+    assert '"TR_CUSTOM_MODELS_REQUIRE_VERIFICATION=false"' in rollout
+    assert '"TR_VERIFF_ENABLED=true"' not in rollout
+    assert '"TR_VERIFF_BASE_URL=https://stationapi.veriff.com"' in rollout
+    assert (
+        'add_secret_env_if_exists "TR_VERIFF_API_KEY" "trustedrouter-veriff-api-key"'
+        in rollout
+    )
+    assert "TR_VERIFF_SHARED_SECRET_KEY" in rollout
+    assert '"VERIFF_API_KEY" "trustedrouter-veriff-api-key"' in secrets
+    assert "VERIFF_SHARED_SECRET_KEY" in secrets
+    assert 'grant_tr_deploy_secret_access "trustedrouter-veriff-api-key"' in secrets
+    assert (
+        'grant_tr_deploy_secret_access "trustedrouter-veriff-shared-secret-key"'
+        in secrets
+    )
+
+
 def test_all_attested_control_plane_regions_remain_warm() -> None:
     library = (ROOT / "scripts/deploy/_lib.sh").read_text()
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()

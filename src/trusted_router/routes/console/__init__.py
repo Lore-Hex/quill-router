@@ -26,6 +26,7 @@ from trusted_router.routes.console import (
     root,
     routing_page,
     settings,
+    verification,
     welcome,
 )
 from trusted_router.routes.console._shared import (
@@ -47,6 +48,7 @@ def register_console_routes(app: FastAPI) -> None:
     routing_page.register(app)
     settings.register(app)
     preferences.register(app)
+    verification.register(app)
 
 
 __all__ = [
