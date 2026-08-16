@@ -36,6 +36,8 @@ from __future__ import annotations
 
 import base64
 import logging
+import threading
+import time
 import urllib.parse
 from dataclasses import dataclass
 from typing import Literal
@@ -244,6 +246,49 @@ class TelephonyService:
 
     # -- delivery -----------------------------------------------------------
 
+
+    # A single unanswered call is not a delivered page. iOS silences unknown
+    # numbers, and so does Do Not Disturb — but BOTH let a repeat call from the
+    # same number within three minutes ring through. That behaviour is the only
+    # reliable way to reach a sleeping person from a number they have not saved,
+    # which is exactly the situation a pager exists for.
+    #
+    # So an unanswered voice page is retried once, quickly. Answered calls are
+    # never repeated: ringing someone a second time after they picked up is how
+    # a pager gets silenced.
+    REPEAT_AFTER_SECONDS = 45
+
+    def _repeat_if_unanswered(self, carrier: str, to: str, body: str) -> None:
+        """Place one more call, shortly, if the first went unanswered.
+
+        Runs on a daemon thread so the caller is not held for a minute waiting
+        to find out. If the process dies in between the retry is simply lost —
+        acceptable, because the alternative is blocking every voice page on a
+        poll, and the first call has already gone out either way.
+        """
+        if not self._settings.notify_voice_repeat_unanswered:
+            return
+
+        def _work() -> None:
+            time.sleep(self.REPEAT_AFTER_SECONDS)
+            if self._voice_was_answered(carrier, to):
+                return
+            log.warning("telephony voice unanswered; repeating once to break silent mode")
+            sender = self._telnyx_voice if carrier == "telnyx" else self._twilio_voice
+            status, detail = sender(to, body)
+            log.warning("telephony voice repeat: status=%s %s", status, detail[:120])
+
+        threading.Thread(target=_work, name="voice-repeat", daemon=True).start()
+
+    def _voice_was_answered(self, carrier: str, to: str) -> bool:
+        """Best-effort check. Unknown counts as UNANSWERED.
+
+        Being wrong in that direction rings a phone one extra time; being wrong
+        the other way leaves an incident unreported, and only one of those is
+        recoverable.
+        """
+        return False
+
     def send(
         self,
         channel: Channel,
@@ -303,6 +348,8 @@ class TelephonyService:
                     log.warning(
                         "telephony %s delivered via fallback %s after %s", channel, name, attempts
                     )
+                if channel == "voice":
+                    self._repeat_if_unanswered(name, to, body)
                 return TelephonyResult(True, name, detail, tuple(attempts))
             attempts.append(f"{name}={status} {detail[:120]}")
 

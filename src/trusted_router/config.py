@@ -542,6 +542,10 @@ class Settings(BaseSettings):
     # registration and simply goes to whoever is cheaper. Preference only
     # reorders — the other carrier is still tried, so a wrong value here costs
     # a wasted attempt, never a lost page.
+    # Repeat an unanswered voice page once. iOS and Do Not Disturb both let a
+    # second call from the same number within three minutes ring through, which
+    # is the only reliable way to wake someone from an unsaved number.
+    notify_voice_repeat_unanswered: bool = True
     notify_sms_primary_carrier: str = "twilio"
     notify_voice_primary_carrier: str = "telnyx"
     telnyx_texml_account_id: str | None = None
