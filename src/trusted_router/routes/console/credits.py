@@ -19,7 +19,11 @@ from trusted_router.billing_policy import (
     is_wallet_only_user,
 )
 from trusted_router.domains import request_control_origin
-from trusted_router.money import VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS, money_pair
+from trusted_router.money import (
+    MIN_PAYPAL_CHECKOUT_DOLLARS,
+    VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS,
+    money_pair,
+)
 from trusted_router.routes.console._shared import ConsoleDep, money, render
 from trusted_router.schemas import CheckoutRequest
 from trusted_router.services.adyen_billing import (
@@ -110,6 +114,7 @@ def register(app: FastAPI) -> None:
             last_auto_refill_at=credit.last_auto_refill_at if credit else None,
             last_auto_refill_status=credit.last_auto_refill_status if credit else None,
             paypal_enabled=settings.paypal_enabled or settings.environment.lower() in {"local", "test"},
+            paypal_minimum_dollars=MIN_PAYPAL_CHECKOUT_DOLLARS,
             adyen_enabled=settings.adyen_checkout_ready,
             wallet_only_billing=wallet_only_billing,
             payments=payments,

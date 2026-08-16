@@ -18,6 +18,7 @@ from trusted_router.money import (
     MAX_CHECKOUT_DOLLARS,
     MICRODOLLARS_PER_CENT,
     MICRODOLLARS_PER_DOLLAR,
+    MIN_PAYPAL_CHECKOUT_MICRODOLLARS,
     dollars_to_microdollars,
 )
 
@@ -69,6 +70,15 @@ class CheckoutRequest(_Lenient):
         if microdollars % MICRODOLLARS_PER_CENT != 0:
             raise ValueError("amount must be exactly representable in cents")
         return Decimal(str(value))
+
+    @model_validator(mode="after")
+    def paypal_amount_in_range(self) -> CheckoutRequest:
+        if (
+            self.payment_method == "paypal"
+            and dollars_to_microdollars(self.amount) < MIN_PAYPAL_CHECKOUT_MICRODOLLARS
+        ):
+            raise ValueError("PayPal checkout amount must be at least 10")
+        return self
 
 
 class X402FundingRequest(_Strict):
