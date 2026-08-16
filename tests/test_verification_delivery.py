@@ -143,6 +143,25 @@ class TestSettingsRoutes:
         assert response.status_code == 400
         assert fake.sent == [], "a carrier was called with a number we knew was bad"
 
+    def test_sms_falls_back_to_voice_while_carrier_registration_is_pending(
+        self, client, user_headers, monkeypatch
+    ) -> None:
+        fake = _Telephony()
+        monkeypatch.setattr(notify_module, "get_telephony_service", lambda s: fake)
+
+        response = client.post(
+            "/notify/phone/start",
+            headers=user_headers,
+            json={"phone": "+13059511381", "channel": "sms"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["channel"] == "voice"
+        assert fake.sent[0][0] == "voice"
+        user = STORE.find_user_by_email("alice@example.com")
+        assert user is not None
+        assert user.phone_code_channel == "voice"
+
     def test_an_immediate_resend_is_refused(self, client, user_headers, monkeypatch) -> None:
         # Without this, "start verification" is a way to ring someone else's
         # phone over and over.
@@ -150,7 +169,9 @@ class TestSettingsRoutes:
         monkeypatch.setattr(notify_module, "get_telephony_service", lambda s: fake)
         body = {"phone": "+13059511381", "channel": "voice"}
 
-        assert client.post("/notify/phone/start", headers=user_headers, json=body).status_code == 200
+        assert (
+            client.post("/notify/phone/start", headers=user_headers, json=body).status_code == 200
+        )
         second = client.post("/notify/phone/start", headers=user_headers, json=body)
 
         assert second.status_code == 429
@@ -166,7 +187,9 @@ class TestSettingsRoutes:
             json={"phone": "+13059511381", "channel": "voice"},
         )
 
-        response = client.post("/notify/phone/confirm", headers=user_headers, json={"code": "000000"})
+        response = client.post(
+            "/notify/phone/confirm", headers=user_headers, json={"code": "000000"}
+        )
 
         assert response.status_code == 400
         assert response.json()["verified"] is False

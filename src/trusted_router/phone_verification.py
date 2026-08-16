@@ -93,7 +93,13 @@ def can_resend(user: User, *, now: dt.datetime | None = None) -> tuple[bool, int
     return False, int(RESEND_FLOOR_SECONDS - elapsed)
 
 
-def begin(user: User, phone: str, *, now: dt.datetime | None = None) -> str:
+def begin(
+    user: User,
+    phone: str,
+    *,
+    channel: str | None = None,
+    now: dt.datetime | None = None,
+) -> str:
     """Stage `phone` against the user and return the code to send.
 
     The number is held in `pending_phone` rather than `phone`: an unconfirmed
@@ -113,6 +119,7 @@ def begin(user: User, phone: str, *, now: dt.datetime | None = None) -> str:
     )
     user.phone_code_attempts = 0
     user.phone_code_sent_at = now.isoformat().replace("+00:00", "Z")
+    user.phone_code_channel = channel if channel in {"sms", "voice"} else None
     return code
 
 
@@ -162,9 +169,22 @@ def clear(user: User) -> None:
     _clear_pending(user)
 
 
+def cancel_pending(user: User) -> None:
+    """Discard an in-flight proof without changing a verified number.
+
+    Deliberately keeps `phone_code_sent_at`: the resend floor is a floor on
+    how often this account may make a phone ring, not on how long a code
+    stays pending. If cancelling reset it, "cancel, then start again" would
+    be a way to ring any number continuously — the exact loop the floor
+    exists to stop.
+    """
+    _clear_pending(user)
+
+
 def _clear_pending(user: User) -> None:
     user.pending_phone = None
     user.phone_code_hash = None
     user.phone_code_salt = None
     user.phone_code_expires_at = None
     user.phone_code_attempts = 0
+    user.phone_code_channel = None

@@ -29,7 +29,8 @@
     {% elif phone_error == 'too_many_attempts' %}<p class="notice bad">Too many attempts — that code is now dead. Send a new one.</p>
     {% elif phone_error == 'no_pending' %}<p class="notice bad">No code is waiting. Send one first.</p>
     {% elif phone_error == 'rate' %}<p class="notice bad">A code was just sent. Wait a moment before asking for another.</p>{% endif %}
-    {% if phone_sent %}<p class="notice ok">Code sent by {{ phone_sent }}. It expires in 10 minutes.</p>{% endif %}
+    {% if phone_sent == 'voice' %}<p class="notice ok">We're calling {{ phone_pending }} now — pick up to hear your code. It expires in 10 minutes.</p>
+    {% elif phone_sent == 'sms' %}<p class="notice ok">Code texted to {{ phone_pending }}. It expires in 10 minutes.</p>{% endif %}
     {% if phone_saved %}<p class="notice ok">Number verified.</p>{% endif %}
 
     {% if phone_verified %}
@@ -44,22 +45,51 @@
         <label>Code<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" required></label>
         <button class="btn primary" type="submit">Verify</button>
       </form>
-      <form class="form" method="post" action="/console/settings/phone/start">
-        <input type="hidden" name="phone" value="{{ phone_pending }}">
-        <input type="hidden" name="channel" value="voice">
-        <button class="btn" type="submit">Call me the code instead</button>
+      {% if phone_code_channel == 'sms' %}
+        <form class="form" method="post" action="/console/settings/phone/start">
+          <input type="hidden" name="phone" value="{{ phone_pending }}">
+          <input type="hidden" name="channel" value="sms">
+          <button class="btn primary" type="submit" {% if resend_wait_seconds %}disabled{% endif %}>{% if resend_wait_seconds %}You can request another in {{ resend_wait_seconds }}s{% else %}Send again{% endif %}</button>
+        </form>
+        <form class="form" method="post" action="/console/settings/phone/start">
+          <input type="hidden" name="phone" value="{{ phone_pending }}">
+          <input type="hidden" name="channel" value="voice">
+          <button class="btn" type="submit" {% if resend_wait_seconds %}disabled{% endif %}>Call me instead</button>
+        </form>
+      {% else %}
+        <form class="form" method="post" action="/console/settings/phone/start">
+          <input type="hidden" name="phone" value="{{ phone_pending }}">
+          <input type="hidden" name="channel" value="voice">
+          <button class="btn primary" type="submit" {% if resend_wait_seconds %}disabled{% endif %}>{% if resend_wait_seconds %}You can request another in {{ resend_wait_seconds }}s{% else %}Call again{% endif %}</button>
+        </form>
+        {% if notify_sms_available %}
+          <form class="form" method="post" action="/console/settings/phone/start">
+            <input type="hidden" name="phone" value="{{ phone_pending }}">
+            <input type="hidden" name="channel" value="sms">
+            <button class="btn" type="submit" {% if resend_wait_seconds %}disabled{% endif %}>Send as text instead</button>
+          </form>
+        {% endif %}
+      {% endif %}
+      <form class="form" method="post" action="/console/settings/phone/cancel">
+        <button class="btn" type="submit">Use a different number</button>
       </form>
     {% else %}
       <p>Add a mobile number so your agents can reach you when something breaks. Verifying it is what unlocks every notification channel, email included.</p>
       <form class="form" method="post" action="/console/settings/phone/start">
         <label>Mobile number<input name="phone" placeholder="+15551234567" autocomplete="tel" required></label>
-        <label>Send the code by
-          <select name="channel">
-            <option value="voice">Phone call</option>
-            <option value="sms">Text message</option>
-          </select>
-        </label>
-        <button class="btn primary" type="submit">Send code</button>
+        {% if notify_sms_available %}
+          <label>Send the code by
+            <select name="channel">
+              <option value="voice">Phone call</option>
+              <option value="sms">Text message</option>
+            </select>
+          </label>
+        {% else %}
+          <input type="hidden" name="channel" value="voice">
+          <p><strong>Phone call</strong></p>
+          <p class="muted">We'll call this number and read you a 6-digit code. (Text messages are coming once carrier registration completes.)</p>
+        {% endif %}
+        <button class="btn primary" type="submit" {% if resend_wait_seconds %}disabled{% endif %}>{% if resend_wait_seconds %}You can request a code in {{ resend_wait_seconds }}s{% else %}Send code{% endif %}</button>
       </form>
       <p class="muted">A phone call works on any number, including landlines and desk phones, and needs no carrier registration. <a href="/docs/notify">What we send</a>.</p>
     {% endif %}

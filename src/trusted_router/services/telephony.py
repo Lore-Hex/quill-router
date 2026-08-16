@@ -93,6 +93,24 @@ def _perform(
 BRAND = "Trusted Router"
 
 
+def control_plane_public_origin(settings: Settings) -> str:
+    """Public origin that serves console and carrier callback routes.
+
+    ``api_base_url`` is the attested inference gateway in production, not the
+    FastAPI control plane, so unauthenticated carrier callbacks must never be
+    built from it.
+    """
+    domain = settings.trusted_domain.strip().rstrip("/")
+    environment = settings.environment.strip().lower()
+    if environment in {"local", "test"}:
+        if domain == "trustedrouter.com":
+            return "http://localhost:8000"
+        hostname = domain.split(":", 1)[0].lower()
+        scheme = "http" if hostname in {"localhost", "127.0.0.1", "[::1]"} else "https"
+        return f"{scheme}://{domain}"
+    return f"https://{domain}"
+
+
 def branded(body: str) -> str:
     """Every SMS and call opens by naming who is calling.
 
@@ -199,14 +217,14 @@ class TelephonyService:
         if (
             not settings.telnyx_texml_account_id
             or not settings.telnyx_texml_application_id
-            or not settings.api_base_url
+            or not settings.trusted_domain
         ):
             return 0, (
                 "telnyx voice needs TR_TELNYX_TEXML_ACCOUNT_ID, "
-                "TR_TELNYX_TEXML_APPLICATION_ID and an api base url"
+                "TR_TELNYX_TEXML_APPLICATION_ID and TR_TRUSTED_DOMAIN"
             )
         url = (
-            settings.api_base_url.rstrip("/")
+            control_plane_public_origin(settings)
             + "/notify/texml?text="
             + urllib.parse.quote(body[:300])
         )
@@ -263,10 +281,14 @@ class TelephonyService:
         wanted = (preferred_carrier or "").strip().lower()
         if not wanted:
             wanted = (
-                self._settings.notify_sms_primary_carrier
-                if channel == "sms"
-                else self._settings.notify_voice_primary_carrier
-            ).strip().lower()
+                (
+                    self._settings.notify_sms_primary_carrier
+                    if channel == "sms"
+                    else self._settings.notify_voice_primary_carrier
+                )
+                .strip()
+                .lower()
+            )
         if wanted:
             chain.sort(key=lambda entry: entry[0] != wanted)
 
@@ -285,8 +307,9 @@ class TelephonyService:
             attempts.append(f"{name}={status} {detail[:120]}")
 
         log.error("telephony %s undelivered: %s", channel, attempts)
-        return TelephonyResult(False, None, "; ".join(attempts) or "no carrier configured",
-                               tuple(attempts))
+        return TelephonyResult(
+            False, None, "; ".join(attempts) or "no carrier configured", tuple(attempts)
+        )
 
 
 def get_telephony_service(settings: Settings) -> TelephonyService:

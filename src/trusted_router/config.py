@@ -519,6 +519,9 @@ class Settings(BaseSettings):
     # never registers anything — and sender reputation becomes a shared asset,
     # which is why notify requires a verified phone and is metered.
     notify_enabled: bool = False
+    # Flip to True once A2P 10DLC is approved on the primary SMS carrier;
+    # voice needs no registration.
+    notify_sms_available: bool = False
     telnyx_api_key: str | None = None
     telnyx_from_number: str | None = None
     # The ORGANIZATION id from Telnyx /v2/whoami — not the number's connection
