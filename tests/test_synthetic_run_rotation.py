@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient
 import trusted_router.routes.internal.synthetic as synthetic_route
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.storage_models import SyntheticProbeSample
 
 INTERNAL_TOKEN = "test-internal-secret"  # noqa: S105 - test fixture.
 
@@ -48,7 +49,11 @@ def _settings(**overrides: Any) -> Settings:
 @pytest.fixture
 def no_network_probes(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Stub every outbound probe the route can trigger; capture arguments."""
-    captured: dict[str, Any] = {"billing_urls": [], "rotation_calls": []}
+    captured: dict[str, Any] = {
+        "billing_urls": [],
+        "canary_urls": [],
+        "rotation_calls": [],
+    }
 
     async def fake_run_synthetic_once(*_args: Any, **_kwargs: Any) -> list[Any]:
         return []
@@ -56,6 +61,18 @@ def no_network_probes(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def fake_billing_probe(*_args: Any, **kwargs: Any) -> list[Any]:
         captured["billing_urls"].append(kwargs["control_plane_base_url"])
         return []
+
+    async def fake_canary_probe(*_args: Any, **kwargs: Any) -> SyntheticProbeSample:
+        control_plane = str(kwargs["control_plane_base_url"])
+        captured["canary_urls"].append(control_plane)
+        return SyntheticProbeSample(
+            id="syn-client-canary",
+            probe_type="client_telemetry_ingest",
+            target="control-plane",
+            target_url=f"{control_plane}/v1/client-events",
+            monitor_region=str(kwargs["monitor_region"]),
+            status="up",
+        )
 
     async def fake_fallback_probe(*_args: Any, **kwargs: Any) -> list[Any]:
         return []
@@ -65,6 +82,7 @@ def no_network_probes(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         return ["sample"] * kwargs["count"]
 
     monkeypatch.setattr(synthetic_route, "run_synthetic_once", fake_run_synthetic_once)
+    monkeypatch.setattr(synthetic_route, "client_telemetry_canary_probe", fake_canary_probe)
     monkeypatch.setattr(synthetic_route, "gateway_billing_probe", fake_billing_probe)
     monkeypatch.setattr(synthetic_route, "gateway_fallback_probe", fake_fallback_probe)
     monkeypatch.setattr(synthetic_route, "rotation_pass", fake_rotation_pass)
@@ -134,6 +152,7 @@ class TestControlPlaneResolution:
         )
         assert _post_run(settings, {}).status_code == 200
         assert no_network_probes["billing_urls"] == ["https://aws.trustedrouter.com"]
+        assert no_network_probes["canary_urls"] == ["https://aws.trustedrouter.com"]
 
     def test_body_beats_settings(self, no_network_probes: dict[str, Any]) -> None:
         settings = _settings(
@@ -190,3 +209,26 @@ class TestDetachMode:
     ) -> None:
         settings = _settings(synthetic_monitor_api_key="sk-test-monitor")
         assert _post_run(settings, {"detach": value}).status_code == 200
+
+
+def test_run_calls_client_watch_and_swallows_its_exception(
+    no_network_probes: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    calls: list[int] = []
+
+    def broken_watch(_settings: Settings, samples: list[SyntheticProbeSample]) -> None:
+        calls.append(len(samples))
+        raise RuntimeError("watch exploded")
+
+    monkeypatch.setattr(synthetic_route, "_client_watch_pass", broken_watch)
+    with caplog.at_level("WARNING"):
+        response = _post_run(
+            _settings(synthetic_monitor_api_key="sk-test-monitor"),
+            {},
+        )
+
+    assert response.status_code == 200
+    assert calls == [1]
+    assert [record.message for record in caplog.records].count("client_watch.pass_failed") == 1

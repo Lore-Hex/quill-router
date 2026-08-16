@@ -193,6 +193,105 @@ def test_snapshot_gate_privacy_and_histogram_percentiles() -> None:
     assert "private-tenant" not in json.dumps(snapshot, sort_keys=True)
 
 
+def test_snapshot_fills_canary_freshness_and_private_watch_sections() -> None:
+    now = dt.datetime(2026, 8, 17, 12, tzinfo=dt.UTC)
+    rows = {
+        "watch_15m": [
+            _rollup(
+                period="5m",
+                period_start="2026-08-17T11:55:00Z",
+                host="apex",
+                attempts=70,
+                attempt_tr_fault=2,
+                distinct_tenants=4,
+                tenant_id="private-one",
+            ),
+            _rollup(
+                period="5m",
+                period_start="2026-08-17T11:50:00Z",
+                host="apex",
+                attempts=80,
+                attempt_tr_fault=3,
+                distinct_tenants=3,
+                tenant_id="private-two",
+            ),
+            _rollup(
+                period="5m",
+                period_start="2026-08-17T11:45:00Z",
+                host="apex",
+                attempts=90,
+                attempt_tr_fault=4,
+                distinct_tenants=5,
+                tenant_id="private-three",
+            ),
+            _rollup(
+                period="5m",
+                period_start="2026-08-17T11:40:00Z",
+                host="apex",
+                attempts=10_000,
+                attempt_tr_fault=10_000,
+                distinct_tenants=99,
+                tenant_id="private-excluded-fourth-row",
+            ),
+        ],
+        "7d": [
+            _rollup(
+                period="hour",
+                period_start="2026-08-17T11:00:00Z",
+                host="apex",
+                attempts=1_000,
+                attempt_tr_fault=10,
+                tenant_id="private-four",
+            ),
+            _rollup(
+                period="hour",
+                period_start="2026-08-17T10:00:00Z",
+                host="apex",
+                attempts=500,
+                attempt_tr_fault=5,
+                tenant_id="private-five",
+            ),
+        ],
+    }
+
+    snapshot = build_client_reliability(
+        rows,
+        now,
+        signals={
+            "canary_last_received_at": "2026-08-17 11:50:00",
+            "canary_last_24h": 23,
+            "newest_received_at": "2026-08-17T11:58:30Z",
+        },
+    )
+
+    assert snapshot["canary"] == {
+        "last_seen_age_seconds": 600,
+        "last_24h_count": 23,
+    }
+    assert snapshot["freshness"] == {
+        "newest_received_at": "2026-08-17T11:58:30Z",
+        "drain_lag_seconds": None,
+        "age_seconds": 90,
+    }
+    assert snapshot["watch"] == {
+        "by_host_15m": {
+            "apex": {
+                "attempts": 240,
+                "attempt_tr_fault": 9,
+                "distinct_tenants": 5,
+            }
+        },
+        "by_host_7d": {
+            "apex": {
+                "attempts": 1_500,
+                "attempt_tr_fault": 15,
+            }
+        },
+    }
+    encoded = json.dumps(snapshot, sort_keys=True)
+    assert "private-" not in encoded
+
+
 def test_availability_has_an_empty_denominator_sentinel() -> None:
     assert availability(99, 1) == 0.99
     assert availability(0, 0) is None

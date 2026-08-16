@@ -193,6 +193,27 @@ FORMAT JSONEachRow
     return [json.loads(line) for line in output.splitlines() if line.strip()]
 
 
+def _client_reliability_signals(password: str, *, now: dt.datetime) -> dict[str, Any]:
+    _ = now
+    output = _query(
+        password,
+        """
+SELECT
+  maxIf(received_at, synthetic = 1)                                        AS canary_last_received_at,
+  countIf(synthetic = 1 AND received_at >= now() - INTERVAL 24 HOUR)       AS canary_last_24h,
+  max(received_at)                                                         AS newest_received_at
+FROM client_minute_counters
+WHERE received_at >= now() - INTERVAL 48 HOUR
+FORMAT JSONEachRow
+""",
+    )
+    for line in output.splitlines():
+        if line.strip():
+            row = json.loads(line)
+            return row if isinstance(row, dict) else {}
+    return {}
+
+
 def _client_rows_by_window(
     rows: list[dict[str, Any]],
     *,
@@ -210,6 +231,9 @@ def _client_rows_by_window(
         "24h": ("hour", dt.timedelta(hours=24)),
         "7d": ("hour", dt.timedelta(days=7)),
         "30d": ("day", dt.timedelta(days=30)),
+        # Private alerting input: the three most recent buckets per host are
+        # selected by the pure builder, even when delivery skipped a bucket.
+        "watch_15m": ("5m", dt.timedelta(hours=48)),
     }
     return {
         name: [row for row in rows if row.get("period") == period and parsed(row) >= now - lookback]
@@ -225,6 +249,7 @@ def build_snapshots(
     status_samples: list[SyntheticProbeSample] | None = None,
     status_rollups: list[SyntheticRollup] | None = None,
     client_reliability_rows: list[dict[str, Any]] | None = None,
+    client_reliability_signals: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
     leaderboard = aggregate_leaderboard(
         samples,
@@ -280,6 +305,7 @@ def build_snapshots(
     client_reliability = build_client_reliability(
         _client_rows_by_window(client_reliability_rows or [], now=snapshot_now),
         snapshot_now,
+        signals=client_reliability_signals,
     )
     return {
         "leaderboard": leaderboard,
@@ -304,6 +330,7 @@ def main() -> int:
         status_samples=status_samples,
         status_rollups=status_rollups,
         client_reliability_rows=_client_reliability_rows(password, now=now),
+        client_reliability_signals=_client_reliability_signals(password, now=now),
     )
     rows = [
         {

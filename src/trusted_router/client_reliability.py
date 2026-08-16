@@ -303,9 +303,81 @@ def _sdk_breakdown(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
     return result
 
 
+def _parse_timestamp(value: Any) -> dt.datetime | None:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(str(value).replace(" ", "T").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.UTC)
+    parsed = parsed.astimezone(dt.UTC)
+    # ClickHouse aggregate functions return the type's epoch default when no
+    # row matches. That sentinel means "not seen", not a decades-stale event.
+    return parsed if parsed > dt.datetime(1970, 1, 1, tzinfo=dt.UTC) else None
+
+
+def _age_seconds(now: dt.datetime, value: dt.datetime | None) -> int | None:
+    if value is None:
+        return None
+    return max(0, int((now - value).total_seconds()))
+
+
+def _host_facet(row: Mapping[str, Any]) -> str | None:
+    host = str(row.get("host") or "")
+    if not host or row.get("endpoint") or row.get("sdk"):
+        return None
+    return host
+
+
+def _watch_15m(rows: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, int]]:
+    by_host: dict[str, list[Mapping[str, Any]]] = {}
+    for row in rows:
+        if row.get("period") not in (None, "", "5m"):
+            continue
+        host = _host_facet(row)
+        if host is not None:
+            by_host.setdefault(host, []).append(row)
+
+    result: dict[str, dict[str, int]] = {}
+    for host, host_rows in sorted(by_host.items()):
+        recent = sorted(
+            host_rows,
+            key=lambda row: _parse_timestamp(row.get("period_start"))
+            or dt.datetime.min.replace(tzinfo=dt.UTC),
+            reverse=True,
+        )[:3]
+        result[host] = {
+            "attempts": sum(_int(row, "attempts") for row in recent),
+            "attempt_tr_fault": sum(_int(row, "attempt_tr_fault") for row in recent),
+            "distinct_tenants": max(
+                (_int(row, "distinct_tenants") for row in recent),
+                default=0,
+            ),
+        }
+    return result
+
+
+def _watch_7d(rows: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, int]]:
+    result: dict[str, dict[str, int]] = {}
+    for row in rows:
+        if row.get("period") not in (None, "", "hour"):
+            continue
+        host = _host_facet(row)
+        if host is None:
+            continue
+        item = result.setdefault(host, {"attempts": 0, "attempt_tr_fault": 0})
+        item["attempts"] += _int(row, "attempts")
+        item["attempt_tr_fault"] += _int(row, "attempt_tr_fault")
+    return dict(sorted(result.items()))
+
+
 def build_client_reliability(
     rows_by_window: Mapping[str, Iterable[Mapping[str, Any]]],
     now: dt.datetime,
+    *,
+    signals: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the content-free public snapshot from bounded fleet rollups."""
 
@@ -317,6 +389,13 @@ def build_client_reliability(
         name: [dict(row) for row in rows_by_window.get(name, ())]
         for name in ("5m", "1h", "24h", "7d", "30d")
     }
+    watch_15m_rows = [
+        dict(row)
+        for row in rows_by_window.get("watch_15m", rows_by_window.get("1h", ()))
+    ]
+    signal_row = signals or {}
+    canary_last_received_at = _parse_timestamp(signal_row.get("canary_last_received_at"))
+    newest_received_at = _parse_timestamp(signal_row.get("newest_received_at"))
     return {
         "generated_at": now.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
         "methodology_version": METHODOLOGY_VERSION,
@@ -324,6 +403,21 @@ def build_client_reliability(
         "windows": {name: _window(rows) for name, rows in windows.items()},
         "by_host_24h": _host_breakdown(windows["24h"]),
         "by_sdk_24h": _sdk_breakdown(windows["24h"]),
-        "canary": {"last_seen_age_seconds": None, "last_24h_count": 0},
-        "freshness": {"newest_received_at": None, "drain_lag_seconds": None},
+        "canary": {
+            "last_seen_age_seconds": _age_seconds(now, canary_last_received_at),
+            "last_24h_count": _int(signal_row, "canary_last_24h"),
+        },
+        "freshness": {
+            "newest_received_at": (
+                newest_received_at.isoformat().replace("+00:00", "Z")
+                if newest_received_at is not None
+                else None
+            ),
+            "drain_lag_seconds": None,
+            "age_seconds": _age_seconds(now, newest_received_at),
+        },
+        "watch": {
+            "by_host_15m": _watch_15m(watch_15m_rows),
+            "by_host_7d": _watch_7d(windows["7d"]),
+        },
     }

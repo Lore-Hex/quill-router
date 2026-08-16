@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "scripts" / "deploy"
 
@@ -57,6 +60,30 @@ def test_control_plane_memory_alert_warns_before_oom() -> None:
     assert "thresholdValue: 0.8" in policy
     assert "duration: 300s" in policy
     assert "EVALUATION_MISSING_DATA_INACTIVE" in policy
+
+
+@pytest.mark.parametrize(
+    ("filename", "tokens"),
+    [
+        ("client-invisible-outage.yaml", ["client_observed.invisible_outage"]),
+        (
+            "client-telemetry-stale.yaml",
+            ["client_observed.pipeline_stale", "client_observed.snapshot_missing"],
+        ),
+    ],
+)
+def test_client_telemetry_log_alerts_are_valid_and_rate_limited(
+    filename: str,
+    tokens: list[str],
+) -> None:
+    policy = yaml.safe_load((DEPLOY / "gateway-alerts" / filename).read_text(encoding="utf-8"))
+
+    condition = policy["conditions"][0]["conditionMatchedLog"]
+    assert 'resource.labels.service_name = "trusted-router"' in condition["filter"]
+    assert 'textPayload:"' in condition["filter"]
+    for token in tokens:
+        assert token in condition["filter"]
+    assert policy["alertStrategy"]["notificationRateLimit"]["period"] == "1800s"
 
 
 def test_gateway_alert_deploy_is_idempotent_and_dry_run_by_default() -> None:
