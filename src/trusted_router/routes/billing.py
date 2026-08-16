@@ -16,7 +16,7 @@ from trusted_router.billing_policy import (
 from trusted_router.config import Settings
 from trusted_router.domains import request_control_origin
 from trusted_router.errors import api_error, deprecated
-from trusted_router.money import money_pair
+from trusted_router.money import VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS, money_pair
 from trusted_router.routes.helpers import json_body
 from trusted_router.schemas import CheckoutRequest, X402FundingRequest, X402SettleRequest
 from trusted_router.services.adyen_billing import create_adyen_checkout_session
@@ -78,32 +78,42 @@ def register_billing_routes(router: APIRouter) -> None:
             )
         body = _checkout_body_with_first_party_returns(body, request, settings)
         account = STORE.get_credit_account(workspace_id)
-        return JSONResponse(
-            {
-                "data": (
-                    create_adyen_checkout_session(
-                        body=body,
-                        workspace_id=workspace_id,
-                        customer_email=_checkout_customer_email(principal),
-                        settings=settings,
-                    )
-                    if body.payment_method == "adyen"
-                    else create_paypal_checkout_session(
-                        body=body,
-                        workspace_id=workspace_id,
-                        customer_email=_checkout_customer_email(principal),
-                        settings=settings,
-                    )
-                    if body.payment_method == "paypal"
-                    else create_checkout_session(
-                        body=body,
-                        workspace_id=workspace_id,
-                        customer_email=_checkout_customer_email(principal),
-                        customer_id=account.stripe_customer_id if account else None,
-                        settings=settings,
-                    )
+        initiating_user_id = _principal_user_id(principal)
+        checkout_data = (
+            create_adyen_checkout_session(
+                body=body,
+                workspace_id=workspace_id,
+                customer_email=_checkout_customer_email(principal),
+                settings=settings,
+            )
+            if body.payment_method == "adyen"
+            else create_paypal_checkout_session(
+                body=body,
+                workspace_id=workspace_id,
+                initiating_user_id=initiating_user_id,
+                customer_email=_checkout_customer_email(principal),
+                settings=settings,
+            )
+            if body.payment_method == "paypal"
+            else create_checkout_session(
+                body=body,
+                workspace_id=workspace_id,
+                initiating_user_id=initiating_user_id,
+                customer_email=_checkout_customer_email(principal),
+                customer_id=account.stripe_customer_id if account else None,
+                settings=settings,
+            )
+        )
+        if body.purpose == "identity_verification":
+            lifetime_topup = STORE.get_lifetime_topup_microdollars(initiating_user_id)
+            checkout_data.update(
+                money_pair(
+                    "verification_topup_remaining",
+                    max(0, VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS - lifetime_topup),
                 )
-            },
+            )
+        return JSONResponse(
+            {"data": checkout_data},
             status_code=201,
         )
 
@@ -159,6 +169,7 @@ def register_billing_routes(router: APIRouter) -> None:
         challenge = create_x402_funding_challenge(
             body=body,
             workspace_id=principal.workspace.id,
+            initiating_user_id=_principal_user_id(principal),
             settings=settings,
         )
         return JSONResponse(
@@ -251,6 +262,14 @@ def _checkout_customer_email(principal: Any) -> str | None:
         if user is not None and user.email and "@" in user.email:
             return user.email
     return None
+
+
+def _principal_user_id(principal: Any) -> str:
+    if principal.user is not None:
+        return str(principal.user.id)
+    if principal.api_key is not None and principal.api_key.creator_user_id:
+        return str(principal.api_key.creator_user_id)
+    return str(principal.workspace.owner_user_id)
 
 
 def _reject_wallet_only_traditional_billing(principal: Any) -> None:

@@ -19,6 +19,7 @@ from trusted_router.billing_policy import (
     is_wallet_only_user,
 )
 from trusted_router.domains import request_control_origin
+from trusted_router.money import VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS, money_pair
 from trusted_router.routes.console._shared import ConsoleDep, money, render
 from trusted_router.schemas import CheckoutRequest
 from trusted_router.services.adyen_billing import (
@@ -45,7 +46,11 @@ from trusted_router.typed_balance import live_credit_summary
 
 def register(app: FastAPI) -> None:
     @app.get("/console/credits")
-    async def console_credits(ctx: ConsoleDep, settings: SettingsDep) -> Response:
+    async def console_credits(
+        ctx: ConsoleDep,
+        settings: SettingsDep,
+        purpose: str = "",
+    ) -> Response:
         credit = STORE.get_credit_account(ctx.workspace.id)
         summary = live_credit_summary(ctx.workspace.id)
         wallet_only_billing = is_wallet_only_user(ctx.user)
@@ -65,6 +70,19 @@ def register(app: FastAPI) -> None:
         saved_payment_method = describe_saved_payment_method(
             payment_method_id=credit.stripe_payment_method_id if credit else None,
             settings=settings,
+        )
+        verification_remaining = max(
+            0,
+            VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS
+            - STORE.get_lifetime_topup_microdollars(ctx.user.id),
+        )
+        verification_nudge = (
+            {
+                **money_pair("verification_topup_remaining", verification_remaining),
+                "verification_topup_remaining_display": money(verification_remaining),
+            }
+            if purpose == "identity_verification"
+            else {}
         )
         return HTMLResponse(render(
             "console/credits.html",
@@ -97,6 +115,8 @@ def register(app: FastAPI) -> None:
             payments=payments,
             saved_payment_method=saved_payment_method,
             api_base_url=ctx.api_base_url,
+            identity_verification_checkout=purpose == "identity_verification",
+            **verification_nudge,
         ))
 
     @app.get("/console/credits/checkout")
@@ -110,6 +130,7 @@ def register(app: FastAPI) -> None:
         settings: SettingsDep,
         amount: str = Form(...),
         payment_method: str = Form("auto"),
+        purpose: str = Form(""),
     ) -> Response:
         if is_wallet_only_user(ctx.user) and not is_stablecoin_checkout_method(
             payment_method
@@ -130,6 +151,7 @@ def register(app: FastAPI) -> None:
                 amount=amount,
                 workspace_id=ctx.workspace.id,
                 payment_method=cast(Any, payment_method),
+                purpose=cast(Any, purpose or None),
                 success_url=success_url,
                 cancel_url=f"{origin}/console/credits?checkout=cancel",
             )
@@ -150,6 +172,7 @@ def register(app: FastAPI) -> None:
                 else create_paypal_checkout_session(
                     body=body,
                     workspace_id=ctx.workspace.id,
+                    initiating_user_id=ctx.user.id,
                     customer_email=ctx.user.email if ctx.user.email and "@" in ctx.user.email else None,
                     settings=settings,
                 )
@@ -157,6 +180,7 @@ def register(app: FastAPI) -> None:
                 else create_checkout_session(
                     body=body,
                     workspace_id=ctx.workspace.id,
+                    initiating_user_id=ctx.user.id,
                     customer_email=ctx.user.email if ctx.user.email and "@" in ctx.user.email else None,
                     customer_id=credit.stripe_customer_id if credit else None,
                     settings=settings,
@@ -164,8 +188,20 @@ def register(app: FastAPI) -> None:
             )
         except HTTPException:
             return RedirectResponse(url="/console/credits?error=checkout_unavailable", status_code=303)
+        if body.purpose == "identity_verification":
+            data.update(
+                money_pair(
+                    "verification_topup_remaining",
+                    max(
+                        0,
+                        VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS
+                        - STORE.get_lifetime_topup_microdollars(ctx.user.id),
+                    ),
+                )
+            )
         if str(data.get("mode", "")).startswith("mock"):
-            return RedirectResponse(url="/console/credits?checkout=mock", status_code=303)
+            suffix = "&purpose=identity_verification" if body.purpose else ""
+            return RedirectResponse(url=f"/console/credits?checkout=mock{suffix}", status_code=303)
         if data.get("mode") == "adyen":
             adyen_js_url, adyen_css_url = adyen_web_asset_urls(settings)
             checkout_config = {

@@ -110,6 +110,11 @@ def maybe_charge_after_settle(
     metadata = fee.metadata(
         workspace_id=workspace_id,
         payment_method="card",
+        initiating_user_id=(
+            workspace.owner_user_id
+            if (workspace := STORE.get_workspace(workspace_id)) is not None
+            else None
+        ),
     )
     metadata.update(
         {

@@ -155,6 +155,9 @@ def test_auto_refill_fires_below_threshold(
     assert kwargs["off_session"] is True
     assert kwargs["confirm"] is True
     assert kwargs["metadata"]["workspace_id"] == configured_workspace
+    workspace = STORE.get_workspace(configured_workspace)
+    assert workspace is not None
+    assert kwargs["metadata"]["initiating_user_id"] == workspace.owner_user_id
     assert kwargs["metadata"]["auto_refill"] == "true"
     assert kwargs["metadata"]["amount_microdollars"] == "20000000"
     assert kwargs["metadata"]["processing_fee_cents"] == "91"

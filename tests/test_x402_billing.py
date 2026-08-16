@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.storage import STORE
 from trusted_router.typed_balance import live_credit_summary
 
 
@@ -173,8 +174,11 @@ def test_x402_fund_creates_stripe_crypto_payment_intent_and_returns_payment_requ
     assert captured["payment_method_data"] == {"type": "crypto"}
     assert captured["payment_method_options"]["crypto"]["mode"] == "deposit"
     assert captured["payment_method_options"]["crypto"]["deposit_options"]["networks"] == ["base"]
+    key = STORE.get_key_by_raw(headers["authorization"].split()[1])
+    assert key is not None
     assert captured["metadata"] == {
         "workspace_id": workspace_id,
+        "initiating_user_id": key.creator_user_id,
         "amount_microdollars": "10000000",
         "payment_method": "x402",
         "purpose": "trustedrouter_credits",

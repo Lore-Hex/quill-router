@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -98,8 +99,17 @@ def test_paypal_checkout_uses_the_existing_stripe_card_fee_schedule(
         ("TrustedRouter credits", "25.00"),
         ("Payment processing fee", "1.06"),
     ]
-    assert unit["custom_id"].startswith("tr1|")
-    assert unit["custom_id"].endswith("|2500|2606")
+    reference = json.loads(unit["custom_id"])
+    assert reference["c"] == 2500
+    assert reference["t"] == 2606
+    initiating_user = STORE.find_user_by_email("alice@example.com")
+    assert initiating_user is not None
+    assert reference == {
+        "w": unit["reference_id"],
+        "u": initiating_user.id,
+        "c": 2500,
+        "t": 2606,
+    }
     data = response.json()["data"]
     assert data["amount_microdollars"] == 25_000_000
     assert data["processing_fee_microdollars"] == 1_060_000

@@ -16,7 +16,13 @@
       <a href="/console/account/preferences">Preferences</a> to use cards or other payment methods.
     </div>
     {% endif %}
+    {% if identity_verification_checkout %}
+    <div class="notice" style="margin-top:18px">
+      Identity verification requires {{ verification_topup_remaining_display }} more in lifetime top-ups. Any successful top-up also unlocks phone verification.
+    </div>
+    {% endif %}
     <form class="form" method="post" action="/console/credits/checkout" style="margin-top:18px">
+      {% if identity_verification_checkout %}<input type="hidden" name="purpose" value="identity_verification">{% endif %}
       <div class="row">
         <label>Amount (USD)<input name="amount" type="number" min="1" max="10000" step="1" value="25" required></label>
         <label>Payment method

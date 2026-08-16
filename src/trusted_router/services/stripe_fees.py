@@ -92,6 +92,7 @@ class ProcessingFee:
         *,
         workspace_id: str,
         payment_method: str,
+        initiating_user_id: str | None = None,
     ) -> dict[str, str]:
         metadata = {
             "workspace_id": workspace_id,
@@ -105,6 +106,8 @@ class ProcessingFee:
         }
         if self.max_fee_cents is not None:
             metadata["fee_max_cents"] = str(self.max_fee_cents)
+        if initiating_user_id is not None:
+            metadata["initiating_user_id"] = initiating_user_id
         return metadata
 
 
