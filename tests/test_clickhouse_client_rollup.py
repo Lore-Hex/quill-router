@@ -106,3 +106,75 @@ def test_rollup_id_is_deterministic_over_the_full_key() -> None:
 
     assert client_rollup_id(**arguments) == client_rollup_id(**arguments)
     assert client_rollup_id(**arguments) != client_rollup_id(**{**arguments, "host": "ally"})
+
+
+class _Executor:
+    """Answers the two fetch queries from memory and records the INSERT."""
+
+    def __init__(self, counters: list[dict[str, Any]], coverage: list[dict[str, Any]]) -> None:
+        self._counters = counters
+        self._coverage = coverage
+        self.queries: list[str] = []
+        self.inserted: list[dict[str, Any]] = []
+
+    def query(self, sql: str, *, input_bytes: bytes | None = None) -> bytes:
+        import json
+
+        self.queries.append(sql)
+        if sql.startswith("INSERT INTO"):
+            assert input_bytes is not None
+            self.inserted.extend(json.loads(line) for line in input_bytes.decode().splitlines())
+            return b""
+        rows = self._counters if "client_minute_counters" in sql else self._coverage
+        return "\n".join(json.dumps(row) for row in rows).encode()
+
+
+def test_recompute_covers_six_hours_of_5m_windows_so_late_batches_still_land() -> None:
+    """The recompute lookback equals the 6 h late-arrival cap in fetch_inputs.
+
+    A batch that drains 4 h late (control-plane outage, SDK backoff) lands in
+    the right minute of client_minute_counters; a 3 h lookback would never
+    fold it into that minute's rollup, silently hiding exactly the outage the
+    telemetry exists to measure.
+    """
+    from clickhouse.rollup_client_events import recompute
+
+    now = START + dt.timedelta(hours=5, minutes=30)
+    late = _counter("t1", bucket_start=START.isoformat())  # 5.5 h before now
+    fresh = _counter("t2", bucket_start=(now - dt.timedelta(minutes=10)).isoformat())
+    executor = _Executor([late, fresh], [_coverage("t1"), _coverage("t2")])
+
+    summary = recompute(executor, now=now)  # type: ignore[arg-type]
+
+    assert summary["counter_rows"] == 2
+    fetch = executor.queries[0]
+    assert "INTERVAL 6 HOUR" in fetch  # late-arrival cap
+    five_minute = [row for row in executor.inserted if row["period"] == "5m"]
+    starts = {row["period_start"] for row in five_minute}
+    assert START.isoformat() in starts  # the 5.5 h-old minute was recomputed
+    assert all(row["methodology_version"] == 1 for row in executor.inserted)
+    tenant_late = [
+        row
+        for row in five_minute
+        if row["scope"] == "tenant"
+        and row["tenant_id"] == "t1"
+        and row["host"] == ""
+        and row["endpoint"] == ""
+        and row["sdk"] == ""
+    ]
+    assert tenant_late and tenant_late[0]["requests"] == 25
+    # Windows without counters are not written (ReplacingMergeTree cannot
+    # delete, and counters are append-only), so the empty windows in between
+    # produce no rows.
+    assert len(starts) == 2
+
+
+def test_recompute_dry_run_computes_but_never_inserts() -> None:
+    from clickhouse.rollup_client_events import recompute
+
+    executor = _Executor([_counter("t1")], [_coverage("t1")])
+    summary = recompute(executor, now=START + dt.timedelta(minutes=7), dry_run=True)  # type: ignore[arg-type]
+
+    assert summary["rollups"] > 0
+    assert executor.inserted == []
+    assert not any(sql.startswith("INSERT INTO") for sql in executor.queries)

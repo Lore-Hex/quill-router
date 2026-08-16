@@ -296,7 +296,7 @@ after those lines only a message string remains. TTFT is only observable in the 
 - Fleet: exclude synthetic (server-side); per-tenant cap 25 % of the window; publish percentages only if
   requests ≥ 1 000 and distinct tenants ≥ 3; coverage (telemetry successes ÷ `activity_generations`
   non-synthetic rows) always shown. Time = server-assigned; late batches land in the right minute; rollups
-  recompute the trailing 3 h every 5 min; `age_ms > 6 h` excluded from rollups.
+  recompute the trailing 6 h every 5 min (matching the late-arrival cap); `age_ms > 6 h` excluded from rollups.
 - Own id `client_observed`; never inside `router_core` or `SLO_DEFINITIONS`. Calibration gate: 14 clean days
   before any percentage is published.
 

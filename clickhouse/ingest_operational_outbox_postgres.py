@@ -581,7 +581,9 @@ def clickhouse_targets_from_env(
             database=database,
         )
     ]
-    is_local = (lambda host: host in local_hosts) if local_hosts is not None else _is_own_address
+    is_local = (
+        (lambda host: host in local_hosts) if local_hosts is not None else _is_own_address
+    )
     _refuse_orphaned_replica_settings(env)
     for suffix in REPLICA_ENV_SUFFIXES:
         prefix = f"{CLICKHOUSE_ENV_PREFIX}_{suffix}"

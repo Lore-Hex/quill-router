@@ -231,26 +231,6 @@ class CanonicalOperationalEvent:
     row: dict[str, Any]
 
 
-class CanonicalOperationalEvents(list[CanonicalOperationalEvent]):
-    """List result with a temporary 1:1 compatibility surface.
-
-    Historical backfill and parity readers consume only activity/synthetic
-    rows and still access ``event_kind``/``row`` directly. Keeping those
-    properties for singleton results lets this rollout change the normalizer
-    to the required 1:N shape without widening the tightly scoped node PR.
-    """
-
-    @property
-    def event_kind(self) -> str:
-        [event] = self
-        return event.event_kind
-
-    @property
-    def row(self) -> dict[str, Any]:
-        [event] = self
-        return event.row
-
-
 @dataclass(frozen=True)
 class DrainResult:
     fetched: int
@@ -648,14 +628,14 @@ def normalise_operational_event(
         raise ValueError(f"unsupported operational event kind: {row.event_kind}")
     missing = [column for column in required if column not in raw]
     if missing:
-        raise ValueError(f"{row.event_kind} payload missing required fields: {', '.join(missing)}")
+        raise ValueError(
+            f"{row.event_kind} payload missing required fields: {', '.join(missing)}"
+        )
     canonical = {
         column: raw.get(column, ACTIVITY_OPTIONAL_DEFAULTS.get(column)) for column in allowed
     }
     canonical["ingest_version"] = _utc(row.commit_ts).isoformat()
-    return CanonicalOperationalEvents(
-        [CanonicalOperationalEvent(event_kind=row.event_kind, row=canonical)]
-    )
+    return [CanonicalOperationalEvent(event_kind=row.event_kind, row=canonical)]
 
 
 def quarantine_event(

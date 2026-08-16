@@ -16,11 +16,7 @@ import subprocess
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from trusted_router.client_reliability import (
-    METHODOLOGY_VERSION,
-    classify_tr_fault,
-    is_excluded,
-)
+from trusted_router.client_reliability import METHODOLOGY_VERSION, classify_tr_fault
 
 COUNTER_TABLE = "client_minute_counters"
 ACTIVITY_TABLE = "activity_generations"
@@ -191,10 +187,9 @@ def _apply_counter(target: dict[str, Any], row: Mapping[str, Any]) -> None:
         elif _is_tr_fault(row):
             target["tr_fault_failures"] += count
         else:
-            # Calling the pure exclusion policy here keeps the disclosed
-            # denominator policy centralized. A future non-fault category is
-            # conservatively disclosed as excluded too.
-            is_excluded(**_classification_args(row))
+            # Methodology v1 partitions every non-ok request into tr_fault or
+            # a disclosed exclusion (unknown counts against us), so whatever is
+            # not our fault is, by construction, excluded from the denominator.
             target["excluded_failures"] += count
         if outcome == "aborted":
             target["aborted"] += count
@@ -433,6 +428,18 @@ def fetch_inputs(
     )
 
 
+def _group_by_period(
+    rows: Iterable[Mapping[str, Any]],
+    period: str,
+) -> dict[dt.datetime, list[Mapping[str, Any]]]:
+    """Bucket rows by the period they fall in, parsing each timestamp once."""
+
+    grouped: dict[dt.datetime, list[Mapping[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(_floor(_parse_time(row["bucket_start"]), period), []).append(row)
+    return grouped
+
+
 def _starts(now: dt.datetime, *, period: str, lookback: dt.timedelta) -> list[dt.datetime]:
     end = _floor(now, period)
     current = _floor(now - lookback, period)
@@ -454,16 +461,21 @@ def recompute(
     counters, coverage = fetch_inputs(executor, start=start, end=now)
     computed_at = dt.datetime.now(dt.UTC)
     rollups: list[dict[str, Any]] = []
+    # The lookback matches the 6 h late-arrival cap in fetch_inputs: a batch
+    # that drains hours late (a control-plane outage, SDK backoff) lands in
+    # the right minute AND is still folded into that minute's rollup.
     for period, lookback in (
-        ("5m", dt.timedelta(hours=3)),
-        ("hour", dt.timedelta(hours=3)),
+        ("5m", dt.timedelta(hours=6)),
+        ("hour", dt.timedelta(hours=6)),
         ("day", dt.timedelta(days=3)),
     ):
+        counters_by_start = _group_by_period(counters, period)
+        coverage_by_start = _group_by_period(coverage, period)
         for period_start in _starts(now, period=period, lookback=lookback):
             rollups.extend(
                 aggregate_client_rollups(
-                    counters,
-                    coverage,
+                    counters_by_start.get(period_start, ()),
+                    coverage_by_start.get(period_start, ()),
                     period=period,
                     period_start=period_start,
                     computed_at=computed_at,

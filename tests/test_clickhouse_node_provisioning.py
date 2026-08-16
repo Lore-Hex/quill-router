@@ -75,7 +75,7 @@ def test_rollout_prefers_private_clickhouse_load_balancer() -> None:
     script = (ROOT / "scripts/deploy/rollout.sh").read_text()
 
     assert "compute addresses describe tr-clickhouse-ilb" in script
-    assert "TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL=${PROVIDER_ANALYTICS_CLICKHOUSE_URL}" in script
+    assert 'TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL=${PROVIDER_ANALYTICS_CLICKHOUSE_URL}' in script
 
 
 def test_operational_deploy_moves_benchmark_code_schema_and_replay_together() -> None:
@@ -85,7 +85,9 @@ def test_operational_deploy_moves_benchmark_code_schema_and_replay_together() ->
     stop = script.index("systemctl stop tr-clickhouse-operational-ingest.service")
     migration = script.index('log "adding workspace attribution to benchmark samples"')
     replay = script.index("clickhouse.backfill_benchmark_samples")
-    restart = script.index("systemctl start tr-clickhouse-operational-ingest.service", replay)
+    restart = script.index(
+        "systemctl start tr-clickhouse-operational-ingest.service", replay
+    )
 
     assert upload < stop < migration < replay < restart
     assert "007_benchmark_samples_workspace_id.sql" in script
@@ -132,7 +134,7 @@ def test_stockholm_refuses_a_cidr_that_overlaps_paris() -> None:
 
     assert "import ipaddress" in script
     assert ".overlaps(" in script
-    assert 'aws ec2 describe-vpcs --region "$PARIS_REGION"' in script
+    assert "aws ec2 describe-vpcs --region \"$PARIS_REGION\"" in script
 
 
 def test_stockholm_security_group_admits_only_the_paris_vpc() -> None:
@@ -155,9 +157,7 @@ def test_stockholm_repeats_the_hard_won_details_from_the_paris_node() -> None:
 
     # The users.d ownership fix: the server drops privileges, so a root-owned
     # file is unreadable to it and it dies without naming the permission.
-    assert (
-        "chown clickhouse:clickhouse /etc/clickhouse-server/users.d/default-password.xml" in script
-    )
+    assert "chown clickhouse:clickhouse /etc/clickhouse-server/users.d/default-password.xml" in script
     # IMDSv2 required, not optional.
     assert "HttpTokens=required" in script
     assert "X-aws-ec2-metadata-token-ttl-seconds" in script
@@ -257,14 +257,14 @@ def test_stockholm_builds_the_path_against_the_subnet_the_drain_runs_in() -> Non
 
     # Derived from the instance that actually runs the drain, by tag.
     assert 'PARIS_NODE_NAME="${PARIS_NODE_NAME:-tr-eu-clickhouse-1}"' in script
-    assert "Name=tag:Name,Values=$PARIS_NODE_NAME" in script
+    assert 'Name=tag:Name,Values=$PARIS_NODE_NAME' in script
     assert "Reservations[0].Instances[0].SubnetId" in script
     # And never from an arbitrary subnet of the VPC. The one surviving
     # `Subnets[0].SubnetId` is the Stockholm lookup, which is deterministic
     # because it filters on this script's own Name tag rather than taking
     # whatever the API returns first.
     assert statements.count("Subnets[0].SubnetId") == 1
-    assert "Name=tag:Name,Values=$VPC_NAME-a" in statements
+    assert 'Name=tag:Name,Values=$VPC_NAME-a' in statements
     assert 'describe-subnets --region "$PARIS_REGION" \\\n      --filters' not in statements
     # A subnet that is not in the Paris VPC is refused rather than used.
     assert "$PARIS_SUBNET_VPC" in script
@@ -283,7 +283,9 @@ def test_stockholm_env_block_contains_no_shell_substitution() -> None:
     """
     lines = STOCKHOLM.read_text().splitlines()
     env_lines = [
-        line for line in lines if "CH_REPLICA_PASSWORD=" in line or "_CLICKHOUSE_REPLICA_" in line
+        line
+        for line in lines
+        if "CH_REPLICA_PASSWORD=" in line or "_CLICKHOUSE_REPLICA_" in line
     ]
     assert env_lines, "the runbook must still print the replica env block"
     for line in env_lines:

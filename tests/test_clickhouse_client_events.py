@@ -325,3 +325,54 @@ def test_quarantine_reason_is_bounded() -> None:
     drain_once(source, writer, batch_size=1)
 
     assert len(writer.batches[0][0].row["reason"]) == 500
+
+
+def _ddl_columns(ddl: str, table: str) -> tuple[str, ...]:
+    """Column names of one CREATE TABLE block, in declaration order."""
+    import re
+
+    start = ddl.index(f"CREATE TABLE IF NOT EXISTS {table}\n(")
+    body = ddl[start:].split("\n)\n", 1)[0].splitlines()[2:]
+    return tuple(
+        match.group(1)
+        for line in body
+        if (match := re.match(r"^\s+([a-z_]+)\s+\S", line)) is not None
+    )
+
+
+def test_ingester_column_tuples_match_the_ddl_in_order() -> None:
+    """The ingester projects rows by these tuples; the DDL must agree exactly.
+
+    A drifted or reordered column would still insert (JSONEachRow is by name)
+    until a NEW column lands in one place only -- then the drain fails on
+    every client_events row. Pin the two lists to each other, replicated and
+    single-node alike.
+    """
+    for ddl in (
+        (ROOT / "clickhouse/008_client_events_replicated.sql").read_text(),
+        (ROOT / "clickhouse/009_client_events_single_node.sql").read_text(),
+    ):
+        assert _ddl_columns(ddl, "client_request_events") == (
+            *CLIENT_REQUEST_COLUMNS,
+            "ingest_version",
+        )
+        assert _ddl_columns(ddl, "client_minute_counters") == (
+            *CLIENT_COUNTER_COLUMNS,
+            "ingest_version",
+        )
+        assert _ddl_columns(ddl, "operational_outbox_quarantine") == (
+            "shard",
+            "commit_ts",
+            "event_kind",
+            "event_id",
+            "payload",
+            "reason",
+            "quarantined_at",
+        )
+        activity_alters = [
+            line.split("ADD COLUMN IF NOT EXISTS ")[1].split()[0]
+            for line in ddl.splitlines()
+            if "ADD COLUMN IF NOT EXISTS" in line
+        ]
+        assert tuple(activity_alters) == tuple(ACTIVITY_OPTIONAL_DEFAULTS)
+        assert ACTIVITY_COLUMNS[-len(activity_alters) :] == tuple(activity_alters)

@@ -240,7 +240,10 @@ def test_rollup_archive_fingerprint_sorts_unordered_map_columns() -> None:
     assert "mapSort(latency_histogram)" in expression
     assert "mapSort(error_counts)" in expression
     assert "mapSort(id)" not in expression
-    assert "toUnixTimestamp64Milli(toDateTime64(period_start, 3, 'UTC'))" in expression
+    assert (
+        "toUnixTimestamp64Milli(toDateTime64(period_start, 3, 'UTC'))"
+        in expression
+    )
 
 
 def test_operational_dataset_archive_round_trips_through_restore_verifier() -> None:
@@ -269,6 +272,48 @@ def test_operational_dataset_archive_round_trips_through_restore_verifier() -> N
     assert restored.rows == 7
     assert restored.parts == 3
     assert restored.revision == result.revision
+
+
+def test_manifest_records_its_columns_and_the_verifier_fingerprints_over_them() -> None:
+    """A revision exported before a column was added stays verifiable.
+
+    activity_generations grew 18 client_* columns; the fingerprint expression
+    covers every column, so recomputing an OLD Parquet part against the CURRENT
+    column list reads columns the file does not have. The manifest therefore
+    records the exact columns it was exported with and the verifier uses them.
+    """
+    import clickhouse.verify_archive_restore as restore
+
+    exporter = FakeExporter(_fingerprint())
+    store = MemoryStore()
+    day = dt.date(2026, 7, 1)
+    result = archive_day(exporter, store, day, dataset="activity_generations")
+    manifest = store.json[result.manifest_key]
+    assert manifest["columns"] == list(ACTIVITY_COLUMNS)
+
+    # Simulate a manifest written by an older exporter (fewer columns) and pin
+    # that the default verifier passes THOSE columns to the Parquet fingerprint.
+    legacy_columns = list(ACTIVITY_COLUMNS[:29])
+    manifest["columns"] = legacy_columns
+    seen: list[tuple[str, tuple[str, ...] | None]] = []
+    original = restore.verify_parquet_part
+
+    def spy(path: Path, *, dataset: str, columns: Any = None) -> ExportedPart:
+        seen.append((dataset, tuple(columns) if columns else None))
+        return exporter.verify_part(path)
+
+    restore.verify_parquet_part = spy  # type: ignore[assignment]
+    try:
+        verify_archived_day(store, dataset="activity_generations", day=day)
+    finally:
+        restore.verify_parquet_part = original  # type: ignore[assignment]
+    assert seen and all(columns == tuple(legacy_columns) for _, columns in seen)
+
+    manifest["columns"] = []
+    with pytest.raises(RuntimeError, match="manifest columns"):
+        verify_archived_day(
+            store, dataset="activity_generations", day=day, verifier=exporter.verify_part
+        )
 
 
 def test_restore_drill_rejects_a_tampered_parquet_part() -> None:

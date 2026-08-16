@@ -87,11 +87,10 @@ def _dataclass_rows(cls: type[Any], output: str) -> list[Any]:
 
 
 def _clickhouse_string_array(values: list[str]) -> str:
-    return (
-        "["
-        + ",".join("'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'" for value in values)
-        + "]"
-    )
+    return "[" + ",".join(
+        "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+        for value in values
+    ) + "]"
 
 
 def _samples(password: str) -> list[ProviderBenchmarkSample]:
@@ -239,7 +238,9 @@ def build_snapshots(
             "generated_at": generated_at,
             "sample_window_count": len(samples),
             "sample_limit": SAMPLE_LIMIT,
-            "window_label": (f"rolling benchmark set of up to {SAMPLE_LIMIT:,} samples"),
+            "window_label": (
+                f"rolling benchmark set of up to {SAMPLE_LIMIT:,} samples"
+            ),
             "rank_minimums": {
                 "model_availability_samples": 10,
                 "provider_availability_samples": 30,
@@ -265,7 +266,9 @@ def build_snapshots(
             "generated_at": generated_at,
             "sample_window_count": len(video_rows),
             "sample_limit": VIDEO_SAMPLE_LIMIT,
-            "window_label": (f"rolling video benchmark set of up to {VIDEO_SAMPLE_LIMIT:,} jobs"),
+            "window_label": (
+                f"rolling video benchmark set of up to {VIDEO_SAMPLE_LIMIT:,} jobs"
+            ),
         }
     )
     status_inputs = {

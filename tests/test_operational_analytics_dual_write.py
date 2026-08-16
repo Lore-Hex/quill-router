@@ -220,7 +220,9 @@ class _Source:
     ) -> list[OperationalOutboxRow]:
         candidates = [row for row in self.rows if row.shard == shard]
         if after is not None:
-            candidates = [row for row in candidates if (row.event_kind, row.event_id) > after]
+            candidates = [
+                row for row in candidates if (row.event_kind, row.event_id) > after
+            ]
         candidates.sort(key=lambda row: (row.event_kind, row.event_id))
         return candidates[:limit]
 
@@ -239,7 +241,8 @@ def _dual_writer() -> Any:
 
 
 def _event(event_id: str = "gen-1") -> Any:
-    return normalise_operational_event(_row(event_id))
+    [event] = normalise_operational_event(_row(event_id))
+    return event
 
 
 # --------------------------------------------------------------------------
@@ -633,7 +636,9 @@ def test_the_cursor_never_lets_a_row_be_deleted_for_only_one_node(
         drain_once(source, _dual_writer(), batch_size=2, shard_count=1, cursors=cursors)
 
     assert source.delete_calls == []
-    assert {row.event_id for row in source.rows} == {f"gen-keep-{index:04d}" for index in range(6)}
+    assert {row.event_id for row in source.rows} == {
+        f"gen-keep-{index:04d}" for index in range(6)
+    }
 
 
 def test_the_backlog_is_delivered_and_deleted_once_the_node_returns(
@@ -867,7 +872,9 @@ def test_the_replacing_engine_backing_this_fake_is_real() -> None:
     schema = (ROOT / "clickhouse/006_operational_analytics_single_node.sql").read_text()
     # Comments stripped: the header explains at length why Keeper is NOT used
     # here, and the assertions below are about the statements, not the prose.
-    ddl = "\n".join(line for line in schema.splitlines() if not line.strip().startswith("--"))
+    ddl = "\n".join(
+        line for line in schema.splitlines() if not line.strip().startswith("--")
+    )
 
     assert ddl.count("ENGINE = ReplacingMergeTree(ingest_version)") == 4
     # Explicitly NOT the Replicated variant: two regions cannot form a Keeper
@@ -1052,7 +1059,7 @@ def test_a_misconfigured_replica_stops_the_drain_before_it_reads_anything(
 def test_the_configured_copies_are_logged_at_startup(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """ "How many copies is this actually keeping?" must be answerable from the
+    """"How many copies is this actually keeping?" must be answerable from the
     log, not from reading the environment file over someone's shoulder."""
     caplog.set_level("INFO")
 
@@ -1095,7 +1102,9 @@ def test_an_alarm_threshold_that_disables_the_alarm_is_refused(
     """
     for value in ("0", "-1"):
         with pytest.raises(SystemExit) as exit_info:
-            _run_main(monkeypatch, DUAL_ENV, oldest=None, argv=["--max-lag-seconds", value])
+            _run_main(
+                monkeypatch, DUAL_ENV, oldest=None, argv=["--max-lag-seconds", value]
+            )
         assert exit_info.value.code == drain_module.CONFIG_EXIT_CODE
 
 

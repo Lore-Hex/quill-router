@@ -57,7 +57,9 @@ def test_client_telemetry_single_node_schema_is_applied_with_operational_schema(
 
 
 def test_operational_finalize_requires_live_outbox_before_closing_gap() -> None:
-    script = (ROOT / "scripts/deploy/clickhouse_operational_analytics_finalize.sh").read_text()
+    script = (
+        ROOT / "scripts/deploy/clickhouse_operational_analytics_finalize.sh"
+    ).read_text()
     assert "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED" in script
     assert "--skip-synthetic --skip-rollups" in script
     assert "--recent-limit 20000 --skip-activity --skip-rollups" in script
@@ -109,7 +111,9 @@ def test_cutover_requires_soak_logs_queue_replica_and_positive_parity() -> None:
 
 
 def test_operational_parity_worker_has_a_bounded_runtime() -> None:
-    service = (ROOT / "clickhouse/tr-clickhouse-operational-parity.service").read_text()
+    service = (
+        ROOT / "clickhouse/tr-clickhouse-operational-parity.service"
+    ).read_text()
     assert "TimeoutStartSec=5m" in service
 
 

@@ -178,7 +178,9 @@ def _day_bounds(day: dt.date) -> tuple[str, str]:
     start = dt.datetime.combine(day, dt.time(), tzinfo=dt.UTC)
     return (
         start.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
-        (start + dt.timedelta(days=1)).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        (start + dt.timedelta(days=1))
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z"),
     )
 
 
@@ -187,7 +189,10 @@ def _row_hash_expression(columns: Sequence[str]) -> str:
         if column in _UNORDERED_MAP_COLUMNS:
             return f"mapSort({column})"
         if column in _DATETIME_MILLI_COLUMNS:
-            return f"toUnixTimestamp64Milli(toDateTime64({column}, 3, 'UTC'))"
+            return (
+                "toUnixTimestamp64Milli("
+                f"toDateTime64({column}, 3, 'UTC'))"
+            )
         return column
 
     canonical = (canonical_column(column) for column in columns)
@@ -204,7 +209,10 @@ class SourceFingerprint:
 
     @property
     def revision(self) -> str:
-        return f"v{ARCHIVE_SCHEMA_VERSION}-{self.rows}-{self.hash_sum:016x}-{self.hash_xor:016x}"
+        return (
+            f"v{ARCHIVE_SCHEMA_VERSION}-{self.rows}-"
+            f"{self.hash_sum:016x}-{self.hash_xor:016x}"
+        )
 
     def matches(self, other: SourceFingerprint) -> bool:
         return (
@@ -574,9 +582,7 @@ def archive_day(
     with tempfile.TemporaryDirectory(prefix=f"tr-archive-{day.isoformat()}-") as temporary:
         paths = exporter.export_parts(day, Path(temporary), part_count=part_count)
         if len(paths) != part_count:
-            raise RuntimeError(
-                f"expected {part_count} Parquet parts, exporter returned {len(paths)}"
-            )
+            raise RuntimeError(f"expected {part_count} Parquet parts, exporter returned {len(paths)}")
         verified = [exporter.verify_part(path) for path in paths]
         actual = _combine_parts(verified)
         if not source.matches(actual):
@@ -617,6 +623,11 @@ def archive_day(
         "revision": revision,
         "exported_at": exported_at.isoformat().replace("+00:00", "Z"),
         "source_fingerprint": source.as_dict(),
+        # The exact column list the fingerprint was computed over. Column
+        # additions (activity_generations grew client_* columns) change the
+        # fingerprint expression, so a verifier must recompute against the
+        # columns of THIS revision, not whatever the current schema says.
+        "columns": list(DATASETS[dataset].columns),
         "parts": manifest_parts,
         "parquet_rows": sum(int(part["rows"]) for part in manifest_parts),
     }
@@ -686,7 +697,9 @@ def main() -> int:
             database=args.database,
             table=table,
         )
-        backfill_start = exporter.earliest_day() if args.backfill and args.date is None else None
+        backfill_start = (
+            exporter.earliest_day() if args.backfill and args.date is None else None
+        )
         for day in _days_to_archive(
             date=args.date,
             lookback_days=args.lookback_days,
