@@ -329,6 +329,28 @@ def test_adyen_authorisation_credits_exactly_once() -> None:
     assert after - before == 5_000_000
 
 
+def test_adyen_authorisation_accrues_lifetime_topup_to_the_owner_exactly_once() -> None:
+    # Every real purchase must accrue lifetime top-up, or an Adyen payer stays
+    # funding-gated for phone verification. The signed reference carries no
+    # initiator, so it lands on the workspace owner; the replayed notification
+    # must not accrue twice.
+    app = create_app(_settings(adyen_enabled=False), init_observability=False)
+    with TestClient(app) as client:
+        workspace_id = _workspace_id(client)
+        owner_id = STORE.get_workspace(workspace_id).owner_user_id
+        assert STORE.get_lifetime_topup_microdollars(owner_id) == 0
+        item = _notification_item(workspace_id)
+        client.post("/v1/internal/adyen/webhook", json=_webhook_payload(item))
+        replay = _notification_item(
+            workspace_id,
+            psp_reference="PSP000000000002",
+            merchant_reference=str(item["merchantReference"]),
+        )
+        client.post("/v1/internal/adyen/webhook", json=_webhook_payload(replay))
+
+    assert STORE.get_lifetime_topup_microdollars(owner_id) == 5_000_000
+
+
 def test_adyen_webhook_remains_available_when_checkout_is_dark_but_needs_hmac() -> None:
     missing_hmac = _settings(
         adyen_enabled=False,

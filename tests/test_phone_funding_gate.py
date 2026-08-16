@@ -258,3 +258,35 @@ def test_verification_status_reports_shape_and_next_step_progression(
     assert phone_done["phone_verified"] is True
     assert phone_done["phone"] == "+13059511381"
     assert phone_done["next_step"] == "identity"
+
+
+def test_verification_status_never_falls_back_to_the_workspace_owner(
+    user_headers: dict[str, str],
+) -> None:
+    # A management key minted under another key has no creator. If the status
+    # endpoint answered for the workspace OWNER in that case, any non-owner
+    # admin could read the owner's phone number and email through it.
+    with TestClient(create_app(_settings(), init_observability=False)) as client:
+        client.get("/v1/auth/verification-status", headers=user_headers)
+        owner = STORE.find_user_by_email("alice@example.com")
+        assert owner is not None
+        workspace = STORE.list_workspaces_for_user(owner.id)[0]
+        started = STORE.begin_phone_verification(owner.id, "+13059511381", "voice")
+        assert started is not None
+        code, _ = started
+        assert STORE.confirm_phone_verification(owner.id, code)[0] == "ok"
+
+        raw_key, _record = STORE.create_api_key(
+            workspace_id=workspace.id,
+            name="ownerless-management-key",
+            creator_user_id=None,
+            management=True,
+        )
+        response = client.get(
+            "/v1/auth/verification-status",
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+
+    assert response.status_code == 403
+    assert "+13059511381" not in response.text
+    assert "alice@example.com" not in response.text

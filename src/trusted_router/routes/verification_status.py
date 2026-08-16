@@ -22,8 +22,6 @@ def register_verification_status_routes(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> dict[str, dict[str, Any]]:
         user = _principal_user(principal)
-        if user is None:
-            raise api_error(404, "User not found", ErrorType.NOT_FOUND)
         lifetime_topup = STORE.get_lifetime_topup_microdollars(user.id)
         return {
             "data": {
@@ -39,14 +37,25 @@ def register_verification_status_routes(router: APIRouter) -> None:
         }
 
 
-def _principal_user(principal: Any) -> User | None:
+def _principal_user(principal: Any) -> User:
+    """The person this status is ABOUT — and only ever the caller.
+
+    A key minted under another key has no creator, and it must not resolve to
+    the workspace owner: that would hand any non-owner admin the owner's phone
+    number and email. Same rule as custom_models._owner_user_id — a status
+    endpoint that cannot identify a person answers 403, not someone else's PII.
+    """
     if principal.user is not None:
         return principal.user
     if principal.api_key is not None and principal.api_key.creator_user_id:
         user = STORE.get_user(principal.api_key.creator_user_id)
         if user is not None:
             return user
-    return STORE.get_user(principal.workspace.owner_user_id)
+    raise api_error(
+        403,
+        "A user-owned management session or key is required",
+        ErrorType.FORBIDDEN,
+    )
 
 
 def _next_step(user: User, lifetime_topup: int) -> str | None:
