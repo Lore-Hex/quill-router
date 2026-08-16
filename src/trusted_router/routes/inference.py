@@ -16,6 +16,8 @@ this module owns the inference dispatch logic.
 """
 from __future__ import annotations
 
+import json
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -35,9 +37,19 @@ from trusted_router.auth import (
     Principal,
     SettingsDep,
 )
-from trusted_router.catalog import AUTO_MODEL_ID, MODELS, MONITOR_MODEL_ID, Model
+from trusted_router.catalog import AUTO_MODEL_ID, MODELS, MONITOR_MODEL_ID, PROVIDERS, Model
 from trusted_router.config import Settings
+from trusted_router.custom_model_billing import (
+    custom_model_cost_microdollars,
+    owner_share_microdollars,
+    user_model_payout_event_id,
+)
 from trusted_router.errors import api_error
+from trusted_router.provider_types import (
+    ProviderResult,
+    estimate_tokens_from_messages,
+    estimate_tokens_from_text,
+)
 from trusted_router.routes.helpers import json_body
 from trusted_router.routing import (
     chat_route_candidates,
@@ -54,18 +66,21 @@ from trusted_router.services.inference import (
     run_embeddings,
     run_messages_stream,
 )
+from trusted_router.services.inference_quota import reserved_quota
 from trusted_router.services.user_model_dispatch import (
+    BufferedUserModelDispatch,
     dispatch_user_model,
     stream_user_model,
 )
-from trusted_router.storage import STORE
+from trusted_router.storage import STORE, Generation
 from trusted_router.storage_custom_models import is_custom_model_id, normalize_custom_model_id
 from trusted_router.storage_models import UserProvidedModel
 from trusted_router.types import ErrorType, UsageType
-from trusted_router.user_model_rules import user_model_is_on_the_clock
+from trusted_router.user_model_rules import user_model_gateway_pair, user_model_is_on_the_clock
 
 _VALID_ROLES = frozenset({"system", "user", "assistant", "tool", "developer"})
 _OUTPUT_TOKEN_FIELDS = ("max_tokens", "max_completion_tokens", "max_output_tokens")
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -94,11 +109,23 @@ def register_inference_routes(router: APIRouter) -> None:
         if user_model is not None:
             if body.get("stream") is True:
                 return StreamingResponse(
-                    stream_user_model(user_model, body, settings),
+                    _stream_local_user_model(
+                        user_model,
+                        body,
+                        principal,
+                        settings,
+                        app_name=_app_name(request),
+                    ),
                     media_type="text/event-stream",
                     headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
                 )
-            result = await dispatch_user_model(user_model, body, settings)
+            result = await _dispatch_local_user_model(
+                user_model,
+                body,
+                principal,
+                settings,
+                app_name=_app_name(request),
+            )
             return JSONResponse(result.body)
         provider_prefs = provider_route_preferences(body)
         usage_type = (
@@ -442,6 +469,324 @@ def _responses_api_envelope(
         },
         "trustedrouter": {"generation_id": generation_id, "content_stored": False},
     }
+
+
+async def _dispatch_local_user_model(
+    model: UserProvidedModel,
+    body: dict[str, Any],
+    principal: InferencePrincipal,
+    settings: Settings,
+    *,
+    app_name: str,
+) -> BufferedUserModelDispatch:
+    assert principal.api_key is not None
+    sentinel, _endpoint = _local_user_model_pair(model)
+    prompt_price = int(model.prompt_price_microdollars_per_million_tokens)
+    completion_price = int(model.completion_price_microdollars_per_million_tokens)
+    input_estimate = estimate_tokens_from_messages(body.get("messages", []))
+    reserve_amount = custom_model_cost_microdollars(
+        input_tokens=input_estimate,
+        output_tokens=_local_max_output_tokens(body),
+        prompt_price=prompt_price,
+        completion_price=completion_price,
+    )
+    async with reserved_quota(
+        principal,
+        sentinel,
+        reserve_amount=reserve_amount,
+        input_tokens=input_estimate,
+        streamed=False,
+        region=settings.primary_region,
+        usage_type_override=UsageType.CREDITS,
+    ) as ticket:
+        dispatch = await dispatch_user_model(model, body, settings)
+        output_text = _owner_response_text(dispatch.body)
+        usage = _sane_owner_usage(dispatch.body.get("usage"))
+        input_tokens, output_tokens = (
+            usage
+            if usage is not None
+            else (input_estimate, estimate_tokens_from_text(output_text))
+        )
+        actual_cost = _capped_user_model_cost(
+            model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            prompt_price=prompt_price,
+            completion_price=completion_price,
+            hold=reserve_amount,
+        )
+        ticket.settle(actual_cost)
+        choice = _owner_choice(dispatch.body)
+        provider_result = ProviderResult(
+            text=output_text,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            finish_reason=str(choice.get("finish_reason") or "stop"),
+            provider_name=PROVIDERS["trustedrouter"].name,
+            request_id=str(dispatch.body.get("id") or f"chatcmpl-{uuid.uuid4().hex}"),
+            usage_estimated=usage is None,
+            elapsed_seconds=dispatch.elapsed_seconds,
+            first_token_seconds=dispatch.first_token_seconds,
+        )
+        _record_local_user_model_generation(
+            model,
+            principal,
+            provider_result,
+            actual_cost=actual_cost,
+            streamed=False,
+            app_name=app_name,
+            region=settings.primary_region,
+        )
+        return dispatch
+
+
+async def _stream_local_user_model(
+    model: UserProvidedModel,
+    body: dict[str, Any],
+    principal: InferencePrincipal,
+    settings: Settings,
+    *,
+    app_name: str,
+) -> AsyncIterator[bytes]:
+    assert principal.api_key is not None
+    sentinel, _endpoint = _local_user_model_pair(model)
+    prompt_price = int(model.prompt_price_microdollars_per_million_tokens)
+    completion_price = int(model.completion_price_microdollars_per_million_tokens)
+    input_estimate = estimate_tokens_from_messages(body.get("messages", []))
+    reserve_amount = custom_model_cost_microdollars(
+        input_tokens=input_estimate,
+        output_tokens=_local_max_output_tokens(body),
+        prompt_price=prompt_price,
+        completion_price=completion_price,
+    )
+    async with reserved_quota(
+        principal,
+        sentinel,
+        reserve_amount=reserve_amount,
+        input_tokens=input_estimate,
+        streamed=True,
+        region=settings.primary_region,
+        usage_type_override=UsageType.CREDITS,
+    ) as ticket:
+        started_at = time.monotonic()
+        text_parts: list[str] = []
+        usage: tuple[int, int] | None = None
+        request_id = f"chatcmpl-{uuid.uuid4().hex}"
+        finish_reason = "stop"
+        first_token_seconds: float | None = None
+        owner_error = False
+        saw_done = False
+        async for chunk in stream_user_model(model, body, settings):
+            if chunk.lstrip().startswith(b"event: error"):
+                owner_error = True
+            for data in _stream_data_payloads(chunk):
+                if data == "[DONE]":
+                    saw_done = True
+                    continue
+                try:
+                    event = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                request_id = str(event.get("id") or request_id)
+                event_usage = _sane_owner_usage(event.get("usage"))
+                if event_usage is not None:
+                    usage = event_usage
+                choices = event.get("choices")
+                if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+                    continue
+                choice = choices[0]
+                delta = choice.get("delta")
+                if isinstance(delta, dict) and isinstance(delta.get("content"), str):
+                    content = delta["content"]
+                    if content:
+                        if first_token_seconds is None:
+                            first_token_seconds = max(time.monotonic() - started_at, 0.001)
+                        text_parts.append(content)
+                if choice.get("finish_reason") is not None:
+                    finish_reason = str(choice["finish_reason"])
+            yield chunk
+        if owner_error or not saw_done:
+            return
+        output_text = "".join(text_parts)
+        input_tokens, output_tokens = (
+            usage
+            if usage is not None
+            else (input_estimate, estimate_tokens_from_text(output_text))
+        )
+        actual_cost = _capped_user_model_cost(
+            model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            prompt_price=prompt_price,
+            completion_price=completion_price,
+            hold=reserve_amount,
+        )
+        ticket.settle(actual_cost)
+        provider_result = ProviderResult(
+            text=output_text,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            finish_reason=finish_reason,
+            provider_name=PROVIDERS["trustedrouter"].name,
+            request_id=request_id,
+            usage_estimated=usage is None,
+            elapsed_seconds=max(time.monotonic() - started_at, 0.001),
+            first_token_seconds=first_token_seconds,
+        )
+        _record_local_user_model_generation(
+            model,
+            principal,
+            provider_result,
+            actual_cost=actual_cost,
+            streamed=True,
+            app_name=app_name,
+            region=settings.primary_region,
+        )
+
+
+def _local_user_model_pair(model: UserProvidedModel) -> tuple[Model, Any]:
+    return user_model_gateway_pair(
+        model_id=model.id,
+        name=model.name,
+        revision=model.revision,
+        prompt_price_microdollars_per_m=(
+            model.prompt_price_microdollars_per_million_tokens
+        ),
+        completion_price_microdollars_per_m=(
+            model.completion_price_microdollars_per_million_tokens
+        ),
+        owner_user_id=model.owner_user_id,
+        upstream_model_id=model.upstream_model_id,
+    )
+
+
+def _local_max_output_tokens(body: dict[str, Any]) -> int:
+    value = resolve_max_output_tokens(body)
+    return 512 if value is None else int(value)
+
+
+def _capped_user_model_cost(
+    model: UserProvidedModel,
+    *,
+    input_tokens: int,
+    output_tokens: int,
+    prompt_price: int,
+    completion_price: int,
+    hold: int,
+) -> int:
+    """Owner-priced cost, never above the hold the caller authorized.
+
+    Same rule as the gateway settle: the token counts are the PAYEE's own
+    meter, so the reservation (estimated prompt + max_output at frozen prices)
+    is the ceiling on what the caller can be charged and the owner paid.
+    """
+    cost = custom_model_cost_microdollars(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        prompt_price=prompt_price,
+        completion_price=completion_price,
+    )
+    if cost > hold:
+        logger.warning(
+            "billing.user_model_settle_capped_to_hold",
+            extra={
+                "user_provided_model_id": model.id,
+                "reported_microdollars": cost,
+                "hold_microdollars": hold,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+            },
+        )
+        return hold
+    return cost
+
+
+def _sane_owner_usage(value: Any) -> tuple[int, int] | None:
+    if not isinstance(value, dict):
+        return None
+    prompt = value.get("prompt_tokens")
+    completion = value.get("completion_tokens")
+    if (
+        isinstance(prompt, bool)
+        or isinstance(completion, bool)
+        or not isinstance(prompt, int)
+        or not isinstance(completion, int)
+        or prompt < 0
+        or completion < 0
+    ):
+        return None
+    return prompt, completion
+
+
+def _owner_choice(body: dict[str, Any]) -> dict[str, Any]:
+    choices = body.get("choices")
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        return choices[0]
+    return {}
+
+
+def _owner_response_text(body: dict[str, Any]) -> str:
+    message = _owner_choice(body).get("message")
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content")
+    return content if isinstance(content, str) else ""
+
+
+def _stream_data_payloads(chunk: bytes) -> list[str]:
+    return [
+        line.removeprefix(b"data:").strip().decode("utf-8", errors="ignore")
+        for line in chunk.splitlines()
+        if line.startswith(b"data:")
+    ]
+
+
+def _record_local_user_model_generation(
+    model: UserProvidedModel,
+    principal: InferencePrincipal,
+    result: ProviderResult,
+    *,
+    actual_cost: int,
+    streamed: bool,
+    app_name: str,
+    region: str | None,
+) -> Generation:
+    assert principal.api_key is not None
+    generation = Generation.from_chat_result(
+        result=result,
+        workspace_id=principal.workspace.id,
+        key_hash=principal.api_key.hash,
+        model_id=model.id,
+        app_name=app_name,
+        actual_cost_microdollars=actual_cost,
+        usage_type=UsageType.CREDITS,
+        streamed=streamed,
+        provider="trustedrouter",
+        region=region,
+    )
+    payout = owner_share_microdollars(actual_cost)
+    generation.custom_model_id = model.id
+    generation.operator_cost_microdollars = payout
+    STORE.add_generation(generation)
+    if payout > 0:
+        try:
+            STORE.credit_user_earnings(
+                model.owner_user_id,
+                payout,
+                user_model_payout_event_id(generation.id),
+                custom_model_id=model.id,
+                payer_workspace_id=principal.workspace.id,
+            )
+        except Exception:
+            logger.error(
+                "user_model_payout_failed authorization_id=%s owner=%s",
+                generation.id,
+                model.owner_user_id,
+                exc_info=True,
+            )
+    return generation
 
 
 # ---------------------------------------------------------------------------

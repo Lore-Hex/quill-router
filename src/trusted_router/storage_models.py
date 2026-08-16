@@ -589,6 +589,14 @@ class TypedFinalizeResult:
     request_record_typed: bool = False
 
 
+@dataclass(frozen=True)
+class UserModelPayout:
+    owner_user_id: str
+    model_id: str
+    amount_microdollars: int
+    payer_workspace_id: str
+
+
 @dataclass
 class Generation:
     id: str
@@ -626,6 +634,7 @@ class Generation:
     # Internal provider COGS for fixed-price orchestration leaves. This is
     # intentionally omitted from public generation/activity response shapes.
     operator_cost_microdollars: int | None = None
+    custom_model_id: str | None = None
     route_type: str | None = None
     video_input_mode: str | None = None
     video_duration_seconds: int | None = None
@@ -811,6 +820,7 @@ class Generation:
             app_categories=[str(item) for item in body.get("app_categories") or []],
             tags=dict(authorization.tags),
             operator_cost_microdollars=operator_cost_microdollars,
+            custom_model_id=authorization.user_provided_model_id,
             route_type=(str(body["route_type"]) if body.get("route_type") else None),
             video_input_mode=(
                 str(body["video_input_mode"]) if body.get("video_input_mode") else None

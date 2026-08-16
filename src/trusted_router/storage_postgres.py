@@ -2176,6 +2176,19 @@ class PostgresStore:
     ) -> UserProvidedModel:
         self._not_implemented("record_user_model_dispatch_result")
 
+    def acquire_user_model_slot(
+        self,
+        model_id: str,
+        authorization_id: str,
+        *,
+        limit: int,
+        ttl_seconds: int,
+    ) -> bool:
+        self._not_implemented("acquire_user_model_slot")
+
+    def release_user_model_slot(self, model_id: str, authorization_id: str) -> None:
+        self._not_implemented("release_user_model_slot")
+
     def list_public_user_models(
         self,
         *,
@@ -3405,6 +3418,7 @@ class PostgresStore:
         usage_type: UsageType | str,
         estimated_microdollars: int,
         credit_reservation_id: str | None,
+        authorization_id: str | None = None,
         requested_model_id: str | None = None,
         candidate_model_ids: list[str] | None = None,
         region: str | None = None,
@@ -3447,7 +3461,7 @@ class PostgresStore:
         admit.
         """
         authorization = GatewayAuthorization(
-            id=f"gwauth_{uuid.uuid4().hex}",
+            id=authorization_id or f"gwauth_{uuid.uuid4().hex}",
             workspace_id=workspace_id,
             key_hash=key_hash,
             model_id=model_id,

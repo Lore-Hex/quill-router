@@ -1,14 +1,25 @@
 from __future__ import annotations
 
+import json
 import socket
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
+from trusted_router.custom_model_billing import (
+    custom_model_cost_microdollars,
+    owner_share_microdollars,
+    user_model_payout_event_id,
+)
 from trusted_router.main import create_app
-from trusted_router.services.user_model_dispatch import BufferedUserModelDispatch
+from trusted_router.provider_types import estimate_tokens_from_messages
+from trusted_router.services.user_model_dispatch import (
+    BufferedUserModelDispatch,
+    dispatch_user_model,
+)
 from trusted_router.services.user_model_probe import ProbeResult
 from trusted_router.services.user_model_secrets import (
     USER_MODEL_ENDPOINT_KEY_PURPOSE,
@@ -16,6 +27,7 @@ from trusted_router.services.user_model_secrets import (
     USER_MODEL_SIGNING_PURPOSE,
 )
 from trusted_router.storage import STORE
+from trusted_router.storage_user_models import InMemoryUserProvidedModels
 
 HEADERS = {"x-trustedrouter-user": "user-model-owner@example.com"}
 
@@ -81,10 +93,79 @@ def _create(
     return response.json()["data"]
 
 
-def _create_key(client: TestClient) -> dict[str, Any]:
-    response = client.post("/v1/keys", headers=HEADERS, json={"name": "gateway"})
+def _create_key(
+    client: TestClient,
+    *,
+    headers: dict[str, str] = HEADERS,
+) -> dict[str, Any]:
+    response = client.post("/v1/keys", headers=headers, json={"name": "gateway"})
     assert response.status_code == 201, response.text
     return response.json()["data"]
+
+
+def _online(created: dict[str, Any]) -> None:
+    STORE.set_user_model_online(
+        created["id"],
+        owner_user_id=created["owner_user_id"],
+        online=True,
+    )
+
+
+def _authorize(
+    client: TestClient,
+    key: dict[str, Any],
+    model_id: str,
+    *,
+    idempotency_key: str,
+    input_tokens: int = 1_000,
+    output_tokens: int = 2_000,
+) -> dict[str, Any]:
+    response = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": model_id,
+            "estimated_input_tokens": input_tokens,
+            "max_output_tokens": output_tokens,
+            "idempotency_key": idempotency_key,
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+def _settle(
+    client: TestClient,
+    authorization_id: str,
+    *,
+    input_tokens: int = 1_000,
+    output_tokens: int = 2_000,
+) -> Any:
+    return client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": authorization_id,
+            "actual_input_tokens": input_tokens,
+            "actual_output_tokens": output_tokens,
+            "elapsed_seconds": 0.2,
+            "first_token_seconds": 0.05,
+        },
+    )
+
+
+def _refund(
+    client: TestClient,
+    authorization_id: str,
+    *,
+    error_status: int | None = None,
+    error_type: str | None = None,
+) -> Any:
+    body: dict[str, Any] = {"authorization_id": authorization_id}
+    if error_status is not None:
+        body["error_status"] = error_status
+    if error_type is not None:
+        body["error_type"] = error_type
+    return client.post("/v1/internal/gateway/refund", json=body)
 
 
 def test_user_model_crud_ownership_and_one_time_secrets(client: TestClient) -> None:
@@ -303,6 +384,304 @@ def test_gateway_authorization_freezes_user_model_attribution(
     assert authorization.user_model_owner_user_id == created["owner_user_id"]
 
 
+def test_gateway_settle_uses_frozen_prices_and_pays_owner_once(
+    dispatch_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = dispatch_client
+    payer_headers = {"x-trustedrouter-user": "user-model-payer@example.com"}
+    key = _create_key(client, headers=payer_headers)
+    body = _body(slug="frozen-billing")
+    prompt_price = 2_000_000
+    completion_price = 3_000_000
+    body["prompt_price_microdollars_per_million_tokens"] = prompt_price
+    body["completion_price_microdollars_per_million_tokens"] = completion_price
+    created = _create(client, body=body)
+    _online(created)
+    authorization = _authorize(
+        client,
+        key,
+        created["id"],
+        idempotency_key="user-model-frozen-billing",
+    )
+
+    patched = client.patch(
+        f"/v1/user-models/{created['id']}",
+        headers=HEADERS,
+        json={
+            "prompt_price_microdollars_per_million_tokens": 10 * prompt_price,
+            "completion_price_microdollars_per_million_tokens": 10 * completion_price,
+        },
+    )
+    assert patched.status_code == 200, patched.text
+
+    result_calls = 0
+    original = InMemoryUserProvidedModels.record_dispatch_result
+
+    def counted_result(
+        self: InMemoryUserProvidedModels,
+        model_id: str,
+        *,
+        success: bool,
+    ) -> Any:
+        nonlocal result_calls
+        result_calls += 1
+        return original(self, model_id, success=success)
+
+    monkeypatch.setattr(
+        InMemoryUserProvidedModels,
+        "record_dispatch_result",
+        counted_result,
+    )
+
+    settled = _settle(client, authorization["authorization_id"])
+    assert settled.status_code == 200, settled.text
+    actual_cost = custom_model_cost_microdollars(
+        input_tokens=1_000,
+        output_tokens=2_000,
+        prompt_price=prompt_price,
+        completion_price=completion_price,
+    )
+    payout = owner_share_microdollars(actual_cost)
+    assert settled.json()["data"]["cost_microdollars"] == actual_cost
+
+    summary = STORE.earnings_summary(created["owner_user_id"])
+    assert summary == {
+        "total_earned": payout,
+        "total_transferred": 0,
+        "available": payout,
+    }
+    movements = STORE.list_credit_movements(f"user:{created['owner_user_id']}")
+    assert len(movements) == 1
+    movement = movements[0]
+    assert movement.movement_id == user_model_payout_event_id(
+        authorization["authorization_id"]
+    )
+    assert movement.kind == "custom_model_payout"
+    assert movement.amount_microdollars == payout
+    payer = STORE.find_user_by_email(payer_headers["x-trustedrouter-user"])
+    assert payer is not None
+    payer_workspace = STORE.list_workspaces_for_user(payer.id)[0]
+    assert movement.counterparty_account_id == payer_workspace.id
+    assert movement.custom_model_id == created["id"]
+
+    generation_id = settled.json()["data"]["generation_id"]
+    generation = STORE.get_generation(generation_id)
+    assert generation is not None
+    assert generation.custom_model_id == created["id"]
+    assert generation.operator_cost_microdollars == payout
+    assert generation.elapsed_milliseconds == 200
+    assert generation.first_token_milliseconds == 50
+
+    replay = _settle(client, authorization["authorization_id"])
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["data"]["already_settled"] is True
+    assert STORE.earnings_summary(created["owner_user_id"])["total_earned"] == payout
+    assert len(STORE.list_credit_movements(f"user:{created['owner_user_id']}")) == 1
+    assert result_calls == 1
+
+
+def test_gateway_refund_releases_hold_without_payout(
+    dispatch_client: TestClient,
+) -> None:
+    client = dispatch_client
+    key = _create_key(client)
+    body = _body(slug="refund-billing")
+    body["prompt_price_microdollars_per_million_tokens"] = 2_000_000
+    body["completion_price_microdollars_per_million_tokens"] = 3_000_000
+    created = _create(client, body=body)
+    _online(created)
+    authorization = _authorize(
+        client,
+        key,
+        created["id"],
+        idempotency_key="user-model-refund-billing",
+    )
+    workspace_money = STORE.credit_money[created["owner_workspace_id"]]
+    assert workspace_money.reserved_microdollars > 0
+
+    refunded = _refund(client, authorization["authorization_id"])
+    assert refunded.status_code == 200, refunded.text
+    assert refunded.json()["data"]["cost_microdollars"] == 0
+    assert workspace_money.reserved_microdollars == 0
+    assert workspace_money.total_usage_microdollars == 0
+    assert STORE.earnings_summary(created["owner_user_id"])["total_earned"] == 0
+    assert STORE.list_credit_movements(f"user:{created['owner_user_id']}") == []
+
+
+def test_deleted_user_model_still_settles_from_frozen_authorization(
+    dispatch_client: TestClient,
+) -> None:
+    client = dispatch_client
+    payer_headers = {"x-trustedrouter-user": "deleted-model-payer@example.com"}
+    key = _create_key(client, headers=payer_headers)
+    body = _body(slug="deleted-before-settle")
+    body["prompt_price_microdollars_per_million_tokens"] = 2_000_000
+    body["completion_price_microdollars_per_million_tokens"] = 3_000_000
+    created = _create(client, body=body)
+    _online(created)
+    authorization = _authorize(
+        client,
+        key,
+        created["id"],
+        idempotency_key="user-model-deleted-before-settle",
+    )
+    deleted = client.delete(f"/v1/user-models/{created['id']}", headers=HEADERS)
+    assert deleted.status_code == 200, deleted.text
+
+    settled = _settle(client, authorization["authorization_id"])
+    assert settled.status_code == 200, settled.text
+    payout = owner_share_microdollars(settled.json()["data"]["cost_microdollars"])
+    assert payout > 0
+    assert STORE.earnings_summary(created["owner_user_id"])["total_earned"] == payout
+    movement = STORE.list_credit_movements(f"user:{created['owner_user_id']}")[0]
+    assert movement.custom_model_id == created["id"]
+
+
+def test_user_model_self_usage_nets_owner_to_thirty_percent(
+    dispatch_client: TestClient,
+) -> None:
+    client = dispatch_client
+    key = _create_key(client)
+    body = _body(slug="self-usage")
+    body["prompt_price_microdollars_per_million_tokens"] = 2_000_000
+    body["completion_price_microdollars_per_million_tokens"] = 3_000_000
+    created = _create(client, body=body)
+    _online(created)
+    authorization = _authorize(
+        client,
+        key,
+        created["id"],
+        idempotency_key="user-model-self-usage",
+    )
+    settled = _settle(client, authorization["authorization_id"])
+    assert settled.status_code == 200, settled.text
+    charge = settled.json()["data"]["cost_microdollars"]
+    earned = STORE.earnings_summary(created["owner_user_id"])["available"]
+    assert earned == owner_share_microdollars(charge)
+    assert charge - earned == charge * 3_000 // 10_000
+
+
+def test_gateway_refund_strikes_only_owner_faults_and_success_resets(
+    dispatch_client: TestClient,
+) -> None:
+    client = dispatch_client
+    key = _create_key(client)
+    created = _create(client, body=_body(slug="gateway-strikes"))
+    _online(created)
+    request_number = 0
+
+    def authorization() -> dict[str, Any]:
+        nonlocal request_number
+        request_number += 1
+        return _authorize(
+            client,
+            key,
+            created["id"],
+            idempotency_key=f"user-model-strike-{request_number}",
+        )
+
+    no_evidence = authorization()
+    response = _refund(client, no_evidence["authorization_id"])
+    assert response.status_code == 200, response.text
+    stored = STORE.get_user_model(created["id"])
+    assert stored is not None
+    assert stored.consecutive_dispatch_failures == 0
+
+    caller_fault = authorization()
+    response = _refund(
+        client,
+        caller_fault["authorization_id"],
+        error_status=422,
+        error_type="bad_request",
+    )
+    assert response.status_code == 200, response.text
+    assert STORE.get_user_model(created["id"]).consecutive_dispatch_failures == 0  # type: ignore[union-attr]
+
+    for _ in range(2):
+        owner_fault = authorization()
+        response = _refund(
+            client,
+            owner_fault["authorization_id"],
+            error_status=503,
+        )
+        assert response.status_code == 200, response.text
+    assert STORE.get_user_model(created["id"]).consecutive_dispatch_failures == 2  # type: ignore[union-attr]
+
+    success = authorization()
+    response = _settle(client, success["authorization_id"])
+    assert response.status_code == 200, response.text
+    stored = STORE.get_user_model(created["id"])
+    assert stored is not None
+    assert stored.consecutive_dispatch_failures == 0
+    assert stored.online is True
+
+    for _ in range(3):
+        owner_fault = authorization()
+        response = _refund(
+            client,
+            owner_fault["authorization_id"],
+            error_type="user_model_timeout",
+        )
+        assert response.status_code == 200, response.text
+    stored = STORE.get_user_model(created["id"])
+    assert stored is not None
+    assert stored.consecutive_dispatch_failures == 3
+    assert stored.online is False
+
+
+def test_gateway_user_model_concurrency_slot_releases_on_settle_and_refund(
+    dispatch_client: TestClient,
+) -> None:
+    client = dispatch_client
+    key = _create_key(client)
+    body = _body(slug="one-at-a-time")
+    body["max_concurrency"] = 1
+    created = _create(client, body=body)
+    _online(created)
+
+    first = _authorize(
+        client,
+        key,
+        created["id"],
+        idempotency_key="user-model-capacity-first",
+    )
+    at_capacity = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": created["id"],
+            "estimated_input_tokens": 1_000,
+            "max_output_tokens": 2_000,
+            "idempotency_key": "user-model-capacity-second",
+        },
+    )
+    assert at_capacity.status_code == 429, at_capacity.text
+    assert at_capacity.json()["error"]["type"] == "rate_limited"
+    assert at_capacity.json()["error"]["message"] == (
+        f"User-provided model {created['id']} is at capacity (1 concurrent)"
+    )
+
+    settled = _settle(client, first["authorization_id"])
+    assert settled.status_code == 200, settled.text
+    third = _authorize(
+        client,
+        key,
+        created["id"],
+        idempotency_key="user-model-capacity-third",
+    )
+    refunded = _refund(client, third["authorization_id"])
+    assert refunded.status_code == 200, refunded.text
+    fourth = _authorize(
+        client,
+        key,
+        created["id"],
+        idempotency_key="user-model-capacity-fourth",
+    )
+    cleanup = _refund(client, fourth["authorization_id"])
+    assert cleanup.status_code == 200, cleanup.text
+
+
 def test_gateway_resolves_user_model_dispatch_block(dispatch_client: TestClient) -> None:
     client = dispatch_client
     key = _create_key(client)
@@ -415,6 +794,149 @@ def test_local_inference_dispatches_user_model_before_frozen_catalog_routing(
     )
     assert response.status_code == 200, response.text
     assert response.json()["choices"][0]["message"]["content"] == "owner reply"
+
+
+def test_local_user_model_dispatch_bills_pays_and_refunds_owner_failure(
+    client: TestClient,
+    inference_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = _body(slug="local-billing")
+    body["supports_streaming"] = False
+    body["prompt_price_microdollars_per_million_tokens"] = 2_000_000
+    body["completion_price_microdollars_per_million_tokens"] = 3_000_000
+    created = _create(client, body=body)
+
+    async def passing_probe(*_args: Any, **_kwargs: Any) -> ProbeResult:
+        return ProbeResult(ok=True, detail="ok")
+
+    monkeypatch.setattr("trusted_router.routes.user_models.probe_user_model", passing_probe)
+    clocked_in = client.post(
+        f"/v1/user-models/{created['id']}/clock-in",
+        headers=HEADERS,
+    )
+    assert clocked_in.status_code == 200, clocked_in.text
+
+    async def owner_success(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-local-billing",
+                "object": "chat.completion",
+                "model": "owner-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "owner billed reply"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 1_000,
+                    "completion_tokens": 2_000,
+                    "total_tokens": 3_000,
+                },
+            },
+        )
+
+    async def success_dispatch(
+        model: Any,
+        request_body: dict[str, Any],
+        settings: Settings,
+    ) -> BufferedUserModelDispatch:
+        return await dispatch_user_model(
+            model,
+            request_body,
+            settings,
+            transport=httpx.MockTransport(owner_success),
+        )
+
+    monkeypatch.setattr(
+        "trusted_router.routes.inference.dispatch_user_model",
+        success_dispatch,
+    )
+    payer = STORE.find_user_by_email("alice@example.com")
+    assert payer is not None
+    payer_workspace = STORE.list_workspaces_for_user(payer.id)[0]
+    payer_money = STORE.credit_money[payer_workspace.id]
+    usage_before = payer_money.total_usage_microdollars
+    response = client.post(
+        "/v1/chat/completions",
+        headers=inference_headers,
+        json={
+            "model": created["id"],
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 2_000,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["choices"][0]["message"]["content"] == "owner billed reply"
+    # The owner reported 1,000 prompt tokens for "hello": more than the caller
+    # authorized. The charge is the owner-priced usage capped at the hold the
+    # caller's request reserved (estimated prompt + max_tokens at frozen
+    # prices) — the payee's meter can never exceed the payer's authorization.
+    reported_cost = custom_model_cost_microdollars(
+        input_tokens=1_000,
+        output_tokens=2_000,
+        prompt_price=2_000_000,
+        completion_price=3_000_000,
+    )
+    hold = custom_model_cost_microdollars(
+        input_tokens=estimate_tokens_from_messages([{"role": "user", "content": "hello"}]),
+        output_tokens=2_000,
+        prompt_price=2_000_000,
+        completion_price=3_000_000,
+    )
+    assert reported_cost > hold
+    actual_cost = hold
+    payout = owner_share_microdollars(actual_cost)
+    assert payer_money.total_usage_microdollars - usage_before == actual_cost
+    assert payer_money.reserved_microdollars == 0
+    assert STORE.earnings_summary(created["owner_user_id"])["total_earned"] == payout
+    movement = STORE.list_credit_movements(f"user:{created['owner_user_id']}")[0]
+    assert movement.amount_microdollars == payout
+    assert movement.counterparty_account_id == payer_workspace.id
+    assert movement.custom_model_id == created["id"]
+    generation = next(iter(STORE.target.generation_store.generations.values()))
+    assert generation.custom_model_id == created["id"]
+    assert movement.movement_id == user_model_payout_event_id(generation.id)
+
+    async def owner_failure(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, json={"error": "owner unavailable"})
+
+    async def failure_dispatch(
+        model: Any,
+        request_body: dict[str, Any],
+        settings: Settings,
+    ) -> BufferedUserModelDispatch:
+        return await dispatch_user_model(
+            model,
+            request_body,
+            settings,
+            transport=httpx.MockTransport(owner_failure),
+        )
+
+    monkeypatch.setattr(
+        "trusted_router.routes.inference.dispatch_user_model",
+        failure_dispatch,
+    )
+    usage_after_success = payer_money.total_usage_microdollars
+    failed = client.post(
+        "/v1/chat/completions",
+        headers=inference_headers,
+        json={
+            "model": created["id"],
+            "messages": [{"role": "user", "content": "try again"}],
+            "max_tokens": 2_000,
+        },
+    )
+    assert failed.status_code == 502, failed.text
+    assert payer_money.total_usage_microdollars == usage_after_success
+    assert payer_money.reserved_microdollars == 0
+    assert STORE.earnings_summary(created["owner_user_id"])["total_earned"] == payout
+    stored = STORE.get_user_model(created["id"])
+    assert stored is not None
+    assert stored.consecutive_dispatch_failures == 1
 
 
 def test_public_shape_is_secret_free_and_resolves_operator_identities(
@@ -565,3 +1087,99 @@ def test_console_verification_disables_user_model_forms() -> None:
     assert page.status_code == 200
     assert "Verification required" in page.text
     assert '<fieldset class="form-gate" disabled>' in page.text
+
+
+def test_local_user_model_streaming_bills_from_the_usage_chunk_and_pays_owner(
+    client: TestClient,
+    inference_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The streaming quadrant of local billing: the owner streams SSE with
+    the OpenAI usage-only final chunk; the caller is charged the owner-priced
+    usage (capped at the hold), the owner is paid 70%, and no strike lands."""
+    body = _body(slug="local-stream-billing")
+    body["supports_streaming"] = True
+    body["prompt_price_microdollars_per_million_tokens"] = 2_000_000
+    body["completion_price_microdollars_per_million_tokens"] = 3_000_000
+    created = _create(client, body=body)
+
+    async def passing_probe(*_args: Any, **_kwargs: Any) -> ProbeResult:
+        return ProbeResult(ok=True, detail="ok")
+
+    monkeypatch.setattr("trusted_router.routes.user_models.probe_user_model", passing_probe)
+    assert (
+        client.post(f"/v1/user-models/{created['id']}/clock-in", headers=HEADERS).status_code
+        == 200
+    )
+
+    def chunk(**payload: Any) -> bytes:
+        base = {
+            "id": "chatcmpl-local-stream",
+            "object": "chat.completion.chunk",
+            "created": 1_700_000_000,
+            "model": "owner-model",
+        }
+        base.update(payload)
+        return b"data: " + json.dumps(base, separators=(",", ":")).encode() + b"\n\n"
+
+    sse = (
+        chunk(choices=[{"index": 0, "delta": {"role": "assistant", "content": "streamed "}}])
+        + chunk(choices=[{"index": 0, "delta": {"content": "reply"}, "finish_reason": "stop"}])
+        + chunk(choices=[], usage={"prompt_tokens": 3, "completion_tokens": 20, "total_tokens": 23})
+        + b"data: [DONE]\n\n"
+    )
+
+    async def owner_stream(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=sse)
+
+    from trusted_router.services.user_model_dispatch import stream_user_model
+
+    def patched_stream(model: Any, request_body: dict[str, Any], settings: Settings) -> Any:
+        return stream_user_model(
+            model, request_body, settings, transport=httpx.MockTransport(owner_stream)
+        )
+
+    monkeypatch.setattr("trusted_router.routes.inference.stream_user_model", patched_stream)
+    payer = STORE.find_user_by_email("alice@example.com")
+    assert payer is not None
+    payer_workspace = STORE.list_workspaces_for_user(payer.id)[0]
+    payer_money = STORE.credit_money[payer_workspace.id]
+    usage_before = payer_money.total_usage_microdollars
+
+    with client.stream(
+        "POST",
+        "/v1/chat/completions",
+        headers=inference_headers,
+        json={
+            "model": created["id"],
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 100,
+            "stream": True,
+        },
+    ) as response:
+        assert response.status_code == 200
+        raw = b"".join(response.iter_bytes())
+    assert b"streamed " in raw and b"reply" in raw and b'"error"' not in raw
+    assert raw.rstrip().endswith(b"data: [DONE]")
+
+    reported = custom_model_cost_microdollars(
+        input_tokens=3, output_tokens=20, prompt_price=2_000_000, completion_price=3_000_000
+    )
+    hold = custom_model_cost_microdollars(
+        input_tokens=estimate_tokens_from_messages([{"role": "user", "content": "hello"}]),
+        output_tokens=100,
+        prompt_price=2_000_000,
+        completion_price=3_000_000,
+    )
+    charged = min(reported, hold)
+    assert payer_money.total_usage_microdollars - usage_before == charged
+    assert payer_money.reserved_microdollars == 0
+    assert STORE.earnings_summary(created["owner_user_id"])["total_earned"] == (
+        owner_share_microdollars(charged)
+    )
+    stored = STORE.get_user_model(created["id"])
+    assert stored is not None
+    assert stored.consecutive_dispatch_failures == 0
+    generation = next(iter(STORE.target.generation_store.generations.values()))
+    assert generation.custom_model_id == created["id"]
+    assert generation.tokens_completion == 20

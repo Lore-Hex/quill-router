@@ -388,6 +388,7 @@ class InMemoryApiKeys:
         usage_type: UsageType | str,
         estimated_microdollars: int,
         credit_reservation_id: str | None,
+        authorization_id: str | None = None,
         requested_model_id: str | None = None,
         candidate_model_ids: list[str] | None = None,
         region: str | None = None,
@@ -430,7 +431,7 @@ class InMemoryApiKeys:
                     )
                 self.deferred_outstanding[workspace_id] = held + estimated_microdollars
             authorization = GatewayAuthorization(
-                id=f"gwa-{uuid.uuid4().hex}",
+                id=authorization_id or f"gwa-{uuid.uuid4().hex}",
                 workspace_id=workspace_id,
                 key_hash=key_hash,
                 model_id=model_id,

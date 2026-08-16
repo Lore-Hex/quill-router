@@ -8,6 +8,13 @@ CUSTOM_MODEL_OWNER_SHARE_BASIS_POINTS = 7_000
 HUMAN_PRICE_MIN_MICRODOLLARS_PER_M = 100_000_000_000
 HUMAN_PRICE_MAX_MICRODOLLARS_PER_M = 1_000_000_000_000
 MACHINE_PRICE_MAX_MICRODOLLARS_PER_M = 1_000_000_000
+USER_MODEL_PAYOUT_SETTLE_FIELD = "_trustedrouter_user_model_payout_microdollars"
+USER_MODEL_OWNER_SETTLE_FIELD = "_trustedrouter_user_model_owner_user_id"
+USER_MODEL_ID_SETTLE_FIELD = "_trustedrouter_user_model_id"
+
+
+def user_model_payout_event_id(authorization_id: str) -> str:
+    return f"custom_model_payout:{authorization_id}"
 
 
 def validate_custom_model_price(

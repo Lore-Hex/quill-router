@@ -679,3 +679,42 @@ def test_clock_in_and_passing_probe_reset_strikes(test_settings: Settings) -> No
     STORE.record_user_model_probe(model.id, status="failed", checked_at="2026-08-16T00:00:01Z")
     stored = STORE.get_user_model(model.id)
     assert stored is not None and stored.consecutive_dispatch_failures == 1
+
+
+@pytest.mark.asyncio
+async def test_usage_only_final_chunk_is_not_malformed(test_settings: Settings) -> None:
+    """OpenAI/vLLM emit `{"choices": [], "usage": {...}}` before [DONE] when
+    stream_options.include_usage is set. It must pass through the streaming
+    quadrant, feed usage in the buffered quadrant, and never strike."""
+    model = _model(test_settings, supports_streaming=True)
+    usage_chunk = {
+        "id": "chatcmpl-owner-stream",
+        "object": "chat.completion.chunk",
+        "created": 1_700_000_000,
+        "model": "owner-upstream",
+        "choices": [],
+        "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10},
+    }
+    body = _sse_body().replace(
+        b"data: [DONE]\n\n",
+        b"data: " + json.dumps(usage_chunk, separators=(",", ":")).encode() + b"\n\ndata: [DONE]\n\n",
+    )
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body)
+
+    frames = [
+        chunk
+        async for chunk in stream_user_model(
+            model, _request_body(stream=True), test_settings, transport=httpx.MockTransport(handler)
+        )
+    ]
+    assert b'"error"' not in b"".join(frames)
+    assert b'"usage":{"prompt_tokens":7' in b"".join(frames)
+    buffered = await dispatch_user_model(
+        model, _request_body(stream=False), test_settings, transport=httpx.MockTransport(handler)
+    )
+    assert buffered.body["usage"]["prompt_tokens"] == 7
+    stored = STORE.get_user_model(model.id)
+    assert stored is not None
+    assert stored.consecutive_dispatch_failures == 0

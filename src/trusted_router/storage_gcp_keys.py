@@ -295,6 +295,7 @@ class SpannerApiKeys:
         usage_type: UsageType | str,
         estimated_microdollars: int,
         credit_reservation_id: str | None,
+        authorization_id: str | None = None,
         requested_model_id: str | None = None,
         candidate_model_ids: list[str] | None = None,
         region: str | None = None,
@@ -335,7 +336,7 @@ class SpannerApiKeys:
         if existing is not None:
             return existing
         auth = GatewayAuthorization(
-            id=f"gwa-{uuid.uuid4().hex}",
+            id=authorization_id or f"gwa-{uuid.uuid4().hex}",
             workspace_id=workspace_id,
             key_hash=key_hash,
             model_id=model_id,

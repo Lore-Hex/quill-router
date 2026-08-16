@@ -183,6 +183,52 @@ def test_gateway_authorization_round_trips_frozen_user_model_fields(
     assert loaded.user_model_owner_user_id == "owner"
 
 
+def test_user_model_slots_are_idempotent_and_release_capacity(
+    user_model_store: Store,
+) -> None:
+    store = user_model_store
+    model_id = "trustedrouter/user-slots"
+
+    assert store.acquire_user_model_slot(model_id, "gwa-first", limit=1, ttl_seconds=600)
+    assert store.acquire_user_model_slot(model_id, "gwa-first", limit=1, ttl_seconds=600)
+    assert not store.acquire_user_model_slot(model_id, "gwa-second", limit=1, ttl_seconds=600)
+
+    store.release_user_model_slot(model_id, "gwa-first")
+    store.release_user_model_slot(model_id, "gwa-first")
+    assert store.acquire_user_model_slot(model_id, "gwa-second", limit=1, ttl_seconds=600)
+
+
+def test_user_model_slot_expires_after_its_ttl(
+    user_model_store: Store,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An enclave that dies between authorize and settle must not black a
+    model out for longer than one dispatch budget: the unreleased slot stops
+    counting once its own ttl has passed."""
+    import datetime as dt
+    import time
+
+    store = user_model_store
+    model_id = "trustedrouter/user-slot-ttl"
+    assert store.acquire_user_model_slot(model_id, "gwa-stuck", limit=1, ttl_seconds=30)
+    assert not store.acquire_user_model_slot(model_id, "gwa-next", limit=1, ttl_seconds=30)
+
+    # Advance both clocks the two backends use by more than the ttl.
+    real_monotonic = time.monotonic
+    real_now = dt.datetime.now
+    monkeypatch.setattr(time, "monotonic", lambda: real_monotonic() + 31)
+
+    class _Shifted(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            return real_now(tz) + dt.timedelta(seconds=31)
+
+    monkeypatch.setattr(
+        "trusted_router.storage_gcp_user_models.dt.datetime", _Shifted, raising=False
+    )
+    assert store.acquire_user_model_slot(model_id, "gwa-next", limit=1, ttl_seconds=30)
+
+
 def test_user_model_coerces_secret_envelope_dicts() -> None:
     raw = {
         "algorithm": "test",

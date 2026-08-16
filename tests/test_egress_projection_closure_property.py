@@ -191,7 +191,7 @@ def test_every_generation_field_is_classified() -> None:
     }
     # Fields carried only on the system-of-record or video surfaces.
     other_metadata = {
-        "route_type", "video_input_mode", "video_duration_seconds",
+        "custom_model_id", "route_type", "video_input_mode", "video_duration_seconds",
         "video_resolution", "video_aspect_ratio", "video_generate_audio",
     }
 

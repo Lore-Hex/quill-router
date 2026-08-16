@@ -17,6 +17,12 @@ from google.api_core.exceptions import (
 
 from tests.fakes.spanner import make_fake_store
 from trusted_router.catalog_data import PARASAIL_LIBERTY_2_0_MODEL_ID
+from trusted_router.custom_model_billing import (
+    USER_MODEL_ID_SETTLE_FIELD,
+    USER_MODEL_OWNER_SETTLE_FIELD,
+    USER_MODEL_PAYOUT_SETTLE_FIELD,
+    user_model_payout_event_id,
+)
 from trusted_router.partner_billing import PARTNER_OPERATOR_COST_SETTLE_FIELD
 from trusted_router.services import settle_outbox_apply as apply_mod
 from trusted_router.services.settle_outbox_apply import ApplyOutcome, apply_frozen_settle
@@ -30,6 +36,8 @@ PROVIDER = "anthropic"
 ENDPOINT_ID = "anthropic/claude-haiku-4.5@anthropic/prepaid"
 ESTIMATE = 1_000_000
 TOTAL_CREDIT = 5_000_000
+USER_MODEL_ID = "trustedrouter/user-outbox-payout"
+USER_MODEL_ENDPOINT_ID = f"{USER_MODEL_ID}@trustedrouter/credits"
 
 
 @pytest.fixture
@@ -133,6 +141,39 @@ def _legacy_authorization(
         endpoint_id=ENDPOINT_ID,
         candidate_endpoint_ids=[ENDPOINT_ID],
     )
+
+
+def _typed_user_model_authorization(
+    store: Any,
+    *,
+    workspace_id: str,
+    key_hash: str,
+) -> GatewayAuthorization:
+    outcome, auth = store.authorize_gateway_typed(
+        workspace_id=workspace_id,
+        key_hash=key_hash,
+        estimate=ESTIMATE,
+        has_credit_candidate=True,
+        reservation_usage_type="Credits",
+        model_id=USER_MODEL_ID,
+        provider="trustedrouter",
+        requested_model_id=USER_MODEL_ID,
+        candidate_model_ids=[USER_MODEL_ID],
+        region="us",
+        endpoint_id=USER_MODEL_ENDPOINT_ID,
+        candidate_endpoint_ids=[USER_MODEL_ENDPOINT_ID],
+        idempotency_key="typed-user-model-payout",
+        idempotency_fingerprint="typed-user-model-payout-fingerprint",
+        user_provided_model_id=USER_MODEL_ID,
+        user_provided_model_revision=3,
+        user_model_prompt_price_microdollars_per_m=2_000_000,
+        user_model_completion_price_microdollars_per_m=3_000_000,
+        user_model_owner_user_id="owner-user-model-payout",
+        expires_at="2026-01-01T00:00:00Z",
+    )
+    assert outcome == AuthorizeOutcome.ACCEPTED
+    assert auth is not None
+    return auth
 
 
 def _settle_body(authorization_id: str, *, endpoint_id: str = ENDPOINT_ID) -> str:
@@ -289,6 +330,90 @@ def test_replay_reports_already_charged(fake_store: tuple[Any, Any, Any]) -> Non
     assert apply_frozen_settle(row) == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
     assert _typed_credit(db, ws)["total_usage"] == 777_777
     assert len(_generation_bodies(db)) == 1
+
+
+def test_user_model_outbox_repair_pays_owner_exactly_once(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, db, _bt = fake_store
+    ws = "ws_apply_user_model_payout"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_user_model_authorization(store, workspace_id=ws, key_hash=key.hash)
+    payout = 5_600
+    body = {
+        "authorization_id": auth.id,
+        "actual_input_tokens": 1_000,
+        "actual_output_tokens": 2_000,
+        "request_id": f"req-{auth.id}",
+        "finish_reason": "stop",
+        "status": "success",
+        "elapsed_seconds": 0.2,
+        "selected_model": USER_MODEL_ID,
+        "selected_endpoint": USER_MODEL_ENDPOINT_ID,
+        USER_MODEL_PAYOUT_SETTLE_FIELD: payout,
+        USER_MODEL_OWNER_SETTLE_FIELD: "owner-user-model-payout",
+        USER_MODEL_ID_SETTLE_FIELD: USER_MODEL_ID,
+        PARTNER_OPERATOR_COST_SETTLE_FIELD: payout,
+    }
+    row = _row(
+        auth,
+        cost=8_000,
+        endpoint_id=USER_MODEL_ENDPOINT_ID,
+        model_id=USER_MODEL_ID,
+        settle_body=json.dumps(body),
+    )
+
+    assert apply_frozen_settle(row) == ApplyOutcome.SETTLED_NOW
+    assert apply_frozen_settle(row) == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
+    assert store.earnings_summary("owner-user-model-payout") == {
+        "total_earned": payout,
+        "total_transferred": 0,
+        "available": payout,
+    }
+    movements = store.list_credit_movements("user:owner-user-model-payout")
+    assert len(movements) == 1
+    assert movements[0].movement_id == user_model_payout_event_id(auth.id)
+    assert movements[0].amount_microdollars == payout
+    assert movements[0].counterparty_account_id == ws
+    assert movements[0].custom_model_id == USER_MODEL_ID
+    assert movements[0].authorization_id == auth.id
+    generations = _generation_bodies(db)
+    assert len(generations) == 1
+    assert generations[0]["custom_model_id"] == USER_MODEL_ID
+    assert generations[0]["operator_cost_microdollars"] == payout
+
+
+@pytest.mark.parametrize("bad_payout", [-1, "5600"], ids=("negative", "non-int"))
+def test_bad_frozen_user_model_payout_is_invalid_row(
+    fake_store: tuple[Any, Any, Any],
+    bad_payout: Any,
+) -> None:
+    store, db, _bt = fake_store
+    ws = f"ws_apply_bad_user_model_payout_{type(bad_payout).__name__}"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_user_model_authorization(store, workspace_id=ws, key_hash=key.hash)
+    body = {
+        "authorization_id": auth.id,
+        "actual_input_tokens": 1_000,
+        "actual_output_tokens": 2_000,
+        USER_MODEL_PAYOUT_SETTLE_FIELD: bad_payout,
+        USER_MODEL_OWNER_SETTLE_FIELD: "owner-user-model-payout",
+        USER_MODEL_ID_SETTLE_FIELD: USER_MODEL_ID,
+    }
+    row = _row(
+        auth,
+        cost=8_000,
+        endpoint_id=USER_MODEL_ENDPOINT_ID,
+        model_id=USER_MODEL_ID,
+        settle_body=json.dumps(body),
+    )
+
+    assert apply_frozen_settle(row) == ApplyOutcome.INVALID_ROW
+    assert store.get_gateway_authorization(auth.id).settled is False
+    assert _typed_credit(db, ws)["total_usage"] == 0
+    assert store.earnings_summary("owner-user-model-payout")["total_earned"] == 0
 
 
 def test_zero_cost_replay_is_benign(fake_store: tuple[Any, Any, Any]) -> None:

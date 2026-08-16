@@ -23,7 +23,12 @@ from trusted_router.services.user_model_secrets import (
 from trusted_router.storage import STORE
 from trusted_router.storage_models import UserProvidedModel
 from trusted_router.types import ErrorType
-from trusted_router.user_model_rules import DispatchBudget, dispatch_budget, sign_request_body
+from trusted_router.user_model_rules import (
+    DispatchBudget,
+    dispatch_budget,
+    is_owner_fault,
+    sign_request_body,
+)
 
 _KEEPALIVE_SECONDS = 15.0
 
@@ -55,20 +60,36 @@ async def dispatch_user_model(
             transport=transport,
         )
     except (TimeoutError, httpx.TimeoutException) as exc:
-        STORE.record_user_model_dispatch_result(model.id, success=False)
+        _record_dispatch_evidence(
+            model,
+            error_status=504,
+            error_type=ErrorType.USER_MODEL_TIMEOUT,
+        )
         raise _timeout_error(model) from exc
     except _MalformedOwnerResponse as exc:
-        STORE.record_user_model_dispatch_result(model.id, success=False)
+        _record_dispatch_evidence(
+            model,
+            error_status=502,
+            error_type="malformed_response",
+        )
         raise _malformed_error(model) from exc
     except _OwnerFault as exc:
-        STORE.record_user_model_dispatch_result(model.id, success=False)
+        _record_dispatch_evidence(
+            model,
+            error_status=exc.error.status_code,
+            error_type=ErrorType.PROVIDER_ERROR,
+        )
         raise exc.error from exc
     except httpx.HTTPError as exc:
-        STORE.record_user_model_dispatch_result(model.id, success=False)
+        _record_dispatch_evidence(
+            model,
+            error_status=502,
+            error_type="connection_error",
+        )
         raise _upstream_error(model) from exc
     # Anything else (owner 4xx, TR-side errors, cancellation) is not evidence
     # about the endpoint's health: neither a strike nor a reset.
-    STORE.record_user_model_dispatch_result(model.id, success=True)
+    _record_dispatch_evidence(model, success=True)
     return result
 
 
@@ -87,6 +108,7 @@ async def stream_user_model(
     otherwise three impatient callers clock a healthy human out.
     """
     outcome: bool | None = None  # None = no evidence either way
+    owner_fault: tuple[int, str] | None = None
     try:
         async for chunk in _stream_user_model(
             model,
@@ -98,14 +120,17 @@ async def stream_user_model(
         outcome = True
     except (TimeoutError, httpx.TimeoutException):
         outcome = False
+        owner_fault = (504, str(ErrorType.USER_MODEL_TIMEOUT))
         yield _sse_error(_timeout_error(model))
         yield b"data: [DONE]\n\n"
     except _OwnerFault as exc:
         outcome = False
+        owner_fault = (exc.error.status_code, str(ErrorType.PROVIDER_ERROR))
         yield _sse_error(exc.error)
         yield b"data: [DONE]\n\n"
     except _MalformedOwnerResponse:
         outcome = False
+        owner_fault = (502, "malformed_response")
         yield _sse_error(_malformed_error(model))
         yield b"data: [DONE]\n\n"
     except HTTPException as exc:
@@ -114,6 +139,7 @@ async def stream_user_model(
         yield b"data: [DONE]\n\n"
     except httpx.HTTPError:
         outcome = False
+        owner_fault = (502, "connection_error")
         yield _sse_error(_upstream_error(model))
         yield b"data: [DONE]\n\n"
     except Exception:
@@ -122,8 +148,14 @@ async def stream_user_model(
         yield _sse_error(_malformed_error(model))
         yield b"data: [DONE]\n\n"
     finally:
-        if outcome is not None:
-            STORE.record_user_model_dispatch_result(model.id, success=outcome)
+        if outcome is True:
+            _record_dispatch_evidence(model, success=True)
+        elif owner_fault is not None:
+            _record_dispatch_evidence(
+                model,
+                error_status=owner_fault[0],
+                error_type=owner_fault[1],
+            )
 
 
 async def _dispatch_user_model(
@@ -449,9 +481,14 @@ def _parse_stream_chunk(payload: bytes) -> dict[str, Any]:
         not isinstance(chunk, dict)
         or chunk.get("object") != "chat.completion.chunk"
         or not isinstance(choices, list)
-        or not choices
-        or not isinstance(choices[0], dict)
-        or not isinstance(choices[0].get("delta"), dict)
+    ):
+        raise _MalformedOwnerResponse("invalid owner SSE chunk")
+    # `choices: []` is the spec-conforming usage-only final chunk emitted when
+    # the caller asked for stream_options.include_usage (OpenAI, vLLM). It is
+    # not malformed — treating it so refunded a fully served answer and struck
+    # a healthy owner. Any non-empty choice must still carry a delta object.
+    if choices and (
+        not isinstance(choices[0], dict) or not isinstance(choices[0].get("delta"), dict)
     ):
         raise _MalformedOwnerResponse("invalid owner SSE chunk")
     return chunk
@@ -478,6 +515,10 @@ def _aggregate_owner_sse(raw: bytes, *, requested_model_id: str) -> dict[str, An
         saw_chunk = True
         request_id = str(chunk.get("id") or request_id)
         created = int(chunk.get("created") or created)
+        if isinstance(chunk.get("usage"), dict):
+            usage = chunk["usage"]
+        if not chunk["choices"]:
+            continue  # usage-only final chunk
         choice = chunk["choices"][0]
         delta = choice["delta"]
         if isinstance(delta.get("role"), str):
@@ -486,8 +527,6 @@ def _aggregate_owner_sse(raw: bytes, *, requested_model_id: str) -> dict[str, An
             content.append(delta["content"])
         if choice.get("finish_reason") is not None:
             finish_reason = str(choice["finish_reason"])
-        if isinstance(chunk.get("usage"), dict):
-            usage = chunk["usage"]
     if not saw_chunk or not saw_done:
         raise _MalformedOwnerResponse("owner stream was incomplete")
     result: dict[str, Any] = {
@@ -601,9 +640,22 @@ def _require_success(response: httpx.Response, model: UserProvidedModel) -> None
         f" (HTTP {response.status_code})",
         ErrorType.PROVIDER_ERROR,
     )
-    if response.status_code >= 500:
+    if is_owner_fault(response.status_code, None):
         raise _OwnerFault(error)
     raise error
+
+
+def _record_dispatch_evidence(
+    model: UserProvidedModel,
+    *,
+    success: bool = False,
+    error_status: int | None = None,
+    error_type: str | ErrorType | None = None,
+) -> None:
+    if success:
+        STORE.record_user_model_dispatch_result(model.id, success=True)
+    elif is_owner_fault(error_status, str(error_type) if error_type is not None else None):
+        STORE.record_user_model_dispatch_result(model.id, success=False)
 
 
 def _timeout_error(model: UserProvidedModel) -> HTTPException:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -47,9 +48,12 @@ class InMemoryUserProvidedModels:
     def __init__(self, *, lock: threading.RLock) -> None:
         self._lock = lock
         self.models: dict[str, UserProvidedModel] = {}
+        # model_id -> {authorization_id: expires_at (monotonic seconds)}
+        self.slots: dict[str, dict[str, float]] = {}
 
     def reset(self) -> None:
         self.models.clear()
+        self.slots.clear()
 
     def create(
         self,
@@ -235,6 +239,43 @@ class InMemoryUserProvidedModels:
                 model.online = False
                 model.online_changed_at = iso_now()
             return model
+
+    def acquire_slot(
+        self,
+        model_id: str,
+        authorization_id: str,
+        *,
+        limit: int,
+        ttl_seconds: int,
+    ) -> bool:
+        """Admit one in-flight authorization if the model has capacity.
+
+        A slot expires after ``ttl_seconds`` (the caller passes the kind's
+        total dispatch budget plus grace) so an enclave that dies between
+        authorize and settle cannot black a model out for longer than one
+        dispatch could legitimately have taken.
+        """
+        with self._lock:
+            now = time.monotonic()
+            slots = self.slots.setdefault(normalize_custom_model_id(model_id), {})
+            for stale in [aid for aid, exp in slots.items() if exp <= now]:
+                slots.pop(stale, None)
+            if authorization_id in slots:
+                return True
+            if limit <= 0 or len(slots) >= limit:
+                return False
+            slots[authorization_id] = now + max(1, ttl_seconds)
+            return True
+
+    def release_slot(self, model_id: str, authorization_id: str) -> None:
+        with self._lock:
+            canonical = normalize_custom_model_id(model_id)
+            slots = self.slots.get(canonical)
+            if slots is None:
+                return
+            slots.pop(authorization_id, None)
+            if not slots:
+                self.slots.pop(canonical, None)
 
     def list_public(self, *, kind: str | None = None) -> list[UserProvidedModel]:
         with self._lock:

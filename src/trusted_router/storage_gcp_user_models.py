@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import datetime as dt
+import json
 import secrets
 from collections.abc import Callable
 from typing import Any
@@ -19,9 +21,11 @@ from trusted_router.storage_models import (
     iso_now,
 )
 from trusted_router.storage_user_models import USER_PROVIDED_MODEL_LIMIT_PER_USER
+from trusted_router.user_model_rules import GATEWAY_RESERVATION_TTL_SECONDS
 
 _CUSTOM_MODEL_KIND = "custom_model"
 _USER_PROVIDED_MODEL_KIND = "user_provided_model"
+_USER_MODEL_SLOT_KIND = "user_model_slot"
 _EDITABLE_FIELDS = (
     "name",
     "kind",
@@ -280,6 +284,97 @@ class SpannerUserProvidedModels:
 
         return self._mutate(model_id, mutate)
 
+    def acquire_slot(
+        self,
+        model_id: str,
+        authorization_id: str,
+        *,
+        limit: int,
+        ttl_seconds: int,
+    ) -> bool:
+        """Admit one in-flight authorization if the model has capacity.
+
+        Each row carries its own ``expires_at`` (now + the kind's total
+        dispatch budget + grace, chosen by the caller). Rows past it are
+        swept on the next acquire for that model, so an enclave crash between
+        authorize and settle blacks a model out for at most one dispatch
+        budget, not a fixed multi-hour window. Legacy rows without
+        ``expires_at`` fall back to ``created_at`` + the reservation TTL.
+        """
+        canonical = normalize_custom_model_id(model_id)
+        slot_id = _user_model_slot_id(canonical, authorization_id)
+        prefix = f"{canonical}#"
+        now = dt.datetime.now(dt.UTC)
+        legacy_cutoff = now - dt.timedelta(seconds=GATEWAY_RESERVATION_TTL_SECONDS)
+        expires_at = now + dt.timedelta(seconds=max(1, ttl_seconds))
+
+        def txn(transaction: Any) -> bool:
+            rows = list(
+                transaction.execute_sql(
+                    "SELECT body FROM tr_entities "
+                    "WHERE kind=@kind AND STARTS_WITH(id, @prefix) ORDER BY id",
+                    params={"kind": _USER_MODEL_SLOT_KIND, "prefix": prefix},
+                    param_types={
+                        "kind": self._io.param_types.STRING,
+                        "prefix": self._io.param_types.STRING,
+                    },
+                )
+            )
+            live_authorizations: set[str] = set()
+            expired_ids: list[str] = []
+            for (raw_body,) in rows:
+                try:
+                    payload = json.loads(str(raw_body))
+                    stored_authorization_id = str(payload["authorization_id"])
+                    created_at = _parse_slot_time(str(payload["created_at"]))
+                    raw_expires = payload.get("expires_at")
+                    row_expires_at = (
+                        _parse_slot_time(str(raw_expires))
+                        if raw_expires
+                        else created_at + dt.timedelta(seconds=GATEWAY_RESERVATION_TTL_SECONDS)
+                    )
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                    # Malformed rows fail closed toward capacity until an
+                    # operator repairs them; silently ignoring one overbooks.
+                    live_authorizations.add(f"malformed:{len(live_authorizations)}")
+                    continue
+                if row_expires_at <= now or created_at < legacy_cutoff:
+                    expired_ids.append(
+                        _user_model_slot_id(canonical, stored_authorization_id)
+                    )
+                else:
+                    live_authorizations.add(stored_authorization_id)
+            if expired_ids:
+                self._io.delete_entities_tx(
+                    transaction,
+                    _USER_MODEL_SLOT_KIND,
+                    expired_ids,
+                )
+            if authorization_id in live_authorizations:
+                return True
+            if limit <= 0 or len(live_authorizations) >= limit:
+                return False
+            self._io.write_entity_tx(
+                transaction,
+                _USER_MODEL_SLOT_KIND,
+                slot_id,
+                {
+                    "model_id": canonical,
+                    "authorization_id": authorization_id,
+                    "created_at": now.isoformat().replace("+00:00", "Z"),
+                    "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
+                },
+            )
+            return True
+
+        return run_in_transaction_with_retry(self._io.database, txn)
+
+    def release_slot(self, model_id: str, authorization_id: str) -> None:
+        self._io.delete_entities(
+            _USER_MODEL_SLOT_KIND,
+            [_user_model_slot_id(normalize_custom_model_id(model_id), authorization_id)],
+        )
+
     def list_public(self, *, kind: str | None = None) -> list[UserProvidedModel]:
         rows = self._io.list_entities(
             _USER_PROVIDED_MODEL_KIND,
@@ -383,3 +478,14 @@ class SpannerUserProvidedModels:
 
 def _user_model_id(owner_user_id: str, model_id: str) -> str:
     return f"{owner_user_id}#{model_id}"
+
+
+def _user_model_slot_id(model_id: str, authorization_id: str) -> str:
+    return f"{model_id}#{authorization_id}"
+
+
+def _parse_slot_time(value: str) -> dt.datetime:
+    parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.UTC)
+    return parsed.astimezone(dt.UTC)

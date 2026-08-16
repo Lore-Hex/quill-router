@@ -55,6 +55,11 @@ def _model(**overrides: Any) -> UserProvidedModel:
         "::",
         "::ffff:127.0.0.1",
         "::ffff:10.0.0.1",
+        "100.64.0.1",  # shared address space (CGNAT): cloud-internal, never routable
+        "100.127.255.254",
+        "192.0.2.1",  # documentation range
+        "198.18.0.1",  # benchmarking range
+        "2001:db8::1",
         "not-an-ip",
     ),
 )
@@ -275,3 +280,67 @@ async def test_async_resolve_is_bounded_by_a_timeout(
         assert time.monotonic() - started < 2.0
     finally:
         release.set()  # let the worker thread finish so the run stays clean
+
+
+@pytest.mark.parametrize(
+    ("status", "error_type", "expected"),
+    [
+        # explicit non-fault tokens win over any status
+        (502, "client_closed", False),
+        (500, "internal_error", False),
+        (422, "upstream_client_error", False),
+        (None, "cancelled", False),
+        # a status decides otherwise: 5xx strikes, everything else does not
+        (503, "provider_error", True),
+        (502, None, True),
+        (599, "anything", True),
+        (401, "provider_error", False),
+        (422, "provider_error", False),
+        (499, "provider_error", False),
+        (429, "timeout", False),
+        # no status: only transport/shape tokens strike; a bare provider_error
+        # is the enclave's default label and carries no evidence
+        (None, "timeout", True),
+        (None, "user_model_timeout", True),
+        (None, "connection_error", True),
+        (None, "malformed_response", True),
+        (None, "provider_error", False),
+        (None, None, False),
+    ],
+)
+def test_is_owner_fault_rule(status: int | None, error_type: str | None, expected: bool) -> None:
+    from trusted_router.user_model_rules import is_owner_fault
+
+    assert is_owner_fault(status, error_type) is expected
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://api.trustedrouter.com/v1",
+        "https://TrustedRouter.com/v1",
+        "https://api.allyrouter.com/v1/",
+        "https://uptimerouter.com./v1",
+    ],
+)
+@pytest.mark.asyncio
+async def test_endpoint_url_refuses_trustedrouter_itself(
+    url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A→TR→A recursion: an owner model must never point back at us."""
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("8.8.8.8", 0))
+        ],
+    )
+    with pytest.raises(HTTPException) as captured:
+        await validate_endpoint_url(url, Settings(environment="test"))
+    assert captured.value.status_code == 400
+    assert "TrustedRouter" in str(captured.value.detail)
+    # a look-alike that is not a subdomain is fine
+    assert (
+        await validate_endpoint_url("https://nottrustedrouter.com/v1", Settings(environment="test"))
+        == "https://nottrustedrouter.com/v1"
+    )
