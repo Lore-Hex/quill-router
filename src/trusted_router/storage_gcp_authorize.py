@@ -29,6 +29,7 @@ from typing import Any
 
 from google.api_core.exceptions import AlreadyExists
 
+from trusted_router.custom_model_billing import user_model_payout_event_id
 from trusted_router.spend_windows import utcnow, window_floors
 from trusted_router.storage_gcp_counter_dml import (
     KEY_ACCEPTED,
@@ -50,7 +51,7 @@ from trusted_router.storage_gcp_request_records import (
     mark_gateway_authorization_settled,
 )
 from trusted_router.storage_gcp_settle_outbox import _GUARD_STATUS_SQL, GUARD_COUNT_SQL
-from trusted_router.storage_models import GatewayAuthorization, Generation
+from trusted_router.storage_models import GatewayAuthorization, Generation, UserModelPayout
 
 log = logging.getLogger(__name__)
 
@@ -173,6 +174,7 @@ def authorize_atomic(
     credit_shard: int = UNSHARDED,
     credit_shard_candidates: tuple[int, ...] | None = None,
     key_shard_candidates: tuple[int, ...] = (UNSHARDED,),
+    authorization_id: str | None = None,
 ) -> dict:
     """Run the atomic authorize. Returns {outcome, reservation_id?, authorization_id?}.
 
@@ -224,7 +226,7 @@ def authorize_atomic(
     is_byok = not has_credit_candidate
     # Stable ids across ABORTED retries (only the committed attempt persists).
     reservation_id = str(uuid.uuid4())
-    authorization_id = f"gwa-{uuid.uuid4().hex}"
+    authorization_id = authorization_id or f"gwa-{uuid.uuid4().hex}"
     created_at = utcnow()
     authorization = (
         build_authorization(authorization_id, reservation_id)
@@ -744,6 +746,7 @@ def typed_finalize_atomic(
     generation: Generation | None = None,
     persist_generation_record: bool = False,
     operational_analytics_outbox: Any | None = None,
+    user_model_payout: UserModelPayout | None = None,
 ) -> dict:
     """Full DML-only finalize for the typed path (codex 3e, Option B).
 
@@ -809,6 +812,25 @@ def typed_finalize_atomic(
             )
             if credit_count != 1:
                 raise _SettleError("credit release row-count != 1")
+
+        if success and user_model_payout is not None and user_model_payout.amount_microdollars > 0:
+            try:
+                _apply_user_model_payout_tx(
+                    transaction,
+                    pt,
+                    authorization_id=authorization_id,
+                    payout=user_model_payout,
+                )
+            except Exception:
+                # The customer reservation claim remains authoritative. A
+                # missing owner payout is repairable from generation metadata;
+                # a rolled-back customer finalize would strand their hold.
+                log.error(
+                    "user_model_payout_failed authorization_id=%s owner=%s",
+                    authorization_id,
+                    user_model_payout.owner_user_id,
+                    exc_info=True,
+                )
 
         marked = 0
         request_record_typed = False
@@ -876,3 +898,65 @@ def typed_finalize_atomic(
         return result
     except _SettleError:
         return {"outcome": SettleOutcome.ERROR}
+
+
+def _apply_user_model_payout_tx(
+    transaction: Any,
+    param_types: Any,
+    *,
+    authorization_id: str,
+    payout: UserModelPayout,
+) -> None:
+    """Credit one owner payout inside the customer finalize transaction.
+
+    The reservation claim is the primary exactly-once guard; the movement PK
+    (`account_id`, deterministic payout event id) is the secondary guard. A
+    duplicate movement therefore skips the balance increment. Payout failure
+    must never abort the customer settle: Phase 7 reconciliation can recover a
+    missing payout from generations carrying ``custom_model_id``, while an
+    aborted customer finalize can strand the payer's reservation.
+    """
+    pt = param_types
+    movement_id = user_model_payout_event_id(authorization_id)
+    inserted = transaction.execute_update(
+        "INSERT OR IGNORE INTO tr_credit_movement "
+        "(account_id, movement_id, kind, amount_microdollars, "
+        "counterparty_account_id, custom_model_id, authorization_id, created_at) "
+        "VALUES (@account_id, @movement_id, 'custom_model_payout', @amount, "
+        "@payer_workspace_id, @custom_model_id, @authorization_id, "
+        "PENDING_COMMIT_TIMESTAMP())",
+        params={
+            "account_id": f"user:{payout.owner_user_id}",
+            "movement_id": movement_id,
+            "amount": payout.amount_microdollars,
+            "payer_workspace_id": payout.payer_workspace_id,
+            "custom_model_id": payout.model_id,
+            "authorization_id": authorization_id,
+        },
+        param_types={
+            "account_id": pt.STRING,
+            "movement_id": pt.STRING,
+            "amount": pt.INT64,
+            "payer_workspace_id": pt.STRING,
+            "custom_model_id": pt.STRING,
+            "authorization_id": pt.STRING,
+        },
+    )
+    if inserted == 0:
+        return
+    updated = transaction.execute_update(
+        "UPDATE tr_earnings_balance "
+        "SET total_earned = total_earned + @amount, "
+        "updated_at = PENDING_COMMIT_TIMESTAMP() "
+        "WHERE user_id=@user_id AND shard=0",
+        params={"amount": payout.amount_microdollars, "user_id": payout.owner_user_id},
+        param_types={"amount": pt.INT64, "user_id": pt.STRING},
+    )
+    if updated == 0:
+        transaction.execute_update(
+            "INSERT INTO tr_earnings_balance "
+            "(user_id, shard, total_earned, total_transferred, updated_at) "
+            "VALUES (@user_id, 0, @amount, 0, PENDING_COMMIT_TIMESTAMP())",
+            params={"user_id": payout.owner_user_id, "amount": payout.amount_microdollars},
+            param_types={"user_id": pt.STRING, "amount": pt.INT64},
+        )

@@ -10,6 +10,12 @@ from pydantic import ValidationError
 
 from trusted_router.catalog import PROVIDERS, endpoint_for_id
 from trusted_router.catalog_data import PARASAIL_LIBERTY_2_0_MODEL_ID
+from trusted_router.custom_model_billing import (
+    USER_MODEL_ID_SETTLE_FIELD,
+    USER_MODEL_OWNER_SETTLE_FIELD,
+    USER_MODEL_PAYOUT_SETTLE_FIELD,
+    user_model_payout_event_id,
+)
 from trusted_router.partner_billing import PARTNER_OPERATOR_COST_SETTLE_FIELD
 from trusted_router.schemas import GatewaySettleRequest
 from trusted_router.storage import STORE, Generation, typed_billing_store
@@ -19,7 +25,11 @@ from trusted_router.storage_gcp_codec import (
     generation_workspace_id as _generation_workspace_id,
 )
 from trusted_router.storage_gcp_codec import json_body as _json_body
-from trusted_router.storage_models import GatewayAuthorization, SettleOutboxRow
+from trusted_router.storage_models import (
+    GatewayAuthorization,
+    SettleOutboxRow,
+    UserModelPayout,
+)
 from trusted_router.types import UsageType
 
 logger = logging.getLogger(__name__)
@@ -126,11 +136,20 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
     # authority; this pre-read is only for body construction and is TOCTOU-prone.
     usage_type = UsageType.coerce(row.selected_usage_type)
     operator_cost_raw = body_dict.pop(PARTNER_OPERATOR_COST_SETTLE_FIELD, None)
+    payout_raw = body_dict.pop(USER_MODEL_PAYOUT_SETTLE_FIELD, None)
+    owner_raw = body_dict.pop(USER_MODEL_OWNER_SETTLE_FIELD, None)
+    model_raw = body_dict.pop(USER_MODEL_ID_SETTLE_FIELD, None)
     try:
         operator_cost = (
             _operator_cost_microdollars(operator_cost_raw)
             if operator_cost_raw is not None
             else None
+        )
+        user_model_payout = _frozen_user_model_payout(
+            auth,
+            amount=payout_raw,
+            owner_user_id=owner_raw,
+            model_id=model_raw,
         )
         generation = (
             _frozen_generation(
@@ -150,9 +169,22 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
         return ApplyOutcome.INVALID_ROW
 
     if row.settle_origin == "typed":
-        return _apply_typed(row, auth, success, usage_type, generation)
+        return _apply_typed(
+            row,
+            auth,
+            success,
+            usage_type,
+            generation,
+            user_model_payout,
+        )
     if row.settle_origin == "legacy":
-        return _apply_legacy(row, success, usage_type, generation)
+        return _apply_legacy(
+            row,
+            success,
+            usage_type,
+            generation,
+            user_model_payout,
+        )
     return ApplyOutcome.INVALID_ROW
 
 
@@ -205,6 +237,32 @@ def _operator_cost_microdollars(value: Any) -> int:
     return value
 
 
+def _frozen_user_model_payout(
+    auth: GatewayAuthorization,
+    *,
+    amount: Any,
+    owner_user_id: Any,
+    model_id: Any,
+) -> UserModelPayout | None:
+    fields = (amount, owner_user_id, model_id)
+    if fields == (None, None, None):
+        return None
+    if isinstance(amount, bool) or not isinstance(amount, int) or amount < 0:
+        raise ValueError("invalid frozen user-model payout")
+    if not isinstance(owner_user_id, str) or not owner_user_id.strip():
+        raise ValueError("invalid frozen user-model owner")
+    if not isinstance(model_id, str) or not model_id.strip():
+        raise ValueError("invalid frozen user-model id")
+    if not auth.workspace_id:
+        raise ValueError("invalid payout workspace")
+    return UserModelPayout(
+        owner_user_id=owner_user_id,
+        model_id=model_id,
+        amount_microdollars=amount,
+        payer_workspace_id=auth.workspace_id,
+    )
+
+
 def _provider_slug(endpoint_id: str | None) -> str:
     endpoint = endpoint_for_id(endpoint_id)
     if endpoint is not None:
@@ -226,6 +284,7 @@ def _apply_typed(
     success: bool,
     usage_type: UsageType,
     generation: Generation | None,
+    user_model_payout: UserModelPayout | None,
 ) -> str:
     typed_store = typed_billing_store()
     if typed_store is None:
@@ -264,6 +323,7 @@ def _apply_typed(
             auth_body_settled=_json_body(auth_settled),
             generation_writes=generation_writes,
             generation=generation,
+            user_model_payout=user_model_payout,
         )
     except _TRANSIENT_STORE_EXCS:
         return ApplyOutcome.PARK_TYPED_UNAVAILABLE
@@ -333,6 +393,7 @@ def _apply_legacy(
     success: bool,
     usage_type: UsageType,
     generation: Generation | None,
+    user_model_payout: UserModelPayout | None,
 ) -> str:
     try:
         finalized = STORE.finalize_gateway_authorization(
@@ -347,6 +408,22 @@ def _apply_legacy(
     except _TRANSIENT_STORE_EXCS:
         return ApplyOutcome.ERROR
     if finalized:
+        if success and user_model_payout is not None and user_model_payout.amount_microdollars > 0:
+            try:
+                STORE.credit_user_earnings(
+                    user_model_payout.owner_user_id,
+                    user_model_payout.amount_microdollars,
+                    user_model_payout_event_id(row.authorization_id),
+                    custom_model_id=user_model_payout.model_id,
+                    payer_workspace_id=user_model_payout.payer_workspace_id,
+                )
+            except Exception:
+                logger.error(
+                    "user_model_payout_failed authorization_id=%s owner=%s",
+                    row.authorization_id,
+                    user_model_payout.owner_user_id,
+                    exc_info=True,
+                )
         return ApplyOutcome.SETTLED_NOW
     # Legacy free releases do exist (inline refund/failure-settle). Only the
     # typed origin can disambiguate via the reservation's actual_micro.

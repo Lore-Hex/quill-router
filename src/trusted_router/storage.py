@@ -952,6 +952,22 @@ class InMemoryStore:
     ) -> UserProvidedModel:
         return self.user_model_store.record_dispatch_result(model_id, success=success)
 
+    def acquire_user_model_slot(
+        self,
+        model_id: str,
+        authorization_id: str,
+        *,
+        limit: int,
+    ) -> bool:
+        return self.user_model_store.acquire_slot(
+            model_id,
+            authorization_id,
+            limit=limit,
+        )
+
+    def release_user_model_slot(self, model_id: str, authorization_id: str) -> None:
+        self.user_model_store.release_slot(model_id, authorization_id)
+
     def list_public_user_models(
         self,
         *,
@@ -1647,6 +1663,7 @@ class InMemoryStore:
         usage_type: UsageType | str,
         estimated_microdollars: int,
         credit_reservation_id: str | None,
+        authorization_id: str | None = None,
         requested_model_id: str | None = None,
         candidate_model_ids: list[str] | None = None,
         region: str | None = None,
@@ -1676,6 +1693,7 @@ class InMemoryStore:
             usage_type=usage_type,
             estimated_microdollars=estimated_microdollars,
             credit_reservation_id=credit_reservation_id,
+            authorization_id=authorization_id,
             requested_model_id=requested_model_id,
             candidate_model_ids=candidate_model_ids,
             region=region,

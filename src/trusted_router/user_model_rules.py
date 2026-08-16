@@ -6,13 +6,24 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from trusted_router.catalog import MODELS, PROVIDERS
+from trusted_router.catalog import MODELS, PROVIDERS, Model, ModelEndpoint
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.services.safe_egress import aassert_public_url
 from trusted_router.storage_custom_models import custom_model_id_from_slug, custom_model_slug
 from trusted_router.storage_models import UserProvidedModel
 from trusted_router.types import ErrorType
+
+GATEWAY_RESERVATION_TTL_SECONDS = 2 * 60 * 60
+_OWNER_FAULT_ERROR_TYPES = frozenset(
+    {
+        "timeout",
+        str(ErrorType.USER_MODEL_TIMEOUT),
+        "connection_error",
+        str(ErrorType.PROVIDER_ERROR),
+        "malformed_response",
+    }
+)
 
 _STATIC_RESERVED_NAMES = {
     "openai",
@@ -48,6 +59,58 @@ _DISPATCH_BUDGETS = {
     "agent": DispatchBudget(connect=10, first_byte=60, idle=60, total=600),
     "human": DispatchBudget(connect=10, first_byte=300, idle=120, total=900),
 }
+
+
+def user_model_gateway_pair(
+    *,
+    model_id: str,
+    name: str,
+    revision: int,
+    prompt_price_microdollars_per_m: int,
+    completion_price_microdollars_per_m: int,
+    owner_user_id: str,
+    upstream_model_id: str | None = None,
+) -> tuple[Model, ModelEndpoint]:
+    """Build the Credits-only catalog sentinel from explicit frozen values."""
+    if not model_id or revision < 1 or not owner_user_id:
+        raise ValueError("invalid frozen user-model attribution")
+    model = Model(
+        id=model_id,
+        name=name or model_id,
+        provider="trustedrouter",
+        context_length=1_000_000,
+        upstream_id=upstream_model_id or model_id,
+        prepaid_available=True,
+        byok_available=False,
+        prompt_price_microdollars_per_million_tokens=prompt_price_microdollars_per_m,
+        completion_price_microdollars_per_million_tokens=(
+            completion_price_microdollars_per_m
+        ),
+    )
+    endpoint = ModelEndpoint(
+        id=f"{model_id}@trustedrouter/credits",
+        model_id=model_id,
+        provider="trustedrouter",
+        usage_type="Credits",
+        upstream_id=upstream_model_id or model_id,
+        prompt_price_microdollars_per_million_tokens=prompt_price_microdollars_per_m,
+        completion_price_microdollars_per_million_tokens=(
+            completion_price_microdollars_per_m
+        ),
+    )
+    return model, endpoint
+
+
+def is_owner_fault(error_status: int | None, error_type: str | None) -> bool:
+    """Match the owner-health rule used by local and attested dispatch.
+
+    An upstream 5xx or an explicit transport/timeout/malformed-response token
+    says the owner endpoint failed to serve. A 4xx, cancellation, or missing
+    error evidence says nothing about endpoint health and must not add a strike.
+    """
+    return (error_status is not None and error_status >= 500) or (
+        str(error_type or "").strip().lower() in _OWNER_FAULT_ERROR_TYPES
+    )
 
 
 def reserved_user_model_names() -> frozenset[str]:

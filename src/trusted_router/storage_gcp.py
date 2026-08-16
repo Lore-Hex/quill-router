@@ -133,6 +133,7 @@ from trusted_router.storage_models import (
     BedrockGroupBuyPublicMessage,
     CreditMovement,
     TypedFinalizeResult,
+    UserModelPayout,
 )
 from trusted_router.types import IdentityVerificationStatus, UsageType
 
@@ -344,6 +345,7 @@ class SpannerBigtableStore:
         io = SpannerIO(
             database=self._database,
             spanner_module=self._spanner,
+            param_types=self._param_types,
             write_entity_batch=self._write_entity_batch,
             read_entity_tx=self._read_entity_tx,
             write_entity_tx=self._write_entity_tx,
@@ -1382,6 +1384,22 @@ class SpannerBigtableStore:
     ) -> UserProvidedModel:
         return self.user_model_store.record_dispatch_result(model_id, success=success)
 
+    def acquire_user_model_slot(
+        self,
+        model_id: str,
+        authorization_id: str,
+        *,
+        limit: int,
+    ) -> bool:
+        return self.user_model_store.acquire_slot(
+            model_id,
+            authorization_id,
+            limit=limit,
+        )
+
+    def release_user_model_slot(self, model_id: str, authorization_id: str) -> None:
+        self.user_model_store.release_slot(model_id, authorization_id)
+
     def list_public_user_models(
         self,
         *,
@@ -2158,6 +2176,7 @@ class SpannerBigtableStore:
         usage_type: UsageType | str,
         estimated_microdollars: int,
         credit_reservation_id: str | None,
+        authorization_id: str | None = None,
         requested_model_id: str | None = None,
         candidate_model_ids: list[str] | None = None,
         region: str | None = None,
@@ -2187,6 +2206,7 @@ class SpannerBigtableStore:
             usage_type=usage_type,
             estimated_microdollars=estimated_microdollars,
             credit_reservation_id=credit_reservation_id,
+            authorization_id=authorization_id,
             requested_model_id=requested_model_id,
             candidate_model_ids=candidate_model_ids,
             region=region,
@@ -2274,6 +2294,7 @@ class SpannerBigtableStore:
         actual_microdollars: int,
         selected_usage_type: UsageType | str,
         generation: Generation | None = None,
+        user_model_payout: UserModelPayout | None = None,
     ) -> bool:
         return self.typed_finalize_gateway_authorization_result(
             authorization_id,
@@ -2281,6 +2302,7 @@ class SpannerBigtableStore:
             actual_microdollars=actual_microdollars,
             selected_usage_type=selected_usage_type,
             generation=generation,
+            user_model_payout=user_model_payout,
         ).finalized
 
     def typed_finalize_gateway_authorization_result(
@@ -2291,6 +2313,7 @@ class SpannerBigtableStore:
         actual_microdollars: int,
         selected_usage_type: UsageType | str,
         generation: Generation | None = None,
+        user_model_payout: UserModelPayout | None = None,
     ) -> TypedFinalizeResult:
         """Route-facing typed settle: same contract as
         finalize_gateway_authorization, with explicit activity-index status.
@@ -2345,6 +2368,7 @@ class SpannerBigtableStore:
                 "_operational_analytics_outbox",
                 None,
             ),
+            user_model_payout=user_model_payout,
         )
         spanner_ms = (time.perf_counter() - spanner_start) * 1000
         if result["outcome"] == SettleOutcome.ERROR:
@@ -2390,6 +2414,7 @@ class SpannerBigtableStore:
         *,
         workspace_id: str,
         key_hash: str,
+        authorization_id: str | None = None,
         estimate: int,
         has_credit_candidate: bool,
         reservation_usage_type: UsageType | str,
@@ -2519,6 +2544,7 @@ class SpannerBigtableStore:
                 request_record_write_mode=self.request_record_write_mode,
                 credit_shard_candidates=candidates,
                 key_shard_candidates=key_shard_candidates,
+                authorization_id=authorization_id,
             )
 
         result = run_authorize(credit_shard_candidates)

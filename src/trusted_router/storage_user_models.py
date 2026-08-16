@@ -47,9 +47,11 @@ class InMemoryUserProvidedModels:
     def __init__(self, *, lock: threading.RLock) -> None:
         self._lock = lock
         self.models: dict[str, UserProvidedModel] = {}
+        self.slots: dict[str, set[str]] = {}
 
     def reset(self) -> None:
         self.models.clear()
+        self.slots.clear()
 
     def create(
         self,
@@ -235,6 +237,32 @@ class InMemoryUserProvidedModels:
                 model.online = False
                 model.online_changed_at = iso_now()
             return model
+
+    def acquire_slot(
+        self,
+        model_id: str,
+        authorization_id: str,
+        *,
+        limit: int,
+    ) -> bool:
+        with self._lock:
+            slots = self.slots.setdefault(normalize_custom_model_id(model_id), set())
+            if authorization_id in slots:
+                return True
+            if limit <= 0 or len(slots) >= limit:
+                return False
+            slots.add(authorization_id)
+            return True
+
+    def release_slot(self, model_id: str, authorization_id: str) -> None:
+        with self._lock:
+            canonical = normalize_custom_model_id(model_id)
+            slots = self.slots.get(canonical)
+            if slots is None:
+                return
+            slots.discard(authorization_id)
+            if not slots:
+                self.slots.pop(canonical, None)
 
     def list_public(self, *, kind: str | None = None) -> list[UserProvidedModel]:
         with self._lock:

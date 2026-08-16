@@ -41,6 +41,7 @@ from trusted_router.storage_models import (
     SyntheticProbeSample,
     SyntheticRollup,
     User,
+    UserModelPayout,
     UserProvidedModel,
     VerificationToken,
     VideoJob,
@@ -462,6 +463,14 @@ class Store(Protocol):
         *,
         success: bool,
     ) -> UserProvidedModel: ...
+    def acquire_user_model_slot(
+        self,
+        model_id: str,
+        authorization_id: str,
+        *,
+        limit: int,
+    ) -> bool: ...
+    def release_user_model_slot(self, model_id: str, authorization_id: str) -> None: ...
     def list_public_user_models(
         self,
         *,
@@ -659,6 +668,7 @@ class Store(Protocol):
         usage_type: UsageType | str,
         estimated_microdollars: int,
         credit_reservation_id: str | None,
+        authorization_id: str | None = ...,
         requested_model_id: str | None = ...,
         candidate_model_ids: list[str] | None = ...,
         region: str | None = ...,
@@ -822,6 +832,7 @@ class TypedBillingStore(Protocol):
         *,
         workspace_id: str,
         key_hash: str,
+        authorization_id: str | None = ...,
         estimate: int,
         has_credit_candidate: bool,
         reservation_usage_type: UsageType | str,
@@ -857,6 +868,7 @@ class TypedBillingStore(Protocol):
         actual_microdollars: int,
         selected_usage_type: UsageType | str,
         generation: Generation | None = ...,
+        user_model_payout: UserModelPayout | None = ...,
     ) -> bool: ...
 
     def typed_finalize_gateway(self, **kwargs: Any) -> dict[str, Any]: ...
