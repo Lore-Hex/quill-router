@@ -96,6 +96,14 @@ ensure_service_account() {
   done
   ensure_project_role "serviceAccount:${CLUSTER_SERVICE_ACCOUNT}" roles/monitoring.metricWriter
   ensure_project_role "serviceAccount:${CLUSTER_SERVICE_ACCOUNT}" roles/logging.logWriter
+  # Node 1 drains the durable Spanner analytics outbox. Keep this grant at the
+  # database boundary: changing the VM from the broad default Compute identity
+  # must not silently stop ingestion with spanner.sessions.create 403s.
+  gc spanner databases add-iam-policy-binding "$SPANNER_DATABASE_ID" \
+    --instance="$SPANNER_INSTANCE_ID" \
+    --member="serviceAccount:${CLUSTER_SERVICE_ACCOUNT}" \
+    --role=roles/spanner.databaseUser \
+    --quiet >/dev/null
 }
 
 ensure_network() {

@@ -216,7 +216,7 @@ def create_app(
     # The standing remediator (command-center Inc 3): detect -> decide ->
     # record on a fixed cadence, on every control plane, outside deploy
     # windows. Observe mode by default; see synthetic/remediator.py.
-    if settings.remediator_mode != "off":
+    if settings.remediator_mode != "off" and settings.remediator_in_process_enabled:
 
         @app.on_event("startup")
         async def _start_remediator_loop() -> None:  # pragma: no cover - thread wiring

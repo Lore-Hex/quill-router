@@ -357,6 +357,30 @@ async def _post_route_health_if_due(
     await _post_route_health(client, url=url, internal_token=internal_token)
 
 
+async def _post_remediator(
+    client: httpx.AsyncClient,
+    *,
+    url: str,
+    internal_token: str,
+) -> bool:
+    """Run the control-plane remediator and make scheduler failures visible."""
+    try:
+        response = await client.post(
+            url,
+            headers={"x-trustedrouter-internal-token": internal_token},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        decisions = payload.get("data", {}).get("decisions") if isinstance(payload, dict) else None
+        if not isinstance(decisions, int):
+            raise ValueError("remediator response did not contain a decision count")
+        print(f"remediator decisions: {decisions}")
+        return True
+    except Exception as exc:
+        print(f"remediator check failed: {exc}", file=sys.stderr)
+        return False
+
+
 async def run() -> int:
     settings = get_settings()
     monitor_region = (
@@ -569,6 +593,16 @@ async def run() -> int:
                     url=route_health_url,
                     internal_token=internal_token,
                 )
+        remediator_url = os.environ.get("TR_SYNTHETIC_REMEDIATOR_URL")
+        if remediator_url:
+            ok = (
+                await _post_remediator(
+                    client,
+                    url=remediator_url,
+                    internal_token=internal_token,
+                )
+                and ok
+            )
     return 0 if ok else 1
 
 

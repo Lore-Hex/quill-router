@@ -146,6 +146,11 @@ for monitor_region in "${_REGION_LIST[@]}"; do
     "TR_SYNTHETIC_THROUGHPUT_ENABLED=false"
     "TR_SYNTHETIC_THROUGHPUT_ONLY=false"
   )
+  if [ "$monitor_region" = "$TR_PRIMARY_REGION" ]; then
+    env_vars+=(
+      "TR_SYNTHETIC_REMEDIATOR_URL=${regional_ingest_base}/v1/internal/synthetic/remediate"
+    )
+  fi
   set_env_vars="$(IFS='|'; echo "^|^${env_vars[*]}")"
 
   log "deploying synthetic Cloud Run job ${job_name} in ${monitor_region}"

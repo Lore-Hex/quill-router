@@ -2683,6 +2683,92 @@ async def test_route_health_caller_obeys_hourly_gate_and_override(
     assert posted == (expected if should_post else [])
 
 
+@pytest.mark.asyncio
+async def test_remediator_caller_reports_success_and_failure(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from trusted_router.synthetic import cli as cli_module
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["x-trustedrouter-internal-token"] == "internal"
+        if request.url.path.endswith("/failure"):
+            return httpx.Response(503, json={"error": "unavailable"})
+        return httpx.Response(200, json={"data": {"decisions": 2}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        succeeded = await cli_module._post_remediator(
+            client,
+            url="https://trustedrouter.com/v1/internal/synthetic/remediate",
+            internal_token="internal",  # noqa: S106 - test placeholder.
+        )
+        failed = await cli_module._post_remediator(
+            client,
+            url="https://trustedrouter.com/failure",
+            internal_token="internal",  # noqa: S106 - test placeholder.
+        )
+
+    output = capsys.readouterr()
+    assert succeeded is True
+    assert failed is False
+    assert "remediator decisions: 2" in output.out
+    assert "remediator check failed:" in output.err
+
+
+@pytest.mark.asyncio
+async def test_primary_synthetic_job_invokes_scheduled_remediator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.synthetic import cli as cli_module
+
+    seen_urls: list[str] = []
+
+    async def empty_pass(**_kwargs: Any) -> tuple[list[Any], list[Any]]:
+        return [], []
+
+    class _Response:
+        status_code = 200
+        text = '{"data":{"decisions":0}}'
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {"data": {"decisions": 0}}
+
+    class _Client:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        async def post(self, url: str, **kwargs: Any) -> _Response:
+            assert kwargs["headers"]["x-trustedrouter-internal-token"] == "internal"
+            seen_urls.append(url)
+            return _Response()
+
+    settings = Settings(
+        environment="test",
+        sentry_dsn=None,
+        internal_gateway_token="internal",  # noqa: S106 - test placeholder.
+    )
+    monkeypatch.setattr(cli_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(cli_module, "_probe_and_rotation_pass", empty_pass)
+    monkeypatch.setattr(cli_module.httpx, "AsyncClient", _Client)
+    monkeypatch.setenv(
+        "TR_SYNTHETIC_REMEDIATOR_URL",
+        "https://trustedrouter.com/v1/internal/synthetic/remediate",
+    )
+    monkeypatch.delenv("TR_SYNTHETIC_THROUGHPUT_ONLY", raising=False)
+    monkeypatch.delenv("TR_SYNTHETIC_THROUGHPUT_ENABLED", raising=False)
+
+    assert await cli_module.run() == 0
+    assert seen_urls == ["https://trustedrouter.com/v1/internal/synthetic/remediate"]
+
+
 def test_synthetic_deploy_targets_public_api_domain() -> None:
     deploy_script = Path(__file__).resolve().parents[1] / "scripts/deploy/synthetic.sh"
     body = deploy_script.read_text()
@@ -2726,6 +2812,13 @@ def test_synthetic_deploy_targets_public_api_domain() -> None:
         '"TR_SYNTHETIC_ROUTE_HEALTH_URL=${regional_ingest_base}/v1/internal/synthetic/route-health"'
         in body
     )
+    assert (
+        '"TR_SYNTHETIC_REMEDIATOR_URL=${regional_ingest_base}/v1/internal/synthetic/remediate"'
+        in body
+    )
+    assert 'if [ "$monitor_region" = "$TR_PRIMARY_REGION" ]' in body
+    rollout = (Path(__file__).resolve().parents[1] / "scripts/deploy/rollout.sh").read_text()
+    assert '"TR_REMEDIATOR_IN_PROCESS_ENABLED=false"' in rollout
     assert (
         '"TR_SYNTHETIC_INGEST_URL=${throughput_ingest_base}/v1/internal/synthetic/samples"'
         in body
@@ -4087,3 +4180,36 @@ def test_internal_route_health_reports_flags_and_requires_token(
     assert response.status_code == 200
     assert response.json() == {"data": {"flagged": [asdict(flag)]}}
     assert reported == [flag]
+
+
+def test_internal_remediator_runs_between_heartbeats_and_requires_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.routes.internal import synthetic as synthetic_routes
+
+    events: list[str] = []
+
+    def fake_heartbeat(name: str, *, settings: Settings) -> None:
+        assert name == "scheduler:remediator"
+        assert settings.environment == "test"
+        events.append("heartbeat")
+
+    def fake_remediator(settings: Settings) -> list[object]:
+        assert settings.environment == "test"
+        events.append("remediate")
+        return [object(), object()]
+
+    monkeypatch.setattr(synthetic_routes, "record_heartbeat", fake_heartbeat)
+    monkeypatch.setattr(synthetic_routes, "run_remediator_pass", fake_remediator)
+    client = TestClient(create_app(_benchmark_ingest_settings(), init_observability=False))
+
+    unauthorized = client.post("/v1/internal/synthetic/remediate")
+    response = client.post(
+        "/v1/internal/synthetic/remediate",
+        headers={"x-trustedrouter-internal-token": "test-internal-secret"},
+    )
+
+    assert unauthorized.status_code in (401, 403)
+    assert response.status_code == 200
+    assert response.json() == {"data": {"decisions": 2}}
+    assert events == ["heartbeat", "remediate", "heartbeat"]

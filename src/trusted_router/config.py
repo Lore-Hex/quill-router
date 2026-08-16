@@ -828,6 +828,10 @@ class Settings(BaseSettings):
     # ship it behaves as observe.
     remediator_mode: str = "observe"
     remediator_interval_seconds: int = 120
+    # Cloud Run request-based CPU may pause background coroutines between
+    # requests. GCP therefore drives remediation from the scheduled synthetic
+    # worker and disables this loop; long-lived AWS/Azure processes retain it.
+    remediator_in_process_enabled: bool = True
     synthetic_fleet_peers: str = (
         "gcp=https://trustedrouter.com"
         ",aws=https://aws.trustedrouter.com"
