@@ -1,0 +1,385 @@
+from __future__ import annotations
+
+import secrets
+from collections.abc import Callable
+from typing import Any
+
+from trusted_router.storage_custom_models import (
+    CUSTOM_MODEL_ID_CHARS,
+    CUSTOM_MODEL_ID_RANDOM_LENGTH,
+    CUSTOM_MODEL_PREFIX,
+    custom_model_id_from_slug,
+    custom_model_slug,
+    normalize_custom_model_id,
+)
+from trusted_router.storage_gcp_io import SpannerIO, run_in_transaction_with_retry
+from trusted_router.storage_models import (
+    EncryptedSecretEnvelope,
+    UserProvidedModel,
+    iso_now,
+)
+from trusted_router.storage_user_models import USER_PROVIDED_MODEL_LIMIT_PER_USER
+
+_CUSTOM_MODEL_KIND = "custom_model"
+_USER_PROVIDED_MODEL_KIND = "user_provided_model"
+_EDITABLE_FIELDS = (
+    "name",
+    "kind",
+    "description",
+    "display_identity",
+    "display_name",
+    "endpoint_url",
+    "upstream_model_id",
+    "encrypted_endpoint_api_key",
+    "endpoint_key_hint",
+    "encrypted_signing_secret",
+    "supports_streaming",
+    "heartbeat_interval_seconds",
+    "max_concurrency",
+    "prompt_price_microdollars_per_million_tokens",
+    "completion_price_microdollars_per_million_tokens",
+    "human_verified",
+    "enabled",
+    "status",
+)
+
+
+class SpannerUserProvidedModels:
+    def __init__(self, io: SpannerIO) -> None:
+        self._io = io
+
+    def create(
+        self,
+        *,
+        owner_user_id: str,
+        owner_workspace_id: str,
+        name: str,
+        kind: str,
+        description: str = "",
+        display_identity: str = "handle",
+        display_name: str = "",
+        endpoint_url: str,
+        upstream_model_id: str | None = None,
+        encrypted_endpoint_api_key: EncryptedSecretEnvelope | None = None,
+        endpoint_key_hint: str | None = None,
+        encrypted_signing_secret: EncryptedSecretEnvelope | None = None,
+        supports_streaming: bool = True,
+        heartbeat_interval_seconds: int | None = None,
+        max_concurrency: int = 4,
+        prompt_price_microdollars_per_million_tokens: int = 0,
+        completion_price_microdollars_per_million_tokens: int = 0,
+        human_verified: bool = False,
+        enabled: bool = True,
+        status: str = "active",
+        slug: str | None = None,
+    ) -> UserProvidedModel:
+        def txn(transaction: Any) -> UserProvidedModel:
+            existing = self._list_for_user_tx(transaction, owner_user_id)
+            if len(existing) >= USER_PROVIDED_MODEL_LIMIT_PER_USER:
+                raise ValueError("custom_model_limit_exceeded")
+            model_id = (
+                self._new_id_tx(transaction)
+                if slug is None
+                else custom_model_id_from_slug(slug)
+            )
+            if self._model_id_exists_tx(transaction, model_id):
+                raise ValueError("custom_model_slug_taken")
+            model = UserProvidedModel(
+                id=model_id,
+                owner_user_id=owner_user_id,
+                owner_workspace_id=owner_workspace_id,
+                name=name,
+                kind=kind,
+                description=description,
+                display_identity=display_identity,
+                display_name=display_name,
+                endpoint_url=endpoint_url,
+                upstream_model_id=upstream_model_id or custom_model_slug(model_id),
+                encrypted_endpoint_api_key=encrypted_endpoint_api_key,
+                endpoint_key_hint=endpoint_key_hint,
+                encrypted_signing_secret=encrypted_signing_secret,
+                supports_streaming=supports_streaming,
+                heartbeat_interval_seconds=heartbeat_interval_seconds,
+                max_concurrency=max_concurrency,
+                prompt_price_microdollars_per_million_tokens=(
+                    prompt_price_microdollars_per_million_tokens
+                ),
+                completion_price_microdollars_per_million_tokens=(
+                    completion_price_microdollars_per_million_tokens
+                ),
+                human_verified=human_verified,
+                enabled=enabled,
+                status=status,
+            )
+            self._io.write_entity_tx(
+                transaction, _USER_PROVIDED_MODEL_KIND, model.id, model
+            )
+            self._io.write_entity_tx(
+                transaction,
+                "user_provided_model_by_user",
+                _user_model_id(owner_user_id, model.id),
+                {"model_id": model.id},
+            )
+            return model
+
+        return run_in_transaction_with_retry(self._io.database, txn)
+
+    def list_for_user(self, owner_user_id: str) -> list[UserProvidedModel]:
+        rows = self._io.list_entities(
+            "user_provided_model_by_user",
+            prefix=f"{owner_user_id}#",
+            cls=dict,
+        )
+        models: list[UserProvidedModel] = []
+        for row in rows:
+            model_id = str(row.get("model_id", ""))
+            if not model_id:
+                continue
+            model = self.get(model_id)
+            if model is not None and model.owner_user_id == owner_user_id:
+                models.append(model)
+        models.sort(key=lambda item: item.created_at)
+        return models
+
+    def get(self, model_id: str) -> UserProvidedModel | None:
+        return self._io.read_entity(
+            _USER_PROVIDED_MODEL_KIND,
+            normalize_custom_model_id(model_id),
+            UserProvidedModel,
+        )
+
+    def update(
+        self,
+        model_id: str,
+        *,
+        owner_user_id: str,
+        patch: dict[str, Any],
+    ) -> UserProvidedModel:
+        values = dict(patch)
+
+        def txn(transaction: Any) -> UserProvidedModel:
+            model = self._io.read_entity_tx(
+                transaction,
+                _USER_PROVIDED_MODEL_KIND,
+                normalize_custom_model_id(model_id),
+                UserProvidedModel,
+            )
+            if model is None or model.owner_user_id != owner_user_id:
+                raise ValueError("custom_model_not_found")
+            old_id = model.id
+            new_id = None
+            if "slug" in values:
+                new_id = custom_model_id_from_slug(str(values.pop("slug")))
+                if new_id != model.id and self._model_id_exists_tx(transaction, new_id):
+                    raise ValueError("custom_model_slug_taken")
+            for key in _EDITABLE_FIELDS:
+                if key in values:
+                    setattr(model, key, values[key])
+            if new_id is not None:
+                model.id = new_id
+            model.revision += 1
+            model.updated_at = iso_now()
+            self._io.write_entity_tx(
+                transaction, _USER_PROVIDED_MODEL_KIND, model.id, model
+            )
+            if old_id != model.id:
+                self._io.delete_entities_tx(
+                    transaction, _USER_PROVIDED_MODEL_KIND, [old_id]
+                )
+                self._io.delete_entities_tx(
+                    transaction,
+                    "user_provided_model_by_user",
+                    [_user_model_id(owner_user_id, old_id)],
+                )
+                self._io.write_entity_tx(
+                    transaction,
+                    "user_provided_model_by_user",
+                    _user_model_id(owner_user_id, model.id),
+                    {"model_id": model.id},
+                )
+            return model
+
+        return run_in_transaction_with_retry(self._io.database, txn)
+
+    def delete(self, model_id: str, *, owner_user_id: str) -> bool:
+        def txn(transaction: Any) -> bool:
+            model = self._io.read_entity_tx(
+                transaction,
+                _USER_PROVIDED_MODEL_KIND,
+                normalize_custom_model_id(model_id),
+                UserProvidedModel,
+            )
+            if model is None or model.owner_user_id != owner_user_id:
+                return False
+            self._io.delete_entities_tx(
+                transaction, _USER_PROVIDED_MODEL_KIND, [model.id]
+            )
+            self._io.delete_entities_tx(
+                transaction,
+                "user_provided_model_by_user",
+                [_user_model_id(owner_user_id, model.id)],
+            )
+            return True
+
+        return run_in_transaction_with_retry(self._io.database, txn)
+
+    def set_online(
+        self,
+        model_id: str,
+        *,
+        owner_user_id: str,
+        online: bool,
+    ) -> UserProvidedModel:
+        def mutate(model: UserProvidedModel) -> None:
+            if model.online != online:
+                model.online = online
+                model.online_changed_at = iso_now()
+            if online:
+                # A clock-in is a fresh start: strikes from the previous shift
+                # must not make the next single failure clock the owner out.
+                model.consecutive_dispatch_failures = 0
+
+        return self._mutate(model_id, mutate, owner_user_id=owner_user_id)
+
+    def record_heartbeat(self, model_id: str, *, expires_at: str) -> UserProvidedModel:
+        def mutate(model: UserProvidedModel) -> None:
+            model.heartbeat_expires_at = expires_at
+
+        return self._mutate(model_id, mutate)
+
+    def record_probe(
+        self,
+        model_id: str,
+        *,
+        status: str,
+        checked_at: str,
+    ) -> UserProvidedModel:
+        def mutate(model: UserProvidedModel) -> None:
+            model.probe_status = status
+            model.probe_checked_at = checked_at
+            if status == "ok":
+                # A passing probe is direct evidence the endpoint answers.
+                model.consecutive_dispatch_failures = 0
+
+        return self._mutate(model_id, mutate)
+
+    def record_dispatch_result(
+        self,
+        model_id: str,
+        *,
+        success: bool,
+    ) -> UserProvidedModel:
+        def mutate(model: UserProvidedModel) -> None:
+            if success:
+                model.consecutive_dispatch_failures = 0
+                return
+            model.consecutive_dispatch_failures += 1
+            if model.consecutive_dispatch_failures >= 3 and model.online:
+                model.online = False
+                model.online_changed_at = iso_now()
+
+        return self._mutate(model_id, mutate)
+
+    def list_public(self, *, kind: str | None = None) -> list[UserProvidedModel]:
+        rows = self._io.list_entities(
+            _USER_PROVIDED_MODEL_KIND,
+            prefix="",
+            cls=UserProvidedModel,
+        )
+        models = [
+            model
+            for model in rows
+            if model.enabled
+            and model.status == "active"
+            and (kind is None or model.kind == kind)
+        ]
+        models.sort(key=lambda item: item.created_at)
+        return models
+
+    def _mutate(
+        self,
+        model_id: str,
+        mutate: Callable[[UserProvidedModel], None],
+        *,
+        owner_user_id: str | None = None,
+    ) -> UserProvidedModel:
+        def txn(transaction: Any) -> UserProvidedModel:
+            model = self._io.read_entity_tx(
+                transaction,
+                _USER_PROVIDED_MODEL_KIND,
+                normalize_custom_model_id(model_id),
+                UserProvidedModel,
+            )
+            if model is None or (
+                owner_user_id is not None and model.owner_user_id != owner_user_id
+            ):
+                raise ValueError("custom_model_not_found")
+            mutate(model)
+            self._io.write_entity_tx(
+                transaction, _USER_PROVIDED_MODEL_KIND, model.id, model
+            )
+            return model
+
+        return run_in_transaction_with_retry(self._io.database, txn)
+
+    def _list_for_user_tx(
+        self,
+        transaction: Any,
+        owner_user_id: str,
+    ) -> list[UserProvidedModel]:
+        refs = self._io.list_entities(
+            "user_provided_model_by_user",
+            prefix=f"{owner_user_id}#",
+            cls=dict,
+        )
+        models: list[UserProvidedModel] = []
+        for ref in refs:
+            model_id = str(ref.get("model_id", ""))
+            if not model_id:
+                continue
+            model = self._io.read_entity_tx(
+                transaction,
+                _USER_PROVIDED_MODEL_KIND,
+                model_id,
+                UserProvidedModel,
+            )
+            if model is not None:
+                models.append(model)
+        return models
+
+    def _new_id_tx(self, transaction: Any) -> str:
+        for _ in range(100):
+            suffix = "".join(
+                secrets.choice(CUSTOM_MODEL_ID_CHARS)
+                for _ in range(CUSTOM_MODEL_ID_RANDOM_LENGTH)
+            )
+            model_id = f"{CUSTOM_MODEL_PREFIX}{suffix}"
+            if not self._model_id_exists_tx(transaction, model_id):
+                return model_id
+        raise RuntimeError("could not allocate custom model id")
+
+    def _model_id_exists_tx(
+        self,
+        transaction: Any,
+        model_id: str,
+    ) -> bool:
+        if (
+            self._io.read_entity_tx(
+                transaction,
+                _USER_PROVIDED_MODEL_KIND,
+                model_id,
+                UserProvidedModel,
+            )
+            is not None
+        ):
+            return True
+        return (
+            self._io.read_entity_tx(
+                transaction, _CUSTOM_MODEL_KIND, model_id, dict
+            )
+            is not None
+        )
+
+
+def _user_model_id(owner_user_id: str, model_id: str) -> str:
+    return f"{owner_user_id}#{model_id}"

@@ -1,0 +1,289 @@
+from __future__ import annotations
+
+import socket
+from typing import Any
+
+import pytest
+from pytest_httpx import HTTPXMock
+
+from trusted_router.config import Settings
+from trusted_router.services.user_model_probe import probe_user_model
+from trusted_router.services.user_model_secrets import (
+    encrypt_user_model_endpoint_key,
+    encrypt_user_model_signing_secret,
+)
+from trusted_router.storage import STORE
+from trusted_router.storage_models import UserProvidedModel
+from trusted_router.user_model_rules import sign_request_body
+
+
+@pytest.fixture(autouse=True)
+def _public_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("8.8.8.8", 0))
+        ],
+    )
+
+
+def _stored_model(settings: Settings, *, supports_streaming: bool = True) -> UserProvidedModel:
+    user = STORE.ensure_user("probe-owner@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    signing_secret = "probe-signing-secret"  # noqa: S105 - synthetic crypto fixture
+    endpoint_key = "probe-endpoint-key"  # noqa: S105 - synthetic crypto fixture
+    return STORE.create_user_model(
+        owner_user_id=user.id,
+        owner_workspace_id=workspace.id,
+        name="Probe model",
+        kind="machine",
+        display_name="probe-operator",
+        endpoint_url="https://owner.example/v1",
+        upstream_model_id="upstream-probe",
+        encrypted_endpoint_api_key=encrypt_user_model_endpoint_key(
+            endpoint_key,
+            settings,
+            workspace_id=workspace.id,
+        ),
+        encrypted_signing_secret=encrypt_user_model_signing_secret(
+            signing_secret,
+            settings,
+            workspace_id=workspace.id,
+        ),
+        supports_streaming=supports_streaming,
+        slug="probe-model",
+    )
+
+
+@pytest.mark.asyncio
+async def test_probe_validates_buffered_and_streaming_shapes_and_signature(
+    test_settings: Settings,
+    httpx_mock: HTTPXMock,
+) -> None:
+    model = _stored_model(test_settings)
+    url = "https://owner.example/v1/chat/completions"
+    httpx_mock.add_response(
+        method="POST",
+        url=url,
+        json={
+            "id": "chatcmpl-probe",
+            "object": "chat.completion",
+            "choices": [{"message": {"role": "assistant", "content": "pong"}}],
+        },
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url=url,
+        content=(
+            b'data: {"id":"chatcmpl-probe","object":"chat.completion.chunk",'
+            b'"choices":[{"delta":{"content":"pong"}}]}\n\n'
+            b"data: [DONE]\n\n"
+        ),
+        headers={"content-type": "text/event-stream"},
+    )
+
+    result = await probe_user_model(model, test_settings)
+
+    assert result.ok is True
+    stored = STORE.get_user_model(model.id)
+    assert stored is not None
+    assert stored.probe_status == "ok"
+    requests = httpx_mock.get_requests()
+    assert len(requests) == 2
+    for request in requests:
+        assert request.headers["authorization"] == "Bearer probe-endpoint-key"
+        signature = request.headers["tr-signature"]
+        timestamp = int(signature.split(",", 1)[0].removeprefix("t="))
+        assert signature == sign_request_body(
+            "probe-signing-secret", request.content, timestamp
+        )
+
+
+@pytest.mark.asyncio
+async def test_probe_records_failed_for_malformed_owner_body(
+    test_settings: Settings,
+    httpx_mock: HTTPXMock,
+) -> None:
+    model = _stored_model(test_settings, supports_streaming=False)
+    httpx_mock.add_response(
+        method="POST",
+        url="https://owner.example/v1/chat/completions",
+        json={"choices": []},
+    )
+
+    result = await probe_user_model(model, test_settings)
+
+    assert result.ok is False
+    stored = STORE.get_user_model(model.id)
+    assert stored is not None
+    assert stored.probe_status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_probe_rechecks_redirect_target_ip(
+    test_settings: Settings,
+    httpx_mock: HTTPXMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _stored_model(test_settings, supports_streaming=False)
+    httpx_mock.add_response(
+        method="POST",
+        url="https://owner.example/v1/chat/completions",
+        status_code=307,
+        headers={"location": "https://private.example/chat/completions"},
+    )
+
+    def resolve(host: str, *_args: Any, **_kwargs: Any) -> list[Any]:
+        address = "127.0.0.1" if host == "private.example" else "8.8.8.8"
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", (address, 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    result = await probe_user_model(model, test_settings)
+
+    assert result.ok is False
+    assert len(httpx_mock.get_requests()) == 1
+    stored = STORE.get_user_model(model.id)
+    assert stored is not None
+    assert stored.probe_status == "failed"
+
+
+# --- Review-round regressions -------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_probe_strips_credentials_on_cross_origin_redirect(
+    test_settings: Settings,
+    httpx_mock: HTTPXMock,
+) -> None:
+    """A redirect to another origin must not carry the owner's upstream key
+    or a valid TR signature to whoever sits there."""
+    model = _stored_model(test_settings, supports_streaming=False)
+    httpx_mock.add_response(
+        method="POST",
+        url="https://owner.example/v1/chat/completions",
+        status_code=307,
+        headers={"location": "https://elsewhere.example/collect"},
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://elsewhere.example/collect",
+        json={
+            "id": "chatcmpl-probe",
+            "object": "chat.completion",
+            "choices": [{"message": {"role": "assistant", "content": "pong"}}],
+        },
+    )
+
+    await probe_user_model(model, test_settings)
+
+    requests = httpx_mock.get_requests()
+    assert len(requests) == 2
+    first, second = requests
+    assert first.headers.get("authorization") == "Bearer probe-endpoint-key"
+    assert "tr-signature" in first.headers
+    assert "authorization" not in second.headers
+    assert "tr-signature" not in second.headers
+
+
+@pytest.mark.asyncio
+async def test_probe_keeps_credentials_on_same_origin_redirect(
+    test_settings: Settings,
+    httpx_mock: HTTPXMock,
+) -> None:
+    model = _stored_model(test_settings, supports_streaming=False)
+    httpx_mock.add_response(
+        method="POST",
+        url="https://owner.example/v1/chat/completions",
+        status_code=307,
+        headers={"location": "/v2/chat/completions"},
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://owner.example/v2/chat/completions",
+        json={
+            "id": "chatcmpl-probe",
+            "object": "chat.completion",
+            "choices": [{"message": {"role": "assistant", "content": "pong"}}],
+        },
+    )
+
+    result = await probe_user_model(model, test_settings)
+
+    assert result.ok is True
+    second = httpx_mock.get_requests()[1]
+    assert second.headers["authorization"] == "Bearer probe-endpoint-key"
+    assert "tr-signature" in second.headers
+
+
+@pytest.mark.asyncio
+async def test_probe_caps_response_size(
+    test_settings: Settings,
+    httpx_mock: HTTPXMock,
+) -> None:
+    """A chatty owner cannot fill control-plane memory through the probe."""
+    model = _stored_model(test_settings, supports_streaming=False)
+    huge = {
+        "id": "chatcmpl-probe",
+        "object": "chat.completion",
+        "choices": [{"message": {"role": "assistant", "content": "x" * (200 * 1024)}}],
+    }
+    httpx_mock.add_response(
+        method="POST",
+        url="https://owner.example/v1/chat/completions",
+        json=huge,
+    )
+
+    result = await probe_user_model(model, test_settings)
+
+    assert result.ok is False
+    stored = STORE.get_user_model(model.id)
+    assert stored is not None
+    assert stored.probe_status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_probe_has_a_total_deadline_that_bounds_a_trickling_owner(
+    test_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """httpx's read timeout resets on every byte; a trickling endpoint would
+    otherwise hold the probe forever. asyncio.timeout is the real deadline."""
+    import asyncio
+    from collections.abc import AsyncIterator
+
+    import httpx
+
+    from trusted_router.services import user_model_probe
+
+    monkeypatch.setattr(user_model_probe, "_PROBE_TOTAL_SECONDS", 0.5)
+    model = _stored_model(test_settings, supports_streaming=False)
+
+    class _Trickle(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            while True:
+                await asyncio.sleep(0.05)
+                yield b" "
+
+        async def aclose(self) -> None:
+            return None
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=_Trickle())
+
+    real_client = httpx.AsyncClient
+
+    def patched_client(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(user_model_probe.httpx, "AsyncClient", patched_client)
+
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    result = await probe_user_model(model, test_settings)
+    assert result.ok is False
+    assert loop.time() - started < 3.0
+    stored = STORE.get_user_model(model.id)
+    assert stored is not None
+    assert stored.probe_status == "failed"

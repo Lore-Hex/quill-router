@@ -1,0 +1,47 @@
+{% extends "public/_base.html" %}
+{% block hero %}
+<section class="public-hero marketing-hero">
+  <div>
+    <div class="kicker">USER-PROVIDED · {{ model.kind|upper }}</div>
+    <h1>{{ heading }}</h1>
+    <p class="lead">This model is operated by a community member, not TrustedRouter.</p>
+    <div class="hero-actions">
+      <a class="btn primary" href="/user-chat?model={{ model.id }}">Open chat</a>
+      <a class="btn" href="/models">TrustedRouter catalog</a>
+    </div>
+  </div>
+  <div class="public-hero-metrics" aria-label="User-provided model facts">
+    <div><strong>{{ model.kind }}</strong><span>operator kind</span></div>
+    <div><strong>{{ 'On' if model.on_the_clock else 'Off' }}</strong><span>the clock</span></div>
+    <div><strong>No</strong><span>attestation or ZDR</span></div>
+  </div>
+</section>
+{% endblock %}
+{% block body %}
+<section class="panel">
+  <div class="panel-head">
+    <h2><code>{{ model.id }}</code></h2>
+    <div class="provider-chip-list">
+      <span class="pill warn">user-provided</span>
+      <span class="pill">{{ model.kind }}</span>
+      <span class="pill {{ 'good' if model.on_the_clock else 'warn' }}">{{ 'on the clock' if model.on_the_clock else 'off the clock' }}</span>
+      {% if model.kind == 'human' and model.operator.human_verified %}<span class="pill good">✓ verified human</span>{% endif %}
+    </div>
+  </div>
+  <div class="panel-body">
+    <p>{{ model.description }}</p>
+    <table><tbody>
+      <tr><th>Operator</th><td>{{ model.operator.display }} <span class="muted">({{ model.operator.identity|replace('_', ' ') }})</span></td></tr>
+      <tr><th>Prompt price</th><td>{{ model.pricing.prompt_microdollars_per_million_tokens }} µ$/Mtok · {{ model.pricing.prompt_per_token }} per token</td></tr>
+      <tr><th>Completion price</th><td>{{ model.pricing.completion_microdollars_per_million_tokens }} µ$/Mtok · {{ model.pricing.completion_per_token }} per token</td></tr>
+    </tbody></table>
+  </div>
+</section>
+<section class="panel">
+  <div class="panel-head"><h2>Privacy notice</h2><span class="pill warn">standard privacy</span></div>
+  <div class="panel-body">
+    <p><strong>{{ model.privacy_notice }}</strong></p>
+    <p>This endpoint is not attested and is not zero-data-retention. TrustedRouter does not operate the model owner's endpoint.</p>
+  </div>
+</section>
+{% endblock %}

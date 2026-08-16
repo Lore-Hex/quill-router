@@ -1235,6 +1235,9 @@ def test_the_real_write_surface_writes_exactly_v2_today() -> None:
         "src/trusted_router/storage_models.py",
         "src/trusted_router/storage_models.py",
         "src/trusted_router/storage_models.py",
+        # UserProvidedModel's two envelope fields (endpoint key, signing secret)
+        "src/trusted_router/storage_models.py",
+        "src/trusted_router/storage_models.py",
     )
 
 
@@ -1251,7 +1254,7 @@ def test_an_unparseable_module_blocks() -> None:
 def test_the_probe_reports_the_format_a_real_call_produced() -> None:
     """The write-side twin of the enclave's declaration, on the real modules.
 
-    Both write entry points are called for real against a local AES wrapper,
+    Every write entry point is called for real against a local AES wrapper,
     and the format is read off the envelope objects those calls constructed.
     Nothing here parses anything, which is the point: every spelling that
     defeated the scan twice — an alias, a subclass, dataclasses.replace, an
@@ -1264,6 +1267,13 @@ def test_the_probe_reports_the_format_a_real_call_produced() -> None:
     assert dict(observed.by_entry_point) == {
         "src/trusted_router/byok_crypto.py:encrypt_byok_secret": (V2,),
         "src/trusted_router/byok_crypto.py:encrypt_control_secret": (V2,),
+        "src/trusted_router/byok_crypto.py:encrypt_user_model_secret": (V2,),
+        "src/trusted_router/services/user_model_secrets.py:encrypt_user_model_endpoint_key": (
+            V2,
+        ),
+        "src/trusted_router/services/user_model_secrets.py:encrypt_user_model_signing_secret": (
+            V2,
+        ),
     }
 
 
@@ -1486,6 +1496,9 @@ def test_the_real_tree_has_a_probe_for_every_entry_point_it_declares() -> None:
     assert scan.entry_points == (
         "src/trusted_router/byok_crypto.py:encrypt_byok_secret",
         "src/trusted_router/byok_crypto.py:encrypt_control_secret",
+        "src/trusted_router/byok_crypto.py:encrypt_user_model_secret",
+        "src/trusted_router/services/user_model_secrets.py:encrypt_user_model_endpoint_key",
+        "src/trusted_router/services/user_model_secrets.py:encrypt_user_model_signing_secret",
     )
     assert set(scan.entry_points) == set(gate._WRITE_PROBES)
 

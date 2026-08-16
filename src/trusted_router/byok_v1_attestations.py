@@ -222,6 +222,14 @@ MIGRATED_SURFACES: tuple[tuple[str, str, str], ...] = (
     ("broadcast_destination", "encrypted_api_key", "control"),
     ("broadcast_destination", "encrypted_headers", "control"),
     ("byok", "encrypted_secret", "provider"),
+    # User-provided model owner secrets. They are v2 from birth — the
+    # `user_model` namespace was added after the split and its decryptor
+    # refuses a v1 envelope — so the backfill can never have work here. They
+    # are listed anyway because this tuple is what makes "the audit walked
+    # every encrypted surface" true: a surface left out is a surface an
+    # attestation silently did not cover.
+    ("user_provided_model", "encrypted_endpoint_api_key", "user_model"),
+    ("user_provided_model", "encrypted_signing_secret", "user_model"),
 )
 
 MIGRATED_KINDS: tuple[str, ...] = tuple(

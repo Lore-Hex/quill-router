@@ -2129,6 +2129,7 @@ def make_fake_store(
     )
     from trusted_router.storage_gcp_rate_limits import SpannerRateLimits
     from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
+    from trusted_router.storage_gcp_user_models import SpannerUserProvidedModels
     from trusted_router.storage_gcp_verification_tokens import SpannerVerificationTokens
     from trusted_router.storage_gcp_video_jobs import SpannerVideoJobs
     from trusted_router.storage_gcp_wallet_challenges import SpannerWalletChallenges
@@ -2188,6 +2189,7 @@ def make_fake_store(
     )
     store.byok_store = SpannerByok(io)
     store.custom_model_store = SpannerCustomModels(io)
+    store.user_model_store = SpannerUserProvidedModels(io)
     store.broadcast_store = SpannerBroadcastDestinations(io)
     store.video_job_store = SpannerVideoJobs(io)
     store.settle_outbox = SpannerSettleOutbox(store._database, store._param_types)

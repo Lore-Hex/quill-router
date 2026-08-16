@@ -69,6 +69,19 @@ def test_mcp_models_list_includes_sonnet_5_and_subagent(client: TestClient) -> N
     assert subagent["trustedrouter"]["byok_available"] is False
 
 
+def test_mcp_models_hide_internal_monitor_model(client: TestClient) -> None:
+    listed_payload = _mcp_call(
+        client, "models-list", {"query": "trustedrouter/monitor", "limit": 100}
+    )
+    listed = _tool_json(listed_payload)
+    assert "trustedrouter/monitor" not in {item["id"] for item in listed["data"]}
+
+    fetched = _mcp_call(client, "model-get", {"model": "trustedrouter/monitor"})
+    result = fetched["result"]
+    assert result["isError"] is True
+    assert "Unknown model" in result["content"][0]["text"]
+
+
 def test_mcp_credits_get_uses_api_key_workspace(
     client: TestClient,
     inference_headers: dict[str, str],

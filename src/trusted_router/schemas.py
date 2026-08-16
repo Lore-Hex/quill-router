@@ -202,6 +202,40 @@ class CustomModelPatchRequest(_Strict):
     enabled: bool | None = None
 
 
+class UserModelCreateRequest(_Strict):
+    name: str = Field(min_length=1, max_length=120)
+    slug: str | None = Field(default=None, min_length=3, max_length=96)
+    kind: Literal["machine", "agent", "human"]
+    description: str = Field(default="", max_length=2000)
+    display_identity: Literal["handle", "verified_name"] = "handle"
+    display_name: str = Field(min_length=1, max_length=120)
+    endpoint_url: str = Field(min_length=1, max_length=2048)
+    upstream_model_id: str | None = Field(default=None, min_length=1, max_length=256)
+    endpoint_api_key: str | None = Field(default=None, min_length=1, max_length=8192)
+    supports_streaming: bool = True
+    heartbeat_interval_seconds: int | None = Field(default=None, ge=5, le=3600)
+    max_concurrency: int = Field(default=4, ge=1, le=100)
+    prompt_price_microdollars_per_million_tokens: int = Field(default=0, ge=0)
+    completion_price_microdollars_per_million_tokens: int = Field(default=0, ge=0)
+
+
+class UserModelPatchRequest(_Strict):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    slug: str | None = Field(default=None, min_length=3, max_length=96)
+    kind: Literal["machine", "agent", "human"] | None = None
+    description: str | None = Field(default=None, max_length=2000)
+    display_identity: Literal["handle", "verified_name"] | None = None
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
+    endpoint_url: str | None = Field(default=None, min_length=1, max_length=2048)
+    upstream_model_id: str | None = Field(default=None, min_length=1, max_length=256)
+    endpoint_api_key: str | None = Field(default=None, min_length=1, max_length=8192)
+    supports_streaming: bool | None = None
+    heartbeat_interval_seconds: int | None = Field(default=None, ge=5, le=3600)
+    max_concurrency: int | None = Field(default=None, ge=1, le=100)
+    prompt_price_microdollars_per_million_tokens: int | None = Field(default=None, ge=0)
+    completion_price_microdollars_per_million_tokens: int | None = Field(default=None, ge=0)
+
+
 class GatewayAuthorizeRequest(_Lenient):
     api_key_hash: str | None = Field(default=None, min_length=1)
     api_key_lookup_hash: str | None = Field(default=None, min_length=1)

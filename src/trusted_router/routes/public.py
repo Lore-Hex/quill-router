@@ -115,6 +115,7 @@ from trusted_router.provider_contract import (
     PROVIDER_CATALOG_V2_SCHEMA,
 )
 from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
+from trusted_router.serialization import user_model_public_shape
 from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.services.ops_chat import OpsChatSupportMessage, fanout_support_message
 from trusted_router.services.trust_release import (
@@ -1542,10 +1543,13 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/user-chat")
     async def user_chat(model: str = Query(..., min_length=1)) -> str:
         locked_model_id = normalize_custom_model_id(model)
+        user_model = STORE.get_user_model(locked_model_id)
         return public_chat_html(
             settings,
             locked_model_id=locked_model_id,
-            locked_model_label="Custom model",
+            locked_model_label=(
+                "User-provided model" if user_model is not None else "Custom model"
+            ),
         )
 
     @public_html_route("/synth")
@@ -1585,6 +1589,29 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 )
             return HTMLResponse(body)
         body = public_model_detail_html(settings, cleaned)
+        if body is None:
+            user_model = STORE.get_user_model(normalize_custom_model_id(cleaned))
+            if (
+                user_model is not None
+                and user_model.enabled
+                and user_model.status == "active"
+            ):
+                shape = user_model_public_shape(user_model)
+                body = render_template(
+                    "public/user_model_detail.html",
+                    api_base_url=settings.api_base_url,
+                    site_url=(
+                        f"https://{settings.trusted_domain}/models/{user_model.id}"
+                    ),
+                    title=f"{user_model.name} | User-provided model",
+                    heading=user_model.name,
+                    description=shape["privacy_notice"],
+                    robots_meta="noindex",
+                    model=shape,
+                    google_enabled=settings.google_oauth_enabled,
+                    github_enabled=settings.github_oauth_enabled,
+                    static_version=settings.release,
+                )
         if body is None:
             return HTMLResponse(
                 public_model_not_found_html(settings, cleaned),

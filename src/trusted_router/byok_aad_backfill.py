@@ -28,8 +28,10 @@ from trusted_router.byok_crypto import (
     ALGORITHM_V2,
     decrypt_byok_secret,
     decrypt_control_secret,
+    decrypt_user_model_secret,
     encrypt_byok_secret,
     encrypt_control_secret,
+    encrypt_user_model_secret,
 )
 from trusted_router.byok_v1_attestations import (
     MIGRATED_KINDS,
@@ -47,6 +49,10 @@ from trusted_router.byok_v1_attestations import (
     utc_now,
 )
 from trusted_router.key_management import KeyWrapperSettings
+from trusted_router.services.user_model_secrets import (
+    USER_MODEL_ENDPOINT_KEY_PURPOSE,
+    USER_MODEL_SIGNING_PURPOSE,
+)
 from trusted_router.storage_models import EncryptedSecretEnvelope
 
 
@@ -309,7 +315,10 @@ class BackfillRunner:
         raw_envelope: dict[str, Any],
     ) -> dict[str, str]:
         assert self._settings is not None
-        workspace_id = _required_string(row.body, "workspace_id")
+        workspace_id = _required_string(
+            row.body,
+            "owner_workspace_id" if row.kind == "user_provided_model" else "workspace_id",
+        )
         envelope = EncryptedSecretEnvelope(**raw_envelope)
         if envelope_family == "provider":
             provider = _required_string(row.body, "provider")
@@ -330,6 +339,30 @@ class BackfillRunner:
                 self._settings,
                 workspace_id=workspace_id,
                 provider=provider,
+            )
+        elif envelope_family == "user_model":
+            purpose = _broadcast_context(row.entity_id, field)
+            # A v1 envelope has no namespace: its AAD is the same bytes for
+            # every family, so the control opener reads it. Re-seal under the
+            # user_model namespace and verify with the strict (v2-only) opener
+            # the application uses.
+            plaintext = decrypt_control_secret(
+                envelope,
+                self._settings,
+                workspace_id=workspace_id,
+                purpose=purpose,
+            )
+            migrated = encrypt_user_model_secret(
+                plaintext,
+                self._settings,
+                workspace_id=workspace_id,
+                purpose=purpose,
+            )
+            verified = decrypt_user_model_secret(
+                migrated,
+                self._settings,
+                workspace_id=workspace_id,
+                purpose=purpose,
             )
         else:
             purpose = _broadcast_context(row.entity_id, field)
@@ -621,6 +654,10 @@ def _fields_for_kind(kind: str) -> tuple[tuple[str, str], ...]:
 
 
 def _broadcast_context(destination_id: str, field: str) -> str:
+    if field == "encrypted_endpoint_api_key":
+        return USER_MODEL_ENDPOINT_KEY_PURPOSE
+    if field == "encrypted_signing_secret":
+        return USER_MODEL_SIGNING_PURPOSE
     suffix = {"encrypted_api_key": "api_key", "encrypted_headers": "headers"}[field]
     # Byte-identical to services.broadcast.broadcast_secret_context. Keeping
     # this tiny helper here avoids importing the application-global STORE into

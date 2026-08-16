@@ -52,6 +52,8 @@ from trusted_router.routes.provider_portal import register_provider_portal_route
 from trusted_router.routes.public import register_public_routes
 from trusted_router.routes.ses_notifications import register_ses_notification_routes
 from trusted_router.routes.signup import register_signup_routes
+from trusted_router.routes.user_models import register_user_model_routes
+from trusted_router.routes.user_models_public import register_user_model_public_routes
 from trusted_router.routes.verification_status import register_verification_status_routes
 from trusted_router.routes.wallet_oauth import register_wallet_oauth_routes
 from trusted_router.routes.workspaces import register_workspace_routes
@@ -420,6 +422,8 @@ def _make_api_router(settings: Settings) -> APIRouter:
     register_billing_routes(router)
     register_broadcast_routes(router)
     register_custom_model_routes(router)
+    register_user_model_routes(router)
+    register_user_model_public_routes(router)
     register_key_routes(router)
     register_oauth_key_routes(router)
     register_activity_routes(router)

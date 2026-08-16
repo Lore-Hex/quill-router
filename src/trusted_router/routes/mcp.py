@@ -115,7 +115,12 @@ class TrustedRouterMCP:
     async def _tool_models_list(self, args: dict[str, Any], _request: Request) -> dict[str, Any]:
         query = str(args.get("query") or "").strip().lower()
         limit = _bounded_int(args.get("limit"), default=25, minimum=1, maximum=100)
-        models = [model_to_openrouter_shape(model) for model in MODELS.values()]
+        models = []
+        for model in MODELS.values():
+            shape = model_to_openrouter_shape(model)
+            if _is_internal_model_shape(shape):
+                continue
+            models.append(shape)
         if query:
             models = [
                 item
@@ -132,13 +137,19 @@ class TrustedRouterMCP:
         model = MODELS.get(model_id)
         if model is None:
             raise MCPToolError(f"Unknown model: {model_id}")
-        return _tool_json({"data": model_to_openrouter_shape(model)})
+        shape = model_to_openrouter_shape(model)
+        if _is_internal_model_shape(shape):
+            raise MCPToolError(f"Unknown model: {model_id}")
+        return _tool_json({"data": shape})
 
     async def _tool_model_endpoints(
         self, args: dict[str, Any], _request: Request
     ) -> dict[str, Any]:
         model_id = _required_string(args, "model")
-        if model_id not in MODELS:
+        model = MODELS.get(model_id)
+        # Same visibility rule as list/get: an internal-only model must not be
+        # confirmable through its endpoints either.
+        if model is None or _is_internal_model_shape(model_to_openrouter_shape(model)):
             raise MCPToolError(f"Unknown model: {model_id}")
         return _tool_json(
             {
@@ -338,6 +349,13 @@ def _mcp_error(request_id: Any, code: int, message: str) -> dict[str, Any]:
 
 def _tool_json(payload: Any) -> dict[str, Any]:
     return _tool_text(json.dumps(payload, indent=2, sort_keys=True))
+
+
+def _is_internal_model_shape(shape: dict[str, Any]) -> bool:
+    trustedrouter = shape.get("trustedrouter")
+    return bool(
+        isinstance(trustedrouter, dict) and trustedrouter.get("internal_only")
+    )
 
 
 def _tool_text(text: str, *, is_error: bool = False) -> dict[str, Any]:

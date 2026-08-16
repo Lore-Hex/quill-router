@@ -28,6 +28,14 @@ ALGORITHM_V2 = "TR-BYOK-ENVELOPE-AES-256-GCM-V2"
 # component rather than a prefix on the same one.
 NAMESPACE_PROVIDER = "provider"
 NAMESPACE_CONTROL = "control"
+# Secrets registered by user-provided model owners (endpoint API key, TR
+# signing secret). They are consumed on BOTH sides of the trust boundary: the
+# control plane probes the endpoint and dispatches locally, and the attested
+# enclave dispatches in production. Neither existing family fits — "provider"
+# is BYOK keys the enclave alone opens, and "control" is by construction never
+# shipped to the enclave (its byokcache refuses that namespace). A third
+# namespace keeps both invariants intact and makes the sharing explicit.
+NAMESPACE_USER_MODEL = "user_model"
 
 # Local/test fallback wrapping key — derived via HKDF from a label, not
 # a literal byte string. Anyone who reads this file can still
@@ -148,6 +156,56 @@ def decrypt_control_secret(
     """
     namespace = NAMESPACE_CONTROL if envelope.algorithm == ALGORITHM_V2 else NAMESPACE_PROVIDER
     aad = _envelope_aad(envelope.algorithm, namespace, workspace_id, purpose)
+    dek = _unwrap_dek(envelope, aad, settings)
+    plaintext = AESGCM(dek).decrypt(_unb64(envelope.nonce), _unb64(envelope.ciphertext), aad)
+    return plaintext.decode("utf-8")
+
+
+def encrypt_user_model_secret(
+    raw_secret: str,
+    settings: KeyWrapperSettings,
+    *,
+    workspace_id: str,
+    purpose: str,
+) -> EncryptedSecretEnvelope:
+    """Envelope-encrypt a user-provided model owner secret.
+
+    Sealed under NAMESPACE_USER_MODEL with the OWNER's workspace id and a
+    per-secret purpose as associated data. Always v2: this family was born
+    after the namespace split, so there is no v1 legacy to keep opening.
+    """
+    plaintext = raw_secret.strip().encode("utf-8")
+    if not plaintext:
+        raise ValueError("raw user-model secret is empty")
+
+    dek = secrets.token_bytes(32)
+    nonce = secrets.token_bytes(12)
+    dek_nonce = secrets.token_bytes(12)
+    aad = _aad_v2(NAMESPACE_USER_MODEL, workspace_id, purpose)
+
+    ciphertext = AESGCM(dek).encrypt(nonce, plaintext, aad)
+    encrypted_dek = _wrap_dek(dek, dek_nonce, aad, settings)
+    return EncryptedSecretEnvelope(
+        algorithm=ALGORITHM_V2,
+        key_ref=_key_ref(settings),
+        encrypted_dek=_b64(encrypted_dek),
+        dek_nonce=_b64(dek_nonce),
+        ciphertext=_b64(ciphertext),
+        nonce=_b64(nonce),
+    )
+
+
+def decrypt_user_model_secret(
+    envelope: EncryptedSecretEnvelope,
+    settings: KeyWrapperSettings,
+    *,
+    workspace_id: str,
+    purpose: str,
+) -> str:
+    """Decrypt a user-provided model owner secret (v2 only; no v1 fallback)."""
+    if envelope.algorithm != ALGORITHM_V2:
+        raise ValueError("user-model secrets are always v2 envelopes")
+    aad = _aad_v2(NAMESPACE_USER_MODEL, workspace_id, purpose)
     dek = _unwrap_dek(envelope, aad, settings)
     plaintext = AESGCM(dek).decrypt(_unb64(envelope.nonce), _unb64(envelope.ciphertext), aad)
     return plaintext.decode("utf-8")

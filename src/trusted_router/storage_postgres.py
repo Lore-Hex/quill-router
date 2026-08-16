@@ -85,6 +85,7 @@ from trusted_router.storage_models import (
     SyntheticProbeSample,
     SyntheticRollup,
     User,
+    UserProvidedModel,
     VerificationToken,
     VideoJob,
     WalletChallenge,
@@ -2094,6 +2095,94 @@ class PostgresStore:
     ) -> bool:
         self._not_implemented("delete_custom_model")
 
+    # User-provided models ---------------------------------------------------
+
+    def create_user_model(
+        self,
+        *,
+        owner_user_id: str,
+        owner_workspace_id: str,
+        name: str,
+        kind: str,
+        description: str = "",
+        display_identity: str = "handle",
+        display_name: str = "",
+        endpoint_url: str,
+        upstream_model_id: str | None = None,
+        encrypted_endpoint_api_key: EncryptedSecretEnvelope | None = None,
+        endpoint_key_hint: str | None = None,
+        encrypted_signing_secret: EncryptedSecretEnvelope | None = None,
+        supports_streaming: bool = True,
+        heartbeat_interval_seconds: int | None = None,
+        max_concurrency: int = 4,
+        prompt_price_microdollars_per_million_tokens: int = 0,
+        completion_price_microdollars_per_million_tokens: int = 0,
+        human_verified: bool = False,
+        enabled: bool = True,
+        status: str = "active",
+        slug: str | None = None,
+    ) -> UserProvidedModel:
+        self._not_implemented("create_user_model")
+
+    def list_user_models_for_user(self, owner_user_id: str) -> list[UserProvidedModel]:
+        self._not_implemented("list_user_models_for_user")
+
+    def get_user_model(self, model_id: str) -> UserProvidedModel | None:
+        return self._read_entity("user_provided_model", model_id, UserProvidedModel)
+
+    def update_user_model(
+        self,
+        model_id: str,
+        *,
+        owner_user_id: str,
+        patch: dict[str, Any],
+    ) -> UserProvidedModel:
+        self._not_implemented("update_user_model")
+
+    def delete_user_model(self, model_id: str, *, owner_user_id: str) -> bool:
+        self._not_implemented("delete_user_model")
+
+    def set_user_model_online(
+        self,
+        model_id: str,
+        *,
+        owner_user_id: str,
+        online: bool,
+    ) -> UserProvidedModel:
+        self._not_implemented("set_user_model_online")
+
+    def record_user_model_heartbeat(
+        self,
+        model_id: str,
+        *,
+        expires_at: str,
+    ) -> UserProvidedModel:
+        self._not_implemented("record_user_model_heartbeat")
+
+    def record_user_model_probe(
+        self,
+        model_id: str,
+        *,
+        status: str,
+        checked_at: str,
+    ) -> UserProvidedModel:
+        self._not_implemented("record_user_model_probe")
+
+    def record_user_model_dispatch_result(
+        self,
+        model_id: str,
+        *,
+        success: bool,
+    ) -> UserProvidedModel:
+        self._not_implemented("record_user_model_dispatch_result")
+
+    def list_public_user_models(
+        self,
+        *,
+        kind: str | None = None,
+    ) -> list[UserProvidedModel]:
+        self._not_implemented("list_public_user_models")
+
     # Broadcast destinations ------------------------------------------------
 
     def create_broadcast_destination(
@@ -3326,6 +3415,11 @@ class PostgresStore:
         idempotency_fingerprint: str | None = None,
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
+        user_provided_model_id: str | None = None,
+        user_provided_model_revision: int | None = None,
+        user_model_prompt_price_microdollars_per_m: int | None = None,
+        user_model_completion_price_microdollars_per_m: int | None = None,
+        user_model_owner_user_id: str | None = None,
         additional_cost_reservation_microdollars: int = 0,
         native_batch_eligible: bool = False,
         settlement: str = "local",
@@ -3371,6 +3465,15 @@ class PostgresStore:
             idempotency_fingerprint=idempotency_fingerprint,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
+            user_provided_model_id=user_provided_model_id,
+            user_provided_model_revision=user_provided_model_revision,
+            user_model_prompt_price_microdollars_per_m=(
+                user_model_prompt_price_microdollars_per_m
+            ),
+            user_model_completion_price_microdollars_per_m=(
+                user_model_completion_price_microdollars_per_m
+            ),
+            user_model_owner_user_id=user_model_owner_user_id,
             additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
             native_batch_eligible=native_batch_eligible,
             settlement=settlement,

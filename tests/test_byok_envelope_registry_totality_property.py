@@ -290,13 +290,19 @@ from trusted_router.byok_crypto import (
     ALGORITHM_V2,
     NAMESPACE_CONTROL,
     NAMESPACE_PROVIDER,
+    NAMESPACE_USER_MODEL,
     decrypt_byok_secret,
     decrypt_control_secret,
+    decrypt_user_model_secret,
 )
 from trusted_router.byok_v1_attestations import MIGRATED_KINDS
 from trusted_router.config import Settings
 from trusted_router.services.broadcast import broadcast_secret_context
 from trusted_router.services.broadcast_adapters import _secret_context as adapter_secret_context
+from trusted_router.services.user_model_secrets import (
+    USER_MODEL_ENDPOINT_KEY_PURPOSE,
+    USER_MODEL_SIGNING_PURPOSE,
+)
 from trusted_router.storage_models import EncryptedSecretEnvelope
 
 SRC = pathlib.Path(trusted_router.__file__).parent
@@ -1186,6 +1192,9 @@ NON_ENVELOPE_KINDS = {
     # Index row written as a dict literal: {"destination_id": ...}. See
     # SpannerBroadcastDestinations.create in storage_gcp_broadcast.py.
     "broadcast_destination_by_workspace": "pointer row, dict literal body",
+    "custom_model": "prompt-wrapper row, no encrypted envelope fields",
+    "custom_model_by_user": "pointer row, dict literal body",
+    "user_provided_model_by_user": "pointer row, dict literal body",
 }
 
 # Fields on a persisted dataclass whose annotation admits Any, and so could
@@ -1354,6 +1363,7 @@ def test_the_sealing_oracle_is_read_off_byok_crypto() -> None:
     assert SEALING_FUNCTIONS == {
         "encrypt_byok_secret": NAMESPACE_PROVIDER,
         "encrypt_control_secret": NAMESPACE_CONTROL,
+        "encrypt_user_model_secret": NAMESPACE_USER_MODEL,
     }, (
         "the namespace each encrypt_* function seals with has changed: "
         f"{SEALING_FUNCTIONS}. That is an AAD-format change, not a refactor."
@@ -1476,6 +1486,10 @@ def _entity_id_for(family: str) -> str:
 def _context_for(family: str, entity_id: str, field: str) -> str:
     if family == NAMESPACE_PROVIDER:
         return PROVIDER
+    if field == "encrypted_endpoint_api_key":
+        return USER_MODEL_ENDPOINT_KEY_PURPOSE
+    if field == "encrypted_signing_secret":
+        return USER_MODEL_SIGNING_PURPOSE
     # The purpose the application uses is the field name minus its prefix; the
     # identity between that and the backfill's private copy is pinned below.
     return broadcast_secret_context(entity_id, field.removeprefix("encrypted_"))
@@ -1507,7 +1521,11 @@ def test_each_derived_location_round_trips_through_the_backfill(
     context = _context_for(family, entity_id, field)
 
     body: dict[str, Any] = {
-        "workspace_id": WORKSPACE,
+        (
+            "owner_workspace_id"
+            if kind == "user_provided_model"
+            else "workspace_id"
+        ): WORKSPACE,
         field: _v1_envelope(secret, settings, workspace_id=WORKSPACE, context=context),
     }
     if family == NAMESPACE_PROVIDER:
@@ -1534,6 +1552,10 @@ def test_each_derived_location_round_trips_through_the_backfill(
     envelope = EncryptedSecretEnvelope(**raw)
     if family == NAMESPACE_PROVIDER:
         opened = decrypt_byok_secret(envelope, settings, workspace_id=WORKSPACE, provider=context)
+    elif family == NAMESPACE_USER_MODEL:
+        opened = decrypt_user_model_secret(
+            envelope, settings, workspace_id=WORKSPACE, purpose=context
+        )
     else:
         opened = decrypt_control_secret(envelope, settings, workspace_id=WORKSPACE, purpose=context)
     assert opened == secret, (
@@ -1545,7 +1567,10 @@ def test_each_derived_location_round_trips_through_the_backfill(
 @pytest.mark.parametrize(
     "field",
     sorted(
-        name for name in DERIVED_FIELD_NAMES if DERIVED_FAMILIES.get(name) == {NAMESPACE_CONTROL}
+        name
+        for name in DERIVED_FIELD_NAMES
+        if DERIVED_FAMILIES.get(name) == {NAMESPACE_CONTROL}
+        and name in {"encrypted_api_key", "encrypted_headers"}
     ),
 )
 def test_the_broadcast_context_helper_matches_the_service(field: str) -> None:
@@ -1567,6 +1592,20 @@ def test_the_broadcast_context_helper_matches_the_service(field: str) -> None:
     assert _broadcast_context(destination_id, field) == adapter_secret_context(
         destination_id, suffix
     )
+
+
+@pytest.mark.parametrize(
+    ("field", "purpose"),
+    (
+        ("encrypted_endpoint_api_key", USER_MODEL_ENDPOINT_KEY_PURPOSE),
+        ("encrypted_signing_secret", USER_MODEL_SIGNING_PURPOSE),
+    ),
+)
+def test_the_user_model_context_helper_matches_the_service(
+    field: str,
+    purpose: str,
+) -> None:
+    assert _broadcast_context("ignored", field) == purpose
 
 
 # ---------------------------------------------------------------------------
@@ -1893,15 +1932,22 @@ def test_the_derivation_reproduces_todays_registry() -> None:
     assert DERIVED_MODEL_FIELDS == {
         "ByokProviderConfig": ("encrypted_secret",),
         "BroadcastDestination": ("encrypted_api_key", "encrypted_headers"),
+        "UserProvidedModel": (
+            "encrypted_endpoint_api_key",
+            "encrypted_signing_secret",
+        ),
     }
     assert DERIVED_KINDS == {
         "ByokProviderConfig": {"byok"},
         "BroadcastDestination": {"broadcast_destination"},
+        "UserProvidedModel": {"user_provided_model"},
     }
     assert DERIVED_FAMILIES == {
         "encrypted_secret": {NAMESPACE_PROVIDER},
         "encrypted_api_key": {NAMESPACE_CONTROL},
         "encrypted_headers": {NAMESPACE_CONTROL},
+        "encrypted_endpoint_api_key": {NAMESPACE_USER_MODEL},
+        "encrypted_signing_secret": {NAMESPACE_USER_MODEL},
     }
     # The derived scope of the adapter-kind guard. Pinned because it replaced a
     # hand-written module list: a fixed point that quietly stopped widening
@@ -1911,9 +1957,15 @@ def test_the_derivation_reproduces_todays_registry() -> None:
         "byok",
         "broadcast_destination",
         "broadcast_destination_by_workspace",
+        "custom_model",
+        "custom_model_by_user",
+        "user_provided_model",
+        "user_provided_model_by_user",
     }
     assert {site.split(":")[0] for sites in DERIVED_ADJACENT_KINDS.values() for site in sites} == {
         "storage_gcp_byok.py",
         "storage_gcp_broadcast.py",
+        "storage_gcp_custom_models.py",
+        "storage_gcp_user_models.py",
         "storage_postgres.py",
     }

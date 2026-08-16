@@ -514,12 +514,47 @@ def _probe_control_secret(settings: Any) -> object:
     )
 
 
+def _probe_user_model_secret(settings: Any) -> object:
+    from trusted_router.byok_crypto import encrypt_user_model_secret
+
+    return encrypt_user_model_secret(
+        _PROBE_PLAINTEXT, settings, workspace_id="ws-probe", purpose="user_model_signing"
+    )
+
+
+def _probe_user_model_endpoint_key(settings: Any) -> object:
+    from trusted_router.services.user_model_secrets import encrypt_user_model_endpoint_key
+
+    return encrypt_user_model_endpoint_key(
+        _PROBE_PLAINTEXT, settings, workspace_id="ws-probe"
+    )
+
+
+def _probe_user_model_signing_secret(settings: Any) -> object:
+    from trusted_router.services.user_model_secrets import encrypt_user_model_signing_secret
+
+    return encrypt_user_model_signing_secret(
+        _PROBE_PLAINTEXT, settings, workspace_id="ws-probe"
+    )
+
+
 # Every write entry point, keyed exactly as `_write_entry_points()` names them.
 # A function under src/trusted_router that returns an envelope and is absent
 # from this table is a REFUSAL, not a gap: see `derive_written_formats`.
 _WRITE_PROBES: dict[str, Callable[[Any], object]] = {
     "src/trusted_router/byok_crypto.py:encrypt_byok_secret": _probe_byok_secret,
     "src/trusted_router/byok_crypto.py:encrypt_control_secret": _probe_control_secret,
+    # User-provided model owner secrets: a third envelope family, v2 from
+    # birth. The two service wrappers are probed as well as the primitive —
+    # each is a separate entry point the enumeration sees, and an unprobed
+    # entry point is a refusal, not a gap.
+    "src/trusted_router/byok_crypto.py:encrypt_user_model_secret": _probe_user_model_secret,
+    "src/trusted_router/services/user_model_secrets.py:encrypt_user_model_endpoint_key": (
+        _probe_user_model_endpoint_key
+    ),
+    "src/trusted_router/services/user_model_secrets.py:encrypt_user_model_signing_secret": (
+        _probe_user_model_signing_secret
+    ),
 }
 
 

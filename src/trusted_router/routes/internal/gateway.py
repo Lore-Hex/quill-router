@@ -43,6 +43,7 @@ from trusted_router.catalog import (
     endpoint_zero_data_retention,
 )
 from trusted_router.config import Settings, get_settings
+from trusted_router.custom_model_billing import custom_model_cost_microdollars
 from trusted_router.errors import api_error, assert_workspace_billing_active
 from trusted_router.money import money_pair, token_cost_microdollars
 from trusted_router.openai_service_tiers import (
@@ -95,6 +96,11 @@ from trusted_router.services.settle_outbox_drain import (
     drain_settle_outbox,
     spanner_settle_outbox,
 )
+from trusted_router.services.user_model_secrets import (
+    USER_MODEL_ENDPOINT_KEY_PURPOSE,
+    USER_MODEL_SECRET_NAMESPACE,
+    USER_MODEL_SIGNING_PURPOSE,
+)
 from trusted_router.storage import (
     STORE,
     Generation,
@@ -111,10 +117,12 @@ from trusted_router.storage_gcp_io import spanner_rpc_budget
 from trusted_router.storage_models import (
     SettleOutboxRow,
     TypedFinalizeResult,
+    UserProvidedModel,
 )
 from trusted_router.synthetic.fleet import record_heartbeat
 from trusted_router.synthetic.funding import ensure_monitor_funding, monitor_lookup_hash
 from trusted_router.types import ErrorType, UsageType
+from trusted_router.user_model_rules import dispatch_budget, user_model_is_on_the_clock
 
 logger = logging.getLogger(__name__)
 REQUEST_METADATA_VERSION = 1
@@ -261,15 +269,44 @@ def _authorize_gateway_sync(
             ErrorType.BAD_REQUEST,
         )
     custom_model = None
+    user_model = None
     if is_custom_model_id(requested_model_id):
-        custom_model = STORE.get_custom_model(normalize_custom_model_id(requested_model_id))
-        if custom_model is None or not custom_model.enabled:
-            raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
-        body_dict["model"] = custom_model.base_model_id
-        body_dict.pop("models", None)
-        body_dict["custom_model_id"] = custom_model.id
-        body_dict["custom_model_revision"] = custom_model.revision
-        _force_custom_model_credit_routes(body_dict)
+        normalized = normalize_custom_model_id(requested_model_id)
+        custom_model = STORE.get_custom_model(normalized)
+        if custom_model is not None:
+            if not custom_model.enabled:
+                raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
+            body_dict["model"] = custom_model.base_model_id
+            body_dict.pop("models", None)
+            body_dict["custom_model_id"] = custom_model.id
+            body_dict["custom_model_revision"] = custom_model.revision
+            _force_custom_model_credit_routes(body_dict)
+        else:
+            user_model = STORE.get_user_model(normalized)
+            if (
+                user_model is None
+                or not user_model.enabled
+                or user_model.status != "active"
+                # Serving is gated until settle/refund exist for these
+                # authorizations; an unreleasable hold is worse than a 404.
+                or not settings.user_models_dispatch_enabled
+            ):
+                raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
+            if not user_model_is_on_the_clock(user_model, datetime.now(dt.UTC)):
+                raise api_error(
+                    503,
+                    f"User-provided {user_model.kind} model {user_model.id} is off the clock",
+                    ErrorType.MODEL_OFF_THE_CLOCK,
+                )
+            # Same fingerprint discipline as prompt wrappers: a same-key retry
+            # after a material edit must 409, not replay stale frozen prices.
+            body_dict.pop("models", None)
+            body_dict["custom_model_id"] = user_model.id
+            body_dict["custom_model_revision"] = user_model.revision
+            _force_custom_model_credit_routes(
+                body_dict,
+                error_message="User-provided models do not support BYOK routes",
+            )
     request_idempotency_key = _gateway_idempotency_key(request, body) or str(uuid.uuid4())
     _require_native_batch_route_binding(body.route_type, request_idempotency_key)
     partner_mode = _partner_billing_mode_or_error(
@@ -301,7 +338,9 @@ def _authorize_gateway_sync(
         and requested_model.supports_embeddings
         and not requested_model.supports_chat
     )
-    if is_video_request:
+    if user_model is not None:
+        endpoint_candidates = [_user_model_gateway_candidate(user_model)]
+    elif is_video_request:
         endpoint_candidates = video_route_endpoint_candidates(body_dict, settings)
     elif is_embeddings_request:
         endpoint_candidates = embeddings_route_endpoint_candidates(body_dict, settings)
@@ -349,7 +388,14 @@ def _authorize_gateway_sync(
 
     output_tokens = body.output_estimate
     model_estimate = (
-        partner_cost_microdollars(
+        custom_model_cost_microdollars(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            prompt_price=user_model.prompt_price_microdollars_per_million_tokens,
+            completion_price=user_model.completion_price_microdollars_per_million_tokens,
+        )
+        if user_model is not None
+        else partner_cost_microdollars(
             partner_mode,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
@@ -514,6 +560,19 @@ def _authorize_gateway_sync(
                 key_usage_shards=key_usage_shards,
                 custom_model_id=custom_model.id if custom_model else None,
                 custom_model_revision=custom_model.revision if custom_model else None,
+                user_provided_model_id=user_model.id if user_model else None,
+                user_provided_model_revision=user_model.revision if user_model else None,
+                user_model_prompt_price_microdollars_per_m=(
+                    user_model.prompt_price_microdollars_per_million_tokens
+                    if user_model
+                    else None
+                ),
+                user_model_completion_price_microdollars_per_m=(
+                    user_model.completion_price_microdollars_per_million_tokens
+                    if user_model
+                    else None
+                ),
+                user_model_owner_user_id=user_model.owner_user_id if user_model else None,
                 additional_cost_reservation_microdollars=additional_cost_reservation,
                 native_batch_eligible=native_batch_eligible,
                 expires_at=expires_at,
@@ -652,6 +711,19 @@ def _authorize_gateway_sync(
             idempotency_fingerprint=request_fingerprint,
             custom_model_id=custom_model.id if custom_model else None,
             custom_model_revision=custom_model.revision if custom_model else None,
+            user_provided_model_id=user_model.id if user_model else None,
+            user_provided_model_revision=user_model.revision if user_model else None,
+            user_model_prompt_price_microdollars_per_m=(
+                user_model.prompt_price_microdollars_per_million_tokens
+                if user_model
+                else None
+            ),
+            user_model_completion_price_microdollars_per_m=(
+                user_model.completion_price_microdollars_per_million_tokens
+                if user_model
+                else None
+            ),
+            user_model_owner_user_id=user_model.owner_user_id if user_model else None,
             additional_cost_reservation_microdollars=additional_cost_reservation,
             native_batch_eligible=native_batch_eligible,
             settlement=settlement,
@@ -786,8 +858,55 @@ def _gateway_resolve_custom_model_sync(
     assert_workspace_billing_active(workspace)
     if not is_custom_model_id(body.model):
         raise api_error(400, "Model is not a custom model", ErrorType.BAD_REQUEST)
-    custom_model = STORE.get_custom_model(normalize_custom_model_id(body.model))
-    if custom_model is None or not custom_model.enabled:
+    normalized = normalize_custom_model_id(body.model)
+    custom_model = STORE.get_custom_model(normalized)
+    if custom_model is None:
+        user_model = STORE.get_user_model(normalized)
+        if (
+            user_model is None
+            or not user_model.enabled
+            or user_model.status != "active"
+            or not settings.user_models_dispatch_enabled
+        ):
+            raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
+        budget = dispatch_budget(user_model.kind)
+        return {
+            "data": {
+                "workspace_id": workspace.id,
+                "api_key_hash": api_key.hash,
+                "route_type": body.route_type,
+                "custom_model": {
+                    "id": user_model.id,
+                    "name": user_model.name,
+                    "kind": "user_provided",
+                    "user_model_kind": user_model.kind,
+                    # The envelopes below are bound (AAD) to the OWNER's
+                    # workspace, a per-secret purpose, and the user_model
+                    # namespace — not to the caller's workspace above; the
+                    # enclave must decrypt with exactly these.
+                    "secret_namespace": USER_MODEL_SECRET_NAMESPACE,
+                    "owner_workspace_id": user_model.owner_workspace_id,
+                    "owner_user_id": user_model.owner_user_id,
+                    "endpoint_url": user_model.endpoint_url,
+                    "upstream_model_id": user_model.upstream_model_id,
+                    "revision": user_model.revision,
+                    "supports_streaming": user_model.supports_streaming,
+                    "endpoint_encrypted_secret": encrypted_secret_payload(
+                        user_model.encrypted_endpoint_api_key
+                    ),
+                    "endpoint_secret_purpose": USER_MODEL_ENDPOINT_KEY_PURPOSE,
+                    "signing_encrypted_secret": encrypted_secret_payload(
+                        user_model.encrypted_signing_secret
+                    ),
+                    "signing_secret_purpose": USER_MODEL_SIGNING_PURPOSE,
+                    "connect_timeout_seconds": budget.connect,
+                    "first_byte_timeout_seconds": budget.first_byte,
+                    "idle_timeout_seconds": budget.idle,
+                    "total_timeout_seconds": budget.total,
+                },
+            }
+        }
+    if not custom_model.enabled:
         raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
     return {
         "data": {
@@ -797,6 +916,7 @@ def _gateway_resolve_custom_model_sync(
             "custom_model": {
                 "id": custom_model.id,
                 "name": custom_model.name,
+                "kind": "prompt_wrapper",
                 "base_model_id": custom_model.base_model_id,
                 "hidden_prompt": custom_model.hidden_prompt,
                 "revision": custom_model.revision,
@@ -1310,8 +1430,12 @@ def _requests_monitor_model(body: dict[str, Any]) -> bool:
     return False
 
 
-def _force_custom_model_credit_routes(body: dict[str, Any]) -> None:
-    _force_credit_routes(body, error_message="Custom models do not support BYOK routes")
+def _force_custom_model_credit_routes(
+    body: dict[str, Any],
+    *,
+    error_message: str = "Custom models do not support BYOK routes",
+) -> None:
+    _force_credit_routes(body, error_message=error_message)
 
 
 def _force_partner_credit_routes(body: dict[str, Any]) -> None:
@@ -1934,6 +2058,47 @@ def _gateway_byok_payload(byok_config: Any | None, workspace_id: str) -> dict[st
         "byok_key_hint": byok_config.key_hint,
         "byok_provider": envelope_provider,
     }
+
+
+def _user_model_gateway_candidate(
+    user_model: UserProvidedModel,
+) -> tuple[Model, ModelEndpoint]:
+    """Build the Credits-only authorization sentinel for owner dispatch.
+
+    User-provided models deliberately do not enter the frozen catalog.  The
+    gateway still needs a stable model/endpoint pair for its reservation
+    record, so this pair exists only inside the authorization response; the
+    enclave resolves the actual owner dispatch block separately.
+    """
+    model = Model(
+        id=user_model.id,
+        name=user_model.name,
+        provider="trustedrouter",
+        context_length=1_000_000,
+        upstream_id=user_model.upstream_model_id,
+        prepaid_available=True,
+        byok_available=False,
+        prompt_price_microdollars_per_million_tokens=(
+            user_model.prompt_price_microdollars_per_million_tokens
+        ),
+        completion_price_microdollars_per_million_tokens=(
+            user_model.completion_price_microdollars_per_million_tokens
+        ),
+    )
+    endpoint = ModelEndpoint(
+        id=f"{user_model.id}@trustedrouter/credits",
+        model_id=user_model.id,
+        provider="trustedrouter",
+        usage_type="Credits",
+        upstream_id=user_model.upstream_model_id,
+        prompt_price_microdollars_per_million_tokens=(
+            user_model.prompt_price_microdollars_per_million_tokens
+        ),
+        completion_price_microdollars_per_million_tokens=(
+            user_model.completion_price_microdollars_per_million_tokens
+        ),
+    )
+    return model, endpoint
 
 
 def _eligible_gateway_endpoint_candidates(
