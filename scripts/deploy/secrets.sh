@@ -8,6 +8,31 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
 
+validate_synthetic_monitor_candidate() {
+  local value="$1"
+  local repo_root
+  local -a python_cmd
+  repo_root="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+  if [ -x "${repo_root}/.venv/bin/python" ]; then
+    python_cmd=("${repo_root}/.venv/bin/python")
+  elif command -v uv >/dev/null 2>&1; then
+    python_cmd=(uv run python)
+  else
+    echo "ERROR: synthetic monitor validation requires the project venv or uv." >&2
+    return 1
+  fi
+  log "validating synthetic monitor key against the dedicated production workspace"
+  printf '%s' "$value" | (
+    cd "$repo_root"
+    TR_STORAGE_BACKEND=spanner-bigtable \
+      TR_GCP_PROJECT_ID="$PROJECT_ID" \
+      TR_SPANNER_INSTANCE_ID="$SPANNER_INSTANCE_ID" \
+      TR_SPANNER_DATABASE_ID="$SPANNER_DATABASE_ID" \
+      PYTHONPATH=src:. \
+      "${python_cmd[@]}" scripts/validate_synthetic_monitor_key.py
+  ) >/dev/null
+}
+
 ensure_secret_from_env_file() {
   local env_name="$1"
   local secret_name="$2"
@@ -28,6 +53,9 @@ ensure_secret_from_env_file() {
   fi
   if [ -z "$value" ]; then
     return 0
+  fi
+  if [ "$secret_name" = "trustedrouter-synthetic-monitor-api-key" ]; then
+    validate_synthetic_monitor_candidate "$value"
   fi
   ensure_secret_value "$secret_name" "$value"
   log "uploaded secret ${secret_name}"

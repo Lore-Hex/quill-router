@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.provision_synthetic_monitor import provision
+from scripts.provision_synthetic_monitor import (
+    provision,
+    validate_synthetic_monitor_key,
+)
 from trusted_router.storage import InMemoryStore
 
 
@@ -77,6 +80,65 @@ def test_provision_synthetic_monitor_is_isolated_funding_limited_and_idempotent(
     snapshot = store.credit_money_snapshot(workspaces[0].id)
     assert snapshot is not None
     assert snapshot[0] == 1_000_000_000
+
+
+def test_validate_synthetic_monitor_key_accepts_only_dedicated_active_key(
+    tmp_path: Path,
+) -> None:
+    store = InMemoryStore()
+    key_file = tmp_path / "monitor.key"
+    provisioned = provision(
+        store,
+        email="synthetic-monitor@trustedrouter.internal",
+        workspace_name="TrustedRouter Synthetic Monitoring",
+        key_name="Synthetic monitor",
+        funding_microdollars=1_000_000_000,
+        funding_event_id="synthetic_monitor_workspace_funding_v1",
+        target_shards=16,
+        apply=True,
+        key_output_file=key_file,
+    )
+    account = store.get_credit_account(provisioned["workspace_id"])
+    key = store.get_key_by_hash(provisioned["key_id"])
+    assert account is not None
+    assert key is not None
+    account.shard_count = 16
+    key.usage_shard_count = 16
+
+    result = validate_synthetic_monitor_key(store, key_file.read_text())
+
+    assert result["valid"] is True
+    assert result["key_id"] == key.hash
+    assert result["credit_shards"] == 16
+    assert result["key_shards"] == 16
+
+
+def test_validate_synthetic_monitor_key_rejects_disabled_unrelated_key() -> None:
+    store = InMemoryStore()
+    user = store.ensure_user("other@example.com", email="other@example.com")
+    workspace = store.list_workspaces_for_user(user.id)[0]
+    raw_key, key = store.create_api_key(
+        workspace_id=workspace.id,
+        name="Other key",
+        creator_user_id=user.id,
+    )
+    key.disabled = True
+
+    try:
+        validate_synthetic_monitor_key(store, raw_key)
+    except ValueError as exc:
+        assert str(exc) == "synthetic monitor key is disabled"
+    else:
+        raise AssertionError("disabled unrelated key was accepted")
+
+
+def test_secret_sync_validates_monitor_key_before_upload() -> None:
+    script = Path("scripts/deploy/secrets.sh").read_text(encoding="utf-8")
+
+    validation = 'validate_synthetic_monitor_candidate "$value"'
+    upload = 'ensure_secret_value "$secret_name" "$value"'
+    assert validation in script
+    assert script.index(validation) < script.index(upload)
 
 
 def test_provision_synthetic_monitor_rejects_reused_capped_key(tmp_path: Path) -> None:
