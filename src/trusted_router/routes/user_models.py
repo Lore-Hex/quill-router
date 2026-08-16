@@ -46,7 +46,7 @@ def register_user_model_routes(router: APIRouter) -> None:
         assert_user_can_create_custom_models(STORE.get_user(owner_user_id), settings)
         slug = validate_user_model_slug(body.slug) if body.slug is not None else None
         display_name = validate_user_model_display_name(body.display_name)
-        endpoint_url = validate_endpoint_url(body.endpoint_url, settings)
+        endpoint_url = await validate_endpoint_url(body.endpoint_url, settings)
         _validate_price(
             body.prompt_price_microdollars_per_million_tokens,
             body.completion_price_microdollars_per_million_tokens,
@@ -128,7 +128,7 @@ def register_user_model_routes(router: APIRouter) -> None:
                 str(patch["display_name"])
             )
         if "endpoint_url" in patch:
-            patch["endpoint_url"] = validate_endpoint_url(
+            patch["endpoint_url"] = await validate_endpoint_url(
                 str(patch["endpoint_url"]), settings
             )
         kind = str(patch.get("kind", existing.kind))

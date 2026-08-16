@@ -65,7 +65,7 @@ def register(app: FastAPI) -> None:
         )
         normalized_slug = validate_user_model_slug(slug) if slug else None
         normalized_display_name = validate_user_model_display_name(display_name)
-        normalized_endpoint = validate_endpoint_url(endpoint_url, settings)
+        normalized_endpoint = await validate_endpoint_url(endpoint_url, settings)
         signing_secret = secrets.token_urlsafe(32)
         try:
             STORE.create_user_model(
@@ -154,7 +154,7 @@ def register(app: FastAPI) -> None:
             "description": description,
             "display_identity": display_identity,
             "display_name": validate_user_model_display_name(display_name),
-            "endpoint_url": validate_endpoint_url(endpoint_url, settings),
+            "endpoint_url": await validate_endpoint_url(endpoint_url, settings),
             "upstream_model_id": upstream_model_id or None,
             "supports_streaming": supports_streaming,
             "heartbeat_interval_seconds": heartbeat_interval_seconds,

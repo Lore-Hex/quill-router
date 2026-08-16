@@ -234,6 +234,10 @@ class SpannerUserProvidedModels:
             if model.online != online:
                 model.online = online
                 model.online_changed_at = iso_now()
+            if online:
+                # A clock-in is a fresh start: strikes from the previous shift
+                # must not make the next single failure clock the owner out.
+                model.consecutive_dispatch_failures = 0
 
         return self._mutate(model_id, mutate, owner_user_id=owner_user_id)
 
@@ -253,6 +257,9 @@ class SpannerUserProvidedModels:
         def mutate(model: UserProvidedModel) -> None:
             model.probe_status = status
             model.probe_checked_at = checked_at
+            if status == "ok":
+                # A passing probe is direct evidence the endpoint answers.
+                model.consecutive_dispatch_failures = 0
 
         return self._mutate(model_id, mutate)
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -9,7 +10,7 @@ import httpx
 
 from trusted_router.byok_crypto import decrypt_control_secret
 from trusted_router.config import Settings
-from trusted_router.services.safe_egress import assert_public_url
+from trusted_router.services.safe_egress import aassert_public_url
 from trusted_router.services.user_model_secrets import (
     USER_MODEL_ENDPOINT_KEY_PURPOSE,
     USER_MODEL_SIGNING_PURPOSE,
@@ -18,7 +19,9 @@ from trusted_router.storage import STORE
 from trusted_router.storage_models import UserProvidedModel
 from trusted_router.user_model_rules import sign_request_body
 
-_PROBE_TIMEOUT_SECONDS = 15.0
+_PROBE_TIMEOUT_SECONDS = 15.0  # per socket operation
+_PROBE_TOTAL_SECONDS = 20.0  # hard deadline for the whole probe, redirects included
+_PROBE_MAX_BYTES = 64 * 1024  # a canary answer is a few hundred bytes
 _MAX_REDIRECTS = 3
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
@@ -121,28 +124,59 @@ async def _probe_once(
     if endpoint_api_key is not None:
         headers["authorization"] = f"Bearer {endpoint_api_key}"
     current = f"{model.endpoint_url.rstrip('/')}/chat/completions"
+    origin = _origin_of(current)
     timeout = httpx.Timeout(_PROBE_TIMEOUT_SECONDS)
-    async with httpx.AsyncClient(follow_redirects=False, timeout=timeout) as client:
+    allow_http = settings.environment in {"local", "test"}
+    # httpx's read timeout resets on every socket read, so it never bounds a
+    # trickling endpoint; asyncio.timeout is the actual deadline. The byte cap
+    # keeps a chatty owner from filling control-plane memory: the canary
+    # answer is a few hundred bytes.
+    async with (
+        asyncio.timeout(_PROBE_TOTAL_SECONDS),
+        httpx.AsyncClient(follow_redirects=False, timeout=timeout) as client,
+    ):
         for _ in range(_MAX_REDIRECTS + 1):
-            assert_public_url(
-                current,
-                allow_http=settings.environment in {"local", "test"},
-            )
-            response = await client.post(current, content=body, headers=headers)
-            if response.status_code in _REDIRECT_STATUSES:
-                location = response.headers.get("location")
-                if not location:
-                    raise httpx.HTTPError("redirect without location")
-                current = str(httpx.URL(current).join(location))
-                continue
-            if not 200 <= response.status_code < 300:
-                raise httpx.HTTPStatusError(
-                    "probe returned a non-success status",
-                    request=response.request,
-                    response=response,
-                )
-            return response.content
+            await aassert_public_url(current, allow_http=allow_http)
+            hop_headers = dict(headers)
+            if _origin_of(current) != origin:
+                # Credentials are for the registered endpoint only. A redirect
+                # to another origin must not carry the owner's upstream key or
+                # a valid TR signature to whoever sits there.
+                hop_headers.pop("authorization", None)
+                hop_headers.pop("TR-Signature", None)
+            async with client.stream(
+                "POST", current, content=body, headers=hop_headers
+            ) as response:
+                if response.status_code in _REDIRECT_STATUSES:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise httpx.HTTPError("redirect without location")
+                    current = str(httpx.URL(current).join(location))
+                    continue
+                if not 200 <= response.status_code < 300:
+                    raise httpx.HTTPStatusError(
+                        "probe returned a non-success status",
+                        request=response.request,
+                        response=response,
+                    )
+                return await _read_capped(response, _PROBE_MAX_BYTES)
     raise httpx.TooManyRedirects("probe exceeded redirect limit")
+
+
+def _origin_of(url: str) -> tuple[str, str, int | None]:
+    parsed = httpx.URL(url)
+    return (parsed.scheme, parsed.host, parsed.port)
+
+
+async def _read_capped(response: httpx.Response, limit: int) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in response.aiter_bytes():
+        total += len(chunk)
+        if total > limit:
+            raise httpx.HTTPError("probe response exceeded size cap")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _valid_chat_completion(raw: bytes) -> bool:

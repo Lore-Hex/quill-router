@@ -9,6 +9,8 @@ from fastapi import HTTPException
 
 from trusted_router.config import Settings
 from trusted_router.services.safe_egress import (
+    aassert_public_url,
+    aresolve_public_or_reject,
     assert_public_url,
     is_safe_public_ip,
     resolve_public_or_reject,
@@ -95,7 +97,8 @@ def test_public_url_scheme_policy(monkeypatch: pytest.MonkeyPatch) -> None:
         assert_public_url("http://owner.example", allow_http=False)
 
 
-def test_endpoint_url_requires_https_outside_local_test(
+@pytest.mark.asyncio
+async def test_endpoint_url_requires_https_outside_local_test(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -105,11 +108,12 @@ def test_endpoint_url_requires_https_outside_local_test(
             (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("8.8.8.8", 0))
         ],
     )
-    assert validate_endpoint_url(
-        "http://owner.example/base/", Settings(environment="test")
-    ) == "http://owner.example/base"
+    assert (
+        await validate_endpoint_url("http://owner.example/base/", Settings(environment="test"))
+        == "http://owner.example/base"
+    )
     with pytest.raises(HTTPException, match="https"):
-        validate_endpoint_url(
+        await validate_endpoint_url(
             "http://owner.example/base", Settings(environment="staging")
         )
 
@@ -178,3 +182,96 @@ def test_tr_signature_documented_vector() -> None:
         "t=1700000000,"
         "v1=a7597e2bfa4bc480b058f31a24542b3ab0c99fe6231ae15aa0498fd5bd1d4304"
     )
+
+
+# --- Review-round regressions -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["Has Spaces", "under_score", "trailing-", "-leading", "a" * 80, "ünïcode", ""],
+)
+def test_invalid_slug_grammar_is_a_400_not_a_500(value: str) -> None:
+    with pytest.raises(HTTPException) as captured:
+        validate_user_model_slug(value)
+    assert captured.value.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://host]:1@127.0.0.1/",  # malformed IPv6 brackets: urlparse raises
+        "https://[::1/",
+        "https:///nohost",
+        "https://",
+        "ftp://owner.example/",
+        "javascript:alert(1)",
+    ],
+)
+@pytest.mark.asyncio
+async def test_malformed_urls_are_400_not_500(url: str) -> None:
+    with pytest.raises(HTTPException) as captured:
+        await aassert_public_url(url, allow_http=False)
+    assert captured.value.status_code == 400
+    with pytest.raises(HTTPException) as captured_sync:
+        assert_public_url(url, allow_http=False)
+    assert captured_sync.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_async_resolve_runs_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A slow nameserver behind an attacker-chosen hostname must not stall
+    every other request on the worker: the lookup runs in a thread and the
+    loop keeps turning while it blocks."""
+    import asyncio
+    import time
+
+    def slow_getaddrinfo(*_args: Any, **_kwargs: Any) -> list[Any]:
+        time.sleep(0.4)  # blocking on purpose: this is what a stuck resolver does
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("8.8.8.8", 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", slow_getaddrinfo)
+    ticks = 0
+
+    async def heartbeat() -> None:
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.02)
+            ticks += 1
+
+    beat = asyncio.create_task(heartbeat())
+    try:
+        await aresolve_public_or_reject("slow.example")
+    finally:
+        beat.cancel()
+    # ~20 ticks fit in 0.4s if the loop is free; a blocked loop yields ~0.
+    assert ticks >= 5, ticks
+
+
+@pytest.mark.asyncio
+async def test_async_resolve_is_bounded_by_a_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+    import time
+
+    from trusted_router.services import safe_egress
+
+    monkeypatch.setattr(safe_egress, "RESOLVE_TIMEOUT_SECONDS", 0.2)
+    release = threading.Event()
+
+    def blackholed(*_args: Any, **_kwargs: Any) -> list[Any]:
+        release.wait(5.0)
+        return []
+
+    monkeypatch.setattr(socket, "getaddrinfo", blackholed)
+    started = time.monotonic()
+    try:
+        with pytest.raises(HTTPException) as captured:
+            await aresolve_public_or_reject("blackhole.example")
+        assert captured.value.status_code == 400
+        assert time.monotonic() - started < 2.0
+    finally:
+        release.set()  # let the worker thread finish so the run stays clean

@@ -521,6 +521,13 @@ class Settings(BaseSettings):
     notify_enabled: bool = False
     phone_verification_requires_funding: bool | None = None
     custom_models_require_verification: bool | None = None
+    # Whether the gateway will AUTHORIZE requests against user-provided
+    # models. Off until the settle/refund half of their billing exists:
+    # authorizing without it takes a credit hold that nothing can release,
+    # and the deployed enclave authorizes any custom id before it resolves,
+    # so this must never default on ahead of that. Registration, probing and
+    # the public section work regardless; only serving is gated.
+    user_models_dispatch_enabled: bool = False
     veriff_enabled: bool = False
     veriff_api_key: str | None = None
     veriff_shared_secret_key: str | None = None

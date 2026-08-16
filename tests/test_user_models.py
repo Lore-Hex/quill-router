@@ -10,6 +10,10 @@ from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.services.user_model_dispatch import BufferedUserModelDispatch
 from trusted_router.services.user_model_probe import ProbeResult
+from trusted_router.services.user_model_secrets import (
+    USER_MODEL_ENDPOINT_KEY_PURPOSE,
+    USER_MODEL_SIGNING_PURPOSE,
+)
 from trusted_router.storage import STORE
 
 HEADERS = {"x-trustedrouter-user": "user-model-owner@example.com"}
@@ -24,6 +28,17 @@ def _public_dns(monkeypatch: pytest.MonkeyPatch) -> None:
             (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("8.8.8.8", 0))
         ],
     )
+
+
+@pytest.fixture
+def dispatch_client(test_settings: Settings) -> TestClient:
+    """A client whose gateway will authorize/resolve user-provided models.
+
+    The flag ships OFF until the settle/refund half of user-model billing
+    exists (Phase 5); the gateway tests below opt in explicitly.
+    """
+    settings = test_settings.model_copy(update={"user_models_dispatch_enabled": True})
+    return TestClient(create_app(settings, init_observability=False))
 
 
 def _body(
@@ -220,8 +235,9 @@ def test_clock_in_probe_failure_stays_offline(
 
 
 def test_gateway_rejects_off_clock_user_model_with_stable_error(
-    client: TestClient,
+    dispatch_client: TestClient,
 ) -> None:
+    client = dispatch_client
     key = _create_key(client)
     created = _create(client)
 
@@ -241,8 +257,9 @@ def test_gateway_rejects_off_clock_user_model_with_stable_error(
 
 
 def test_gateway_authorization_freezes_user_model_attribution(
-    client: TestClient,
+    dispatch_client: TestClient,
 ) -> None:
+    client = dispatch_client
     key = _create_key(client)
     created = _create(client)
     STORE.set_user_model_online(created["id"], owner_user_id=created["owner_user_id"], online=True)
@@ -285,7 +302,8 @@ def test_gateway_authorization_freezes_user_model_attribution(
     assert authorization.user_model_owner_user_id == created["owner_user_id"]
 
 
-def test_gateway_resolves_user_model_dispatch_block(client: TestClient) -> None:
+def test_gateway_resolves_user_model_dispatch_block(dispatch_client: TestClient) -> None:
+    client = dispatch_client
     key = _create_key(client)
     body = _body()
     body["endpoint_api_key"] = "owner-dispatch-key"
@@ -314,6 +332,44 @@ def test_gateway_resolves_user_model_dispatch_block(client: TestClient) -> None:
     assert dispatch["idle_timeout_seconds"] == 60
     assert dispatch["total_timeout_seconds"] == 300
     assert "owner-dispatch-key" not in response.text
+    # The envelopes are AAD-bound to the OWNER's workspace and per-secret
+    # purposes; the block must carry both or the enclave cannot decrypt.
+    assert dispatch["owner_workspace_id"] == created["owner_workspace_id"]
+    assert dispatch["owner_user_id"] == created["owner_user_id"]
+    assert dispatch["user_model_kind"] == "machine"
+    assert dispatch["endpoint_secret_purpose"] == USER_MODEL_ENDPOINT_KEY_PURPOSE
+    assert dispatch["signing_secret_purpose"] == USER_MODEL_SIGNING_PURPOSE
+
+
+def test_gateway_hides_user_models_until_dispatch_is_enabled(client: TestClient) -> None:
+    """Default flag OFF: neither authorize nor resolve admits a user model.
+
+    Without this, authorize would place a credit hold that no settle path
+    can release yet.
+    """
+    key = _create_key(client)
+    created = _create(client)
+    STORE.set_user_model_online(created["id"], owner_user_id=created["owner_user_id"], online=True)
+
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": created["id"],
+            "estimated_input_tokens": 10,
+            "max_output_tokens": 10,
+        },
+    )
+    assert authorize.status_code == 404, authorize.text
+    resolve = client.post(
+        "/v1/internal/gateway/resolve-custom-model",
+        json={
+            "api_key_hash": key["hash"],
+            "model": created["id"],
+            "route_type": "chat.completions",
+        },
+    )
+    assert resolve.status_code == 404, resolve.text
 
 
 def test_local_inference_dispatches_user_model_before_frozen_catalog_routing(

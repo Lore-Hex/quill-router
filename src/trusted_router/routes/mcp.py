@@ -146,7 +146,10 @@ class TrustedRouterMCP:
         self, args: dict[str, Any], _request: Request
     ) -> dict[str, Any]:
         model_id = _required_string(args, "model")
-        if model_id not in MODELS:
+        model = MODELS.get(model_id)
+        # Same visibility rule as list/get: an internal-only model must not be
+        # confirmable through its endpoints either.
+        if model is None or _is_internal_model_shape(model_to_openrouter_shape(model)):
             raise MCPToolError(f"Unknown model: {model_id}")
         return _tool_json(
             {

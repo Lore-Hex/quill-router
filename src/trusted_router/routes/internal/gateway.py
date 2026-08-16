@@ -96,6 +96,10 @@ from trusted_router.services.settle_outbox_drain import (
     drain_settle_outbox,
     spanner_settle_outbox,
 )
+from trusted_router.services.user_model_secrets import (
+    USER_MODEL_ENDPOINT_KEY_PURPOSE,
+    USER_MODEL_SIGNING_PURPOSE,
+)
 from trusted_router.storage import (
     STORE,
     Generation,
@@ -282,6 +286,9 @@ def _authorize_gateway_sync(
                 user_model is None
                 or not user_model.enabled
                 or user_model.status != "active"
+                # Serving is gated until settle/refund exist for these
+                # authorizations; an unreleasable hold is worse than a 404.
+                or not settings.user_models_dispatch_enabled
             ):
                 raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
             if not user_model_is_on_the_clock(user_model, datetime.now(dt.UTC)):
@@ -290,6 +297,11 @@ def _authorize_gateway_sync(
                     f"User-provided {user_model.kind} model {user_model.id} is off the clock",
                     ErrorType.MODEL_OFF_THE_CLOCK,
                 )
+            # Same fingerprint discipline as prompt wrappers: a same-key retry
+            # after a material edit must 409, not replay stale frozen prices.
+            body_dict.pop("models", None)
+            body_dict["custom_model_id"] = user_model.id
+            body_dict["custom_model_revision"] = user_model.revision
             _force_custom_model_credit_routes(
                 body_dict,
                 error_message="User-provided models do not support BYOK routes",
@@ -853,6 +865,7 @@ def _gateway_resolve_custom_model_sync(
             user_model is None
             or not user_model.enabled
             or user_model.status != "active"
+            or not settings.user_models_dispatch_enabled
         ):
             raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
         budget = dispatch_budget(user_model.kind)
@@ -865,6 +878,12 @@ def _gateway_resolve_custom_model_sync(
                     "id": user_model.id,
                     "name": user_model.name,
                     "kind": "user_provided",
+                    "user_model_kind": user_model.kind,
+                    # The envelopes below are bound (AAD) to the OWNER's
+                    # workspace and a per-secret purpose, not to the caller's
+                    # workspace above; the enclave must decrypt with these.
+                    "owner_workspace_id": user_model.owner_workspace_id,
+                    "owner_user_id": user_model.owner_user_id,
                     "endpoint_url": user_model.endpoint_url,
                     "upstream_model_id": user_model.upstream_model_id,
                     "revision": user_model.revision,
@@ -872,9 +891,11 @@ def _gateway_resolve_custom_model_sync(
                     "endpoint_encrypted_secret": encrypted_secret_payload(
                         user_model.encrypted_endpoint_api_key
                     ),
+                    "endpoint_secret_purpose": USER_MODEL_ENDPOINT_KEY_PURPOSE,
                     "signing_encrypted_secret": encrypted_secret_payload(
                         user_model.encrypted_signing_secret
                     ),
+                    "signing_secret_purpose": USER_MODEL_SIGNING_PURPOSE,
                     "connect_timeout_seconds": budget.connect,
                     "first_byte_timeout_seconds": budget.first_byte,
                     "idle_timeout_seconds": budget.idle,

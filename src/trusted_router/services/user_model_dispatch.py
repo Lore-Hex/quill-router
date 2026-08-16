@@ -15,7 +15,7 @@ from fastapi import HTTPException
 from trusted_router.byok_crypto import decrypt_control_secret
 from trusted_router.config import Settings
 from trusted_router.errors import api_error, error_body
-from trusted_router.services.safe_egress import assert_public_url
+from trusted_router.services.safe_egress import aassert_public_url
 from trusted_router.services.user_model_secrets import (
     USER_MODEL_ENDPOINT_KEY_PURPOSE,
     USER_MODEL_SIGNING_PURPOSE,
@@ -60,12 +60,14 @@ async def dispatch_user_model(
     except _MalformedOwnerResponse as exc:
         STORE.record_user_model_dispatch_result(model.id, success=False)
         raise _malformed_error(model) from exc
+    except _OwnerFault as exc:
+        STORE.record_user_model_dispatch_result(model.id, success=False)
+        raise exc.error from exc
     except httpx.HTTPError as exc:
         STORE.record_user_model_dispatch_result(model.id, success=False)
         raise _upstream_error(model) from exc
-    except Exception:
-        STORE.record_user_model_dispatch_result(model.id, success=False)
-        raise
+    # Anything else (owner 4xx, TR-side errors, cancellation) is not evidence
+    # about the endpoint's health: neither a strike nor a reset.
     STORE.record_user_model_dispatch_result(model.id, success=True)
     return result
 
@@ -77,8 +79,14 @@ async def stream_user_model(
     *,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> AsyncIterator[bytes]:
-    """Dispatch a streaming caller and always finish failures as valid SSE."""
-    succeeded = False
+    """Dispatch a streaming caller and always finish failures as valid SSE.
+
+    Outcome recording is explicit per branch rather than in a `finally`: a
+    caller that disconnects mid-stream (GeneratorExit / CancelledError) tells
+    us nothing about the owner's endpoint, and must not count as a strike —
+    otherwise three impatient callers clock a healthy human out.
+    """
+    outcome: bool | None = None  # None = no evidence either way
     try:
         async for chunk in _stream_user_model(
             model,
@@ -87,21 +95,35 @@ async def stream_user_model(
             transport=transport,
         ):
             yield chunk
-        succeeded = True
+        outcome = True
     except (TimeoutError, httpx.TimeoutException):
+        outcome = False
         yield _sse_error(_timeout_error(model))
         yield b"data: [DONE]\n\n"
+    except _OwnerFault as exc:
+        outcome = False
+        yield _sse_error(exc.error)
+        yield b"data: [DONE]\n\n"
+    except _MalformedOwnerResponse:
+        outcome = False
+        yield _sse_error(_malformed_error(model))
+        yield b"data: [DONE]\n\n"
     except HTTPException as exc:
+        # Owner 4xx or a TR-side rejection: report it, no strike.
         yield _sse_error(exc)
         yield b"data: [DONE]\n\n"
     except httpx.HTTPError:
+        outcome = False
         yield _sse_error(_upstream_error(model))
         yield b"data: [DONE]\n\n"
     except Exception:
+        # A TR-side bug is ours, not the owner's: keep the SSE framing valid,
+        # record nothing about the endpoint.
         yield _sse_error(_malformed_error(model))
         yield b"data: [DONE]\n\n"
     finally:
-        STORE.record_user_model_dispatch_result(model.id, success=succeeded)
+        if outcome is not None:
+            STORE.record_user_model_dispatch_result(model.id, success=outcome)
 
 
 async def _dispatch_user_model(
@@ -113,7 +135,7 @@ async def _dispatch_user_model(
 ) -> BufferedUserModelDispatch:
     started_at = time.monotonic()
     budget = dispatch_budget(model.kind)
-    request_url, request_body, headers = _owner_request(model, body, settings)
+    request_url, request_body, headers = await _owner_request(model, body, settings)
     timeout = httpx.Timeout(
         connect=float(budget.connect),
         read=None,
@@ -132,7 +154,13 @@ async def _dispatch_user_model(
                 content=request_body,
                 headers=headers,
             )
-            response = await client.send(request, stream=True)
+            # The first-byte budget bounds the wait for response HEADERS too,
+            # not only the body; without this a machine owner that accepts and
+            # then stalls holds a buffered request for the whole total budget.
+            response = await asyncio.wait_for(
+                client.send(request, stream=True),
+                timeout=max(0.001, started_at + budget.first_byte - time.monotonic()),
+            )
             try:
                 _require_success(response, model)
                 raw, first_token_seconds = await _read_owner_body(
@@ -146,7 +174,7 @@ async def _dispatch_user_model(
     if model.supports_streaming:
         result_body = _aggregate_owner_sse(raw, requested_model_id=model.id)
     else:
-        result_body = _parse_buffered_completion(raw)
+        result_body = _parse_buffered_completion(raw, requested_model_id=model.id)
     return BufferedUserModelDispatch(
         body=result_body,
         first_token_seconds=max(first_token_seconds, 0.001),
@@ -163,7 +191,7 @@ async def _stream_user_model(
 ) -> AsyncIterator[bytes]:
     started_at = time.monotonic()
     budget = dispatch_budget(model.kind)
-    request_url, request_body, headers = _owner_request(model, body, settings)
+    request_url, request_body, headers = await _owner_request(model, body, settings)
     timeout = httpx.Timeout(
         connect=float(budget.connect),
         read=None,
@@ -208,6 +236,7 @@ async def _stream_user_model(
                         first,
                         iterator,
                         idle_timeout=float(budget.idle),
+                        requested_model_id=model.id,
                     ):
                         yield frame
                 else:
@@ -216,29 +245,69 @@ async def _stream_user_model(
                         iterator,
                         idle_timeout=float(budget.idle),
                     )
-                    completion = _parse_buffered_completion(raw)
+                    completion = _parse_buffered_completion(raw, requested_model_id=model.id)
                     for frame in _buffered_completion_frames(completion, model.id):
                         yield frame
             finally:
                 await response.aclose()
 
 
-def _owner_request(
+# The OpenAI chat-completions request surface. Everything else a caller sends
+# is TrustedRouter's own vocabulary — routing hints (`provider`, `models`,
+# `route`, `transforms`), attribution (`user`, `session_id`, `trace`, `app`,
+# `tags`, `http_referer`), TR extensions — and none of it belongs on a
+# community-operated endpoint that is explicitly not attested.
+_OWNER_BODY_ALLOWLIST = frozenset(
+    {
+        "messages",
+        "temperature",
+        "top_p",
+        "n",
+        "stop",
+        "max_tokens",
+        "max_completion_tokens",
+        "presence_penalty",
+        "frequency_penalty",
+        "logit_bias",
+        "logprobs",
+        "top_logprobs",
+        "response_format",
+        "seed",
+        "tools",
+        "tool_choice",
+        "parallel_tool_calls",
+        "reasoning_effort",
+        "metadata",
+        "stream_options",
+    }
+)
+
+
+async def _owner_request(
     model: UserProvidedModel,
     body: dict[str, Any],
     settings: Settings,
 ) -> tuple[str, bytes, dict[str, str]]:
     request_url = f"{model.endpoint_url.rstrip('/')}/chat/completions"
-    # Re-resolve at dispatch time. Registration/probe success is not authority
-    # for a later DNS answer, and redirects stay disabled below.
-    assert_public_url(
-        request_url,
-        allow_http=settings.environment in {"local", "test"},
-    )
+    # Re-resolve at dispatch time, off the event loop. Registration/probe
+    # success is not authority for a later DNS answer, and redirects stay
+    # disabled below.
+    try:
+        await aassert_public_url(
+            request_url,
+            allow_http=settings.environment in {"local", "test"},
+        )
+    except HTTPException as exc:
+        # The check speaks in registration terms (400 "bad URL"), but here
+        # the caller's request is fine: the OWNER's endpoint now resolves
+        # somewhere we will not connect. That is an unreachable upstream to
+        # the caller and a strike for the owner — a rebinding endpoint must
+        # clock out, not be retried forever.
+        raise _OwnerFault(_upstream_error(model)) from exc
     signing_secret = _decrypt_signing_secret(model, settings)
     endpoint_api_key = _decrypt_endpoint_key(model, settings)
     owner_body = {
-        **body,
+        **{k: v for k, v in body.items() if k in _OWNER_BODY_ALLOWLIST},
         "model": model.upstream_model_id,
         "stream": model.supports_streaming,
     }
@@ -316,6 +385,7 @@ async def _validated_owner_sse(
     iterator: AsyncIterator[bytes],
     *,
     idle_timeout: float,
+    requested_model_id: str,
 ) -> AsyncIterator[bytes]:
     pending = first
     saw_chunk = False
@@ -332,9 +402,9 @@ async def _validated_owner_sse(
                 saw_done = True
                 yield b"data: [DONE]\n\n"
                 break
-            _parse_stream_chunk(payload)
+            chunk = _parse_stream_chunk(payload)
             saw_chunk = True
-            yield b"data: " + payload + b"\n\n"
+            yield _sse_json({**chunk, "model": requested_model_id})
         if saw_done:
             break
         try:
@@ -348,9 +418,9 @@ async def _validated_owner_sse(
                     saw_done = True
                     yield b"data: [DONE]\n\n"
                 elif payload is not None:
-                    _parse_stream_chunk(payload)
+                    chunk = _parse_stream_chunk(payload)
                     saw_chunk = True
-                    yield b"data: " + payload + b"\n\n"
+                    yield _sse_json({**chunk, "model": requested_model_id})
             break
     if not saw_chunk or not saw_done:
         raise _MalformedOwnerResponse("owner stream was incomplete")
@@ -438,7 +508,7 @@ def _aggregate_owner_sse(raw: bytes, *, requested_model_id: str) -> dict[str, An
     return result
 
 
-def _parse_buffered_completion(raw: bytes) -> dict[str, Any]:
+def _parse_buffered_completion(raw: bytes, *, requested_model_id: str) -> dict[str, Any]:
     try:
         body = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -453,7 +523,10 @@ def _parse_buffered_completion(raw: bytes) -> dict[str, Any]:
         or not isinstance(choices[0].get("message"), dict)
     ):
         raise _MalformedOwnerResponse("invalid owner chat completion")
-    return body
+    # The caller asked for the TrustedRouter id; the owner's upstream model
+    # name is owner-private (it is deliberately absent from the public shape)
+    # and must not leak through this quadrant when the other three mask it.
+    return {**body, "model": requested_model_id}
 
 
 def _buffered_completion_frames(
@@ -503,14 +576,34 @@ def _buffered_completion_frames(
     ]
 
 
+class _OwnerFault(Exception):
+    """The owner's endpoint failed to serve: unreachable, timed out, 5xx, or a
+    malformed body. Only these count as strikes toward auto clock-out. A 4xx
+    is the OWNER judging the CALLER's request (or a human declining), which
+    is a normal outcome, not evidence the endpoint is down — and it must not
+    be a lever a caller can pull three times to knock a healthy model
+    offline."""
+
+    def __init__(self, error: HTTPException) -> None:
+        super().__init__(error.detail)
+        self.error = error
+
+
 def _require_success(response: httpx.Response, model: UserProvidedModel) -> None:
     if 200 <= response.status_code < 300:
         return
-    raise api_error(
+    # The caller always sees 502: an owner-chosen status must not be mistaken
+    # for TR's own (a 401 here is not the caller's key). The owner's status
+    # rides in the message so both sides can debug it.
+    error = api_error(
         502,
-        f"User-provided model {model.id} returned an upstream error",
+        f"User-provided model {model.id} returned an upstream error"
+        f" (HTTP {response.status_code})",
         ErrorType.PROVIDER_ERROR,
     )
+    if response.status_code >= 500:
+        raise _OwnerFault(error)
+    raise error
 
 
 def _timeout_error(model: UserProvidedModel) -> HTTPException:

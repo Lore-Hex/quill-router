@@ -258,7 +258,10 @@ async def test_owner_buffered_to_requester_buffered_validates_and_passes_through
         test_settings,
         transport=httpx.MockTransport(handler),
     )
-    assert result.body == owner_body
+    # Passed through except for `model`: the caller asked for the TR id, and
+    # the owner's upstream model name is owner-private.
+    assert result.body == {**owner_body, "model": model.id}
+    assert result.body["model"] != owner_body["model"]
 
 
 @pytest.mark.asyncio
@@ -412,7 +415,8 @@ async def test_dispatch_rechecks_dns_and_rejects_private_rebinding(
             test_settings,
             transport=httpx.MockTransport(handler),
         )
-    assert captured.value.status_code == 400
+    # Not the caller's fault: an unreachable upstream, and a strike for the owner.
+    assert captured.value.status_code == 502
     assert called is False
     stored = STORE.get_user_model(model.id)
     assert stored is not None
@@ -459,3 +463,219 @@ async def test_stream_timeout_is_sse_error_then_done(
     assert b'"code":504' in body
     assert b'"type":"user_model_timeout"' in body
     assert body.endswith(b"data: [DONE]\n\n")
+
+
+# --- Review-round regressions -------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_owner_4xx_is_reported_but_is_not_a_strike(
+    test_settings: Settings,
+) -> None:
+    """A 4xx is the owner judging the CALLER's request; it says nothing about
+    whether the endpoint is up, so it must not walk a healthy owner offline."""
+    model = _model(test_settings, supports_streaming=False)
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(422, json={"error": "too long for me"})
+
+    for _ in range(3):
+        with pytest.raises(HTTPException) as captured:
+            await dispatch_user_model(
+                model,
+                _request_body(stream=False),
+                test_settings,
+                transport=httpx.MockTransport(handler),
+            )
+        # The caller sees TR's 502 (an owner-chosen status is never TR's own),
+        # with the owner's status in the message for debugging.
+        assert captured.value.status_code == 502
+        assert "HTTP 422" in str(captured.value.detail)
+    stored = STORE.get_user_model(model.id)
+    assert stored is not None
+    assert stored.consecutive_dispatch_failures == 0
+    assert stored.online is True
+
+
+@pytest.mark.asyncio
+async def test_owner_5xx_strikes_and_three_clock_out(test_settings: Settings) -> None:
+    model = _model(test_settings, supports_streaming=False)
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, json={"error": "down"})
+
+    for _ in range(3):
+        with pytest.raises(HTTPException) as captured:
+            await dispatch_user_model(
+                model,
+                _request_body(stream=False),
+                test_settings,
+                transport=httpx.MockTransport(handler),
+            )
+        assert captured.value.status_code == 502
+        assert "HTTP 503" in str(captured.value.detail)
+    stored = STORE.get_user_model(model.id)
+    assert stored is not None
+    assert stored.consecutive_dispatch_failures == 3
+    assert stored.online is False
+
+
+@pytest.mark.asyncio
+async def test_caller_disconnect_mid_stream_is_not_a_strike(
+    test_settings: Settings,
+) -> None:
+    """Three impatient callers must not clock a healthy human out."""
+    model = _model(test_settings, supports_streaming=True)
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=_DelayedStream([_sse_body()], first_delay=5.0),
+        )
+
+    for _ in range(3):
+        stream = stream_user_model(
+            model,
+            _request_body(stream=True),
+            test_settings,
+            transport=httpx.MockTransport(handler),
+        )
+        # Take one keepalive, then hang up like a disconnecting client.
+        task = asyncio.create_task(anext(stream))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await stream.aclose()
+    stored = STORE.get_user_model(model.id)
+    assert stored is not None
+    assert stored.consecutive_dispatch_failures == 0
+    assert stored.online is True
+
+
+@pytest.mark.asyncio
+async def test_owner_request_body_is_allowlisted(test_settings: Settings) -> None:
+    """Only OpenAI chat fields reach the owner: no TR routing knobs, no
+    caller-side hints, and never a caller-chosen `model`/`stream`."""
+    model = _model(test_settings, supports_streaming=False)
+    seen: dict[str, Any] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        return httpx.Response(200, json=_buffered_body())
+
+    body = _request_body(stream=False)
+    body.update(
+        {
+            "temperature": 0.2,
+            "max_tokens": 32,
+            "provider": {"order": ["evil"]},
+            "models": ["openai/gpt-4o"],
+            "custom_model_id": "trustedrouter/user-someone-else",
+            "user": "caller-account-id",
+            "route": "fallback",
+        }
+    )
+    await dispatch_user_model(
+        model, body, test_settings, transport=httpx.MockTransport(handler)
+    )
+    assert seen["model"] == "owner-upstream"
+    assert seen["stream"] is False
+    assert seen["temperature"] == 0.2
+    assert seen["max_tokens"] == 32
+    for forbidden in ("provider", "models", "custom_model_id", "user", "route"):
+        assert forbidden not in seen, forbidden
+
+
+@pytest.mark.asyncio
+async def test_stream_passthrough_masks_owner_upstream_model_id(
+    test_settings: Settings,
+) -> None:
+    """All four quadrants answer with the TR id the caller asked for."""
+    model = _model(test_settings, supports_streaming=True)
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=_sse_body(),
+        )
+
+    frames = [
+        chunk
+        async for chunk in stream_user_model(
+            model,
+            _request_body(stream=True),
+            test_settings,
+            transport=httpx.MockTransport(handler),
+        )
+    ]
+    payloads = [
+        json.loads(frame.removeprefix(b"data: ").strip())
+        for frame in frames
+        if frame.startswith(b"data: ") and not frame.startswith(b"data: [DONE]")
+    ]
+    assert len(payloads) == 2
+    assert all(payload["model"] == model.id for payload in payloads)
+    assert b"owner-upstream" not in b"".join(frames)
+
+
+@pytest.mark.asyncio
+async def test_buffered_first_byte_budget_bounds_response_headers(
+    test_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An owner that accepts the connection and then never sends headers must
+    time out at the first-byte budget, not hold the request for `total`."""
+    from trusted_router import user_model_rules
+
+    monkeypatch.setitem(
+        user_model_rules._DISPATCH_BUDGETS,
+        "machine",
+        user_model_rules.DispatchBudget(connect=1, first_byte=1, idle=60, total=300),
+    )
+    model = _model(test_settings, supports_streaming=False)
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(3.0)
+        return httpx.Response(200, json=_buffered_body())
+
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    with pytest.raises(HTTPException) as captured:
+        await dispatch_user_model(
+            model,
+            _request_body(stream=False),
+            test_settings,
+            transport=httpx.MockTransport(handler),
+        )
+    assert captured.value.status_code == 504
+    assert loop.time() - started < 2.5
+    stored = STORE.get_user_model(model.id)
+    assert stored is not None
+    assert stored.consecutive_dispatch_failures == 1
+
+
+def test_clock_in_and_passing_probe_reset_strikes(test_settings: Settings) -> None:
+    """Strikes from the previous shift must not carry into the next one."""
+    model = _model(test_settings, supports_streaming=False)
+    STORE.record_user_model_dispatch_result(model.id, success=False)
+    STORE.record_user_model_dispatch_result(model.id, success=False)
+    stored = STORE.get_user_model(model.id)
+    assert stored is not None and stored.consecutive_dispatch_failures == 2
+
+    STORE.set_user_model_online(model.id, owner_user_id=model.owner_user_id, online=False)
+    STORE.set_user_model_online(model.id, owner_user_id=model.owner_user_id, online=True)
+    stored = STORE.get_user_model(model.id)
+    assert stored is not None and stored.consecutive_dispatch_failures == 0
+
+    STORE.record_user_model_dispatch_result(model.id, success=False)
+    STORE.record_user_model_probe(model.id, status="ok", checked_at="2026-08-16T00:00:00Z")
+    stored = STORE.get_user_model(model.id)
+    assert stored is not None and stored.consecutive_dispatch_failures == 0
+
+    STORE.record_user_model_dispatch_result(model.id, success=False)
+    STORE.record_user_model_probe(model.id, status="failed", checked_at="2026-08-16T00:00:01Z")
+    stored = STORE.get_user_model(model.id)
+    assert stored is not None and stored.consecutive_dispatch_failures == 1

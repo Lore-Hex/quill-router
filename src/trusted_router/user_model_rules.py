@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from trusted_router.catalog import MODELS, PROVIDERS
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
-from trusted_router.services.safe_egress import assert_public_url
+from trusted_router.services.safe_egress import aassert_public_url
 from trusted_router.storage_custom_models import custom_model_id_from_slug, custom_model_slug
 from trusted_router.storage_models import UserProvidedModel
 from trusted_router.types import ErrorType
@@ -55,7 +55,16 @@ def reserved_user_model_names() -> frozenset[str]:
 
 
 def validate_user_model_slug(slug: str) -> str:
-    model_id = custom_model_id_from_slug(slug)
+    try:
+        model_id = custom_model_id_from_slug(slug)
+    except ValueError as exc:
+        # An owner-typed slug that fails the grammar is their input error,
+        # not a server fault.
+        raise api_error(
+            400,
+            "Slug may contain only lowercase letters, digits, and hyphens",
+            ErrorType.BAD_REQUEST,
+        ) from exc
     normalized = custom_model_slug(model_id)
     if normalized in _RESERVED_NAMES:
         raise api_error(400, "This model slug is reserved", ErrorType.BAD_REQUEST)
@@ -70,11 +79,17 @@ def validate_user_model_display_name(display_name: str) -> str:
     return display_name.strip()
 
 
-def validate_endpoint_url(url: str, settings: Settings) -> str:
+async def validate_endpoint_url(url: str, settings: Settings) -> str:
+    """Normalize and SSRF-check an owner endpoint URL.
+
+    Async on purpose: the DNS lookup behind the check runs off the event loop.
+    Every caller is a request handler, and a synchronous lookup against an
+    attacker-chosen hostname would stall the whole worker.
+    """
     normalized = url.strip().rstrip("/")
     if not normalized:
         raise api_error(400, "Endpoint URL is required", ErrorType.BAD_REQUEST)
-    assert_public_url(
+    await aassert_public_url(
         normalized,
         allow_http=settings.environment in {"local", "test"},
     )
