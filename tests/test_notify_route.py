@@ -84,7 +84,9 @@ class TestAuth:
 
         owner = _owner_of_key(notify_client, inference_headers)
         _verify_phone(owner)
-        monkeypatch.setattr(notify_module, "get_telephony_service", lambda s: _Recorder(delivered=True))
+        monkeypatch.setattr(
+            notify_module, "get_telephony_service", lambda s: _Recorder(delivered=True)
+        )
 
         notify_client.post(
             "/v1/notify",
@@ -124,7 +126,9 @@ class TestMoney:
     ) -> None:
         owner = _owner_of_key(notify_client, inference_headers)
         _verify_phone(owner)
-        monkeypatch.setattr(notify_module, "get_telephony_service", lambda s: _Telephony(delivered=True))
+        monkeypatch.setattr(
+            notify_module, "get_telephony_service", lambda s: _Telephony(delivered=True)
+        )
 
         response = notify_client.post(
             "/v1/notify", headers=inference_headers, json={"channel": "sms", "body": "disk full"}
@@ -145,7 +149,9 @@ class TestMoney:
         key = STORE.get_key_by_raw(inference_headers["authorization"].split()[1])
         assert key is not None
         before = live_credit_summary(key.workspace_id)
-        monkeypatch.setattr(notify_module, "get_telephony_service", lambda s: _Telephony(delivered=False))
+        monkeypatch.setattr(
+            notify_module, "get_telephony_service", lambda s: _Telephony(delivered=False)
+        )
 
         response = notify_client.post(
             "/v1/notify", headers=inference_headers, json={"channel": "sms", "body": "disk full"}
@@ -181,9 +187,22 @@ class TestTexml:
         assert "Trusted Router" in response.text
         assert response.text.count("region two is down") == 2
 
-    def test_xml_metacharacters_cannot_break_the_document(
+    def test_post_returns_the_same_instructions_and_ignores_form_status(
         self, notify_client: TestClient
     ) -> None:
+        query = {"text": "region two is down"}
+        get_response = notify_client.get("/notify/texml", params=query)
+
+        post_response = notify_client.post(
+            "/notify/texml",
+            params=query,
+            data={"CallStatus": "in-progress", "From": "+15551234567"},
+        )
+
+        assert post_response.status_code == 200
+        assert post_response.text == get_response.text
+
+    def test_xml_metacharacters_cannot_break_the_document(self, notify_client: TestClient) -> None:
         # A document that fails to parse is a call that connects and says
         # nothing — indistinguishable from a page that never arrived.
         response = notify_client.get("/notify/texml", params={"text": "a <b> & </Say>"})

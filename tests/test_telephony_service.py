@@ -218,6 +218,35 @@ class TestTelnyxVoiceRequestShape:
         assert "/texml/Accounts/acct-1/Calls" in url
         assert payload["ApplicationSid"] == "app-1"
 
+    def test_texml_url_uses_the_public_control_plane_not_the_api_gateway(self, calls):
+        service = telephony.TelephonyService(
+            _settings(
+                environment="production",
+                api_base_url="https://api.trustedrouter.com/v1",
+                trusted_domain="trustedrouter.com",
+                telnyx_texml_account_id="acct-1",
+                telnyx_texml_application_id="app-1",
+                internal_gateway_token="prod-token",  # noqa: S106 - test config.
+                stripe_webhook_secret="whsec_test",  # noqa: S106 - test config.
+                stripe_secret_key="sk_test",  # noqa: S106 - test config.
+                sentry_dsn="https://example@example.ingest.sentry.io/1",
+                aws_access_key_id="test-access-key",
+                aws_secret_access_key="test-secret-key",  # noqa: S106 - test config.
+                ses_from_email="noreply@example.com",
+                storage_backend="spanner-bigtable",
+                spanner_instance_id="trusted-router",
+                spanner_database_id="trusted-router",
+                bigtable_instance_id="trusted-router-logs",
+                byok_kms_key_name=("projects/test/locations/global/keyRings/tr/cryptoKeys/byok"),
+            )
+        )
+
+        service._telnyx_voice("+15551234567", "verification code")
+
+        _endpoint, payload, _headers = calls[0]
+        assert payload["Url"].startswith("https://trustedrouter.com/notify/texml")
+        assert not payload["Url"].startswith("https://api.trustedrouter.com")
+
     def test_voice_is_unconfigured_without_the_application(self):
         # Better to report unconfigured and fall through to the other carrier
         # than to spend a request learning it from a 422.

@@ -152,9 +152,7 @@ def register_notify_routes(router: APIRouter) -> None:
         if user is None:
             raise api_error(403, "sign in to manage your phone number", ErrorType.FORBIDDEN)
 
-        status, updated = STORE.confirm_phone_verification(
-            user.id, str(payload.get("code") or "")
-        )
+        status, updated = STORE.confirm_phone_verification(user.id, str(payload.get("code") or ""))
         if status == "ok":
             return JSONResponse({"verified": True, "phone": updated.phone if updated else None})
 
@@ -162,7 +160,7 @@ def register_notify_routes(router: APIRouter) -> None:
         code = 400 if status == "mismatch" else 409
         return JSONResponse({"verified": False, "status": status}, status_code=code)
 
-    @router.get("/notify/texml")
+    @router.api_route("/notify/texml", methods=["GET", "POST"])
     async def notify_texml(text: str = "") -> Response:
         """Call instructions, fetched by the carrier when a call connects.
 
@@ -258,9 +256,7 @@ class _Charge:
             reservation = STORE.reserve(principal.workspace.id, key_hash, amount)
         except ValueError as exc:
             STORE.refund_key_limit(key_hash, amount, usage_type=UsageType.CREDITS)
-            raise api_error(
-                402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS
-            ) from exc
+            raise api_error(402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS) from exc
 
         return cls(key_hash, reservation.id, amount)
 
@@ -270,9 +266,7 @@ class _Charge:
         self._finalized = True
         if self._reservation_id is not None:
             STORE.settle(self._reservation_id, actual)
-        STORE.settle_key_limit(
-            self._key_hash, self._amount, actual, usage_type=UsageType.CREDITS
-        )
+        STORE.settle_key_limit(self._key_hash, self._amount, actual, usage_type=UsageType.CREDITS)
 
     def refund(self) -> None:
         if self._finalized or self._key_hash is None:
