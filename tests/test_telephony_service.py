@@ -312,3 +312,91 @@ class TestPerChannelCarrierDefaults:
         monkeypatch.setattr(service, "_twilio_sms", lambda to, body: (500, "down"))
 
         assert service.send("sms", "+1555", "x").delivered
+
+
+class TestUnansweredVoiceRepeats:
+    """A single unanswered call is not a delivered page.
+
+    iOS silences unknown numbers and so does Do Not Disturb, but both let a
+    repeat call from the same number within three minutes ring through. That is
+    the only reliable way to reach a sleeping person from a number they have not
+    saved — which is the entire situation a pager exists for.
+    """
+
+    def test_a_voice_page_schedules_one_repeat(self, monkeypatch, calls):
+        service = telephony.TelephonyService(
+            _settings(telnyx_texml_account_id="a", telnyx_texml_application_id="b")
+        )
+        scheduled: list[tuple] = []
+        monkeypatch.setattr(
+            service, "_repeat_if_unanswered",
+            lambda carrier, to, body: scheduled.append((carrier, to)),
+        )
+
+        service.send("voice", "+15551234567", "region down")
+
+        assert scheduled == [("telnyx", "+15551234567")]
+
+    def test_sms_is_never_repeated(self, monkeypatch, calls):
+        # A text sits on the screen until read. Repeating it is just noise.
+        service = telephony.TelephonyService(_settings())
+        scheduled: list[tuple] = []
+        monkeypatch.setattr(
+            service, "_repeat_if_unanswered",
+            lambda carrier, to, body: scheduled.append((carrier, to)),
+        )
+
+        service.send("sms", "+15551234567", "region down")
+
+        assert scheduled == []
+
+    def test_an_undelivered_call_schedules_nothing(self, monkeypatch, calls):
+        # Nothing rang, so there is nothing to repeat — the failover already
+        # tried every carrier.
+        service = telephony.TelephonyService(_settings())
+        monkeypatch.setattr(service, "_telnyx_voice", lambda to, body: (500, "down"))
+        monkeypatch.setattr(service, "_twilio_voice", lambda to, body: (500, "down"))
+        scheduled: list[tuple] = []
+        monkeypatch.setattr(
+            service, "_repeat_if_unanswered",
+            lambda carrier, to, body: scheduled.append((carrier, to)),
+        )
+
+        assert not service.send("voice", "+15551234567", "x").delivered
+        assert scheduled == []
+
+    def test_the_repeat_can_be_switched_off(self, monkeypatch):
+        service = telephony.TelephonyService(
+            _settings(notify_voice_repeat_unanswered=False)
+        )
+        started: list[str] = []
+        monkeypatch.setattr(telephony.threading, "Thread",
+                            lambda **kw: started.append(kw.get("name")) or _NeverStarts())
+
+        service._repeat_if_unanswered("telnyx", "+1555", "x")
+
+        assert started == []
+
+    def test_unknown_answer_state_counts_as_unanswered(self):
+        # Being wrong this way rings a phone once more; being wrong the other
+        # way leaves an incident unreported, and only one of those is
+        # recoverable.
+        service = telephony.TelephonyService(_settings())
+
+        assert service._voice_was_answered("telnyx", "+15551234567") is False
+
+    def test_the_repeat_runs_off_the_request_path(self, monkeypatch):
+        # A voice page must not hold its caller for the length of a ring.
+        service = telephony.TelephonyService(_settings())
+        made: list[dict] = []
+        monkeypatch.setattr(telephony.threading, "Thread",
+                            lambda **kw: made.append(kw) or _NeverStarts())
+
+        service._repeat_if_unanswered("telnyx", "+1555", "x")
+
+        assert made and made[0]["daemon"] is True
+
+
+class _NeverStarts:
+    def start(self) -> None:
+        pass
