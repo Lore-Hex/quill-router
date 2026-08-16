@@ -10,7 +10,7 @@ on:
   # CI explicitly for the generated commit before dispatching deploy.yml.
   workflow_dispatch: {}
 
-# Four independent jobs instead of one serial pipeline: wall time becomes the
+# Independent jobs instead of one serial pipeline: wall time becomes the
 # slowest job, not the sum. deploy.yml's gate polls this WORKFLOW RUN's
 # conclusion for the SHA, and a run only concludes success when every job
 # succeeds, so the gate semantics are unchanged by the split.
@@ -114,6 +114,50 @@ jobs:
       # backend) and waits on /health — no DB service containers needed.
       - name: Browser smoke
         run: npm run test:browser
+
+  # The BYOK envelope ordering constraint, checked against the DIFF rather than
+  # against a deploy.
+  #
+  # The rule (docs/design/byok-aad-v2-migration.md section 4.1): a control plane
+  # may only write envelope formats every enclave serving its cloud already
+  # reads. Break it and every BYOK key in that cloud's database stops opening at
+  # the next inference request. The dangerous act is a code change to what gets
+  # written, which is exactly the thing a pull request contains, so this belongs
+  # here and NOT in deploy.yml. Being in ci.yml still reaches deploys the way
+  # every job here does -- deploy.yml's gate-on-ci refuses a commit whose CI is
+  # red -- but it runs once per push rather than on every deploy, and a refusal
+  # lands on the pull request that caused it before it can land on main.
+  #
+  # Cheap and offline on an ordinary pull request. The script compares what this
+  # tree writes against BASELINE_WRITTEN_FORMATS and, when they are equal, exits
+  # 0 without fetching a release record, contacting an attestation endpoint or
+  # reading the enclave repository. It reaches the network only when the written
+  # set has CHANGED, and then it fails closed. So no `continue-on-error` and no
+  # network-flake exemption: the path that can be flaky is the path a format
+  # change opted into. The offline half is kept true by
+  # tests/test_check_format_ordering.py, in
+  # test_an_unchanged_write_side_is_silent_and_reads_no_network, which drives
+  # the real main() with every network seam replaced by a function that raises.
+  byok-format-ordering:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Sync
+        run: uv sync --frozen
+      # `-m` rather than a path: the script imports scripts.verify_trust_
+      # measurements for the attestation samplers, so the repository root has to
+      # be on sys.path.
+      #
+      # No token is passed. On the loud path the enclave reads go to a different
+      # repository, which GITHUB_TOKEN does not cover, and the script reads
+      # GH_TOKEN only to raise the anonymous rate limit -- so anonymous is what
+      # it uses here. A rate-limited read is an HTTP error, and an HTTP error
+      # fails this check rather than being assumed away.
+      - name: BYOK written formats vs what every enclave accepts
+        run: uv run python -m scripts.check_format_ordering
 
   # Model checking. The property tests in `tests/` run inside the `test` job
   # like any other pytest file; this job is for the TLA+ specs in `proofs/`,
