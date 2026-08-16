@@ -87,11 +87,14 @@ def register_notify_routes(router: APIRouter) -> None:
             ticket.refund()
             raise
 
-        ticket.settle(outcome.price_microdollars if outcome.billable else 0)
+        charged = outcome.price_microdollars if (outcome.billable and ticket.billable) else 0
+        ticket.settle(charged)
 
+        body_out = _body(outcome)
+        body_out["charged_microdollars"] = charged
         if not outcome.delivered:
-            return JSONResponse(_body(outcome), status_code=_status_for(outcome))
-        return JSONResponse(_body(outcome), status_code=200)
+            return JSONResponse(body_out, status_code=_status_for(outcome))
+        return JSONResponse(body_out, status_code=200)
 
     @router.post("/notify/phone/start")
     async def start_phone_verification(
@@ -247,11 +250,21 @@ class _Charge:
     reserved_quota() is built around a Model, and a notification has none.
     """
 
-    def __init__(self, key_hash: str | None, reservation_id: str | None, amount: int) -> None:
+    def __init__(
+        self,
+        key_hash: str | None,
+        reservation_id: str | None,
+        amount: int,
+        *,
+        billable: bool = True,
+    ) -> None:
         self._key_hash = key_hash
         self._reservation_id = reservation_id
         self._amount = amount
         self._finalized = False
+        # False when no credit hold could be taken. The send still happens; the
+        # response must then report zero rather than a price nobody charged.
+        self.billable = billable
 
     @classmethod
     def reserve(cls, principal: Principal, amount: int) -> _Charge:
@@ -267,11 +280,33 @@ class _Charge:
                 402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED
             ) from exc
 
+        # Production runs the TYPED billing backend, where STORE.reserve() is a
+        # removed legacy path that raises RuntimeError. The suite runs against
+        # InMemoryStore, which still implements the old surface, so 3757 green
+        # tests could not reach this line. The first real request 500'd on it
+        # and Sentry found it before any test did.
+        #
+        # Charging correctly means authorize_gateway_typed, which is shaped
+        # entirely around inference — model id, provider, candidate endpoints —
+        # and would file notifications into the same counters and analytics as
+        # model traffic. That deserves its own change rather than a
+        # plausible-looking argument list invented at the call site. So the
+        # typed backend takes the key-limit hold only and reports zero.
+        #
+        # Delivering free beats refusing to deliver, and zero is the honest
+        # number: the caller is told what happened instead of being billed by a
+        # path nobody has verified.
         try:
             reservation = STORE.reserve(principal.workspace.id, key_hash, amount)
         except ValueError as exc:
             STORE.refund_key_limit(key_hash, amount, usage_type=UsageType.CREDITS)
             raise api_error(402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS) from exc
+        except RuntimeError:
+            log.warning(
+                "notify: credit reservation unavailable on this backend; "
+                "delivering unbilled (workspace=%s)", principal.workspace.id,
+            )
+            return cls(key_hash, None, amount, billable=False)
 
         return cls(key_hash, reservation.id, amount)
 
