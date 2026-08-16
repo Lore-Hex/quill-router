@@ -278,7 +278,7 @@ What ships is `scripts/check_format_ordering.py`, run by the
 **`byok-format-ordering` job in `.github/workflows/ci.yml`** on pull requests
 and on pushes to `main`.
 
-**It is a pull-request check, not a deploy gate.** `deploy.yml`,
+**It is a pull-request check, not a deploy-time gate.** `deploy.yml`,
 `scripts/deploy/aws_eu_control_plane.sh` and
 `scripts/deploy/azure_control_plane.sh` do not call it and are not modified. An
 earlier draft did wire it into all three, and that was the wrong trade: it put a
@@ -322,10 +322,14 @@ Two things are worth stating plainly rather than leaving to be discovered:
   _writes` runs the real derivation against the real tree and asserts equality,
   so a stale constant fails CI on the commit that made it stale rather than
   making the check silent about a real change.
-* **Nothing here stops a deploy.** A build whose written formats this check
-  never saw — because the job was made non-required, or because the change
-  reached `main` some other way — deploys like any other. What the check stops
-  is the change *arriving*.
+* **Nothing consults this at deploy time, and its red still reaches deploys
+  the ordinary way.** `deploy.yml`'s `gate-on-ci` refuses any commit whose CI
+  run is red, so this job failing on a `main` push keeps that commit from
+  deploying exactly as a failing pytest job does. That is the repository's
+  standing deploy contract, not something this check adds. A build whose
+  written formats this check never saw — the job made non-required, a change
+  reaching `main` outside CI — deploys like any other. What the check itself
+  stops is the change *arriving*.
 
 **What this means for a future v3.** The pull request that first makes the
 control plane write v3 is the one that goes loud, and it will not go green until
@@ -337,16 +341,18 @@ somebody was supposed to have read. Once that pull request clears, its author
 updates `BASELINE_WRITTEN_FORMATS` to the new set in the same pull request, and
 the check returns to silence on the next one.
 
-Both sides of the comparison are derived by **running code**, never by parsing
-it. What the enclave accepts comes from `accepted_formats.json`, generated in
+The load-bearing halves of both sides are derived by **running code**. What the
+enclave accepts comes from `accepted_formats.json`, generated in
 `quill-cloud-proxy` by a Go test that seals an envelope per format and requires
-`(*Cache).Resolve` to return the plaintext; an earlier design read
-`case AlgorithmV2:` labels out of `cache.go`, and review produced four
-compiling, gofmt-clean ways to keep the label while rejecting the format. What
-this control plane writes comes from installing a recorder on
-`EncryptedSecretEnvelope`'s constructor and calling every write entry point for
-real. The script's module docstring carries the full list of what neither of
-those establishes.
+`(*Cache).Resolve` to return the plaintext — behavioural only; an earlier
+design read `case AlgorithmV2:` labels out of `cache.go`, and review produced
+four compiling, gofmt-clean ways to keep the label while rejecting the format.
+What this control plane writes is the UNION of two derivations: a recorder on
+`EncryptedSecretEnvelope`'s constructor with every write entry point called for
+real, plus a syntactic scan of envelope constructions. The scan can only widen
+the set, which is the fail-closed direction, and for a write path no probe
+calls it is the only half that sees the new format. The script's module
+docstring carries the full list of what none of this establishes.
 
 ### Step 1 — enclave learns to read v2 (`quill-cloud-proxy`)
 

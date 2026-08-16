@@ -123,9 +123,10 @@ jobs:
   # reads. Break it and every BYOK key in that cloud's database stops opening at
   # the next inference request. The dangerous act is a code change to what gets
   # written, which is exactly the thing a pull request contains, so this belongs
-  # here and NOT in deploy.yml -- where it would have been another blocking
-  # dependency of the `deploy` job, running on every deploy forever to guard an
-  # event that happens about once per envelope-format migration.
+  # here and NOT in deploy.yml. Being in ci.yml still reaches deploys the way
+  # every job here does -- deploy.yml's gate-on-ci refuses a commit whose CI is
+  # red -- but it runs once per push rather than on every deploy, and a refusal
+  # lands on the pull request that caused it before it can land on main.
   #
   # Cheap and offline on an ordinary pull request. The script compares what this
   # tree writes against BASELINE_WRITTEN_FORMATS and, when they are equal, exits

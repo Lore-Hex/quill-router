@@ -35,8 +35,18 @@ until somebody fixes it. Adding another blocking dependency there widens that
 surface for a check whose subject -- which envelope format the code writes -- is
 not a property of the deploy at all. It is a property of a CODE CHANGE, and a
 code change is visible in a diff. This catches it at authoring time instead,
-where a red check blocks one pull request rather than every deploy on three
-clouds.
+where the red lands on the pull request that caused it, in front of its author.
+
+Stated honestly rather than absolutely: deploy.yml's `gate-on-ci` job refuses to
+deploy any commit whose CI run is not green, so a red result from this job on a
+push to main DOES keep that commit from deploying -- transitively, exactly as a
+red pytest job does. That is the repository's standing deploy contract, not a
+property added here. What changed from the deploy-gate design: the check runs
+once per push instead of on every deploy, its refusals appear on the offending
+pull request before they can appear on main, and a main-side red means either a
+genuine violation (in which case not deploying that commit is the invariant
+doing its job) or cross-PR drift that no single PR showed -- the same class as
+any two individually-green PRs that break in combination, handled the same way.
 
 SILENT UNLESS THE WRITTEN FORMAT SET CHANGES
 --------------------------------------------
@@ -53,10 +63,10 @@ paths and takes the second only when the diff earns it:
     resolved, exits 1.
 
 There is no report-only mode. The reason the earlier version needed one was that
-it was wired into deploy, where a refusal stopped releases on three clouds for
-whoever happened to be deploying. Here a refusal stops one pull request, in
-front of the author of the change that caused it, so the check can simply
-enforce.
+it was wired directly into deploy, where a refusal surfaced for the first time
+in front of whoever happened to be deploying, with no diff in hand to explain
+it. Here a refusal surfaces first on the pull request that caused it, in front
+of its author, so the check can simply enforce.
 
 That distinction is load-bearing TODAY, not in theory. Run against the live
 records on 2026-08-16, the loud path refused all three clouds, for two different
@@ -228,12 +238,16 @@ WHAT THIS DOES NOT ESTABLISH
   refusal can also be cleared by an operator NARROWING the accepted set instead
   of retiring the build, which converts the refusal into exactly that blind
   spot; the refusal text says so where it offers the option.
-* NOTHING HERE STOPS A DEPLOY. This runs on pull requests and on pushes to main;
-  it stops a format change from being MERGED, and nothing consults it at deploy
-  time. A build whose written formats this never checked -- because the job was
-  made non-required, or because the change reached main some other way --
-  deploys like any other. That is strictly less than the deploy gate this
-  replaced would have covered, and it is the trade: see "WHERE THIS RUNS".
+* NOTHING CONSULTS THIS AT DEPLOY TIME -- but that is not the same as "cannot
+  keep a commit from deploying". deploy.yml's `gate-on-ci` refuses any commit
+  whose CI run is red, so a red from this job on a main push blocks that
+  commit's deploy transitively, the same way a red pytest job does (see the
+  module docstring). What is genuinely gone from the deploy path: no per-deploy
+  cost, no first-contact refusal in front of an operator mid-release. And a
+  build whose written formats this never checked -- the job made non-required,
+  a change reaching main outside CI -- deploys like any other. That is strictly
+  less than the deploy gate this replaced would have covered, and it is the
+  trade: see "WHERE THIS RUNS".
 * An underivable write side fails this check. `scan_write_surface` refuses on
   any assignment to an `algorithm` attribute anywhere under src/trusted_router
   (deliberately: see `_mutates_an_algorithm_attribute`), and
@@ -1802,9 +1816,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     There is no report-only mode and no `--mode` flag. Both existed because the
     earlier version of this program was a non-skippable dependency of the deploy
-    job and an inline call in two hand-run cloud scripts, where a refusal stopped
-    releases on three clouds. Here a refusal fails one pull request, in front of
-    the author of the change that caused it.
+    job and an inline call in two hand-run cloud scripts, where a refusal
+    surfaced first in front of whoever was deploying. Here a refusal surfaces
+    first on the pull request that caused it; if it reaches a main push it
+    keeps that commit from deploying through the ordinary CI-green gate, as any
+    red job does.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--control-plane", default=DEFAULT_CONTROL_PLANE)
