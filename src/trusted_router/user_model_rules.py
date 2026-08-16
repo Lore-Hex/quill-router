@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from trusted_router.catalog import MODELS, PROVIDERS, Model, ModelEndpoint
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
-from trusted_router.services.safe_egress import aassert_public_url
+from trusted_router.services.safe_egress import aassert_public_url, validate_url_scheme
 from trusted_router.storage_custom_models import custom_model_id_from_slug, custom_model_slug
 from trusted_router.storage_models import UserProvidedModel
 from trusted_router.types import ErrorType
@@ -157,16 +157,46 @@ def validate_user_model_display_name(display_name: str) -> str:
     return display_name.strip()
 
 
+def _first_party_domains(settings: Settings) -> frozenset[str]:
+    domains = {settings.trusted_domain.strip().lower().rstrip(".")}
+    domains.update(
+        value.strip().lower().rstrip(".")
+        for value in settings.trusted_domain_aliases.split(",")
+        if value.strip()
+    )
+    return frozenset(d for d in domains if d)
+
+
+def _is_first_party_host(host: str, settings: Settings) -> bool:
+    candidate = host.strip().lower().rstrip(".")
+    return any(
+        candidate == domain or candidate.endswith("." + domain)
+        for domain in _first_party_domains(settings)
+    )
+
+
 async def validate_endpoint_url(url: str, settings: Settings) -> str:
     """Normalize and SSRF-check an owner endpoint URL.
 
     Async on purpose: the DNS lookup behind the check runs off the event loop.
     Every caller is a request handler, and a synchronous lookup against an
     attacker-chosen hostname would stall the whole worker.
+
+    A TrustedRouter host is refused outright: an owner model pointed back at
+    api.trustedrouter.com (or an alias) — directly, or A→B→A — turns one
+    request into a recursive chain of live enclave connections and credit
+    holds. The enclave keeps the same rule so a stale row cannot loop either.
     """
     normalized = url.strip().rstrip("/")
     if not normalized:
         raise api_error(400, "Endpoint URL is required", ErrorType.BAD_REQUEST)
+    _scheme, host = validate_url_scheme(normalized)
+    if _is_first_party_host(host, settings):
+        raise api_error(
+            400,
+            "Endpoint URL must not point at TrustedRouter itself",
+            ErrorType.BAD_REQUEST,
+        )
     await aassert_public_url(
         normalized,
         allow_http=settings.environment in {"local", "test"},

@@ -312,3 +312,35 @@ def test_is_owner_fault_rule(status: int | None, error_type: str | None, expecte
     from trusted_router.user_model_rules import is_owner_fault
 
     assert is_owner_fault(status, error_type) is expected
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://api.trustedrouter.com/v1",
+        "https://TrustedRouter.com/v1",
+        "https://api.allyrouter.com/v1/",
+        "https://uptimerouter.com./v1",
+    ],
+)
+@pytest.mark.asyncio
+async def test_endpoint_url_refuses_trustedrouter_itself(
+    url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A→TR→A recursion: an owner model must never point back at us."""
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("8.8.8.8", 0))
+        ],
+    )
+    with pytest.raises(HTTPException) as captured:
+        await validate_endpoint_url(url, Settings(environment="test"))
+    assert captured.value.status_code == 400
+    assert "TrustedRouter" in str(captured.value.detail)
+    # a look-alike that is not a subdomain is fine
+    assert (
+        await validate_endpoint_url("https://nottrustedrouter.com/v1", Settings(environment="test"))
+        == "https://nottrustedrouter.com/v1"
+    )
