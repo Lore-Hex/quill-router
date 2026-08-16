@@ -2722,8 +2722,12 @@ async def test_primary_synthetic_job_invokes_scheduled_remediator(
     from trusted_router.synthetic import cli as cli_module
 
     seen_urls: list[str] = []
+    remediator_started = asyncio.Event()
 
     async def empty_pass(**_kwargs: Any) -> tuple[list[Any], list[Any]]:
+        # A sequential implementation deadlocks here until the test timeout;
+        # the remediator must begin while independent probes are in flight.
+        await asyncio.wait_for(remediator_started.wait(), timeout=1.0)
         return [], []
 
     class _Response:
@@ -2750,6 +2754,7 @@ async def test_primary_synthetic_job_invokes_scheduled_remediator(
             assert kwargs["headers"]["x-trustedrouter-internal-token"] == "internal"
             assert kwargs["timeout"].read == 75.0
             seen_urls.append(url)
+            remediator_started.set()
             return _Response()
 
     settings = Settings(
