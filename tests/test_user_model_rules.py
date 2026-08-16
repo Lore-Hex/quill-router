@@ -55,6 +55,11 @@ def _model(**overrides: Any) -> UserProvidedModel:
         "::",
         "::ffff:127.0.0.1",
         "::ffff:10.0.0.1",
+        "100.64.0.1",  # shared address space (CGNAT): cloud-internal, never routable
+        "100.127.255.254",
+        "192.0.2.1",  # documentation range
+        "198.18.0.1",  # benchmarking range
+        "2001:db8::1",
         "not-an-ip",
     ),
 )

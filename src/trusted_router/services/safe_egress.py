@@ -23,7 +23,12 @@ def is_safe_public_ip(ip_str: str) -> bool:
         return False
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
         return is_safe_public_ip(str(ip.ipv4_mapped))
-    return not (
+    # `is_global` is the IANA special-purpose-registry-aware check: it is
+    # False for shared address space (CGNAT 100.64.0.0/10 — never
+    # internet-routable, used INSIDE clouds for internal services), which the
+    # explicit predicates below miss. Keep them anyway: they are the
+    # documented rule, and the enclave's Go guard enumerates the same ranges.
+    return ip.is_global and not (
         ip.is_loopback
         or ip.is_private
         or ip.is_link_local
