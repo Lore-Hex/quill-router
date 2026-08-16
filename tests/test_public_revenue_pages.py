@@ -267,7 +267,10 @@ def test_public_pricing_matches_five_point_five_percent_billing_policy(
     comparison = client.get("/compare/openrouter")
     assert comparison.status_code == 200
     assert "5.5% on prepaid model cost" in comparison.text
-    assert "5.5% on credit purchases" in comparison.text
+    # The fee bases differ and the page now says so: OpenRouter's 5.5%
+    # ($0.80 min) applies when buying credits with inference at list price;
+    # ours applies to prepaid model cost.
+    assert "5.5% ($0.80 min) buying credits; inference at list price" in comparison.text
     assert "Provider cost + 5.5% markup" in comparison.text
     assert "10% markup" not in comparison.text
 
