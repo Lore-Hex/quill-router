@@ -24,13 +24,13 @@
     <form class="form" method="post" action="/console/credits/checkout" style="margin-top:18px">
       {% if identity_verification_checkout %}<input type="hidden" name="purpose" value="identity_verification">{% endif %}
       <div class="row">
-        <label>Amount (USD)<input name="amount" type="number" min="1" max="10000" step="1" value="25" required></label>
+        <label>Amount (USD)<input name="amount" type="number" min="1" max="10000" step="1" value="25" required data-checkout-amount data-default-minimum="1" data-paypal-minimum="{{ paypal_minimum_dollars }}"></label>
         <label>Payment method
           {% if wallet_only_billing %}
           <input type="hidden" name="payment_method" value="stablecoin">
           <input type="text" value="Stablecoin (USDC)" readonly>
           {% else %}
-          <select name="payment_method">
+          <select name="payment_method" data-checkout-payment-method>
             <option value="auto">Stripe card</option>
             <option value="ach">Bank account (ACH)</option>
             <option value="stablecoin">Stripe USDC / stablecoin</option>
@@ -45,6 +45,9 @@
         </label>
       </div>
       <button class="btn primary" type="submit">Continue to checkout</button>
+      <p class="form-help" data-paypal-minimum-message hidden>
+        PayPal purchases have a ${{ paypal_minimum_dollars }} minimum.
+      </p>
       <p class="form-help">
         {% if wallet_only_billing %}
         Stablecoin checkout adds prepaid credits without attaching a card or bank account.

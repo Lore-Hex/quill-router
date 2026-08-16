@@ -1353,6 +1353,33 @@ def test_console_checkout_post_does_not_404_in_local_mock_mode(
     assert resp.headers["location"] == "/console/credits?checkout=mock"
 
 
+def test_console_checkout_exposes_and_enforces_paypal_minimum(
+    console_session: tuple[TestClient, str],
+) -> None:
+    client, _ = console_session
+    page = client.get("/console/credits")
+
+    assert page.status_code == 200
+    assert 'data-paypal-minimum="10"' in page.text
+    assert "PayPal purchases have a $10 minimum." in page.text
+
+    too_small = client.post(
+        "/console/credits/checkout",
+        data={"amount": "9.99", "payment_method": "paypal"},
+        follow_redirects=False,
+    )
+    assert too_small.status_code == 303
+    assert too_small.headers["location"] == "/console/credits?error=invalid_checkout"
+
+    minimum = client.post(
+        "/console/credits/checkout",
+        data={"amount": "10", "payment_method": "paypal"},
+        follow_redirects=False,
+    )
+    assert minimum.status_code == 303
+    assert minimum.headers["location"] == "/console/credits?checkout=mock"
+
+
 def test_console_checkout_get_redirects_back_to_credits(
     console_session: tuple[TestClient, str],
 ) -> None:

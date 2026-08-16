@@ -324,8 +324,35 @@ function toggleTheme() {
   updateThemeToggleGlyph();
 }
 
+function updateCheckoutMinimum() {
+  const method = document.querySelector("[data-checkout-payment-method]");
+  const amount = document.querySelector("[data-checkout-amount]");
+  const message = document.querySelector("[data-paypal-minimum-message]");
+  if (!method || !amount)
+    return;
+
+  const isPayPal = method.value === "paypal";
+  const minimum = isPayPal
+    ? Number(amount.dataset.paypalMinimum)
+    : Number(amount.dataset.defaultMinimum);
+  if (Number.isFinite(minimum)) {
+    amount.min = String(minimum);
+    if (isPayPal && Number(amount.value) < minimum) {
+      amount.value = String(minimum);
+    }
+  }
+  if (message) {
+    message.hidden = !isPayPal;
+  }
+}
+
 function initConsole() {
   applyStoredTheme();
+  updateCheckoutMinimum();
+  const checkoutMethod = document.querySelector("[data-checkout-payment-method]");
+  if (checkoutMethod) {
+    checkoutMethod.addEventListener("change", updateCheckoutMinimum);
+  }
   if (window.location.hash === "#new-api-key") {
     const panel = document.getElementById("new-api-key");
     if (panel) {
