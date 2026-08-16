@@ -395,6 +395,18 @@ class CreditMoney:
 
 
 @dataclass
+class CreditMovement:
+    account_id: str
+    movement_id: str
+    kind: str
+    amount_microdollars: int
+    counterparty_account_id: str | None = None
+    custom_model_id: str | None = None
+    authorization_id: str | None = None
+    created_at: str = field(default_factory=iso_now)
+
+
+@dataclass
 class Reservation:
     id: str
     workspace_id: str

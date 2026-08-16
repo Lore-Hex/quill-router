@@ -31,6 +31,7 @@ import threading
 import pytest
 
 from trusted_router.store_protocol import Store
+from trusted_router.typed_balance import live_credit_summary
 
 from .conftest import BACKENDS, make_benchmark_sample, make_synthetic_probe_sample
 
@@ -67,6 +68,252 @@ def test_credit_workspace_once_distinguishes_events(
     assert store.credit_workspace_once(workspace_id, 5_000, f"evt-{unique}-A") is True
     assert store.credit_workspace_once(workspace_id, 5_000, f"evt-{unique}-A") is False
     assert store.credit_workspace_once(workspace_id, 5_000, f"evt-{unique}-B") is True
+
+
+def test_guarded_debit_is_exactly_once_and_writes_one_negative_movement(
+    store: Store,
+    workspace_id: str,
+    unique: str,
+) -> None:
+    assert store.credit_workspace_once(workspace_id, 100, f"evt-fund-debit-{unique}")
+    event_id = f"evt-debit-{unique}"
+
+    assert (
+        store.debit_workspace_guarded(
+            workspace_id,
+            60,
+            event_id,
+            kind="verification_fee",
+            authorization_id=f"auth-{unique}",
+        )
+        == "accepted"
+    )
+    assert (
+        store.debit_workspace_guarded(
+            workspace_id,
+            60,
+            event_id,
+            kind="verification_fee",
+        )
+        == "duplicate"
+    )
+    summary = live_credit_summary(workspace_id, store=store)
+    assert summary is not None
+    assert summary["total_credits"] == 40
+    movements = store.list_credit_movements(workspace_id)
+    assert [(movement.kind, movement.amount_microdollars) for movement in movements] == [
+        ("verification_fee", -60)
+    ]
+    assert movements[0].authorization_id == f"auth-{unique}"
+
+
+def test_guarded_debit_never_overdraws_or_records_a_rejected_attempt(
+    store: Store,
+    workspace_id: str,
+    unique: str,
+) -> None:
+    assert store.credit_workspace_once(workspace_id, 100, f"evt-fund-overdraw-{unique}")
+    assert (
+        store.debit_workspace_guarded(
+            workspace_id,
+            101,
+            f"evt-overdraw-{unique}",
+            kind="adjustment",
+        )
+        == "insufficient"
+    )
+    summary = live_credit_summary(workspace_id, store=store)
+    assert summary is not None
+    assert summary["available"] == 100
+    assert store.list_credit_movements(workspace_id) == []
+
+
+def test_user_earnings_seed_and_payout_are_idempotent(
+    store: Store,
+    user_id: str,
+    unique: str,
+) -> None:
+    store.ensure_earnings_account(user_id)
+    assert store.earnings_summary(user_id) == {
+        "total_earned": 0,
+        "total_transferred": 0,
+        "available": 0,
+    }
+    event_id = f"evt-payout-{unique}"
+    assert store.credit_user_earnings(
+        user_id,
+        75,
+        event_id,
+        custom_model_id="model-a",
+        payer_workspace_id="ws-payer",
+    )
+    assert not store.credit_user_earnings(user_id, 75, event_id)
+    assert store.earnings_summary(user_id) == {
+        "total_earned": 75,
+        "total_transferred": 0,
+        "available": 75,
+    }
+    movement = store.list_credit_movements(f"user:{user_id}")[0]
+    assert movement.kind == "custom_model_payout"
+    assert movement.amount_microdollars == 75
+    assert movement.counterparty_account_id == "ws-payer"
+    assert movement.custom_model_id == "model-a"
+
+
+def test_user_earnings_credit_seeds_an_absent_account(
+    store: Store,
+    user_id: str,
+    unique: str,
+) -> None:
+    assert store.credit_user_earnings(user_id, 9, f"evt-bare-payout-{unique}")
+    assert store.earnings_summary(user_id)["available"] == 9
+
+
+def test_transfer_earnings_is_atomic_idempotent_and_visible_in_workspace(
+    store: Store,
+    user_id: str,
+    workspace_id: str,
+    unique: str,
+) -> None:
+    assert store.credit_user_earnings(user_id, 100, f"evt-transfer-fund-{unique}")
+    event_id = f"evt-transfer-{unique}"
+    assert store.transfer_earnings_to_workspace(user_id, workspace_id, 60, event_id) == "accepted"
+    assert store.transfer_earnings_to_workspace(user_id, workspace_id, 60, event_id) == "duplicate"
+    assert store.earnings_summary(user_id) == {
+        "total_earned": 100,
+        "total_transferred": 60,
+        "available": 40,
+    }
+    summary = live_credit_summary(workspace_id, store=store)
+    assert summary is not None
+    assert summary["total_credits"] == 60
+    user_movements = store.list_credit_movements(f"user:{user_id}", kinds=["earnings_transfer_out"])
+    workspace_movements = store.list_credit_movements(workspace_id, kinds=["earnings_transfer_in"])
+    assert len(user_movements) == len(workspace_movements) == 1
+    assert user_movements[0].amount_microdollars == -60
+    assert user_movements[0].counterparty_account_id == workspace_id
+    assert workspace_movements[0].amount_microdollars == 60
+    assert workspace_movements[0].counterparty_account_id == f"user:{user_id}"
+
+
+def test_insufficient_earnings_transfer_leaves_both_accounts_unchanged(
+    store: Store,
+    user_id: str,
+    workspace_id: str,
+    unique: str,
+) -> None:
+    assert store.credit_user_earnings(user_id, 20, f"evt-low-fund-{unique}")
+    assert (
+        store.transfer_earnings_to_workspace(
+            user_id,
+            workspace_id,
+            21,
+            f"evt-low-transfer-{unique}",
+        )
+        == "insufficient"
+    )
+    assert store.earnings_summary(user_id)["available"] == 20
+    summary = live_credit_summary(workspace_id, store=store)
+    assert summary is not None
+    assert summary["total_credits"] == 0
+    assert store.list_credit_movements(f"user:{user_id}", kinds=["earnings_transfer_out"]) == []
+    assert store.list_credit_movements(workspace_id, kinds=["earnings_transfer_in"]) == []
+
+
+def test_custom_model_earnings_aggregate_groups_only_payouts_by_model(
+    store: Store,
+    user_id: str,
+    unique: str,
+) -> None:
+    assert store.credit_user_earnings(
+        user_id,
+        30,
+        f"evt-model-a1-{unique}",
+        custom_model_id="model-a",
+    )
+    assert store.credit_user_earnings(
+        user_id,
+        12,
+        f"evt-model-a2-{unique}",
+        custom_model_id="model-a",
+    )
+    assert store.credit_user_earnings(
+        user_id,
+        8,
+        f"evt-model-b-{unique}",
+        custom_model_id="model-b",
+    )
+    assert store.custom_model_earnings_by_model(
+        user_id,
+        since="1970-01-01T00:00:00Z",
+    ) == {"model-a": 42, "model-b": 8}
+
+
+def test_credit_movement_listing_is_newest_first_filterable_and_bounded(
+    store: Store,
+    user_id: str,
+    unique: str,
+) -> None:
+    first_id = f"evt-list-a-{unique}"
+    second_id = f"evt-list-b-{unique}"
+    assert store.credit_user_earnings(
+        user_id,
+        1,
+        first_id,
+        custom_model_id="model-a",
+    )
+    assert store.credit_user_earnings(
+        user_id,
+        2,
+        second_id,
+        custom_model_id="model-b",
+    )
+
+    account_id = f"user:{user_id}"
+    movements = store.list_credit_movements(
+        account_id,
+        kinds=["custom_model_payout"],
+        limit=1,
+    )
+    assert [movement.movement_id for movement in movements] == [second_id]
+    assert store.list_credit_movements(account_id, kinds=[]) == []
+    all_movements = store.list_credit_movements(account_id)
+    assert (
+        store.list_credit_movements(
+            account_id,
+            before=min(movement.created_at for movement in all_movements),
+        )
+        == []
+    )
+
+
+def test_lifetime_topup_is_part_of_the_grant_claim(
+    store: Store,
+    workspace_id: str,
+    user_id: str,
+    unique: str,
+) -> None:
+    assert store.get_lifetime_topup_microdollars(f"unknown-{unique}") == 0
+    event_id = f"evt-lifetime-{unique}"
+    assert store.credit_workspace_typed_direct(
+        workspace_id,
+        25,
+        event_id,
+        lifetime_topup_user_id=user_id,
+    )
+    assert not store.credit_workspace_typed_direct(
+        workspace_id,
+        25,
+        event_id,
+        lifetime_topup_user_id=user_id,
+    )
+    assert store.credit_workspace_typed_direct(
+        workspace_id,
+        10,
+        f"{event_id}-second",
+        lifetime_topup_user_id=user_id,
+    )
+    assert store.get_lifetime_topup_microdollars(user_id) == 35
 
 
 def _credit_and_key(

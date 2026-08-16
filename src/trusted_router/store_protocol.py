@@ -24,6 +24,7 @@ from trusted_router.storage_models import (
     BroadcastDestination,
     ByokProviderConfig,
     CreditAccount,
+    CreditMovement,
     CreditTransfer,
     CustomModel,
     EmailSendBlock,
@@ -474,11 +475,62 @@ class Store(Protocol):
     # Credit ledger -----------------------------------------------------------
     def get_credit_account(self, workspace_id: str) -> CreditAccount | None: ...
     def credit_workspace_typed_direct(
-        self, workspace_id: str, amount_microdollars: int, event_id: str
+        self,
+        workspace_id: str,
+        amount_microdollars: int,
+        event_id: str,
+        *,
+        lifetime_topup_user_id: str | None = ...,
     ) -> bool: ...
     def credit_workspace_once(
         self, workspace_id: str, amount_microdollars: int, event_id: str
     ) -> bool: ...
+
+    # Earnings & movement primitives -----------------------------------------
+    def debit_workspace_guarded(
+        self,
+        workspace_id: str,
+        amount_microdollars: int,
+        event_id: str,
+        *,
+        kind: str,
+        custom_model_id: str | None = ...,
+        authorization_id: str | None = ...,
+    ) -> str: ...
+    def credit_user_earnings(
+        self,
+        user_id: str,
+        amount_microdollars: int,
+        event_id: str,
+        *,
+        custom_model_id: str | None = ...,
+        payer_workspace_id: str | None = ...,
+    ) -> bool: ...
+    def transfer_earnings_to_workspace(
+        self,
+        user_id: str,
+        workspace_id: str,
+        amount_microdollars: int,
+        event_id: str,
+    ) -> str: ...
+    def ensure_earnings_account(self, user_id: str) -> None: ...
+    def earnings_summary(self, user_id: str) -> dict[str, int]: ...
+    def list_credit_movements(
+        self,
+        account_id: str,
+        *,
+        kinds: list[str] | None = ...,
+        limit: int = ...,
+        before: str | None = ...,
+    ) -> list[CreditMovement]: ...
+    def custom_model_earnings_by_model(
+        self,
+        user_id: str,
+        *,
+        since: str,
+    ) -> dict[str, int]: ...
+    def get_lifetime_topup_microdollars(self, user_id: str) -> int: ...
+
     def reserve(
         self,
         workspace_id: str,
