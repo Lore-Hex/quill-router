@@ -1,0 +1,130 @@
+name: Check ClickHouse archive freshness
+
+# The verified daily archive (clickhouse/archive_daily.py) and its restore
+# drill (clickhouse/verify_archive_restore.py) run on tr-clickhouse-1 under
+# systemd timers at ~04:28 and 06:08 UTC. When they fail, nothing outside the
+# node notices: on 2026-08-16 a service-account swap left both units failing
+# for ten hours until a person looked at the bucket (NC-005). This job looks
+# at the bucket for them, from outside, after the timers should have fired.
+#
+# It fails, and files or updates ONE issue, if yesterday's _latest.json is
+# missing for any dataset or names a manifest that does not exist. Because it
+# reads the bucket rather than the node, it also catches "the archiver never
+# ran" (node down, timer disabled), which an OnFailure= hook on the unit
+# cannot.
+
+on:
+  schedule:
+    # 07:30 UTC daily: after the 04:28 archive and 06:08 drill, with slack for
+    # GitHub's scheduler drift. The archiver's own 7-day lookback means a day
+    # that is caught here still gets back-filled by the next successful run.
+    - cron: "30 7 * * *"
+  push:
+    branches: [main]
+    paths:
+      - "clickhouse/check_archive_freshness.py"
+      - ".github/workflows/check-archive-freshness.yml"
+  workflow_dispatch:
+    inputs:
+      day:
+        description: "Closed day to check (YYYY-MM-DD, UTC). Default: yesterday."
+        required: false
+        default: ""
+      lookback:
+        description: "How many closed days to check, ending yesterday (ignored if day is set)."
+        required: false
+        default: "1"
+
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+
+concurrency:
+  group: check-archive-freshness
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Read-only. The identity already holds storage.admin project-wide for
+      # deploys; this job uses only storage.objects.get/list on one bucket.
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Check yesterday's archive pointers
+        id: check
+        env:
+          DAY: ${{ github.event.inputs.day }}
+          LOOKBACK: ${{ github.event.inputs.lookback || '1' }}
+        run: |
+          set -euo pipefail
+          args=(--problems-file /tmp/problems.txt)
+          if [ -n "${DAY}" ]; then
+            args+=(--day "${DAY}")
+          else
+            args+=(--lookback "${LOOKBACK}")
+          fi
+          python3 -m clickhouse.check_archive_freshness "${args[@]}"
+
+      - name: Open or update the freshness issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -f /tmp/problems.txt ]; then
+            cp /tmp/problems.txt /tmp/detail.txt
+          else
+            echo "the freshness check failed before it could report; see the run log" > /tmp/detail.txt
+          fi
+          {
+            echo "The scheduled check found the verified ClickHouse archive has not advanced."
+            echo
+            echo '```'
+            cat /tmp/detail.txt
+            echo '```'
+            echo
+            echo "What to look at, in order:"
+            echo
+            echo '```bash'
+            echo "gcloud compute ssh tr-clickhouse-1 --zone=us-central1-a --project=quill-cloud-proxy --tunnel-through-iap \\"
+            echo "  --command='systemctl status tr-clickhouse-archive.service tr-clickhouse-archive-restore.service --no-pager; \\"
+            echo "             sudo journalctl -u tr-clickhouse-archive.service -n 30 --no-pager'"
+            echo '```'
+            echo
+            echo "A 403 in that journal means the node identity lost its bucket grant (this is"
+            echo "how NC-005 happened after a service-account swap): fix the IAM binding, then"
+            echo "'sudo systemctl start tr-clickhouse-archive.service' and the restore drill;"
+            echo "the archiver's 7-day lookback back-fills the missing day. If the unit did not"
+            echo "run at all, check the timer and the node. Record the outcome in the SOC 2"
+            echo "evidence log."
+            echo
+            echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          } > /tmp/issue-body.md
+          gh label create archive-freshness \
+            --description "The verified ClickHouse archive stopped advancing" \
+            --color D93F0B --force >/dev/null
+          # One open issue at a time: a daily duplicate trains people to ignore it.
+          existing="$(gh issue list --label archive-freshness --state open --json number --jq '.[0].number' 2>/dev/null || true)"
+          if [ -n "${existing}" ]; then
+            gh issue comment "${existing}" --body-file /tmp/issue-body.md
+          else
+            gh issue create \
+              --title "ClickHouse archive has not advanced" \
+              --label archive-freshness \
+              --body-file /tmp/issue-body.md
+          fi
