@@ -12,6 +12,7 @@ from trusted_router.client_reliability import (
     build_client_reliability,
     classify_tr_fault,
     is_excluded,
+    timeout_floor_met,
 )
 
 
@@ -195,3 +196,25 @@ def test_snapshot_gate_privacy_and_histogram_percentiles() -> None:
 def test_availability_has_an_empty_denominator_sentinel() -> None:
     assert availability(99, 1) == 0.99
     assert availability(0, 0) is None
+
+
+@pytest.mark.parametrize(
+    ("phase", "configured_ms", "expected"),
+    [
+        ("connect", 9_999, False),
+        ("connect", 10_000, True),
+        ("first_byte", 59_999, False),
+        ("first_byte", 60_000, True),
+        ("idle", 29_999, False),
+        ("idle", 30_000, True),
+        ("total", 3_600_000, False),
+        ("none", 3_600_000, False),
+        ("connect", None, False),
+    ],
+)
+def test_timeout_floor_met_table(
+    phase: str,
+    configured_ms: int | None,
+    expected: bool,
+) -> None:
+    assert timeout_floor_met(phase, configured_ms) is expected

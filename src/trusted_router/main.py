@@ -36,6 +36,7 @@ from trusted_router.routes.broadcast import register_broadcast_routes
 from trusted_router.routes.byok import register_byok_routes
 from trusted_router.routes.catalog import register_catalog_routes
 from trusted_router.routes.chat_proxy import register_chat_proxy_routes
+from trusted_router.routes.client_events import register_client_events_routes
 from trusted_router.routes.compat import register_compat_stub_routes
 from trusted_router.routes.console import register_console_routes
 from trusted_router.routes.custom_models import register_custom_model_routes
@@ -427,6 +428,7 @@ def _make_api_router(settings: Settings) -> APIRouter:
     register_key_routes(router)
     register_oauth_key_routes(router)
     register_activity_routes(router)
+    register_client_events_routes(router)
     register_workspace_routes(router)
 
     if _control_plane_inference_enabled(settings):

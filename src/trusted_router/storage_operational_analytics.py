@@ -14,14 +14,23 @@ backend-specific.  Everything here is pure: no cloud SDKs, no IO.
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 from typing import Any
 
+from trusted_router.catalog import MODELS
+from trusted_router.client_events_schema import ClientEventsBatch
+from trusted_router.client_reliability import (
+    METHODOLOGY_VERSION,
+    classify_tr_fault,
+    timeout_floor_met,
+)
 from trusted_router.storage_models import Generation, SyntheticProbeSample
 
 OPERATIONAL_ANALYTICS_OUTBOX_SHARDS = 32
 ACTIVITY_EVENT_KIND = "activity"
 SYNTHETIC_EVENT_KIND = "synthetic"
+CLIENT_EVENTS_EVENT_KIND = "client_events"
 
 
 def operational_analytics_shard(
@@ -39,6 +48,120 @@ def analytics_surrogate(namespace: str, value: str) -> str:
     """Return a stable non-reversible identifier for private analytics."""
     material = f"trustedrouter:{namespace}:{value}".encode()
     return hashlib.sha256(material).hexdigest()
+
+
+def _iso_milliseconds(value: dt.datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=dt.UTC)
+    return value.astimezone(dt.UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def build_client_events_payload(
+    batch: ClientEventsBatch,
+    *,
+    tenant_id: str,
+    key_id: str,
+    received_at: dt.datetime,
+    is_synthetic: bool,
+    success_sample_rate: float,
+) -> dict[str, Any]:
+    """Project one validated beacon batch onto the ClickHouse outbox shape."""
+    _ = success_sample_rate
+    if received_at.tzinfo is None:
+        received_at = received_at.replace(tzinfo=dt.UTC)
+    received_at = received_at.astimezone(dt.UTC)
+    received_at_text = _iso_milliseconds(received_at)
+    clock_skew_ms = 0
+    if batch.sent_at_ms is not None:
+        clock_skew_ms = int(received_at.timestamp() * 1000) - batch.sent_at_ms
+        clock_skew_ms = max(-86_400_000, min(clock_skew_ms, 86_400_000))
+
+    events: list[dict[str, Any]] = []
+    for event in batch.events:
+        attempts = event.attempts
+        outcome = attempts[-1].outcome if event.final_outcome == "exhausted" else event.final_outcome
+        error_class = next(
+            (attempt.error_class for attempt in attempts if attempt.error_class is not None),
+            None,
+        )
+        error_source = next(
+            (attempt.error_source for attempt in attempts if attempt.error_source is not None),
+            None,
+        )
+        event_payload = event.model_dump(mode="json")
+        event_payload.pop("age_ms")
+        if event.model is not None:
+            event_payload["model"] = event.model if event.model in MODELS else "other"
+        event_payload.update(
+            {
+                "created_at": _iso_milliseconds(
+                    received_at - dt.timedelta(milliseconds=event.age_ms)
+                ),
+                "tr_fault": int(
+                    classify_tr_fault(
+                        level="request",
+                        outcome=outcome,
+                        error_class=error_class,
+                        error_source=error_source,
+                        http_status_class_or_status=event.final_http_status,
+                        host=attempts[-1].host,
+                        provider_pinned=event.provider_pinned,
+                        timeout_phase=event.timeout_phase,
+                        timeout_floor_met=timeout_floor_met(
+                            event.timeout_phase,
+                            event.configured_timeout_ms,
+                        ),
+                    )
+                ),
+                "methodology_version": METHODOLOGY_VERSION,
+            }
+        )
+        events.append(event_payload)
+
+    counters: list[dict[str, Any]] = []
+    for counter in batch.counters:
+        bucket_start = received_at - dt.timedelta(
+            milliseconds=counter.window_start_age_ms
+        )
+        counter_payload = counter.model_dump(mode="json")
+        counter_payload.pop("window_start_age_ms")
+        counter_payload.update(
+            {
+                "bucket_start": _iso_milliseconds(
+                    bucket_start.replace(second=0, microsecond=0)
+                ),
+                "tr_fault": int(
+                    classify_tr_fault(
+                        level=counter.level,
+                        outcome=counter.outcome,
+                        error_class=counter.error_class,
+                        error_source=None,
+                        http_status_class_or_status=counter.http_status_class,
+                        host=counter.host,
+                        provider_pinned=counter.provider_pinned,
+                        timeout_phase=counter.timeout_phase,
+                        timeout_floor_met=counter.timeout_floor_met,
+                    )
+                ),
+                "methodology_version": METHODOLOGY_VERSION,
+            }
+        )
+        counters.append(counter_payload)
+
+    return {
+        "schema_version": batch.schema_version,
+        "tenant_id": analytics_surrogate("workspace", tenant_id),
+        "key_id": analytics_surrogate("api-key", key_id),
+        "received_at": received_at_text,
+        "clock_skew_ms": clock_skew_ms,
+        "synthetic": bool(batch.synthetic or is_synthetic),
+        "batch_id": batch.batch_id,
+        "instance_id": batch.instance_id,
+        "seq": batch.seq,
+        "sdk": batch.sdk.model_dump(mode="json"),
+        "events": events,
+        "counters": counters,
+    }
 
 
 def activity_payload(generation: Generation) -> dict[str, Any]:

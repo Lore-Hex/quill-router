@@ -299,6 +299,23 @@ class Settings(BaseSettings):
     # Durable tenant-activity and synthetic-status stream. Kept independent
     # from provider analytics so its privacy and cutover can be controlled.
     operational_analytics_outbox_enabled: bool = False
+    # Client-observed reliability beacons remain off until the ClickHouse node
+    # runbook has been completed. Every setting is available as TR_CLIENT_EVENTS_*.
+    client_events_enabled: bool = False
+    # Sampling policy returned to SDKs for ordinary successful requests.
+    client_events_success_sample_rate: float = 0.01
+    # A positive value pauses SDK delivery without reading or storing a body.
+    client_events_pause_seconds: int = 0
+    # Workspaces whose beacons are synthetic regardless of the client bit.
+    client_events_synthetic_workspace_ids: list[str] = []
+    # Hard request and abuse-control bounds for the fire-and-forget endpoint.
+    client_events_max_body_bytes: int = 65_536
+    client_events_key_per_minute: int = 60
+    client_events_workspace_per_minute: int = 300
+    # Bounds blocking outbox writes so telemetry cannot consume the money path's pool.
+    client_events_write_concurrency: int = 4
+    # Flush cadence returned to SDKs in the accepted policy.
+    client_events_flush_seconds: int = 30
 
     # Starter credit granted exactly once with a new email/social OAuth account's
     # first workspace. Wallet-only and secondary workspaces receive no grant.

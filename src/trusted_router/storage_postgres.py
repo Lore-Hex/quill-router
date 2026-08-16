@@ -50,6 +50,7 @@ from trusted_router.storage_errors import (
     DeferredSettlementCapReached,
     StoreConflict,
     StoreUnavailable,
+    is_duplicate_key_error,
 )
 from trusted_router.storage_gcp_codec import (
     byok_id,
@@ -3936,6 +3937,39 @@ class PostgresStore:
 
     def add_generation(self, generation: Generation) -> None:
         self._not_implemented("add_generation")
+
+    def record_client_events_batch(self, payload: dict[str, Any]) -> None:
+        outbox = self._operational_analytics_outbox
+        if outbox is None:
+            log.warning(
+                "postgres.client_events_outbox_disabled_drop",
+                extra={
+                    "tenant": str(payload["tenant_id"])[:12],
+                    "batch_id": payload["batch_id"],
+                },
+            )
+            return
+        try:
+            outbox.enqueue_client_events(payload)
+        except Exception as exc:
+            if is_duplicate_key_error(exc):
+                log.info(
+                    "postgres.client_events_duplicate",
+                    extra={
+                        "tenant": str(payload["tenant_id"])[:12],
+                        "batch_id": payload["batch_id"],
+                    },
+                )
+                return
+            log.exception(
+                "postgres.client_events_enqueue_failed",
+                extra={
+                    "tenant": str(payload["tenant_id"])[:12],
+                    "batch_id": payload["batch_id"],
+                    "error_class": type(exc).__name__,
+                },
+            )
+            raise
 
     def record_provider_benchmark(self, sample: ProviderBenchmarkSample) -> None:
         self._run_transaction(
