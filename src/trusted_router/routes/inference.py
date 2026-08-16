@@ -19,6 +19,7 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -53,7 +54,15 @@ from trusted_router.services.inference import (
     run_embeddings,
     run_messages_stream,
 )
+from trusted_router.services.user_model_dispatch import (
+    dispatch_user_model,
+    stream_user_model,
+)
+from trusted_router.storage import STORE
+from trusted_router.storage_custom_models import is_custom_model_id, normalize_custom_model_id
+from trusted_router.storage_models import UserProvidedModel
 from trusted_router.types import ErrorType, UsageType
+from trusted_router.user_model_rules import user_model_is_on_the_clock
 
 _VALID_ROLES = frozenset({"system", "user", "assistant", "tool", "developer"})
 _OUTPUT_TOKEN_FIELDS = ("max_tokens", "max_completion_tokens", "max_output_tokens")
@@ -81,6 +90,16 @@ def register_inference_routes(router: APIRouter) -> None:
         _validate_output_token_limit(body)
         _validate_chat_messages(body)
         _require_monitor_model_key(body, principal, settings)
+        user_model = _local_user_model_or_none(body)
+        if user_model is not None:
+            if body.get("stream") is True:
+                return StreamingResponse(
+                    stream_user_model(user_model, body, settings),
+                    media_type="text/event-stream",
+                    headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
+                )
+            result = await dispatch_user_model(user_model, body, settings)
+            return JSONResponse(result.body)
         provider_prefs = provider_route_preferences(body)
         usage_type = (
             UsageType.coerce(provider_prefs.usage_type)
@@ -443,6 +462,24 @@ def _require_chat_model(body: dict[str, Any]) -> Model:
             400, "Model does not support chat completions", ErrorType.MODEL_NOT_SUPPORTED
         )
     _validate_messages_field(body)
+    return model
+
+
+def _local_user_model_or_none(body: dict[str, Any]) -> UserProvidedModel | None:
+    model_id = str(body.get("model") or "")
+    if not is_custom_model_id(model_id):
+        return None
+    model = STORE.get_user_model(normalize_custom_model_id(model_id))
+    if model is None:
+        return None
+    if not model.enabled or model.status != "active":
+        raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
+    if not user_model_is_on_the_clock(model, datetime.now(UTC)):
+        raise api_error(
+            503,
+            f"User-provided {model.kind} model {model.id} is off the clock",
+            ErrorType.MODEL_OFF_THE_CLOCK,
+        )
     return model
 
 
