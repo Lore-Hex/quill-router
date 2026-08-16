@@ -384,6 +384,22 @@ async def _post_remediator(
         return False
 
 
+async def _run_scheduled_remediator(
+    *,
+    url: str,
+    internal_token: str,
+    timeout_seconds: float,
+) -> bool:
+    """Own the HTTP client so remediation can overlap independent probes."""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds)) as client:
+        return await _post_remediator(
+            client,
+            url=url,
+            internal_token=internal_token,
+            timeout_seconds=timeout_seconds,
+        )
+
+
 async def run() -> int:
     settings = get_settings()
     monitor_region = (
@@ -395,6 +411,16 @@ async def run() -> int:
     internal_token = settings.internal_gateway_token
     api_key = settings.synthetic_monitor_api_key
     timeout = httpx.Timeout(settings.synthetic_monitor_timeout_seconds)
+    remediator_url = os.environ.get("TR_SYNTHETIC_REMEDIATOR_URL")
+    remediator_timeout_seconds = max(
+        30.0,
+        float(
+            os.environ.get(
+                "TR_SYNTHETIC_REMEDIATOR_TIMEOUT_SECONDS",
+                str(_DEFAULT_REMEDIATOR_TIMEOUT_SECONDS),
+            )
+        ),
+    )
     runs_per_invocation = max(
         1,
         int(
@@ -485,6 +511,17 @@ async def run() -> int:
     benchmark_samples: list[ProviderBenchmarkSample] = []
     if start_delay_seconds:
         await asyncio.sleep(start_delay_seconds)
+    remediator_task = (
+        asyncio.create_task(
+            _run_scheduled_remediator(
+                url=remediator_url,
+                internal_token=internal_token,
+                timeout_seconds=remediator_timeout_seconds,
+            )
+        )
+        if remediator_url and internal_token and not throughput_only
+        else None
+    )
     if throughput_only:
         if not throughput_enabled:
             print(
@@ -596,26 +633,8 @@ async def run() -> int:
                     url=route_health_url,
                     internal_token=internal_token,
                 )
-        remediator_url = os.environ.get("TR_SYNTHETIC_REMEDIATOR_URL")
-        if remediator_url:
-            remediator_timeout_seconds = max(
-                30.0,
-                float(
-                    os.environ.get(
-                        "TR_SYNTHETIC_REMEDIATOR_TIMEOUT_SECONDS",
-                        str(_DEFAULT_REMEDIATOR_TIMEOUT_SECONDS),
-                    )
-                ),
-            )
-            ok = (
-                await _post_remediator(
-                    client,
-                    url=remediator_url,
-                    internal_token=internal_token,
-                    timeout_seconds=remediator_timeout_seconds,
-                )
-                and ok
-            )
+    if remediator_task is not None:
+        ok = (await remediator_task) and ok
     return 0 if ok else 1
 
 
