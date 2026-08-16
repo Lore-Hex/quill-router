@@ -492,6 +492,49 @@ def test_record_sns_message_once_is_idempotent(store: Store, unique: str) -> Non
     assert store.record_sns_message_once(f"msg-{unique}-2") is True
 
 
+def test_record_webhook_event_once_is_idempotent_and_source_scoped(
+    store: Store, unique: str
+) -> None:
+    event_id = f"event-{unique}"
+    assert store.record_webhook_event_once("veriff", event_id) is True
+    assert store.record_webhook_event_once("veriff", event_id) is False
+    assert store.record_webhook_event_once("another-source", event_id) is True
+
+
+def test_user_identity_status_transitions_persist_and_stamp_approval_once(
+    store: Store, user_id: str
+) -> None:
+    pending = store.set_user_identity_status(
+        user_id,
+        status="pending",
+        session_id="session-one",
+        session_url="https://example.test/session-one",
+        increment_attempts=True,
+    )
+    assert pending is not None
+    assert pending.identity_status == "pending"
+    assert pending.identity_verified is False
+    assert pending.veriff_session_created_at is not None
+    assert pending.veriff_attempt_count == 1
+
+    approved = store.set_user_identity_status(
+        user_id,
+        status="approved",
+        decision_code=9001,
+        verified_name="Ada Lovelace",
+    )
+    assert approved is not None
+    assert approved.identity_verified is True
+    assert approved.identity_verified_at is not None
+    first_verified_at = approved.identity_verified_at
+
+    approved_again = store.set_user_identity_status(user_id, status="approved")
+    assert approved_again is not None
+    assert approved_again.identity_verified_at == first_verified_at
+    assert approved_again.identity_verified_name == "Ada Lovelace"
+    assert approved_again.veriff_attempt_count == 1
+
+
 # --------------------------------------------------------------------------
 # Single-use secrets
 # --------------------------------------------------------------------------

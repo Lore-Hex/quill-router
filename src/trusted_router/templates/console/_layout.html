@@ -85,6 +85,7 @@
       <div class="sidebar-group">
         <div class="sidebar-label">Account</div>
         <a href="/console/credits" class="sidebar-link {{ 'active' if active == 'credits' else '' }}">Credits</a>
+        <a href="/console/account/verification" class="sidebar-link {{ 'active' if active == 'verification' else '' }}">Verification</a>
         <a href="/console/account/preferences" class="sidebar-link {{ 'active' if active == 'preferences' else '' }}">Preferences</a>
         <form class="sidebar-link sidebar-signout" method="post" action="/auth/logout">
           <button type="submit">Sign out</button>

@@ -17,6 +17,7 @@ from . import paypal as paypal
 from . import reconcile as reconcile
 from . import sentry as sentry
 from . import synthetic as synthetic
+from . import veriff as veriff
 from . import video_jobs as video_jobs
 from . import webhook as webhook
 
@@ -31,6 +32,7 @@ def register_internal_routes(router: APIRouter) -> None:
     fetch_image.register(router)
     reconcile.register(router)
     synthetic.register(router)
+    veriff.register(router)
     sentry.register(router)
     chat_browser_key.register(router)
     federation.register(router)

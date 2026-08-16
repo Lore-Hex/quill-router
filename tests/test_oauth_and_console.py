@@ -1149,6 +1149,7 @@ def test_console_workspace_selector_persists_session_workspace(
         "/console/broadcast",
         "/console/settings",
         "/console/credits",
+        "/console/account/verification",
         "/console/account/preferences",
     )
     for path in console_pages:

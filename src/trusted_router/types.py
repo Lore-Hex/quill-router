@@ -36,6 +36,28 @@ class UsageType(StrEnum):
         return self is UsageType.BYOK
 
 
+class IdentityVerificationStatus(StrEnum):
+    """Current state of a user's identity-verification attempt."""
+
+    NONE = "none"
+    PENDING = "pending"
+    APPROVED = "approved"
+    DECLINED = "declined"
+    RESUBMISSION_REQUESTED = "resubmission_requested"
+    EXPIRED = "expired"
+
+    @classmethod
+    def coerce(
+        cls, value: str | IdentityVerificationStatus
+    ) -> IdentityVerificationStatus:
+        if isinstance(value, cls):
+            return value
+        try:
+            return cls(str(value).strip().lower())
+        except ValueError:
+            return cls.NONE
+
+
 class ErrorType(StrEnum):
     """Stable error type strings shared across the API surface."""
 

@@ -102,6 +102,18 @@ class User:
     phone_code_attempts: int = 0
     phone_code_sent_at: str | None = None
     phone_code_channel: str | None = None
+    identity_status: str = "none"
+    identity_verified_at: str | None = None
+    identity_verified_name: str | None = None
+    veriff_session_id: str | None = None
+    veriff_session_url: str | None = None
+    veriff_session_created_at: str | None = None
+    veriff_decision_code: int | None = None
+    veriff_attempt_count: int = 0
+
+    @property
+    def identity_verified(self) -> bool:
+        return self.identity_status == "approved"
 
 
 @dataclass

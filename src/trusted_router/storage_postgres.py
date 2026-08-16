@@ -115,7 +115,7 @@ from trusted_router.synthetic.rollups import (
     new_rollup_for_sample,
     sample_rollup_ids,
 )
-from trusted_router.types import UsageType
+from trusted_router.types import IdentityVerificationStatus, UsageType
 
 T = TypeVar("T")
 
@@ -948,6 +948,42 @@ class PostgresStore:
     def mark_user_email_verified(self, user_id: str) -> User | None:
         self._not_implemented("mark_user_email_verified")
 
+    def set_user_identity_status(
+        self,
+        user_id: str,
+        *,
+        status: str,
+        session_id: str | None = None,
+        session_url: str | None = None,
+        decision_code: int | None = None,
+        verified_name: str | None = None,
+        increment_attempts: bool = False,
+    ) -> User | None:
+        def txn(conn: Any) -> User | None:
+            user = self._read_entity_tx(conn, "user", user_id, User, for_update=True)
+            if user is None:
+                return None
+            normalized = IdentityVerificationStatus.coerce(status)
+            if normalized is IdentityVerificationStatus.APPROVED and not user.identity_verified_at:
+                user.identity_verified_at = iso_now()
+            user.identity_status = normalized.value
+            if session_id is not None:
+                if session_id != user.veriff_session_id or not user.veriff_session_created_at:
+                    user.veriff_session_created_at = iso_now()
+                user.veriff_session_id = session_id
+            if session_url is not None:
+                user.veriff_session_url = session_url
+            if decision_code is not None:
+                user.veriff_decision_code = decision_code
+            if verified_name is not None:
+                user.identity_verified_name = verified_name
+            if increment_attempts:
+                user.veriff_attempt_count += 1
+            self._write_entity_tx(conn, "user", user.id, user)
+            return user
+
+        return self._run_transaction(txn)
+
     def begin_phone_verification(
         self, user_id: str, phone: str, channel: str | None = None
     ) -> tuple[str, User] | None:
@@ -1257,6 +1293,16 @@ class PostgresStore:
                 conn,
                 "sns_message",
                 message_id,
+                {"created_at": iso_now()},
+            )
+        )
+
+    def record_webhook_event_once(self, source: str, event_id: str) -> bool:
+        return self._run_transaction(
+            lambda conn: self._insert_entity_once_tx(
+                conn,
+                "webhook_event",
+                f"{source}#{event_id}",
                 {"created_at": iso_now()},
             )
         )

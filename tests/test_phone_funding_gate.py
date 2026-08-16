@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.money import VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS
 from trusted_router.services import notify as notify_module
 from trusted_router.services.telephony import TelephonyResult
 from trusted_router.storage import STORE
@@ -36,11 +37,16 @@ def _settings() -> Settings:
     )
 
 
-def _fund_user(user: Any, *, event_id: str = "evt_phone_gate_funding") -> None:
+def _fund_user(
+    user: Any,
+    *,
+    event_id: str = "evt_phone_gate_funding",
+    amount: int = 1,
+) -> None:
     workspace = STORE.list_workspaces_for_user(user.id)[0]
     STORE.credit_workspace_typed_direct(
         workspace.id,
-        1,
+        amount,
         event_id,
         lifetime_topup_user_id=user.id,
     )
@@ -223,7 +229,11 @@ def test_verification_status_reports_shape_and_next_step_progression(
             headers=user_headers,
         ).json()["data"]
 
-        _fund_user(user, event_id="evt_verification_status_funding")
+        _fund_user(
+            user,
+            event_id="evt_verification_status_funding",
+            amount=VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS,
+        )
         funded = client.get(
             "/v1/auth/verification-status",
             headers=user_headers,
@@ -239,6 +249,12 @@ def test_verification_status_reports_shape_and_next_step_progression(
             headers=user_headers,
         ).json()["data"]
 
+        STORE.set_user_identity_status(user.id, status="approved")
+        identity_done = client.get(
+            "/v1/auth/verification-status",
+            headers=user_headers,
+        ).json()["data"]
+
     assert initial_response.status_code == 200
     assert initial == {
         "email": "alice@example.com",
@@ -248,16 +264,25 @@ def test_verification_status_reports_shape_and_next_step_progression(
         "phone_verified": False,
         "phone": None,
         "identity_status": "none",
-        "missing_requirements": ["funding"],
+        "identity_verified_at": None,
+        "veriff_attempt_count": 0,
+        "verification_fee": 5.0,
+        "verification_fee_microdollars": 5_000_000,
+        "lifetime_topup_required": 25.0,
+        "lifetime_topup_required_microdollars": 25_000_000,
+        "missing_requirements": ["phone_verified", "funding"],
         "next_step": "email",
     }
     assert email_done["next_step"] == "funding"
-    assert funded["lifetime_topup_microdollars"] == 1
-    assert funded["missing_requirements"] == []
+    assert funded["lifetime_topup_microdollars"] == 25_000_000
+    assert funded["missing_requirements"] == ["phone_verified"]
     assert funded["next_step"] == "phone"
     assert phone_done["phone_verified"] is True
     assert phone_done["phone"] == "+13059511381"
     assert phone_done["next_step"] == "identity"
+    assert identity_done["identity_status"] == "approved"
+    assert identity_done["identity_verified_at"] is not None
+    assert identity_done["next_step"] is None
 
 
 def test_verification_status_never_falls_back_to_the_workspace_owner(
