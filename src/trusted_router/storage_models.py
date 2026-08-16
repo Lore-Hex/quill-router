@@ -702,8 +702,18 @@ class Generation:
             status=str(body.get("status") or "success"),
             streamed=bool(body.get("streamed", False)),
             usage_estimated=bool(body.get("usage_estimated", False)),
+            # `cache_read_input_tokens` is the canonical settle-body field: it is
+            # what the attested gateway sends, what SettleRequest declares, and
+            # what billing reads via `cache_read_count`. Reading only the two
+            # legacy aliases meant this metric was silently 0 on every attested
+            # generation. Billing was never affected — the cost is computed
+            # upstream and passed in as `actual_cost_microdollars`; only this
+            # activity-index field was blank.
             cached_input_tokens=int(
-                body.get("cached_input_tokens") or body.get("cached_tokens") or 0
+                body.get("cache_read_input_tokens")
+                or body.get("cached_input_tokens")
+                or body.get("cached_tokens")
+                or 0
             ),
             reasoning_tokens=int(body.get("reasoning_tokens") or 0),
             # Tool-call arguments are model output content, not activity

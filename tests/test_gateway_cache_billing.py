@@ -214,3 +214,39 @@ def test_settle_without_cache_fields_is_unchanged() -> None:
     generation = STORE.get_generation(data["generation_id"])
     assert generation is not None
     assert generation.tokens_prompt == 500
+    assert generation.cached_input_tokens == 0
+
+
+def test_settle_records_cache_reads_on_the_generation() -> None:
+    """The generation's cached_input_tokens must reflect the settle body.
+
+    Regression: `from_settle_body` only read the legacy `cached_input_tokens`
+    / `cached_tokens` aliases, but the attested gateway sends
+    `cache_read_input_tokens` (the name SettleRequest declares and billing
+    reads). Every attested generation therefore recorded 0 cached tokens —
+    across ~700k rows in production — making prompt-cache usage look
+    nonexistent. Billing was always correct; only this metric was blank.
+    """
+    client, key = _client_and_key()
+    auth = _authorize(
+        client,
+        key,
+        "z-ai/glm-5.2",
+        provider={"only": ["tinfoil"]},
+    )
+
+    settle = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": auth["authorization_id"],
+            "actual_input_tokens": 1_000,
+            "actual_output_tokens": 50,
+            "cache_read_input_tokens": 900,
+            "request_id": "gw-cache-metric",
+            "elapsed_seconds": 1.0,
+        },
+    )
+    assert settle.status_code == 200, settle.text
+    generation = STORE.get_generation(settle.json()["data"]["generation_id"])
+    assert generation is not None
+    assert generation.cached_input_tokens == 900
