@@ -469,6 +469,7 @@ class Store(Protocol):
         authorization_id: str,
         *,
         limit: int,
+        ttl_seconds: int,
     ) -> bool: ...
     def release_user_model_slot(self, model_id: str, authorization_id: str) -> None: ...
     def list_public_user_models(

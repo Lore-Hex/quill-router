@@ -102,6 +102,21 @@ except ImportError:  # pragma: no cover - google always present in the test venv
     _AlreadyExists = Exception  # type: ignore[assignment,misc]
 
 
+try:  # subclass the real exception so production handlers see the prod type
+    from google.api_core.exceptions import FailedPrecondition as _FailedPrecondition
+except ImportError:  # pragma: no cover - google always present in the test venv
+    _FailedPrecondition = Exception  # type: ignore[assignment,misc]
+
+
+class FakeFailedPrecondition(_FailedPrecondition):
+    """Non-retryable statement rejection (e.g. writing PENDING_COMMIT_TIMESTAMP()
+    into a column without allow_commit_timestamp). run_in_transaction does NOT
+    retry it; the callback either handles it or the whole transaction fails."""
+
+    def __init__(self, detail: str = "failed precondition") -> None:
+        super().__init__(detail)
+
+
 class FakeAlreadyExists(_AlreadyExists):
     """Unique-index / duplicate-PK violation (e.g. duplicate idempotency_scope or
     reservation_id). Unlike Aborted, run_in_transaction does NOT retry this — the
@@ -707,17 +722,23 @@ class _FakeTransaction:
                 if sql.startswith("INSERT OR IGNORE"):
                     return 0
                 raise FakeAlreadyExists(f"tr_credit_movement/{pk}")
+            # Strict on purpose: created_at is NOT a commit-timestamp column,
+            # so real Spanner requires a client TIMESTAMP param here. A writer
+            # that omits it (or writes PENDING_COMMIT_TIMESTAMP()) must fail
+            # in the fake exactly as it would in prod.
+            if "PENDING_COMMIT_TIMESTAMP" in sql:
+                raise FakeFailedPrecondition(
+                    "tr_credit_movement.created_at: allow_commit_timestamp is not set"
+                )
             record = {
                 "account_id": p["account_id"],
                 "movement_id": p["movement_id"],
-                "kind": p.get("kind", "custom_model_payout"),
+                "kind": p["kind"],
                 "amount_microdollars": p["amount"],
-                "counterparty_account_id": p.get(
-                    "counterparty", p.get("payer_workspace_id")
-                ),
+                "counterparty_account_id": p["counterparty"],
                 "custom_model_id": p["custom_model_id"],
                 "authorization_id": p["authorization_id"],
-                "created_at": p.get("created_at", dt.datetime.now(dt.UTC)),
+                "created_at": p["created_at"],
             }
             self.pending_writes.append(("insert_typed_dml", "tr_credit_movement", pk, record))
             return 1

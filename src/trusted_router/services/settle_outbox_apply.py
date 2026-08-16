@@ -169,7 +169,7 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
         return ApplyOutcome.INVALID_ROW
 
     if row.settle_origin == "typed":
-        return _apply_typed(
+        outcome = _apply_typed(
             row,
             auth,
             success,
@@ -177,15 +177,39 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
             generation,
             user_model_payout,
         )
-    if row.settle_origin == "legacy":
-        return _apply_legacy(
+    elif row.settle_origin == "legacy":
+        outcome = _apply_legacy(
             row,
             success,
             usage_type,
             generation,
             user_model_payout,
         )
-    return ApplyOutcome.INVALID_ROW
+    else:
+        return ApplyOutcome.INVALID_ROW
+    # The inline settle releases the user-model concurrency slot after it
+    # finalizes; when the inline attempt died before that (this row exists
+    # because it did), the repair is the only thing left that can. Releasing
+    # is idempotent and independent of the money outcome, so do it for every
+    # terminal-or-already-terminal result rather than leaving the model at
+    # capacity until the slot's ttl.
+    _release_user_model_slot_safely(auth)
+    return outcome
+
+
+def _release_user_model_slot_safely(auth: GatewayAuthorization) -> None:
+    model_id = auth.user_provided_model_id
+    if not model_id:
+        return
+    try:
+        STORE.release_user_model_slot(model_id, auth.id)
+    except Exception:
+        logger.warning(
+            "user_model_slot_release_failed authorization_id=%s model_id=%s",
+            auth.id,
+            model_id,
+            exc_info=True,
+        )
 
 
 def _parse_settle_body(raw: str | None) -> dict[str, Any] | None:

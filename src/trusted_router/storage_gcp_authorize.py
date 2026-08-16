@@ -814,23 +814,22 @@ def typed_finalize_atomic(
                 raise _SettleError("credit release row-count != 1")
 
         if success and user_model_payout is not None and user_model_payout.amount_microdollars > 0:
-            try:
-                _apply_user_model_payout_tx(
-                    transaction,
-                    pt,
-                    authorization_id=authorization_id,
-                    payout=user_model_payout,
-                )
-            except Exception:
-                # The customer reservation claim remains authoritative. A
-                # missing owner payout is repairable from generation metadata;
-                # a rolled-back customer finalize would strand their hold.
-                log.error(
-                    "user_model_payout_failed authorization_id=%s owner=%s",
-                    authorization_id,
-                    user_model_payout.owner_user_id,
-                    exc_info=True,
-                )
+            # Deliberately NOT wrapped in a swallow. The payout is two DML
+            # statements in this same transaction; a failure between them
+            # would otherwise commit the movement row without the balance
+            # bump (or the reverse), and every later replay would read the
+            # row as "already paid" — a permanent, silent underpayment. An
+            # exception here aborts the whole finalize: transient errors are
+            # retried by run_in_transaction_with_retry, and a deterministic
+            # one (schema drift) fails the settle LOUDLY, which the outbox
+            # repair/drain surfaces, instead of quietly not paying owners.
+            _apply_user_model_payout_tx(
+                transaction,
+                pt,
+                authorization_id=authorization_id,
+                payout=user_model_payout,
+                now=now,
+            )
 
         marked = 0
         request_record_typed = False
@@ -906,15 +905,21 @@ def _apply_user_model_payout_tx(
     *,
     authorization_id: str,
     payout: UserModelPayout,
+    now: Any,
 ) -> None:
     """Credit one owner payout inside the customer finalize transaction.
 
     The reservation claim is the primary exactly-once guard; the movement PK
-    (`account_id`, deterministic payout event id) is the secondary guard. A
-    duplicate movement therefore skips the balance increment. Payout failure
-    must never abort the customer settle: Phase 7 reconciliation can recover a
-    missing payout from generations carrying ``custom_model_id``, while an
-    aborted customer finalize can strand the payer's reservation.
+    (`account_id`, deterministic payout event id) is the secondary guard, so
+    a duplicate movement skips the balance increment. Both statements live in
+    the caller's transaction and either both commit or neither does — see the
+    call site for why a failure here is allowed to abort the finalize.
+
+    ``created_at`` is a client timestamp on purpose: tr_credit_movement was
+    created WITHOUT ``allow_commit_timestamp`` (migrate_money_primitives.sh),
+    and Spanner rejects PENDING_COMMIT_TIMESTAMP() into such a column
+    (FAILED_PRECONDITION). Phase 1's credit_user_earnings writes it the same
+    way; only tr_earnings_balance.updated_at is a commit-timestamp column.
     """
     pt = param_types
     movement_id = user_model_payout_event_id(authorization_id)
@@ -922,24 +927,27 @@ def _apply_user_model_payout_tx(
         "INSERT OR IGNORE INTO tr_credit_movement "
         "(account_id, movement_id, kind, amount_microdollars, "
         "counterparty_account_id, custom_model_id, authorization_id, created_at) "
-        "VALUES (@account_id, @movement_id, 'custom_model_payout', @amount, "
-        "@payer_workspace_id, @custom_model_id, @authorization_id, "
-        "PENDING_COMMIT_TIMESTAMP())",
+        "VALUES (@account_id, @movement_id, @kind, @amount, "
+        "@counterparty, @custom_model_id, @authorization_id, @created_at)",
         params={
             "account_id": f"user:{payout.owner_user_id}",
             "movement_id": movement_id,
+            "kind": "custom_model_payout",
             "amount": payout.amount_microdollars,
-            "payer_workspace_id": payout.payer_workspace_id,
+            "counterparty": payout.payer_workspace_id,
             "custom_model_id": payout.model_id,
             "authorization_id": authorization_id,
+            "created_at": now,
         },
         param_types={
             "account_id": pt.STRING,
             "movement_id": pt.STRING,
+            "kind": pt.STRING,
             "amount": pt.INT64,
-            "payer_workspace_id": pt.STRING,
+            "counterparty": pt.STRING,
             "custom_model_id": pt.STRING,
             "authorization_id": pt.STRING,
+            "created_at": pt.TIMESTAMP,
         },
     )
     if inserted == 0:

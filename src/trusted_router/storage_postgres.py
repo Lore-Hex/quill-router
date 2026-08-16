@@ -2182,6 +2182,7 @@ class PostgresStore:
         authorization_id: str,
         *,
         limit: int,
+        ttl_seconds: int,
     ) -> bool:
         self._not_implemented("acquire_user_model_slot")
 

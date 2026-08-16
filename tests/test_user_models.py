@@ -14,6 +14,7 @@ from trusted_router.custom_model_billing import (
     user_model_payout_event_id,
 )
 from trusted_router.main import create_app
+from trusted_router.provider_types import estimate_tokens_from_messages
 from trusted_router.services.user_model_dispatch import (
     BufferedUserModelDispatch,
     dispatch_user_model,
@@ -869,12 +870,24 @@ def test_local_user_model_dispatch_bills_pays_and_refunds_owner_failure(
     )
     assert response.status_code == 200, response.text
     assert response.json()["choices"][0]["message"]["content"] == "owner billed reply"
-    actual_cost = custom_model_cost_microdollars(
+    # The owner reported 1,000 prompt tokens for "hello": more than the caller
+    # authorized. The charge is the owner-priced usage capped at the hold the
+    # caller's request reserved (estimated prompt + max_tokens at frozen
+    # prices) — the payee's meter can never exceed the payer's authorization.
+    reported_cost = custom_model_cost_microdollars(
         input_tokens=1_000,
         output_tokens=2_000,
         prompt_price=2_000_000,
         completion_price=3_000_000,
     )
+    hold = custom_model_cost_microdollars(
+        input_tokens=estimate_tokens_from_messages([{"role": "user", "content": "hello"}]),
+        output_tokens=2_000,
+        prompt_price=2_000_000,
+        completion_price=3_000_000,
+    )
+    assert reported_cost > hold
+    actual_cost = hold
     payout = owner_share_microdollars(actual_cost)
     assert payer_money.total_usage_microdollars - usage_before == actual_cost
     assert payer_money.reserved_microdollars == 0

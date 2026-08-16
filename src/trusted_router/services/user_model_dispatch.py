@@ -481,9 +481,14 @@ def _parse_stream_chunk(payload: bytes) -> dict[str, Any]:
         not isinstance(chunk, dict)
         or chunk.get("object") != "chat.completion.chunk"
         or not isinstance(choices, list)
-        or not choices
-        or not isinstance(choices[0], dict)
-        or not isinstance(choices[0].get("delta"), dict)
+    ):
+        raise _MalformedOwnerResponse("invalid owner SSE chunk")
+    # `choices: []` is the spec-conforming usage-only final chunk emitted when
+    # the caller asked for stream_options.include_usage (OpenAI, vLLM). It is
+    # not malformed — treating it so refunded a fully served answer and struck
+    # a healthy owner. Any non-empty choice must still carry a delta object.
+    if choices and (
+        not isinstance(choices[0], dict) or not isinstance(choices[0].get("delta"), dict)
     ):
         raise _MalformedOwnerResponse("invalid owner SSE chunk")
     return chunk
@@ -510,6 +515,10 @@ def _aggregate_owner_sse(raw: bytes, *, requested_model_id: str) -> dict[str, An
         saw_chunk = True
         request_id = str(chunk.get("id") or request_id)
         created = int(chunk.get("created") or created)
+        if isinstance(chunk.get("usage"), dict):
+            usage = chunk["usage"]
+        if not chunk["choices"]:
+            continue  # usage-only final chunk
         choice = chunk["choices"][0]
         delta = choice["delta"]
         if isinstance(delta.get("role"), str):
@@ -518,8 +527,6 @@ def _aggregate_owner_sse(raw: bytes, *, requested_model_id: str) -> dict[str, An
             content.append(delta["content"])
         if choice.get("finish_reason") is not None:
             finish_reason = str(choice["finish_reason"])
-        if isinstance(chunk.get("usage"), dict):
-            usage = chunk["usage"]
     if not saw_chunk or not saw_done:
         raise _MalformedOwnerResponse("owner stream was incomplete")
     result: dict[str, Any] = {

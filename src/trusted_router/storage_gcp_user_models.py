@@ -290,12 +290,23 @@ class SpannerUserProvidedModels:
         authorization_id: str,
         *,
         limit: int,
+        ttl_seconds: int,
     ) -> bool:
+        """Admit one in-flight authorization if the model has capacity.
+
+        Each row carries its own ``expires_at`` (now + the kind's total
+        dispatch budget + grace, chosen by the caller). Rows past it are
+        swept on the next acquire for that model, so an enclave crash between
+        authorize and settle blacks a model out for at most one dispatch
+        budget, not a fixed multi-hour window. Legacy rows without
+        ``expires_at`` fall back to ``created_at`` + the reservation TTL.
+        """
         canonical = normalize_custom_model_id(model_id)
         slot_id = _user_model_slot_id(canonical, authorization_id)
         prefix = f"{canonical}#"
         now = dt.datetime.now(dt.UTC)
-        cutoff = now - dt.timedelta(seconds=GATEWAY_RESERVATION_TTL_SECONDS)
+        legacy_cutoff = now - dt.timedelta(seconds=GATEWAY_RESERVATION_TTL_SECONDS)
+        expires_at = now + dt.timedelta(seconds=max(1, ttl_seconds))
 
         def txn(transaction: Any) -> bool:
             rows = list(
@@ -316,12 +327,18 @@ class SpannerUserProvidedModels:
                     payload = json.loads(str(raw_body))
                     stored_authorization_id = str(payload["authorization_id"])
                     created_at = _parse_slot_time(str(payload["created_at"]))
+                    raw_expires = payload.get("expires_at")
+                    row_expires_at = (
+                        _parse_slot_time(str(raw_expires))
+                        if raw_expires
+                        else created_at + dt.timedelta(seconds=GATEWAY_RESERVATION_TTL_SECONDS)
+                    )
                 except (KeyError, TypeError, ValueError, json.JSONDecodeError):
                     # Malformed rows fail closed toward capacity until an
                     # operator repairs them; silently ignoring one overbooks.
                     live_authorizations.add(f"malformed:{len(live_authorizations)}")
                     continue
-                if created_at < cutoff:
+                if row_expires_at <= now or created_at < legacy_cutoff:
                     expired_ids.append(
                         _user_model_slot_id(canonical, stored_authorization_id)
                     )
@@ -345,6 +362,7 @@ class SpannerUserProvidedModels:
                     "model_id": canonical,
                     "authorization_id": authorization_id,
                     "created_at": now.isoformat().replace("+00:00", "Z"),
+                    "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
                 },
             )
             return True

@@ -529,17 +529,20 @@ def _authorize_gateway_sync(
                 ErrorType.CONFLICT,
             )
         return _replay_response(existing_authorization)
-    authorization_id = _new_gateway_authorization_id(
-        workspace.id,
-        api_key.hash,
-        request_idempotency_key,
-    )
+    # Minted up front so a user-model concurrency slot can be keyed by it
+    # before the reservation exists. It is a fresh uuid — never derived from
+    # the caller's Idempotency-Key: a deterministic id would outlive its
+    # 30-day authorization row inside the 400-day tr_credit_movement PK
+    # (silently dropping a later payout) and let a mismatching concurrent
+    # request release the winner's slot.
+    authorization_id = _new_gateway_authorization_id()
     user_model_slot_acquired = False
     if user_model is not None:
         user_model_slot_acquired = acquire_user_model_slot(
             user_model.id,
             authorization_id,
             limit=user_model.max_concurrency,
+            kind=user_model.kind,
         )
         if not user_model_slot_acquired:
             raise api_error(
@@ -676,7 +679,10 @@ def _authorize_gateway_sync(
             release_user_model_slot_after_error()
             raise api_error(500, "gateway authorize failed", ErrorType.INTERNAL_ERROR)
         if outcome == AuthorizeOutcome.REPLAY:
-            # concurrent-race replay: respond from the STORED authorization
+            # concurrent-race replay: respond from the STORED authorization.
+            # Our provisional slot belongs to the id that lost the race, not
+            # to the stored authorization — give it back.
+            release_user_model_slot_after_error()
             return _replay_response(authorization)
         credit_reservation_id = authorization.credit_reservation_id
     else:
@@ -1180,14 +1186,9 @@ def _gateway_authorize_fingerprint(
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def _new_gateway_authorization_id(
-    workspace_id: str,
-    key_hash: str,
-    idempotency_key: str,
-) -> str:
-    """Derive one opaque slot/authorization id per idempotent request."""
-    material = f"{workspace_id}\0{key_hash}\0{idempotency_key}".encode()
-    return f"gwa-{hashlib.sha256(material).hexdigest()[:32]}"
+def _new_gateway_authorization_id() -> str:
+    """One fresh authorization id (same shape the typed store mints)."""
+    return f"gwa-{uuid.uuid4().hex}"
 
 
 def _authorization_endpoint_candidates(
@@ -1619,15 +1620,17 @@ def _settle_gateway_authorization(
     service_tier = (
         None if user_model_pair is not None else _actual_service_tier_or_error(body.service_tier)
     )
+    # Owner endpoints speak the OpenAI chat dialect, whose prompt_tokens
+    # already INCLUDES any cached subset — the "trustedrouter" branch of
+    # normalized_prompt_accounting (also what the outbox repair path uses).
+    # Adding cache counts on top would double-bill the prompt and let an owner
+    # who reports cached_tokens == prompt_tokens double their revenue. Owner
+    # prices have no cache tier, so the whole prompt bills at the prompt price.
+    uncached_input, total_input, cache_read, cache_creation = normalized_prompt_accounting(
+        selected_endpoint.provider, body
+    )
     if user_model_pair is not None:
-        cache_read = body.cache_read_count
-        cache_creation = body.cache_creation_count
-        total_input = body.input_count + cache_read + cache_creation
         uncached_input = total_input
-    else:
-        uncached_input, total_input, cache_read, cache_creation = normalized_prompt_accounting(
-            selected_endpoint.provider, body
-        )
     partner_mode = _partner_billing_mode_or_error(
         requested_model_id=authorization.requested_model_id,
         route_type=body.route_type,
@@ -1676,7 +1679,27 @@ def _settle_gateway_authorization(
         # route marker from a generic abort path; the authorization id is the
         # durable authority and refusing a refund can strand funds for 26h.
         actual_cost = 0
-    elif user_model_pair is None:
+    elif user_model_pair is not None:
+        # The token counts come from the PAYEE's own meter (the owner endpoint
+        # reports usage; the enclave forwards it). Catalog providers are
+        # trusted to overrun a hold by a little; an owner who reports
+        # 10^7 tokens for a 10-token answer must not be able to drain the
+        # caller and pocket 70%. The hold the caller authorized — estimated
+        # prompt at frozen prices plus max_output — is the ceiling.
+        if actual_cost > authorization.estimated_microdollars:
+            logger.warning(
+                "billing.user_model_settle_capped_to_hold",
+                extra={
+                    "authorization_id": authorization.id,
+                    "user_provided_model_id": authorization.user_provided_model_id,
+                    "reported_microdollars": actual_cost,
+                    "hold_microdollars": authorization.estimated_microdollars,
+                    "input_tokens": total_input,
+                    "output_tokens": output_tokens,
+                },
+            )
+            actual_cost = authorization.estimated_microdollars
+    else:
         actual_cost = _native_batch_cost_or_error(
             actual_cost,
             route_type=body.route_type,
@@ -2380,7 +2403,15 @@ def _select_authorized_endpoint(
         frozen_model, frozen_endpoint = user_model_pair
         if body.selected_endpoint_id not in {None, frozen_endpoint.id}:
             return None
-        if body.selected_model_id not in {None, frozen_model.id}:
+        # The enclave may echo the caller's raw spelling of the id
+        # ("TrustedRouter/User-Foo", the short "user-foo" alias); authorize
+        # normalized it before freezing, so compare normalized. A refused
+        # settle here strands the hold, so be no stricter than the id grammar.
+        selected_model_id = body.selected_model_id
+        if (
+            selected_model_id is not None
+            and normalize_custom_model_id(selected_model_id) != frozen_model.id
+        ):
             return None
         return frozen_endpoint
     authorized_endpoint_ids = authorization.candidate_endpoint_ids or []

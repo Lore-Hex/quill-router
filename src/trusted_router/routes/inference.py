@@ -507,11 +507,13 @@ async def _dispatch_local_user_model(
             if usage is not None
             else (input_estimate, estimate_tokens_from_text(output_text))
         )
-        actual_cost = custom_model_cost_microdollars(
+        actual_cost = _capped_user_model_cost(
+            model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             prompt_price=prompt_price,
             completion_price=completion_price,
+            hold=reserve_amount,
         )
         ticket.settle(actual_cost)
         choice = _owner_choice(dispatch.body)
@@ -613,11 +615,13 @@ async def _stream_local_user_model(
             if usage is not None
             else (input_estimate, estimate_tokens_from_text(output_text))
         )
-        actual_cost = custom_model_cost_microdollars(
+        actual_cost = _capped_user_model_cost(
+            model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             prompt_price=prompt_price,
             completion_price=completion_price,
+            hold=reserve_amount,
         )
         ticket.settle(actual_cost)
         provider_result = ProviderResult(
@@ -661,6 +665,42 @@ def _local_user_model_pair(model: UserProvidedModel) -> tuple[Model, Any]:
 def _local_max_output_tokens(body: dict[str, Any]) -> int:
     value = resolve_max_output_tokens(body)
     return 512 if value is None else int(value)
+
+
+def _capped_user_model_cost(
+    model: UserProvidedModel,
+    *,
+    input_tokens: int,
+    output_tokens: int,
+    prompt_price: int,
+    completion_price: int,
+    hold: int,
+) -> int:
+    """Owner-priced cost, never above the hold the caller authorized.
+
+    Same rule as the gateway settle: the token counts are the PAYEE's own
+    meter, so the reservation (estimated prompt + max_output at frozen prices)
+    is the ceiling on what the caller can be charged and the owner paid.
+    """
+    cost = custom_model_cost_microdollars(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        prompt_price=prompt_price,
+        completion_price=completion_price,
+    )
+    if cost > hold:
+        logger.warning(
+            "billing.user_model_settle_capped_to_hold",
+            extra={
+                "user_provided_model_id": model.id,
+                "reported_microdollars": cost,
+                "hold_microdollars": hold,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+            },
+        )
+        return hold
+    return cost
 
 
 def _sane_owner_usage(value: Any) -> tuple[int, int] | None:

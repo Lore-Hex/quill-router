@@ -15,14 +15,21 @@ from trusted_router.storage_models import UserProvidedModel
 from trusted_router.types import ErrorType
 
 GATEWAY_RESERVATION_TTL_SECONDS = 2 * 60 * 60
+# Transport/shape failures that indict the owner endpoint even when no HTTP
+# status exists (the connection never produced one).
 _OWNER_FAULT_ERROR_TYPES = frozenset(
     {
         "timeout",
         str(ErrorType.USER_MODEL_TIMEOUT),
         "connection_error",
-        str(ErrorType.PROVIDER_ERROR),
         "malformed_response",
     }
+)
+# Explicit "not the owner's fault" tokens: the caller hung up, TR itself
+# failed, or the owner judged the CALLER's request (4xx). These win over any
+# status, so an enclave that labels a caller disconnect 502 cannot strike.
+_NON_OWNER_FAULT_ERROR_TYPES = frozenset(
+    {"client_closed", "internal_error", "upstream_client_error", "cancelled"}
 )
 
 _STATIC_RESERVED_NAMES = {
@@ -104,13 +111,21 @@ def user_model_gateway_pair(
 def is_owner_fault(error_status: int | None, error_type: str | None) -> bool:
     """Match the owner-health rule used by local and attested dispatch.
 
-    An upstream 5xx or an explicit transport/timeout/malformed-response token
-    says the owner endpoint failed to serve. A 4xx, cancellation, or missing
-    error evidence says nothing about endpoint health and must not add a strike.
+    Order matters and is deliberate:
+    1. an explicit non-fault token (caller disconnect, TR-internal error,
+       owner 4xx relabelled) is never a strike, whatever status rides with it;
+    2. otherwise an HTTP status decides: 5xx says the owner failed to serve,
+       anything else (4xx, 499) says nothing about endpoint health;
+    3. with no status at all, only a transport/timeout/malformed token strikes.
+    A bare "provider_error" with no status is NOT a strike: it is the enclave's
+    default label for "something went wrong" and carries no evidence.
     """
-    return (error_status is not None and error_status >= 500) or (
-        str(error_type or "").strip().lower() in _OWNER_FAULT_ERROR_TYPES
-    )
+    token = str(error_type or "").strip().lower()
+    if token in _NON_OWNER_FAULT_ERROR_TYPES:
+        return False
+    if error_status is not None:
+        return 500 <= error_status <= 599
+    return token in _OWNER_FAULT_ERROR_TYPES
 
 
 def reserved_user_model_names() -> frozenset[str]:

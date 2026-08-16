@@ -958,11 +958,13 @@ class InMemoryStore:
         authorization_id: str,
         *,
         limit: int,
+        ttl_seconds: int,
     ) -> bool:
         return self.user_model_store.acquire_slot(
             model_id,
             authorization_id,
             limit=limit,
+            ttl_seconds=ttl_seconds,
         )
 
     def release_user_model_slot(self, model_id: str, authorization_id: str) -> None:

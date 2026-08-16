@@ -275,3 +275,35 @@ async def test_async_resolve_is_bounded_by_a_timeout(
         assert time.monotonic() - started < 2.0
     finally:
         release.set()  # let the worker thread finish so the run stays clean
+
+
+@pytest.mark.parametrize(
+    ("status", "error_type", "expected"),
+    [
+        # explicit non-fault tokens win over any status
+        (502, "client_closed", False),
+        (500, "internal_error", False),
+        (422, "upstream_client_error", False),
+        (None, "cancelled", False),
+        # a status decides otherwise: 5xx strikes, everything else does not
+        (503, "provider_error", True),
+        (502, None, True),
+        (599, "anything", True),
+        (401, "provider_error", False),
+        (422, "provider_error", False),
+        (499, "provider_error", False),
+        (429, "timeout", False),
+        # no status: only transport/shape tokens strike; a bare provider_error
+        # is the enclave's default label and carries no evidence
+        (None, "timeout", True),
+        (None, "user_model_timeout", True),
+        (None, "connection_error", True),
+        (None, "malformed_response", True),
+        (None, "provider_error", False),
+        (None, None, False),
+    ],
+)
+def test_is_owner_fault_rule(status: int | None, error_type: str | None, expected: bool) -> None:
+    from trusted_router.user_model_rules import is_owner_fault
+
+    assert is_owner_fault(status, error_type) is expected
