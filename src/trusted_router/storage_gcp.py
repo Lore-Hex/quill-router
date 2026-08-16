@@ -132,7 +132,7 @@ from trusted_router.storage_models import (
     CreditMovement,
     TypedFinalizeResult,
 )
-from trusted_router.types import UsageType
+from trusted_router.types import IdentityVerificationStatus, UsageType
 
 T = TypeVar("T")
 log = logging.getLogger(__name__)
@@ -878,6 +878,42 @@ class SpannerBigtableStore:
             if user is None:
                 return None
             user.email_verified = True
+            self._write_entity_tx(transaction, "user", user.id, user)
+            return user
+
+        return self._run_in_transaction(txn)
+
+    def set_user_identity_status(
+        self,
+        user_id: str,
+        *,
+        status: str,
+        session_id: str | None = None,
+        session_url: str | None = None,
+        decision_code: int | None = None,
+        verified_name: str | None = None,
+        increment_attempts: bool = False,
+    ) -> User | None:
+        def txn(transaction: Any) -> User | None:
+            user = self._read_entity_tx(transaction, "user", user_id, User)
+            if user is None:
+                return None
+            normalized = IdentityVerificationStatus.coerce(status)
+            if normalized is IdentityVerificationStatus.APPROVED and not user.identity_verified_at:
+                user.identity_verified_at = iso_now()
+            user.identity_status = normalized.value
+            if session_id is not None:
+                if session_id != user.veriff_session_id or not user.veriff_session_created_at:
+                    user.veriff_session_created_at = iso_now()
+                user.veriff_session_id = session_id
+            if session_url is not None:
+                user.veriff_session_url = session_url
+            if decision_code is not None:
+                user.veriff_decision_code = decision_code
+            if verified_name is not None:
+                user.identity_verified_name = verified_name
+            if increment_attempts:
+                user.veriff_attempt_count += 1
             self._write_entity_tx(transaction, "user", user.id, user)
             return user
 
@@ -3238,6 +3274,23 @@ class SpannerBigtableStore:
 
     def record_sns_message_once(self, message_id: str) -> bool:
         return self.email_blocks.record_message_once(message_id)
+
+    def record_webhook_event_once(self, source: str, event_id: str) -> bool:
+        entity_id = f"{source}#{event_id}"
+
+        def txn(transaction: Any) -> bool:
+            existing = self._read_entity_tx(transaction, "webhook_event", entity_id, dict)
+            if existing is not None:
+                return False
+            self._write_entity_tx(
+                transaction,
+                "webhook_event",
+                entity_id,
+                {"created_at": iso_now()},
+            )
+            return True
+
+        return self._run_in_transaction(txn)
 
     def _resolve_user_identifier(self, identifier: str) -> str | None:
         user = self._read_entity("user", identifier, User)

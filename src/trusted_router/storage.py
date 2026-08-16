@@ -71,7 +71,7 @@ from trusted_router.storage_synthetic import InMemorySyntheticChecks
 from trusted_router.storage_verification_tokens import InMemoryVerificationTokens
 from trusted_router.storage_video_jobs import InMemoryVideoJobs
 from trusted_router.storage_wallet_challenges import InMemoryWalletChallenges
-from trusted_router.types import UsageType
+from trusted_router.types import IdentityVerificationStatus, UsageType
 
 
 class InMemoryStore:
@@ -93,6 +93,7 @@ class InMemoryStore:
         self.credits: dict[str, CreditAccount] = {}
         self.credit_money: dict[str, CreditMoney] = {}
         self.stripe_events: set[str] = set()
+        self.webhook_events: set[tuple[str, str]] = set()
         self.earnings_money: dict[str, tuple[int, int]] = {}
         self.credit_movements: dict[tuple[str, str], CreditMovement] = {}
         self.lifetime_topups: dict[str, int] = {}
@@ -145,6 +146,7 @@ class InMemoryStore:
             self.credits.clear()
             self.credit_money.clear()
             self.stripe_events.clear()
+            self.webhook_events.clear()
             self.earnings_money.clear()
             self.credit_movements.clear()
             self.lifetime_topups.clear()
@@ -535,6 +537,39 @@ class InMemoryStore:
             if user is None:
                 return None
             user.email_verified = True
+            return user
+
+    def set_user_identity_status(
+        self,
+        user_id: str,
+        *,
+        status: str,
+        session_id: str | None = None,
+        session_url: str | None = None,
+        decision_code: int | None = None,
+        verified_name: str | None = None,
+        increment_attempts: bool = False,
+    ) -> User | None:
+        with self._lock:
+            user = self.users.get(user_id)
+            if user is None:
+                return None
+            normalized = IdentityVerificationStatus.coerce(status)
+            if normalized is IdentityVerificationStatus.APPROVED and not user.identity_verified_at:
+                user.identity_verified_at = iso_now()
+            user.identity_status = normalized.value
+            if session_id is not None:
+                if session_id != user.veriff_session_id or not user.veriff_session_created_at:
+                    user.veriff_session_created_at = iso_now()
+                user.veriff_session_id = session_id
+            if session_url is not None:
+                user.veriff_session_url = session_url
+            if decision_code is not None:
+                user.veriff_decision_code = decision_code
+            if verified_name is not None:
+                user.identity_verified_name = verified_name
+            if increment_attempts:
+                user.veriff_attempt_count += 1
             return user
 
     def begin_phone_verification(
@@ -1871,6 +1906,14 @@ class InMemoryStore:
 
     def record_sns_message_once(self, message_id: str) -> bool:
         return self.email_blocks.record_message_once(message_id)
+
+    def record_webhook_event_once(self, source: str, event_id: str) -> bool:
+        with self._lock:
+            key = (source, event_id)
+            if key in self.webhook_events:
+                return False
+            self.webhook_events.add(key)
+            return True
 
 
 #: Analytics mirror. No-op until the app factory installs a real one, so
