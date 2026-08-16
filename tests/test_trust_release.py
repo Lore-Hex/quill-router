@@ -155,6 +155,56 @@ async def test_live_release_rejects_invalid_or_expired_metadata(
 
 
 @pytest.mark.asyncio
+async def test_a_validator_raising_an_unforeseen_class_is_still_unavailable_not_a_crash(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """The resolver cannot know its validator's exception vocabulary.
+
+    `validator` is a constructor parameter, so the set of exceptions it can
+    raise is not knowable here — and this used to be an enumeration,
+    `except (httpx.HTTPError, TypeError, ValueError)`. The enumeration was
+    wrong: validated_azure_metadata was widened to parse region URLs with
+    httpx.URL, which raises httpx.InvalidURL, a plain Exception outside
+    httpx.HTTPError. It escaped resolve(), sailed past the route's
+    `except TrustReleaseUnavailable`, and /trust/azure-release.json answered 500
+    with no fallback and no backoff.
+
+    Asserted with a validator raising a class nothing in this repo raises,
+    because the point is not that InvalidURL is handled now — it is that a
+    failure to produce a validated record is ONE outcome for a mirror however it
+    arrives. The backoff is asserted too: an escape skips the whole failure
+    path, so every subsequent request went back to the upstream.
+    """
+
+    class UnforeseenValidatorError(Exception):
+        pass
+
+    def hostile_validator(payload: object) -> dict[str, object]:
+        raise UnforeseenValidatorError("a class this layer was never told about")
+
+    httpx_mock.add_response(
+        url="https://trust.example/release.json?tr_cache_bucket=10",
+        json=release_payload(),
+    )
+    resolver = TrustReleaseResolver(
+        Settings(trust_gcp_release_url="https://trust.example/release.json"),
+        monotonic=lambda: 0.0,
+        wall_clock=lambda: 600.0,
+        validator=hostile_validator,
+    )
+
+    with pytest.raises(TrustReleaseUnavailable) as first:
+        await resolver.resolve()
+    with pytest.raises(TrustReleaseUnavailable):
+        await resolver.resolve()
+
+    assert isinstance(first.value.__cause__, UnforeseenValidatorError), (
+        "the cause has to travel with it, or a real bug becomes an untraceable 503"
+    )
+    assert len(httpx_mock.get_requests()) == 1, "the second resolve must be inside the backoff"
+
+
+@pytest.mark.asyncio
 async def test_live_release_rejects_oversized_response(httpx_mock: HTTPXMock) -> None:
     httpx_mock.add_response(
         url="https://trust.example/large.json?tr_cache_bucket=10",
@@ -418,6 +468,18 @@ def test_gcp_record_describes_the_gcp_plane_from_every_deployment() -> None:
         # The two fields must never disagree about which host terminates the
         # prompt path; that disagreement is what makes the record unverifiable.
         assert record["api_base_url"] == f"https://{record['tls']['hostname']}/v1"
+        # The PLURAL had the same leak and kept it after the scalar was fixed:
+        # api_base_urls was built with api_base_url_for_domain(), which returns
+        # settings.api_base_url for the canonical domain — per-deployment — so
+        # entry 0 of a gcp-confidential-space record served from the AWS-hosted
+        # control plane named api-aws.trustedrouter.com. Every entry is a
+        # property of the GCP plane, and must pair with tls.hostnames entry for
+        # entry.
+        assert record["api_base_urls"] == [
+            f"https://{hostname}/v1" for hostname in record["tls"]["hostnames"]
+        ]
+        assert record["api_base_urls"][0] == record["api_base_url"]
+        assert not any("api-aws" in url or "api-azure" in url for url in record["api_base_urls"])
 
 
 def test_gcp_endpoint_fields_are_derived_from_the_domain_not_hardcoded() -> None:
@@ -590,6 +652,18 @@ def test_azure_mirror_requires_an_issuer_and_carries_every_region(
                 "https://trquilluaen.uaen.attest.azure.net",
                 "https://trquillsea.sasia.attest.azure.net",
             ],
+            "regions": [
+                {
+                    "attestation_url": "https://api-azure.trustedrouter.com/attestation",
+                    "hostdata": uaen,
+                    "attestation_issuer": "https://trquilluaen.uaen.attest.azure.net",
+                },
+                {
+                    "attestation_url": "https://api-azure-sea.trustedrouter.com/attestation",
+                    "hostdata": sea,
+                    "attestation_issuer": "https://trquillsea.sasia.attest.azure.net",
+                },
+            ],
         },
     )
     settings = Settings(
@@ -603,6 +677,15 @@ def test_azure_mirror_requires_an_issuer_and_carries_every_region(
     # region conclude tampering.
     assert record["accepted_hostdata"] == [uaen, sea]
     assert len(record["attestation_issuers"]) == 2
+    # ...and WHERE each of them answers has to survive the trip too. This
+    # assertion used to be absent while the test's name promised it: the
+    # validator whitelisted three scalar keys, so the array never reached
+    # trust.azure_release and the drift check had one endpoint to enumerate.
+    assert [region["attestation_url"] for region in record["regions"]] == [
+        "https://api-azure.trustedrouter.com/attestation",
+        "https://api-azure-sea.trustedrouter.com/attestation",
+    ]
+    assert record["regions"][1]["hostdata"] == sea
 
 
 def test_azure_record_without_an_issuer_is_rejected(httpx_mock: HTTPXMock) -> None:
