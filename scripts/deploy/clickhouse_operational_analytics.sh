@@ -11,6 +11,8 @@ source "${SCRIPT_DIR}/_lib.sh"
 NAMES=(tr-clickhouse-1 tr-clickhouse-2 tr-clickhouse-3)
 ZONES=(us-central1-a us-central1-b us-central1-c)
 SCHEMA="${ROOT}/clickhouse/004_operational_analytics_replicated.sql"
+BENCHMARK_WORKSPACE_SCHEMA="${ROOT}/clickhouse/007_benchmark_samples_workspace_id.sql"
+BENCHMARK_WORKSPACE_BACKFILL_LIMIT="${TR_CLICKHOUSE_BENCHMARK_WORKSPACE_BACKFILL_LIMIT:-200000}"
 CONTROL_SECRET="trustedrouter-clickhouse-control-read-password"
 APPLY=0
 
@@ -26,7 +28,13 @@ if [ "$APPLY" -eq 0 ]; then
   log "dry-run: would create three-replica activity and synthetic tables"
   log "dry-run: would backfill bounded Bigtable history and verify replica parity"
   log "dry-run: would install the ingester, rollup worker, and private reader"
+  log "dry-run: would migrate and replay bounded benchmark workspace attribution"
   exit 0
+fi
+
+if ! [[ "$BENCHMARK_WORKSPACE_BACKFILL_LIMIT" =~ ^[1-9][0-9]*$ ]]; then
+  echo "TR_CLICKHOUSE_BENCHMARK_WORKSPACE_BACKFILL_LIMIT must be a positive integer" >&2
+  exit 2
 fi
 
 node_ssh() {
@@ -123,6 +131,27 @@ node_ssh 0 --command="sudo sh -c '
     /etc/systemd/system/tr-clickhouse-spanner-delivery.timer
   systemctl daemon-reload
   systemctl stop tr-clickhouse-operational-ingest.service 2>/dev/null || true
+'"
+
+# Deploy the parser before the additive column. The ingester is stopped while
+# these two versions move together, so rows queue durably in Spanner instead
+# of being written with the column default during a version-skew window.
+log "adding workspace attribution to benchmark samples"
+benchmark_workspace_schema="$(cat "$BENCHMARK_WORKSPACE_SCHEMA")"
+for index in 0 1 2; do
+  node_query "$index" "$benchmark_workspace_schema"
+done
+
+log "replaying bounded benchmark history with workspace attribution"
+node_ssh 0 --command="sudo sh -c '
+  set -eu
+  set -a
+  . /etc/tr-clickhouse-ingest.env
+  set +a
+  cd /opt/tr-clickhouse
+  PYTHONPATH=/opt/tr-clickhouse/src \
+    /opt/tr-clickhouse/venv/bin/python -m clickhouse.backfill_benchmark_samples \
+      --limit ${BENCHMARK_WORKSPACE_BACKFILL_LIMIT} --batch 20000
 '"
 
 log "backfilling bounded Bigtable history"
