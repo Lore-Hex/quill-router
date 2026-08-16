@@ -346,17 +346,18 @@ ENV_VARS=(
   # one is a 422 or a 403 on every call.
   "TR_NOTIFY_ENABLED=true"
   "TR_NOTIFY_SMS_AVAILABLE=false"
-  # Identity verification ships DARK and the custom-model gate ships OFF, as a
-  # pair. They must flip together: enabling the gate without a reachable
-  # Veriff would 403 every custom-model create/edit with an unsatisfiable
-  # "identity_verified" — a silent lockout, not a boot failure. Activation
-  # (once trustedrouter-veriff-{api-key,shared-secret-key} exist in Secret
-  # Manager — the deploy SA can read them but not create them):
-  #   TR_VERIFF_ENABLED=true and TR_CUSTOM_MODELS_REQUIRE_VERIFICATION=true.
-  # The config validator refuses TR_VERIFF_ENABLED=true without both secrets,
-  # so a premature flip fails loud at boot rather than serving broken.
-  "TR_VERIFF_ENABLED=false"
-  "TR_CUSTOM_MODELS_REQUIRE_VERIFICATION=false"
+  # Identity verification and the custom-model verification gate are a PAIR
+  # and must flip together: enabling the gate without a reachable Veriff
+  # would 403 every custom-model create/edit with an unsatisfiable
+  # "identity_verified" — a silent lockout, not a boot failure. Activated
+  # 2026-08-16 once trustedrouter-veriff-{api-key,shared-secret-key} existed
+  # in Secret Manager (the deploy SA reads them via add_secret_env_if_exists
+  # above; it cannot create them). The config validator refuses
+  # TR_VERIFF_ENABLED=true without both secrets, so a rollout that lost them
+  # fails loud at boot rather than serving broken. To go dark again, set BOTH
+  # back to false in one commit.
+  "TR_VERIFF_ENABLED=true"
+  "TR_CUSTOM_MODELS_REQUIRE_VERIFICATION=true"
   "TR_VERIFF_BASE_URL=https://stationapi.veriff.com"
   "TR_TELNYX_FROM_NUMBER=+17869471547"
   "TR_TELNYX_TEXML_ACCOUNT_ID=1eea716a-02e0-4d4f-96fa-36d1f556edca"
