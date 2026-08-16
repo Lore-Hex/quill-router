@@ -288,6 +288,33 @@ def _paypal_post(
     return data
 
 
+def fetch_paypal_capture(settings: Settings, capture_id: str) -> dict[str, Any]:
+    """Fetch one capture for operator reconciliation/backfill tooling."""
+    if not capture_id or any(character in capture_id for character in "/?#"):
+        raise ValueError("invalid PayPal capture id")
+    return _paypal_get(settings, f"/v2/payments/captures/{capture_id}")
+
+
+def _paypal_get(settings: Settings, path: str) -> dict[str, Any]:
+    token = _access_token(settings)
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            response = client.get(
+                f"{_paypal_base_url(settings)}{path}",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise api_error(502, "PayPal request failed", ErrorType.INTERNAL_ERROR) from exc
+    if not isinstance(data, dict):
+        raise api_error(502, "PayPal returned an invalid response", ErrorType.INTERNAL_ERROR)
+    return data
+
+
 def _access_token(settings: Settings) -> str:
     if not settings.paypal_client_id or not settings.paypal_client_secret:
         raise api_error(400, "PayPal checkout is not configured", ErrorType.BAD_REQUEST)
