@@ -13,6 +13,7 @@ from trusted_router.auth import SettingsDep
 from trusted_router.routes.console._shared import ConsoleDep, render
 from trusted_router.services.notify import send_verification_code
 from trusted_router.storage import STORE
+from trusted_router.verification_gates import missing_phone_verification_requirements
 
 MAX_WORKSPACE_NAME = 120
 
@@ -44,6 +45,7 @@ def register(app: FastAPI) -> None:
         # verified moments ago on this same page would otherwise still render
         # as unverified and invite the visitor to start over.
         user = STORE.get_user(ctx.user.id) or ctx.user
+        phone_missing_requirements = missing_phone_verification_requirements(user, settings)
         _resend_allowed, resend_wait_seconds = pv.can_resend(user)
         return HTMLResponse(
             render(
@@ -69,6 +71,7 @@ def register(app: FastAPI) -> None:
                 phone_saved=bool(phone_saved),
                 phone_error=error,
                 phone_error_detail=detail,
+                phone_missing_requirements=phone_missing_requirements,
             )
         )
 
@@ -84,6 +87,9 @@ def register(app: FastAPI) -> None:
         # that happened seconds ago on this same page, or a fast retry loop
         # (or cancel-then-start) rings the number again before it applies.
         current = STORE.get_user(ctx.user.id) or ctx.user
+        missing_requirements = missing_phone_verification_requirements(current, settings)
+        if missing_requirements:
+            return _back(f"error={missing_requirements[0]}")
         allowed, wait = pv.can_resend(current)
         if not allowed:
             # Without a floor, this form is a way to ring someone else's phone

@@ -51,6 +51,7 @@ from trusted_router.routes.provider_portal import register_provider_portal_route
 from trusted_router.routes.public import register_public_routes
 from trusted_router.routes.ses_notifications import register_ses_notification_routes
 from trusted_router.routes.signup import register_signup_routes
+from trusted_router.routes.verification_status import register_verification_status_routes
 from trusted_router.routes.wallet_oauth import register_wallet_oauth_routes
 from trusted_router.routes.workspaces import register_workspace_routes
 from trusted_router.sentry_config import init_sentry
@@ -428,6 +429,7 @@ def _make_api_router(settings: Settings) -> APIRouter:
     register_compat_stub_routes(router)
     register_signup_routes(router)
     register_email_verify_routes(router)
+    register_verification_status_routes(router)
     register_notify_routes(router)
     register_wallet_oauth_routes(router)
     register_ses_notification_routes(router)
