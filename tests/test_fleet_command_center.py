@@ -11,8 +11,10 @@ Covers the two halves plus the alert plumbing they rely on:
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import datetime as dt
 import json
+import time
 
 import httpx
 import pytest
@@ -176,9 +178,73 @@ def test_record_heartbeat_and_liveness_rows() -> None:
             created_at=old,
         )
     )
+    fleet.register_heartbeat_target("scheduler:dead-loop")
     snapshot = asyncio.run(fleet_snapshot(settings))
     beats = {row["name"]: row for row in snapshot["heartbeats"]}
     assert beats["scheduler:dead-loop"]["stale"] is True
+
+
+def test_heartbeat_read_your_write_masks_stale_analytics_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rollout must not page between the durable write and CH ingestion."""
+    from trusted_router.storage_models import SyntheticProbeSample
+
+    settings = _settings()
+    target = "scheduler:rollout-race"
+    record_heartbeat(target, settings=settings)
+    stale = SyntheticProbeSample(
+        id="syn_hb_rollout_stale",
+        probe_type="heartbeat",
+        target=target,
+        target_url="",
+        monitor_region="test-1",
+        status="up",
+        created_at=(utcnow() - dt.timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
+    )
+    reads: list[dict[str, object]] = []
+
+    def stale_analytics(self: object, **kwargs: object) -> list[SyntheticProbeSample]:
+        reads.append(kwargs)
+        return [stale] if kwargs.get("target") == target else []
+
+    monkeypatch.setattr(
+        type(STORE.target),
+        "synthetic_probe_samples",
+        stale_analytics,
+    )
+
+    beats = {row["name"]: row for row in fleet._heartbeat_rows()}
+
+    assert beats[target]["stale"] is False
+    assert beats[target]["last_beat_at"] != stale.created_at
+    assert reads
+    assert all(read["target"] and read["limit"] == 1 for read in reads)
+    assert all(read["probe_type"] == "heartbeat" for read in reads)
+
+
+def test_concurrent_heartbeat_calls_write_one_bucket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_type = type(STORE.target)
+    original = store_type.record_synthetic_probe_sample
+
+    def slow_record(self: object, sample: object) -> None:
+        time.sleep(0.01)
+        original(self, sample)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(store_type, "record_synthetic_probe_sample", slow_record)
+    settings = _settings()
+    target = "job:concurrent-heartbeat"
+    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
+        list(pool.map(lambda _: record_heartbeat(target, settings=settings), range(24)))
+
+    samples = STORE.synthetic_probe_samples(
+        target=target,
+        probe_type="heartbeat",
+        limit=100,
+    )
+    assert len(samples) == 1
 
 
 def test_fleet_snapshot_merges_peers_and_ranks_overall() -> None:

@@ -54,6 +54,7 @@ def _record(sample: SyntheticProbeSample) -> None:
 
 
 def test_stale_heartbeat_produces_paged_decision(sentry_events: list[str]) -> None:
+    fleet.register_heartbeat_target("scheduler:dead")
     _record(
         SyntheticProbeSample(
             id="syn_hb_dead_sched_rem",
@@ -124,6 +125,7 @@ def test_fresh_probes_produce_no_monitor_decision(sentry_events: list[str]) -> N
 
 
 def test_decision_rows_bucket_and_dedupe(sentry_events: list[str]) -> None:
+    fleet.register_heartbeat_target("scheduler:bucketed")
     _record(
         SyntheticProbeSample(
             id="syn_hb_dead_bucket",
@@ -180,6 +182,7 @@ def test_remediation_samples_stay_out_of_public_surfaces() -> None:
 def test_fleet_snapshot_carries_remediator_section() -> None:
     import asyncio
 
+    fleet.register_heartbeat_target("scheduler:fleet-dead")
     _record(
         SyntheticProbeSample(
             id="syn_hb_dead_fleet_rem",

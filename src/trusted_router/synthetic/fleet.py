@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
+import threading
 import time
 import uuid
 from typing import Any
@@ -56,6 +57,19 @@ PEER_FETCH_TIMEOUT_SECONDS = 10.0
 # concerned. Two synthetic cadences plus scheduling allowance, mirroring
 # SILENT_PROBE_TTL_SECONDS in status.py.
 HEARTBEAT_STALE_SECONDS = 11 * 60
+
+# Heartbeat reads must use the target-leading analytics indexes. A broad
+# ``probe_type=heartbeat`` read scans the entire synthetic table in ClickHouse
+# because ``target`` is the first sort-key column. Keep every product heartbeat
+# name here; ``record_heartbeat`` also registers local extension names.
+BUILTIN_HEARTBEAT_TARGETS = frozenset(
+    {
+        "job:settle-outbox-drain",
+        "scheduler:home-settlement",
+        "scheduler:remediator",
+        "scheduler:synthetic",
+    }
+)
 
 
 def fleet_peers(settings: Settings) -> list[tuple[str, str]]:
@@ -204,6 +218,31 @@ HEARTBEAT_BUCKET_SECONDS = 5 * 60
 # (job name -> last bucket recorded by THIS process); purely a write saver,
 # the deterministic id is what keeps concurrent replicas to one row.
 _HEARTBEAT_MARKS: dict[str, int] = {}
+_REGISTERED_HEARTBEAT_TARGETS: set[str] = set()
+_HEARTBEAT_LOCK = threading.RLock()
+
+
+def register_heartbeat_target(name: str) -> None:
+    """Register a heartbeat name for indexed fleet reads.
+
+    Product heartbeat names belong in ``BUILTIN_HEARTBEAT_TARGETS``. This
+    registry preserves the helper's usefulness for local jobs and tests
+    without falling back to a full-table ``probe_type`` scan.
+    """
+    if name:
+        with _HEARTBEAT_LOCK:
+            _REGISTERED_HEARTBEAT_TARGETS.add(name)
+
+
+def _heartbeat_bucket_start(bucket: int) -> str:
+    return (
+        dt.datetime.fromtimestamp(
+            bucket * HEARTBEAT_BUCKET_SECONDS,
+            tz=dt.UTC,
+        )
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def record_heartbeat(name: str, *, settings: Settings) -> None:
@@ -211,36 +250,36 @@ def record_heartbeat(name: str, *, settings: Settings) -> None:
     heartbeat that can kill its own loop would be worse than no heartbeat."""
     try:
         bucket = int(time.time() // HEARTBEAT_BUCKET_SECONDS)
-        if _HEARTBEAT_MARKS.get(name) == bucket:
-            return
-        from trusted_router.storage import STORE
+        with _HEARTBEAT_LOCK:
+            _REGISTERED_HEARTBEAT_TARGETS.add(name)
+            if _HEARTBEAT_MARKS.get(name) == bucket:
+                return
+            from trusted_router.storage import STORE
 
-        bucket_start = (
-            dt.datetime.fromtimestamp(
-                bucket * HEARTBEAT_BUCKET_SECONDS,
-                tz=dt.UTC,
+            bucket_start = _heartbeat_bucket_start(bucket)
+            STORE.record_synthetic_probe_sample(
+                SyntheticProbeSample(
+                    id=f"syn_hb_{name.replace(':', '_')}_{bucket}",
+                    probe_type=HEARTBEAT_PROBE,
+                    target=name,
+                    target_url="",
+                    monitor_region=(settings.synthetic_monitor_region or settings.primary_region),
+                    status="up",
+                    created_at=bucket_start,
+                )
             )
-            .isoformat()
-            .replace("+00:00", "Z")
-        )
-        STORE.record_synthetic_probe_sample(
-            SyntheticProbeSample(
-                id=f"syn_hb_{name.replace(':', '_')}_{bucket}",
-                probe_type=HEARTBEAT_PROBE,
-                target=name,
-                target_url="",
-                monitor_region=settings.synthetic_monitor_region or settings.primary_region,
-                status="up",
-                created_at=bucket_start,
-            )
-        )
-        _HEARTBEAT_MARKS[name] = bucket
+            # Publish the read-your-write mark only after the store accepted
+            # the sample. The lock also collapses concurrent gateway calls
+            # into one heartbeat row for this five-minute bucket.
+            _HEARTBEAT_MARKS[name] = bucket
     except Exception:  # noqa: BLE001 - liveness reporting must not break the job
         logger.exception("heartbeat record failed for %s", name)
 
 
 def reset_for_tests() -> None:
-    _HEARTBEAT_MARKS.clear()
+    with _HEARTBEAT_LOCK:
+        _HEARTBEAT_MARKS.clear()
+        _REGISTERED_HEARTBEAT_TARGETS.clear()
 
 
 def _age_seconds(created_at: str) -> float | None:
@@ -256,20 +295,34 @@ def _age_seconds(created_at: str) -> float | None:
 def _heartbeat_rows() -> list[dict[str, Any]]:
     from trusted_router.storage import STORE
 
-    samples = STORE.synthetic_probe_samples(probe_type=HEARTBEAT_PROBE, limit=500)
-    latest: dict[str, SyntheticProbeSample] = {}
-    for sample in samples:
-        current = latest.get(sample.target)
-        if current is None or sample.created_at > current.created_at:
-            latest[sample.target] = sample
+    # The durable analytics pipeline is intentionally asynchronous. Merge the
+    # successful process-local write marks so a newly rolled instance cannot
+    # page on an old ClickHouse snapshot immediately after publishing its own
+    # heartbeat. Durable samples remain authoritative after process restart.
+    latest: dict[str, str] = {}
+    with _HEARTBEAT_LOCK:
+        targets = BUILTIN_HEARTBEAT_TARGETS | _REGISTERED_HEARTBEAT_TARGETS
+        local_marks = dict(_HEARTBEAT_MARKS)
+    for name in sorted(targets):
+        samples = STORE.synthetic_probe_samples(
+            target=name,
+            probe_type=HEARTBEAT_PROBE,
+            limit=1,
+        )
+        if samples:
+            latest[name] = samples[0].created_at
+    for name, bucket in local_marks.items():
+        local_created_at = _heartbeat_bucket_start(bucket)
+        if local_created_at > latest.get(name, ""):
+            latest[name] = local_created_at
+
     rows = []
-    for name in sorted(latest):
-        sample = latest[name]
-        age = _age_seconds(sample.created_at)
+    for name, created_at in sorted(latest.items()):
+        age = _age_seconds(created_at)
         rows.append(
             {
                 "name": name,
-                "last_beat_at": sample.created_at,
+                "last_beat_at": created_at,
                 "age_seconds": round(age) if age is not None else None,
                 "stale": age is None or age > HEARTBEAT_STALE_SECONDS,
             }
