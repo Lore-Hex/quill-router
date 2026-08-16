@@ -833,9 +833,7 @@ class PostgresStore:
     ) -> AcquisitionAttribution | None:
         self._not_implemented("record_acquisition_purchase")
 
-    def list_activation_reminders(
-        self, *, limit: int = 100
-    ) -> list[ActivationReminderTask]:
+    def list_activation_reminders(self, *, limit: int = 100) -> list[ActivationReminderTask]:
         self._not_implemented("list_activation_reminders")
 
     def delete_activation_reminders(self, reminder_ids: list[str]) -> None:
@@ -948,11 +946,16 @@ class PostgresStore:
     def mark_user_email_verified(self, user_id: str) -> User | None:
         self._not_implemented("mark_user_email_verified")
 
-    def begin_phone_verification(self, user_id: str, phone: str) -> tuple[str, User] | None:
+    def begin_phone_verification(
+        self, user_id: str, phone: str, channel: str | None = None
+    ) -> tuple[str, User] | None:
         self._not_implemented("begin_phone_verification")
 
     def confirm_phone_verification(self, user_id: str, code: str) -> tuple[str, User | None]:
         self._not_implemented("confirm_phone_verification")
+
+    def cancel_phone_verification(self, user_id: str) -> User | None:
+        self._not_implemented("cancel_phone_verification")
 
     def clear_user_phone(self, user_id: str) -> User | None:
         self._not_implemented("clear_user_phone")
@@ -2268,9 +2271,7 @@ class PostgresStore:
         lease_until = _iso_after_seconds(lease_seconds)
 
         claimed: list[VideoJob] = []
-        for pointer in self._list_entities(
-            "video_job_due", dict, limit=max(limit * 10, limit)
-        ):
+        for pointer in self._list_entities("video_job_due", dict, limit=max(limit * 10, limit)):
             if len(claimed) >= limit:
                 break
             # Ids sort as "<next_poll_at>#<job_id>", so the scan is in due

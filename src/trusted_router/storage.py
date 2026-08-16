@@ -288,9 +288,7 @@ class InMemoryStore:
             occurred_at=occurred_at,
         )
 
-    def list_activation_reminders(
-        self, *, limit: int = 100
-    ) -> list[ActivationReminderTask]:
+    def list_activation_reminders(self, *, limit: int = 100) -> list[ActivationReminderTask]:
         return self.acquisition_store.list_reminders(limit=limit)
 
     def delete_activation_reminders(self, reminder_ids: list[str]) -> None:
@@ -532,12 +530,14 @@ class InMemoryStore:
             user.email_verified = True
             return user
 
-    def begin_phone_verification(self, user_id: str, phone: str) -> tuple[str, User] | None:
+    def begin_phone_verification(
+        self, user_id: str, phone: str, channel: str | None = None
+    ) -> tuple[str, User] | None:
         with self._lock:
             user = self.users.get(user_id)
             if user is None:
                 return None
-            code = phone_verification.begin(user, phone)
+            code = phone_verification.begin(user, phone, channel=channel)
             return code, user
 
     def confirm_phone_verification(self, user_id: str, code: str) -> tuple[str, User | None]:
@@ -547,6 +547,14 @@ class InMemoryStore:
                 return "no_pending", None
             result = phone_verification.confirm(user, code)
             return result.status, user
+
+    def cancel_phone_verification(self, user_id: str) -> User | None:
+        with self._lock:
+            user = self.users.get(user_id)
+            if user is None:
+                return None
+            phone_verification.cancel_pending(user)
+            return user
 
     def clear_user_phone(self, user_id: str) -> User | None:
         with self._lock:

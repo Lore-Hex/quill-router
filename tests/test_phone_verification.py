@@ -34,7 +34,9 @@ class TestNormalization:
         # actually say something useful.
         assert pv.normalize_phone(raw) == expected
 
-    @pytest.mark.parametrize("raw", ["", "   ", "3059511381", "+1305call1381", "+123", "+" + "9" * 16])
+    @pytest.mark.parametrize(
+        "raw", ["", "   ", "3059511381", "+1305call1381", "+123", "+" + "9" * 16]
+    )
     def test_rejects_what_a_carrier_would(self, raw: str) -> None:
         with pytest.raises(pv.PhoneNumberError):
             pv.normalize_phone(raw)
@@ -50,6 +52,13 @@ class TestVerification:
         assert user.pending_phone == "+13059511381"
         assert user.phone is None
         assert not user.phone_verified
+
+    def test_begin_records_the_delivery_channel(self) -> None:
+        user = _user()
+
+        pv.begin(user, "+13059511381", channel="voice")
+
+        assert user.phone_code_channel == "voice"
 
     def test_the_right_code_promotes_the_number(self) -> None:
         user = _user()
@@ -168,3 +177,17 @@ class TestClear:
         assert not user.phone_verified
         assert user.phone_verified_at is None
         assert user.pending_phone is None
+
+    def test_cancel_discards_only_the_pending_number(self) -> None:
+        user = _user()
+        first_code = pv.begin(user, "+13059511381", channel="voice")
+        pv.confirm(user, first_code)
+        pv.begin(user, "+442071838750", channel="sms")
+
+        pv.cancel_pending(user)
+
+        assert user.phone == "+13059511381"
+        assert user.phone_verified
+        assert user.pending_phone is None
+        assert user.phone_code_channel is None
+        assert user.phone_code_sent_at is None

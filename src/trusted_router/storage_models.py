@@ -101,6 +101,7 @@ class User:
     phone_code_expires_at: str | None = None
     phone_code_attempts: int = 0
     phone_code_sent_at: str | None = None
+    phone_code_channel: str | None = None
 
 
 @dataclass
@@ -1168,8 +1169,8 @@ def activation_reminder_tasks(
         signup_at = signup_at.replace(tzinfo=dt.UTC)
     tasks: list[ActivationReminderTask] = []
     for stage, delay_seconds in ACTIVATION_REMINDER_DELAYS_SECONDS:
-        due_at = (signup_at + dt.timedelta(seconds=delay_seconds)).isoformat().replace(
-            "+00:00", "Z"
+        due_at = (
+            (signup_at + dt.timedelta(seconds=delay_seconds)).isoformat().replace("+00:00", "Z")
         )
         tasks.append(
             ActivationReminderTask(

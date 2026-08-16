@@ -420,9 +420,7 @@ class SpannerBigtableStore:
             occurred_at=occurred_at,
         )
 
-    def list_activation_reminders(
-        self, *, limit: int = 100
-    ) -> list[ActivationReminderTask]:
+    def list_activation_reminders(self, *, limit: int = 100) -> list[ActivationReminderTask]:
         return self.acquisition_store.list_reminders(limit=limit)
 
     def delete_activation_reminders(self, reminder_ids: list[str]) -> None:
@@ -867,7 +865,9 @@ class SpannerBigtableStore:
 
         return self._run_in_transaction(txn)
 
-    def begin_phone_verification(self, user_id: str, phone: str) -> tuple[str, User] | None:
+    def begin_phone_verification(
+        self, user_id: str, phone: str, channel: str | None = None
+    ) -> tuple[str, User] | None:
         # The code is generated inside the transaction and returned to the
         # caller to send; only its hash is persisted.
         holder: dict[str, str] = {}
@@ -876,7 +876,7 @@ class SpannerBigtableStore:
             user = self._read_entity_tx(transaction, "user", user_id, User)
             if user is None:
                 return None
-            holder["code"] = phone_verification.begin(user, phone)
+            holder["code"] = phone_verification.begin(user, phone, channel=channel)
             self._write_entity_tx(transaction, "user", user.id, user)
             return user
 
@@ -900,6 +900,17 @@ class SpannerBigtableStore:
 
         user = self._run_in_transaction(txn)
         return holder.get("status", "no_pending"), user
+
+    def cancel_phone_verification(self, user_id: str) -> User | None:
+        def txn(transaction: Any) -> User | None:
+            user = self._read_entity_tx(transaction, "user", user_id, User)
+            if user is None:
+                return None
+            phone_verification.cancel_pending(user)
+            self._write_entity_tx(transaction, "user", user.id, user)
+            return user
+
+        return self._run_in_transaction(txn)
 
     def clear_user_phone(self, user_id: str) -> User | None:
         def txn(transaction: Any) -> User | None:
@@ -975,9 +986,7 @@ class SpannerBigtableStore:
         # Exact lifetime limits deliberately remain single-row so authorize
         # can reserve against the cap atomically.
         usage_shard_count = (
-            1
-            if limit_microdollars is not None
-            else self._credit_shard_count(workspace_id)
+            1 if limit_microdollars is not None else self._credit_shard_count(workspace_id)
         )
         return self.api_keys.create(
             workspace_id=workspace_id,
