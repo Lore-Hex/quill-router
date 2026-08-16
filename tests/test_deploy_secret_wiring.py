@@ -70,6 +70,19 @@ def test_deploy_wires_three_cloud_ops_chat_support_fanout() -> None:
     )
 
 
+def test_deploy_serves_user_provided_models() -> None:
+    """The switch that lets the gateway authorize a user-provided model.
+
+    It stayed off until BOTH halves existed: settle/refund of the synthetic
+    user-model endpoint with its exactly-once payout (#608), and the attested
+    enclave that dispatches to the owner's URL. Pinning it here means turning
+    it back off is a deliberate edit with a test to update, not a quiet drift.
+    """
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+
+    assert '"TR_USER_MODELS_DISPATCH_ENABLED=true"' in rollout
+
+
 def test_deploy_wires_veriff_config_and_secrets() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
     secrets = (ROOT / "scripts/deploy/secrets.sh").read_text()
