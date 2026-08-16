@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Google AI Studio chat and image models that are available from the Gemini API before the OpenRouter snapshot catches up. Verified against Google Gemini /v1beta/models and direct countTokens/generateContent smoke.",
   "provider": "google-ai-studio",
   "source": "https://generativelanguage.googleapis.com/v1beta/models",
-  "generated_at": "2026-08-16T04:38:17Z",
+  "generated_at": "2026-08-16T05:30:45Z",
   "model_count": 35,
   "models": [
     {
@@ -835,7 +835,7 @@
       "context_length": 1048576,
       "max_output_tokens": 65536,
       "routable": false,
-      "routable_reason": "awaiting-price",
+      "routable_reason": "delisted-upstream",
       "unresolved_since": "2026-08-15",
       "missing_since": "2026-08-16"
     }

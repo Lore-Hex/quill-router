@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-08-16T04:38:17Z",
+  "generated_at": "2026-08-16T05:30:45Z",
   "model_count": 142,
   "models": [
     {
