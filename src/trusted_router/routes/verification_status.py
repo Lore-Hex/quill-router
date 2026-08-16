@@ -6,13 +6,15 @@ from fastapi import APIRouter
 
 from trusted_router.auth import ManagementPrincipal, SettingsDep
 from trusted_router.errors import api_error
-from trusted_router.money import money_pair
+from trusted_router.money import (
+    VERIFF_ATTEMPT_FEE_MICRODOLLARS,
+    VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS,
+    money_pair,
+)
 from trusted_router.storage import STORE
 from trusted_router.storage_models import User
 from trusted_router.types import ErrorType
-from trusted_router.verification_gates import missing_phone_verification_requirements
-
-IDENTITY_STATUS = "none"
+from trusted_router.verification_gates import missing_identity_verification_requirements
 
 
 def register_verification_status_routes(router: APIRouter) -> None:
@@ -30,8 +32,15 @@ def register_verification_status_routes(router: APIRouter) -> None:
                 **money_pair("lifetime_topup", lifetime_topup),
                 "phone_verified": bool(user.phone_verified),
                 "phone": user.phone,
-                "identity_status": IDENTITY_STATUS,
-                "missing_requirements": missing_phone_verification_requirements(user, settings),
+                "identity_status": user.identity_status,
+                "identity_verified_at": user.identity_verified_at,
+                "veriff_attempt_count": user.veriff_attempt_count,
+                **money_pair("verification_fee", VERIFF_ATTEMPT_FEE_MICRODOLLARS),
+                **money_pair(
+                    "lifetime_topup_required",
+                    VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS,
+                ),
+                "missing_requirements": missing_identity_verification_requirements(user, settings),
                 "next_step": _next_step(user, lifetime_topup),
             }
         }
@@ -61,10 +70,10 @@ def _principal_user(principal: Any) -> User:
 def _next_step(user: User, lifetime_topup: int) -> str | None:
     if not user.email or not user.email_verified:
         return "email"
-    if lifetime_topup <= 0:
+    if lifetime_topup < VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS:
         return "funding"
     if not user.phone_verified:
         return "phone"
-    if IDENTITY_STATUS == "none":
+    if not user.identity_verified:
         return "identity"
     return None

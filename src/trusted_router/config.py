@@ -520,6 +520,12 @@ class Settings(BaseSettings):
     # which is why notify requires a verified phone and is metered.
     notify_enabled: bool = False
     phone_verification_requires_funding: bool | None = None
+    custom_models_require_verification: bool | None = None
+    veriff_enabled: bool = False
+    veriff_api_key: str | None = None
+    veriff_shared_secret_key: str | None = None
+    veriff_base_url: str = "https://stationapi.veriff.com"
+    identity_session_stale_after_days: int = 7
     # Flip to True once A2P 10DLC is approved on the primary SMS carrier;
     # voice needs no registration.
     notify_sms_available: bool = False
@@ -1004,6 +1010,19 @@ class Settings(BaseSettings):
             raise ValueError("TR_OPS_CHAT_WEBHOOK_URLS must contain only HTTPS URLs in production")
         if self.x402_allow_mock_payments and environment not in {"local", "test"}:
             raise ValueError("TR_X402_ALLOW_MOCK_PAYMENTS is only allowed in local/test")
+        if self.identity_session_stale_after_days <= 0:
+            raise ValueError("TR_IDENTITY_SESSION_STALE_AFTER_DAYS must be positive")
+        if self.veriff_enabled and environment not in {"local", "test"}:
+            missing_veriff = [
+                name
+                for name, value in (
+                    ("TR_VERIFF_API_KEY", self.veriff_api_key),
+                    ("TR_VERIFF_SHARED_SECRET_KEY", self.veriff_shared_secret_key),
+                )
+                if not value
+            ]
+            if missing_veriff:
+                raise ValueError("TR_VERIFF_ENABLED requires " + ", ".join(missing_veriff))
         if self.adyen_environment not in {"test", "live"}:
             raise ValueError("TR_ADYEN_ENVIRONMENT must be test or live")
         if not 0 <= self.adyen_card_fee_basis_points < 10_000:
@@ -1231,6 +1250,16 @@ class Settings(BaseSettings):
         return self.environment.lower() not in {"local", "test"}
 
     @property
+    def custom_models_verification_enforced(self) -> bool:
+        if self.custom_models_require_verification is not None:
+            return self.custom_models_require_verification
+        return self.environment.lower() not in {"local", "test"}
+
+    @property
+    def veriff_configured(self) -> bool:
+        return bool(self.veriff_api_key and self.veriff_shared_secret_key)
+
+    @property
     def adyen_checkout_ready(self) -> bool:
         return bool(
             self.adyen_enabled
@@ -1312,6 +1341,10 @@ _LOCAL_KEY_FALLBACKS: tuple[str, ...] = (
     "internal_gateway_token",
     "stripe_webhook_secret",
     "stripe_secret_key",
+    "veriff_enabled",
+    "veriff_api_key",
+    "veriff_shared_secret_key",
+    "veriff_base_url",
     "paypal_client_id",
     "paypal_client_secret",
     "paypal_webhook_id",

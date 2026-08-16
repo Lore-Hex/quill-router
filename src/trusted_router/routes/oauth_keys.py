@@ -417,6 +417,7 @@ def _identity_payload(user: Any) -> dict[str, Any] | None:
         "email": user.email,
         "email_verified": user.email_verified,
         "phone_verified": user.phone_verified,
+        "identity_verified": user.identity_verified,
         "wallet_address": user.wallet_address,
     }
 
