@@ -298,7 +298,9 @@ class UserProvidedModel:
                 **self.encrypted_endpoint_api_key
             )
         if isinstance(self.encrypted_signing_secret, dict):
-            self.encrypted_signing_secret = EncryptedSecretEnvelope(**self.encrypted_signing_secret)
+            self.encrypted_signing_secret = EncryptedSecretEnvelope(
+                **self.encrypted_signing_secret
+            )
 
 
 @dataclass

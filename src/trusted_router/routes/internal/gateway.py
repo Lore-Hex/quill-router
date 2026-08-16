@@ -173,6 +173,8 @@ _NATIVE_BATCH_PROVIDER_FIELDS = frozenset(
 _SETTLE_REPAIR_FIELDS = frozenset(
     {
         "authorization_id",
+        "client",
+        "gateway_request_id",
         "actual_input_tokens",
         "actual_output_tokens",
         "input_tokens",
@@ -205,8 +207,6 @@ _SETTLE_REPAIR_FIELDS = frozenset(
         "http_referer",
         "app_categories",
         "route_type",
-        "client",
-        "gateway_request_id",
         "additional_cost_microdollars",
         "video_input_mode",
         "video_duration_seconds",
@@ -615,7 +615,9 @@ def _authorize_gateway_sync(
                 user_provided_model_id=user_model.id if user_model else None,
                 user_provided_model_revision=user_model.revision if user_model else None,
                 user_model_prompt_price_microdollars_per_m=(
-                    user_model.prompt_price_microdollars_per_million_tokens if user_model else None
+                    user_model.prompt_price_microdollars_per_million_tokens
+                    if user_model
+                    else None
                 ),
                 user_model_completion_price_microdollars_per_m=(
                     user_model.completion_price_microdollars_per_million_tokens
@@ -780,10 +782,14 @@ def _authorize_gateway_sync(
             user_provided_model_id=user_model.id if user_model else None,
             user_provided_model_revision=user_model.revision if user_model else None,
             user_model_prompt_price_microdollars_per_m=(
-                user_model.prompt_price_microdollars_per_million_tokens if user_model else None
+                user_model.prompt_price_microdollars_per_million_tokens
+                if user_model
+                else None
             ),
             user_model_completion_price_microdollars_per_m=(
-                user_model.completion_price_microdollars_per_million_tokens if user_model else None
+                user_model.completion_price_microdollars_per_million_tokens
+                if user_model
+                else None
             ),
             user_model_owner_user_id=user_model.owner_user_id if user_model else None,
             additional_cost_reservation_microdollars=additional_cost_reservation,
@@ -1624,10 +1630,8 @@ def _settle_gateway_authorization(
             "selected endpoint was not authorized for this gateway request",
             ErrorType.BAD_REQUEST,
         )
-    model = (
-        user_model_pair[0]
-        if user_model_pair is not None
-        else MODELS.get(selected_endpoint.model_id)
+    model = user_model_pair[0] if user_model_pair is not None else MODELS.get(
+        selected_endpoint.model_id
     )
     if model is None:
         raise api_error(500, "Authorized model is no longer configured", ErrorType.INTERNAL_ERROR)
@@ -1670,7 +1674,9 @@ def _settle_gateway_authorization(
             input_tokens=total_input,
             output_tokens=output_tokens,
             prompt_price=int(authorization.user_model_prompt_price_microdollars_per_m or 0),
-            completion_price=int(authorization.user_model_completion_price_microdollars_per_m or 0),
+            completion_price=int(
+                authorization.user_model_completion_price_microdollars_per_m or 0
+            ),
         )
         if user_model_pair is not None
         else partner_cost_microdollars(
@@ -1726,7 +1732,8 @@ def _settle_gateway_authorization(
     operator_cost = (
         owner_share_microdollars(actual_cost)
         if user_model_pair is not None
-        else _endpoint_cost_microdollars(
+        else
+        _endpoint_cost_microdollars(
             selected_endpoint,
             uncached_input,
             output_tokens,
@@ -1818,7 +1825,9 @@ def _settle_gateway_authorization(
         user_model_payout = UserModelPayout(
             owner_user_id=owner_user_id,
             model_id=user_model_id,
-            amount_microdollars=(owner_share_microdollars(actual_cost) if success else 0),
+            amount_microdollars=(
+                owner_share_microdollars(actual_cost) if success else 0
+            ),
             payer_workspace_id=authorization.workspace_id,
         )
 
@@ -1839,7 +1848,9 @@ def _settle_gateway_authorization(
                 frozen_settle_body[USER_MODEL_PAYOUT_SETTLE_FIELD] = (
                     user_model_payout.amount_microdollars
                 )
-                frozen_settle_body[USER_MODEL_OWNER_SETTLE_FIELD] = user_model_payout.owner_user_id
+                frozen_settle_body[USER_MODEL_OWNER_SETTLE_FIELD] = (
+                    user_model_payout.owner_user_id
+                )
                 frozen_settle_body[USER_MODEL_ID_SETTLE_FIELD] = user_model_payout.model_id
             # §5.4 honest scope: durability starts only when this INSERT commits;
             # crashes before it still rely on enclave redelivery. MF4/MF5 freeze
@@ -2020,6 +2031,8 @@ def _settle_gateway_authorization(
                 settings=settings,
             )
     if success and generation is not None:
+        # Customers' webhooks must not gain a new object silently: the
+        # correlation id is useful to them, the client telemetry object is not.
         broadcast_settle_body = dict(settle_body)
         broadcast_settle_body.pop("client", None)
         enqueue_metadata_broadcast(generation, settle_body=broadcast_settle_body)
@@ -2233,6 +2246,12 @@ def _settle_body_with_safe_attribution(
 def _settle_body_with_safe_client_context(
     settle_body: dict[str, Any], authorization_id: str
 ) -> dict[str, Any]:
+    """Soft-validate the enclave's client telemetry; drop it rather than 4xx.
+
+    Telemetry may never fail settlement. Anything that does not match the
+    closed vocabulary in ``client_context`` is removed and logged; the money
+    path continues unchanged.
+    """
     if "client" in settle_body:
         client_context = parse_client_context(settle_body.get("client"))
         if client_context is None:
@@ -2356,7 +2375,9 @@ def _user_model_gateway_candidate(
         model_id=user_model.id,
         name=user_model.name,
         revision=user_model.revision,
-        prompt_price_microdollars_per_m=(user_model.prompt_price_microdollars_per_million_tokens),
+        prompt_price_microdollars_per_m=(
+            user_model.prompt_price_microdollars_per_million_tokens
+        ),
         completion_price_microdollars_per_m=(
             user_model.completion_price_microdollars_per_million_tokens
         ),
@@ -2388,7 +2409,12 @@ def _authorized_user_model_pair(
     prompt_price = authorization.user_model_prompt_price_microdollars_per_m
     completion_price = authorization.user_model_completion_price_microdollars_per_m
     owner_user_id = authorization.user_model_owner_user_id
-    if revision is None or prompt_price is None or completion_price is None or not owner_user_id:
+    if (
+        revision is None
+        or prompt_price is None
+        or completion_price is None
+        or not owner_user_id
+    ):
         return None
     try:
         return user_model_gateway_pair(
@@ -2657,7 +2683,11 @@ def _require_native_batch_route_binding(
 
 
 def _authorization_ttl_seconds(route_type: str | None) -> int:
-    return 26 * 60 * 60 if _is_native_batch_route(route_type) else GATEWAY_RESERVATION_TTL_SECONDS
+    return (
+        26 * 60 * 60
+        if _is_native_batch_route(route_type)
+        else GATEWAY_RESERVATION_TTL_SECONDS
+    )
 
 
 def _native_batch_cost_or_error(
