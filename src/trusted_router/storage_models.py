@@ -815,10 +815,18 @@ def scrub_provider_error_message(value: str) -> str:
 
 @dataclass
 class ProviderBenchmarkSample:
-    """Privacy-safe provider performance sample for future public rankings.
+    """Provider performance sample, and the durable per-workspace usage record.
 
-    This intentionally omits workspace_id, key_hash, app, prompt, and output.
-    Public ranking pages can aggregate these rows without exposing tenants.
+    Prompts, outputs, and key material are never carried here. `workspace_id`
+    IS carried: this row is the only usage record that outlives Spanner's
+    30-day `tr_generation` deletion policy, so without it there is no way to
+    answer "how much has this customer used" beyond a month.
+
+    That places a hard requirement on every consumer: these rows feed PUBLIC
+    surfaces (the leaderboard, provider/model rankings, the /apps directory).
+    Those aggregate samples into their own explicit dicts and must never
+    project `workspace_id` into a response. `tests/test_analytics_workspace_id.py`
+    pins that boundary — if you add a public consumer, extend that test.
     """
 
     id: str
@@ -828,6 +836,9 @@ class ProviderBenchmarkSample:
     status: str
     usage_type: UsageType
     streamed: bool
+    # Tenant that generated the sample. Empty only for rows predating this
+    # field and for error paths without an authorization in scope.
+    workspace_id: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
     total_cost_microdollars: int = 0
@@ -876,6 +887,7 @@ class ProviderBenchmarkSample:
             status=generation.status,
             usage_type=generation.usage_type,
             streamed=generation.streamed,
+            workspace_id=generation.workspace_id,
             input_tokens=generation.tokens_prompt,
             output_tokens=generation.tokens_completion,
             total_cost_microdollars=generation.total_cost_microdollars,
@@ -941,6 +953,7 @@ class ProviderBenchmarkSample:
         error_type: str,
         region: str | None,
         provider: str | None = None,
+        workspace_id: str = "",
     ) -> ProviderBenchmarkSample:
         return cls(
             id=f"bench-{uuid.uuid4().hex}",
@@ -950,6 +963,7 @@ class ProviderBenchmarkSample:
             status="error",
             usage_type=UsageType.coerce(usage_type),
             streamed=streamed,
+            workspace_id=workspace_id,
             input_tokens=input_tokens,
             output_tokens=0,
             total_cost_microdollars=0,
