@@ -5,8 +5,11 @@ from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from trusted_router.auth import ManagementPrincipal, Principal
-from trusted_router.custom_model_rules import require_custom_model_base_model
+from trusted_router.auth import ManagementPrincipal, Principal, SettingsDep
+from trusted_router.custom_model_rules import (
+    assert_user_can_create_custom_models,
+    require_custom_model_base_model,
+)
 from trusted_router.errors import api_error
 from trusted_router.schemas import (
     CustomModelCreateRequest,
@@ -33,8 +36,10 @@ def register_custom_model_routes(router: APIRouter) -> None:
     async def create_custom_model(
         body: CustomModelCreateRequest,
         principal: ManagementPrincipal,
+        settings: SettingsDep,
     ) -> JSONResponse:
         owner_user_id = _owner_user_id(principal)
+        assert_user_can_create_custom_models(STORE.get_user(owner_user_id), settings)
         _require_base_model(body.base_model_id)
         try:
             model = STORE.create_custom_model(
@@ -81,7 +86,10 @@ def register_custom_model_routes(router: APIRouter) -> None:
         model_id: str,
         body: CustomModelPatchRequest,
         principal: ManagementPrincipal,
+        settings: SettingsDep,
     ) -> dict[str, Any]:
+        owner_user_id = _owner_user_id(principal)
+        assert_user_can_create_custom_models(STORE.get_user(owner_user_id), settings)
         existing = _require_owner_model(model_id, principal)
         patch = model_to_dict(body)
         base_model_id = patch.get("base_model_id")
