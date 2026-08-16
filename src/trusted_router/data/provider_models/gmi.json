@@ -2,7 +2,7 @@
   "_about": "Provider-native GMI Cloud catalog. Account-visible models are intersected with GMI's official billing feed; explicitly approved routes omitted from /v1/models remain current only after an exact visible-content PONG canary succeeds.",
   "provider": "gmi",
   "source": "https://console.gmicloud.ai/api/v1/billing/model_prices",
-  "generated_at": "2026-08-16T12:42:10Z",
+  "generated_at": "2026-08-16T13:33:59Z",
   "model_count": 83,
   "models": [
     {
