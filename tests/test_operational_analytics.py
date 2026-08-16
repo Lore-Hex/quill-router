@@ -13,6 +13,7 @@ from clickhouse.ingest_operational_outbox import (
     CanonicalOperationalEvent,
     OperationalOutboxRow,
     drain_once,
+    expand_client_events_payload,
     normalise_operational_event,
 )
 from clickhouse.rollup_synthetic import (
@@ -20,6 +21,7 @@ from clickhouse.rollup_synthetic import (
     complete_window_rollups,
     monthly_from_daily,
 )
+from trusted_router.client_events_schema import ClientEventsBatch
 from trusted_router.operational_analytics import (
     OperationalAnalyticsClient,
     stable_rows_fingerprint,
@@ -35,6 +37,13 @@ from trusted_router.storage_models import (
     Generation,
     ProviderBenchmarkSample,
     SyntheticProbeSample,
+)
+from trusted_router.storage_operational_analytics import (
+    CLIENT_EVENTS_EVENT_KIND,
+    build_client_events_payload,
+)
+from trusted_router.storage_postgres_operational_analytics_outbox import (
+    PostgresOperationalAnalyticsOutbox,
 )
 from trusted_router.types import UsageType
 
@@ -133,6 +142,166 @@ def test_operational_outbox_enqueue_is_sharded_and_commit_timestamped() -> None:
         "event_id": "STRING",
         "payload": "STRING",
     }
+
+
+def _client_events_payload() -> dict[str, Any]:
+    batch = ClientEventsBatch.model_validate(
+        {
+            "schema_version": 1,
+            "batch_id": "a" * 32,
+            "instance_id": "b" * 16,
+            "seq": 9,
+            "sent_at_ms": 0,
+            "sdk": {
+                "name": "tr-py",
+                "version": "1.2.3",
+                "lang": "python",
+                "runtime": "cpython/3.12.4",
+                "os": "linux",
+                "arch": "arm64",
+            },
+            "events": [
+                {
+                    "age_ms": 1_500,
+                    "plane": "inference",
+                    "endpoint": "responses",
+                    "method": "POST",
+                    "streaming": True,
+                    "provider_pinned": False,
+                    "model": "private/model-name",
+                    "attempts": [
+                        {
+                            "index": 0,
+                            "host": "ally",
+                            "outcome": "transport_error",
+                            "http_status": None,
+                            "error_class": "connect_timeout",
+                            "error_source": "router",
+                            "should_retry": "false",
+                            "retry_after_ms": None,
+                            "elapsed_ms": 10_000,
+                            "ttfb_ms": None,
+                            "request_id": None,
+                            "moved": False,
+                        }
+                    ],
+                    "final_outcome": "exhausted",
+                    "final_http_status": None,
+                    "total_ms": 10_000,
+                    "ttft_ms": None,
+                    "failover_used": False,
+                    "timeout_phase": "connect",
+                    "configured_timeout_ms": 10_000,
+                    "sample_rate": 1.0,
+                    "sample_reason": "failure",
+                }
+            ],
+            "counters": [
+                {
+                    "window_start_age_ms": 61_500,
+                    "level": "request",
+                    "endpoint": "responses",
+                    "streaming": True,
+                    "host": "apex",
+                    "outcome": "ok",
+                    "error_class": None,
+                    "http_status_class": "2xx",
+                    "timeout_phase": "none",
+                    "timeout_floor_met": False,
+                    "provider_pinned": False,
+                    "requests": 4,
+                    "attempts": 4,
+                    "failover_used": 0,
+                    "first_attempt_success": 4,
+                    "total_ms_hist": {"lt400": 4},
+                    "first_event_ms_hist": {"lt200": 4},
+                }
+            ],
+        }
+    )
+    return build_client_events_payload(
+        batch,
+        tenant_id="raw-workspace",
+        key_id="raw-key-hash",
+        received_at=dt.datetime(2026, 8, 17, 12, 1, 2, 345000, tzinfo=dt.UTC),
+        is_synthetic=False,
+        success_sample_rate=0.01,
+    )
+
+
+def test_client_events_payload_round_trips_through_clickhouse_expansion() -> None:
+    payload = _client_events_payload()
+
+    rows = expand_client_events_payload(
+        payload,
+        dt.datetime(2026, 8, 17, 12, 1, 3, tzinfo=dt.UTC),
+    )
+
+    assert set(payload) == {
+        "schema_version",
+        "tenant_id",
+        "key_id",
+        "received_at",
+        "clock_skew_ms",
+        "synthetic",
+        "batch_id",
+        "instance_id",
+        "seq",
+        "sdk",
+        "events",
+        "counters",
+    }
+    assert len(rows) == 2
+    request = next(row.row for row in rows if row.event_kind == "client_request")
+    counter = next(row.row for row in rows if row.event_kind == "client_counter")
+    assert request["tr_fault"] == 1
+    assert counter["tr_fault"] == 0
+    assert request["final_host"] == "ally"
+    assert request["model"] == "other"
+
+
+def test_spanner_client_events_enqueue_uses_one_batch_outbox_row() -> None:
+    database = _Database()
+    payload = _client_events_payload()
+
+    SpannerOperationalAnalyticsOutbox(database, _ParamTypes()).enqueue_client_events(
+        payload
+    )
+
+    [(sql, params, _)] = database.transaction.calls
+    event_id = f"{payload['tenant_id']}:{payload['batch_id']}"
+    assert "PENDING_COMMIT_TIMESTAMP()" in sql
+    assert params["event_kind"] == CLIENT_EVENTS_EVENT_KIND
+    assert params["event_id"] == event_id
+    assert params["shard"] == operational_analytics_shard(
+        f"{CLIENT_EVENTS_EVENT_KIND}:{event_id}"
+    )
+    assert json.loads(params["payload"]) == payload
+
+
+def test_postgres_client_events_enqueue_uses_one_idempotent_batch_row() -> None:
+    statements: list[tuple[str, tuple[Any, ...]]] = []
+
+    class Connection:
+        def execute(self, sql: str, params: tuple[Any, ...]) -> None:
+            statements.append((sql, params))
+
+    connection = Connection()
+    outbox = PostgresOperationalAnalyticsOutbox(
+        lambda operation: operation(connection)
+    )
+    payload = _client_events_payload()
+
+    outbox.enqueue_client_events(payload)
+    outbox.enqueue_client_events(payload)
+
+    assert len(statements) == 2
+    for sql, params in statements:
+        event_id = f"{payload['tenant_id']}:{payload['batch_id']}"
+        assert "ON CONFLICT" in sql
+        assert params[1] == CLIENT_EVENTS_EVENT_KIND
+        assert params[2] == event_id
+        assert json.loads(params[3]) == payload
 
 
 def test_clickhouse_balanced_benchmark_reader_uses_one_window_query() -> None:

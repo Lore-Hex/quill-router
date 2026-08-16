@@ -20,6 +20,7 @@ from trusted_router.storage_gcp_codec import json_body
 from trusted_router.storage_models import Generation, SyntheticProbeSample
 from trusted_router.storage_operational_analytics import (
     ACTIVITY_EVENT_KIND,
+    CLIENT_EVENTS_EVENT_KIND,
     OPERATIONAL_ANALYTICS_OUTBOX_SHARDS,
     SYNTHETIC_EVENT_KIND,
     activity_payload,
@@ -30,6 +31,7 @@ from trusted_router.storage_operational_analytics import (
 
 __all__ = [
     "ACTIVITY_EVENT_KIND",
+    "CLIENT_EVENTS_EVENT_KIND",
     "OPERATIONAL_ANALYTICS_OUTBOX_SHARDS",
     "SYNTHETIC_EVENT_KIND",
     "SpannerOperationalAnalyticsOutbox",
@@ -95,6 +97,13 @@ class SpannerOperationalAnalyticsOutbox:
             event_kind=SYNTHETIC_EVENT_KIND,
             event_id=sample.id,
             payload=synthetic_payload(sample),
+        )
+
+    def enqueue_client_events(self, payload: dict[str, Any]) -> None:
+        self._enqueue(
+            event_kind=CLIENT_EVENTS_EVENT_KIND,
+            event_id=f"{payload['tenant_id']}:{payload['batch_id']}",
+            payload=payload,
         )
 
     def _enqueue(

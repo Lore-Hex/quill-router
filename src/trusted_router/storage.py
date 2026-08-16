@@ -108,6 +108,8 @@ class InMemoryStore:
         # insert-once verdict per transfer id). One store can be both.
         self.credit_transfers: dict[str, CreditTransfer] = {}
         self.credit_transfer_claims: dict[str, dict[str, Any]] = {}
+        self.client_events_batches: list[dict[str, Any]] = []
+        self.client_event_ids: set[str] = set()
         #: Federated settlement claims, keyed (source_plane, authorization_id).
         #: Insert-once: the recorded terms are the verdict for every replay.
         self.federated_settlement_claims: dict[tuple[str, str], dict[str, Any]] = {}
@@ -158,6 +160,8 @@ class InMemoryStore:
             self.lifetime_topups.clear()
             self.credit_transfers.clear()
             self.credit_transfer_claims.clear()
+            self.client_events_batches.clear()
+            self.client_event_ids.clear()
             self.api_keys.reset()
             self.acquisition_store.reset()
             self.bedrock_group_buy_store.reset()
@@ -1795,6 +1799,19 @@ class InMemoryStore:
     # Generations + activity + benchmarks delegate to storage_generations.
     def add_generation(self, generation: Generation) -> None:
         self.generation_store.add(generation)
+
+    def record_client_events_batch(self, payload: dict[str, Any]) -> None:
+        event_id = f"{payload['tenant_id']}:{payload['batch_id']}"
+        with self._lock:
+            if event_id in self.client_event_ids:
+                return
+            self.client_event_ids.add(event_id)
+            self.client_events_batches.append(dict(payload))
+            if len(self.client_events_batches) > 1_000:
+                removed = self.client_events_batches.pop(0)
+                self.client_event_ids.discard(
+                    f"{removed['tenant_id']}:{removed['batch_id']}"
+                )
 
     def record_provider_benchmark(self, sample: ProviderBenchmarkSample) -> None:
         self.generation_store.record_benchmark(sample)

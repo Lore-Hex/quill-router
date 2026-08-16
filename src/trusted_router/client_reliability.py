@@ -94,6 +94,21 @@ TR_FAULT_TRANSPORT_CLASSES = (
 )
 
 
+def timeout_floor_met(timeout_phase: str, configured_timeout_ms: int | None) -> bool:
+    """Return whether a client timeout met methodology v1's disclosed floor."""
+    floors = {
+        "connect": 10_000,
+        "first_byte": 60_000,
+        "idle": 30_000,
+    }
+    floor = floors.get(timeout_phase)
+    return bool(
+        floor is not None
+        and configured_timeout_ms is not None
+        and configured_timeout_ms >= floor
+    )
+
+
 def _status_class(value: str | int | None) -> str:
     if value is None:
         return "none"
