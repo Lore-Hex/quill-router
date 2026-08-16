@@ -1,0 +1,117 @@
+{% extends "console/_layout.html" %}
+{% block body %}
+{% if flash %}
+<div class="console-flash {{ flash.type }}">{{ flash.text }}{% if flash.href %} <a href="{{ flash.href }}">{{ flash.link_text }}</a>{% endif %}</div>
+{% endif %}
+
+{% if one_time_secret %}
+<section class="panel" data-copy-secret-scope>
+  <div class="panel-head"><h2>Signing secret {{ secret_reason }}</h2><span class="pill warn">shown once</span></div>
+  <div class="panel-body">
+    <p>Copy this secret now. TrustedRouter cannot show it again.</p>
+    <div class="secret-row">
+      <code id="user-model-signing-secret">{{ one_time_secret }}</code>
+      <button class="btn secret-copy-btn" type="button" data-copy-secret="user-model-signing-secret">Copy</button>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-head"><h2>Privacy boundary</h2><span class="pill warn">not attested</span></div>
+  <div class="panel-body">
+    <p><strong>Prompts and outputs are sent to the model owner's endpoint.</strong></p>
+    <p>These models are not attested and not zero-data-retention. A human model means a live person reads messages and types replies.</p>
+  </div>
+</section>
+
+{% if not verification.met %}
+<section class="panel">
+  <div class="panel-head"><h2>Verification required</h2><span class="pill warn">action needed</span></div>
+  <div class="panel-body">
+    <p>Complete account verification before creating or editing user-provided models.</p>
+    <p class="muted">Missing: {{ verification.missing_requirements|join(', ') }}</p>
+    <a class="btn primary" href="{{ verification.url }}">Complete verification</a>
+  </div>
+</section>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-head"><h2>Register an endpoint</h2><span class="pill">{{ models|length }} / {{ limit }}</span></div>
+  <div class="panel-body">
+    <form class="form" method="post" action="/console/user-models">
+      <fieldset class="form-gate" {% if not verification.met %}disabled{% endif %}>
+        <label>Name <input name="name" required maxlength="120" placeholder="Community research agent"></label>
+        <label>Slug <input name="slug" maxlength="64" pattern="[a-z0-9][a-z0-9-]{1,62}[a-z0-9]" placeholder="research-agent"></label>
+        <label>Kind
+          <select name="kind" required><option value="machine">Machine</option><option value="agent">Agent</option><option value="human">Human</option></select>
+        </label>
+        <label>Description <textarea name="description" rows="3" maxlength="2000"></textarea></label>
+        <label>Public identity
+          <select name="display_identity"><option value="handle">Anonymous handle</option><option value="verified_name">Verified real name</option></select>
+        </label>
+        <label>Handle <input name="display_name" required maxlength="120" placeholder="helpful-operator"></label>
+        <label>Endpoint base URL <input name="endpoint_url" type="url" required maxlength="2048" placeholder="https://owner.example/v1"></label>
+        <label>Upstream model id <input name="upstream_model_id" maxlength="256" placeholder="Defaults to the slug"></label>
+        <label>Endpoint API key <input name="endpoint_api_key" type="password" maxlength="8192" autocomplete="new-password"></label>
+        <label>Heartbeat interval seconds <input name="heartbeat_interval_seconds" type="number" min="5" max="3600"></label>
+        <label>Maximum concurrency <input name="max_concurrency" type="number" min="1" max="100" value="4"></label>
+        <label>Prompt price (microdollars / Mtok) <input name="prompt_price_microdollars_per_million_tokens" type="number" min="0" value="0"></label>
+        <label>Completion price (microdollars / Mtok) <input name="completion_price_microdollars_per_million_tokens" type="number" min="0" value="0"></label>
+        <label class="inline-check"><input name="supports_streaming" type="checkbox" value="true" checked> Owner endpoint supports streaming</label>
+        <button class="btn primary" type="submit">Register model</button>
+      </fieldset>
+    </form>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><h2>Your user-provided models</h2><span class="pill">{{ models|length }} saved</span></div>
+  <div class="panel-body">
+    {% if models %}
+    <div class="custom-model-list">
+      {% for model in models %}
+      <article class="custom-model-card">
+        <div class="custom-model-card-head">
+          <div><h3>{{ model.name }}</h3><code>{{ model.id }}</code></div>
+          <div class="custom-model-actions">
+            <span class="pill {{ 'good' if model.online else 'warn' }}">{{ 'on the clock' if model.online else 'off the clock' }}</span>
+            <span class="pill">{{ model.kind }}</span>
+          </div>
+        </div>
+        <p class="muted">Probe: {{ model.probe_status }} · failures: {{ model.consecutive_dispatch_failures }} · revision {{ model.revision }}</p>
+        <form class="form" method="post" action="/console/user-models/{{ model.id }}/edit">
+          <fieldset class="form-gate" {% if not verification.met %}disabled{% endif %}>
+            <label>Name <input name="name" required maxlength="120" value="{{ model.name }}"></label>
+            <label>Slug <input name="slug" required maxlength="64" value="{{ model.slug }}"></label>
+            <label>Kind
+              <select name="kind"><option value="machine" {{ 'selected' if model.kind == 'machine' else '' }}>Machine</option><option value="agent" {{ 'selected' if model.kind == 'agent' else '' }}>Agent</option><option value="human" {{ 'selected' if model.kind == 'human' else '' }}>Human</option></select>
+            </label>
+            <label>Description <textarea name="description" rows="3" maxlength="2000">{{ model.description }}</textarea></label>
+            <label>Public identity
+              <select name="display_identity"><option value="handle" {{ 'selected' if model.display_identity == 'handle' else '' }}>Anonymous handle</option><option value="verified_name" {{ 'selected' if model.display_identity == 'verified_name' else '' }}>Verified real name</option></select>
+            </label>
+            <label>Handle <input name="display_name" required maxlength="120" value="{{ model.display_name }}"></label>
+            <label>Endpoint base URL <input name="endpoint_url" type="url" required maxlength="2048" value="{{ model.endpoint_url }}"></label>
+            <label>Upstream model id <input name="upstream_model_id" maxlength="256" value="{{ model.upstream_model_id or '' }}"></label>
+            <label>Replace endpoint API key <input name="endpoint_api_key" type="password" maxlength="8192" autocomplete="new-password" placeholder="Leave blank to keep {{ model.endpoint_key_hint or 'no key' }}"></label>
+            <label>Heartbeat interval seconds <input name="heartbeat_interval_seconds" type="number" min="5" max="3600" value="{{ model.heartbeat_interval_seconds or '' }}"></label>
+            <label>Maximum concurrency <input name="max_concurrency" type="number" min="1" max="100" value="{{ model.max_concurrency }}"></label>
+            <label>Prompt price (microdollars / Mtok) <input name="prompt_price_microdollars_per_million_tokens" type="number" min="0" value="{{ model.prompt_price_microdollars_per_million_tokens }}"></label>
+            <label>Completion price (microdollars / Mtok) <input name="completion_price_microdollars_per_million_tokens" type="number" min="0" value="{{ model.completion_price_microdollars_per_million_tokens }}"></label>
+            <label class="inline-check"><input name="supports_streaming" type="checkbox" value="true" {{ 'checked' if model.supports_streaming else '' }}> Owner endpoint supports streaming</label>
+            <button class="btn primary" type="submit">Save</button>
+          </fieldset>
+        </form>
+        <div class="row-actions">
+          <form method="post" action="/console/user-models/{{ model.id }}/{{ 'clock-out' if model.online else 'clock-in' }}"><button class="btn" type="submit">{{ 'Clock out' if model.online else 'Probe and clock in' }}</button></form>
+          <form method="post" action="/console/user-models/{{ model.id }}/rotate-secrets"><button class="btn" type="submit">Rotate signing secret</button></form>
+          <form method="post" action="/console/user-models/{{ model.id }}/delete"><button class="btn danger" type="submit">Delete</button></form>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}<p class="empty">No user-provided models yet.</p>{% endif %}
+  </div>
+</section>
+{% endblock %}
