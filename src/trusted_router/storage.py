@@ -38,6 +38,7 @@ from trusted_router.storage_models import (
     ByokProviderConfig,
     CreditAccount,
     CreditMoney,
+    CreditMovement,
     CreditTransfer,
     CustomModel,
     EmailSendBlock,
@@ -92,6 +93,9 @@ class InMemoryStore:
         self.credits: dict[str, CreditAccount] = {}
         self.credit_money: dict[str, CreditMoney] = {}
         self.stripe_events: set[str] = set()
+        self.earnings_money: dict[str, tuple[int, int]] = {}
+        self.credit_movements: dict[tuple[str, str], CreditMovement] = {}
+        self.lifetime_topups: dict[str, int] = {}
         # Cross-plane credit transfer (trusted_router.credit_transfer).
         # `credit_transfers` is this plane as the SOURCE (escrow records);
         # `credit_transfer_claims` is this plane as the DESTINATION (the
@@ -141,6 +145,9 @@ class InMemoryStore:
             self.credits.clear()
             self.credit_money.clear()
             self.stripe_events.clear()
+            self.earnings_money.clear()
+            self.credit_movements.clear()
+            self.lifetime_topups.clear()
             self.credit_transfers.clear()
             self.credit_transfer_claims.clear()
             self.api_keys.reset()
@@ -995,14 +1002,209 @@ class InMemoryStore:
         with self._lock:
             if event_id in self.stripe_events:
                 return False
+            money = self.credit_money.get(workspace_id)
+            if money is None:
+                raise ValueError("credit_account_not_found")
             self.stripe_events.add(event_id)
-            self.credit_money[workspace_id].total_credits_microdollars += amount_microdollars
+            money.total_credits_microdollars += amount_microdollars
             return True
 
     def credit_workspace_typed_direct(
-        self, workspace_id: str, amount_microdollars: int, event_id: str
+        self,
+        workspace_id: str,
+        amount_microdollars: int,
+        event_id: str,
+        *,
+        lifetime_topup_user_id: str | None = None,
     ) -> bool:
-        return self.credit_workspace_once(workspace_id, amount_microdollars, event_id)
+        with self._lock:
+            if event_id in self.stripe_events:
+                return False
+            self.stripe_events.add(event_id)
+            self.credit_money[workspace_id].total_credits_microdollars += amount_microdollars
+            if lifetime_topup_user_id is not None:
+                self.lifetime_topups[lifetime_topup_user_id] = self.lifetime_topups.get(
+                    lifetime_topup_user_id, 0
+                ) + int(amount_microdollars)
+            return True
+
+    # Earnings & movement primitives -----------------------------------------
+
+    @staticmethod
+    def _positive_money_amount(amount_microdollars: int) -> int:
+        amount = int(amount_microdollars)
+        if amount <= 0:
+            raise ValueError("amount_must_be_positive")
+        return amount
+
+    def debit_workspace_guarded(
+        self,
+        workspace_id: str,
+        amount_microdollars: int,
+        event_id: str,
+        *,
+        kind: str,
+        custom_model_id: str | None = None,
+        authorization_id: str | None = None,
+    ) -> str:
+        amount = self._positive_money_amount(amount_microdollars)
+        with self._lock:
+            if event_id in self.stripe_events:
+                return "duplicate"
+            money = self.credit_money.get(workspace_id)
+            available = (
+                -1
+                if money is None
+                else money.total_credits_microdollars
+                - money.total_usage_microdollars
+                - money.reserved_microdollars
+            )
+            if money is None or available < amount:
+                return "insufficient"
+            money.total_credits_microdollars -= amount
+            self.stripe_events.add(event_id)
+            self.credit_movements[(workspace_id, event_id)] = CreditMovement(
+                account_id=workspace_id,
+                movement_id=event_id,
+                kind=kind,
+                amount_microdollars=-amount,
+                custom_model_id=custom_model_id,
+                authorization_id=authorization_id,
+            )
+            return "accepted"
+
+    def credit_user_earnings(
+        self,
+        user_id: str,
+        amount_microdollars: int,
+        event_id: str,
+        *,
+        custom_model_id: str | None = None,
+        payer_workspace_id: str | None = None,
+    ) -> bool:
+        amount = self._positive_money_amount(amount_microdollars)
+        account_id = f"user:{user_id}"
+        with self._lock:
+            if event_id in self.stripe_events:
+                return False
+            earned, transferred = self.earnings_money.get(user_id, (0, 0))
+            self.earnings_money[user_id] = (earned + amount, transferred)
+            self.stripe_events.add(event_id)
+            self.credit_movements[(account_id, event_id)] = CreditMovement(
+                account_id=account_id,
+                movement_id=event_id,
+                kind="custom_model_payout",
+                amount_microdollars=amount,
+                counterparty_account_id=payer_workspace_id,
+                custom_model_id=custom_model_id,
+            )
+            return True
+
+    def transfer_earnings_to_workspace(
+        self,
+        user_id: str,
+        workspace_id: str,
+        amount_microdollars: int,
+        event_id: str,
+    ) -> str:
+        amount = self._positive_money_amount(amount_microdollars)
+        user_account_id = f"user:{user_id}"
+        with self._lock:
+            if event_id in self.stripe_events:
+                return "duplicate"
+            earned, transferred = self.earnings_money.get(user_id, (0, 0))
+            if earned - transferred < amount:
+                return "insufficient"
+            money = self.credit_money.get(workspace_id)
+            if money is None:
+                raise ValueError("credit_account_not_found")
+            self.earnings_money[user_id] = (earned, transferred + amount)
+            money.total_credits_microdollars += amount
+            self.stripe_events.add(event_id)
+            created_at = iso_now()
+            self.credit_movements[(user_account_id, event_id)] = CreditMovement(
+                account_id=user_account_id,
+                movement_id=event_id,
+                kind="earnings_transfer_out",
+                amount_microdollars=-amount,
+                counterparty_account_id=workspace_id,
+                created_at=created_at,
+            )
+            self.credit_movements[(workspace_id, event_id)] = CreditMovement(
+                account_id=workspace_id,
+                movement_id=event_id,
+                kind="earnings_transfer_in",
+                amount_microdollars=amount,
+                counterparty_account_id=user_account_id,
+                created_at=created_at,
+            )
+            return "accepted"
+
+    def ensure_earnings_account(self, user_id: str) -> None:
+        with self._lock:
+            self.earnings_money.setdefault(user_id, (0, 0))
+
+    def earnings_summary(self, user_id: str) -> dict[str, int]:
+        with self._lock:
+            earned, transferred = self.earnings_money.get(user_id, (0, 0))
+            return {
+                "total_earned": earned,
+                "total_transferred": transferred,
+                "available": earned - transferred,
+            }
+
+    def list_credit_movements(
+        self,
+        account_id: str,
+        *,
+        kinds: list[str] | None = None,
+        limit: int = 50,
+        before: str | None = None,
+    ) -> list[CreditMovement]:
+        allowed = None if kinds is None else set(kinds)
+        bounded = max(0, int(limit))
+        before_timestamp = None if before is None else _parse_iso_timestamp(before)
+        with self._lock:
+            matches = [
+                movement
+                for (movement_account_id, _), movement in self.credit_movements.items()
+                if movement_account_id == account_id
+                and (allowed is None or movement.kind in allowed)
+                and (
+                    before_timestamp is None
+                    or _parse_iso_timestamp(movement.created_at) < before_timestamp
+                )
+            ]
+        matches.sort(
+            key=lambda movement: (movement.created_at, movement.movement_id),
+            reverse=True,
+        )
+        return matches[:bounded]
+
+    def custom_model_earnings_by_model(
+        self,
+        user_id: str,
+        *,
+        since: str,
+    ) -> dict[str, int]:
+        totals: dict[str, int] = {}
+        since_timestamp = _parse_iso_timestamp(since)
+        with self._lock:
+            for movement in self.credit_movements.values():
+                if (
+                    movement.account_id == f"user:{user_id}"
+                    and movement.kind == "custom_model_payout"
+                    and movement.custom_model_id is not None
+                    and _parse_iso_timestamp(movement.created_at) >= since_timestamp
+                ):
+                    totals[movement.custom_model_id] = (
+                        totals.get(movement.custom_model_id, 0) + movement.amount_microdollars
+                    )
+        return totals
+
+    def get_lifetime_topup_microdollars(self, user_id: str) -> int:
+        with self._lock:
+            return self.lifetime_topups.get(user_id, 0)
 
     def update_auto_refill_settings(
         self,
@@ -1834,6 +2036,13 @@ def create_store(settings: Any) -> Store:
             ),
         )
     raise ValueError(f"unsupported storage backend: {backend}")
+
+
+def _parse_iso_timestamp(value: str) -> dt.datetime:
+    parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.UTC)
+    return parsed.astimezone(dt.UTC)
 
 
 def _normalize_email(value: str) -> str:

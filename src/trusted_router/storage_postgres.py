@@ -54,6 +54,7 @@ from trusted_router.storage_gcp_codec import (
     normalize_email,
     workspace_key_id,
 )
+from trusted_router.storage_gcp_counters import credit_shard_count, distribute_credit_amount
 from trusted_router.storage_models import (
     FUTURE_SAMPLE_SKEW_SECONDS,
     AcquisitionAttribution,
@@ -67,6 +68,7 @@ from trusted_router.storage_models import (
     BroadcastDestination,
     ByokProviderConfig,
     CreditAccount,
+    CreditMovement,
     CreditTransfer,
     CustomModel,
     EmailSendBlock,
@@ -2385,6 +2387,8 @@ class PostgresStore:
         workspace_id: str,
         amount_microdollars: int,
         event_id: str,
+        *,
+        lifetime_topup_user_id: str | None = None,
     ) -> bool:
         def credit(conn: Any) -> bool:
             won = self._insert_entity_once_tx(
@@ -2398,17 +2402,21 @@ class PostgresStore:
             )
             if not won:
                 return False
-            cursor = conn.execute(
-                "UPDATE tr_credit_balance "
-                "SET total_credits = total_credits + %s, "
-                "source_updated_at = CURRENT_TIMESTAMP, "
-                "updated_at = CURRENT_TIMESTAMP "
-                "WHERE workspace_id = %s AND shard = 0",
-                (int(amount_microdollars), workspace_id),
+            self._credit_workspace_balance_tx(
+                conn,
+                workspace_id,
+                int(amount_microdollars),
             )
-            if cursor.rowcount != 1:
-                raise ValueError(
-                    f"missing authoritative tr_credit_balance for workspace {workspace_id}"
+            if lifetime_topup_user_id is not None:
+                conn.execute(
+                    "INSERT INTO tr_user_lifetime_topup "
+                    "(user_id, total_microdollars, updated_at) "
+                    "VALUES (%s, %s, CURRENT_TIMESTAMP) "
+                    "ON CONFLICT (user_id) DO UPDATE SET "
+                    "total_microdollars = "
+                    "tr_user_lifetime_topup.total_microdollars + EXCLUDED.total_microdollars, "
+                    "updated_at = CURRENT_TIMESTAMP",
+                    (lifetime_topup_user_id, int(amount_microdollars)),
                 )
             return True
 
@@ -2425,6 +2433,330 @@ class PostgresStore:
             amount_microdollars,
             event_id,
         )
+
+    # Earnings & movement primitives -----------------------------------------
+
+    @staticmethod
+    def _positive_money_amount(amount_microdollars: int) -> int:
+        amount = int(amount_microdollars)
+        if amount <= 0:
+            raise ValueError("amount_must_be_positive")
+        return amount
+
+    def _credit_workspace_balance_tx(
+        self,
+        conn: Any,
+        workspace_id: str,
+        amount_microdollars: int,
+    ) -> None:
+        account = self._read_entity_tx(conn, "credit", workspace_id, CreditAccount)
+        if account is None:
+            raise ValueError("credit_account_not_found")
+        deltas = distribute_credit_amount(
+            int(amount_microdollars),
+            credit_shard_count(account),
+        )
+        for shard, delta in enumerate(deltas):
+            cursor = conn.execute(
+                "UPDATE tr_credit_balance "
+                "SET total_credits = total_credits + %s, "
+                "source_updated_at = CURRENT_TIMESTAMP, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE workspace_id = %s AND shard = %s",
+                (delta, workspace_id, shard),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("credit_balance_shard_missing")
+
+    @staticmethod
+    def _insert_credit_movement_tx(conn: Any, movement: CreditMovement) -> None:
+        conn.execute(
+            "INSERT INTO tr_credit_movement "
+            "(account_id, movement_id, kind, amount_microdollars, "
+            "counterparty_account_id, custom_model_id, authorization_id, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                movement.account_id,
+                movement.movement_id,
+                movement.kind,
+                movement.amount_microdollars,
+                movement.counterparty_account_id,
+                movement.custom_model_id,
+                movement.authorization_id,
+                _parse_timestamp(movement.created_at),
+            ),
+        )
+
+    def debit_workspace_guarded(
+        self,
+        workspace_id: str,
+        amount_microdollars: int,
+        event_id: str,
+        *,
+        kind: str,
+        custom_model_id: str | None = None,
+        authorization_id: str | None = None,
+    ) -> str:
+        amount = self._positive_money_amount(amount_microdollars)
+
+        def debit(conn: Any) -> str:
+            won = self._insert_entity_once_tx(
+                conn,
+                "stripe_event",
+                event_id,
+                {"created_at": iso_now(), "workspace_id": workspace_id},
+            )
+            if not won:
+                return "duplicate"
+            cursor = conn.execute(
+                "UPDATE tr_credit_balance "
+                "SET total_credits = total_credits - %s, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE workspace_id = %s AND shard = 0 "
+                "AND (total_credits - total_usage - reserved) >= %s",
+                (amount, workspace_id, amount),
+            )
+            if cursor.rowcount != 1:
+                self._delete_entity_tx(conn, "stripe_event", event_id)
+                return "insufficient"
+            self._insert_credit_movement_tx(
+                conn,
+                CreditMovement(
+                    account_id=workspace_id,
+                    movement_id=event_id,
+                    kind=kind,
+                    amount_microdollars=-amount,
+                    custom_model_id=custom_model_id,
+                    authorization_id=authorization_id,
+                ),
+            )
+            return "accepted"
+
+        return self._run_transaction(debit)
+
+    def credit_user_earnings(
+        self,
+        user_id: str,
+        amount_microdollars: int,
+        event_id: str,
+        *,
+        custom_model_id: str | None = None,
+        payer_workspace_id: str | None = None,
+    ) -> bool:
+        amount = self._positive_money_amount(amount_microdollars)
+
+        def credit(conn: Any) -> bool:
+            won = self._insert_entity_once_tx(
+                conn,
+                "stripe_event",
+                event_id,
+                {"created_at": iso_now(), "user_id": user_id},
+            )
+            if not won:
+                return False
+            conn.execute(
+                "INSERT INTO tr_earnings_balance "
+                "(user_id, shard, total_earned, total_transferred, updated_at) "
+                "VALUES (%s, 0, %s, 0, CURRENT_TIMESTAMP) "
+                "ON CONFLICT (user_id, shard) DO UPDATE SET "
+                "total_earned = tr_earnings_balance.total_earned + EXCLUDED.total_earned, "
+                "updated_at = CURRENT_TIMESTAMP",
+                (user_id, amount),
+            )
+            self._insert_credit_movement_tx(
+                conn,
+                CreditMovement(
+                    account_id=f"user:{user_id}",
+                    movement_id=event_id,
+                    kind="custom_model_payout",
+                    amount_microdollars=amount,
+                    counterparty_account_id=payer_workspace_id,
+                    custom_model_id=custom_model_id,
+                ),
+            )
+            return True
+
+        return self._run_transaction(credit)
+
+    def transfer_earnings_to_workspace(
+        self,
+        user_id: str,
+        workspace_id: str,
+        amount_microdollars: int,
+        event_id: str,
+    ) -> str:
+        amount = self._positive_money_amount(amount_microdollars)
+        user_account_id = f"user:{user_id}"
+
+        def transfer(conn: Any) -> str:
+            won = self._insert_entity_once_tx(
+                conn,
+                "stripe_event",
+                event_id,
+                {"created_at": iso_now(), "user_id": user_id},
+            )
+            if not won:
+                return "duplicate"
+            cursor = conn.execute(
+                "UPDATE tr_earnings_balance "
+                "SET total_transferred = total_transferred + %s, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE user_id = %s AND shard = 0 "
+                "AND (total_earned - total_transferred) >= %s",
+                (amount, user_id, amount),
+            )
+            if cursor.rowcount != 1:
+                self._delete_entity_tx(conn, "stripe_event", event_id)
+                return "insufficient"
+            self._credit_workspace_balance_tx(conn, workspace_id, amount)
+            created_at = iso_now()
+            self._insert_credit_movement_tx(
+                conn,
+                CreditMovement(
+                    account_id=user_account_id,
+                    movement_id=event_id,
+                    kind="earnings_transfer_out",
+                    amount_microdollars=-amount,
+                    counterparty_account_id=workspace_id,
+                    created_at=created_at,
+                ),
+            )
+            self._insert_credit_movement_tx(
+                conn,
+                CreditMovement(
+                    account_id=workspace_id,
+                    movement_id=event_id,
+                    kind="earnings_transfer_in",
+                    amount_microdollars=amount,
+                    counterparty_account_id=user_account_id,
+                    created_at=created_at,
+                ),
+            )
+            return "accepted"
+
+        return self._run_transaction(transfer)
+
+    def ensure_earnings_account(self, user_id: str) -> None:
+        def ensure(conn: Any) -> None:
+            conn.execute(
+                "INSERT INTO tr_earnings_balance "
+                "(user_id, shard, total_earned, total_transferred, updated_at) "
+                "VALUES (%s, 0, 0, 0, CURRENT_TIMESTAMP) "
+                "ON CONFLICT (user_id, shard) DO NOTHING",
+                (user_id,),
+            )
+
+        self._run_transaction(ensure)
+
+    def earnings_summary(self, user_id: str) -> dict[str, int]:
+        def read(conn: Any) -> dict[str, int]:
+            row = conn.execute(
+                "SELECT total_earned, total_transferred "
+                "FROM tr_earnings_balance WHERE user_id = %s AND shard = 0",
+                (user_id,),
+            ).fetchone()
+            earned, transferred = (0, 0) if row is None else (int(row[0]), int(row[1]))
+            return {
+                "total_earned": earned,
+                "total_transferred": transferred,
+                "available": earned - transferred,
+            }
+
+        return self._run_transaction(read)
+
+    def list_credit_movements(
+        self,
+        account_id: str,
+        *,
+        kinds: list[str] | None = None,
+        limit: int = 50,
+        before: str | None = None,
+    ) -> list[CreditMovement]:
+        if kinds == []:
+            return []
+        query = (
+            "SELECT account_id, movement_id, kind, amount_microdollars, "
+            "counterparty_account_id, custom_model_id, authorization_id, created_at "
+            "FROM tr_credit_movement WHERE account_id = %s"
+        )
+        params: list[Any] = [account_id]
+        if kinds is not None:
+            query += " AND kind IN (" + ", ".join(["%s"] * len(kinds)) + ")"
+            params.extend(kinds)
+        if before is not None:
+            query += " AND created_at < %s"
+            params.append(_parse_timestamp(before))
+        query += " ORDER BY created_at DESC, movement_id DESC LIMIT %s"
+        params.append(max(0, int(limit)))
+
+        def read(conn: Any) -> list[CreditMovement]:
+            rows = conn.execute(query, tuple(params)).fetchall()
+            return [
+                CreditMovement(
+                    account_id=str(row[0]),
+                    movement_id=str(row[1]),
+                    kind=str(row[2]),
+                    amount_microdollars=int(row[3]),
+                    counterparty_account_id=(None if row[4] is None else str(row[4])),
+                    custom_model_id=None if row[5] is None else str(row[5]),
+                    authorization_id=None if row[6] is None else str(row[6]),
+                    created_at=_timestamp_string(row[7]),
+                )
+                for row in rows
+            ]
+
+        return self._run_transaction(read)
+
+    def custom_model_earnings_by_model(
+        self,
+        user_id: str,
+        *,
+        since: str,
+    ) -> dict[str, int]:
+        def read(conn: Any) -> dict[str, int]:
+            rows = conn.execute(
+                "SELECT custom_model_id, SUM(amount_microdollars) "
+                "FROM tr_credit_movement "
+                "WHERE account_id = %s AND kind = 'custom_model_payout' "
+                "AND custom_model_id IS NOT NULL AND created_at >= %s "
+                "GROUP BY custom_model_id",
+                (f"user:{user_id}", _parse_timestamp(since)),
+            ).fetchall()
+            return {str(row[0]): int(row[1]) for row in rows}
+
+        return self._run_transaction(read)
+
+    def get_lifetime_topup_microdollars(self, user_id: str) -> int:
+        def read(conn: Any) -> int:
+            row = conn.execute(
+                "SELECT total_microdollars FROM tr_user_lifetime_topup WHERE user_id = %s",
+                (user_id,),
+            ).fetchone()
+            return 0 if row is None else int(row[0])
+
+        return self._run_transaction(read)
+
+    def typed_credit_snapshot(self, workspace_id: str) -> tuple[int, int, int] | None:
+        def read(conn: Any) -> tuple[int, int, int] | None:
+            account = self._read_entity_tx(conn, "credit", workspace_id, CreditAccount)
+            if account is None:
+                return None
+            shard_count = credit_shard_count(account)
+            rows = conn.execute(
+                "SELECT shard, total_credits, total_usage, reserved "
+                "FROM tr_credit_balance WHERE workspace_id = %s "
+                "AND shard >= 0 AND shard < %s ORDER BY shard",
+                (workspace_id, shard_count),
+            ).fetchall()
+            if [int(row[0]) for row in rows] != list(range(shard_count)):
+                raise ValueError("credit_balance_shard_missing")
+            return (
+                sum(int(row[1]) for row in rows),
+                sum(int(row[2]) for row in rows),
+                sum(int(row[3]) for row in rows),
+            )
+
+        return self._run_transaction(read)
 
     def reserve(
         self,
@@ -3724,6 +4056,11 @@ def _parse_timestamp(value: str) -> dt.datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=dt.UTC)
     return parsed.astimezone(dt.UTC)
+
+
+def _timestamp_string(value: dt.datetime | str) -> str:
+    parsed = _parse_timestamp(value) if isinstance(value, str) else _as_utc(value)
+    return parsed.isoformat().replace("+00:00", "Z")
 
 
 def _rollup_retention_cutoff(now: dt.datetime) -> dt.datetime:

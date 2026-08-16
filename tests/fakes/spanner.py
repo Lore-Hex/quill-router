@@ -32,6 +32,8 @@ class _ParamTypes:
 # typed-DML-owned counters start at 0.
 _TYPED_DEFAULTS: dict[str, dict[str, Any]] = {
     "tr_credit_balance": {"total_credits": 0, "total_usage": 0, "reserved": 0},
+    "tr_earnings_balance": {"total_earned": 0, "total_transferred": 0},
+    "tr_user_lifetime_topup": {"total_microdollars": 0},
     "tr_key_limit": {
         "limit_micro": None,
         "usage": 0,
@@ -448,7 +450,7 @@ class _FakeTransaction:
         DML can't see mutations; mixing is rejected in execute_update). Records
         the read version on first read for conflict detection."""
         for op in reversed(self.pending_writes):
-            if op[0] == "update_typed" and op[1] == table and op[2] == pk:
+            if op[0] in ("insert_typed_dml", "update_typed") and op[1] == table and op[2] == pk:
                 return dict(op[3])
         return self._pinned_read(
             ("typed", table, pk),
@@ -472,6 +474,28 @@ class _FakeTransaction:
             )
         self._did_dml = True
         p = params or {}
+        if "UPDATE tr_credit_balance SET total_credits = total_credits - @amt" in sql:
+            _require_pred(
+                sql,
+                "AND (total_credits - total_usage - reserved) >= @amt",
+                "guarded-workspace-debit",
+            )
+            pk = (p["ws"], 0)
+            rec = self._typed_current("tr_credit_balance", pk)
+            available = (
+                rec["total_credits"] - rec["total_usage"] - rec["reserved"]
+                if rec is not None
+                else -1
+            )
+            if rec is None or available < p["amt"]:
+                return 0
+            new = dict(
+                rec,
+                total_credits=rec["total_credits"] - p["amt"],
+                updated_at=p["now"],
+            )
+            self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
+            return 1
         if "UPDATE tr_credit_balance SET total_usage = total_usage + @amt" in sql:
             # Federated settlement's usage booking: UNCONDITIONAL by design.
             # The spend already happened on a peer plane while this one was
@@ -612,6 +636,87 @@ class _FakeTransaction:
                 self.pending_writes.append(("update_typed", "tr_key_limit", pk, new))
                 return 1
             return 0
+        if sql.startswith("UPDATE tr_earnings_balance SET total_earned"):
+            pk = (p["user_id"], 0)
+            rec = self._typed_current("tr_earnings_balance", pk)
+            if rec is None:
+                return 0
+            new = dict(
+                rec,
+                total_earned=rec["total_earned"] + p["amount"],
+                updated_at=p["now"],
+            )
+            self.pending_writes.append(("update_typed", "tr_earnings_balance", pk, new))
+            return 1
+        if sql.startswith("UPDATE tr_earnings_balance SET total_transferred"):
+            _require_pred(
+                sql,
+                "AND (total_earned - total_transferred) >= @amount",
+                "guarded-earnings-transfer",
+            )
+            pk = (p["user_id"], 0)
+            rec = self._typed_current("tr_earnings_balance", pk)
+            if rec is None or rec["total_earned"] - rec["total_transferred"] < p["amount"]:
+                return 0
+            new = dict(
+                rec,
+                total_transferred=rec["total_transferred"] + p["amount"],
+                updated_at=p["now"],
+            )
+            self.pending_writes.append(("update_typed", "tr_earnings_balance", pk, new))
+            return 1
+        if sql.startswith("INSERT INTO tr_earnings_balance"):
+            pk = (p["user_id"], 0)
+            if self._typed_current("tr_earnings_balance", pk) is not None:
+                raise FakeAlreadyExists(f"tr_earnings_balance/{pk}")
+            record = dict(
+                _TYPED_DEFAULTS["tr_earnings_balance"],
+                user_id=p["user_id"],
+                shard=0,
+                total_earned=p.get("amount", 0),
+                updated_at=p["now"],
+            )
+            self.pending_writes.append(("insert_typed_dml", "tr_earnings_balance", pk, record))
+            return 1
+        if sql.startswith("UPDATE tr_user_lifetime_topup"):
+            pk = (p["user_id"],)
+            rec = self._typed_current("tr_user_lifetime_topup", pk)
+            if rec is None:
+                return 0
+            new = dict(
+                rec,
+                total_microdollars=rec["total_microdollars"] + p["amount"],
+                updated_at=p["now"],
+            )
+            self.pending_writes.append(("update_typed", "tr_user_lifetime_topup", pk, new))
+            return 1
+        if sql.startswith("INSERT INTO tr_user_lifetime_topup"):
+            pk = (p["user_id"],)
+            if self._typed_current("tr_user_lifetime_topup", pk) is not None:
+                raise FakeAlreadyExists(f"tr_user_lifetime_topup/{pk}")
+            record = {
+                "user_id": p["user_id"],
+                "total_microdollars": p["amount"],
+                "updated_at": p["now"],
+            }
+            self.pending_writes.append(("insert_typed_dml", "tr_user_lifetime_topup", pk, record))
+            return 1
+        if sql.startswith("INSERT INTO tr_credit_movement"):
+            pk = (p["account_id"], p["movement_id"])
+            if self._typed_current("tr_credit_movement", pk) is not None:
+                raise FakeAlreadyExists(f"tr_credit_movement/{pk}")
+            record = {
+                "account_id": p["account_id"],
+                "movement_id": p["movement_id"],
+                "kind": p["kind"],
+                "amount_microdollars": p["amount"],
+                "counterparty_account_id": p["counterparty"],
+                "custom_model_id": p["custom_model_id"],
+                "authorization_id": p["authorization_id"],
+                "created_at": p["created_at"],
+            }
+            self.pending_writes.append(("insert_typed_dml", "tr_credit_movement", pk, record))
+            return 1
         if "UPDATE tr_key_limit " in sql and "reserved = reserved - @hold" in sql:
             _require_pred(sql, "key_hash=@kh AND shard=@shard AND reserved >= @hold", "key-release")
             pk = (p["kh"], p["shard"])
@@ -1351,6 +1456,61 @@ def _execute_sql(
     params: dict[str, Any],
 ) -> list[list[str]]:
     kind = params.get("kind", "")
+    if "FROM tr_credit_movement@{FORCE_INDEX=tr_credit_movement_by_time}" in sql:
+        records = list(db.typed.get("tr_credit_movement", {}).items())
+        visible = [
+            txn._typed_current("tr_credit_movement", pk) if txn is not None else dict(rec)
+            for pk, rec in records
+        ]
+        movements = [rec for rec in visible if rec is not None]
+        movements = [rec for rec in movements if rec["account_id"] == params["account_id"]]
+        if "kind IN UNNEST(@kinds)" in sql:
+            movements = [rec for rec in movements if rec["kind"] in params["kinds"]]
+        if "created_at < @before" in sql:
+            movements = [rec for rec in movements if rec["created_at"] < params["before"]]
+        if "kind='custom_model_payout'" in sql:
+            totals: dict[str, int] = {}
+            for rec in movements:
+                custom_model_id = rec.get("custom_model_id")
+                if (
+                    rec["kind"] == "custom_model_payout"
+                    and custom_model_id is not None
+                    and rec["created_at"] >= params["since"]
+                ):
+                    totals[str(custom_model_id)] = totals.get(str(custom_model_id), 0) + int(
+                        rec["amount_microdollars"]
+                    )
+            return [[model_id, total] for model_id, total in sorted(totals.items())]
+        movements.sort(
+            key=lambda rec: (rec["created_at"], rec["movement_id"]),
+            reverse=True,
+        )
+        movements = movements[: int(params["limit"])]
+        columns = [
+            column.strip() for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
+        return [[rec.get(column) for column in columns] for rec in movements]
+    if "FROM tr_earnings_balance" in sql:
+        pk = (params["user_id"], 0)
+        rec = (
+            txn._typed_current("tr_earnings_balance", pk)
+            if txn is not None
+            else db.typed.get("tr_earnings_balance", {}).get(pk)
+        )
+        if rec is None:
+            return []
+        columns = [
+            column.strip() for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
+        return [[rec.get(column) for column in columns]]
+    if "FROM tr_user_lifetime_topup" in sql:
+        pk = (params["user_id"],)
+        rec = (
+            txn._typed_current("tr_user_lifetime_topup", pk)
+            if txn is not None
+            else db.typed.get("tr_user_lifetime_topup", {}).get(pk)
+        )
+        return [] if rec is None else [[rec["total_microdollars"]]]
     if sql.startswith("SELECT payload FROM tr_generation"):
         generation = db.generation_records.get(str(params["generation_id"]))
         return [[str(generation["payload"])]] if generation is not None else []
