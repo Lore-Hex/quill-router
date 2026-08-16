@@ -64,6 +64,8 @@ from trusted_router.dashboard import (
     public_blog_index_html,
     public_blog_post_html,
     public_chat_html,
+    public_competitor_compare_html,
+    public_competitor_compare_index_html,
     public_dpa_html,
     public_fusion_html,
     public_hipaa_readiness_html,
@@ -727,16 +729,26 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @public_html_route("/compare/openrouter")
-    async def compare_openrouter() -> str:
-        return public_page_html(settings, "compare/openrouter")
+    async def compare_openrouter() -> HTMLResponse:
+        body = public_competitor_compare_html(settings, "openrouter")
+        assert body is not None
+        return HTMLResponse(body)
 
     @public_html_route("/compare/vercel-ai-gateway")
-    async def compare_vercel_ai_gateway() -> str:
-        return public_page_html(settings, "compare/vercel-ai-gateway")
+    async def compare_vercel_ai_gateway() -> HTMLResponse:
+        body = public_competitor_compare_html(settings, "vercel-ai-gateway")
+        assert body is not None
+        return HTMLResponse(body)
 
     @public_html_route("/compare/litellm")
-    async def compare_litellm() -> str:
-        return public_page_html(settings, "compare/litellm")
+    async def compare_litellm() -> HTMLResponse:
+        body = public_competitor_compare_html(settings, "litellm")
+        assert body is not None
+        return HTMLResponse(body)
+
+    @public_html_route("/compare")
+    async def competitor_compare_index() -> HTMLResponse:
+        return HTMLResponse(public_competitor_compare_index_html(settings))
 
     @public_html_route("/docs/migrate-from-openrouter")
     async def migrate_from_openrouter() -> str:
@@ -1509,6 +1521,16 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         if body is None:
             return HTMLResponse(
                 public_model_not_found_html(settings, f"{left_id}/vs/{right_id}"),
+                status_code=404,
+            )
+        return HTMLResponse(body)
+
+    @public_html_route("/compare/{competitor_slug}")
+    async def competitor_compare(competitor_slug: str) -> HTMLResponse:
+        body = public_competitor_compare_html(settings, competitor_slug.strip())
+        if body is None:
+            return HTMLResponse(
+                public_not_found_html(settings, f"/compare/{competitor_slug}"),
                 status_code=404,
             )
         return HTMLResponse(body)

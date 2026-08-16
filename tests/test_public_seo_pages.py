@@ -75,6 +75,8 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert "<loc>https://trustedrouter.com/docs/fusion</loc>" not in core.text
     assert "<loc>https://trustedrouter.com/fusion</loc>" not in core.text
     assert "<loc>https://trustedrouter.com/compare/models</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/compare</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/compare/cloudflare-ai-gateway</loc>" in core.text
     assert "<loc>https://trustedrouter.com/resources</loc>" in core.text
     assert "<loc>https://trustedrouter.com/badge</loc>" in core.text
     assert "<loc>https://trustedrouter.com/customers/robot-robot-human</loc>" in core.text
@@ -1139,6 +1141,7 @@ def test_resources_directory_links_previous_orphan_pages(client: TestClient) -> 
         "/best-llm-router",
         "/claude-api-privacy",
         "/cline-api-provider",
+        "/compare",
         "/compare/litellm",
         "/compare/vercel-ai-gateway",
         "/confidential-computing-llm",
@@ -1178,6 +1181,7 @@ def test_resources_directory_links_previous_orphan_pages(client: TestClient) -> 
 
 def test_high_authority_pages_link_the_primary_intent_hubs(client: TestClient) -> None:
     primary_hubs = {
+        "/compare",
         "/compare/models",
         "/private-llm-api",
         "/eu",
@@ -1192,7 +1196,7 @@ def test_high_authority_pages_link_the_primary_intent_hubs(client: TestClient) -
         assert f'href="{path}"' in resources.text, path
 
     for heading in [
-        "Models and comparisons",
+        "AI gateways",
         "Private and ZDR APIs",
         "EU AI infrastructure",
         "OpenRouter migration",

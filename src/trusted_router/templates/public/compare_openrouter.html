@@ -130,4 +130,6 @@ curl -s "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE" \
   </div>
 </section>
 
+{% include "public/_competitor_evidence.html" %}
+
 {% endblock %}
