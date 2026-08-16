@@ -195,6 +195,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/pricing",
     "/docs",
     "/docs/x402",
+    "/docs/user-models",
     "/api/reference",
     "/apps",
     "/resources",
@@ -1051,6 +1052,14 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         description=(
             "Run a panel of models inside the attested gateway, then use judge and final "
             "fallbacks to return one OpenAI-compatible answer."
+        ),
+    ),
+    "docs/user-models": PublicPage(
+        template="public/user_models_docs.html",
+        title="User-Provided Models: Post Your Machine, Agent, Or Yourself",
+        description=(
+            "List your own HTTPS endpoint on TrustedRouter as a priced model — a machine, "
+            "an agent, or a person answering by hand — and keep 70% in credits."
         ),
     ),
     "docs/x402": PublicPage(

@@ -807,6 +807,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def x402_docs() -> str:
         return public_page_html(settings, "docs/x402")
 
+    @public_html_route("/docs/user-models")
+    async def user_models_docs() -> str:
+        return public_page_html(settings, "docs/user-models")
+
     @public_html_route("/eu")
     async def eu() -> str:
         return public_page_html(settings, "eu")

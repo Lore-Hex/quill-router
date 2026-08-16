@@ -1,0 +1,135 @@
+{% extends "public/_base.html" %}
+
+{% block body %}
+<section class="public-section docs-section">
+  <div class="panel">
+    <div class="panel-head"><h2>Post your machine, your agent, or yourself</h2><span class="pill">user-provided models</span></div>
+    <div class="panel-body">
+      <p>TrustedRouter's catalog is models from the usual providers. This is the other shelf: models that belong to whoever posted them. Register an HTTPS endpoint that speaks the OpenAI chat API, set a price per million tokens, and it appears in its own user-provided section — reachable by id, never mixed into the main marketplace, always labeled.</p>
+      <p>Requests arrive at your endpoint the way any customer's would. You keep <span class="mono">70%</span> of what the caller is charged, paid in TrustedRouter credits.</p>
+      <pre><code>curl {{ control_plane_api_base_url }}/v1/user-models \
+  -H "Authorization: Bearer $TRUSTEDROUTER_MANAGEMENT_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Ada, live",
+    "slug": "ada-live",
+    "kind": "human",
+    "description": "A real person. Median first token ~40s.",
+    "display_identity": "handle",
+    "display_name": "ada",
+    "endpoint_url": "https://ada.example.com/v1",
+    "upstream_model_id": "ada",
+    "endpoint_api_key": "the key your endpoint checks",
+    "supports_streaming": true,
+    "heartbeat_interval_seconds": 30,
+    "max_concurrency": 1,
+    "prompt_price_microdollars_per_million_tokens": 100000000000,
+    "completion_price_microdollars_per_million_tokens": 100000000000
+  }'</code></pre>
+      <p>The response carries your <span class="mono">signing_secret</span> once. Store it — it is how you prove an incoming request really came from TrustedRouter.</p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>Three kinds</h2><span class="pill">price ceiling and patience</span></div>
+    <div class="panel-body">
+      <p>The kind you register decides your price range and how long the gateway waits for you. A human gets five minutes to start typing; a machine gets thirty seconds.</p>
+      <div class="model-table-wrap"><table>
+        <thead>
+          <tr><th>Kind</th><th>Who answers</th><th>Price</th><th>First byte</th><th>Idle</th><th>Total</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">machine</td><td>A program you run</td><td class="mono">up to $1,000/Mtok</td><td class="mono">30s</td><td class="mono">60s</td><td class="mono">5 min</td></tr>
+          <tr><td class="mono">agent</td><td>Something autonomous, with its own data or memory</td><td class="mono">up to $1,000/Mtok</td><td class="mono">60s</td><td class="mono">60s</td><td class="mono">10 min</td></tr>
+          <tr><td class="mono">human</td><td>A person, typing</td><td class="mono">$0.10 – $1.00 per token</td><td class="mono">5 min</td><td class="mono">120s</td><td class="mono">15 min</td></tr>
+        </tbody>
+      </table></div>
+      <p>Human pricing is quoted per token on purpose: $0.10 a token is $100,000 per million. The arithmetic is what makes a hand-typed answer a serious offer.</p>
+    </div>
+  </div>
+
+  <div class="docs-grid">
+    <div class="panel">
+      <div class="panel-head"><h2>Who can post one</h2><span class="pill">in order</span></div>
+      <div class="panel-body">
+        <ul class="plain-list">
+          <li><strong>Email on file</strong> — the account you already have.</li>
+          <li><strong>One funded top-up</strong> — any real payment unlocks phone verification.</li>
+          <li><strong>Verified phone</strong> — a code by call or SMS. Only verified numbers are ever stored.</li>
+          <li><strong>Identity check</strong> — government ID through Veriff. Needs $25 of lifetime top-ups on the account and costs $5 per attempt, charged to your credits.</li>
+        </ul>
+        <p>Verification is required to create <em>and</em> to edit a model. Models already serving keep serving.</p>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>The money</h2><span class="pill good">credits, never cash</span></div>
+      <div class="panel-body">
+        <ul class="plain-list">
+          <li>Your price is the customer's price. TrustedRouter's 30% comes out of it, not on top.</li>
+          <li>Earnings land in a wallet on your account and move into any of your workspaces to spend.</li>
+          <li>The charge is capped at what the caller authorized — your endpoint reports usage, so the reservation is the ceiling.</li>
+          <li>Calling your own model nets −30%.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>What a request looks like</h2><span class="pill">two credentials</span></div>
+    <div class="panel-body">
+      <p>The attested enclave dials your endpoint over HTTPS to a public address, with the resolved IP pinned for the connection and redirects refused. Your credentials are decrypted inside the enclave and nowhere else. Only allowlisted chat fields are forwarded — TrustedRouter's routing data never reaches you.</p>
+      <pre><code>POST https://ada.example.com/v1/chat/completions
+Authorization: Bearer &lt;the endpoint key you registered&gt;
+TR-Signature: t=1700000000,v1=&lt;hex hmac-sha256(signing_secret, "t." + raw body)&gt;
+Content-Type: application/json
+
+{"model":"ada","stream":true,"messages":[{"role":"user","content":"..."}]}</code></pre>
+      <p>Verify the signature before answering: reject if the timestamp is more than 300 seconds old, recompute the HMAC over the raw bytes you received, and compare in constant time. Test vector — secret <span class="mono">test-signing-secret</span>, body <span class="mono">{"model":"demo","stream":false}</span>, t <span class="mono">1700000000</span>:</p>
+      <pre><code>t=1700000000,v1=a7597e2bfa4bc480b058f31a24542b3ab0c99fe6231ae15aa0498fd5bd1d4304</code></pre>
+    </div>
+  </div>
+
+  <div class="docs-grid">
+    <div class="panel">
+      <div class="panel-head"><h2>Answering</h2><span class="pill">stream or batch</span></div>
+      <div class="panel-body">
+        <p>Reply in the transport you registered: <span class="mono">text/event-stream</span> chunks (a usage-only final chunk is welcome, then <span class="mono">data: [DONE]</span>), or one <span class="mono">chat.completion</span> body. TrustedRouter adapts to whatever the caller asked for.</p>
+        <p>Declining is just an HTTP error. A <span class="mono">4xx</span> says you judged the request; a <span class="mono">5xx</span> says you failed to serve it. Only the second counts against you.</p>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>On the clock</h2><span class="pill">shift, not uptime</span></div>
+      <div class="panel-body">
+        <pre><code>POST /v1/user-models/{id}/clock-in    # probes you first; 409 if the probe fails
+POST /v1/user-models/{id}/heartbeat   # every interval; miss two and you go quiet
+POST /v1/user-models/{id}/clock-out</code></pre>
+        <p>Three consecutive real failures — timeouts, 5xx, unparsable answers — clock you out automatically. A caller hanging up never does. Clocking back in clears the count.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>The reverse-harness</h2><span class="pill">Apache 2.0</span></div>
+    <div class="panel-body">
+      <p>The open-source client that does the boring half: verifies every signature, opens a tunnel so TrustedRouter can reach you, keeps the clock, and answers the canary without waking anyone.</p>
+      <pre><code># expose the model already running on your laptop
+npx @trustedrouter/reverse-harness --mode proxy --upstream http://localhost:11434/v1
+
+# expose an agent you run locally
+npx @trustedrouter/reverse-harness --mode exec --command "python my_agent.py"
+
+# be the model yourself: a queue in your browser, you type the answer
+npx @trustedrouter/reverse-harness --mode human</code></pre>
+      <p>People pay per token to ask your thing questions; you keep 70% in credits.</p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>What we say out loud</h2><span class="pill warn">not attested, not ZDR</span></div>
+    <div class="panel-body">
+      <p>A user-provided model is <strong>not attested</strong> and is <strong>not covered by zero-data-retention</strong>. The enclave carries the request and never logs it, but the endpoint on the other end belongs to someone else, and prompts and outputs go there. That is stated on the model's page, in the API shape, and on the <a href="https://trust.trustedrouter.com/">public trust page</a>.</p>
+      <p>These models are also kept out of the main catalog, the routing pools, the comparison pages, and search indexing. You reach one by asking for it by id.</p>
+    </div>
+  </div>
+</section>
+{% endblock %}
