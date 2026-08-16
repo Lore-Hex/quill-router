@@ -144,6 +144,9 @@ class _Fleet:
     def stored(self, host: str) -> list[dict[str, Any]]:
         collapsed: dict[tuple[Any, ...], dict[str, Any]] = {}
         for call in self.accepted(host):
+            query = call.command[call.command.index("--query") + 1]
+            if "INSERT INTO activity_generations" not in query:
+                continue
             for row in call.rows:
                 # activity_generations ORDER BY (tenant_id, created_at, generation_id)
                 key = (row["tenant_id"], row["created_at"], row["generation_id"])
@@ -217,9 +220,7 @@ class _Source:
     ) -> list[OperationalOutboxRow]:
         candidates = [row for row in self.rows if row.shard == shard]
         if after is not None:
-            candidates = [
-                row for row in candidates if (row.event_kind, row.event_id) > after
-            ]
+            candidates = [row for row in candidates if (row.event_kind, row.event_id) > after]
         candidates.sort(key=lambda row: (row.event_kind, row.event_id))
         return candidates[:limit]
 
@@ -632,9 +633,7 @@ def test_the_cursor_never_lets_a_row_be_deleted_for_only_one_node(
         drain_once(source, _dual_writer(), batch_size=2, shard_count=1, cursors=cursors)
 
     assert source.delete_calls == []
-    assert {row.event_id for row in source.rows} == {
-        f"gen-keep-{index:04d}" for index in range(6)
-    }
+    assert {row.event_id for row in source.rows} == {f"gen-keep-{index:04d}" for index in range(6)}
 
 
 def test_the_backlog_is_delivered_and_deleted_once_the_node_returns(
@@ -666,16 +665,13 @@ def test_the_backlog_is_delivered_and_deleted_once_the_node_returns(
     assert len(fleet.stored("local")) == 6
 
 
-def test_a_poison_batch_no_longer_blocks_the_rest_of_its_shard(
+def test_a_poison_batch_is_quarantined_and_does_not_block_its_shard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Same root cause, non-ClickHouse trigger.
 
-    A payload this build cannot normalise fails its batch, so the batch is
-    never deleted -- and with an unpaged read that one row blocked its shard's
-    window permanently, taking every well-formed row behind it with it. The
-    cursor steps over the bad batch; the bad rows stay queued for a build that
-    can read them.
+    A payload this build cannot normalise is written to the quarantine table
+    and deleted with the healthy rows, so it cannot crash-loop the drainer.
     """
     fleet = _Fleet()
     fleet.install(monkeypatch)
@@ -690,18 +686,19 @@ def test_a_poison_batch_no_longer_blocks_the_rest_of_its_shard(
     source = _Source([poison, *healthy])
     cursors: dict[int, tuple[str, str]] = {}
 
-    # Progress is not free: a delivered batch resets the cursor to the head, so
-    # the unreadable batch is re-attempted before each good one. That is the
-    # deliberate trade -- the healthy path must read from the head exactly as it
-    # always did -- and it is bounded work, not a block. Before the cursor, the
-    # good rows behind this one were delivered NEVER, at any sweep count.
     for _ in range(8):
         drain_once(source, _dual_writer(), batch_size=1, shard_count=1, cursors=cursors)
 
     delivered = {row["generation_id"] for row in fleet.stored("local")}
     assert delivered == {f"gen-{index:04d}" for index in range(1, 4)}
-    # The unreadable row is still queued -- not delivered, and not dropped.
-    assert [row.event_id for row in source.rows] == ["gen-0000-poison"]
+    assert source.rows == []
+    quarantine_calls = [
+        call
+        for call in fleet.accepted("local")
+        if "INSERT INTO operational_outbox_quarantine"
+        in call.command[call.command.index("--query") + 1]
+    ]
+    assert quarantine_calls[0].rows[0]["event_id"] == "gen-0000-poison"
 
 
 def test_a_hard_down_target_is_skipped_after_a_few_failures_in_one_sweep(
@@ -870,9 +867,7 @@ def test_the_replacing_engine_backing_this_fake_is_real() -> None:
     schema = (ROOT / "clickhouse/006_operational_analytics_single_node.sql").read_text()
     # Comments stripped: the header explains at length why Keeper is NOT used
     # here, and the assertions below are about the statements, not the prose.
-    ddl = "\n".join(
-        line for line in schema.splitlines() if not line.strip().startswith("--")
-    )
+    ddl = "\n".join(line for line in schema.splitlines() if not line.strip().startswith("--"))
 
     assert ddl.count("ENGINE = ReplacingMergeTree(ingest_version)") == 4
     # Explicitly NOT the Replicated variant: two regions cannot form a Keeper
@@ -1057,7 +1052,7 @@ def test_a_misconfigured_replica_stops_the_drain_before_it_reads_anything(
 def test_the_configured_copies_are_logged_at_startup(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """"How many copies is this actually keeping?" must be answerable from the
+    """ "How many copies is this actually keeping?" must be answerable from the
     log, not from reading the environment file over someone's shoulder."""
     caplog.set_level("INFO")
 
@@ -1100,9 +1095,7 @@ def test_an_alarm_threshold_that_disables_the_alarm_is_refused(
     """
     for value in ("0", "-1"):
         with pytest.raises(SystemExit) as exit_info:
-            _run_main(
-                monkeypatch, DUAL_ENV, oldest=None, argv=["--max-lag-seconds", value]
-            )
+            _run_main(monkeypatch, DUAL_ENV, oldest=None, argv=["--max-lag-seconds", value])
         assert exit_info.value.code == drain_module.CONFIG_EXIT_CODE
 
 

@@ -149,12 +149,12 @@ than one whose edges are known:
   and nothing notices, because the drain has forgotten the rows and the two
   nodes are never compared to each other.  The fan-out makes *total* loss much
   less likely; it does not make a single node's just-acked writes durable.
-* **Two of the four tables.**  This drain writes ``activity_generations`` and
-  ``synthetic_probe_samples`` (``EVENT_TABLES``).  The single-node DDL also
-  creates ``synthetic_status_rollups`` and ``public_analytics_snapshots``, which
-  nothing on this cloud writes today — they are produced by GCP timers — so both
-  nodes hold them empty.  If such a job is ever pointed at Paris, its output is
-  NOT replicated by this drain and the second copy is not complete until it is.
+* **Only ingested tables.**  This drain writes ``activity_generations``,
+  ``synthetic_probe_samples``, both raw client telemetry tables, and quarantine
+  rows (``EVENT_TABLES``). It does not write synthetic/client rollups or public
+  snapshots. Nothing on this cloud produces those today — they are GCP timers —
+  so both nodes hold them empty. If such a job is ever pointed at Paris, its
+  output is NOT replicated by this drain and the second copy is not complete.
 * **The alarm needs this process alive.**  ``backlog_alarm`` is emitted from the
   sweep loop, so it says nothing while the drain is not running.  A
   configuration error therefore exits with ``CONFIG_EXIT_CODE``, which the unit
@@ -180,6 +180,7 @@ from clickhouse.ingest_operational_outbox import (
     _lag_seconds,
     _utc,
     normalise_operational_event,
+    quarantine_event,
 )
 from trusted_router.postgres_dsn import (
     aws_dsql_connection_details,
@@ -580,9 +581,7 @@ def clickhouse_targets_from_env(
             database=database,
         )
     ]
-    is_local = (
-        (lambda host: host in local_hosts) if local_hosts is not None else _is_own_address
-    )
+    is_local = (lambda host: host in local_hosts) if local_hosts is not None else _is_own_address
     _refuse_orphaned_replica_settings(env)
     for suffix in REPLICA_ENV_SUFFIXES:
         prefix = f"{CLICKHOUSE_ENV_PREFIX}_{suffix}"
@@ -635,6 +634,7 @@ class ShardDrainResult:
     fetched: int
     inserted: int
     deleted: int
+    quarantined: int = 0
 
 
 @dataclass(frozen=True)
@@ -655,6 +655,7 @@ class SweepResult:
     rows_per_second: float
     failed_shards: int = 0
     degraded_targets: tuple[str, ...] = ()
+    quarantined: int = 0
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -911,7 +912,14 @@ def drain_shard_once(
     exhausted = len(rows) < batch_size
     last_key = (rows[-1].event_kind, rows[-1].event_id)
     try:
-        events = [normalise_operational_event(row) for row in rows]
+        events: list[Any] = []
+        quarantined = 0
+        for row in rows:
+            try:
+                events.extend(normalise_operational_event(row))
+            except ValueError as exc:
+                events.append(quarantine_event(row, exc))
+                quarantined += 1
         writer.insert(events)
     except BaseException:
         if cursors is not None:
@@ -926,8 +934,9 @@ def drain_shard_once(
     return ShardDrainResult(
         shard=shard,
         fetched=len(rows),
-        inserted=len(events),
+        inserted=len(events) - quarantined,
         deleted=int(deleted or 0),
+        quarantined=quarantined,
     )
 
 
@@ -951,6 +960,7 @@ def drain_once(
     """
     fetched = 0
     inserted = 0
+    quarantined = 0
     failed_shards = 0
     degraded: dict[str, None] = {}
     # Lets a fan-out stop re-dialling a target that has already failed several
@@ -982,6 +992,7 @@ def drain_once(
             continue
         fetched += result.fetched
         inserted += result.inserted
+        quarantined += result.quarantined
     elapsed = max(time.monotonic() - started, 0.000_001)
     return SweepResult(
         fetched=fetched,
@@ -989,6 +1000,7 @@ def drain_once(
         rows_per_second=inserted / elapsed,
         failed_shards=failed_shards,
         degraded_targets=tuple(degraded),
+        quarantined=quarantined,
     )
 
 
@@ -1087,13 +1099,14 @@ def main() -> int:
         log.info(
             "operational_analytics_outbox.metrics backend=postgres rows=%d "
             "rows_per_second=%.3f drain_lag_seconds=%.3f failed_shards=%d "
-            "copies=%d degraded_targets=%s",
+            "copies=%d degraded_targets=%s quarantined=%d",
             result.inserted,
             result.rows_per_second,
             lag_seconds,
             result.failed_shards,
             len(targets),
             ",".join(degraded) or "-",
+            result.quarantined,
         )
         # The bound on outbox growth is this line plus an operator. There is no
         # automatic one: the only automatic bounds available are "delete rows a

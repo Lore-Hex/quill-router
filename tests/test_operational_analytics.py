@@ -99,9 +99,7 @@ def test_activity_payload_uses_surrogates_and_omits_content_and_raw_ids() -> Non
     payload = activity_payload(generation)
     encoded = json.dumps(payload, sort_keys=True)
 
-    assert payload["tenant_id"] == analytics_surrogate(
-        "workspace", generation.workspace_id
-    )
+    assert payload["tenant_id"] == analytics_surrogate("workspace", generation.workspace_id)
     assert payload["key_id"] == analytics_surrogate("api-key", generation.key_hash)
     assert generation.workspace_id not in encoded
     assert generation.key_hash not in encoded
@@ -115,17 +113,13 @@ def test_activity_payload_uses_surrogates_and_omits_content_and_raw_ids() -> Non
 def test_operational_outbox_enqueue_is_sharded_and_commit_timestamped() -> None:
     database = _Database()
     generation = _generation()
-    SpannerOperationalAnalyticsOutbox(database, _ParamTypes()).enqueue_activity(
-        generation
-    )
+    SpannerOperationalAnalyticsOutbox(database, _ParamTypes()).enqueue_activity(generation)
 
     [(sql, params, param_types)] = database.transaction.calls
     assert "PENDING_COMMIT_TIMESTAMP()" in sql
     assert params["event_kind"] == "activity"
     assert params["event_id"] == generation.id
-    assert params["shard"] == operational_analytics_shard(
-        f"activity:{generation.id}"
-    )
+    assert params["shard"] == operational_analytics_shard(f"activity:{generation.id}")
     assert json.loads(params["payload"])["tenant_id"] != generation.workspace_id
     assert param_types == {
         "shard": "INT64",
@@ -220,7 +214,13 @@ def test_clickhouse_balanced_benchmark_reader_uses_one_window_query() -> None:
 
 @pytest.mark.parametrize(
     "snapshot_name",
-    ["leaderboard", "apps", "video_leaderboard", "status_inputs"],
+    [
+        "leaderboard",
+        "apps",
+        "video_leaderboard",
+        "status_inputs",
+        "client_reliability",
+    ],
 )
 def test_public_snapshot_reads_newest_revision_across_month_partitions(
     snapshot_name: str,
@@ -242,9 +242,7 @@ def test_public_snapshot_reads_newest_revision_across_month_partitions(
         transport=httpx.MockTransport(handler),
     )
 
-    assert client.public_snapshot(snapshot_name) == {
-        "generated_at": "2026-08-01T00:00:00Z"
-    }
+    assert client.public_snapshot(snapshot_name) == {"generated_at": "2026-08-01T00:00:00Z"}
 
 
 def test_public_snapshot_rejects_unknown_products_without_querying() -> None:
@@ -288,15 +286,13 @@ def _outbox_row() -> OperationalOutboxRow:
 
 
 def test_operational_normalizer_adds_commit_version_and_rejects_unknown_kind() -> None:
-    event = normalise_operational_event(_outbox_row())
+    [event] = normalise_operational_event(_outbox_row())
     assert event.event_kind == "activity"
     assert event.row["generation_id"] == _generation().id
     assert event.row["ingest_version"].startswith("2026-07-31T12:35:00")
 
     with pytest.raises(ValueError, match="unsupported operational event kind"):
-        normalise_operational_event(
-            dataclasses.replace(_outbox_row(), event_kind="prompt")
-        )
+        normalise_operational_event(dataclasses.replace(_outbox_row(), event_kind="prompt"))
 
 
 class _Source:

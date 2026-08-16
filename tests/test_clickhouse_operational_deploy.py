@@ -41,12 +41,23 @@ def test_operational_deploy_backfills_before_starting_live_ingest() -> None:
     assert "clickhouse_replicate_rollups.sh" in script
     assert "clickhouse_operational_analytics_finalize.sh --apply" in script
     assert "systemctl start tr-clickhouse-operational-parity.service" not in script
+    assert "008_client_events_replicated.sql" in script
+    assert "tr-clickhouse-client-rollup.service" in script
+    assert "tr-clickhouse-client-rollup.timer" in script
+    assert "systemctl enable" in script
+    assert 'id_column="event_id"' in script
+
+
+def test_client_telemetry_single_node_schema_is_applied_with_operational_schema() -> None:
+    script = (ROOT / "scripts/deploy/aws_eu_north_clickhouse.sh").read_text()
+
+    assert "006_operational_analytics_single_node.sql" in script
+    assert "009_client_events_single_node.sql" in script
+    assert "${CLIENT_SCHEMA}" in script
 
 
 def test_operational_finalize_requires_live_outbox_before_closing_gap() -> None:
-    script = (
-        ROOT / "scripts/deploy/clickhouse_operational_analytics_finalize.sh"
-    ).read_text()
+    script = (ROOT / "scripts/deploy/clickhouse_operational_analytics_finalize.sh").read_text()
     assert "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED" in script
     assert "--skip-synthetic --skip-rollups" in script
     assert "--recent-limit 20000 --skip-activity --skip-rollups" in script
@@ -98,9 +109,7 @@ def test_cutover_requires_soak_logs_queue_replica_and_positive_parity() -> None:
 
 
 def test_operational_parity_worker_has_a_bounded_runtime() -> None:
-    service = (
-        ROOT / "clickhouse/tr-clickhouse-operational-parity.service"
-    ).read_text()
+    service = (ROOT / "clickhouse/tr-clickhouse-operational-parity.service").read_text()
     assert "TimeoutStartSec=5m" in service
 
 

@@ -306,6 +306,7 @@ FORMAT JSON
             "apps",
             "video_leaderboard",
             "status_inputs",
+            "client_reliability",
         }:
             raise ValueError("unsupported public analytics snapshot")
         rows = self._query(
@@ -374,14 +375,8 @@ def _generation(row: dict[str, Any], *, tenant_id: str) -> Generation:
         ttfb_milliseconds=_optional_int(row.get("ttfb_milliseconds")),
         region=str(row["region"]) if row.get("region") is not None else None,
         user=str(row["user"]) if row.get("user") is not None else None,
-        session_id=(
-            str(row["session_id"]) if row.get("session_id") is not None else None
-        ),
-        http_referer=(
-            str(row["http_referer"])
-            if row.get("http_referer") is not None
-            else None
-        ),
+        session_id=(str(row["session_id"]) if row.get("session_id") is not None else None),
+        http_referer=(str(row["http_referer"]) if row.get("http_referer") is not None else None),
         app_categories=[str(item) for item in row.get("app_categories") or []],
         tags={str(key): str(value) for key, value in (row.get("tags") or {}).items()},
         created_at=_iso(row["created_at"]),
@@ -397,11 +392,7 @@ def stable_rows_fingerprint(rows: list[Any], *, grace_seconds: int = 30) -> tupl
     cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=max(0, grace_seconds))
     stable: list[dict[str, Any]] = []
     for row in rows:
-        payload = (
-            dataclasses.asdict(cast(Any, row))
-            if dataclasses.is_dataclass(row)
-            else dict(row)
-        )
+        payload = dataclasses.asdict(cast(Any, row)) if dataclasses.is_dataclass(row) else dict(row)
         # Rebuild timestamps are expected to differ across stores. Raw tenant
         # and key identifiers are intentionally replaced by opaque surrogates
         # in ClickHouse, so they are not parity fields either.
@@ -428,8 +419,7 @@ def stable_rows_fingerprint(rows: list[Any], *, grace_seconds: int = 30) -> tupl
                 continue
         stable.append(payload)
     canonical_rows = sorted(
-        json.dumps(row, sort_keys=True, separators=(",", ":"), default=str)
-        for row in stable
+        json.dumps(row, sort_keys=True, separators=(",", ":"), default=str) for row in stable
     )
     encoded = "\n".join(canonical_rows)
     return len(stable), hashlib.sha256(encoded.encode("utf-8")).hexdigest()

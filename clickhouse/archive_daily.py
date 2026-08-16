@@ -27,6 +27,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
+from clickhouse.ingest_operational_outbox import ACTIVITY_COLUMNS
+
 PROJECT = "quill-cloud-proxy"
 DATABASE = "tr"
 TABLE = "provider_benchmark_samples"
@@ -83,6 +85,8 @@ class DatasetSpec:
     shard_column: str
 
 
+# Raw client_request_events and client_minute_counters are deliberately absent:
+# the telemetry contract retains their rollups, not raw client tables, in Parquet.
 DATASETS: dict[str, DatasetSpec] = {
     "provider_benchmark_samples": DatasetSpec(
         columns=_BENCHMARK_COLUMNS,
@@ -90,37 +94,7 @@ DATASETS: dict[str, DatasetSpec] = {
         shard_column="id",
     ),
     "activity_generations": DatasetSpec(
-        columns=(
-            "generation_id",
-            "request_id",
-            "tenant_id",
-            "key_id",
-            "model",
-            "provider",
-            "provider_name",
-            "app",
-            "tokens_prompt",
-            "tokens_completion",
-            "cached_input_tokens",
-            "reasoning_tokens",
-            "total_cost_microdollars",
-            "usage_type",
-            "speed_tokens_per_second",
-            "finish_reason",
-            "status",
-            "streamed",
-            "usage_estimated",
-            "elapsed_milliseconds",
-            "first_token_milliseconds",
-            "ttfb_milliseconds",
-            "region",
-            "user",
-            "session_id",
-            "http_referer",
-            "app_categories",
-            "tags",
-            "created_at",
-        ),
+        columns=ACTIVITY_COLUMNS,
         time_column="created_at",
         shard_column="generation_id",
     ),
@@ -204,9 +178,7 @@ def _day_bounds(day: dt.date) -> tuple[str, str]:
     start = dt.datetime.combine(day, dt.time(), tzinfo=dt.UTC)
     return (
         start.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
-        (start + dt.timedelta(days=1))
-        .isoformat(timespec="milliseconds")
-        .replace("+00:00", "Z"),
+        (start + dt.timedelta(days=1)).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
     )
 
 
@@ -215,10 +187,7 @@ def _row_hash_expression(columns: Sequence[str]) -> str:
         if column in _UNORDERED_MAP_COLUMNS:
             return f"mapSort({column})"
         if column in _DATETIME_MILLI_COLUMNS:
-            return (
-                "toUnixTimestamp64Milli("
-                f"toDateTime64({column}, 3, 'UTC'))"
-            )
+            return f"toUnixTimestamp64Milli(toDateTime64({column}, 3, 'UTC'))"
         return column
 
     canonical = (canonical_column(column) for column in columns)
@@ -235,10 +204,7 @@ class SourceFingerprint:
 
     @property
     def revision(self) -> str:
-        return (
-            f"v{ARCHIVE_SCHEMA_VERSION}-{self.rows}-"
-            f"{self.hash_sum:016x}-{self.hash_xor:016x}"
-        )
+        return f"v{ARCHIVE_SCHEMA_VERSION}-{self.rows}-{self.hash_sum:016x}-{self.hash_xor:016x}"
 
     def matches(self, other: SourceFingerprint) -> bool:
         return (
@@ -608,7 +574,9 @@ def archive_day(
     with tempfile.TemporaryDirectory(prefix=f"tr-archive-{day.isoformat()}-") as temporary:
         paths = exporter.export_parts(day, Path(temporary), part_count=part_count)
         if len(paths) != part_count:
-            raise RuntimeError(f"expected {part_count} Parquet parts, exporter returned {len(paths)}")
+            raise RuntimeError(
+                f"expected {part_count} Parquet parts, exporter returned {len(paths)}"
+            )
         verified = [exporter.verify_part(path) for path in paths]
         actual = _combine_parts(verified)
         if not source.matches(actual):
@@ -718,9 +686,7 @@ def main() -> int:
             database=args.database,
             table=table,
         )
-        backfill_start = (
-            exporter.earliest_day() if args.backfill and args.date is None else None
-        )
+        backfill_start = exporter.earliest_day() if args.backfill and args.date is None else None
         for day in _days_to_archive(
             date=args.date,
             lookback_days=args.lookback_days,

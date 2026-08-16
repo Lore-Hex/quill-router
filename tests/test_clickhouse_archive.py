@@ -17,6 +17,7 @@ from clickhouse.archive_daily import (
     _row_hash_expression,
     archive_day,
 )
+from clickhouse.ingest_operational_outbox import ACTIVITY_COLUMNS
 from clickhouse.verify_archive_backfill import verify_archive_backfill
 from clickhouse.verify_archive_restore import verify_archived_day
 
@@ -228,6 +229,9 @@ def test_every_bounded_analytics_dataset_has_an_archive_schema() -> None:
         assert spec.shard_column in spec.columns
         assert "ingest_version" not in spec.columns
     assert "updated_at" not in DATASETS["synthetic_status_rollups"].columns
+    assert DATASETS["activity_generations"].columns == ACTIVITY_COLUMNS
+    assert "client_request_events" not in DATASETS
+    assert "client_minute_counters" not in DATASETS
 
 
 def test_rollup_archive_fingerprint_sorts_unordered_map_columns() -> None:
@@ -236,10 +240,7 @@ def test_rollup_archive_fingerprint_sorts_unordered_map_columns() -> None:
     assert "mapSort(latency_histogram)" in expression
     assert "mapSort(error_counts)" in expression
     assert "mapSort(id)" not in expression
-    assert (
-        "toUnixTimestamp64Milli(toDateTime64(period_start, 3, 'UTC'))"
-        in expression
-    )
+    assert "toUnixTimestamp64Milli(toDateTime64(period_start, 3, 'UTC'))" in expression
 
 
 def test_operational_dataset_archive_round_trips_through_restore_verifier() -> None:

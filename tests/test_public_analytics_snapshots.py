@@ -128,6 +128,7 @@ def test_snapshot_builder_precomputes_video_and_status_inputs() -> None:
 
     assert set(snapshots) == {
         "apps",
+        "client_reliability",
         "leaderboard",
         "status_inputs",
         "video_leaderboard",
@@ -135,6 +136,7 @@ def test_snapshot_builder_precomputes_video_and_status_inputs() -> None:
     assert snapshots["video_leaderboard"]["total_samples"] == 1
     assert snapshots["status_inputs"]["samples"][0]["id"] == "status-1"
     assert snapshots["status_inputs"]["rollups"][0]["id"] == "rollup-1"
+    assert snapshots["client_reliability"]["published"] is False
 
 
 def test_snapshot_builder_encodes_clickhouse_array_parameters() -> None:
