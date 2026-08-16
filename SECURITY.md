@@ -2,35 +2,31 @@
 
 ## Reporting a vulnerability
 
-Email **security@trustedrouter.com**. We respond within one business day.
+Email **security@trustedrouter.com**. Please do not open a public issue for a
+security report.
 
-Include enough detail to reproduce the issue — a proof of concept, the affected
-version or commit, and the impact you believe it has.
+Include what you can — affected version or commit, reproduction steps, and the
+impact you believe it has. A partial report sent early is more useful than a
+complete one sent late.
 
-Please do not open a public issue for a suspected vulnerability. There is no bug
-bounty programme. We will credit you in the fix unless you ask us not to.
+## What to expect
 
-## What we commit to
+- **Acknowledgement within 72 hours.**
+- An assessment of severity and affected components within 5 business days.
+- Notification when a fix ships, and credit if you would like it.
 
-- Acknowledgement within one business day.
-- An assessment, including whether we agree the issue is exploitable, within five
-  business days.
-- Any suspected exposure of customer content in the hosted service is treated at
-  the highest severity by default, and affected customers are notified without
-  waiting for the investigation to conclude.
+We treat any suspected exposure of customer content as the highest severity by
+default, and we notify affected users without waiting for a root-cause analysis
+to finish.
 
 ## Scope
 
-This repository is maintained by Lore Hex Corp. Reports about the hosted
-TrustedRouter service, including the attested serving gateways, are in scope at
-the same address.
+This policy covers the code in this repository. TrustedRouter's hosted service
+runs inside hardware-attested confidential computing environments; the published
+measurements and how to verify them are at https://trustedrouter.com/trust
 
-Published enclave measurements and the procedure for verifying what code handles
-a request are at <https://trustedrouter.com/trust>. If you believe a published
-measurement does not match what is actually running, that is a security report
-and we want to hear it.
+## Safe harbour
 
-## Supported versions
-
-The default branch is the supported version. Fixes land there first, and released
-packages are built from it.
+We will not pursue or support legal action against anyone who reports a
+vulnerability in good faith, avoids privacy violations and service degradation,
+and gives us reasonable time to respond before disclosing.
