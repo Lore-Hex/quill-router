@@ -45,6 +45,14 @@
   {% endfor %}
 </section>
 
+{% if comparison.article_html %}
+<article class="panel comparison-article" aria-label="Detailed comparison">
+  <div class="panel-body">
+    {{ comparison.article_html|safe }}
+  </div>
+</article>
+{% endif %}
+
 <section class="marketing-split" aria-label="Migration guidance">
   <div class="marketing-copy">
     <span class="eyebrow">Migration shape</span>
