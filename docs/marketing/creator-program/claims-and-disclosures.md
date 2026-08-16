@@ -21,7 +21,7 @@ linked live pages immediately before publication.
   Use that endpoint instead of quoting a hard-coded model count.
 - Public router-core and provider-effective health are available from
   https://status.trustedrouter.com.
-- Prepaid pricing is the provider route price plus 5 percent, with no required
+- Prepaid pricing is the provider route price plus 5.5 percent, with no required
   monthly subscription. Verify current per-model prices before publication.
 
 ## Claims that are not approved

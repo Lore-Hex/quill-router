@@ -206,8 +206,8 @@ def test_pearl_public_api_exposes_provider_and_exact_endpoint(client: Any) -> No
         if row["provider_name"] == "Pearl Research Labs"
     )
     assert endpoint["upstream_id"] == "zai-org/GLM-5.2"
-    assert endpoint["pricing"]["prompt"] == "0.00000126"
-    assert endpoint["pricing"]["completion"] == "0.000004305"
+    assert endpoint["pricing"]["prompt"] == "0.000001266"
+    assert endpoint["pricing"]["completion"] == "0.0000043255"
 
 
 def test_pearl_hourly_refresh_and_secret_wiring_are_complete() -> None:

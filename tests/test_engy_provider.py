@@ -178,11 +178,11 @@ def test_engy_manifest_routes_use_exact_upstream_ids_and_customer_prices() -> No
     }
     assert {endpoint.usage_type for endpoint in endpoints} == {"Credits"}
     glm = next(endpoint for endpoint in endpoints if endpoint.model_id == "z-ai/glm-5.2")
-    assert glm.prompt_price_microdollars_per_million_tokens == 714_000
-    assert glm.completion_price_microdollars_per_million_tokens == 1_575_000
+    assert glm.prompt_price_microdollars_per_million_tokens == 717_400
+    assert glm.completion_price_microdollars_per_million_tokens == 1_582_500
     assert (
         glm.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
-        == 189_000
+        == 189_900
     )
 
 

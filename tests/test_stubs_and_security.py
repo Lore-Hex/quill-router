@@ -425,10 +425,10 @@ def test_og_svg_copy_matches_current_positioning() -> None:
     assert "api.trustedrouter.com" not in svg
 
 
-def test_pricing_og_svg_matches_five_percent_policy() -> None:
+def test_pricing_og_svg_matches_five_point_five_percent_policy() -> None:
     svg = pricing_og_image_svg(Settings())
 
-    assert "5% markup" in svg
+    assert "5.5% markup" in svg
     assert "on prepaid model cost" in svg
     assert "OpenRouter credit fee" in svg
     assert "5.5%" in svg

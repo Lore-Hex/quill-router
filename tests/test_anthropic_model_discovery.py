@@ -262,10 +262,10 @@ def test_opus_5_catalog_is_routable_for_chat_and_messages_but_not_zdr() -> None:
             endpoint.completion_price_microdollars_per_million_tokens,
         )
         for endpoint in anthropic_endpoints
-    } == {(5_250_000, 26_250_000)}
+    } == {(5_275_000, 26_375_000)}
     assert all(
         endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
-        == 525_000
+        == 527_500
         for endpoint in anthropic_endpoints
     )
     assert not any(endpoint_zero_data_retention(endpoint) for endpoint in endpoints)

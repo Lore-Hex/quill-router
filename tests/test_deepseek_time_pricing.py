@@ -186,9 +186,9 @@ def test_model_endpoints_publish_direct_deepseek_schedule(
     direct = next(row for row in response.json()["data"] if row["provider"] == "deepseek")
 
     assert direct["pricing"] == {
-        "prompt": "0.000001386",
-        "completion": "0.000004158",
-        "input_cache_read": "0.0000000462",
+        "prompt": "0.0000013926",
+        "completion": "0.0000041778",
+        "input_cache_read": "0.00000004642",
     }
     assert direct["trustedrouter"]["pricing_schedule"]["current_period"] == "peak"
     assert direct["trustedrouter"]["pricing_schedule"]["rate_locked_at"] == "authorization"
@@ -213,10 +213,10 @@ def test_deepseek_pricing_page_explains_variable_direct_rate(
 @pytest.mark.parametrize(
     ("model_id", "period", "prompt", "completion", "cached"),
     [
-        (_FLASH, "off_peak", 231_000, 693_000, 10_000),
-        (_FLASH, "peak", 462_000, 1_386_000, 14_700),
-        (_PRO, "off_peak", 693_000, 2_079_000, 23_100),
-        (_PRO, "peak", 1_386_000, 4_158_000, 46_200),
+        (_FLASH, "off_peak", 232_100, 696_300, 10_000),
+        (_FLASH, "peak", 464_200, 1_392_600, 14_770),
+        (_PRO, "off_peak", 696_300, 2_088_900, 23_210),
+        (_PRO, "peak", 1_392_600, 4_177_800, 46_420),
     ],
 )
 def test_effective_endpoint_applies_markup_and_real_cached_rate(
@@ -246,9 +246,9 @@ def test_deepseek_cached_tokens_are_billed_at_announced_cache_rate() -> None:
     )
 
     assert actual == (
-        100_000 * 1_386_000 // 1_000_000
-        + 900_000 * 46_200 // 1_000_000
-        + 200_000 * 4_158_000 // 1_000_000
+        100_000 * 1_392_600 // 1_000_000
+        + 900_000 * 46_420 // 1_000_000
+        + 200_000 * 4_177_800 // 1_000_000
     )
 
 
@@ -304,4 +304,4 @@ def test_gateway_settlement_uses_authorization_time_for_deepseek_price(
         },
     )
     assert settled.status_code == 200, settled.text
-    assert settled.json()["data"]["cost_microdollars"] == 19_803
+    assert settled.json()["data"]["cost_microdollars"] == 19_897

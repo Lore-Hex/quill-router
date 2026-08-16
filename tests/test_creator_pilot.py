@@ -41,7 +41,7 @@ def test_creator_quickstart_is_public_and_campaign_attributed(
     assert "trustedrouter/zdr" in response.text
     assert "max_tokens=256" in response.text
     assert "No subscription. No card required." in response.text
-    assert "Text models cost the provider price plus 5%." in response.text
+    assert "Text models cost the provider price plus 5.5%." in response.text
     assert "Privacy with proof" in response.text
     assert "https://trust.trustedrouter.com" in response.text
     assert "https://status.trustedrouter.com" in response.text

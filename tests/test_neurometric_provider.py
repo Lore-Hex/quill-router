@@ -296,8 +296,8 @@ def test_neurometric_public_api_exposes_provider_and_exact_endpoint(client: Any)
         endpoint for endpoint in endpoints if endpoint["provider_name"] == "Neurometric AI"
     )
     assert neurometric["upstream_id"] == "ibm-granite/granite-4.1-8b"
-    assert neurometric["pricing"]["prompt"] == "0.0000000525"
-    assert neurometric["pricing"]["completion"] == "0.000000105"
+    assert neurometric["pricing"]["prompt"] == "0.00000005275"
+    assert neurometric["pricing"]["completion"] == "0.0000001055"
 
 
 def test_neurometric_hourly_refresh_and_secret_wiring_are_complete() -> None:
