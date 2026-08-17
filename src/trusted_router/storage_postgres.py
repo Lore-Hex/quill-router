@@ -128,6 +128,34 @@ log = logging.getLogger(__name__)
 
 _AWS_DSQL_IAM_AUTH = "aws-dsql"
 
+# SQLSTATEs meaning "the server rolled your transaction back whole; replaying
+# it is the correct response". _run_transaction retries exactly these.
+#
+# Keyed on the SQLSTATE string rather than on a psycopg exception class, and
+# that is the entire point. psycopg generates ONE FLAT CLASS PER SQLSTATE, each
+# deriving straight from its DB-API base, so `SerializationFailure` (40001) and
+# `DeadlockDetected` (40P01) are SIBLINGS of `TransactionRollback` (40000), not
+# subclasses of it. `except psycopg.errors.TransactionRollback` therefore
+# caught only a bare 40000 -- which no server in this fleet emits -- and every
+# real abort fell through to the generic handler as a caller-visible
+# StoreUnavailable. That is how a routine concurrent reserve came back as
+# "Postgres could not service the storage operation" instead of retrying and
+# reporting "insufficient credits" (CI run 31996299784). SQLSTATE is the
+# DATABASE's contract; psycopg's class layout is not.
+#
+# The other two class-40 codes are deliberately absent:
+#   40002 transaction_integrity_constraint_violation -- deterministic, so a
+#         replay fails identically forever.
+#   40003 statement_completion_unknown -- the statement may in fact have
+#         COMMITTED, so replaying it could double-apply money.
+_RETRYABLE_ROLLBACK_SQLSTATES = frozenset(
+    {
+        "40000",  # transaction_rollback
+        "40001",  # serialization_failure -- Spanner ABORTED, DSQL OCC abort
+        "40P01",  # deadlock_detected -- ordinary Postgres lock ordering
+    }
+)
+
 
 class _IamTokenConnectionPool(ConnectionPool):
     """Connection pool that obtains a new password for every connection.
@@ -405,22 +433,20 @@ class PostgresStore:
                 with self._pool.connection() as conn:
                     with conn.transaction():
                         return operation(conn)
-            except psycopg.errors.TransactionRollback as exc:
-                # Covers SerializationFailure (40001) *and* DeadlockDetected
-                # (40P01). Both mean "the server rolled you back, try again",
-                # and both are routine: 40001 is how Aurora DSQL reports every
-                # optimistic-concurrency abort, and 40P01 is ordinary Postgres
-                # lock ordering. Retrying only the first would surface
-                # deadlocks to callers as hard failures.
+            except psycopg.Error as exc:
+                # Retry on SQLSTATE, NOT on psycopg's exception classes. See
+                # _RETRYABLE_ROLLBACK_SQLSTATES: psycopg gives every SQLSTATE
+                # its own flat class, so the obvious `except TransactionRollback`
+                # silently caught neither 40001 nor 40P01.
                 #
                 # Safe to retry because the transaction rolled back whole: an
                 # idempotency row inserted on the failed attempt is gone, so
                 # the retry re-inserts and credits exactly once.
-                last_serialization_error = exc
-                continue
-            except psycopg.IntegrityError as exc:
-                raise StoreConflict("Postgres write conflict") from exc
-            except psycopg.Error as exc:
+                if exc.sqlstate in _RETRYABLE_ROLLBACK_SQLSTATES:
+                    last_serialization_error = exc
+                    continue
+                if isinstance(exc, psycopg.IntegrityError):
+                    raise StoreConflict("Postgres write conflict") from exc
                 raise StoreUnavailable("Postgres could not service the storage operation") from exc
         raise StoreConflict(
             "Postgres transaction repeatedly rolled back (serialization failure or deadlock)"
