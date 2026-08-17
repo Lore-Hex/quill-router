@@ -78,10 +78,13 @@ from trusted_router.operational_analytics_freshness import (
     DRAIN_LAG_FIELD,
     GENERATED_AT_FIELD,
     OUTBOX_DEPTH_FIELD,
+    PUBLISHABLE_REASONS,
     REASON_FIELD,
     REASON_NO_DATA,
     REASON_NOT_CONFIGURED,
     REASON_UNREACHABLE,
+    publishable_backend,
+    publishable_reason,
 )
 
 #: Kept for the single-cloud alias in :mod:`clickhouse.check_aws_analytics_freshness`.
@@ -145,9 +148,38 @@ _UNAVAILABLE_EXPLANATION: dict[str, str] = {
     ),
 }
 
+#: What we say when a plane publishes a reason outside the fixed vocabulary --
+#: WITHOUT quoting it. This is the second public surface, and it is easy to miss:
+#: every problem line is written to ``--problems-file`` and the workflow pastes
+#: that file verbatim into a PUBLIC GitHub issue body. The publisher clamps its
+#: own output (``PUBLISHABLE_REASONS``), but that clamp protects the page, not
+#: this job: what arrives here is text fetched over the wire from a plane that
+#: may be running older code, may be misconfigured, may be compromised, or may
+#: not be ours at all if a status hostname was ever repointed. Echoing it would
+#: let whatever answered choose the contents of an issue in this repository.
+_UNRECOGNISED_REASON_EXPLANATION = (
+    "the control plane published a reason OUTSIDE the vocabulary the publisher "
+    "narrows to, so the publisher and this checker have drifted -- or whatever "
+    "answered is not this codebase. The published value is deliberately NOT "
+    "reproduced here: this line is pasted verbatim into a public GitHub issue, "
+    "and remote text is not ours to republish. Read it directly with "
+    "`curl -s <status_url> | jq .data.analytics`."
+)
+
+
+def _published_reason(section: dict[str, Any]) -> tuple[str, bool]:
+    """``(reason safe to print, whether the plane's own value was recognised)``.
+
+    Clamped through the publisher's own :func:`publishable_reason`, on values
+    that arrived over the network. See :data:`_UNRECOGNISED_REASON_EXPLANATION`.
+    """
+    raw = section.get(REASON_FIELD)
+    recognised = isinstance(raw, str) and raw in PUBLISHABLE_REASONS
+    return publishable_reason(raw), recognised
+
 
 def unavailable_reason(payload: dict[str, Any]) -> str | None:
-    """The reason a payload's section gives, or ``None`` if it is not unavailable.
+    """The clamped reason a payload's section gives, or ``None`` if it is available.
 
     Shared with :func:`evaluate_fleet` so that "is this the declared-absent
     case?" and "what do we say about it?" cannot answer differently.
@@ -155,8 +187,7 @@ def unavailable_reason(payload: dict[str, Any]) -> str | None:
     section = payload.get(ANALYTICS_STATUS_KEY)
     if not isinstance(section, dict) or section.get(AVAILABLE_FIELD):
         return None
-    reason = section.get(REASON_FIELD)
-    return reason if isinstance(reason, str) else ""
+    return _published_reason(section)[0]
 
 
 def evaluate(
@@ -188,18 +219,18 @@ def evaluate(
             "(the control plane does not publish drain lag)"
         ]
     if not section.get(AVAILABLE_FIELD):
-        reason = section.get(REASON_FIELD)
-        if not expects_outbox and reason == REASON_NOT_CONFIGURED:
+        reason, recognised = _published_reason(section)
+        if not expects_outbox and recognised and reason == REASON_NOT_CONFIGURED:
             # The registry declared this absence; the caller reports it as
             # explicitly unchecked rather than as health or as a failure.
             return []
-        explanation = _UNAVAILABLE_EXPLANATION.get(
-            reason if isinstance(reason, str) else "",
-            "the control plane published a reason this checker does not know; "
-            "the publisher narrows reasons to a fixed set, so an unknown value "
-            "means the two have drifted",
-        )
-        return [f"{ANALYTICS_STATUS_KEY} unavailable: reason={reason!r} -- {explanation}"]
+        if recognised:
+            explanation = _UNAVAILABLE_EXPLANATION[reason]
+            printed = repr(reason)
+        else:
+            explanation = _UNRECOGNISED_REASON_EXPLANATION
+            printed = f"{reason!r} (narrowed; the plane's own value is not quoted)"
+        return [f"{ANALYTICS_STATUS_KEY} unavailable: reason={printed} -- {explanation}"]
 
     problems: list[str] = []
 
@@ -218,7 +249,12 @@ def evaluate(
     # aimed at somebody else's deployment. (It cannot separate aws from azure,
     # which are both Postgres -- registry_defects rejects duplicate URLs
     # offline for exactly that gap.)
-    backend = section.get(BACKEND_FIELD)
+    # Clamped, for the reason in `_UNRECOGNISED_REASON_EXPLANATION`: this value
+    # came off a remote page and this string ends up in a public issue body.
+    # Anything outside the published vocabulary reads as `unknown`, which still
+    # mismatches every expected backend and so still fails, loudly, without
+    # letting the remote page choose the words.
+    backend = publishable_backend(section.get(BACKEND_FIELD))
     if expected_backend is not None and backend != expected_backend:
         problems.append(
             f"answered by {BACKEND_FIELD}={backend!r}, but this cloud runs "
@@ -285,6 +321,7 @@ def evaluate_fleet(
     max_drain_lag_seconds: float = DEFAULT_MAX_DRAIN_LAG_SECONDS,
     max_age_seconds: int = 3_600,
     max_outbox_depth: int | None = None,
+    minimum_measured: int = 1,
 ) -> FleetResult:
     """Problems and unchecked notes, each prefixed with the cloud it is about.
 
@@ -303,9 +340,17 @@ def evaluate_fleet(
     slice) and deliberately does not narrow what is validated: a run restricted
     to one cloud must still notice that a fourth cloud has no entry, or the
     slice becomes a way to make the coverage check disappear.
+
+    ``minimum_measured`` is the FLOOR on how many clouds must produce a real
+    drain-lag evaluation. Without it every outcome above can be legitimately
+    "not a failure" -- unchecked by declaration, excluded by ``--cloud``,
+    absent from the registry -- and a fleet where NOTHING was measured exits 0.
+    An exit code that means "no cloud reported a problem because no cloud was
+    asked" is precisely the state this job exists to detect, one level up.
     """
     problems: list[str] = []
     unchecked: list[str] = []
+    measured = 0
     for defect in registry_defects(deployed, registry=registry):
         problems.append(f"registry: {defect}")
 
@@ -351,6 +396,7 @@ def evaluate_fleet(
                 "the day it publishes a real lag."
             )
             continue
+        measured += 1
         for problem in evaluate(
             payload,
             now=now,
@@ -361,6 +407,16 @@ def evaluate_fleet(
             expects_outbox=entry.expects_outbox,
         ):
             problems.append(f"{entry.cloud}: {problem}")
+
+    if measured < minimum_measured:
+        problems.append(
+            f"nothing was measured: {measured} of {len(registry)} registry entries "
+            f"produced a drain-lag evaluation, and the floor is {minimum_measured}. "
+            "Every entry was unchecked by declaration, excluded by --cloud, or never "
+            "fetched, so passing here would mean 'no cloud reported a problem' only in "
+            "the sense that no cloud was asked -- a green run measuring nothing, which "
+            "is the failure this job exists to catch one level down."
+        )
     return FleetResult(problems=problems, unchecked=unchecked)
 
 
@@ -449,7 +505,7 @@ def main(argv: list[str] | None = None) -> int:
     selected = _selected_clouds(args)
 
     payloads: dict[str, dict[str, Any] | None] = {}
-    lags: dict[str, Any] = {}
+    lags: dict[str, float | None] = {}
     for entry in registry:
         if selected is not None and entry.cloud not in selected:
             continue
@@ -463,7 +519,13 @@ def main(argv: list[str] | None = None) -> int:
             continue
         payloads[entry.cloud] = payload
         section = payload.get(ANALYTICS_STATUS_KEY)
-        lags[entry.cloud] = section.get(DRAIN_LAG_FIELD) if isinstance(section, dict) else None
+        # Through `_float`, not straight out of the payload: the summary is
+        # printed to a public Actions log, and a remote page must not be able
+        # to choose what this job prints. A non-numeric lag renders as None,
+        # and `evaluate` fails the cloud for it separately.
+        lags[entry.cloud] = (
+            _float(section.get(DRAIN_LAG_FIELD)) if isinstance(section, dict) else None
+        )
 
     result = evaluate_fleet(
         payloads,

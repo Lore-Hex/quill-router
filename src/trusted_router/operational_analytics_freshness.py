@@ -63,8 +63,16 @@ REASON_FIELD = "reason"
 BACKEND_FIELD = "backend"
 DRAIN_LAG_FIELD = "drain_lag_seconds"
 OUTBOX_DEPTH_FIELD = "outbox_depth"
-OLDEST_ENQUEUED_AT_FIELD = "oldest_enqueued_at"
 GENERATED_AT_FIELD = "generated_at"
+
+#: Every key the published section may contain, in both of its forms.  Pinned
+#: by a test, because a public contract that grows by accident is one nobody
+#: can safely narrow later: an added key is a promise to whoever started
+#: reading it.
+PUBLISHED_AVAILABLE_FIELDS: frozenset[str] = frozenset(
+    {AVAILABLE_FIELD, BACKEND_FIELD, DRAIN_LAG_FIELD, OUTBOX_DEPTH_FIELD, GENERATED_AT_FIELD}
+)
+PUBLISHED_UNAVAILABLE_FIELDS: frozenset[str] = frozenset({AVAILABLE_FIELD, REASON_FIELD})
 
 #: Mirrors ``clickhouse.ingest_operational_outbox_postgres.DEFAULT_MAX_LAG_SECONDS``.
 #: The drain logs ``backlog_alarm`` at this age; a checker that tolerated more
@@ -147,7 +155,7 @@ def _iso(value: dt.datetime) -> str:
     return _utc(value).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def publishable_reason(reason: str | None) -> str:
+def publishable_reason(reason: object) -> str:
     """Narrow any reason to the published vocabulary.
 
     Anything unrecognised becomes ``unreachable``, which is the honest summary
@@ -155,13 +163,30 @@ def publishable_reason(reason: str | None) -> str:
     cannot leak: a reason this module has never heard of did not come from this
     module's own constants, so it came from somewhere that may have had an
     exception, a DSN, or a hostname in scope.  See :data:`PUBLISHABLE_REASONS`.
+
+    TOTAL, over ``object`` and not over ``str | None``, because both callers
+    feed it values they did not construct.  The publisher takes whatever a
+    storage backend put in ``OutboxFreshness.reason``; the fleet checker takes
+    whatever JSON a remote page served, where a ``list`` or a ``dict`` is one
+    keystroke away.  ``x in frozenset`` raises ``TypeError`` on an unhashable
+    value, and a clamp that raises on hostile input is not a clamp -- on the
+    publisher it would drop the whole ``analytics`` key (which the checker
+    reads as "this cloud runs older code"), and in the checker it would crash
+    the run that was supposed to report the problem.
     """
-    return reason if reason in PUBLISHABLE_REASONS else REASON_UNREACHABLE
+    return (
+        reason if isinstance(reason, str) and reason in PUBLISHABLE_REASONS else REASON_UNREACHABLE
+    )
 
 
-def publishable_backend(backend: str | None) -> str:
-    """Narrow any backend name to the published vocabulary."""
-    return backend if backend in PUBLISHABLE_BACKENDS else BACKEND_UNKNOWN
+def publishable_backend(backend: object) -> str:
+    """Narrow any backend name to the published vocabulary.
+
+    Total, for the reasons in :func:`publishable_reason`.
+    """
+    return (
+        backend if isinstance(backend, str) and backend in PUBLISHABLE_BACKENDS else BACKEND_UNKNOWN
+    )
 
 
 def analytics_status_unavailable(reason: str = REASON_NO_DATA) -> dict[str, Any]:
@@ -196,21 +221,25 @@ def analytics_status_section(
     writer and ``now`` comes from the reader, so a few milliseconds of clock
     skew can otherwise publish a negative age and make every downstream
     comparison read backwards.
+
+    The oldest row's own timestamp is NOT published.  An earlier revision
+    carried it as ``oldest_enqueued_at``, and nothing read it: the checker uses
+    ``drain_lag_seconds``, the runbook quotes the lag, and the value is
+    ``generated_at`` minus the lag in any case.  Nothing published yet, so
+    there is no consumer to break -- and this is the moment when dropping it is
+    free.  An uncredentialed page should carry the fields somebody reads and
+    not one more.
     """
     moment = _utc(now)
     if oldest_enqueued_at is None:
         lag = 0.0
-        oldest_iso: str | None = None
     else:
-        oldest = _utc(oldest_enqueued_at)
-        lag = max(0.0, (moment - oldest).total_seconds())
-        oldest_iso = _iso(oldest)
+        lag = max(0.0, (moment - _utc(oldest_enqueued_at)).total_seconds())
     return {
         AVAILABLE_FIELD: True,
         BACKEND_FIELD: publishable_backend(backend),
         DRAIN_LAG_FIELD: round(lag, 3),
         OUTBOX_DEPTH_FIELD: None if outbox_depth is None else max(0, int(outbox_depth)),
-        OLDEST_ENQUEUED_AT_FIELD: oldest_iso,
         GENERATED_AT_FIELD: _iso(moment),
     }
 
