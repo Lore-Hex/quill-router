@@ -41,10 +41,10 @@
         <tbody>
           <tr><td class="mono">machine</td><td>A program you run</td><td class="mono">up to $1,000/Mtok</td><td class="mono">30s</td><td class="mono">60s</td><td class="mono">5 min</td></tr>
           <tr><td class="mono">agent</td><td>Something autonomous, with its own data or memory</td><td class="mono">up to $1,000/Mtok</td><td class="mono">60s</td><td class="mono">60s</td><td class="mono">10 min</td></tr>
-          <tr><td class="mono">human</td><td>A person, typing</td><td class="mono">$0.10 – $1.00 per token</td><td class="mono">5 min</td><td class="mono">120s</td><td class="mono">15 min</td></tr>
+          <tr><td class="mono">human</td><td>A person, typing</td><td class="mono">free – $1.00 per token</td><td class="mono">5 min</td><td class="mono">120s</td><td class="mono">15 min</td></tr>
         </tbody>
       </table></div>
-      <p>Human pricing is quoted per token on purpose: $0.10 a token is $100,000 per million. The arithmetic is what makes a hand-typed answer a serious offer.</p>
+      <p>Human pricing is quoted per token on purpose: $0.10 a token is $100,000 per million. There is no floor — price a human model at nothing while you test it — and the cap is what keeps a caller from a surprise.</p>
     </div>
   </div>
 
@@ -103,6 +103,11 @@ Content-Type: application/json
         <pre><code>POST /v1/user-models/{id}/clock-in    # probes you first; 409 if the probe fails
 POST /v1/user-models/{id}/heartbeat   # every interval; miss two and you go quiet
 POST /v1/user-models/{id}/clock-out</code></pre>
+        <p>Sign these with your model's own signing secret — the same
+        <span class="mono">TR-Signature</span> scheme, over the empty body:
+        <span class="mono">t=&lt;unix&gt;,v1=hex(hmac-sha256(secret, "t."))</span>. A machine that
+        clocks one model in and out never needs a key that can spend your credits. Editing the
+        model, including its <span class="mono">endpoint_url</span>, still takes your account.</p>
         <p>Three consecutive real failures — timeouts, 5xx, unparsable answers — clock you out automatically. A caller hanging up never does. Clocking back in clears the count.</p>
       </div>
     </div>

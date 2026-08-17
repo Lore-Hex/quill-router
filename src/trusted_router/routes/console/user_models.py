@@ -7,7 +7,12 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from trusted_router.auth import SettingsDep
-from trusted_router.custom_model_billing import validate_custom_model_price
+from trusted_router.custom_model_billing import (
+    HUMAN_PRICE_MAX_MICRODOLLARS_PER_M,
+    HUMAN_PRICE_SUGGESTED_MICRODOLLARS_PER_M,
+    MACHINE_PRICE_MAX_MICRODOLLARS_PER_M,
+    validate_custom_model_price,
+)
 from trusted_router.custom_model_rules import missing_custom_model_requirements
 from trusted_router.routes.console._shared import ConsoleDep, render
 from trusted_router.serialization import user_model_owner_shape
@@ -265,6 +270,14 @@ def _render_page(
         page_subtitle="Operate your own machine, agent, or live human endpoint.",
         models=models,
         limit=USER_PROVIDED_MODEL_LIMIT_PER_USER,
+        # The form enforces the same caps the API does, so a price that would
+        # be rejected cannot be submitted in the first place.
+        price_cap_for_kind={
+            "machine": MACHINE_PRICE_MAX_MICRODOLLARS_PER_M,
+            "agent": MACHINE_PRICE_MAX_MICRODOLLARS_PER_M,
+            "human": HUMAN_PRICE_MAX_MICRODOLLARS_PER_M,
+        },
+        human_suggested_price=HUMAN_PRICE_SUGGESTED_MICRODOLLARS_PER_M,
         verification={
             "met": not missing,
             "missing_requirements": missing,

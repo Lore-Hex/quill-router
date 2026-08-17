@@ -5,7 +5,11 @@ from __future__ import annotations
 from trusted_router.money import token_cost_microdollars
 
 CUSTOM_MODEL_OWNER_SHARE_BASIS_POINTS = 7_000
-HUMAN_PRICE_MIN_MICRODOLLARS_PER_M = 100_000_000_000
+#: Kept as the SUGGESTED human price ($0.10/token) shown in the console. It is
+#: not a floor: a floor blocks the first thing anyone does with a human model,
+#: which is price it at nothing and try it. The cap is what actually protects
+#: callers from a surprise.
+HUMAN_PRICE_SUGGESTED_MICRODOLLARS_PER_M = 100_000_000_000
 HUMAN_PRICE_MAX_MICRODOLLARS_PER_M = 1_000_000_000_000
 MACHINE_PRICE_MAX_MICRODOLLARS_PER_M = 1_000_000_000
 USER_MODEL_PAYOUT_SETTLE_FIELD = "_trustedrouter_user_model_payout_microdollars"
@@ -33,10 +37,7 @@ def validate_custom_model_price(
 ) -> None:
     prices = (int(prompt_price), int(completion_price))
     if kind == "human":
-        valid = all(
-            HUMAN_PRICE_MIN_MICRODOLLARS_PER_M <= price <= HUMAN_PRICE_MAX_MICRODOLLARS_PER_M
-            for price in prices
-        )
+        valid = all(0 <= price <= HUMAN_PRICE_MAX_MICRODOLLARS_PER_M for price in prices)
     elif kind in {"machine", "agent"}:
         valid = all(0 <= price <= MACHINE_PRICE_MAX_MICRODOLLARS_PER_M for price in prices)
     else:

@@ -243,3 +243,44 @@ def sign_request_body(
     message = str(timestamp).encode("ascii") + b"." + body_bytes
     digest = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
     return f"t={timestamp},v1={digest}"
+
+
+#: How far a clock-call signature timestamp may drift, matching the window the
+#: owner's endpoint is told to enforce on requests coming the other way.
+CLOCK_SIGNATURE_SKEW_SECONDS = 300
+
+
+def verify_clock_signature(
+    secret: str,
+    header: str | None,
+    body_bytes: bytes,
+    *,
+    now: datetime,
+) -> None:
+    """Authenticate an availability call signed with the model's own secret.
+
+    The signature scheme is the one already documented for the other
+    direction (`t=<unix>,v1=hex(HMAC_SHA256(secret, "<t>." + body))`), so an
+    owner implements it once and uses it both ways. Availability calls carry
+    no body, so the empty body is signed — the timestamp is what makes each
+    signature distinct, and the skew window bounds replay.
+
+    Raises ``ValueError``; callers translate it into a 401.
+    """
+    if not header:
+        raise ValueError("missing signature")
+    timestamp_part, _, signature_part = header.strip().partition(",")
+    timestamp_text = timestamp_part.removeprefix("t=").strip()
+    provided = signature_part.removeprefix("v1=").strip().lower()
+    if not timestamp_text.isdigit() or not provided:
+        raise ValueError("malformed signature")
+    timestamp = int(timestamp_text)
+    if abs(int(now.timestamp()) - timestamp) > CLOCK_SIGNATURE_SKEW_SECONDS:
+        raise ValueError("signature timestamp is outside the accepted window")
+    expected = hmac.new(
+        secret.encode("utf-8"),
+        str(timestamp).encode("ascii") + b"." + body_bytes,
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(expected, provided):
+        raise ValueError("invalid signature")

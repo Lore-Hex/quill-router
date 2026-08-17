@@ -16,7 +16,7 @@ in TrustedRouter credits into your earnings wallet (never cash). Three kinds sha
 |---|---|---|---|
 | `machine` | a program | ≤ 1,000,000,000 ($1,000/Mtok) | 10 / 30 / 60 / 300 s |
 | `agent` | an autonomous agent | ≤ 1,000,000,000 | 10 / 60 / 60 / 600 s |
-| `human` | a person at a keyboard | 100,000,000,000 – 1,000,000,000,000 ($0.10 – $1.00 per token) | 10 / **300** / 120 / **900** s |
+| `human` | a person at a keyboard | 0 – 1,000,000,000,000 (up to $1.00 per token; $0.10 is typical) | 10 / **300** / 120 / **900** s |
 
 Your model is **not attested and not zero-data-retention**: TrustedRouter says so on your model's
 page and on its trust page. Prompts and outputs are sent to you; what you do with them is between

@@ -41,8 +41,10 @@
   <div class="panel-body">
     <form class="form" method="post" action="/console/user-models">
       <fieldset class="form-gate" {% if not verification.met %}disabled{% endif %}>
-        <label>Name <input name="name" required maxlength="120" placeholder="Community research agent"></label>
-        <label>Slug <input name="slug" maxlength="64" pattern="[a-z0-9][a-z0-9-]{1,62}[a-z0-9]" placeholder="research-agent"></label>
+        <label>Name <input name="name" required maxlength="120" placeholder="Community research agent">
+          <span class="field-help">Shown on your model's page. Any words you like.</span></label>
+        <label>Slug <input name="slug" maxlength="64" pattern="[a-z0-9][a-z0-9-]{1,62}[a-z0-9]" placeholder="research-agent">
+          <span class="field-help">The last part of the id callers type: <span class="mono">trustedrouter/user-<b id="slug-echo">research-agent</b></span></span></label>
         <label>Kind
           <select name="kind" required><option value="machine">Machine</option><option value="agent">Agent</option><option value="human">Human</option></select>
         </label>
@@ -50,14 +52,21 @@
         <label>Public identity
           <select name="display_identity"><option value="handle">Anonymous handle</option><option value="verified_name">Verified real name</option></select>
         </label>
-        <label>Handle <input name="display_name" required maxlength="120" placeholder="helpful-operator"></label>
-        <label>Endpoint base URL <input name="endpoint_url" type="url" required maxlength="2048" placeholder="https://owner.example/v1"></label>
-        <label>Upstream model id <input name="upstream_model_id" maxlength="256" placeholder="Defaults to the slug"></label>
-        <label>Endpoint API key <input name="endpoint_api_key" type="password" maxlength="8192" autocomplete="new-password"></label>
+        <label>Handle <input name="display_name" required maxlength="120" placeholder="helpful-operator">
+          <span class="field-help">Who callers see as the operator. Use a nickname, or switch the field above to your verified name.</span></label>
+        <label>Endpoint base URL <input name="endpoint_url" type="url" required maxlength="2048" placeholder="https://owner.example/v1">
+          <span class="field-help">Your HTTPS base URL. TrustedRouter posts to <span class="mono">&lt;base&gt;/chat/completions</span>. The reverse-harness prints one to paste.</span></label>
+        <label>Upstream model id <input name="upstream_model_id" maxlength="256" placeholder="Defaults to the slug">
+          <span class="field-help">What YOUR endpoint calls this model, sent back to you in the <span class="mono">model</span> field. Callers never see it. Leave blank unless your server needs a specific name (e.g. <span class="mono">llama3.1:8b</span>).</span></label>
+        <label>Endpoint API key <input name="endpoint_api_key" type="password" maxlength="8192" autocomplete="new-password">
+          <span class="field-help">Optional. Sent to you as <span class="mono">Authorization: Bearer …</span> so your endpoint can reject everyone else.</span></label>
         <label>Heartbeat interval seconds <input name="heartbeat_interval_seconds" type="number" min="5" max="3600"></label>
         <label>Maximum concurrency <input name="max_concurrency" type="number" min="1" max="100" value="4"></label>
-        <label>Prompt price (microdollars / Mtok) <input name="prompt_price_microdollars_per_million_tokens" type="number" min="0" value="0"></label>
-        <label>Completion price (microdollars / Mtok) <input name="completion_price_microdollars_per_million_tokens" type="number" min="0" value="0"></label>
+        <label>Prompt price (microdollars / Mtok) <input id="price-prompt" name="prompt_price_microdollars_per_million_tokens" type="number" min="0" value="0" data-price>
+          <span class="field-help" data-price-echo="price-prompt">free</span></label>
+        <label>Completion price (microdollars / Mtok) <input id="price-completion" name="completion_price_microdollars_per_million_tokens" type="number" min="0" value="0" data-price>
+          <span class="field-help" data-price-echo="price-completion">free</span></label>
+        <p class="field-help" id="price-bounds"></p>
         <label class="inline-check"><input name="supports_streaming" type="checkbox" value="true" checked> Owner endpoint supports streaming</label>
         <button class="btn primary" type="submit">Register model</button>
       </fieldset>
@@ -97,8 +106,10 @@
             <label>Replace endpoint API key <input name="endpoint_api_key" type="password" maxlength="8192" autocomplete="new-password" placeholder="Leave blank to keep {{ model.endpoint_key_hint or 'no key' }}"></label>
             <label>Heartbeat interval seconds <input name="heartbeat_interval_seconds" type="number" min="5" max="3600" value="{{ model.heartbeat_interval_seconds or '' }}"></label>
             <label>Maximum concurrency <input name="max_concurrency" type="number" min="1" max="100" value="{{ model.max_concurrency }}"></label>
-            <label>Prompt price (microdollars / Mtok) <input name="prompt_price_microdollars_per_million_tokens" type="number" min="0" value="{{ model.prompt_price_microdollars_per_million_tokens }}"></label>
-            <label>Completion price (microdollars / Mtok) <input name="completion_price_microdollars_per_million_tokens" type="number" min="0" value="{{ model.completion_price_microdollars_per_million_tokens }}"></label>
+            <label>Prompt price (microdollars / Mtok) <input name="prompt_price_microdollars_per_million_tokens" type="number" min="0" max="{{ price_cap_for_kind[model.kind] }}" value="{{ model.prompt_price_microdollars_per_million_tokens }}" data-price>
+              <span class="field-help" data-price-echo="">&nbsp;</span></label>
+            <label>Completion price (microdollars / Mtok) <input name="completion_price_microdollars_per_million_tokens" type="number" min="0" max="{{ price_cap_for_kind[model.kind] }}" value="{{ model.completion_price_microdollars_per_million_tokens }}" data-price>
+              <span class="field-help" data-price-echo="">&nbsp;</span></label>
             <label class="inline-check"><input name="supports_streaming" type="checkbox" value="true" {{ 'checked' if model.supports_streaming else '' }}> Owner endpoint supports streaming</label>
             <button class="btn primary" type="submit">Save</button>
           </fieldset>
@@ -114,4 +125,56 @@
     {% else %}<p class="empty">No user-provided models yet.</p>{% endif %}
   </div>
 </section>
+<script>
+  (function () {
+    const CAPS = {
+      machine: {{ price_cap_for_kind["machine"] }},
+      agent: {{ price_cap_for_kind["agent"] }},
+      human: {{ price_cap_for_kind["human"] }},
+    };
+    const SUGGESTED_HUMAN = {{ human_suggested_price }};
+    const form = document.querySelector('form[action="/console/user-models"]');
+    if (!form) return;
+    const kind = form.querySelector('select[name="kind"]');
+    const slug = form.querySelector('input[name="slug"]');
+    const slugEcho = document.getElementById("slug-echo");
+    const bounds = document.getElementById("price-bounds");
+    const prices = Array.from(form.querySelectorAll("input[data-price]"));
+
+    const money = (micro) => {
+      if (!Number.isFinite(micro) || micro <= 0) return "free";
+      const perToken = micro / 1e12;
+      if (perToken >= 0.01) return "$" + perToken.toFixed(2) + " per token";
+      const perM = micro / 1e6;
+      return "$" + perM.toFixed(perM >= 1 ? 2 : 4) + " per million tokens";
+    };
+
+    const render = () => {
+      const cap = CAPS[kind ? kind.value : "machine"] ?? CAPS.machine;
+      for (const input of prices) {
+        input.max = String(cap);
+        const echo = input.parentElement.querySelector("[data-price-echo]");
+        const value = Number(input.value);
+        if (echo) {
+          echo.textContent = value > cap
+            ? "over the cap for this kind"
+            : money(value);
+        }
+        input.setCustomValidity(value > cap ? "Above the cap for this kind." : "");
+      }
+      if (bounds) {
+        bounds.textContent =
+          (kind && kind.value === "human")
+            ? "Humans: anything from free up to " + money(cap) + ". " + money(SUGGESTED_HUMAN) + " is a typical rate for typing an answer by hand."
+            : "Machines and agents: anything from free up to " + money(cap) + ".";
+      }
+      if (slugEcho && slug) slugEcho.textContent = slug.value || "research-agent";
+    };
+
+    for (const input of prices) input.addEventListener("input", render);
+    if (kind) kind.addEventListener("change", render);
+    if (slug) slug.addEventListener("input", render);
+    render();
+  })();
+</script>
 {% endblock %}

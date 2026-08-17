@@ -5,7 +5,7 @@ import pytest
 from trusted_router.custom_model_billing import (
     CUSTOM_MODEL_OWNER_SHARE_BASIS_POINTS,
     HUMAN_PRICE_MAX_MICRODOLLARS_PER_M,
-    HUMAN_PRICE_MIN_MICRODOLLARS_PER_M,
+    HUMAN_PRICE_SUGGESTED_MICRODOLLARS_PER_M,
     MACHINE_PRICE_MAX_MICRODOLLARS_PER_M,
     custom_model_cost_microdollars,
     owner_share_microdollars,
@@ -22,15 +22,13 @@ from trusted_router.money import (
 @pytest.mark.parametrize("kind", ["human"])
 def test_human_price_bounds_include_both_edges(kind: str) -> None:
     validate_custom_model_price(
-        HUMAN_PRICE_MIN_MICRODOLLARS_PER_M,
+        HUMAN_PRICE_SUGGESTED_MICRODOLLARS_PER_M,
         HUMAN_PRICE_MAX_MICRODOLLARS_PER_M,
         kind=kind,
     )
     for prompt, completion in (
-        (HUMAN_PRICE_MIN_MICRODOLLARS_PER_M - 1, HUMAN_PRICE_MIN_MICRODOLLARS_PER_M),
-        (HUMAN_PRICE_MIN_MICRODOLLARS_PER_M, HUMAN_PRICE_MIN_MICRODOLLARS_PER_M - 1),
         (HUMAN_PRICE_MAX_MICRODOLLARS_PER_M + 1, HUMAN_PRICE_MAX_MICRODOLLARS_PER_M),
-        (HUMAN_PRICE_MIN_MICRODOLLARS_PER_M, HUMAN_PRICE_MAX_MICRODOLLARS_PER_M + 1),
+        (HUMAN_PRICE_SUGGESTED_MICRODOLLARS_PER_M, HUMAN_PRICE_MAX_MICRODOLLARS_PER_M + 1),
     ):
         with pytest.raises(ValueError, match="^custom_model_price_out_of_bounds$"):
             validate_custom_model_price(prompt, completion, kind=kind)
@@ -56,7 +54,7 @@ def test_unknown_custom_model_kind_is_rejected() -> None:
 
 def test_price_constants_have_the_documented_dollar_per_token_values() -> None:
     denominator = MICRODOLLARS_PER_DOLLAR * TOKENS_PER_MILLION
-    assert HUMAN_PRICE_MIN_MICRODOLLARS_PER_M / denominator == pytest.approx(0.10)
+    assert HUMAN_PRICE_SUGGESTED_MICRODOLLARS_PER_M / denominator == pytest.approx(0.10)
     assert HUMAN_PRICE_MAX_MICRODOLLARS_PER_M / denominator == pytest.approx(1.00)
     assert MACHINE_PRICE_MAX_MICRODOLLARS_PER_M / MICRODOLLARS_PER_DOLLAR == 1_000
     assert CUSTOM_MODEL_OWNER_SHARE_BASIS_POINTS == 7_000
@@ -106,3 +104,19 @@ def test_owner_and_tr_shares_conserve_every_microdollar(charge: int) -> None:
     trusted_router = charge - owner
     assert owner + trusted_router == charge
     assert trusted_router == (charge * 3_000 + 9_999) // 10_000
+
+
+def test_a_human_model_may_be_priced_at_anything_up_to_the_cap() -> None:
+    """Free and cheap human models are the point of testing one.
+
+    The floor used to reject exactly the price a person picks when they are
+    trying the thing out for the first time.
+    """
+    for price in (0, 1, 1_000, HUMAN_PRICE_SUGGESTED_MICRODOLLARS_PER_M):
+        validate_custom_model_price(price, price, kind="human")
+    with pytest.raises(ValueError):
+        validate_custom_model_price(
+            HUMAN_PRICE_MAX_MICRODOLLARS_PER_M + 1,
+            HUMAN_PRICE_MAX_MICRODOLLARS_PER_M,
+            kind="human",
+        )
