@@ -2261,7 +2261,36 @@ async def test_run_synthetic_once_fans_out_targets_and_probes(monkeypatch: pytes
         ),
     ]
 
-    def fake_probe(probe_type: str) -> Any:
+    # Fan-out is proven STRUCTURALLY (mutual handshake), not by wall clock:
+    # the old `elapsed < 0.18` bound flaked on CI at 0.1802s. Every unmetered
+    # probe registers itself and then WAITS until all of them are in flight at
+    # once, so a serialized implementation parks the first probe forever and
+    # asyncio.wait_for fails the test deterministically, while a concurrent one
+    # releases every probe the instant the last one arrives. There is no timing
+    # margin left to erode.
+    #
+    # Ten unmetered coroutines: tls_health + attestation_nonce +
+    # gateway_latency_phase_probes on each of the 3 targets, plus the single
+    # control-plane probe on the one target that configures a control plane URL.
+    # The six credit-bearing probes are deliberately EXCLUDED from the
+    # handshake: DEFAULT_SYNTHETIC_BILLING_CONCURRENCY caps them at 2 in flight
+    # (pinned by test_run_synthetic_once_bounds_credit_bearing_probe_concurrency),
+    # so making them join a ten-way rendezvous would deadlock by design.
+    unmetered_probe_count = 10
+    in_flight = 0
+    peak_in_flight = 0
+    all_in_flight = asyncio.Event()
+
+    async def rendezvous() -> None:
+        nonlocal in_flight, peak_in_flight
+        in_flight += 1
+        peak_in_flight = max(peak_in_flight, in_flight)
+        if in_flight >= unmetered_probe_count:
+            all_in_flight.set()
+        await asyncio.wait_for(all_in_flight.wait(), timeout=5)
+        in_flight -= 1
+
+    def fake_probe(probe_type: str, *, unmetered: bool = True) -> Any:
         async def run(
             _client: httpx.AsyncClient,
             target: SyntheticTarget,
@@ -2269,7 +2298,8 @@ async def test_run_synthetic_once_fans_out_targets_and_probes(monkeypatch: pytes
             monitor_region: str,
             **_kwargs: Any,
         ) -> SyntheticProbeSample:
-            await asyncio.sleep(0.03)
+            if unmetered:
+                await rendezvous()
             return _sample(
                 id=f"{probe_type}-{target.name}",
                 probe_type=probe_type,
@@ -2291,6 +2321,7 @@ async def test_run_synthetic_once_fans_out_targets_and_probes(monkeypatch: pytes
         monitor_region: str,
         **_kwargs: Any,
     ) -> list[SyntheticProbeSample]:
+        await rendezvous()
         return [
             _sample(
                 id=f"{probe_type}-{target.name}",
@@ -2307,10 +2338,13 @@ async def test_run_synthetic_once_fans_out_targets_and_probes(monkeypatch: pytes
     monkeypatch.setattr(
         probe_module, "control_plane_health_probe", fake_probe("control_plane_health")
     )
-    monkeypatch.setattr(probe_module, "openai_chat_pong_probe", fake_probe("openai_sdk_pong"))
-    monkeypatch.setattr(probe_module, "responses_pong_probe", fake_probe("responses_pong"))
+    monkeypatch.setattr(
+        probe_module, "openai_chat_pong_probe", fake_probe("openai_sdk_pong", unmetered=False)
+    )
+    monkeypatch.setattr(
+        probe_module, "responses_pong_probe", fake_probe("responses_pong", unmetered=False)
+    )
 
-    started = time.perf_counter()
     samples = await run_synthetic_once(
         Settings(
             environment="test",
@@ -2320,13 +2354,14 @@ async def test_run_synthetic_once_fans_out_targets_and_probes(monkeypatch: pytes
         monitor_region="us-central1",
         api_key="sk-tr-test",
     )
-    elapsed = time.perf_counter() - started
 
     assert len(samples) == 19
     assert {sample.target for sample in samples} == {"canonical", "us-east4", "europe-west4"}
-    # Serial execution would take about 13 * 30ms. Keep enough slack for busy CI
-    # while still proving a single slow target no longer blocks the whole pass.
-    assert elapsed < 0.18
+    # Every unmetered probe across every target was in flight at the same
+    # instant. A pass that serialized targets, or serialized probes within a
+    # target, could never reach this count — it would have timed out in
+    # rendezvous() above rather than reaching this assertion.
+    assert peak_in_flight == unmetered_probe_count
 
 
 @pytest.mark.asyncio
