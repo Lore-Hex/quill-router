@@ -54,13 +54,15 @@ INSERT_EVENT_SQL = (
 
 # The lag read, published in /status.json as `analytics.drain_lag_seconds`.
 #
-# Verbatim the statement the drain itself runs
-# (`clickhouse.ingest_operational_outbox_postgres.SELECT_OLDEST_SQL`), so the
-# number an outside observer reads and the number `backlog_alarm` fires on
-# cannot drift into meaning different things. One statement for the whole
-# table, not one per shard: this runs on the request path behind the status
-# cache, and 32 round trips per poll is what the drain's own metric used to
-# cost before it was collapsed.
+# THE definition of that statement, for both readers: the drain imports this
+# name as its own `SELECT_OLDEST_SQL`
+# (`clickhouse.ingest_operational_outbox_postgres`), so the number an outside
+# observer reads and the number `backlog_alarm` fires on are the same query by
+# construction rather than by two literals and a comment asking politely.
+#
+# One statement for the whole table, not one per shard: this runs on the
+# request path behind the status cache, and 32 round trips per poll is what the
+# drain's own metric used to cost before it was collapsed.
 #
 # Backed by tr_operational_analytics_outbox_enqueued_at_idx, so it is an index
 # seek and its cost does not grow with the backlog -- which matters precisely
@@ -77,10 +79,7 @@ class PostgresOperationalAnalyticsOutbox:
 
     def __init__(
         self,
-        # Widened from `Callable[[Any], None]` because the lag read below
-        # returns a value; `PostgresStore._run_transaction` is generic in the
-        # operation's return type and satisfies both shapes.
-        run_transaction: Callable[[Callable[[Any], Any]], Any],
+        run_transaction: Callable[[Callable[[Any], None]], Any],
         *,
         shard_count: int = OPERATIONAL_ANALYTICS_OUTBOX_SHARDS,
     ) -> None:
@@ -133,7 +132,7 @@ class PostgresOperationalAnalyticsOutbox:
             payload=payload,
         )
 
-    def oldest_enqueued_at(self) -> dt.datetime | None:
+    def oldest_enqueued_at_tx(self, conn: Any) -> dt.datetime | None:
         """``enqueued_at`` of the oldest undelivered row, or ``None`` if empty.
 
         ``None`` is fully drained, not unknown: rows are deleted only after
@@ -141,17 +140,18 @@ class PostgresOperationalAnalyticsOutbox:
         NOT swallowed here -- the caller has to be able to tell "I looked and
         the queue is empty" from "I could not look", and a backend that
         returned ``None`` for both would publish an outage as perfect health.
+
+        Takes a CONNECTION rather than running its own transaction, like every
+        other ``*_tx`` method here. That is what lets the only caller --
+        ``PostgresStore.operational_analytics_outbox_freshness`` -- put the read
+        inside a bounded connection with a `statement_timeout`, which it must,
+        because this one runs on the public /status.json path.
         """
-
-        def read(conn: Any) -> dt.datetime | None:
-            row = conn.execute(SELECT_OLDEST_ENQUEUED_AT_SQL).fetchone()
-            if row is None or row[0] is None:
-                return None
-            value: dt.datetime = row[0]
-            return value if value.tzinfo else value.replace(tzinfo=dt.UTC)
-
-        result: dt.datetime | None = self._run_transaction(read)
-        return result
+        row = conn.execute(SELECT_OLDEST_ENQUEUED_AT_SQL).fetchone()
+        if row is None or row[0] is None:
+            return None
+        value: dt.datetime = row[0]
+        return value if value.tzinfo else value.replace(tzinfo=dt.UTC)
 
     def _enqueue(
         self,

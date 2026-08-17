@@ -334,21 +334,27 @@ def test_workflow_needs_no_cloud_credentials() -> None:
     assert "clickhouse.check_fleet_analytics_freshness" in workflow
 
 
-def test_workflow_pages_on_a_schedule_now_that_every_cloud_publishes() -> None:
-    """This was the only reason the schedule was withheld.
+def test_workflow_still_does_not_page_before_the_field_is_deployed() -> None:
+    """Publishing the field in this repo is not the same as serving it.
 
     The predecessor shipped without a `schedule:` because nothing published the
-    field yet, and a daily issue about an undeployed field trains people to
-    ignore the job. The field is now published by every deployment (one
-    codebase, one wiring in `routes/public.py`), so the schedule is honest.
-    `tests/test_analytics_freshness_registry.py` pins the fleet coverage.
+    section. That is still true of the LIVE fleet: merging main auto-deploys
+    the GCP control plane only, while AWS-EU and Azure are hand-run scripts and
+    are already behind. A schedule enabled in the same commit as the publisher
+    would file an issue every morning about clouds nobody redeployed, and a
+    check that cries wolf is a check people learn to ignore.
+
+    The structural version of this assertion, on parsed YAML, is in
+    `tests/test_analytics_freshness_registry.py`; this one keeps the
+    predecessor's own guard alive where the predecessor's tests live.
     """
     workflow = WORKFLOW.read_text()
 
-    # Matched at the two-space indent a real trigger sits at under `on:`.
-    assert "\n  schedule:\n" in workflow
+    # Matched at the two-space indent a real trigger sits at under `on:`, so
+    # the enabling instructions in the header do not satisfy it.
+    assert "\n  schedule:" not in workflow
     assert "\n  workflow_dispatch:" in workflow
-    assert "OPERATOR STEPS BEFORE THE SCHEDULE IS ENABLED" not in workflow
+    assert "OPERATOR STEPS BEFORE THE SCHEDULE IS ENABLED" in workflow
 
 
 def test_workflow_issue_names_the_never_installed_case() -> None:
@@ -400,10 +406,18 @@ def test_aws_alias_still_accepts_a_bare_status_url(monkeypatch) -> None:
     assert fetched == ["https://tr-eu.example/status.json"] * 2
 
 
-def test_aws_alias_refuses_to_be_used_as_a_cloud_selector() -> None:
-    """`--cloud` on the alias would quietly widen an AWS-only entrypoint."""
+@pytest.mark.parametrize("spelling", [["--cloud", "gcp"], ["--cloud=gcp"]])
+def test_aws_alias_refuses_to_be_used_as_a_cloud_selector(spelling: list[str]) -> None:
+    """`--cloud` on the alias would quietly widen an AWS-only entrypoint.
+
+    BOTH spellings. argparse treats `--cloud=gcp` and `--cloud gcp` as the same
+    option, so a guard that tested only for the bare token `--cloud` let the
+    joined form straight through -- and since this alias appends the caller's
+    arguments AFTER its own `--cloud aws`, the result was a two-cloud run from
+    an entrypoint whose name promises one.
+    """
     with pytest.raises(SystemExit):
-        aws_check.main(["--cloud", "gcp"])
+        aws_check.main(spelling)
 
 
 def test_aws_alias_fails_when_aws_publishes_nothing(monkeypatch) -> None:

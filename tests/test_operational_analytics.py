@@ -972,6 +972,7 @@ class _SnapshotDatabase:
         self._rows_by_shard = rows_by_shard
         self.queries: list[tuple[str, dict[str, Any]]] = []
         self.multi_use: list[bool] = []
+        self.timeouts: list[float | None] = []
 
     def snapshot(self, **kwargs: Any) -> Any:
         self.multi_use.append(bool(kwargs.get("multi_use")))
@@ -990,7 +991,9 @@ class _SnapshotDatabase:
                 *,
                 params: dict[str, Any],
                 param_types: dict[str, Any],
+                **kwargs: Any,
             ) -> list[list[Any]]:
+                outer.timeouts.append(kwargs.get("timeout"))
                 outer.queries.append((sql, params))
                 stamps = sorted(outer._rows_by_shard.get(int(params["shard"]), []))
                 return [[stamps[0]]] if stamps else []
@@ -1038,3 +1041,30 @@ def test_spanner_oldest_enqueued_at_returns_utc_aware_timestamps() -> None:
     assert result is not None
     assert result.tzinfo is not None
     assert result == dt.datetime(2026, 8, 2, 3, 0, tzinfo=dt.UTC)
+
+
+def test_spanner_oldest_enqueued_at_spends_one_budget_across_all_shards() -> None:
+    """The bound is on the CALL, not on each of the 32 statements.
+
+    This read runs on the public /status.json path inside an async handler, so
+    the number that matters is how long the whole thing can hold the event
+    loop. Handing each shard a fresh copy of the timeout would make the real
+    ceiling 32x the number written down -- a bound in name only.
+    """
+    database = _SnapshotDatabase({0: [dt.datetime(2026, 8, 2, 3, 0, tzinfo=dt.UTC)]})
+    outbox = SpannerOperationalAnalyticsOutbox(database, _ParamTypes())
+
+    outbox.oldest_enqueued_at(timeout=5.0)
+
+    assert all(timeout is not None and timeout <= 5.0 for timeout in database.timeouts)
+    assert database.timeouts == sorted(database.timeouts, reverse=True)
+
+
+def test_spanner_oldest_enqueued_at_is_unbounded_only_when_asked_to_be() -> None:
+    """The drain has no deadline; only the status path does."""
+    database = _SnapshotDatabase({})
+    outbox = SpannerOperationalAnalyticsOutbox(database, _ParamTypes())
+
+    outbox.oldest_enqueued_at()
+
+    assert database.timeouts == [None] * OPERATIONAL_ANALYTICS_OUTBOX_SHARDS

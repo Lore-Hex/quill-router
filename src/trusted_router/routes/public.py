@@ -2133,10 +2133,17 @@ def _merge_analytics_status(payload: dict[str, Any]) -> dict[str, Any]:
     whenever the database is unhappy is a signal that is quietest exactly when
     it matters. A read failure publishes `available: false` with a reason
     instead, and never the last good number -- a stale-but-plausible lag is
-    indistinguishable from a healthy one.
+    indistinguishable from a healthy one. That claim is why `_status_snapshot`
+    calls this function on its stale-cache fallback paths TOO: those re-serve
+    the previous payload wholesale, and without a re-read they would re-serve
+    the previous drain lag with it, which is precisely the last good number.
 
     Runs inside `_status_snapshot`, so it is behind `STATUS_SNAPSHOT_CACHE_SECONDS`
-    and costs one index seek per cache miss rather than one per request.
+    and costs one bounded index seek per cache miss rather than one per request.
+    The store side caps both the pool wait and the statement (3s, as
+    `readiness_check` does) and degrades to `unavailable`: this runs on an
+    async request path, where an unbounded blocking read would stop the event
+    loop rather than occupy one thread.
     """
     reading = None
     try:
@@ -2167,7 +2174,13 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
         except Exception:
             log.exception("public_analytics_snapshot_read_failed name=status_inputs")
             if _STATUS_CACHE is not None:
-                return _STATUS_CACHE[1]
+                # The rest of the payload may be served stale; the analytics
+                # section may NOT. Re-read it, so this path publishes the drain
+                # lag as of now (or `unavailable`) rather than whatever the
+                # last successful build happened to see. A stale lag is the one
+                # value here that is worse than no value: it is a plausible
+                # small number that ages into a lie while the outbox grows.
+                return _merge_analytics_status(_STATUS_CACHE[1])
         else:
             if precomputed is not None:
                 try:
@@ -2200,7 +2213,9 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
     except Exception:
         if settings.environment != "test" and _STATUS_CACHE is not None:
             log.exception("status_live_fallback_failed_serving_stale")
-            return _STATUS_CACHE[1]
+            # Same rule as the precomputed path above: everything else may be
+            # stale, the drain lag may not.
+            return _merge_analytics_status(_STATUS_CACHE[1])
         raise
     payload = _merge_client_observed_status(payload, settings=settings)
     payload = _merge_analytics_status(payload)

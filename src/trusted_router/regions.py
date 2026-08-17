@@ -73,6 +73,34 @@ MULTICLOUD_REGION_GEO: dict[str, RegionGeo] = {
     ),
 }
 
+#: Cloud a bare, un-namespaced region id belongs to. GCP was here first, so its
+#: regions are spelled `us-central1` rather than `gcp-us-central1`.
+DEFAULT_REGION_CLOUD = "gcp"
+
+
+def cloud_for_region(region: str) -> str:
+    """Which cloud a configured region id names.
+
+    The tables answer first. The PREFIX fallback is the part that matters: a
+    region id on a cloud nobody has added a `MULTICLOUD_REGION_GEO` row for is
+    still attributable, because these ids are namespaced by cloud on purpose
+    (see the comment above). Callers that derive a fleet-coverage requirement
+    from settings — `trusted_router.operational_analytics_fleet` — need a
+    fourth cloud to be visible the moment it appears in ANY declaration, not
+    only once someone remembers to write it down in every table.
+
+    An id with no namespace at all is GCP, which is the conservative answer:
+    GCP is already a known deployment, so a misparse here can only fail to
+    invent a cloud, never invent a fake one.
+    """
+    geo = MULTICLOUD_REGION_GEO.get(region)
+    if geo is not None:
+        return geo.cloud
+    if region in GCP_REGION_GEO:
+        return DEFAULT_REGION_CLOUD
+    prefix, _, remainder = region.partition("-")
+    return prefix if prefix and remainder else DEFAULT_REGION_CLOUD
+
 
 def configured_regions(settings: Settings) -> list[str]:
     regions = [item.strip() for item in settings.regions.split(",") if item.strip()]

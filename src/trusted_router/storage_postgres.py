@@ -163,6 +163,15 @@ _RETRYABLE_ROLLBACK_SQLSTATES = frozenset(
 )
 
 
+#: Hard cap on the /status.json outbox-lag read, applied to BOTH the pool wait
+#: and the statement. Matches `readiness_check`'s 3s, and for the same reason:
+#: a public page must degrade rather than wait. It is far above the read's real
+#: cost -- an index seek on tr_operational_analytics_outbox_enqueued_at_idx --
+#: so hitting it means the database is not answering, which is exactly the
+#: state that should publish `unreachable` instead of hanging the event loop.
+OUTBOX_FRESHNESS_TIMEOUT_SECONDS = 3.0
+
+
 class _IamTokenConnectionPool(ConnectionPool):
     """Connection pool that obtains a new password for every connection.
 
@@ -4186,13 +4195,41 @@ class PostgresStore:
         costs one index seek behind the status cache and needs no new IAM, no
         new unit, and no reachability into the VPC.
 
-        A failed read is `unreachable`, never an empty queue.
+        BOUNDED ON BOTH AXES, the same way `readiness_check` above is, and for
+        a sharper reason: this read sits on the PUBLIC /status.json build path,
+        inside an async handler. A blocking call there does not tie up one
+        worker thread, it stops the event loop, so an unbounded wait on a hung
+        DSQL cluster would take the status page -- and every other request this
+        process is serving -- down with it. Two separate waits have to be
+        capped, because either one alone is unbounded:
+
+        * `connection(timeout=)`  -- the wait for a pool slot. An exhausted or
+          unreachable pool blocks here having issued no SQL at all, so a
+          statement timeout never gets the chance to fire.
+        * `SET LOCAL statement_timeout` -- the server-side cap on the query,
+          which is what covers a connection that is up but a cluster that is
+          not answering.
+
+        Deliberately NOT run through `_run_transaction`: that retries
+        serialization failures, and a retry loop is the one thing that turns a
+        bounded read back into an unbounded one.
+
+        Every failure -- timeout included -- degrades to `unreachable`. It must
+        never raise: the caller publishes this section unconditionally, and an
+        exception escaping here would drop the key, which the fleet checker
+        reads as "this deployment is running code too old to publish drain
+        lag" and answers by telling somebody to redeploy a healthy service.
         """
         outbox = self._operational_analytics_outbox
         if outbox is None:
             return OutboxFreshness.unavailable(BACKEND_POSTGRES, REASON_NOT_CONFIGURED)
         try:
-            oldest = outbox.oldest_enqueued_at()
+            with self._pool.connection(timeout=OUTBOX_FRESHNESS_TIMEOUT_SECONDS) as conn:
+                with conn.transaction():
+                    conn.execute(
+                        f"SET LOCAL statement_timeout = '{OUTBOX_FRESHNESS_TIMEOUT_SECONDS:g}s'"
+                    )
+                    oldest = outbox.oldest_enqueued_at_tx(conn)
         except Exception as exc:
             log.exception(
                 "postgres.operational_analytics_outbox_freshness_failed",

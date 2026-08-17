@@ -80,12 +80,40 @@ REASON_UNREACHABLE = "unreachable"
 #: delivered" publish the same 0 rows and mean opposite things.
 REASON_NOT_CONFIGURED = "not_configured"
 
+#: The ONLY reasons that may appear on the public page.  This is a privacy
+#: boundary, not tidiness, and it is a clamp rather than an assertion because
+#: it protects an UNCREDENTIALED page from a value produced far away from it.
+#:
+#: Both Postgres and Spanner backends build ``str(exc)[:500]`` on the line above
+#: their ``OutboxFreshness.unavailable(...)`` call, for the log.  Passing that
+#: string one field to the right -- a plausible, tidy-looking edit -- would put
+#: DSQL/Spanner error text on ``/status.json``: hostnames, VPC addresses, IAM
+#: role names, SQLSTATEs, sometimes a fragment of the statement.  The fleet
+#: checker then formats the same value into a PUBLIC GitHub issue body.  So the
+#: narrowing happens HERE, at the last function before the dict, where no
+#: backend can route around it.  Same contract, and the same reason, as
+#: :func:`trusted_router.client_reliability.client_observed_status_section`,
+#: which narrows every value it publishes.
+PUBLISHABLE_REASONS: frozenset[str] = frozenset(
+    {REASON_NO_DATA, REASON_UNREACHABLE, REASON_NOT_CONFIGURED}
+)
+
 #: ``backend`` values.  The column the lag comes from differs per backend --
 #: Spanner stamps ``commit_ts``, Postgres/DSQL defaults ``enqueued_at`` -- so
 #: publishing which one answered is what lets an operator read the right table.
 BACKEND_SPANNER = "spanner"
 BACKEND_POSTGRES = "postgres"
 BACKEND_MEMORY = "memory"
+#: A backend name the publisher does not recognise.  Narrowed for the same
+#: reason as :data:`PUBLISHABLE_REASONS` above -- every value on the public page
+#: comes from a closed vocabulary -- and it is not silently dropped, because the
+#: fleet checker matches this field against the cloud's expected backend and a
+#: missing field would read as a plane that answered correctly.
+BACKEND_UNKNOWN = "unknown"
+
+PUBLISHABLE_BACKENDS: frozenset[str] = frozenset(
+    {BACKEND_SPANNER, BACKEND_POSTGRES, BACKEND_MEMORY}
+)
 
 
 @dataclass(frozen=True)
@@ -119,6 +147,23 @@ def _iso(value: dt.datetime) -> str:
     return _utc(value).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def publishable_reason(reason: str | None) -> str:
+    """Narrow any reason to the published vocabulary.
+
+    Anything unrecognised becomes ``unreachable``, which is the honest summary
+    of every way a backend can fail to answer, and is the one direction that
+    cannot leak: a reason this module has never heard of did not come from this
+    module's own constants, so it came from somewhere that may have had an
+    exception, a DSN, or a hostname in scope.  See :data:`PUBLISHABLE_REASONS`.
+    """
+    return reason if reason in PUBLISHABLE_REASONS else REASON_UNREACHABLE
+
+
+def publishable_backend(backend: str | None) -> str:
+    """Narrow any backend name to the published vocabulary."""
+    return backend if backend in PUBLISHABLE_BACKENDS else BACKEND_UNKNOWN
+
+
 def analytics_status_unavailable(reason: str = REASON_NO_DATA) -> dict[str, Any]:
     """The section when the outbox could not be read.
 
@@ -126,8 +171,11 @@ def analytics_status_unavailable(reason: str = REASON_NO_DATA) -> dict[str, Any]
     state there is -- everything ever enqueued has been delivered -- and
     collapsing "I could not look" into it would turn a broken database
     connection into a green check.
+
+    Every caller that publishes an unavailable section goes through here, which
+    is why the reason clamp lives here.
     """
-    return {AVAILABLE_FIELD: False, REASON_FIELD: reason}
+    return {AVAILABLE_FIELD: False, REASON_FIELD: publishable_reason(reason)}
 
 
 def analytics_status_section(
@@ -159,7 +207,7 @@ def analytics_status_section(
         oldest_iso = _iso(oldest)
     return {
         AVAILABLE_FIELD: True,
-        BACKEND_FIELD: backend,
+        BACKEND_FIELD: publishable_backend(backend),
         DRAIN_LAG_FIELD: round(lag, 3),
         OUTBOX_DEPTH_FIELD: None if outbox_depth is None else max(0, int(outbox_depth)),
         OLDEST_ENQUEUED_AT_FIELD: oldest_iso,
@@ -180,6 +228,12 @@ def analytics_status_from_reading(
     branch is reserved for a deployment running code that does not publish the
     field at all, and conflating the two would tell an operator to redeploy
     when the real problem is the database.
+
+    ``reading.reason`` is NOT trusted here: it goes through
+    :func:`analytics_status_unavailable`, which narrows it.  Both backends
+    build a truncated exception string one line above the call that produces
+    this reading, so "publish whatever the store said" is one careless edit
+    away from putting database error text on an uncredentialed page.
     """
     if reading is None:
         return analytics_status_unavailable(REASON_UNREACHABLE)

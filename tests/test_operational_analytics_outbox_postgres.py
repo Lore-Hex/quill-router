@@ -1213,7 +1213,7 @@ def test_oldest_enqueued_at_reads_the_head_of_the_real_table() -> None:
             (index, ACTIVITY_EVENT_KIND, f"gen-{index}", "{}", enqueued_at),
         )
 
-    assert outbox.oldest_enqueued_at() == oldest
+    assert outbox.oldest_enqueued_at_tx(conn) == oldest
 
 
 def test_oldest_enqueued_at_is_none_on_a_fully_drained_table() -> None:
@@ -1221,19 +1221,40 @@ def test_oldest_enqueued_at_is_none_on_a_fully_drained_table() -> None:
     conn = _real_schema_conn()
     outbox = PostgresOperationalAnalyticsOutbox(lambda operation: operation(conn))
 
-    assert outbox.oldest_enqueued_at() is None
+    assert outbox.oldest_enqueued_at_tx(conn) is None
 
 
 def test_oldest_enqueued_at_propagates_read_failures_instead_of_returning_none() -> None:
-    """A swallowed exception would publish a dead database as a drained queue."""
+    """A swallowed exception would publish a dead database as a drained queue.
 
-    def explode(_operation: Any) -> Any:
-        raise RuntimeError("dsql: connection refused")
+    The bound and the degrade-to-unavailable live in
+    `PostgresStore.operational_analytics_outbox_freshness`, which owns the
+    connection. This layer must stay loud, or the store cannot tell "the queue
+    is empty" from "the read failed".
+    """
 
-    outbox = PostgresOperationalAnalyticsOutbox(explode)
+    class _Exploding:
+        def execute(self, *_args: Any, **_kwargs: Any) -> Any:
+            raise RuntimeError("dsql: connection refused")
+
+    outbox = PostgresOperationalAnalyticsOutbox(lambda operation: operation(None))
 
     with pytest.raises(RuntimeError):
-        outbox.oldest_enqueued_at()
+        outbox.oldest_enqueued_at_tx(_Exploding())
+
+
+def test_the_lag_read_takes_a_connection_so_its_caller_can_bound_it() -> None:
+    """Why this is a `_tx` method and not a self-transacting one.
+
+    It runs on the public /status.json build path inside an async handler,
+    where a blocking read that waits without limit stops the event loop rather
+    than one worker thread. The caller therefore has to be able to wrap it in a
+    connection with a pool timeout and a `SET LOCAL statement_timeout`, exactly
+    as `PostgresStore.readiness_check` does -- and it can only do that if the
+    statement runs on a connection the caller owns.
+    """
+    assert not hasattr(PostgresOperationalAnalyticsOutbox, "oldest_enqueued_at")
+    assert hasattr(PostgresOperationalAnalyticsOutbox, "oldest_enqueued_at_tx")
 
 
 def test_lag_read_is_an_index_seek_and_never_a_count() -> None:
@@ -1252,3 +1273,21 @@ def test_lag_read_is_an_index_seek_and_never_a_count() -> None:
         "tr_operational_analytics_outbox_enqueued_at_idx" in statement
         for statement in _outbox_schema_statements()
     )
+
+
+def test_the_drain_and_the_status_page_run_the_identical_lag_statement() -> None:
+    """One object, not two literals kept equal by a comment.
+
+    The published `analytics.drain_lag_seconds` is only worth anything because
+    it is the same measurement the drain's own `backlog_alarm` fires on. Two
+    copies of the statement could drift while both kept returning a plausible
+    number, and only their MEANINGS would part company -- a defect with no
+    symptom. The identity check, rather than an equality check, is what makes
+    re-typing the literal a failure instead of a coincidence away from passing.
+    """
+    from clickhouse.ingest_operational_outbox_postgres import SELECT_OLDEST_SQL
+    from trusted_router.storage_postgres_operational_analytics_outbox import (
+        SELECT_OLDEST_ENQUEUED_AT_SQL,
+    )
+
+    assert SELECT_OLDEST_SQL is SELECT_OLDEST_ENQUEUED_AT_SQL

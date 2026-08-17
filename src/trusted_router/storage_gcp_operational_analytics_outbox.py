@@ -15,6 +15,7 @@ unchanged.  What stays is the Spanner-specific writer.
 from __future__ import annotations
 
 import datetime as dt
+import time
 from typing import Any
 
 from trusted_router.storage_gcp_codec import json_body
@@ -107,7 +108,7 @@ class SpannerOperationalAnalyticsOutbox:
             payload=payload,
         )
 
-    def oldest_enqueued_at(self) -> dt.datetime | None:
+    def oldest_enqueued_at(self, *, timeout: float | None = None) -> dt.datetime | None:
         """Commit timestamp of the oldest undelivered row, or ``None`` if empty.
 
         Spanner's column is ``commit_ts``, not ``enqueued_at`` -- the method is
@@ -125,16 +126,37 @@ class SpannerOperationalAnalyticsOutbox:
         (``clickhouse.ingest_operational_outbox.oldest_commit_ts``); keeping
         them identical is what stops the published number and the drain's own
         ``backlog_alarm`` from meaning different things.
+
+        ``timeout`` is a budget for the WHOLE call, not per statement, and that
+        distinction is the point. This runs on the public /status.json path, in
+        an async handler, where a blocking wait stops the event loop rather
+        than one thread. 32 shard reads each given a 3s timeout is a 96s worst
+        case -- a per-statement bound that is not a bound. So the deadline is
+        set once and each statement gets whatever is LEFT of it, and running
+        out raises rather than returning a partial answer: a minimum taken over
+        the shards that happened to reply before the clock expired is not the
+        oldest row, it is a smaller number that would publish as better health.
         """
+        deadline = None if timeout is None else time.monotonic() + timeout
         oldest: dt.datetime | None = None
         with self._database.snapshot(multi_use=True) as snapshot:
             for shard in range(self._shard_count):
+                kwargs: dict[str, Any] = {}
+                if deadline is not None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError(
+                            "operational analytics outbox lag read exceeded "
+                            f"{timeout}s after {shard} of {self._shard_count} shards"
+                        )
+                    kwargs["timeout"] = remaining
                 rows = list(
                     snapshot.execute_sql(
                         "SELECT commit_ts FROM tr_operational_analytics_outbox "
                         "WHERE shard=@shard ORDER BY commit_ts LIMIT 1",
                         params={"shard": shard},
                         param_types={"shard": self._pt.INT64},
+                        **kwargs,
                     )
                 )
                 if not rows or rows[0][0] is None:

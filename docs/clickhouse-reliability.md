@@ -246,14 +246,35 @@ each of the 32 shards on the key prefix. `outbox_depth` is deliberately
 optional — `count(*)` over a large backlog is the expensive question and the
 lag already answers the important one.
 
-`.github/workflows/check-analytics-freshness.yml` reads it daily, with no
-credentials, for **every** cloud in
+`.github/workflows/check-analytics-freshness.yml` reads it with no credentials
+for **every** cloud in
 `src/trusted_router/operational_analytics_fleet.py:ANALYTICS_FRESHNESS_FLEET`.
-`tests/test_analytics_freshness_registry.py` fails if that registry and
-`byok_v1_attestations.STANDALONE_CLOUDS` disagree in either direction, so a
-fourth deployment cannot exist without a drain-freshness signal or a written
-reason it has none. Missing section, unavailable, stale, unreachable, and
-over-lag are all failures — never skips.
+`tests/test_analytics_freshness_registry.py` fails if that registry disagrees,
+in either direction, with the union of every table in this repo that declares a
+deployment (`deployment_sources()`: the BYOK attestation tables,
+`regions.MULTICLOUD_REGION_GEO`, and the `external_live_regions` /
+`marketing_regions` settings), so a fourth deployment cannot exist without a
+drain-freshness signal or a written reason it has none — whichever of those
+tables it lands in first. Missing section, unavailable, stale, unreachable,
+over-lag, and a plane answering with the wrong storage backend are all
+failures — never skips.
+
+**It ships without a `schedule:` trigger, on purpose.** Publishing the field in
+this repo is not the same as serving it: merging main auto-deploys the GCP
+control plane only, while AWS-EU and Azure are hand-run scripts. A cron enabled
+before those deploys land files an issue every morning about clouds nobody
+redeployed, and a check that cries wolf is a check people learn to ignore (the
+same failure the client-telemetry check's `CANARY_COUNT_GATE_FROM` ramp-up
+guard exists to avoid). Deploy all three, confirm each `/status.json` returns an
+`analytics` object, run the job once by `workflow_dispatch`, then add the one
+line the workflow header spells out.
+
+Two states are neither pass nor fail, and are printed as `(unchecked)` on every
+run rather than skipped: a cloud with no public status page (`reason=`), and a
+cloud that legitimately runs no outbox (`expects_outbox=False` — Azure today,
+whose deploy script sets no `TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED`). The
+second one becomes a **failure** the day that cloud publishes a real lag, which
+is the day it needs watching.
 
 To ask about one cloud during an incident:
 

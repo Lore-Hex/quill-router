@@ -50,7 +50,12 @@ def main(argv: list[str] | None = None) -> int:
     already names a cloud is passed through.
     """
     args = list(argv or [])
-    if "--cloud" in args:
+    # Both spellings. argparse accepts `--cloud=gcp` and `--cloud gcp`
+    # identically, so a guard that matched only the separated form let the
+    # joined one through -- and it would have been APPENDED after this
+    # function's own `--cloud aws`, silently widening an AWS-only entrypoint
+    # into a two-cloud one whose name says otherwise.
+    if any(arg == "--cloud" or arg.startswith("--cloud=") for arg in args):
         raise SystemExit(
             "check_aws_analytics_freshness is the AWS-only alias; to select "
             "clouds use `python3 -m clickhouse.check_fleet_analytics_freshness "

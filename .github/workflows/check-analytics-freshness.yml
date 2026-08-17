@@ -20,9 +20,13 @@ name: Check fleet analytics freshness
 # pointed at one hardcoded URL has exactly that failure mode: it is green about
 # the cloud somebody happened to point it at. The URL list is therefore
 # `trusted_router.operational_analytics_fleet.ANALYTICS_FRESHNESS_FLEET`, and
-# `tests/test_analytics_freshness_registry.py` fails if that registry and
-# `byok_v1_attestations.STANDALONE_CLOUDS` disagree in either direction -- a
-# fourth cloud cannot be deployed without a drain-freshness signal.
+# `tests/test_analytics_freshness_registry.py` fails if that registry disagrees
+# in either direction with the UNION of every table in this repo that declares
+# a deployment (`operational_analytics_fleet.deployment_sources()`: the BYOK
+# attestation tables, MULTICLOUD_REGION_GEO, and the external_live_regions /
+# marketing_regions settings). A fourth cloud cannot be deployed without a
+# drain-freshness signal, and it does not matter which of those tables somebody
+# happens to edit first.
 #
 # WHY IT READS /status.json AND NOT THE NODES
 # -------------------------------------------
@@ -57,6 +61,45 @@ name: Check fleet analytics freshness
 # this is an end-to-end statement about the whole pipeline and it is strictly
 # stronger than a ClickHouse timestamp -- it cannot be satisfied by a drain that
 # is writing nowhere.
+#
+# OPERATOR STEPS BEFORE THE SCHEDULE IS ENABLED
+# ---------------------------------------------
+# The `schedule:` trigger is intentionally absent, exactly as it was in this
+# job's single-cloud predecessor and for the same reason one layer up.
+#
+# PRECONDITION: every cloud in ANALYTICS_FRESHNESS_FLEET must actually be
+# SERVING the code that publishes the `analytics` section. Merging to main is
+# not that. Merging auto-deploys the GCP control plane only (deploy.yml);
+# AWS-EU and Azure are deployed by hand-run scripts
+# (scripts/deploy/aws_eu_control_plane.sh, scripts/deploy/azure_control_plane.sh)
+# and are already behind main. A schedule turned on in the same commit as the
+# publisher would therefore file an issue every morning about two clouds that
+# were never redeployed -- a check that cries wolf is a check people learn to
+# ignore, which is the failure `CANARY_COUNT_GATE_FROM` in
+# clickhouse/check_client_telemetry_freshness.py was written to avoid.
+#
+#   1. Deploy all three control planes; verify with
+#        curl -s https://trustedrouter.com/status.json | jq .data.analytics
+#      (and the AWS/Azure URLs in ANALYTICS_FRESHNESS_FLEET) that each one
+#      returns an object rather than null. Verified 2026-08-17: all three
+#      returned null, i.e. NONE of them publishes the section yet.
+#   2. Run this workflow once with workflow_dispatch and read the result,
+#      including the `~` unchecked lines.
+#
+# Then the follow-up is one line added here, under `on:`:
+#     schedule: [{cron: "20 7 * * *"}]
+#
+# Daily, and deliberately not more often: the bound this enforces is the
+# drain's own backlog_alarm at one hour, and the outbox is durable, so the cost
+# of a late detection is freshness and storage, never data.
+#
+# The `push:` trigger below is NOT the same hazard. It fires only when these
+# specific files change, i.e. on the merge that lands them, and it is aimed at
+# the person doing the merging while they are still looking: "you changed the
+# freshness check; here is what the fleet says right now." One run, addressed
+# to somebody holding the context, is a reminder. A daily 07:20 issue about a
+# cloud nobody has redeployed is the thing that trains people to close it
+# unread.
 
 on:
   push:
@@ -67,14 +110,6 @@ on:
       - "src/trusted_router/operational_analytics_freshness.py"
       - "src/trusted_router/operational_analytics_fleet.py"
       - ".github/workflows/check-analytics-freshness.yml"
-  # Daily, and deliberately not more often: the bound this enforces is the
-  # drain's own backlog_alarm at one hour, and the outbox is durable, so the
-  # cost of a late detection is freshness and storage, never data. The section
-  # is published by every cloud as of PR "analytics drain cannot be missing",
-  # which is what made a schedule honest rather than a daily issue about a
-  # field nobody deployed.
-  schedule:
-    - cron: "20 7 * * *"
   workflow_dispatch:
     inputs:
       cloud:
@@ -188,6 +223,12 @@ jobs:
             echo "If the line reads \`registry:\`, no drain is broken — the fleet registry in"
             echo "\`src/trusted_router/operational_analytics_fleet.py\` disagrees with the"
             echo "deployed-cloud list. Fix the registry."
+            echo
+            echo "Lines marked \`(unchecked)\` are NOT failures and NOT passes. They are the"
+            echo "clouds this run did not measure and why — a cloud with no public status"
+            echo "page, or one the registry declares runs no outbox at all (Azure today)."
+            echo "They are printed on every run so \"we do not watch that cloud\" stays a"
+            echo "visible fact instead of an absence from a list."
             echo
             echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           } > /tmp/issue-body.md

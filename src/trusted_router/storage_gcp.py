@@ -150,6 +150,11 @@ from trusted_router.types import IdentityVerificationStatus, UsageType
 T = TypeVar("T")
 log = logging.getLogger(__name__)
 
+#: Whole-call budget for the /status.json outbox-lag read. Same 3s as
+#: `readiness_check`, and the same rule: a public page degrades rather than
+#: waits. See `SpannerBigtableStore.operational_analytics_outbox_freshness`.
+OUTBOX_FRESHNESS_TIMEOUT_SECONDS = 3.0
+
 
 def _empty_usage_bucket(bucket: str) -> dict[str, Any]:
     return {
@@ -2947,12 +2952,19 @@ class SpannerBigtableStore:
         two are one value apart in the naive shape (`None`) and opposite in
         meaning, and this is the number an external check uses to decide the
         pipeline is alive.
+
+        Bounded like `readiness_check` above, and for the sharper reason that
+        this read is on the PUBLIC /status.json path inside an async handler --
+        a blocking wait there stops the event loop, not one thread. The budget
+        covers the whole 32-shard sweep rather than each statement, so the cap
+        is a real ceiling on how long the status page can be held up; a timeout
+        raises and degrades to `unreachable` here, and never propagates.
         """
         outbox = self._operational_analytics_outbox
         if outbox is None:
             return OutboxFreshness.unavailable(BACKEND_SPANNER, REASON_NOT_CONFIGURED)
         try:
-            oldest = outbox.oldest_enqueued_at()
+            oldest = outbox.oldest_enqueued_at(timeout=OUTBOX_FRESHNESS_TIMEOUT_SECONDS)
         except Exception as exc:
             log.exception(
                 "spanner.operational_analytics_outbox_freshness_failed",
