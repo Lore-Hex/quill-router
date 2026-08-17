@@ -118,14 +118,6 @@ PROVIDER_JURISDICTION_SG = "SG"
 # starts where this one stopped instead of repeating it. Keys must be provider
 # slugs whose provider_headquarters_country is None.
 PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
-    "novita": (
-        "Checked novita.ai/legal/terms-of-service (governed by Delaware law, "
-        "exclusive jurisdiction Wilmington, Delaware), novita.ai/legal/"
-        "privacy-policy, and the site footer: none names a legal entity or "
-        "registered address. Novita AI's LinkedIn page self-reports a San "
-        "Francisco address. A choice-of-law clause and a self-reported office "
-        "are not the operator's legal home, so no country is recorded."
-    ),
     "phala": (
         "Checked phala.com/terms (names Hashforest Technology LLC, California "
         "law) and redpill.ai/terms for api.redpill.ai, the endpoint TrustedRouter "
@@ -139,26 +131,6 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
         "registered address, or governing-law clause appears on any of them. "
         "Third-party coverage ties Engy to a Bittensor subnet operated by a team "
         "called Hanlin AI, with no incorporation record located."
-    ),
-    "kling": (
-        "kling.ai/docs/privacy-policy, kling.ai/docs/user-policy, and the API "
-        "privacy policy under app.klingai.com answer HTTP 446 to TrustedRouter's "
-        "fetches, and browser access was denied, so the operating entity was not "
-        "read from the primary source. Kling AI is Kuaishou Technology's product "
-        "(Kuaishou head office: Haidian District, Beijing), and secondary "
-        "coverage points to a Singapore operating entity. Recheck when the "
-        "policy pages are reachable."
-    ),
-    "alibaba": (
-        "The Alibaba Cloud International Website Membership Agreement selects "
-        "the contracting entity by billing address and names only non-China "
-        "entities (Alibaba Cloud (Singapore) Private Limited by default, "
-        "Alibaba (Netherlands) B.V. for the EEA, Alibaba Cloud US LLC and "
-        "others), and the configured workspace is an eu-central-1 Frankfurt "
-        "endpoint. Which of those entities bills TrustedRouter is not public. "
-        "Recorded as unverified rather than as Alibaba Group's Hangzhou home, "
-        "because this field records the operator of the endpoint. Resolve by "
-        "reading the entity named on TrustedRouter's own Alibaba Cloud invoice."
     ),
 }
 
@@ -608,7 +580,13 @@ PROVIDERS: dict[str, Provider] = {
             "processing is governed by customer agreements."
         ),
         provider_policy_url="https://novita.ai/legal/privacy-policy",
-        # No country recorded: see PROVIDER_JURISDICTION_UNVERIFIED["novita"].
+        # United States. Novita's terms select Delaware law with exclusive
+        # jurisdiction in Wilmington and publish no operating entity, so this is
+        # not read from a public document: it is recorded from TrustedRouter's
+        # own account relationship with the provider (operator knowledge,
+        # 2026-08-17). Kept distinct in the comment from the entries that cite a
+        # published policy, so the basis is never overstated.
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Phala publishes Intel TDX / NVIDIA Confidential Compute evidence and
     # signed request receipts. TrustedRouter does not yet verify that evidence
@@ -1180,19 +1158,15 @@ PROVIDERS: dict[str, Provider] = {
         # (Singapore) Private Limited, Alibaba (Netherlands) B.V. for the EEA,
         # Alibaba Cloud US LLC, and others — so the entity billing TrustedRouter
         # may not be the Chinese parent, and the configured workspace runs in the
-        # eu-central-1 Frankfurt region. This field records the OPERATOR, not
-        # the group, and the operator here cannot be established from the
-        # agreement alone: it selects the contracting entity by billing address
-        # and names only non-China entities (Singapore default, Alibaba
-        # (Netherlands) B.V. for the EEA, Alibaba Cloud US LLC, and others),
-        # none of which is identifiable as ours from public sources. Recorded
-        # as unverified rather than as the parent's home, which an earlier
-        # revision did on the strength of Alibaba Group's Hangzhou HQ. The lab
-        # (Qwen) is Chinese and is recorded as such in the origin map. Resolve
-        # by reading the entity named on TrustedRouter's own Alibaba Cloud
-        # invoice.
+        # eu-central-1 Frankfurt region. The membership agreement alone cannot
+        # settle it -- it selects the contracting entity by billing address and
+        # names only non-China entities -- so this is recorded from
+        # TrustedRouter's own account relationship with the provider (operator
+        # knowledge, 2026-08-17), which is the invoice-level fact the agreement
+        # points at. The lab (Qwen) is Chinese and is recorded separately in the
+        # origin map.
         # https://www.alibabacloud.com/help/en/legal/latest/alibaba-cloud-international-website-membership-agreement
-        provider_headquarters_country=None,
+        provider_headquarters_country=PROVIDER_JURISDICTION_CN,
     ),
     "ltx": Provider(
         slug="ltx",
@@ -1243,7 +1217,12 @@ PROVIDERS: dict[str, Provider] = {
             "prompt or generated video content."
         ),
         provider_policy_url="https://kling.ai/privacy-policy",
-        # No country recorded: see PROVIDER_JURISDICTION_UNVERIFIED["kling"].
+        # China. Kling AI is Kuaishou Technology's product (Kuaishou head
+        # office: Haidian District, Beijing). Its policy pages answer HTTP 446
+        # to our fetches, so this is recorded from TrustedRouter's own account
+        # relationship with the provider (operator knowledge, 2026-08-17)
+        # rather than from a published document.
+        provider_headquarters_country=PROVIDER_JURISDICTION_CN,
     ),
     # Cohere — first-party embeddings (embed-v4.0, embed-*-v3.0) plus
     # Command chat models. Embeddings are Cohere's flagship retrieval

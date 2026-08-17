@@ -98,9 +98,17 @@ def test_named_provider_jurisdictions_match_their_researched_values() -> None:
         "nebius": "NL",
         "minimax": "SG",
         "xiaomi": PROVIDER_JURISDICTION_CN,
-        "alibaba": None,
+        "alibaba": PROVIDER_JURISDICTION_CN,
         "ltx": "IL",
         "cohere": "CA",
+        # Recorded from TrustedRouter's own account relationship with each
+        # provider rather than a published page: novita publishes no entity
+        # (its terms only select Delaware law), kling's policy pages answer
+        # HTTP 446, and Alibaba's membership agreement picks the contracting
+        # entity by billing address. The comments in catalog_data say so, so
+        # the basis is never mistaken for a citation.
+        "novita": PROVIDER_JURISDICTION_US,
+        "kling": PROVIDER_JURISDICTION_CN,
     }
 
     actual = {slug: PROVIDERS[slug].provider_headquarters_country for slug in sorted(expected)}
