@@ -364,3 +364,36 @@ PY
   aws events put-targets --region "$REGION" --rule tr-eu-synthetic-1min --targets "$TARGETS" >/dev/null
   log "rule aligned: rotation_count=8, full catalogue (unpinned)"
 fi
+
+# ---------------------------------------------------------------------------
+# The deploy is not done until the CLOUD is done.
+#
+# This script is the source of truth for the service env, and the env it sets
+# includes TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED — so from 2026-08-02 it was
+# faithfully enqueueing operational rows into DSQL while no drain existed to
+# collect them. Every part of this file succeeded. The cloud did not work.
+#
+# Ending here makes those the same claim. It is READ-ONLY (one public HTTPS GET
+# plus a text read of this file) and provisions nothing; if it fails, the
+# service that was just deployed stays deployed and the message names what is
+# still missing.
+#
+# require_cloud_complete returns the gate's status unaltered, and this is the
+# last statement in the file, so under `set -e` this script's exit status IS the
+# gate's — including 5 (NOT YET OBSERVABLE), which is not a plain failure and
+# which it reports in the same words as every other bound script.
+# tests/test_deploy_script_execution.py runs this whole file under a stub PATH
+# — isolation by name, not a sandbox — and asserts both halves.
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/deploy/cloud_complete_gate.sh
+. "${SCRIPT_DIR}/cloud_complete_gate.sh"
+
+require_cloud_complete aws "$(cat <<'NEXT'
+The service is deployed but the AWS cloud is not complete. Most often this is
+the drain — the step that has been missed before:
+
+  bash scripts/deploy/aws_eu_clickhouse_drain_install.sh
+  bash scripts/deploy/verify_cloud_complete.sh aws
+NEXT
+)"
