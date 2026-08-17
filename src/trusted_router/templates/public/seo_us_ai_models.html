@@ -4,9 +4,8 @@
   <div class="marketing-copy">
     <span class="eyebrow">American labs, and the operators who serve them</span>
     <h2>"US AI models" is two questions. This page answers both, separately.</h2>
-    <p>The first question is who built the weights. {{ region.origin_model_count }} models in the TrustedRouter catalog come from one of the {{ region.lab_count }} labs recorded as US-based: {% for lab in region.labs %}{{ lab.lab_name }}{% if not loop.last %}, {% endif %}{% endfor %}. Each of those rows carries the filing, licence, or policy the country was read from, listed further down.</p>
-    <p>The second question is where your prompt goes. That is decided by the company operating the endpoint, not by the lab, and the two come apart constantly: the open-weights models from these labs are served by operators registered outside the US as well as inside it, which the operator-jurisdiction column below shows per model. {{ region.provider_count }} of the {{ region.catalog_provider_count }} providers in the catalog are operated by a US-registered company.</p>
-    <p>If US jurisdiction is a requirement rather than a preference, say so in the request: <span class="mono">provider.jurisdiction</span> set to <span class="mono">us</span> narrows routing to providers whose recorded operator country is the United States, and fails closed when none qualify. {{ content_handling_claim }}</p>
+    <p><strong>Who built it</strong> and <strong>where your prompt goes</strong> are different facts. {{ region.origin_model_count }} models here come from {{ region.lab_count }} US labs: {% for lab in region.labs %}{{ lab.lab_name }}{% if not loop.last %}, {% endif %}{% endfor %}. {{ region.provider_count }} of {{ region.catalog_provider_count }} providers are US-headquartered.</p>
+    <p>Need US-only routing? Set <span class="mono">provider.jurisdiction</span> to <span class="mono">us</span>. It fails closed when nothing qualifies.</p>
     <p><a class="btn primary" href="/models?filter=us">Browse US-provider routes</a> <a class="btn" href="/providers">Review provider policies</a></p>
   </div>
   <div class="copy-terminal">
@@ -24,6 +23,19 @@ reply = client.chat.completions.create(
                "content": "Draft the incident summary."}],
     extra_body={"provider": {"jurisdiction": "us"}},
 )</code></pre>
+  </div>
+</section>
+
+<section class="panel" aria-label="US open-weight models">
+  <div class="panel-head"><h2>US open-weight models</h2><span class="pill">{{ region.open_weight_count }} routes</span></div>
+  <div class="panel-body">
+    <p>Weights you can download, run anywhere, and inspect &mdash; built by US labs.</p>
+    <ul class="link-list">
+      {% for lab in region.open_weight_labs %}
+      <li><a href="/models?filter={{ lab.prefix }}">{{ lab.lab_name }}</a><span>{{ lab.count }} open-weight model{{ '' if lab.count == 1 else 's' }} &middot; {{ lab.example }}</span></li>
+      {% endfor %}
+    </ul>
+    <p><a class="btn primary" href="/models?filter=open-weight">Browse all open-weight routes</a></p>
   </div>
 </section>
 

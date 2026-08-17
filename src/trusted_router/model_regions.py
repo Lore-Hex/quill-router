@@ -39,6 +39,7 @@ from trusted_router.catalog import (
     Provider,
     endpoints_for_model,
     meta_candidate_models,
+    model_open_weights,
     model_us_provider_available,
 )
 from trusted_router.catalog_data import (
@@ -449,6 +450,36 @@ def _liberty_rows() -> list[dict[str, object]]:
     return rows
 
 
+def _open_weight_labs(region: ModelRegion) -> list[dict[str, object]]:
+    """Open-weight routes grouped by the lab that released the weights.
+
+    Grouped by MODEL_ORIGINS lab_name to match `_lab_rows`, so a lab with two
+    vendor prefixes lands in one row. TrustedRouter's own routes are excluded:
+    they qualify as open weight because every candidate beneath them does,
+    which is a fact about our routing rather than about a lab publishing
+    weights, and a reader looking for "US open-weight models" wants the labs.
+    """
+    grouped: dict[str, list[Model]] = defaultdict(list)
+    for model in _directory_models():
+        origin = model_origin_for_model_id(model.id)
+        if origin is None or origin.country not in region.origin_countries:
+            continue
+        if model.id.split("/")[0] == "trustedrouter":
+            continue
+        if not model_open_weights(model):
+            continue
+        grouped[origin.lab_name].append(model)
+    rows: list[dict[str, object]] = [
+        {
+            "lab_name": lab_name,
+            "count": len(models),
+            "example": sorted(model.id for model in models)[0],
+        }
+        for lab_name, models in grouped.items()
+    ]
+    rows.sort(key=lambda row: (-int(str(row["count"])), str(row["lab_name"])))
+    return rows
+
 def model_region_evidence(slug: str) -> dict[str, object]:
     """Everything the /us-ai-models, /eu-ai-models, and /china-ai-models pages
     show, computed from the live catalog on each render."""
@@ -492,6 +523,10 @@ def model_region_evidence(slug: str) -> dict[str, object]:
         ),
         "models_without_recorded_origin": sum(
             model_origin_for_model_id(model.id) is None for model in directory_models
+        ),
+        "open_weight_labs": _open_weight_labs(region),
+        "open_weight_count": sum(
+            int(str(row["count"])) for row in _open_weight_labs(region)
         ),
         "liberty_models": _liberty_rows(),
         "other_regions": [
