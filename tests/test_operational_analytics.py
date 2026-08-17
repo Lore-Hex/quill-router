@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import json
+import re
 import threading
 from typing import Any
 
@@ -966,7 +967,15 @@ def test_synthetic_rollup_rebuild_never_overwrites_partial_ttl_boundary() -> Non
 
 
 class _SnapshotDatabase:
-    """A Spanner database whose snapshot answers per-shard oldest-row reads."""
+    """A Spanner database whose snapshot answers the one-statement lag read.
+
+    The read is a single `SELECT MIN(commit_ts) FROM (<32 per-shard seeks>)`,
+    so this fake parses the shard literals back out of the SQL and answers the
+    minimum over the shards it was asked about. Parsing rather than ignoring
+    them is deliberate: it is what lets the tests below assert that all 32
+    heads really were consulted, which is the property the old 32-round-trip
+    form made obvious and this one does not.
+    """
 
     def __init__(self, rows_by_shard: dict[int, list[dt.datetime]]) -> None:
         self._rows_by_shard = rows_by_shard
@@ -985,20 +994,22 @@ class _SnapshotDatabase:
             def __exit__(self, *_exc: Any) -> None:
                 return None
 
-            def execute_sql(
-                self,
-                sql: str,
-                *,
-                params: dict[str, Any],
-                param_types: dict[str, Any],
-                **kwargs: Any,
-            ) -> list[list[Any]]:
+            def execute_sql(self, sql: str, **kwargs: Any) -> list[list[Any]]:
                 outer.timeouts.append(kwargs.get("timeout"))
-                outer.queries.append((sql, params))
-                stamps = sorted(outer._rows_by_shard.get(int(params["shard"]), []))
-                return [[stamps[0]]] if stamps else []
+                outer.queries.append((sql, kwargs.get("params") or {}))
+                shards = [int(value) for value in re.findall(r"WHERE shard=(\d+)", sql)]
+                stamps = sorted(
+                    stamp
+                    for shard in shards
+                    for stamp in outer._rows_by_shard.get(shard, [])
+                )
+                return [[stamps[0]]] if stamps else [[None]]
 
         return _Snapshot()
+
+
+def _queried_shards(sql: str) -> set[int]:
+    return {int(value) for value in re.findall(r"WHERE shard=(\d+)", sql)}
 
 
 def test_spanner_oldest_enqueued_at_is_the_minimum_across_every_shard() -> None:
@@ -1019,9 +1030,49 @@ def test_spanner_oldest_enqueued_at_is_the_minimum_across_every_shard() -> None:
     outbox = SpannerOperationalAnalyticsOutbox(database, _ParamTypes())
 
     assert outbox.oldest_enqueued_at() == oldest
-    assert len(database.queries) == OPERATIONAL_ANALYTICS_OUTBOX_SHARDS
-    assert all("ORDER BY commit_ts LIMIT 1" in sql for sql, _ in database.queries)
-    assert all("count(" not in sql.lower() for sql, _ in database.queries)
+    [(sql, _)] = database.queries
+    assert _queried_shards(sql) == set(range(OPERATIONAL_ANALYTICS_OUTBOX_SHARDS))
+    assert sql.count("ORDER BY commit_ts LIMIT 1") == OPERATIONAL_ANALYTICS_OUTBOX_SHARDS
+    assert "count(" not in sql.lower()
+
+
+def test_spanner_lag_read_is_one_round_trip_not_one_per_shard() -> None:
+    """32 sequential round trips do not fit the budget that bounds this read.
+
+    Measured against production Spanner on 2026-08-17, the per-shard loop this
+    replaced took 9.76s (2.22s for the first shard, ~0.25s for each of the
+    rest) against a 3.0s budget, so it raised TimeoutError on EVERY call and
+    /status.json published `unreachable` for a cloud whose outbox was empty --
+    a healthy drain reported as a broken one, on the very page added to notice
+    broken drains. As one statement: 2.93s cold, 1.01s warm.
+
+    The count is the assertion. Anything that walks the shards in Python is
+    correct and unusably slow, and it would pass every other test here.
+    """
+    database = _SnapshotDatabase({5: [dt.datetime(2026, 8, 2, 3, 0, tzinfo=dt.UTC)]})
+    outbox = SpannerOperationalAnalyticsOutbox(database, _ParamTypes())
+
+    outbox.oldest_enqueued_at(timeout=3.0)
+
+    assert len(database.queries) == 1
+
+
+def test_spanner_lag_read_never_scans_the_whole_table() -> None:
+    """Every arm carries a shard predicate; a bare MIN() would scan.
+
+    One round trip is achievable the wrong way -- `SELECT MIN(commit_ts) FROM
+    tr_operational_analytics_outbox` is also one statement, and it degrades
+    precisely as the backlog grows, which is when this number matters most.
+    """
+    database = _SnapshotDatabase({0: [dt.datetime(2026, 8, 2, 3, 0, tzinfo=dt.UTC)]})
+    outbox = SpannerOperationalAnalyticsOutbox(database, _ParamTypes())
+
+    outbox.oldest_enqueued_at()
+
+    [(sql, _)] = database.queries
+    selects = sql.count("FROM tr_operational_analytics_outbox")
+    assert selects == OPERATIONAL_ANALYTICS_OUTBOX_SHARDS
+    assert selects == sql.count("WHERE shard=")
 
 
 def test_spanner_oldest_enqueued_at_is_none_when_every_shard_is_drained() -> None:
@@ -1048,23 +1099,13 @@ def test_spanner_oldest_enqueued_at_spends_one_budget_across_all_shards() -> Non
 
     This read runs on the public /status.json path inside an async handler, so
     the number that matters is how long the whole thing can hold the event
-    loop. Handing each shard a fresh copy of the timeout would make the real
-    ceiling 32x the number written down -- a bound in name only.
+    loop. With one statement the two are the same thing by construction, which
+    is the second reason to prefer it: the earlier form had to subtract
+    elapsed time from a deadline to keep the promise this now keeps for free.
     """
     database = _SnapshotDatabase({0: [dt.datetime(2026, 8, 2, 3, 0, tzinfo=dt.UTC)]})
     outbox = SpannerOperationalAnalyticsOutbox(database, _ParamTypes())
 
     outbox.oldest_enqueued_at(timeout=5.0)
 
-    assert all(timeout is not None and timeout <= 5.0 for timeout in database.timeouts)
-    assert database.timeouts == sorted(database.timeouts, reverse=True)
-
-
-def test_spanner_oldest_enqueued_at_is_unbounded_only_when_asked_to_be() -> None:
-    """The drain has no deadline; only the status path does."""
-    database = _SnapshotDatabase({})
-    outbox = SpannerOperationalAnalyticsOutbox(database, _ParamTypes())
-
-    outbox.oldest_enqueued_at()
-
-    assert database.timeouts == [None] * OPERATIONAL_ANALYTICS_OUTBOX_SHARDS
+    assert database.timeouts == [5.0]

@@ -15,7 +15,6 @@ unchanged.  What stays is the Spanner-specific writer.
 from __future__ import annotations
 
 import datetime as dt
-import time
 from typing import Any
 
 from trusted_router.storage_gcp_codec import json_body
@@ -127,44 +126,45 @@ class SpannerOperationalAnalyticsOutbox:
         them identical is what stops the published number and the drain's own
         ``backlog_alarm`` from meaning different things.
 
-        ``timeout`` is a budget for the WHOLE call, not per statement, and that
-        distinction is the point. This runs on the public /status.json path, in
-        an async handler, where a blocking wait stops the event loop rather
-        than one thread. 32 shard reads each given a 3s timeout is a 96s worst
-        case -- a per-statement bound that is not a bound. So the deadline is
-        set once and each statement gets whatever is LEFT of it, and running
-        out raises rather than returning a partial answer: a minimum taken over
-        the shards that happened to reply before the clock expired is not the
+        ``timeout`` bounds the one statement, which is the whole call. This
+        runs on the public /status.json path, in an async handler, where a
+        blocking wait stops the event loop rather than one thread. Running out
+        raises rather than returning a partial answer: a minimum over the
+        shards that happened to reply before the clock expired is not the
         oldest row, it is a smaller number that would publish as better health.
         """
-        deadline = None if timeout is None else time.monotonic() + timeout
-        oldest: dt.datetime | None = None
-        with self._database.snapshot(multi_use=True) as snapshot:
-            for shard in range(self._shard_count):
-                kwargs: dict[str, Any] = {}
-                if deadline is not None:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise TimeoutError(
-                            "operational analytics outbox lag read exceeded "
-                            f"{timeout}s after {shard} of {self._shard_count} shards"
-                        )
-                    kwargs["timeout"] = remaining
-                rows = list(
-                    snapshot.execute_sql(
-                        "SELECT commit_ts FROM tr_operational_analytics_outbox "
-                        "WHERE shard=@shard ORDER BY commit_ts LIMIT 1",
-                        params={"shard": shard},
-                        param_types={"shard": self._pt.INT64},
-                        **kwargs,
-                    )
-                )
-                if not rows or rows[0][0] is None:
-                    continue
-                candidate: dt.datetime = rows[0][0]
-                if candidate.tzinfo is None:
-                    candidate = candidate.replace(tzinfo=dt.UTC)
-                oldest = candidate if oldest is None else min(oldest, candidate)
+        # ONE round trip, not 32. Each arm is still a seek on the key prefix
+        # (the primary key leads with `shard`), so this keeps the cost the
+        # per-shard form was chosen for while paying the network once.
+        #
+        # Measured against production Spanner on 2026-08-17, the 32-statement
+        # loop this replaces took 9.76s -- 2.22s for the first shard, ~0.25s
+        # for each of the rest -- against a 3.0s budget. It therefore raised
+        # TimeoutError on every call, and /status.json published
+        # `{"available": false, "reason": "unreachable"}` for a cloud whose
+        # outbox was in fact EMPTY, i.e. whose drain was perfectly healthy. The
+        # same sweep as one statement: 2.93s cold, 1.01s warm.
+        #
+        # `MIN(commit_ts)` over the whole table would be one round trip too and
+        # is the wrong fix: no shard predicate means a scan, which gets slower
+        # exactly as the backlog it measures grows.
+        arms = " UNION ALL ".join(
+            "SELECT (SELECT commit_ts FROM tr_operational_analytics_outbox "  # noqa: S608
+            f"WHERE shard={shard} ORDER BY commit_ts LIMIT 1) AS commit_ts"
+            for shard in range(self._shard_count)
+        )
+        # Interpolation is safe and unavoidable here: shard numbers come from
+        # range(self._shard_count), never from a caller, and a query parameter
+        # cannot stand in for the literal each arm seeks on.
+        sql = f"SELECT MIN(commit_ts) FROM ({arms})"  # noqa: S608
+        kwargs: dict[str, Any] = {} if timeout is None else {"timeout": timeout}
+        with self._database.snapshot() as snapshot:
+            rows = list(snapshot.execute_sql(sql, **kwargs))
+        if not rows or rows[0][0] is None:
+            return None
+        oldest: dt.datetime = rows[0][0]
+        if oldest.tzinfo is None:
+            oldest = oldest.replace(tzinfo=dt.UTC)
         return oldest
 
     def _enqueue(
