@@ -68,20 +68,37 @@ def test_provider_countries_are_iso_alpha2_codes() -> None:
 
 def test_named_provider_jurisdictions_match_their_researched_values() -> None:
     # Spot-check the entities this change researched. Moving one of these needs
-    # a new source, so the change has to touch this list to land.
+    # a new source, so the change has to touch this list to land -- which is
+    # what happened to kimi, minimax and alibaba below.
+    #
+    # Three of these were recorded as CN from the LAB's home and corrected on
+    # 2026-08-17 to the entity that operates the routed endpoint, which is what
+    # this field means. All three were missed the first time because the
+    # governing policy renders only under JavaScript and a plain fetch returns
+    # an empty shell:
+    #   kimi    -- the policy for api.moonshot.ai opens "provided and
+    #              controlled by MOONSHOT AI PTE. LTD. ... in Singapore"
+    #   minimax -- the Open Platform terms for api.minimax.io name Nanonoble
+    #              Pte. Ltd., Singapore, under Singapore law
+    #   alibaba -- the membership agreement names only non-China contracting
+    #              entities and the workspace is eu-central-1; which entity
+    #              bills us is not public, so it is unverified, not CN
+    # The labs behind all three remain Chinese and are recorded that way in the
+    # model-origin map. Conflating the two is the error these pages exist to
+    # correct, so getting it wrong in the data would have been self-refuting.
     expected = {
         "deepseek": PROVIDER_JURISDICTION_CN,
         "mistral": "FR",
-        "kimi": PROVIDER_JURISDICTION_CN,
+        "kimi": "SG",
         "zai": "SG",
         "siliconflow": "SG",
         "friendli": PROVIDER_JURISDICTION_US,
         "zero-g": PROVIDER_JURISDICTION_US,
         "deepinfra": PROVIDER_JURISDICTION_US,
         "nebius": "NL",
-        "minimax": PROVIDER_JURISDICTION_CN,
+        "minimax": "SG",
         "xiaomi": PROVIDER_JURISDICTION_CN,
-        "alibaba": PROVIDER_JURISDICTION_CN,
+        "alibaba": None,
         "ltx": "IL",
         "cohere": "CA",
     }

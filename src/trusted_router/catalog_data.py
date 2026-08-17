@@ -149,6 +149,17 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
         "coverage points to a Singapore operating entity. Recheck when the "
         "policy pages are reachable."
     ),
+    "alibaba": (
+        "The Alibaba Cloud International Website Membership Agreement selects "
+        "the contracting entity by billing address and names only non-China "
+        "entities (Alibaba Cloud (Singapore) Private Limited by default, "
+        "Alibaba (Netherlands) B.V. for the EEA, Alibaba Cloud US LLC and "
+        "others), and the configured workspace is an eu-central-1 Frankfurt "
+        "endpoint. Which of those entities bills TrustedRouter is not public. "
+        "Recorded as unverified rather than as Alibaba Group's Hangzhou home, "
+        "because this field records the operator of the endpoint. Resolve by "
+        "reading the entity named on TrustedRouter's own Alibaba Cloud invoice."
+    ),
 }
 
 
@@ -504,13 +515,17 @@ PROVIDERS: dict[str, Provider] = {
             "for users who need to review API retention and processing terms."
         ),
         provider_policy_url="https://platform.kimi.ai/docs/agreement/userprivacy",
-        # Beijing Moonshot AI Technology Co., Ltd. (北京月之暗面科技有限公司),
-        # 13th Floor, Building 1, JD Technology Building, No.76 Zhichun Rd,
-        # Haidian District, Beijing, China, per Moonshot's own about page. The
-        # routed endpoint is api.moonshot.ai; the platform privacy policy linked
-        # above names no operating entity of its own.
-        # https://www.moonshot.ai/about
-        provider_headquarters_country=PROVIDER_JURISDICTION_CN,
+        # MOONSHOT AI PTE. LTD., Singapore. The privacy policy linked above --
+        # the one governing the routed endpoint api.moonshot.ai -- opens:
+        # "Our services are provided and controlled by MOONSHOT AI PTE. LTD.
+        # ... in Singapore", and states storage on "secure servers located in
+        # Singapore". Verified 2026-08-17 by rendering the page; a plain fetch
+        # returns an empty JS shell, which is how an earlier revision of this
+        # entry came to record CN from the LAB's about page (Moonshot AI,
+        # Beijing) instead of the operator's own policy. The lab is Chinese and
+        # is recorded as such in the model-origin map; the operator is not.
+        # https://platform.kimi.ai/docs/agreement/userprivacy
+        provider_headquarters_country=PROVIDER_JURISDICTION_SG,
     ),
     "zai": Provider(
         slug="zai",
@@ -1095,12 +1110,16 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://www.minimax.io/privacy-policy-v2.html",
         # MiniMax Group Inc. (稀宇科技) is based in Shanghai, China and listed in
         # Hong Kong (SEHK: 100). https://en.wikipedia.org/wiki/MiniMax_Group
-        # Jurisdiction nuance: the routed endpoint is the international
-        # api.minimax.io. MiniMax's own reachable legal pages — the privacy
-        # overview above, minimax.io/about, and the open-platform privacy policy,
-        # which renders only under JavaScript — name no separate non-China
-        # operating entity, so the group's home jurisdiction is what is recorded.
-        provider_headquarters_country=PROVIDER_JURISDICTION_CN,
+        # Nanonoble Pte. Ltd., 152 Beach Road, #14-02 Gateway East, Singapore
+        # 189721 -- the Service Provider named by the MiniMax Open Platform
+        # terms governing the routed endpoint api.minimax.io, under Singapore
+        # law with SIAC arbitration. Verified 2026-08-17. An earlier revision
+        # recorded CN and claimed the reachable legal pages named no non-China
+        # operator; they do -- the terms render only under JavaScript, so a
+        # plain fetch missed them. Same fact pattern as Z.AI, recorded the same
+        # way. The lab is Chinese and is recorded as such in the origin map.
+        # https://platform.minimax.io/protocol/terms-of-service
+        provider_headquarters_country=PROVIDER_JURISDICTION_SG,
     ),
     # Thinking Machines Lab Tinker sampler. The 256K Inkling endpoint is
     # provider-native and OpenAI-compatible. Keep its privacy posture
@@ -1161,10 +1180,19 @@ PROVIDERS: dict[str, Provider] = {
         # (Singapore) Private Limited, Alibaba (Netherlands) B.V. for the EEA,
         # Alibaba Cloud US LLC, and others — so the entity billing TrustedRouter
         # may not be the Chinese parent, and the configured workspace runs in the
-        # eu-central-1 Frankfurt region. Neither fact moves the group's home
-        # jurisdiction, and neither is a data-residency claim by TrustedRouter.
+        # eu-central-1 Frankfurt region. This field records the OPERATOR, not
+        # the group, and the operator here cannot be established from the
+        # agreement alone: it selects the contracting entity by billing address
+        # and names only non-China entities (Singapore default, Alibaba
+        # (Netherlands) B.V. for the EEA, Alibaba Cloud US LLC, and others),
+        # none of which is identifiable as ours from public sources. Recorded
+        # as unverified rather than as the parent's home, which an earlier
+        # revision did on the strength of Alibaba Group's Hangzhou HQ. The lab
+        # (Qwen) is Chinese and is recorded as such in the origin map. Resolve
+        # by reading the entity named on TrustedRouter's own Alibaba Cloud
+        # invoice.
         # https://www.alibabacloud.com/help/en/legal/latest/alibaba-cloud-international-website-membership-agreement
-        provider_headquarters_country=PROVIDER_JURISDICTION_CN,
+        provider_headquarters_country=None,
     ),
     "ltx": Provider(
         slug="ltx",
