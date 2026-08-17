@@ -312,49 +312,85 @@ nobody has ever set the variable, a gate exit of 5 and a gate exit of 1 both
 came out as 3. The propagation held only for the harness fixture, which supplies
 the variable so the script can reach its own end.
 
-**Proven by execution today:** `aws_eu_clickhouse.sh`,
-`aws_eu_control_plane.sh`, `aws_eu_north_clickhouse.sh`,
-`azure_control_plane.sh`.
+**The two lists below are checked against `ROLLOUT_REGISTRY` for exact set
+equality** by `tests/test_deploy_script_execution.py` — path by path, not by
+substring. That is the point of writing them as lists: flipping a script from
+`PROVEN_BY_EXECUTION` to `NOT_PROVEN` silently deletes five parametrised
+behavioural cases from the suite, and for one revision the only thing standing
+in the way was a minimum reason length. It cost 121 characters of filler to go
+from 76 passing tests to 71, still green, with this document still calling the
+script proven. Now the registry cannot say `NOT_PROVEN` while this page says
+proven: moving a script between these lists fails CI until both move together,
+and the second move is a diff a reviewer reads.
+
+<!-- PROVEN_BY_EXECUTION:begin -->
+- `scripts/deploy/aws_eu_clickhouse.sh`
+- `scripts/deploy/aws_eu_control_plane.sh`
+- `scripts/deploy/aws_eu_north_clickhouse.sh`
+- `scripts/deploy/azure_control_plane.sh`
+- `scripts/deploy/verify_gcp_complete.sh`
+<!-- PROVEN_BY_EXECUTION:end -->
 
 **Not proven, and therefore only CLAIMED:**
-`aws_eu_clickhouse_drain_install.sh`. Its middle ships a tarball to the node in
-base64 chunks over SSM and then reads the drain's own journal back to establish
-that rows moved; a stub SSM that answers `Status=Success` to everything would
-make that verification an assertion about the stub. It is recorded as
-`NOT_PROVEN` in `ROLLOUT_REGISTRY` with that reason, and a `NOT_PROVEN` entry
-with a blank reason fails CI. What *is* proven about it is that the shared
-fragment it calls — `scripts/deploy/cloud_complete_gate.sh` — returns the gate's
-exit status unaltered for every code the gate can produce. What is not proven is
-that a real run reaches that call.
+
+<!-- NOT_PROVEN:begin -->
+- `scripts/deploy/aws_eu_clickhouse_drain_install.sh`
+<!-- NOT_PROVEN:end -->
+
+Its middle ships a tarball to the node in base64 chunks over SSM and then reads
+the drain's own journal back to establish that rows moved; a stub SSM that
+answers `Status=Success` to everything would make that verification an assertion
+about the stub. It is recorded as `NOT_PROVEN` in `ROLLOUT_REGISTRY` with that
+reason, and a `NOT_PROVEN` entry with a blank reason fails CI. What *is* proven
+about it is that the shared fragment it calls —
+`scripts/deploy/cloud_complete_gate.sh` — returns the gate's exit status
+unaltered for every code the gate can produce. What is not proven is that a real
+run reaches that call.
 
 A smaller true claim beats a larger false one; that is the whole thesis here, so
 it applies to this section too.
 
-**GCP is the exception, and it is named in code.** `rollout.sh` is not a script
-a human runs; it is a step of the deploy job in `.github/workflows/deploy.yml`,
+**GCP: `rollout.sh` is exempt, and GCP is not.** `rollout.sh` is not a script a
+human runs; it is a step of the deploy job in `.github/workflows/deploy.yml`,
 which runs on every merge to `main`. Ending *it* in this check would put a public
 fetch of `trustedrouter.com/status.json` in the middle of deploying the cloud
 that *serves* `trustedrouter.com` — the deploy that repairs an outage would
-abort partway, because of the outage it repairs. So GCP carries a
+abort partway, because of the outage it repairs. So `rollout.sh` carries a
 `ScriptExemption` with that reason in `ROLLOUT_REGISTRY`. That is a statement
-about which SCRIPTS end in the gate. It is not permission for GCP to skip a
-stage; no such permission exists.
+about which FILE ends in the gate. It is not permission for GCP to skip a stage;
+no such permission exists.
 
-That exemption used to cite "the scheduled analytics freshness workflow" as what
-checks GCP instead. That workflow ships with **no `schedule:` trigger**, on
-purpose and in its own header — so the citation was to a control that does not
-run, and the primary cloud had no automated completeness check at all behind a
-sentence saying it did. The control is now the `verify-cloud-complete` job in
-`.github/workflows/deploy.yml`. The exemption references that workflow and job
-as structured data, and CI resolves the reference — an exemption citing a job
-that is not there fails.
+For one revision it was more than that, and the gap is worth recording because
+it was the thesis of this whole change turned inside out. The compensating
+control was twenty lines of YAML inside that job, and the only thing binding it
+was a substring: the tests concatenated the job's `run:` blocks and looked for
+`verify_cloud_complete.sh gcp`. A reviewer replaced the entire body with
+`echo "Next: bash scripts/deploy/verify_cloud_complete.sh gcp"` and `exit 0`,
+and the suite stayed green at 76 passed — as it did for a commented-out line and
+for `|| true`. All three of the saboteur shapes this section exists to kill
+satisfied the one binding covering the primary cloud.
 
-That job runs `if: always()` on `needs: [deploy]`, which is load-bearing and was
-missing: with a bare `needs:`, GitHub SKIPS a job when its dependency fails, and
-a deploy that failed PARTWAY has already mutated production. The check would
-have been absent from exactly the runs where it mattered, behind a comment
-saying it ran after every production mutation. It is skipped only when the
-deploy job itself was skipped, i.e. when nothing was deployed.
+So the job's body moved into `scripts/deploy/verify_gcp_complete.sh`, which is
+in GCP's `deploy_scripts` and is executed by the behavioural harness exactly
+like the other four: it calls the gate for `gcp`, it cannot exit 0 over a
+failing gate, it runs no cloud CLI afterwards, and both exit codes come out
+unchanged. The workflow step is now one line invoking that file, and CI requires
+it to be an exact invocation of a script the registry proves by execution — an
+`echo` of the command is not one.
+
+What stayed in YAML, because a workflow cannot be executed from a test: that the
+job exists, that it depends on `deploy`, and that it runs `if: always()`. Those
+are read as text out of `.github/workflows/deploy.yml`.
+
+`if: always()` on `needs: [deploy]` is load-bearing and was missing: with a bare
+`needs:`, GitHub SKIPS a job when its dependency fails, and a deploy that failed
+PARTWAY has already mutated production. **Its coverage, stated exactly:** every
+run in which the `deploy` job ran, whatever the result. Not "after every
+production mutation" — `migrate-schema` and `sync-runtime-secrets` run *before*
+`deploy` and mutate production, and the job is skipped when `deploy` is skipped,
+which is what happens when `confirm-current-main` says do not proceed. A run can
+migrate the schema, rotate runtime secrets, skip the deploy and never reach this
+check.
 
 Honest caveat, because this is a control that has never fired: it lands with
 this change and has not yet run on a merge.
@@ -477,15 +513,33 @@ history is unrecorded cannot answer the question canaries exist to answer.
 
        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
        . "${SCRIPT_DIR}/cloud_complete_gate.sh"
-       require_cloud_complete <cloud> "$(cat <<'NEXT'
+
+       NEXT_STEPS=$(cat <<'NEXT'
        ...what to do about it...
        NEXT
-       )"
+       )
+       require_cloud_complete <cloud> "$NEXT_STEPS"
 
-   letting its exit status stand. Add a fixture for it in
-   `tests/deploy_script_harness.py` so the behavioural test can run it; if it
-   cannot be run honestly under stubs, mark it `NOT_PROVEN` with the reason and
-   say so here. CI fails on a `NOT_PROVEN` entry with no reason.
+   letting its exit status stand.
+
+   **Assign the heredoc to a variable first — do not inline it.** This checklist
+   used to prescribe `require_cloud_complete <cloud> "$(cat <<'NEXT' ... NEXT )"`,
+   and a heredoc nested inside a command substitution is a *syntax error* in
+   bash 3.2 — `/bin/bash` on every macOS — as soon as the body contains an
+   apostrophe. `aws_eu_clickhouse_drain_install.sh` was written that way and did
+   not parse at all on a Mac: the whole file did nothing, gate included, while
+   CI on Linux bash 5 stayed green. `tests/test_deploy_script_execution.py` runs
+   `bash -n` over `scripts/**/*.sh` with the local shell, which catches this in
+   *this* repository — it cannot catch it in a script you have written from this
+   page and not yet committed, so read the paragraph rather than relying on the
+   test.
+
+   Then add a fixture for it in `tests/deploy_script_harness.py` so the
+   behavioural test can run it; if it cannot be run honestly under stubs, mark it
+   `NOT_PROVEN` with the reason and move it into the `NOT_PROVEN` list above. CI
+   compares both lists on this page against `ROLLOUT_REGISTRY` for exact set
+   equality, so a script that changes proof status here fails until this page
+   changes with it.
 5. Build the pipeline: an outbox (enabled in the control-plane script), a
    ClickHouse the cloud owns, and a drain installed as a supervised unit.
 6. Run `bash scripts/deploy/verify_cloud_complete.sh <cloud>` until it exits 0

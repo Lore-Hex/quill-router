@@ -35,6 +35,7 @@ that list ever grows without a reason, or if the docs stop saying so.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -341,26 +342,88 @@ def test_the_shapes_the_old_regex_accepted_now_fail(
         assert not called, f"the {shape} saboteur must never reach the gate"
 
 
+#: The page that states, for a human, which scripts are proven and which are
+#: only claimed. It is the other half of the registry, and CI holds the two to
+#: exact agreement.
+PROOF_DOC = ROOT / "docs" / "storage-portability" / "multi-cloud-separation.md"
+
+
+def _documented_scripts(marker: str) -> set[str]:
+    """The repo-relative paths listed between ``<!-- MARKER:begin/end -->``.
+
+    A parser rather than a substring search, and that is the whole fix. The
+    previous check asked whether each NOT_PROVEN script's BASENAME appeared
+    anywhere in this document — which it does, several times, in the prose
+    explaining why it is not proven. So the document could go on calling a
+    script proven while the registry called it unproven, and the check was happy
+    with both.
+    """
+    text = PROOF_DOC.read_text()
+    match = re.search(
+        rf"<!--\s*{marker}:begin\s*-->(.*?)<!--\s*{marker}:end\s*-->", text, re.DOTALL
+    )
+    assert match is not None, (
+        f"{PROOF_DOC.relative_to(ROOT)} has no <!-- {marker}:begin --> block. That block "
+        "is how the docs and ROLLOUT_REGISTRY are held to the same list; do not delete it "
+        "to make this test pass."
+    )
+    return set(re.findall(r"^\s*[-*]\s*`([^`]+)`\s*$", match.group(1), re.MULTILINE))
+
+
+def test_the_docs_and_the_registry_name_the_same_proven_scripts() -> None:
+    """Losing behavioural coverage has to be loud, and this is the noise.
+
+    Flipping one script from PROVEN_BY_EXECUTION to NOT_PROVEN takes five
+    parametrised cases out of this module — the suite goes from 76 passing to 71
+    and stays GREEN, because a test that is not collected cannot fail. For one
+    revision the only thing in the way was a minimum reason length, which is 121
+    characters of filler.
+
+    So the gate is not the reason's length: it is that the registry and the
+    human-readable page must name the SAME SET, exactly. A script cannot lose
+    its coverage without an edit to a document somebody reviews, and the failure
+    below says which script moved and in which direction.
+    """
+    registry_proven = {script for script, _cloud in PROVEN}
+    registry_unproven = {script for script, _cloud, _reason in UNPROVEN}
+    doc_proven = _documented_scripts("PROVEN_BY_EXECUTION")
+    doc_unproven = _documented_scripts("NOT_PROVEN")
+
+    assert registry_proven == doc_proven, (
+        "ROLLOUT_REGISTRY and the 'Proven by execution today' list disagree.\n"
+        f"  proven in the registry, absent from the docs: {sorted(registry_proven - doc_proven)}\n"
+        f"  listed in the docs, not proven in the registry: {sorted(doc_proven - registry_proven)}\n"
+        f"Fix both, in {PROOF_DOC.relative_to(ROOT)} and "
+        "src/trusted_router/cloud_rollout_completeness.py. A script that quietly stops "
+        "being executed here loses five behavioural cases and the suite stays green."
+    )
+    assert registry_unproven == doc_unproven, (
+        "ROLLOUT_REGISTRY and the 'Not proven, and therefore only CLAIMED' list "
+        "disagree.\n"
+        f"  NOT_PROVEN in the registry, absent from the docs: "
+        f"{sorted(registry_unproven - doc_unproven)}\n"
+        f"  listed in the docs, not NOT_PROVEN in the registry: "
+        f"{sorted(doc_unproven - registry_unproven)}"
+    )
+    assert not (registry_proven & registry_unproven)
+
+
 def test_unproven_scripts_are_declared_and_not_silently_skipped() -> None:
     """A script this harness cannot run honestly must SAY so, in code and docs.
 
     The permitted answer to "the harness cannot run this one" is a written
     reason, not a quiet omission — an omission is exactly the shape of the
-    original defect. Today there is one, and this pins that the docs name the
-    same file, so a reader of the runbook and a reader of the registry get the
-    same list.
+    original defect.
+
+    Note what this no longer asserts: a minimum reason LENGTH. That was the only
+    thing standing between the registry and a silent loss of five behavioural
+    cases per script, and 121 characters of filler cleared it. The gate is
+    :func:`test_the_docs_and_the_registry_name_the_same_proven_scripts`; a blank
+    reason is separately a `script_binding_gaps` failure.
     """
     for script, cloud, reason in UNPROVEN:
         assert reason.strip(), f"{cloud}: {script} is NOT_PROVEN with no reason"
-        assert len(reason) > 120, f"{cloud}: {script}'s unproven_reason is a shrug"
         assert (ROOT / script).is_file()
-
-    doc = (ROOT / "docs" / "storage-portability" / "multi-cloud-separation.md").read_text()
-    for script, _cloud, _reason in UNPROVEN:
-        assert Path(script).name in doc, (
-            f"{script} is not proven by execution and the docs do not say so. "
-            "A smaller true claim beats a larger false one, but only if it is written down."
-        )
 
 
 def test_the_unprovable_script_really_is_unprovable(harness: DeployScriptHarness) -> None:
