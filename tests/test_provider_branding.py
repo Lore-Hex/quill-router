@@ -4,10 +4,12 @@ import json
 import re
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
 from scripts.generate_provider_og import CARD_VERSION, generate
+from tests.lifecycle_clock import LIFECYCLE_CLOCK_OVERRIDDEN
 from trusted_router.catalog import PROVIDERS
 from trusted_router.provider_branding import (
     PROVIDER_BRANDS,
@@ -19,6 +21,19 @@ from trusted_router.provider_og import all_provider_og_facts
 from trusted_router.storage import STORE, ProviderBenchmarkSample
 
 STATIC_DIR = Path(__file__).parents[1] / "src" / "trusted_router" / "static"
+
+# Provider social cards embed live model and route COUNTS, so the committed
+# cards match exactly one catalog: the one the real clock produces. Under a
+# pinned future lifecycle clock they are stale by construction and `generate()`
+# would rewrite the committed PNGs, so these two are the one thing the
+# post-cutover job cannot assert. Cards are regenerated after a real cutover by
+# the hourly refresh workflow -- see
+# test_hourly_catalog_refresh_keeps_provider_cards_current below, which runs on
+# both clocks because it reads the workflow rather than the catalog.
+_needs_real_clock = pytest.mark.skipif(
+    LIFECYCLE_CLOCK_OVERRIDDEN,
+    reason="social cards embed live route counts; only the real clock's catalog matches",
+)
 
 
 def test_every_catalog_provider_has_local_branding() -> None:
@@ -38,6 +53,7 @@ def test_unknown_provider_logo_falls_back_locally() -> None:
     assert provider_homepage_url("future-provider") is None
 
 
+@_needs_real_clock
 def test_every_provider_has_current_social_card() -> None:
     manifest_path = STATIC_DIR / "og" / "providers" / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
@@ -67,6 +83,7 @@ def test_provider_social_cards_use_current_trustedrouter_mark() -> None:
     assert (169, 205, 185) in colors  # mint attested route
 
 
+@_needs_real_clock
 def test_provider_social_card_generation_is_idempotent() -> None:
     generated, unchanged = generate()
 

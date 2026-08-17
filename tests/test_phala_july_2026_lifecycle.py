@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import phala
+from tests.lifecycle_clock import catalog_predates
 from trusted_router import provider_lifecycle
 from trusted_router.catalog import (
     MODELS,
@@ -50,8 +51,10 @@ def test_phala_retirement_is_provider_scoped(monkeypatch: pytest.MonkeyPatch) ->
     assert glm_providers
     assert "phala" not in qwen_providers
     # Retirement is provider-scoped: Alibaba still serves this exact Qwen
-    # revision after Phala's route is removed.
-    assert qwen_providers == {"alibaba"}
+    # revision after Phala's route is removed -- until Alibaba retires it too,
+    # at which point no provider serves it and the model leaves the catalog.
+    if catalog_predates(provider_lifecycle.ALIBABA_OCTOBER_2026_RETIREMENT_AT):
+        assert qwen_providers == {"alibaba"}
 
 
 def test_non_confidential_phala_qwen_route_is_not_published() -> None:
@@ -75,10 +78,17 @@ def test_public_catalog_uses_effective_price_and_active_routes(
         endpoint.prompt_price_microdollars_per_million_tokens for endpoint in qwen_endpoints
     )
 
-    retired_qwen = model_to_openrouter_shape(MODELS["qwen/qwen3-30b-a3b-instruct-2507"])
-    assert all(
-        endpoint["provider"] != "phala" for endpoint in retired_qwen["trustedrouter"]["endpoints"]
-    )
+    # Alibaba retires this same Qwen revision on 2026-10-09; after that no
+    # provider serves it and the model is absent from MODELS altogether, which
+    # is a stronger form of the same assertion.
+    if catalog_predates(provider_lifecycle.ALIBABA_OCTOBER_2026_RETIREMENT_AT):
+        retired_qwen = model_to_openrouter_shape(MODELS["qwen/qwen3-30b-a3b-instruct-2507"])
+        assert all(
+            endpoint["provider"] != "phala"
+            for endpoint in retired_qwen["trustedrouter"]["endpoints"]
+        )
+    else:
+        assert "qwen/qwen3-30b-a3b-instruct-2507" not in MODELS
 
 
 def test_phala_hourly_parser_applies_announced_policy() -> None:
