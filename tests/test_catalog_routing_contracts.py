@@ -2179,7 +2179,9 @@ def test_wafer_kimi_k26_is_available_but_standard_tier_only() -> None:
     [
         "z-ai/glm-5.2@wafer/prepaid",
         "moonshotai/kimi-k3@wafer/prepaid",
-        "moonshotai/kimi-k3-fast@wafer/prepaid",
+        # moonshotai/kimi-k3-fast@wafer/prepaid retired 2026-08-17 00:00 UTC
+        # (provider_lifecycle WAFER_AUGUST_2026_RETIREMENT_AT); the catalog is
+        # built against the real clock, so the endpoint no longer exists.
         "deepseek/deepseek-v4-flash-0731-fast@wafer/prepaid",
     ],
 )
