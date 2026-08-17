@@ -205,25 +205,30 @@ def test_the_shared_gate_library_returns_the_verifier_status_unaltered(
     assert "UNREADABLE STATUS PAGE" in stderr_for(7)
 
 
-def test_every_bound_script_shares_that_library(harness: DeployScriptHarness) -> None:
-    """Exit code 5 is understood by all bound scripts, or by none.
+@pytest.mark.parametrize(("script", "cloud"), PROVEN, ids=[s for s, _ in PROVEN])
+def test_each_gate_outcome_gets_the_same_words_from_every_script(
+    harness: DeployScriptHarness, script: str, cloud: str
+) -> None:
+    """The consequence of sharing the library, read off the scripts' own output.
 
-    It used to be taught to exactly one of five: the other four reported
-    today's real state ("no control plane publishes the analytics section yet")
-    as INCOMPLETE ROLLOUT with a fix that would not have fixed it. The mapping
-    is one shared file now, and this asserts every bound script — proven or
-    not — goes through it rather than reimplementing a `case`.
+    Exit 5 used to be taught to exactly one of five bound scripts: the other
+    four reported today's real state — no control plane publishes the analytics
+    section yet — as "INCOMPLETE ROLLOUT" with a fix that would not have fixed
+    it. So this does not check that a file sources a file; it runs the script
+    under each outcome and reads what the operator would have been told.
     """
-    for cloud, entry in crc.ROLLOUT_REGISTRY.items():
-        for script in entry.deploy_scripts:
-            text = (ROOT / script.path).read_text()
-            assert "cloud_complete_gate.sh" in text, (
-                f"{cloud}: {script.path} does not source {crc.GATE_LIBRARY}, so it has its "
-                "own idea of what exit 5 means"
-            )
-            assert "verify_cloud_complete.sh\" " not in text.replace(
-                "bash scripts/deploy/verify_cloud_complete.sh", ""
-            ), f"{cloud}: {script.path} still calls the verifier directly"
+    expected = {
+        5: "NOT YET OBSERVABLE",
+        6: "NOT VERIFIED",
+        7: "UNREADABLE STATUS PAGE",
+    }
+    for rc, phrase in expected.items():
+        run = harness.run(script, verifier_rc=rc)
+        assert phrase in run.stderr, (
+            f"{script} exited {run.returncode} on gate code {rc} without telling the "
+            f"operator {phrase!r}, so it has its own idea of what that code means.\n"
+            f"{summarise(run)}"
+        )
 
 
 #: The three shapes the old text check accepted, written as scripts. Each one

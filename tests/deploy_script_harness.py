@@ -124,6 +124,14 @@ _STUB = r"""#!/usr/bin/env bash
 # ordered log, answers from the fixture table if anything matches, and exits 0.
 { printf '%s' "${0##*/}"; for a in "$@"; do printf '\t%s' "$a"; done; printf '\n'; } \
   >> "$HARNESS_ARGV_LOG"
+# Drain stdin before answering. A stub that exits without reading closes the
+# pipe under its upstream, and `aws ecr get-login-password | docker login
+# --password-stdin` then dies of SIGPIPE -- 141 through `set -o pipefail`, in
+# about one run in eighty. That is the harness inventing a failure in the
+# script it is measuring, which would be a flake in the one suite that must not
+# have any. The run's stdin is /dev/null, so this returns immediately when the
+# stub is not in a pipeline.
+cat >/dev/null 2>&1 || true
 if [ -n "${HARNESS_FIXTURES:-}" ] && [ -f "$HARNESS_FIXTURES" ]; then
   joined="${0##*/} $*"
   while IFS=$'\t' read -r pattern reply; do
@@ -363,6 +371,9 @@ class DeployScriptHarness:
             env=env,
             cwd=str(self.mirror),
             timeout=timeout,
+            # So a stub draining stdin sees EOF at once unless it is genuinely
+            # downstream of a pipe.
+            stdin=subprocess.DEVNULL,
         )
         calls = [
             line.split("\t")
