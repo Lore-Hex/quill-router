@@ -33,6 +33,9 @@ FRIENDLI_K_EXAONE_236B_RETIREMENT_AT = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
 CRUSOE_NEMOTRON_3_ULTRA_RETIREMENT_AT = datetime(2026, 7, 28, 18, 0, tzinfo=UTC)
 WAFER_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
 DEEPINFRA_TERMINUS_RETIREMENT_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
+DEEPINFRA_QWEN3_235B_THINKING_RETIREMENT_AT = datetime(
+    2026, 8, 24, 0, 0, tzinfo=UTC
+)
 NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
 ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
@@ -215,6 +218,18 @@ _RETIREMENTS = (
         model_ids=frozenset({"deepseek/deepseek-v3.1-terminus"}),
         upstream_ids=frozenset({"deepseek-ai/DeepSeek-V3.1-Terminus"}),
         effective_at=DEEPINFRA_TERMINUS_RETIREMENT_AT,
+    ),
+    # DeepInfra announced that Qwen3-235B-A22B-Thinking-2507 retires on
+    # 2026-08-24 and that requests will subsequently redirect to
+    # Qwen3.6-35B-A3B. Do not accept that silent model substitution: retire
+    # only DeepInfra's old route while preserving the requested checkpoint on
+    # other providers. The notice did not specify a time zone, so use 00:00 UTC
+    # conservatively. The replacement remains independently routable.
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"qwen/qwen3-235b-a22b-thinking-2507"}),
+        upstream_ids=frozenset({"Qwen/Qwen3-235B-A22B-Thinking-2507"}),
+        effective_at=DEEPINFRA_QWEN3_235B_THINKING_RETIREMENT_AT,
     ),
     # Wafer announced that GLM 5.1, GLM 5.2 Fast, and Kimi K3 Fast retire on
     # 2026-08-17. Standard GLM 5.2 replaces both GLM routes, while Kimi K3

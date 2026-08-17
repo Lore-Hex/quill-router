@@ -38,6 +38,7 @@ from scripts.pricing.base import (
 from scripts.pricing.manifest import write_discovered_chat_manifest
 from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_upstream_id
 from scripts.pricing.openai_catalog import positive_int
+from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "deepinfra"
 URL = "https://api.deepinfra.com/v1/openai/models"
@@ -107,6 +108,8 @@ def fetch() -> ProviderPricingResult:
             continue
         or_id = mapped_or_canonical_model_id(native_id, _NATIVE_TO_OR_ID)
         if or_id is None:
+            continue
+        if provider_model_retired(SLUG, or_id, native_id):
             continue
         remember_upstream_id(UPSTREAM_ID_MAP, or_id, native_id)
         meta = row.get("metadata") or {}
