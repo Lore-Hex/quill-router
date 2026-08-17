@@ -28,11 +28,14 @@ WHAT COUNTS AS "A DEPLOYED CLOUD", AND WHY IT IS NOT ONE TABLE
     So the requirement is the UNION of every table in this repository that
     declares a deployment exists, listed in :func:`deployment_sources`. They
     disagree in kind on purpose -- one is a hand-transcribed enclave topology,
-    one is a map of dots, one is a config default -- and a union cannot be
-    weakened by any single one of them going stale. A cloud appearing in ANY of
-    them makes this registry incomplete, loudly, and the failure message names
-    every source it consulted so the reader can see what the requirement is
-    made of.
+    one is a map of dots, two are region settings, and one is the peer list
+    every cloud already polls -- and a union cannot be weakened by any single
+    one of them going stale. A cloud appearing in ANY of them makes this
+    registry incomplete, loudly, and the failure message names every source it
+    consulted so the reader can see what the requirement is made of. Each
+    source must also be NON-EMPTY: a union over an empty source is satisfied by
+    anything, so a source that silently degraded to zero clouds would leave
+    this check passing about a requirement it had stopped stating.
 
 WHY A ``reason`` FIELD AND NOT AN OMISSION
     A cloud with no public control-plane status URL is a real possibility -- an
@@ -76,6 +79,7 @@ from trusted_router.operational_analytics_freshness import (
     BACKEND_POSTGRES,
     BACKEND_SPANNER,
 )
+from trusted_router.synthetic import fleet as synthetic_fleet
 
 #: Backends a control plane can legitimately answer this question from. The
 #: registry pins one per cloud so a status page belonging to a DIFFERENT cloud
@@ -93,6 +97,18 @@ class DeploymentSource:
 
     name: str
     clouds: tuple[str, ...]
+    #: Region ids this source declares that NO table in
+    #: :mod:`trusted_router.regions` can attribute to a cloud. Reported as
+    #: defects rather than guessed at: guessing a prefix mints phantom clouds
+    #: out of ordinary GCP region ids, and shrugging them off as GCP hides a
+    #: real fourth cloud, which is the failure this whole module is about.
+    unattributable: tuple[str, ...] = ()
+    #: A bound source that is empty proves nothing -- the union it feeds is
+    #: vacuously satisfied, so the day it silently degrades to zero clouds is
+    #: a day this check quietly stops being a check. Sources are therefore
+    #: required to be non-empty unless they say here that empty is legitimate,
+    #: which is a claim a reader can argue with.
+    allow_empty: bool = False
 
 
 @dataclass(frozen=True)
@@ -194,24 +210,56 @@ def _setting(settings: Settings | None, field: str) -> str:
     and what the binding is about is what this repository claims to deploy. A
     live ``Settings`` is accepted so a running control plane can ask the same
     question about its own configuration.
+
+    Raises rather than returning ``""`` when the field is not a string. The
+    empty string is the one value that cannot fail: it parses to no clouds, and
+    a source with no clouds satisfies the union vacuously. So a field that
+    changes type -- to a list, or to ``None`` -- would silently delete a
+    deployment source instead of failing, which is the exact way this check
+    would stop being a check without anybody noticing.
     """
-    if settings is not None:
-        value = getattr(settings, field)
-        return value if isinstance(value, str) else ""
-    default = Settings.model_fields[field].default
-    return default if isinstance(default, str) else ""
-
-
-def _region_clouds(settings: Settings | None, field: str) -> tuple[str, ...]:
-    return tuple(
-        sorted(
-            {
-                regions.cloud_for_region(item.strip())
-                for item in _setting(settings, field).split(",")
-                if item.strip()
-            }
+    value = getattr(settings, field) if settings is not None else Settings.model_fields[field].default
+    if not isinstance(value, str):
+        raise TypeError(
+            f"Settings.{field} is bound as a deployment source in "
+            "trusted_router.operational_analytics_fleet.deployment_sources(), but its "
+            f"value is {type(value).__name__}, not str. Parse it into cloud names "
+            "explicitly there -- an unparseable source reads as zero clouds, and zero "
+            "clouds is a coverage requirement that is satisfied by anything."
         )
-    )
+    return value
+
+
+def _region_clouds(settings: Settings | None, field: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """``(clouds, unattributable region ids)`` for one comma-separated setting.
+
+    Split in two because "we do not know which cloud this is" must not render
+    as either answer: not as a cloud (a phantom named after a GCP geography)
+    and not as silence (a real fourth cloud, covered by nothing).
+    """
+    clouds: set[str] = set()
+    unknown: set[str] = set()
+    for item in _setting(settings, field).split(","):
+        region = item.strip()
+        if not region:
+            continue
+        cloud = regions.cloud_for_region(region)
+        if cloud is None:
+            unknown.add(region)
+        else:
+            clouds.add(cloud)
+    return tuple(sorted(clouds)), tuple(sorted(unknown))
+
+
+def _peer_clouds(settings: Settings | None) -> tuple[str, ...]:
+    """Cloud names in ``synthetic_fleet_peers`` ("cloud=base_url,...").
+
+    Parsed through :func:`trusted_router.synthetic.fleet.parse_fleet_peers`,
+    the same function the probes use, so this binding cannot disagree with the
+    list that is actually fetched.
+    """
+    raw = _setting(settings, "synthetic_fleet_peers")
+    return tuple(sorted({name for name, _url in synthetic_fleet.parse_fleet_peers(raw)}))
 
 
 def deployment_sources(settings: Settings | None = None) -> tuple[DeploymentSource, ...]:
@@ -221,7 +269,25 @@ def deployment_sources(settings: Settings | None = None) -> tuple[DeploymentSour
     to any one of them and watch the binding bite. Each entry's ``name`` is
     printed in the failure message: the point of a union is lost if the reader
     cannot see what it is a union OF.
+
+    WHAT IS DELIBERATELY NOT HERE, and why -- because "I did not think of it"
+    and "it does not declare a deployment" are indistinguishable from outside:
+
+    * ``catalog_data``'s provider list and ``bedrock_group_buy``'s spend
+      sources both contain the string ``"azure"``. They name a VENDOR we route
+      to or a box a customer ticks on a form; neither says TrustedRouter is
+      deployed on that cloud, and binding them would demand a status endpoint
+      for every provider in the catalogue.
+    * ``Settings.regions`` / ``primary_region`` are the attested-gateway
+      regions, which are GCP-only by construction (they template
+      ``api-{region}.quillrouter.com`` and Cloud Run URLs). They can add a
+      REGION, never a cloud, and ``marketing_regions`` is a superset of them.
+    * ``Settings.synthetic_status_us_url`` / ``_eu_url`` are two URLs of the
+      GCP deployment's own status service, keyed by geography rather than by
+      cloud.
     """
+    external_clouds, external_unknown = _region_clouds(settings, "external_live_regions")
+    marketing_clouds, marketing_unknown = _region_clouds(settings, "marketing_regions")
     return (
         DeploymentSource(
             name="trusted_router.byok_v1_attestations.clouds_that_must_attest()"
@@ -234,11 +300,25 @@ def deployment_sources(settings: Settings | None = None) -> tuple[DeploymentSour
         ),
         DeploymentSource(
             name="trusted_router.config.Settings.external_live_regions",
-            clouds=_region_clouds(settings, "external_live_regions"),
+            clouds=external_clouds,
+            unattributable=external_unknown,
         ),
         DeploymentSource(
             name="trusted_router.config.Settings.marketing_regions",
-            clouds=_region_clouds(settings, "marketing_regions"),
+            clouds=marketing_clouds,
+            unattributable=marketing_unknown,
+        ),
+        DeploymentSource(
+            # The closest relative of ANALYTICS_FRESHNESS_FLEET in the repo:
+            # cloud-name-keyed, config-as-code, and holding a public status URL
+            # per deployment. It is how every cloud watches every other cloud's
+            # /status.json, so a fourth cloud added here is a fourth cloud whose
+            # status page this repo already reads -- while nothing read its
+            # drain lag. Bound for exactly that reason: a peer list that knows
+            # about a cloud the freshness registry does not is the outage's
+            # shape with the two halves swapped.
+            name="trusted_router.config.Settings.synthetic_fleet_peers",
+            clouds=_peer_clouds(settings),
         ),
     )
 
@@ -248,7 +328,7 @@ def deployed_clouds(settings: Settings | None = None) -> tuple[str, ...]:
 
     A union, for the same reason
     ``byok_v1_attestations.clouds_that_must_attest`` takes one: no single table
-    can weaken the requirement by omission. Today all four sources agree on
+    can weaken the requirement by omission. Today all five sources agree on
     ``aws``/``azure``/``gcp``; a fourth deployment landing in any ONE of them
     makes this registry incomplete.
     """
@@ -280,6 +360,31 @@ def registry_defects(
     expected = tuple(deployed_clouds(settings) if clouds is None else clouds)
     source_list = "; ".join(source.name for source in sources)
     defects: list[str] = []
+
+    for source in sources:
+        if not source.clouds and not source.allow_empty:
+            defects.append(
+                f"{source.name}: declares NO clouds at all. It is bound as a deployment "
+                "source, and a union over an empty source is satisfied by anything -- "
+                "so this check would go on passing while one of the tables it is made "
+                "of had quietly stopped saying anything. Either it really is empty now "
+                "(pass allow_empty=True in deployment_sources() and say why), or it was "
+                "renamed, retyped, or reparsed wrongly."
+            )
+        for region in source.unattributable:
+            defects.append(
+                f"{source.name}: region id {region!r} belongs to no cloud this repo "
+                "knows. Add it to trusted_router.regions.GCP_REGION_GEO (a new GCP "
+                "region) or to trusted_router.regions.MULTICLOUD_REGION_GEO (a "
+                "deployment on another cloud -- that row is also what makes its "
+                "'<cloud>-' namespace recognisable everywhere else). It is not guessed "
+                "at in either direction on purpose: reading the prefix as a cloud "
+                "invents one out of an ordinary GCP geography and fails CI with a "
+                "nonsense name, and defaulting it to GCP would let a FOURTH CLOUD "
+                "arrive with no drain-freshness endpoint and nothing to say so. The "
+                "marketing map already drops this id silently (regions.py: `if geo is "
+                "None: continue`), so it is unrendered as well as unattributed."
+            )
 
     seen: set[str] = set()
     urls: dict[str, str] = {}
