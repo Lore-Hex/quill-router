@@ -23,7 +23,6 @@ import httpx
 from cryptography import x509
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-from trusted_router import __version__
 from trusted_router.config import Settings, parse_gateway_region_targets
 from trusted_router.provider_reliability import model_deadlines
 from trusted_router.regions import choose_region, region_payload
@@ -870,8 +869,15 @@ async def client_telemetry_canary_probe(
         "instance_id": secrets.token_hex(8),
         "seq": 0,
         "sdk": {
+            # 0.0.0 is the deliberate "not a real SDK release" sentinel. The
+            # schema requires a TR SDK name and a SEMVER, but this batch comes
+            # from the monitor, not from a customer's SDK: reporting the
+            # CONTROL PLANE's own package version here put a phantom
+            # "tr-py 0.1.0" into the per-SDK breakdowns the calibration report
+            # reads (harmless in fleet stats, which exclude synthetic rows,
+            # but a fact that is not true).
             "name": "tr-py",
-            "version": str(__version__ or "0.0.0"),
+            "version": "0.0.0",
             "lang": "python",
             "runtime": "cpython/0.0.0",
             "os": "other",

@@ -49,6 +49,13 @@ def _parse_time(value: Any) -> dt.datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.UTC)
 
 
+# The canary began posting at 2026-08-17 04:49 UTC (the first synthetic pass
+# after the beacon flag went live). A 24 h count gate cannot pass before this
+# instant; it is a start-up fact, not a threshold to tune, and it expires on
+# its own.
+CANARY_COUNT_GATE_FROM = dt.datetime(2026, 8, 18, 5, 0, tzinfo=dt.UTC)
+
+
 def evaluate(
     payload: dict[str, Any],
     *,
@@ -56,6 +63,7 @@ def evaluate(
     max_age_seconds: int,
     max_canary_age_seconds: int,
     min_canary_24h: int,
+    canary_count_from: dt.datetime = CANARY_COUNT_GATE_FROM,
 ) -> list[str]:
     """Return human-readable problems; an empty list means fresh."""
     section = payload.get("client_observed")
@@ -80,7 +88,12 @@ def evaluate(
     elif canary_age > max_canary_age_seconds:
         problems.append(f"canary last seen {canary_age}s ago (> {max_canary_age_seconds}s)")
     canary_24h = _int(canary.get("last_24h_count")) or 0
-    if canary_24h < min_canary_24h:
+    # Ramp-up: the 24 h count cannot be met until the canary has been posting
+    # for 24 h (it started 2026-08-17 04:49 UTC, the first pass after
+    # TR_CLIENT_EVENTS_ENABLED went live). Liveness is still enforced above by
+    # last_seen_age_seconds, so an outage during the ramp-up is still caught;
+    # only the count is deferred, and the guard expires by itself.
+    if now >= canary_count_from and canary_24h < min_canary_24h:
         problems.append(f"only {canary_24h} canary batches in the last 24h (< {min_canary_24h})")
     return problems
 
