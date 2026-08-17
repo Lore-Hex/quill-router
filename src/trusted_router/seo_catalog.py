@@ -44,9 +44,11 @@ _DEFAULT_MODEL_IDS: tuple[str, ...] = (
 _PAGE_FOCUS_TERMS: dict[str, tuple[str, ...]] = {
     "azure-openai-alternative": ("gpt-5", "claude-opus", "gemini"),
     "aws-bedrock-alternative": ("claude", "llama", "mistral"),
+    "china-ai-models": ("deepseek", "kimi", "glm", "qwen", "minimax"),
     "chinese-ai-models-us-hosted": ("deepseek", "kimi", "glm", "qwen", "minimax"),
     "claude-api-privacy": ("claude-opus", "claude-sonnet", "claude-haiku"),
     "deepseek-api-privacy": ("deepseek-v4", "deepseek-v3", "deepseek-r1"),
+    "eu-ai-models": ("mistral",),
     "gemini-flash-alternative": ("gemini-3.5-flash", "gemini-3.1-flash", "gemma"),
     "glm-5-api": ("glm-5.2", "glm-5.1", "glm-5"),
     "gpt-oss-120b-api": ("gpt-oss-120b",),
@@ -55,6 +57,7 @@ _PAGE_FOCUS_TERMS: dict[str, tuple[str, ...]] = {
     "llm-document-processing": ("gemini", "deepseek-ocr", "qwen-vl"),
     "minimax-m3-api": ("minimax-m3", "minimax-m2"),
     "tinfoil-alternative": ("glm", "qwen", "deepseek"),
+    "us-ai-models": ("gpt-5", "claude-opus", "gemini", "nemotron", "llama"),
     "vertex-ai-alternative": ("gemini", "claude"),
 }
 
