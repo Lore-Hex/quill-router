@@ -136,6 +136,10 @@ class DatasetStatus:
     revision: str | None
     updated_at: str | None
     problems: tuple[Problem, ...]
+    # True when the archive could not be READ, as opposed to read and found
+    # stale. The two need different exit codes: a stale archive is a real
+    # finding, an unreadable one means this check does not know.
+    unreadable: bool = False
 
     @property
     def fresh(self) -> bool:
@@ -225,7 +229,25 @@ def check_days(
     statuses: list[DatasetStatus] = []
     for day in days:
         for dataset in datasets:
-            statuses.append(check_dataset(store, dataset, day))
+            # A read failure is contained to its own dataset-day rather than
+            # unwinding the sweep. It used to propagate: one denied read aborted
+            # the run after reporting 1 of 4 datasets, so an unrelated
+            # permissions error could hide a dataset that had genuinely stopped
+            # archiving -- the same shape as the 2026-08-16 incident, where the
+            # thing that should have raised the alarm was the thing that broke.
+            try:
+                statuses.append(check_dataset(store, dataset, day))
+            except StoreError as error:
+                statuses.append(
+                    DatasetStatus(
+                        dataset,
+                        day,
+                        None,
+                        None,
+                        (Problem(dataset, day, f"could not read the archive: {error}"),),
+                        unreadable=True,
+                    )
+                )
     return statuses
 
 
@@ -297,22 +319,27 @@ def main(
     datasets: tuple[str, ...] = tuple(args.dataset) if args.dataset else tuple(DATASETS)
     active_store: FreshnessStore = store or GcloudStore(bucket=args.bucket)
 
-    try:
-        statuses = check_days(active_store, days, datasets)
-    except StoreError as exc:
-        out(f"::error::archive freshness could not be determined: {exc}")
-        if args.problems_file:
-            with open(args.problems_file, "w", encoding="utf-8") as handle:
-                handle.write(f"could not read the archive: {exc}\n")
-        return 2
+    # No try/except around the sweep: check_days contains a read failure to the
+    # dataset-day it happened on, so every dataset is still reported. Aborting
+    # here is what let one unreadable dataset hide the rest.
+    statuses = check_days(active_store, days, datasets)
 
     out(format_report(statuses))
     problems = [problem for status in statuses for problem in status.problems]
     if problems:
+        unreadable = [status for status in statuses if status.unreadable]
+        # Report the whole picture first, then distinguish "the archive is
+        # stale" (a finding) from "this check could not read it" (not knowing).
         out(f"::error::{len(problems)} archive freshness problem(s) in gs://{args.bucket}")
         if args.problems_file:
             with open(args.problems_file, "w", encoding="utf-8") as handle:
                 handle.write("\n".join(str(problem) for problem in problems) + "\n")
+        if unreadable:
+            out(
+                f"::error::{len(unreadable)} of {len(statuses)} dataset-day(s) could not be "
+                "read, so freshness is unknown for those"
+            )
+            return 2
         return 1
     checked = ", ".join(day.isoformat() for day in days)
     out(f"archive is fresh for {len(datasets)} dataset(s) on {checked}")

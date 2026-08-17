@@ -44,6 +44,9 @@ class FakeStore:
         self.present: set[str] = set()
         self.reads: list[str] = []
         self.fail_reads_with: str | None = None
+        # Fail only the keys containing one of these fragments, so a test can
+        # make ONE dataset unreadable while the others stay legible.
+        self.fail_only_keys_containing: tuple[str, ...] = ()
 
     def put(self, key: str, pointer: dict[str, Any], *, with_manifest: bool = True) -> None:
         self.objects[key] = pointer
@@ -52,7 +55,10 @@ class FakeStore:
 
     def read_json(self, key: str) -> dict[str, Any] | None:
         self.reads.append(key)
-        if self.fail_reads_with is not None:
+        if self.fail_reads_with is not None and (
+            not self.fail_only_keys_containing
+            or any(fragment in key for fragment in self.fail_only_keys_containing)
+        ):
             raise StoreError(self.fail_reads_with)
         return self.objects.get(key)
 
@@ -208,8 +214,13 @@ def test_main_exit_codes_and_problem_file(tmp_path: Any) -> None:
     lines.clear()
     code = main(["--problems-file", str(problems_file)], store=broken, now=now, out=lines.append)
     assert code == 2
-    assert "could not read the archive: 403 Forbidden" in problems_file.read_text()
-    assert any("could not be determined" in line for line in lines)
+    written = problems_file.read_text()
+    assert "could not read the archive: 403 Forbidden" in written
+    assert any("could not be read, so freshness is unknown" in line for line in lines)
+    # Every dataset is reported even though the very first read failed. The
+    # sweep used to abort on it, so 3 of 4 datasets went unreported.
+    for dataset in DATASETS:
+        assert dataset in written
 
 
 def test_main_day_and_dataset_overrides() -> None:
@@ -282,3 +293,42 @@ def test_gcloud_store_distinguishes_absent_from_forbidden() -> None:
     with pytest.raises(StoreError, match="403"):
         store.exists("denied")
     assert runner.calls[0][:3] == ["gcloud", "storage", "cat"]
+
+
+def test_one_unreadable_dataset_does_not_hide_another_that_is_stale(tmp_path: Any) -> None:
+    """The masking case, and the reason the sweep no longer aborts.
+
+    Before this, check_days let a StoreError propagate, so the first denied read
+    ended the run. A dataset that had genuinely stopped archiving could sit
+    behind an unrelated permissions error on a different dataset and never be
+    reported -- the 2026-08-16 shape, where the mechanism that should have
+    raised the alarm was itself the broken thing.
+    """
+
+    now = dt.datetime(2026, 8, 16, 7, 30, tzinfo=UTC)
+    store = _fresh_store()
+    # provider_benchmark_samples is unreadable ...
+    store.fail_reads_with = "403 Forbidden"
+    store.fail_only_keys_containing = ("provider_benchmark_samples",)
+    # ... and a DIFFERENT dataset was genuinely never archived.
+    del store.objects[pointer_key("activity_generations", DAY)]
+
+    problems_file = tmp_path / "problems.txt"
+    lines: list[str] = []
+    code = main(
+        ["--problems-file", str(problems_file)],
+        store=store,
+        now=now,
+        out=lines.append,
+    )
+
+    written = problems_file.read_text()
+    # The genuine staleness is reported even though another dataset errored.
+    assert "activity_generations day=2026-08-15" in written
+    assert "the day was never archived" in written
+    # And the unreadable one is reported as unreadable, not as fresh.
+    assert "could not read the archive: 403 Forbidden" in written
+    # Unknown outranks stale: exit 2 says this check could not see everything.
+    assert code == 2
+    # The datasets that were readable and fine are not dragged in as problems.
+    assert "synthetic_status_rollups" not in written

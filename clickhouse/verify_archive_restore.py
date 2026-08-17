@@ -31,6 +31,7 @@ from clickhouse.archive_daily import (
     _run_clickhouse_local,
     _sha256,
     _sql_string,
+    build_archive_store,
 )
 
 log = logging.getLogger("trusted_router.analytics_archive_restore")
@@ -40,25 +41,6 @@ class RestoreStore(Protocol):
     def read_json(self, key: str) -> dict[str, Any] | None: ...
 
     def download_file(self, key: str, destination: Path) -> None: ...
-
-
-class GCSRestoreStore:
-    def __init__(self, *, project: str, bucket: str) -> None:
-        from google.cloud import storage
-
-        self._bucket = storage.Client(project=project).bucket(bucket)
-
-    def read_json(self, key: str) -> dict[str, Any] | None:
-        blob = self._bucket.blob(key)
-        if not blob.exists():
-            return None
-        value = json.loads(blob.download_as_text())
-        if not isinstance(value, dict):
-            raise RuntimeError(f"archive object {key} is not a JSON object")
-        return value
-
-    def download_file(self, key: str, destination: Path) -> None:
-        self._bucket.blob(key).download_to_filename(str(destination))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -199,6 +181,15 @@ def main() -> int:
     parser.add_argument("--project", default=os.environ.get("GCP_PROJECT_ID", PROJECT))
     parser.add_argument("--bucket", default=os.environ.get("ARCHIVE_BUCKET", ARCHIVE_BUCKET))
     parser.add_argument("--table", action="append", choices=tuple(DATASETS))
+    # Which cloud's archive to drill. A drill that can only reach GCS would
+    # leave the other clouds writing archives nobody has proven restorable.
+    parser.add_argument(
+        "--object-store",
+        choices=("gcs", "s3", "azure"),
+        default=os.environ.get("TR_ARCHIVE_OBJECT_STORE", "gcs"),
+    )
+    parser.add_argument("--region", default=os.environ.get("AWS_REGION"))
+    parser.add_argument("--account-url", default=os.environ.get("AZURE_STORAGE_ACCOUNT_URL"))
     parser.add_argument("--date", type=dt.date.fromisoformat)
     parser.add_argument(
         "--result-file",
@@ -214,7 +205,13 @@ def main() -> int:
     day = args.date or (dt.datetime.now(dt.UTC).date() - dt.timedelta(days=1))
     if day >= dt.datetime.now(dt.UTC).date():
         raise SystemExit("restore verification only accepts closed UTC days")
-    store = GCSRestoreStore(project=args.project, bucket=args.bucket)
+    store = build_archive_store(
+        args.object_store,
+        project=args.project,
+        bucket=args.bucket,
+        region=args.region,
+        account_url=args.account_url,
+    )
     results = [
         verify_archived_day(store, dataset=dataset, day=day)
         for dataset in tuple(dict.fromkeys(args.table or tuple(DATASETS)))
