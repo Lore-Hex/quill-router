@@ -589,7 +589,7 @@ def test_exporter_argv_carries_the_configured_user_and_database(
     # A leftover "tr" anywhere in argv means the AWS node authenticates as a
     # user that does not exist there.
     assert "tr" not in argv
-    assert seen["env"]["CLICKHOUSE_PASSWORD"] == "pw"
+    assert seen["env"]["CLICKHOUSE_PASSWORD"] == "pw"  # noqa: S105 - test literal
 
 
 def test_exporter_still_defaults_to_the_gcp_user(monkeypatch: pytest.MonkeyPatch) -> None:
