@@ -110,10 +110,21 @@ die(){ printf '\nFATAL: %s\n' "$*" >&2; exit 1; }
 # same class of bug as a drain that cannot tell delivery from silence.
 ssm(){
   local comment="$1"; shift
-  local cid
+  local cid params
+  # --parameters MUST arrive as a file:// JSON document, never as
+  # "commands=[...]". The latter looks like JSON but the CLI parses key=[a,b]
+  # with its SHORTHAND parser, which does not decode JSON escapes: every \n
+  # stayed a literal backslash-n, the remote script arrived as ONE line, and
+  # the leading "\nset -eux" ran as the command `nset`:
+  #     _script.sh: 1: nset: not found   (exit 127)
+  # Shorthand also splits on commas, so any command containing one would be
+  # silently torn into separate list elements. JSON in, JSON parsed.
+  params="$WORK/ssm-params.json"
+  python3 -c 'import json,sys; json.dump({"commands": [sys.stdin.read()]}, sys.stdout)' \
+    <<<"$*" > "$params"
   cid="$(aws ssm send-command --region "$REGION" --instance-ids "$INSTANCE_ID" \
     --document-name AWS-RunShellScript --comment "$comment" \
-    --parameters "commands=$(python3 -c 'import json,sys; print(json.dumps([sys.stdin.read()]))' <<<"$*")" \
+    --parameters "file://$params" \
     --query 'Command.CommandId' --output text)"
   aws ssm wait command-executed --region "$REGION" --command-id "$cid" \
     --instance-id "$INSTANCE_ID" 2>/dev/null || true
@@ -269,6 +280,9 @@ test -f '$STAGE_DIR/trusted_router/postgres_dsn.py'
 ssm "drain: user, state dir, venv" "
 set -eux
 id -u '$SERVICE_USER' >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin '$SERVICE_USER'
+# The unit pins HOME here (see its comment: ProtectHome + libpq's cert lookup).
+# Create it whether or not the user already existed with a /home entry.
+install -d -o '$SERVICE_USER' -g '$SERVICE_USER' -m 0750 /var/lib/tr-clickhouse-ingest
 install -d -o '$SERVICE_USER' -g '$SERVICE_USER' -m 0750 '$STATE_DIR'
 test -x '$PYTHON_BIN' || { echo 'missing $PYTHON_BIN; provision 3.12 (deadsnakes on 22.04)'; exit 1; }
 '$PYTHON_BIN' -m venv '$STAGE_DIR/venv'
