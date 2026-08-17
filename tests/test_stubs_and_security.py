@@ -1113,22 +1113,69 @@ def test_internal_rate_limit_precedence_matches_route_auth(
     assert mixed.status_code == 200, mixed.text
 
 
+def test_in_memory_rate_limit_window_is_tumbling_not_sliding() -> None:
+    """The window is a TUMBLING bucket keyed on `epoch // window_seconds`.
+
+    This is the documented behaviour, not a defect -- but it means a burst that
+    crosses a wall-clock boundary gets a fresh allowance, and it is why tests
+    that assert "the Nth request is refused" must pin the clock. Two of them did
+    not, and one failed on CI (2026-08-17) with 202 instead of 429 for exactly
+    this reason.
+
+    If someone later changes this to a sliding window, this test should fail and
+    the clock pins in those tests can then be removed.
+    """
+    import datetime as _dt
+    import threading as _threading
+
+    from trusted_router.storage_rate_limits import InMemoryRateLimits
+
+    limits = InMemoryRateLimits(lock=_threading.RLock())
+
+    def nth_request_allowed(start: _dt.datetime) -> bool:
+        limits.reset()
+        hit = None
+        for index in range(61):
+            hit = limits.hit(
+                namespace="ce",
+                subject="k",
+                limit=60,
+                window_seconds=60,
+                now=start + _dt.timedelta(milliseconds=20 * index),
+            )
+        assert hit is not None
+        return hit.allowed
+
+    # Entirely inside one bucket: the 61st request is over the limit of 60.
+    assert nth_request_allowed(_dt.datetime(2026, 1, 1, 0, 0, 10, tzinfo=_dt.UTC)) is False
+    # Straddling :00 starts a new bucket, so the count restarts and the same
+    # 61st request is allowed.
+    assert nth_request_allowed(_dt.datetime(2026, 1, 1, 0, 0, 59, tzinfo=_dt.UTC)) is True
+
+
 def test_in_memory_rate_limit_bucket_cardinality_is_capped() -> None:
     """Attacker-fabricated identities (rotated tokens, spoofed XFF) must not
     grow the process map without bound (review finding on #400, round 3).
     At the cap, new subjects fold into a shared per-namespace overflow bucket:
     memory stays bounded and fabricated identities throttle collectively."""
+    import datetime as _dt
     import threading as _threading
 
     from trusted_router.storage_rate_limits import InMemoryRateLimits
 
     limits = InMemoryRateLimits(lock=_threading.RLock(), max_buckets=50)
+    # The bucket key includes `epoch // window_seconds`, so a run that crosses a
+    # real minute boundary starts a SECOND generation of keys and can exceed the
+    # cap+1 bound below for a reason unrelated to cardinality. Pinning `now`
+    # keeps this a test of the cap.
+    fixed_now = _dt.datetime(2026, 1, 1, 0, 0, 30, tzinfo=_dt.UTC)
     for n in range(200):
         hit = limits.hit(
             namespace="internal",
             subject=f"fabricated-{n}",
             limit=3,
             window_seconds=60,
+            now=fixed_now,
         )
     assert len(limits.buckets) <= 51  # cap + at most the one overflow bucket
     # Identities past the cap share the overflow bucket, so a rotation attack
