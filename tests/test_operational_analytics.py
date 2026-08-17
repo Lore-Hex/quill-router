@@ -587,6 +587,148 @@ def test_clickhouse_activity_reader_binds_private_filters_and_never_sends_raw_id
     assert generation.created_at == "2026-07-31T12:34:56.789Z"
 
 
+def test_client_reliability_reader_binds_tenant_and_uses_final_rollups() -> None:
+    tenant_id = analytics_surrogate("workspace", "ws-client-reliability")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = request.content.decode()
+        assert request.url.params["param_tenant_id"] == tenant_id
+        assert request.url.params["param_window_minutes"] == "60"
+        assert "ws-client-reliability" not in body
+        assert "FROM client_availability_rollups FINAL" in body
+        assert "tenant_id = {tenant_id:String}" in body
+        assert "period IN ('5m', 'hour')" in body
+        assert "INTERVAL {window_minutes:UInt32} MINUTE" in body
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "period": "5m",
+                        "host": "",
+                        "endpoint": "",
+                        "sdk": "",
+                        "requests": 100,
+                        "successes": 99,
+                        "tr_fault_failures": 1,
+                        "excluded_failures": 2,
+                        "aborted": 1,
+                        "attempts": 110,
+                        "attempt_tr_fault": 0,
+                        "failover_used": 5,
+                        "first_attempt_success": 94,
+                        "total_ms_hist": {"lt100": 50, "lt200": 50},
+                        "first_event_ms_hist": {"lt100": 100},
+                    },
+                    {
+                        "period": "5m",
+                        "host": "apex",
+                        "endpoint": "",
+                        "sdk": "",
+                        "requests": 0,
+                        "successes": 0,
+                        "tr_fault_failures": 0,
+                        "excluded_failures": 0,
+                        "aborted": 0,
+                        "attempts": 110,
+                        "attempt_tr_fault": 2,
+                        "failover_used": 0,
+                        "first_attempt_success": 0,
+                        "total_ms_hist": {},
+                        "first_event_ms_hist": {},
+                    },
+                ]
+            },
+        )
+
+    client = OperationalAnalyticsClient(
+        base_url="http://clickhouse.test:8123",
+        user="reader",
+        password="secret",  # noqa: S106 - inert test credential.
+        transport=httpx.MockTransport(handler),
+    )
+
+    summary = client.client_reliability_summary(tenant_id, window_minutes=60)
+
+    assert summary == {
+        "requests": 100,
+        "successes": 99,
+        "tr_fault": 1,
+        "excluded": 2,
+        "aborted": 1,
+        "attempts": 110,
+        "failover_used": 5,
+        "first_attempt_success": 94,
+        "p50_total_ms": 100,
+        "p95_total_ms": 200,
+        "p50_ttft_ms": 100,
+        "by_host": {
+            "apex": {"attempts": 110, "attempt_tr_fault": 2, "rate": 0.018182}
+        },
+    }
+
+
+def test_client_event_reader_binds_since_limit_and_normalizes_failures() -> None:
+    tenant_id = analytics_surrogate("workspace", "ws-client-events")
+    since = dt.datetime(2026, 8, 17, 10, 30, tzinfo=dt.UTC)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = request.content.decode()
+        assert request.url.params["param_tenant_id"] == tenant_id
+        assert request.url.params["param_since"] == "2026-08-17T10:30:00Z"
+        assert request.url.params["param_limit"] == "50"
+        assert "ws-client-events" not in body
+        assert "FROM client_request_events FINAL" in body
+        assert "created_at >= parseDateTime64BestEffort({since:String}, 3)" in body
+        assert "final_outcome != 'ok'" in body
+        assert "LIMIT {limit:UInt32}" in body
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "created_at": "2026-08-17 10:45:00.000",
+                        "endpoint": "responses",
+                        "model": "openai/gpt-5",
+                        "attempt_host": ["apex", "ally"],
+                        "attempt_count": 2,
+                        "final_outcome": "transport_error",
+                        "final_http_status": 0,
+                        "first_error_class": "connect_timeout",
+                        "sdk": "tr-py",
+                        "sdk_version": "0.6.0",
+                        "attempt_request_id": ["", "rlog_0123456789abcdef0123456789abcdef"],
+                    }
+                ]
+            },
+        )
+
+    client = OperationalAnalyticsClient(
+        base_url="http://clickhouse.test:8123",
+        user="reader",
+        password="secret",  # noqa: S106 - inert test credential.
+        transport=httpx.MockTransport(handler),
+    )
+
+    rows = client.client_events_recent(tenant_id, since=since, limit=100)
+
+    assert rows == [
+        {
+            "created_at": "2026-08-17T10:45:00.000Z",
+            "endpoint": "responses",
+            "model": "openai/gpt-5",
+            "attempt_host": ["apex", "ally"],
+            "attempt_count": 2,
+            "final_outcome": "transport_error",
+            "final_http_status": None,
+            "first_error_class": "connect_timeout",
+            "sdk": "tr-py",
+            "sdk_version": "0.6.0",
+            "attempt_request_id": ["rlog_0123456789abcdef0123456789abcdef"],
+        }
+    ]
+
+
 def _read_router(mode: str) -> SpannerBigtableStore:
     store = object.__new__(SpannerBigtableStore)
     store._analytics_read_mode = mode

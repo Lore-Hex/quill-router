@@ -209,6 +209,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/docs/mcp",
     "/docs/migrate-from-openrouter",
     "/docs/tagging",
+    "/docs/telemetry",
     "/docs/prompt-caching",
     "/docs/batch",
     "/docs/web-search",
@@ -956,6 +957,14 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         description=(
             "Attach AWS style tags and OpenRouter attribution metadata to LLM requests "
             "without adding them to model prompts or provider payloads."
+        ),
+    ),
+    "docs/telemetry": PublicPage(
+        template="public/telemetry.html",
+        title="Client Reliability Telemetry",
+        description=(
+            "See exactly what TrustedRouter SDKs measure for client-observed reliability, "
+            "what they never send, how long metadata is retained, and how to opt out."
         ),
     ),
     "docs/prompt-caching": PublicPage(
@@ -3360,9 +3369,11 @@ def llms_txt(settings: Settings) -> str:
         f"- Batch API: https://{domain}/docs/batch",
         f"- Video generation: https://{domain}/docs/video",
         f"- Request tagging and cost allocation: https://{domain}/docs/tagging",
+        f"- Client reliability telemetry: https://{domain}/docs/telemetry",
         f"- Blog: https://{domain}/blog",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
         f"- Request tagging and cost allocation: https://{domain}/docs/tagging",
+        f"- Client reliability telemetry: https://{domain}/docs/telemetry",
         "",
         "## API",
         "- OpenAI compatible base URL: https://api.trustedrouter.com/v1",
@@ -3458,6 +3469,7 @@ def docs_llms_txt(settings: Settings) -> str:
             f"- Blog: https://{domain}/blog",
             f"- Migrate from OpenRouter: https://{domain}/docs/migrate-from-openrouter",
             f"- Request tagging and cost allocation: https://{domain}/docs/tagging",
+            f"- Client reliability telemetry: https://{domain}/docs/telemetry",
             f"- Security: https://{domain}/security",
             f"- Legal/procurement packet: https://{domain}/legal",
             f"- SOC 2 readiness: https://{domain}/legal/soc2-readiness",

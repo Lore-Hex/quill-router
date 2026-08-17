@@ -45,6 +45,7 @@ from trusted_router.catalog import (
     providers_for_display,
 )
 from trusted_router.choose_catalog import choose_catalog_payload
+from trusted_router.client_reliability import client_observed_status_section
 from trusted_router.config import Settings
 from trusted_router.dashboard import (
     MODEL_SEO_SECTIONS,
@@ -762,6 +763,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/docs/tagging")
     async def tagging_docs() -> str:
         return public_page_html(settings, "docs/tagging")
+
+    @public_html_route("/docs/telemetry")
+    async def telemetry_docs() -> str:
+        return public_page_html(settings, "docs/telemetry")
 
     @public_html_route("/docs/prompt-caching")
     async def prompt_caching_docs() -> str:
@@ -2084,7 +2089,30 @@ def _precomputed_public_analytics_snapshot(name: str) -> dict[str, Any] | None:
     reader = getattr(STORE, "public_analytics_snapshot", None)
     if not callable(reader):
         return None
-    return current_public_analytics_snapshot(name, reader=reader)
+    return current_public_analytics_snapshot(
+        name,
+        reader=reader,
+        max_age_seconds=(2_147_483_647 if name == "client_reliability" else 600),
+    )
+
+
+def _merge_client_observed_status(
+    payload: dict[str, Any],
+    *,
+    settings: Settings,
+) -> dict[str, Any]:
+    snapshot = None
+    if settings.environment != "test":
+        try:
+            snapshot = _precomputed_public_analytics_snapshot("client_reliability")
+        except Exception:
+            log.exception("public_analytics_snapshot_read_failed name=client_reliability")
+    result = dict(payload)
+    result["client_observed"] = client_observed_status_section(
+        snapshot,
+        now=dt.datetime.now(dt.UTC),
+    )
+    return result
 
 
 def _status_snapshot(settings: Settings) -> dict[str, Any]:
@@ -2118,6 +2146,7 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
                 except (TypeError, ValueError):
                     log.exception("public_analytics_snapshot_invalid name=status_inputs")
                 else:
+                    payload = _merge_client_observed_status(payload, settings=settings)
                     _STATUS_CACHE = (now, payload)
                     return payload
     # Keep the fallback bounded. Current state and headline latency come from
@@ -2133,6 +2162,7 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
             log.exception("status_live_fallback_failed_serving_stale")
             return _STATUS_CACHE[1]
         raise
+    payload = _merge_client_observed_status(payload, settings=settings)
     if settings.environment != "test":
         _STATUS_CACHE = (now, payload)
     return payload
@@ -2279,6 +2309,8 @@ def _compact_status_json(snapshot: dict[str, Any]) -> dict[str, Any]:
         ]
         compact_components.append(compact_component)
     payload["components"] = compact_components
+    if "client_observed" in snapshot:
+        payload["client_observed"] = snapshot["client_observed"]
     return payload
 
 

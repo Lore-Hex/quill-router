@@ -225,7 +225,7 @@ def _merge_histograms(
     return result
 
 
-def _histogram_percentile(histogram: Mapping[str, int], percentile: int) -> int | None:
+def histogram_percentile(histogram: Mapping[str, int], percentile: int) -> int | None:
     total = sum(max(0, int(histogram.get(bucket, 0))) for bucket in LATENCY_BUCKETS)
     if total <= 0:
         return None
@@ -272,9 +272,9 @@ def _window(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         ),
         "distinct_tenants": distinct_tenants,
         "coverage": (round(successes / coverage_requests, 4) if coverage_requests else None),
-        "p50_total_ms": _histogram_percentile(total_hist, 50),
-        "p95_total_ms": _histogram_percentile(total_hist, 95),
-        "p50_ttft_ms": _histogram_percentile(first_event_hist, 50),
+        "p50_total_ms": histogram_percentile(total_hist, 50),
+        "p95_total_ms": histogram_percentile(total_hist, 95),
+        "p50_ttft_ms": histogram_percentile(first_event_hist, 50),
     }
 
 
@@ -371,6 +371,169 @@ def _watch_7d(rows: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, int]]:
         item["attempts"] += _int(row, "attempts")
         item["attempt_tr_fault"] += _int(row, "attempt_tr_fault")
     return dict(sorted(result.items()))
+
+
+def tenant_client_reliability_summary(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    window_minutes: int,
+) -> dict[str, Any]:
+    """Summarize tenant rollups without applying the fleet publication gate."""
+
+    period = "5m" if window_minutes <= 360 else "hour"
+    selected = [
+        dict(row)
+        for row in rows
+        if not row.get("period") or str(row.get("period")) == period
+    ]
+    totals = _total_rows(selected)
+    total_hist = _merge_histograms(totals, "total_ms_hist")
+    first_event_hist = _merge_histograms(totals, "first_event_ms_hist")
+    return {
+        "requests": sum(_int(row, "requests") for row in totals),
+        "successes": sum(_int(row, "successes") for row in totals),
+        "tr_fault": sum(_int(row, "tr_fault_failures") for row in totals),
+        "excluded": sum(_int(row, "excluded_failures") for row in totals),
+        "aborted": sum(_int(row, "aborted") for row in totals),
+        "attempts": sum(_int(row, "attempts") for row in totals),
+        "failover_used": sum(_int(row, "failover_used") for row in totals),
+        "first_attempt_success": sum(
+            _int(row, "first_attempt_success") for row in totals
+        ),
+        "p50_total_ms": histogram_percentile(total_hist, 50),
+        "p95_total_ms": histogram_percentile(total_hist, 95),
+        "p50_ttft_ms": histogram_percentile(first_event_hist, 50),
+        "by_host": _host_breakdown(selected),
+    }
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def _snapshot_age_seconds(
+    snapshot: Mapping[str, Any],
+    *,
+    now: dt.datetime,
+) -> float | None:
+    freshness = snapshot.get("freshness")
+    if isinstance(freshness, Mapping):
+        age_seconds = _optional_float(freshness.get("age_seconds"))
+        if age_seconds is not None:
+            return age_seconds if age_seconds >= 0 else None
+    generated_at = snapshot.get("generated_at")
+    if not isinstance(generated_at, str):
+        return None
+    try:
+        generated = dt.datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if generated.tzinfo is None:
+        generated = generated.replace(tzinfo=dt.UTC)
+    age_seconds = (now - generated.astimezone(dt.UTC)).total_seconds()
+    return age_seconds if age_seconds >= 0 else None
+
+
+def _status_window(window: Any, *, published: bool) -> dict[str, Any]:
+    row = window if isinstance(window, Mapping) else {}
+    return {
+        "requests": max(0, _int(row, "requests")),
+        "successes": max(0, _int(row, "successes")),
+        "tr_fault": max(0, _int(row, "tr_fault")),
+        "excluded": max(0, _int(row, "excluded")),
+        "aborted": max(0, _int(row, "aborted")),
+        "distinct_tenants": max(0, _int(row, "distinct_tenants")),
+        "coverage": _optional_float(row.get("coverage")),
+        "p50_total_ms": _optional_int(row.get("p50_total_ms")),
+        "p95_total_ms": _optional_int(row.get("p95_total_ms")),
+        "p50_ttft_ms": _optional_int(row.get("p50_ttft_ms")),
+        "availability_percent": (
+            _optional_float(row.get("availability_percent")) if published else None
+        ),
+    }
+
+
+def _status_host_breakdown(value: Any) -> dict[str, dict[str, Any]]:
+    rows = value if isinstance(value, Mapping) else {}
+    result: dict[str, dict[str, Any]] = {}
+    for host in HOSTS:
+        row = rows.get(host)
+        if not isinstance(row, Mapping):
+            continue
+        attempts = max(0, _int(row, "attempts"))
+        attempt_tr_fault = max(0, _int(row, "attempt_tr_fault"))
+        rate = _optional_float(row.get("rate"))
+        result[host] = {
+            "attempts": attempts,
+            "attempt_tr_fault": attempt_tr_fault,
+            "rate": (
+                rate
+                if rate is not None
+                else (round(attempt_tr_fault / attempts, 6) if attempts else None)
+            ),
+        }
+    return result
+
+
+def _status_canary(value: Any) -> dict[str, Any]:
+    row = value if isinstance(value, Mapping) else {}
+    return {
+        "last_seen_age_seconds": _optional_float(row.get("last_seen_age_seconds")),
+        "last_24h_count": max(0, _int(row, "last_24h_count")),
+    }
+
+
+def client_observed_status_section(
+    snapshot: Mapping[str, Any] | None,
+    *,
+    now: dt.datetime,
+) -> dict[str, Any]:
+    """Project the public snapshot onto the privacy-safe status contract."""
+
+    if not isinstance(snapshot, Mapping):
+        return {"available": False, "reason": "no_data"}
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=dt.UTC)
+    else:
+        now = now.astimezone(dt.UTC)
+    age_seconds = _snapshot_age_seconds(snapshot, now=now)
+    if age_seconds is None:
+        return {"available": False, "reason": "no_data"}
+    if age_seconds > 900:
+        return {"available": False, "reason": "stale"}
+
+    published = snapshot.get("published") is True
+    raw_windows = snapshot.get("windows")
+    windows = raw_windows if isinstance(raw_windows, Mapping) else {}
+    generated_at = snapshot.get("generated_at")
+    return {
+        "available": True,
+        "state": "published" if published else "calibrating",
+        "slo_id": "client_observed",
+        "methodology_version": _optional_int(snapshot.get("methodology_version")),
+        "windows": {
+            name: _status_window(windows.get(name), published=published)
+            for name in ("5m", "1h", "24h", "7d", "30d")
+        },
+        "by_host_24h": _status_host_breakdown(snapshot.get("by_host_24h")),
+        "canary": _status_canary(snapshot.get("canary")),
+        "generated_at": generated_at if isinstance(generated_at, str) else None,
+    }
 
 
 def build_client_reliability(

@@ -3,6 +3,8 @@ prompt content."""
 
 from __future__ import annotations
 
+import datetime as dt
+import logging
 import threading
 import time
 from collections import OrderedDict
@@ -12,11 +14,16 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, Response
 
 from trusted_router.auth import SettingsDep
+from trusted_router.client_reliability import availability
+from trusted_router.config import Settings
 from trusted_router.money import format_money_precise
+from trusted_router.operational_analytics import OperationalAnalyticsClient
 from trusted_router.routes.console._shared import ConsoleDep, render
 from trusted_router.storage import STORE
+from trusted_router.storage_operational_analytics import analytics_surrogate
 
 _USAGE_CACHE_TTL_SECONDS = 60.0
+_CLIENT_RELIABILITY_CACHE_TTL_SECONDS = 60.0
 USAGE_RANGE_PRESETS: dict[str, tuple[int, str]] = {
     "1h": (60, "minute"),
     "6h": (360, "5min"),
@@ -75,6 +82,120 @@ class _UsageCache:
 
 
 _USAGE_CACHE = _UsageCache()
+_CLIENT_RELIABILITY_CACHE = _UsageCache()
+CLIENT_RELIABILITY_RANGE_PRESETS = {
+    "1h": 60,
+    "6h": 360,
+    "24h": 1440,
+    "7d": 10080,
+}
+log = logging.getLogger(__name__)
+
+
+def _operational_analytics_client(
+    settings: Settings,
+) -> OperationalAnalyticsClient | None:
+    if not (
+        settings.operational_analytics_clickhouse_url
+        and settings.operational_analytics_clickhouse_password
+    ):
+        return None
+    return OperationalAnalyticsClient(
+        base_url=settings.operational_analytics_clickhouse_url,
+        user=settings.operational_analytics_clickhouse_user,
+        password=settings.operational_analytics_clickhouse_password,
+        database=settings.operational_analytics_clickhouse_database,
+    )
+
+
+def _percent(numerator: int, denominator: int) -> float | None:
+    return round(numerator / denominator * 100, 2) if denominator else None
+
+
+def _median(values: list[int]) -> int | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) // 2
+
+
+def _top_errors(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str | None, int | None], int] = {}
+    for row in rows:
+        key = (row.get("first_error_class"), row.get("final_http_status"))
+        grouped[key] = grouped.get(key, 0) + 1
+    return [
+        {"error_class": error_class, "http_status": http_status, "count": count}
+        for (error_class, http_status), count in sorted(
+            grouped.items(),
+            key=lambda item: (-item[1], str(item[0][0] or ""), item[0][1] or 0),
+        )
+    ]
+
+
+def _client_reliability_data(
+    client: OperationalAnalyticsClient,
+    *,
+    workspace_id: str,
+    range_: str,
+    window_minutes: int,
+) -> dict[str, Any]:
+    tenant_id = analytics_surrogate("workspace", workspace_id)
+    since = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=window_minutes)
+    summary = client.client_reliability_summary(
+        tenant_id,
+        window_minutes=window_minutes,
+    )
+    failures = client.client_events_recent(tenant_id, since=since, limit=50)
+    generations = client.activity_generations(
+        tenant_id=tenant_id,
+        start_at=since.isoformat().replace("+00:00", "Z"),
+        limit=5001,
+    )
+    truncated = len(generations) > 5000
+    generations = generations[:5000]
+    elapsed = [
+        generation.elapsed_milliseconds
+        for generation in generations
+        if generation.elapsed_milliseconds is not None
+    ]
+    requests = int(summary.get("requests") or 0)
+    successes = int(summary.get("successes") or 0)
+    tr_fault = int(summary.get("tr_fault") or 0)
+    measured = availability(successes, tr_fault)
+    retry_count = min(requests, max(0, int(summary.get("attempts") or 0) - requests))
+    rendered_summary = dict(summary)
+    rendered_summary.update(
+        {
+            "availability_percent": (
+                round(measured * 100, 4)
+                if measured is not None and requests >= 100
+                else None
+            ),
+            "retried_percent": _percent(retry_count, requests),
+            "failover_percent": _percent(
+                int(summary.get("failover_used") or 0),
+                requests,
+            ),
+        }
+    )
+    return {
+        "data": {
+            "range": range_,
+            "summary": rendered_summary,
+            "server_p50_elapsed_ms": _median(elapsed),
+            "top_errors": _top_errors(failures),
+            "recent_failures": failures,
+        },
+        "meta": {
+            "scanned": len(generations) + len(failures),
+            "truncated": truncated,
+            "freshness_seconds": 0,
+        },
+    }
 
 
 def register(app: FastAPI) -> None:
@@ -134,5 +255,39 @@ def register(app: FastAPI) -> None:
             cache_key,
             result,
             expires_at=now + _USAGE_CACHE_TTL_SECONDS,
+        )
+        return result
+
+    @app.get("/console/activity/client-reliability.json")
+    async def console_activity_client_reliability(
+        ctx: ConsoleDep,
+        settings: SettingsDep,
+        range_: str = Query("24h", alias="range"),
+    ) -> dict[str, Any]:
+        if range_ not in CLIENT_RELIABILITY_RANGE_PRESETS:
+            raise HTTPException(status_code=400, detail="invalid range")
+        cache_key = (ctx.workspace.id, range_, False, "client_reliability")
+        now = time.monotonic()
+        cached = _CLIENT_RELIABILITY_CACHE.get(cache_key, now=now)
+        if cached is not None:
+            return cached
+        client = _operational_analytics_client(settings)
+        if client is None:
+            result = {"data": None, "meta": {"reason": "unavailable"}}
+        else:
+            try:
+                result = _client_reliability_data(
+                    client,
+                    workspace_id=ctx.workspace.id,
+                    range_=range_,
+                    window_minutes=CLIENT_RELIABILITY_RANGE_PRESETS[range_],
+                )
+            except Exception:
+                log.exception("console_client_reliability_read_failed")
+                result = {"data": None, "meta": {"reason": "unavailable"}}
+        _CLIENT_RELIABILITY_CACHE.put(
+            cache_key,
+            result,
+            expires_at=now + _CLIENT_RELIABILITY_CACHE_TTL_SECONDS,
         )
         return result
