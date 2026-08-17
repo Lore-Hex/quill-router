@@ -182,9 +182,7 @@ def test_region_pages_report_operator_jurisdiction_per_model(client: TestClient)
     for lab in labs:
         for model in lab["models"]:
             operators = {str(operator["slug"]) for operator in model["operators"]}
-            configured = {
-                endpoint.provider for endpoint in endpoints_for_model(str(model["id"]))
-            }
+            configured = {endpoint.provider for endpoint in endpoints_for_model(str(model["id"]))}
             assert operators <= configured, model["id"]
             counted = sum(int(str(chip["operator_count"])) for chip in model["jurisdiction_chips"])
             assert counted == len(configured), model["id"]
