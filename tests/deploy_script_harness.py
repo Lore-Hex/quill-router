@@ -19,28 +19,37 @@ So the script is EXECUTED, and two properties are asserted about what it did:
 A printed instruction fails both by construction. So does a commented-out call,
 a heredoc, and a call whose exit status is swallowed.
 
-HOW IT IS HERMETIC
-------------------
+HOW ISOLATED IT IS, EXACTLY
+---------------------------
+Stated precisely rather than flatteringly, because "hermetic" was claimed here
+before and overstated three separate things.
+
 ``PATH`` is one directory, built here, containing:
 
-* a recording stub for every command that would leave this machine or change
-  something outside it (``aws``, ``az``, ``gcloud``, ``docker``, ``curl``,
-  ``ssh``, ``systemctl``, ``journalctl``, ``clickhouse-client``, ``sleep``, ...).
-  Each writes its argv to a shared ordered log and exits 0;
-* symlinks to the ordinary local text utilities (``sed``, ``tar``, ``base64``,
-  ``python3``, ...), so nothing has to be re-implemented.
+* a recording stub for each name in :data:`STUBBED_COMMANDS` — the commands
+  these scripts use to leave the machine or change something outside it
+  (``aws``, ``az``, ``gcloud``, ``docker``, ``curl``, ``ssh``, ``systemctl``,
+  ``journalctl``, ``clickhouse-client``, ``sleep``, ...). Each writes its argv
+  to a shared ordered log and exits 0;
+* a symlink to **every other entry of /bin and /usr/bin**. Not a curated list of
+  text utilities: all of them, so nothing has to be re-implemented.
 
-A command that is neither is simply not found, and the script fails — which is
-a result, not a hole: it means the harness does not know enough about that
-script to run it honestly, and the registry says so in
-:data:`~trusted_router.cloud_rollout_completeness.NOT_PROVEN`.
+So the isolation is *by name*, and its boundary is :data:`STUBBED_COMMANDS`. A
+script that reached the network through some tool nobody listed — ``ftp``,
+``telnet``, a language runtime — would reach it. What the harness does
+guarantee is what the two assertions need: the scripts under test call the
+cloud CLIs and ``curl``, all of which are stubs, and the ``bash`` they run is
+this machine's.
 
 ``$HOME`` and ``$TMPDIR`` point inside the temp directory, and the repository
-the scripts see is a COPY: they read ``clickhouse/*.sql`` and ``src/`` for
-real, and cannot write to the checkout under test. ``verify_cloud_complete.sh``
-in that copy is replaced by a stub that records the call and exits with
-``HARNESS_VERIFIER_RC``; ``cloud_complete_gate.sh`` is the real one, because
-its behaviour is part of what is being proven.
+the scripts see is a COPY of ``clickhouse/``, ``src/`` and ``scripts/``: they
+read the SQL schemas and the package for real, and writes land in the copy
+rather than in the checkout the suite is running from. That is a copy, not a
+sandbox — an absolute path would still escape it — but no script here uses one.
+``verify_cloud_complete.sh`` in that copy is replaced by a stub that records the
+call and exits with ``HARNESS_VERIFIER_RC``; ``cloud_complete_gate.sh`` is the
+real one, because its behaviour is part of what is being proven, and it resolves
+its verifier relative to itself, which is how the stub gets found.
 
 WHAT THE STUB RESPONSES ARE, AND WHAT THEY ARE NOT
 --------------------------------------------------
@@ -333,7 +342,22 @@ class DeployScriptHarness:
         target.chmod(0o755)
         return relative
 
-    def run(self, script: str, *, verifier_rc: int = 0, timeout: int = 120) -> HarnessRun:
+    def run(
+        self,
+        script: str,
+        *,
+        verifier_rc: int = 0,
+        timeout: int = 120,
+        omit_env: tuple[str, ...] = (),
+    ) -> HarnessRun:
+        """Run one script. ``omit_env`` drops fixture variables for this run.
+
+        ``omit_env`` exists for one question, and it is a question worth being
+        able to ask: a fixture supplies the environment an operator would type,
+        so a property that holds only BECAUSE the fixture supplied something is
+        a property that does not hold on a first run. See
+        ``test_the_gate_status_survives_without_the_operator_attestation``.
+        """
         fixture = SCRIPT_FIXTURES.get(script, ScriptFixture())
         self._runs += 1
         run_dir = self.root / f"run-{self._runs:03d}"
@@ -361,7 +385,7 @@ class DeployScriptHarness:
             "HARNESS_ARGV_LOG": str(argv_log),
             "HARNESS_FIXTURES": str(fixtures_file),
             "HARNESS_VERIFIER_RC": str(verifier_rc),
-            **fixture.env,
+            **{k: v for k, v in fixture.env.items() if k not in omit_env},
         }
 
         proc = subprocess.run(  # noqa: S603 - fixed argv, hermetic PATH, repo-local script

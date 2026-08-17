@@ -450,13 +450,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/cloud_complete_gate.sh
 . "${SCRIPT_DIR}/cloud_complete_gate.sh"
 
+# The next-steps text is built with a plain heredoc into a variable, NOT as
+# "$(cat <<'NEXT' ... )". Nesting a heredoc inside a command substitution is a
+# syntax error in bash 3.2 -- which is /bin/bash on every macOS -- as soon as
+# the BODY contains an apostrophe: the parser looks for a matching quote inside
+# the substitution and runs off the end of the file. This body said "step 9's
+# output", so on a Mac this entire script failed to parse and did nothing at
+# all, gate included, while CI (Linux, bash 5) stayed green. The script whose
+# absence caused the outage could not be run by the person most likely to run
+# it. tests/test_deploy_script_execution.py now parses every deploy script with
+# the local shell, so a repeat is caught wherever the old shell is.
+NEXT_STEPS='The drain install itself did not fail. Read step 9 output above before
+touching anything: copies=, drain_lag_seconds, and the two ClickHouse
+counts are printed there and asserted nowhere.'
+
 VERIFY_RC=0
-require_cloud_complete aws "$(cat <<'NEXT'
-The drain install itself did not fail. Read step 9's output above before
-touching anything: `copies=`, `drain_lag_seconds`, and the two ClickHouse
-counts are printed there and asserted nowhere.
-NEXT
-)" || VERIFY_RC=$?
+require_cloud_complete aws "$NEXT_STEPS" || VERIFY_RC=$?
 
 if [ "$VERIFY_RC" -eq 5 ]; then
   cat >&2 <<'PREDEPLOY'

@@ -599,6 +599,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPLETE=0
 require_cloud_complete aws || COMPLETE=$?
 
+# The gate's answer wins, and it wins FIRST. Written the other way round, this
+# script returned 3 for an unwired replica whatever the gate had said — and
+# since a first-run operator has never set TR_STOCKHOLM_REPLICA_WIRED, that was
+# every first run. The claim "this script's exit status is the gate's" then held
+# only for the fixture in tests/deploy_script_harness.py, which sets the
+# variable so the script can reach its own end. A claim that is true of the test
+# and false of the operator is the shape of defect this whole change is about.
+if [ "$COMPLETE" -ne 0 ]; then
+  exit "$COMPLETE"
+fi
+
 if [ "${TR_STOCKHOLM_REPLICA_WIRED:-0}" != "1" ]; then
   cat >&2 <<NEXT
 

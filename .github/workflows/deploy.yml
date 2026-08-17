@@ -791,9 +791,17 @@ jobs:
   # saying it did. THIS JOB is that control, and the exemption now names it as a
   # structured reference that tests/test_cloud_rollout_completeness.py resolves.
   #
-  # Out of band by construction. It needs the deploy job, so it runs AFTER every
-  # production mutation: it can make the run red, and it can never leave GCP
-  # half-deployed. Read-only -- one public GET, no credentials, no cloud SDK.
+  # Out of band by construction: it runs after the deploy job, so it can make
+  # the run red and can never leave GCP half-deployed. Read-only -- one public
+  # GET, no credentials, no cloud SDK.
+  #
+  # `if: always()` is load-bearing and was missing. With a bare `needs:
+  # [deploy]`, GitHub SKIPS this job when deploy fails -- and a deploy that
+  # failed PARTWAY has already mutated production, which is exactly the state
+  # somebody needs to know the completeness of. The check would have been absent
+  # from every run where it mattered most, behind a comment saying it ran after
+  # every production mutation. It is skipped only when the deploy job itself was
+  # skipped, i.e. when nothing was deployed.
   #
   # It retries because a Cloud Run revision takes traffic gradually and the
   # status snapshot behind the CDN is not instant. A failure that survives five
@@ -801,6 +809,7 @@ jobs:
   # ---------------------------------------------------------------------------
   verify-cloud-complete:
     needs: [deploy]
+    if: ${{ always() && needs.deploy.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
