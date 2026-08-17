@@ -166,6 +166,14 @@ def register(router: APIRouter) -> None:
         await run_in_threadpool(_record_probe_samples, samples)
         await run_in_threadpool(report_image_generation_failures, samples)
         await run_in_threadpool(report_video_generation_failures, samples)
+        # The GCP monitor is a Cloud Run Job (synthetic.cli) that posts its
+        # samples here; it never runs _run_and_record. Evaluate the client
+        # watch on THIS side, where STORE and the ClickHouse reader live, so
+        # the invisible-outage / stale alerts fire on every cloud's pass.
+        try:
+            await run_in_threadpool(_client_watch_pass, settings, samples)
+        except Exception:
+            log.warning("client_watch.pass_failed", exc_info=True)
         return {"data": {"recorded": len(samples)}}
 
     @router.post("/internal/synthetic/benchmark")
