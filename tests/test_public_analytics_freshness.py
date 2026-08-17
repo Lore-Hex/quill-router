@@ -236,6 +236,58 @@ def test_the_three_real_reasons_survive_the_clamp() -> None:
         assert published["reason"] == reason
 
 
+@pytest.mark.parametrize("hostile", [["unreachable"], {"reason": "unreachable"}, 17, None])
+def test_a_reason_that_is_not_even_a_string_is_narrowed_rather_than_raising(
+    hostile: object,
+) -> None:
+    """`x in frozenset` raises TypeError on an unhashable value.
+
+    The clamp sat outside `_merge_analytics_status`'s try block, so a backend
+    returning a list would have taken the exception straight through the status
+    build -- dropping the whole `analytics` key, which the fleet checker reads
+    as "this deployment runs code too old to publish drain lag" and answers by
+    sending somebody to redeploy a healthy service. A clamp that raises on
+    hostile input is not a clamp.
+    """
+    published = analytics_status_from_reading(
+        OutboxFreshness(backend=BACKEND_POSTGRES, available=False, reason=hostile),  # type: ignore[arg-type]
+        now=dt.datetime.now(dt.UTC),
+    )
+
+    assert published == {"available": False, "reason": REASON_UNREACHABLE}
+
+
+@pytest.mark.parametrize("hostile", [["postgres"], {"backend": "postgres"}, 17])
+def test_a_backend_that_is_not_even_a_string_is_narrowed_rather_than_raising(
+    hostile: object,
+) -> None:
+    """Same total-function requirement, same reason, the other clamped field."""
+    published = analytics_status_from_reading(
+        OutboxFreshness(backend=hostile, oldest_enqueued_at=None),  # type: ignore[arg-type]
+        now=dt.datetime.now(dt.UTC),
+    )
+
+    assert published["backend"] == BACKEND_UNKNOWN
+
+
+def test_a_store_that_returns_nonsense_still_leaves_the_key_published(monkeypatch) -> None:
+    """Whatever goes wrong in the projection, the section is written.
+
+    An omitted key is not a neutral outcome: it is the one shape that tells the
+    fleet checker to send somebody to redeploy.
+    """
+    monkeypatch.setattr(
+        STORE.target,
+        "operational_analytics_outbox_freshness",
+        lambda: OutboxFreshness(backend=BACKEND_POSTGRES, oldest_enqueued_at="yesterday"),  # type: ignore[arg-type]
+        raising=False,
+    )
+
+    section = _snapshot(monkeypatch)[ANALYTICS_STATUS_KEY]
+
+    assert section == {"available": False, "reason": REASON_UNREACHABLE}
+
+
 def test_an_unrecognised_backend_name_is_narrowed_too() -> None:
     """Same contract, applied to every published value, as client_reliability does."""
     published = analytics_status_from_reading(
@@ -272,27 +324,34 @@ def test_a_leaky_reason_cannot_reach_the_wire_either(client: TestClient, monkeyp
 # ---------------------------------------------------------------------------
 
 
-def test_a_slow_backend_still_returns_a_status_payload_promptly(monkeypatch) -> None:
-    """The bound has to degrade, not hang and not raise.
+def test_a_backend_that_answers_slowly_does_not_hold_the_status_build_open(
+    monkeypatch,
+) -> None:
+    """The bound this module OWNS, tested by exceeding it twentyfold.
 
-    This read sits on the public /status.json build path inside an async
-    handler, so a blocking wait there stops the EVENT LOOP -- every request
-    this process is serving, not one worker thread. The store drivers cap both
-    the pool wait and the statement at 3s (see the structural tests below);
-    what this pins is the behaviour when that cap fires: the section publishes
-    `unavailable`, the page is still served, and the caller does not wait for a
-    database that is not answering.
+    The failure it prevents: this read sits on the public /status.json build
+    path inside an async handler, so a blocking wait there stops the EVENT LOOP
+    -- every request this process is serving, not one worker thread.
+
+    This is written to FAIL against an unbounded implementation, which the
+    previous version of it could not: a backend that slept 0.25s under a 2.0s
+    assertion passes whether anything bounds it or not. Here the backend takes
+    a full second, the bound is 50ms, and the assertion is a tenth of a second
+    -- so the only way to pass is to stop waiting. It also does not rely on the
+    store's own timeouts: this backend does not have any, which is precisely
+    the case (a driver that ignores its cap, a backend added later) the
+    caller-side bound exists for.
     """
-    slow = 0.25
+    monkeypatch.setattr(public_routes, "STATUS_ANALYTICS_READ_TIMEOUT_SECONDS", 0.05)
 
-    def hangs_then_times_out() -> OutboxFreshness:
-        time.sleep(slow)
-        raise TimeoutError("statement timeout")
+    def answers_eventually() -> OutboxFreshness:
+        time.sleep(1.0)
+        return OutboxFreshness(backend=BACKEND_POSTGRES, oldest_enqueued_at=None)
 
     monkeypatch.setattr(
         STORE.target,
         "operational_analytics_outbox_freshness",
-        hangs_then_times_out,
+        answers_eventually,
         raising=False,
     )
 
@@ -301,16 +360,57 @@ def test_a_slow_backend_still_returns_a_status_payload_promptly(monkeypatch) -> 
     elapsed = time.monotonic() - started
 
     assert section == {"available": False, "reason": REASON_UNREACHABLE}
-    assert elapsed < 2.0, "the status build waited on the backend rather than bounding it"
+    assert elapsed < 0.5, "the status build waited on the backend rather than bounding it"
+
+
+def test_a_backend_that_raises_after_its_own_timeout_publishes_unavailable(
+    monkeypatch,
+) -> None:
+    """The other half: the store's cap fires first and the page is still served."""
+
+    def times_out() -> OutboxFreshness:
+        time.sleep(0.05)
+        raise TimeoutError("statement timeout")
+
+    monkeypatch.setattr(
+        STORE.target,
+        "operational_analytics_outbox_freshness",
+        times_out,
+        raising=False,
+    )
+
+    section = _snapshot(monkeypatch)[ANALYTICS_STATUS_KEY]
+
+    assert section == {"available": False, "reason": REASON_UNREACHABLE}
+
+
+def test_the_caller_side_bound_is_above_the_drivers_own_caps() -> None:
+    """Ordering matters: the driver's cap should be the one that normally fires.
+
+    It can cancel the statement; this one can only stop waiting for it. A
+    caller bound BELOW the driver's would abandon reads the database was about
+    to answer and publish `unavailable` on a healthy cloud.
+    """
+    from trusted_router import storage_postgres
+
+    assert (
+        public_routes.STATUS_ANALYTICS_READ_TIMEOUT_SECONDS
+        > storage_postgres.OUTBOX_FRESHNESS_TIMEOUT_SECONDS
+    )
 
 
 def test_the_postgres_lag_read_bounds_the_pool_wait_and_the_statement() -> None:
-    """Both waits, because either one alone is still unbounded.
+    """Supplementary, and stated as such: this reads source text, not behaviour.
 
-    An exhausted or unreachable pool blocks before any SQL is issued, so a
-    statement timeout never gets its chance; a healthy connection to a cluster
-    that has stopped answering blocks after it. `readiness_check` in the same
-    class caps both, and this read is on a more exposed path than that one.
+    The behavioural bound is
+    `test_a_backend_that_answers_slowly_does_not_hold_the_status_build_open`
+    above, which fails against an unbounded implementation. What string
+    matching adds is WHICH waits the driver caps -- both of them, because
+    either alone is still unbounded: an exhausted or unreachable pool blocks
+    before any SQL is issued, so a statement timeout never gets its chance,
+    while a healthy connection to a cluster that has stopped answering blocks
+    after it. Neither is reachable from a unit test without a real pool, so it
+    is checked here as a drift guard rather than offered as the proof.
     """
     import inspect
 

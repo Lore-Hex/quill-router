@@ -113,7 +113,10 @@ from trusted_router.domains import (
 from trusted_router.og import OG_PNG_PATH
 from trusted_router.operational_analytics_freshness import (
     ANALYTICS_STATUS_KEY,
+    REASON_UNREACHABLE,
+    OutboxFreshness,
     analytics_status_from_reading,
+    analytics_status_unavailable,
 )
 from trusted_router.provider_contract import (
     PROVIDER_CATALOG_SCHEMA,
@@ -2119,6 +2122,53 @@ def _merge_client_observed_status(
     return result
 
 
+#: Wall-clock bound this module puts on the outbox-lag read, independently of
+#: whatever the storage driver promises. Above the drivers' own 3s caps on
+#: purpose: their cap is the one that should normally fire (it can cancel the
+#: statement, which this cannot), and this one exists for the case where theirs
+#: does not -- a driver that ignores a timeout, a backend added later that
+#: never had one, a wait that happens before any SQL is issued. A bound that
+#: lives entirely inside the thing being bounded is a bound you cannot test.
+STATUS_ANALYTICS_READ_TIMEOUT_SECONDS = 5.0
+
+
+def _read_outbox_freshness_bounded(timeout: float) -> OutboxFreshness | None:
+    """One drain-lag reading, or ``None`` if the store did not answer in time.
+
+    The read runs on a daemon thread and the caller waits at most ``timeout``.
+    Why the wait belongs HERE and not only in the drivers: this runs on the
+    async /status.json build path, so a blocking read that overruns does not
+    occupy one worker thread, it stops the EVENT LOOP -- every request this
+    process is serving. The store side caps its pool wait and its statement,
+    but those caps are the callee's promise about itself; this is the caller's
+    own guarantee, and it holds for a backend that has not made that promise.
+
+    The thread is a daemon and is deliberately not joined after the timeout:
+    the point is that this function returns while the database is still not
+    answering. It cannot be cancelled -- Python has no way to interrupt a
+    blocking driver call -- so the abandoned read finishes into a result nobody
+    reads, under the driver's own cap, and process exit never waits on it.
+    """
+    result: list[OutboxFreshness] = []
+
+    def read() -> None:
+        try:
+            result.append(STORE.operational_analytics_outbox_freshness())
+        except Exception:
+            log.exception("operational_analytics_outbox_freshness_read_failed")
+
+    worker = threading.Thread(target=read, name="status-analytics-lag", daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        log.warning(
+            "operational_analytics_outbox_freshness_timed_out",
+            extra={"timeout_seconds": timeout},
+        )
+        return None
+    return result[0] if result else None
+
+
 def _merge_analytics_status(payload: dict[str, Any]) -> dict[str, Any]:
     """Publish this cloud's operational-analytics drain lag.
 
@@ -2140,24 +2190,31 @@ def _merge_analytics_status(payload: dict[str, Any]) -> dict[str, Any]:
 
     Runs inside `_status_snapshot`, so it is behind `STATUS_SNAPSHOT_CACHE_SECONDS`
     and costs one bounded index seek per cache miss rather than one per request.
-    The store side caps both the pool wait and the statement (3s, as
-    `readiness_check` does) and degrades to `unavailable`: this runs on an
-    async request path, where an unbounded blocking read would stop the event
-    loop rather than occupy one thread.
+    Two bounds apply, and neither is the other's substitute: the store caps its
+    own pool wait and statement (3s, as `readiness_check` does), and
+    `_read_outbox_freshness_bounded` caps how long THIS function is willing to
+    wait for any of that to happen. A read that overruns publishes
+    `unavailable` and the page is served.
+
+    Nothing in here may raise. The section is written unconditionally, and an
+    exception escaping would drop the key -- which the fleet checker reads as
+    "this deployment runs code too old to publish drain lag" and answers by
+    sending somebody to redeploy a healthy service.
     """
-    reading = None
     try:
         # Called through the declared `Store` surface rather than a getattr
         # probe, so a backend that stops implementing it fails mypy instead of
         # silently degrading every cloud's status page to "unreachable".
-        reading = STORE.operational_analytics_outbox_freshness()
+        reading = _read_outbox_freshness_bounded(STATUS_ANALYTICS_READ_TIMEOUT_SECONDS)
+        section = analytics_status_from_reading(reading, now=dt.datetime.now(dt.UTC))
     except Exception:
-        log.exception("operational_analytics_outbox_freshness_read_failed")
+        # The projection too, not just the read: it handles a value some
+        # backend produced, and the clamps it runs are the last thing standing
+        # between that value and an uncredentialed page.
+        log.exception("operational_analytics_status_section_failed")
+        section = analytics_status_unavailable(REASON_UNREACHABLE)
     result = dict(payload)
-    result[ANALYTICS_STATUS_KEY] = analytics_status_from_reading(
-        reading,
-        now=dt.datetime.now(dt.UTC),
-    )
+    result[ANALYTICS_STATUS_KEY] = section
     return result
 
 
