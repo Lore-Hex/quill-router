@@ -92,6 +92,35 @@
       <div class="charter-stat"><strong>Public</strong><span>Source and status</span></div>
     </section>
 
+    <section class="home-section" aria-label="How {{ brand_name }} works">
+      <div class="home-wrap narrow">
+        <div class="section-lead center">
+          <div class="kicker">Watch</div>
+          <h2>How {{ brand_name }} works</h2>
+        </div>
+        {#
+          Click-to-load facade, deliberately. A standard YouTube embed contacts
+          Google and sets tracking cookies on page load — indefensible on a page
+          whose claim is that we cannot read your requests. Nothing leaves the
+          browser until the visitor presses play; only then do we load the
+          privacy-enhanced (youtube-nocookie) player. It is also faster: no
+          third-party iframe on first paint.
+        #}
+        <div
+          class="video-embed"
+          data-action="load-video"
+          data-video-id="UzLY4kvjklI"
+          data-video-start="128"
+          role="button"
+          tabindex="0"
+          aria-label="Play: how {{ brand_name }} works (loads YouTube)"
+        >
+          <span class="video-embed-play" aria-hidden="true"></span>
+          <span class="video-embed-note">Loads YouTube only when you press play</span>
+        </div>
+      </div>
+    </section>
+
     <nav class="home-topic-links" aria-label="TrustedRouter developer resources">
       <span>Explore</span>
       <a href="/compare/models">Model comparisons</a>

@@ -582,3 +582,48 @@ test("model picker has no horizontal overflow at mobile width", async ({ page })
   );
   expect(overflow).toBeLessThanOrEqual(2);
 });
+
+test("homepage explainer video contacts YouTube only after an explicit press", async ({
+  page,
+}) => {
+  const thirdParty = [];
+  page.on("request", (request) => {
+    if (/youtube|ytimg|googlevideo/.test(request.url())) {
+      thirdParty.push(request.url());
+    }
+  });
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "How TrustedRouter works" })).toBeVisible();
+
+  const facade = page.locator('[data-action="load-video"]');
+  await expect(facade).toBeVisible();
+
+  // The point of the facade: a privacy-first homepage must not hand Google a
+  // pageview to render. Nothing may be requested before the visitor asks.
+  await expect(page.locator('[data-action="load-video"] iframe')).toHaveCount(0);
+  expect(thirdParty).toEqual([]);
+
+  await facade.click();
+
+  const frame = page.locator('[data-action="load-video"] iframe');
+  await expect(frame).toHaveCount(1);
+  const src = await frame.getAttribute("src");
+  // Privacy-enhanced host, and the timestamp the video actually explains from.
+  expect(src).toContain("youtube-nocookie.com/embed/UzLY4kvjklI");
+  expect(src).toContain("start=128");
+
+  // Once loaded it is a player, not a button.
+  await expect(facade).not.toHaveAttribute("role", "button");
+  await facade.click();
+  await expect(frame).toHaveCount(1);
+});
+
+test("homepage explainer video is keyboard operable", async ({ page }) => {
+  await page.goto("/");
+  const facade = page.locator('[data-action="load-video"]');
+  await expect(facade).toHaveAttribute("role", "button");
+  await facade.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator('[data-action="load-video"] iframe')).toHaveCount(1);
+});
