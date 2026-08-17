@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
+from trusted_router.operational_analytics_freshness import OutboxFreshness
 from trusted_router.storage_models import (
     AcquisitionAttribution,
     ActivationReminderTask,
@@ -746,6 +747,12 @@ class Store(Protocol):
         include_histograms: bool = ...,
         limit: int = ...,
     ) -> list[SyntheticRollup]: ...
+    # Operational-analytics drain freshness -----------------------------------
+    # Declared on the Protocol, not duck-typed off STORE, so a backend that
+    # forgets it is a mypy error rather than a cloud that quietly publishes no
+    # drain signal. That omission is the exact shape of the AWS-EU outage of
+    # 2026-08-02..17: the drain was absent and the only alarm was the drain's.
+    def operational_analytics_outbox_freshness(self) -> OutboxFreshness: ...
     def reconcile_generation_activity(
         self,
         workspace_id: str,

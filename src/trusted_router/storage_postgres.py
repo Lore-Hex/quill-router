@@ -31,6 +31,12 @@ from trusted_router.custom_model_billing import (
     user_model_authorization_id_from_payout_event_id,
 )
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
+from trusted_router.operational_analytics_freshness import (
+    BACKEND_POSTGRES,
+    REASON_NOT_CONFIGURED,
+    REASON_UNREACHABLE,
+    OutboxFreshness,
+)
 from trusted_router.postgres_dsn import (
     aws_dsql_connection_details,
     dsql_token_is_admin,
@@ -155,6 +161,15 @@ _RETRYABLE_ROLLBACK_SQLSTATES = frozenset(
         "40P01",  # deadlock_detected -- ordinary Postgres lock ordering
     }
 )
+
+
+#: Hard cap on the /status.json outbox-lag read, applied to BOTH the pool wait
+#: and the statement. Matches `readiness_check`'s 3s, and for the same reason:
+#: a public page must degrade rather than wait. It is far above the read's real
+#: cost -- an index seek on tr_operational_analytics_outbox_enqueued_at_idx --
+#: so hitting it means the database is not answering, which is exactly the
+#: state that should publish `unreachable` instead of hanging the event loop.
+OUTBOX_FRESHNESS_TIMEOUT_SECONDS = 3.0
 
 
 class _IamTokenConnectionPool(ConnectionPool):
@@ -4169,6 +4184,59 @@ class PostgresStore:
             return [_dataclass_from_json(row[0], SyntheticProbeSample) for row in rows]
 
         return self._run_transaction(list_samples)
+
+    def operational_analytics_outbox_freshness(self) -> OutboxFreshness:
+        """The age of the oldest row the drain has not delivered yet.
+
+        This is the AWS and Azure answer, and it is the one the outage of
+        2026-08-02..17 needed: on AWS-EU the outbox held 470,370 rows and the
+        only process that could have said so had never been installed. The
+        control plane already holds the DSQL connection, so publishing this
+        costs one index seek behind the status cache and needs no new IAM, no
+        new unit, and no reachability into the VPC.
+
+        BOUNDED ON BOTH AXES, the same way `readiness_check` above is, and for
+        a sharper reason: this read sits on the PUBLIC /status.json build path,
+        inside an async handler. A blocking call there does not tie up one
+        worker thread, it stops the event loop, so an unbounded wait on a hung
+        DSQL cluster would take the status page -- and every other request this
+        process is serving -- down with it. Two separate waits have to be
+        capped, because either one alone is unbounded:
+
+        * `connection(timeout=)`  -- the wait for a pool slot. An exhausted or
+          unreachable pool blocks here having issued no SQL at all, so a
+          statement timeout never gets the chance to fire.
+        * `SET LOCAL statement_timeout` -- the server-side cap on the query,
+          which is what covers a connection that is up but a cluster that is
+          not answering.
+
+        Deliberately NOT run through `_run_transaction`: that retries
+        serialization failures, and a retry loop is the one thing that turns a
+        bounded read back into an unbounded one.
+
+        Every failure -- timeout included -- degrades to `unreachable`. It must
+        never raise: the caller publishes this section unconditionally, and an
+        exception escaping here would drop the key, which the fleet checker
+        reads as "this deployment is running code too old to publish drain
+        lag" and answers by telling somebody to redeploy a healthy service.
+        """
+        outbox = self._operational_analytics_outbox
+        if outbox is None:
+            return OutboxFreshness.unavailable(BACKEND_POSTGRES, REASON_NOT_CONFIGURED)
+        try:
+            with self._pool.connection(timeout=OUTBOX_FRESHNESS_TIMEOUT_SECONDS) as conn:
+                with conn.transaction():
+                    conn.execute(
+                        f"SET LOCAL statement_timeout = '{OUTBOX_FRESHNESS_TIMEOUT_SECONDS:g}s'"
+                    )
+                    oldest = outbox.oldest_enqueued_at_tx(conn)
+        except Exception as exc:
+            log.exception(
+                "postgres.operational_analytics_outbox_freshness_failed",
+                extra={"error_class": type(exc).__name__, "error_message": str(exc)[:500]},
+            )
+            return OutboxFreshness.unavailable(BACKEND_POSTGRES, REASON_UNREACHABLE)
+        return OutboxFreshness(backend=BACKEND_POSTGRES, oldest_enqueued_at=oldest)
 
     def synthetic_rollups(
         self,

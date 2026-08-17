@@ -111,6 +111,13 @@ from trusted_router.domains import (
     status_hostname_for_domain,
 )
 from trusted_router.og import OG_PNG_PATH
+from trusted_router.operational_analytics_freshness import (
+    ANALYTICS_STATUS_KEY,
+    REASON_UNREACHABLE,
+    OutboxFreshness,
+    analytics_status_from_reading,
+    analytics_status_unavailable,
+)
 from trusted_router.provider_contract import (
     PROVIDER_CATALOG_SCHEMA,
     PROVIDER_CATALOG_V2_SCHEMA,
@@ -2115,6 +2122,102 @@ def _merge_client_observed_status(
     return result
 
 
+#: Wall-clock bound this module puts on the outbox-lag read, independently of
+#: whatever the storage driver promises. Above the drivers' own 3s caps on
+#: purpose: their cap is the one that should normally fire (it can cancel the
+#: statement, which this cannot), and this one exists for the case where theirs
+#: does not -- a driver that ignores a timeout, a backend added later that
+#: never had one, a wait that happens before any SQL is issued. A bound that
+#: lives entirely inside the thing being bounded is a bound you cannot test.
+STATUS_ANALYTICS_READ_TIMEOUT_SECONDS = 5.0
+
+
+def _read_outbox_freshness_bounded(timeout: float) -> OutboxFreshness | None:
+    """One drain-lag reading, or ``None`` if the store did not answer in time.
+
+    The read runs on a daemon thread and the caller waits at most ``timeout``.
+    Why the wait belongs HERE and not only in the drivers: this runs on the
+    async /status.json build path, so a blocking read that overruns does not
+    occupy one worker thread, it stops the EVENT LOOP -- every request this
+    process is serving. The store side caps its pool wait and its statement,
+    but those caps are the callee's promise about itself; this is the caller's
+    own guarantee, and it holds for a backend that has not made that promise.
+
+    The thread is a daemon and is deliberately not joined after the timeout:
+    the point is that this function returns while the database is still not
+    answering. It cannot be cancelled -- Python has no way to interrupt a
+    blocking driver call -- so the abandoned read finishes into a result nobody
+    reads, under the driver's own cap, and process exit never waits on it.
+    """
+    result: list[OutboxFreshness] = []
+
+    def read() -> None:
+        try:
+            result.append(STORE.operational_analytics_outbox_freshness())
+        except Exception:
+            log.exception("operational_analytics_outbox_freshness_read_failed")
+
+    worker = threading.Thread(target=read, name="status-analytics-lag", daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        log.warning(
+            "operational_analytics_outbox_freshness_timed_out",
+            extra={"timeout_seconds": timeout},
+        )
+        return None
+    return result[0] if result else None
+
+
+def _merge_analytics_status(payload: dict[str, Any]) -> dict[str, Any]:
+    """Publish this cloud's operational-analytics drain lag.
+
+    One wiring covers every deployment because every deployment runs this
+    codebase; that is the property the fleet check in
+    :mod:`clickhouse.check_fleet_analytics_freshness` relies on, and the reason
+    the registry can insist that no cloud is missing the section.
+
+    The key is written unconditionally. Omitting it on failure would be the
+    original bug in a new place: the checker reads a missing section as "this
+    deployment does not publish drain lag", and a section that disappears
+    whenever the database is unhappy is a signal that is quietest exactly when
+    it matters. A read failure publishes `available: false` with a reason
+    instead, and never the last good number -- a stale-but-plausible lag is
+    indistinguishable from a healthy one. That claim is why `_status_snapshot`
+    calls this function on its stale-cache fallback paths TOO: those re-serve
+    the previous payload wholesale, and without a re-read they would re-serve
+    the previous drain lag with it, which is precisely the last good number.
+
+    Runs inside `_status_snapshot`, so it is behind `STATUS_SNAPSHOT_CACHE_SECONDS`
+    and costs one bounded index seek per cache miss rather than one per request.
+    Two bounds apply, and neither is the other's substitute: the store caps its
+    own pool wait and statement (3s, as `readiness_check` does), and
+    `_read_outbox_freshness_bounded` caps how long THIS function is willing to
+    wait for any of that to happen. A read that overruns publishes
+    `unavailable` and the page is served.
+
+    Nothing in here may raise. The section is written unconditionally, and an
+    exception escaping would drop the key -- which the fleet checker reads as
+    "this deployment runs code too old to publish drain lag" and answers by
+    sending somebody to redeploy a healthy service.
+    """
+    try:
+        # Called through the declared `Store` surface rather than a getattr
+        # probe, so a backend that stops implementing it fails mypy instead of
+        # silently degrading every cloud's status page to "unreachable".
+        reading = _read_outbox_freshness_bounded(STATUS_ANALYTICS_READ_TIMEOUT_SECONDS)
+        section = analytics_status_from_reading(reading, now=dt.datetime.now(dt.UTC))
+    except Exception:
+        # The projection too, not just the read: it handles a value some
+        # backend produced, and the clamps it runs are the last thing standing
+        # between that value and an uncredentialed page.
+        log.exception("operational_analytics_status_section_failed")
+        section = analytics_status_unavailable(REASON_UNREACHABLE)
+    result = dict(payload)
+    result[ANALYTICS_STATUS_KEY] = section
+    return result
+
+
 def _status_snapshot(settings: Settings) -> dict[str, Any]:
     global _STATUS_CACHE
     now = time.monotonic()
@@ -2128,7 +2231,13 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
         except Exception:
             log.exception("public_analytics_snapshot_read_failed name=status_inputs")
             if _STATUS_CACHE is not None:
-                return _STATUS_CACHE[1]
+                # The rest of the payload may be served stale; the analytics
+                # section may NOT. Re-read it, so this path publishes the drain
+                # lag as of now (or `unavailable`) rather than whatever the
+                # last successful build happened to see. A stale lag is the one
+                # value here that is worse than no value: it is a plausible
+                # small number that ages into a lie while the outbox grows.
+                return _merge_analytics_status(_STATUS_CACHE[1])
         else:
             if precomputed is not None:
                 try:
@@ -2147,6 +2256,7 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
                     log.exception("public_analytics_snapshot_invalid name=status_inputs")
                 else:
                     payload = _merge_client_observed_status(payload, settings=settings)
+                    payload = _merge_analytics_status(payload)
                     _STATUS_CACHE = (now, payload)
                     return payload
     # Keep the fallback bounded. Current state and headline latency come from
@@ -2160,9 +2270,12 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
     except Exception:
         if settings.environment != "test" and _STATUS_CACHE is not None:
             log.exception("status_live_fallback_failed_serving_stale")
-            return _STATUS_CACHE[1]
+            # Same rule as the precomputed path above: everything else may be
+            # stale, the drain lag may not.
+            return _merge_analytics_status(_STATUS_CACHE[1])
         raise
     payload = _merge_client_observed_status(payload, settings=settings)
+    payload = _merge_analytics_status(payload)
     if settings.environment != "test":
         _STATUS_CACHE = (now, payload)
     return payload
@@ -2311,6 +2424,12 @@ def _compact_status_json(snapshot: dict[str, Any]) -> dict[str, Any]:
     payload["components"] = compact_components
     if "client_observed" in snapshot:
         payload["client_observed"] = snapshot["client_observed"]
+    # Carried through explicitly. This function is what /status.json actually
+    # serves, and the fleet freshness check fails a cloud whose payload has no
+    # `analytics` key -- so dropping it here would look exactly like a cloud
+    # running code too old to publish drain lag.
+    if ANALYTICS_STATUS_KEY in snapshot:
+        payload[ANALYTICS_STATUS_KEY] = snapshot[ANALYTICS_STATUS_KEY]
     return payload
 
 

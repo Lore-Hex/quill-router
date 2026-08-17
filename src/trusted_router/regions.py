@@ -73,6 +73,57 @@ MULTICLOUD_REGION_GEO: dict[str, RegionGeo] = {
     ),
 }
 
+#: Cloud a bare, un-namespaced region id belongs to. GCP was here first, so its
+#: regions are spelled `us-central1` rather than `gcp-us-central1`.
+DEFAULT_REGION_CLOUD = "gcp"
+
+
+def cloud_region_namespaces() -> frozenset[str]:
+    """Prefixes that are allowed to name a cloud inside a region id.
+
+    Derived from `MULTICLOUD_REGION_GEO` at CALL time rather than written down
+    a second time: that table is what makes `aws-`/`azure-` mean anything, so a
+    cloud added there is recognised everywhere at once, and a prefix that is
+    not there cannot become a cloud just because somebody typed it.
+    """
+    return frozenset(geo.cloud for geo in MULTICLOUD_REGION_GEO.values())
+
+
+def cloud_for_region(region: str) -> str | None:
+    """Which cloud a configured region id names, or `None` when nothing can say.
+
+    Three answers, in order: the multi-cloud table; the GCP table (GCP was here
+    first, so its ids are bare — `us-central1`, not `gcp-us-central1`); and a
+    `<cloud>-<native id>` namespace whose prefix is already a KNOWN cloud, which
+    is what lets a new region on an existing cloud (`aws-eu-west-2`) be
+    attributed without a table edit.
+
+    Everything else is `None`, and that is the point. An earlier revision
+    returned the bare prefix for any hyphenated id, which minted a CLOUD out of
+    an ordinary GCP geography: a real GCP region missing from `GCP_REGION_GEO`
+    — that table is hand-maintained and Google keeps shipping regions — made
+    `europe-west12` resolve to a cloud named "europe", and the fleet-coverage
+    check in `trusted_router.operational_analytics_fleet` then failed CI
+    demanding a drain-freshness endpoint for a cloud that does not exist.
+
+    Guessing GCP instead would be the opposite failure and a worse one: a
+    genuinely new cloud (`oracle-eu-frankfurt-1`) added to a settings list and
+    nowhere else would silently read as GCP, i.e. as already covered, which is
+    the "configured, healthy, and empty" shape the whole freshness registry
+    exists to make impossible. So an id nobody can attribute is `None`, and the
+    caller reports it as something a human has to resolve — by adding the row
+    that says which cloud it is.
+    """
+    geo = MULTICLOUD_REGION_GEO.get(region)
+    if geo is not None:
+        return geo.cloud
+    if region in GCP_REGION_GEO:
+        return DEFAULT_REGION_CLOUD
+    prefix, _, remainder = region.partition("-")
+    if remainder and prefix in cloud_region_namespaces():
+        return prefix
+    return None
+
 
 def configured_regions(settings: Settings) -> list[str]:
     regions = [item.strip() for item in settings.regions.split(",") if item.strip()]
