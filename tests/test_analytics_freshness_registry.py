@@ -43,6 +43,7 @@ from trusted_router.operational_analytics_freshness import (
     BACKEND_FIELD,
     BACKEND_POSTGRES,
     BACKEND_SPANNER,
+    DRAIN_LAG_FIELD,
     REASON_NOT_CONFIGURED,
     REASON_UNREACHABLE,
     analytics_status_section,
@@ -739,6 +740,29 @@ def test_a_cloud_reporting_unavailable_fails(cloud: str) -> None:
     result = evaluate_fleet(payloads, now=NOW)
 
     assert any(problem.startswith(f"{cloud}:") for problem in result.problems)
+
+
+@pytest.mark.parametrize("cloud", MEASURED_CLOUDS)
+@pytest.mark.parametrize("lag", [float("nan"), float("inf"), float("-inf"), 10**400])
+def test_an_unusable_lag_number_is_not_read_as_health(cloud: str, lag: object) -> None:
+    """A number that cannot be compared must never pass for a small one.
+
+    json.loads accepts the bare NaN / Infinity / -Infinity literals, and every
+    comparison against NaN is False -- so `lag > max_lag` is False and the
+    cloud would read HEALTHY while nothing was measured. That is the outage
+    this job exists to catch, arriving through the job itself. 10**400 covers
+    the OverflowError path, which is not a ValueError.
+    """
+    payloads = _as_declared()
+    section = dict(payloads[cloud][ANALYTICS_STATUS_KEY])
+    section[DRAIN_LAG_FIELD] = lag
+    payloads[cloud] = {ANALYTICS_STATUS_KEY: section}
+
+    result = evaluate_fleet(payloads, now=NOW)
+
+    assert any(problem.startswith(f"{cloud}:") for problem in result.problems), (
+        f"lag={lag!r} was accepted as healthy"
+    )
 
 
 @pytest.mark.parametrize("cloud", CHECKABLE_CLOUDS)

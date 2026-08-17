@@ -59,6 +59,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import sys
 import urllib.request
 from collections.abc import Iterable, Sequence
@@ -94,20 +95,33 @@ DEFAULT_STATUS_URL = "https://gchircrcif.eu-west-3.awsapprunner.com/status.json"
 
 
 def _float(value: Any) -> float | None:
+    """Coerce a remote-supplied number, or None if it is not a usable one.
+
+    NaN and the infinities are rejected rather than returned. Python's
+    json.loads accepts the bare `NaN` / `-Infinity` literals by default, and
+    every comparison against NaN is False -- so a plane publishing
+    `"drain_lag_seconds": NaN` would sail past `lag > max_lag`, read HEALTHY,
+    and exit 0. That is the same shape as the outage this whole check exists
+    to catch: a value that reports success without measuring anything.
+    OverflowError is caught for the same reason: a huge int-like value (e.g.
+    10**400 from a Decimal) raises it rather than ValueError.
+    """
     if value is None or isinstance(value, bool):
         return None
     try:
-        return float(value)
-    except (TypeError, ValueError):
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
         return None
+    return number if math.isfinite(number) else None
 
 
 def _int(value: Any) -> int | None:
+    """Coerce a remote-supplied integer. See _float on why OverflowError."""
     if value is None or isinstance(value, bool):
         return None
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 

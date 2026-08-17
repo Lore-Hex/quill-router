@@ -22,11 +22,12 @@ name: Check fleet analytics freshness
 # `trusted_router.operational_analytics_fleet.ANALYTICS_FRESHNESS_FLEET`, and
 # `tests/test_analytics_freshness_registry.py` fails if that registry disagrees
 # in either direction with the UNION of every table in this repo that declares
-# a deployment (`operational_analytics_fleet.deployment_sources()`: the BYOK
-# attestation tables, MULTICLOUD_REGION_GEO, and the external_live_regions /
-# marketing_regions settings). A fourth cloud cannot be deployed without a
-# drain-freshness signal, and it does not matter which of those tables somebody
-# happens to edit first.
+# a deployment (`operational_analytics_fleet.deployment_sources()` -- that
+# function is the authority and lists the sources with the reasons; today: the
+# BYOK attestation tables, MULTICLOUD_REGION_GEO, the external_live_regions /
+# marketing_regions settings, and synthetic_fleet_peers). A cloud cannot be
+# deployed without a drain-freshness signal, and it does not matter which of
+# those tables somebody happens to edit first.
 #
 # WHY IT READS /status.json AND NOT THE NODES
 # -------------------------------------------
