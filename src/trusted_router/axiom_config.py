@@ -29,9 +29,12 @@ Design choices:
 
 from __future__ import annotations
 
+import atexit
 import importlib
 import logging
+import logging.handlers
 import os
+import queue
 import re
 import sys
 import time
@@ -91,24 +94,27 @@ def init_axiom(settings: Settings) -> None:
         return
 
     resolved_level = _resolve_level(settings.axiom_log_level)
-    raw_handler: Any = AxiomHandler(client, dataset)
-    raw_handler.setLevel(logging.NOTSET)
-    # axiom-py's emit() recreates each threading.Timer with `self.flush` at
-    # Timer-creation time. Assigning the bound flush on this instance shadows
-    # the class method, so timer-thread flushes go through the safe wrapper too.
-    raw_handler.flush = _safe_flush_wrapper(raw_handler.flush)
-    handler: logging.Handler = _SafeAxiomHandler(raw_handler)
-    handler.setLevel(resolved_level)
-    # Attach a filter that scrubs PII before the handler ships the
-    # record. Reuses sentry_config's `_scrub` so the rules are defined
-    # in one place.
-    handler.addFilter(_AxiomScrubFilter())
-    # Drop third-party transport chatter before it ships. Measured
-    # 2026-07-04: urllib3.connectionpool (Sentry's envelope uploads)
-    # was 235 of 238 events in a 2h window — a feedback loop where
-    # observability traffic generates observability traffic. Name-based
-    # so it composes with any handler level.
-    handler.addFilter(_AxiomNoiseFilter())
+    handler, listener = build_axiom_pipeline(
+        AxiomHandler(client, dataset),
+        resolved_level=resolved_level,
+    )
+    listener.start()
+
+    # Flush what is still queued at shutdown. The Axiom client already runs
+    # before_shutdown hooks; stopping the listener there drains the queue
+    # through the shipper first. atexit is the backstop for paths that never
+    # reach the client's own shutdown.
+    def _stop_listener() -> None:
+        try:
+            listener.stop()
+        except Exception as exc:  # noqa: BLE001 - shutdown must not raise.
+            sys.stderr.write(f"axiom.listener_stop_failed err={exc!r}\n")
+
+    try:
+        client.before_shutdown(_stop_listener)
+    except Exception as exc:  # noqa: BLE001 - hook registration is best effort.
+        log.warning("axiom.listener_shutdown_hook_failed err=%s", exc)
+    atexit.register(_stop_listener)
 
     root = logging.getLogger()
     root.addHandler(handler)
@@ -127,6 +133,60 @@ def init_axiom(settings: Settings) -> None:
         settings.axiom_log_level,
         "<set>" if org_id else "<unset>",
     )
+
+
+def build_axiom_pipeline(
+    raw_handler: Any,
+    *,
+    resolved_level: int,
+    max_queued: int = 10_000,
+) -> tuple[_DroppingQueueHandler, logging.handlers.QueueListener]:
+    """Wire the record path: logging thread -> bounded queue -> shipper thread.
+
+    Extracted from `init_axiom` so the wiring is testable. `init_axiom` returns
+    early under pytest by design, so a test that only exercised `init_axiom`
+    could not assert on the wiring at all — and a test that builds its own
+    handlers asserts a stdlib property rather than this function's choices. The
+    security-relevant choice here is WHICH handler carries the scrub filter,
+    and that is only checkable against the objects this returns.
+
+    Returns the handler to attach to the root logger and the not-yet-started
+    listener; the caller starts it and registers shutdown.
+    """
+    raw_handler.setLevel(logging.NOTSET)
+    # axiom-py's emit() recreates each threading.Timer with `self.flush` at
+    # Timer-creation time. Assigning the bound flush on this instance shadows
+    # the class method, so timer-thread flushes go through the safe wrapper too.
+    raw_handler.flush = _safe_flush_wrapper(raw_handler.flush)
+    shipper: logging.Handler = _SafeAxiomHandler(raw_handler)
+    shipper.setLevel(resolved_level)
+
+    # The record crosses to the shipper thread here, so the blocking HTTPS POST
+    # inside axiom-py's emit() no longer happens on the request thread. The
+    # queue is bounded: log shipping may lose records under backpressure, and
+    # may never slow a response.
+    handler = _DroppingQueueHandler(queue.Queue(maxsize=max_queued))
+    handler.setLevel(resolved_level)
+    # SCRUB BEFORE THE QUEUE, NOT AT THE SHIPPER. Filters run inside
+    # `Handler.handle()` before `emit()`, so attaching here scrubs on the
+    # logging thread and no unscrubbed record ever sits in the queue. Reuses
+    # sentry_config's `_scrub` so the PII rules have one home.
+    handler.addFilter(_AxiomScrubFilter())
+    # Drop third-party transport chatter before it ships. Measured 2026-07-04:
+    # urllib3.connectionpool (Sentry's envelope uploads) was 235 of 238 events
+    # in a 2h window — observability traffic generating observability traffic.
+    handler.addFilter(_AxiomNoiseFilter())
+
+    # respect_handler_level=True so the shipper's level still governs what is
+    # sent if either level is changed later.
+    listener = logging.handlers.QueueListener(
+        handler.queue,
+        shipper,
+        respect_handler_level=True,
+    )
+    # No daemon flag to set: QueueListener.start() creates its monitor thread
+    # with daemon=True itself, so the process is never held open by shipping.
+    return handler, listener
 
 
 def _client_kwargs(*, token: str, org_id: str | None, axiom_url: str) -> dict[str, Any]:
@@ -188,8 +248,14 @@ def _handler_already_installed() -> bool:
     """Don't double-attach if init_axiom() is called twice in the same
     process (e.g. tests that re-create the FastAPI app)."""
     root = logging.getLogger()
+    # `_DroppingQueueHandler` is what actually lands on root now that shipping
+    # happens on a listener thread; the other two names are what earlier
+    # versions attached, and are kept so a mixed-version process still
+    # short-circuits. Missing a name here does not merely double-log: it
+    # starts a second listener thread and a second bounded queue.
     return any(
-        type(handler).__name__ in {"AxiomHandler", "_SafeAxiomHandler"} for handler in root.handlers
+        type(handler).__name__ in {"AxiomHandler", "_SafeAxiomHandler", "_DroppingQueueHandler"}
+        for handler in root.handlers
     )
 
 
@@ -315,6 +381,50 @@ class _AxiomNoiseFilter(logging.Filter):
             if name == prefix or name.startswith(prefix + "."):
                 return False
         return True
+
+
+class _DroppingQueueHandler(logging.handlers.QueueHandler):
+    """Enqueue for the shipper thread, and drop rather than block when full.
+
+    WHY THIS EXISTS. axiom-py's `AxiomHandler.emit()` flushes SYNCHRONOUSLY in
+    the calling thread whenever more than its interval (1s) has elapsed since
+    the last flush. At low request volume that is nearly every request, so a
+    request that logs pays a blocking HTTPS POST to Axiom before it can
+    respond. Measured 2026-08-17 from this machine: 551 ms for a cold POST to
+    api.axiom.co. Production console pages served from europe-west4 measured
+    p50 1540 ms; this was one of the summands.
+
+    `logging.handlers.QueueHandler.enqueue` uses `put_nowait`, which raises
+    `queue.Full` on a bounded queue. The base class routes that through
+    `handleError`, whose behaviour depends on `logging.raiseExceptions`. Being
+    explicit instead: on a full queue the record is dropped and a throttled
+    stderr breadcrumb is written. Dropping observability under backpressure is
+    the correct trade; blocking a request on log shipping is not.
+
+    FILTERS RUN BEFORE THE QUEUE, DELIBERATELY. `logging.Handler.handle()`
+    applies filters and then calls `emit()`, so a filter attached to THIS
+    handler runs on the request thread before the record is enqueued. The PII
+    scrubbing filter is attached here rather than to the shipping handler for
+    exactly that reason: an unscrubbed record must never exist in the queue,
+    where a crash dump or a future queue implementation could expose it.
+    """
+
+    def __init__(self, queue: Any) -> None:
+        super().__init__(queue)
+        self._dropped = 0
+        self._last_drop_log_at: float | None = None
+
+    def enqueue(self, record: logging.LogRecord) -> None:
+        try:
+            self.queue.put_nowait(record)
+        except Exception:  # noqa: BLE001 - a full queue must not break a request.
+            self._dropped += 1
+            now = time.monotonic()
+            if self._last_drop_log_at is None or now - self._last_drop_log_at > 60:
+                self._last_drop_log_at = now
+                sys.stderr.write(
+                    f"axiom.queue_full dropped_total={self._dropped} reason=shipper_thread_behind\n"
+                )
 
 
 class _SafeAxiomHandler(logging.Handler):
