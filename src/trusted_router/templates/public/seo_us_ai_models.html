@@ -26,23 +26,10 @@ reply = client.chat.completions.create(
   </div>
 </section>
 
-<section class="panel" aria-label="US open-weight models">
-  <div class="panel-head"><h2>US open-weight models</h2><span class="pill">{{ region.open_weight_count }} routes</span></div>
-  <div class="panel-body">
-    <p>Weights you can download, run anywhere, and inspect &mdash; built by US labs.</p>
-    <ul class="link-list">
-      {% for lab in region.open_weight_labs %}
-      <li><a href="/models?filter={{ lab.prefix }}">{{ lab.lab_name }}</a><span>{{ lab.count }} open-weight model{{ '' if lab.count == 1 else 's' }} &middot; {{ lab.example }}</span></li>
-      {% endfor %}
-    </ul>
-    <p><a class="btn primary" href="/models?filter=open-weight">Browse all open-weight routes</a></p>
-  </div>
-</section>
-
 <section class="panel" aria-label="Liberty model family">
-  <div class="panel-head"><h2>Liberty: our own routes, built only from US-lab models</h2><span class="pill good">TrustedRouter</span></div>
+  <div class="panel-head"><h2>Liberty: US labs, open weights, one route</h2><span class="pill good">open weight</span></div>
   <div class="panel-body">
-    <p>Liberty is TrustedRouter's own family. Each Liberty id is a panel route: it calls several component models and returns one answer. What makes it belong on this page is checkable rather than asserted — every component model under every Liberty route resolves to a lab recorded as US-based in the catalog's model-origin table, and the counts below are computed from that table when this page renders. If a component were ever swapped for a model from elsewhere, the count would move and this claim would stop being made.</p>
+    <p>Our own family. Each Liberty id calls several component models and returns one answer &mdash; and every component is an open-weight model from a US lab. Both facts are computed from the catalog when this page renders, so if a component were ever swapped the counts would move and the claim would retire itself.</p>
     <div class="model-table-wrap">
       <table>
         <thead>
@@ -76,6 +63,19 @@ reply = client.chat.completions.create(
     </div>
     <p class="muted">Two limits worth stating plainly. First, the component models are open-weights models that many providers serve, and Liberty's default candidate pool includes operators outside the US; set <span class="mono">provider.jurisdiction</span> to <span class="mono">us</span> when the serving provider has to be US-operated. Second, operator jurisdiction is not datacentre location — a US-registered company can run inference on hardware elsewhere, and the catalog records the company, not the machine.</p>
     <p class="muted">Measurement for these routes is published rather than summarised here: our own DRACO run for Liberty 2.0 is written up in <a href="/blog/introducing-liberty">the Liberty 2.0 post</a>, and live route behaviour is on the <a href="/leaderboard">leaderboard</a>.</p>
+  </div>
+</section>
+
+<section class="panel" aria-label="US open-weight models">
+  <div class="panel-head"><h2>Open weights from US labs</h2><span class="pill">{{ region.open_weight_count }} routes</span></div>
+  <div class="panel-body">
+    <p>The labs themselves. Weights you can download, run anywhere, and inspect.</p>
+    <ul class="link-list">
+      {% for lab in region.open_weight_labs %}
+      <li><a href="/models?filter={{ lab.prefix }}">{{ lab.lab_name }}</a><span>{{ lab.count }} open-weight model{{ '' if lab.count == 1 else 's' }} &middot; {{ lab.example }}</span></li>
+      {% endfor %}
+    </ul>
+    <p><a class="btn primary" href="/models?filter=open-weight">Browse all open-weight routes</a></p>
   </div>
 </section>
 
