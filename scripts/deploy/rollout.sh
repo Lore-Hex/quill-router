@@ -447,6 +447,16 @@ ENV_VARS=(
   # ClickHouse remains asynchronous and never participates in inference.
   "TR_ANALYTICS_OUTBOX_ENABLED=true"
   "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true"
+  # Client-observed reliability beacons (docs/client-telemetry.md §4): SDKs
+  # POST content-free per-request outcomes + exact minute counters to
+  # /v1/client-events; one operational-outbox row per batch; the ClickHouse
+  # node fans it out (DDL 008 applied on all replicas 2026-08-16, ingester
+  # quarantines poison rows, rollup timer live). Flipped 2026-08-17 per the
+  # approved plan after the local 200 POST/s x 64 KB smoke (all 202, p99 134
+  # ms) and R-PR4's canary probe + corroborated alerts landed. Off = the route
+  # answers 202 + `x-tr-telemetry: off` + pause 86400 before reading a body,
+  # so removing this line stops every SDK within one flush.
+  "TR_CLIENT_EVENTS_ENABLED=true"
   # Private provider operations portal. Direct VPC egress below reaches this
   # RFC1918 address; ClickHouse has no public IP and the credential is a
   # SELECT-only account scoped to the benchmark table.
