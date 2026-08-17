@@ -290,10 +290,19 @@ class ClickHouseDailyExporter:
         password: str,
         database: str = DATABASE,
         table: str = TABLE,
+        user: str = "tr",
     ) -> None:
         self._password = password
         self._database = _identifier(database, label="database")
         self._table = _identifier(table, label="table")
+        # The user was hardcoded to "tr" while the database was already a
+        # parameter, so this exporter silently only worked on the GCP cluster --
+        # the same latent bug ClickHouseOperationalWriter carried. The AWS-EU
+        # node authenticates as "default" into database "default" (its schema is
+        # applied unqualified), and an explicit --user beats CLICKHOUSE_USER in
+        # the environment, so this could not have been corrected from the unit
+        # file. Archiving another cloud requires it to be a parameter.
+        self._user = _identifier(user, label="user")
         try:
             self._spec = DATASETS[self._table]
         except KeyError:
@@ -314,7 +323,7 @@ class ClickHouseDailyExporter:
             [
                 "/usr/bin/clickhouse-client",
                 "--user",
-                "tr",
+                self._user,
                 "--database",
                 self._database,
                 "--query",
@@ -403,6 +412,8 @@ class ClickHouseDailyExporter:
 
 
 class GCSArchiveStore:
+    scheme = "gs"
+
     def __init__(self, *, project: str, bucket: str) -> None:
         import google.cloud.storage as gcs_storage
 
@@ -946,7 +957,9 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", default=os.environ.get("GCP_PROJECT_ID", PROJECT))
     parser.add_argument("--bucket", default=os.environ.get("ARCHIVE_BUCKET", ARCHIVE_BUCKET))
-    parser.add_argument("--database", default=DATABASE)
+    parser.add_argument("--database", default=os.environ.get("TR_CLICKHOUSE_DATABASE", DATABASE))
+    # The AWS-EU node authenticates as "default"; see ClickHouseDailyExporter.
+    parser.add_argument("--clickhouse-user", default=os.environ.get("TR_CLICKHOUSE_USER", "tr"))
     parser.add_argument("--table", action="append", choices=tuple(DATASETS))
     parser.add_argument("--date", type=dt.date.fromisoformat)
     parser.add_argument("--lookback-days", type=int, default=7)
@@ -980,6 +993,7 @@ def main() -> int:
             password=os.environ["CH_PASSWORD"],
             database=args.database,
             table=table,
+            user=args.clickhouse_user,
         )
         backfill_start = (
             exporter.earliest_day() if args.backfill and args.date is None else None
@@ -998,12 +1012,13 @@ def main() -> int:
             )
             log.info(
                 "analytics_archive.completed dataset=%s day=%s rows=%d "
-                "revision=%s skipped=%s manifest=gs://%s/%s",
+                "revision=%s skipped=%s manifest=%s://%s/%s",
                 table,
                 result.day,
                 result.rows,
                 result.revision,
                 result.skipped,
+                getattr(store, "scheme", "gs"),
                 args.bucket,
                 result.manifest_key,
             )
