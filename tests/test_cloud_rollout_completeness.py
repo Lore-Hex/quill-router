@@ -63,6 +63,7 @@ from trusted_router import operational_analytics_fleet as fleet
 from trusted_router import regions
 from trusted_router.operational_analytics_freshness import (
     ANALYTICS_STATUS_KEY,
+    AVAILABLE_FIELD,
     DEFAULT_MAX_DRAIN_LAG_SECONDS,
     REASON_NOT_CONFIGURED,
     REASON_UNREACHABLE,
@@ -346,6 +347,51 @@ def test_healthy_section_passes_c_and_d() -> None:
     payload = _payload(_healthy_section())
     assert crc.available_blockers("aws", payload) == []
     assert crc.drain_lag_blockers("aws", payload, now=NOW) == []
+
+
+def test_the_string_false_does_not_read_as_available() -> None:
+    """Stage (c) tested this field with Python truthiness, and `"false"` is true.
+
+    The value comes off somebody else's HTTP response. A control plane that
+    serialised the flag as text — or anything in the path that stringified the
+    body — would publish `available: "false"` and be read here as AVAILABLE,
+    which passes the stage whose entire job is to notice that the control plane
+    could not read its own outbox. Only a JSON boolean counts now, and a
+    non-boolean is its own finding rather than a silent pass.
+    """
+    for value in ("false", "0", "no"):
+        section = {**_healthy_section(), AVAILABLE_FIELD: value}
+        blockers = crc.available_blockers("aws", _payload(section))
+        assert blockers, f"{value!r} read as available"
+        assert "rather than the JSON boolean" in blockers[0]
+        # ...and stage (d) does not then read a lag off a section it cannot trust.
+        assert crc.drain_lag_blockers("aws", _payload(section), now=NOW)
+
+    assert crc.available_blockers("aws", _payload(_healthy_section())) == []
+
+
+def test_a_generated_at_in_the_future_fails_instead_of_disabling_the_check() -> None:
+    """A negative age passes every "is it too old?" test there is.
+
+    The staleness half of stage (d) exists because a frozen control plane
+    republishes a healthy lag forever. A publisher whose clock or timezone is
+    wrong stamps the section ahead of now, the computed age goes negative, and
+    the comparison can never fire again however stale the snapshot really is —
+    the check switches itself off and the run stays green.
+    """
+    stamped = NOW + dt.timedelta(hours=6)
+    section = analytics_status_section(
+        oldest_enqueued_at=stamped - dt.timedelta(seconds=5), now=stamped
+    )
+    blockers = crc.drain_lag_blockers("aws", _payload(section), now=NOW)
+    assert blockers == [b for b in blockers if "in the FUTURE" in b], blockers
+
+    # Ordinary clock skew between two machines is not a finding.
+    skew = dt.timedelta(seconds=crc.MAX_SECTION_CLOCK_SKEW_SECONDS - 1)
+    skewed = analytics_status_section(
+        oldest_enqueued_at=NOW + skew - dt.timedelta(seconds=5), now=NOW + skew
+    )
+    assert crc.drain_lag_blockers("aws", _payload(skewed), now=NOW) == []
 
 
 def test_stage_d_defers_to_stage_c_rather_than_inventing_a_second_failure() -> None:

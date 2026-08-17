@@ -213,6 +213,15 @@ DEPLOY_SCRIPT_DIR = "scripts"
 #: rather than a healthy one. Mirrors the default in the fleet freshness check.
 DEFAULT_MAX_SECTION_AGE_SECONDS = 3_600.0
 
+#: How far into the future a published ``generated_at`` may sit before the
+#: staleness check calls it broken rather than fresh. Two machines' clocks
+#: disagree by seconds; a timestamp minutes ahead is a wrong clock or a wrong
+#: timezone, and either one turns the staleness half of stage (d) OFF — a
+#: control plane frozen a week ago that stamps tomorrow's date reads as
+#: negative age and passes. Small on purpose: this is skew tolerance, not a
+#: grace period.
+MAX_SECTION_CLOCK_SKEW_SECONDS = 120.0
+
 #: This script is executed end to end by the behavioural harness in
 #: ``tests/test_deploy_script_execution.py``, which asserts that it calls the
 #: verifier for its cloud AND that a failing verifier makes it exit non-zero.
@@ -756,13 +765,38 @@ def section_blockers(cloud: str, payload: dict[str, Any]) -> list[str]:
     ]
 
 
+def _published_as_true(value: Any) -> bool:
+    """``available`` is a JSON boolean, and only a JSON boolean counts.
+
+    Python truthiness is the wrong predicate for a field read off somebody
+    else's HTTP response: the strings ``"false"``, ``"0"`` and ``"no"`` are all
+    truthy, so a control plane that serialised the flag as text — or a proxy
+    that stringified the body — would publish ``available: "false"`` and read as
+    AVAILABLE here. The publisher in this repo emits a real bool
+    (``operational_analytics_freshness.analytics_status_section``), so requiring
+    one costs nothing and closes the case where something else does not.
+    """
+    return value is True
+
+
 def available_blockers(cloud: str, payload: dict[str, Any]) -> list[str]:
     """Stage (c): the section says the outbox could actually be read."""
     section = payload.get(ANALYTICS_STATUS_KEY)
     if not isinstance(section, dict):
         return section_blockers(cloud, payload)
-    if section.get(AVAILABLE_FIELD):
+    if _published_as_true(section.get(AVAILABLE_FIELD)):
         return []
+    raw = section.get(AVAILABLE_FIELD)
+    if raw is not None and not isinstance(raw, bool):
+        entry = ROLLOUT_REGISTRY.get(cloud)
+        install = entry.drain_install_command if entry else "install this cloud's drain"
+        return [
+            f"{cloud}: {ANALYTICS_STATUS_KEY}.{AVAILABLE_FIELD} is {raw!r}, a "
+            f"{type(raw).__name__} rather than the JSON boolean this field is. The string "
+            '"false" is TRUE to a truthiness test, so this stage refuses to guess. Fix: '
+            "publish it from operational_analytics_freshness.analytics_status_section(), "
+            f"which emits a bool, or find whatever is rewriting the body. Then: {install}"
+        ]
     reason = section.get(REASON_FIELD)
     entry = ROLLOUT_REGISTRY.get(cloud)
     install = entry.drain_install_command if entry else "install this cloud's drain"
@@ -810,14 +844,15 @@ def drain_lag_blockers(
     entry = ROLLOUT_REGISTRY.get(cloud)
     install = entry.drain_install_command if entry else "install this cloud's drain"
 
-    if not section.get(AVAILABLE_FIELD):
+    if not _published_as_true(section.get(AVAILABLE_FIELD)):
         # Nothing to measure, and inventing a "missing field" failure here would
         # report the same condition twice in different words. Defer to (c),
         # which already said whether this is a configuration or a fault.
         return [
-            f"{cloud}: {ANALYTICS_STATUS_KEY}.{AVAILABLE_FIELD} is false "
-            f"({REASON_FIELD}={section.get(REASON_FIELD)!r}), so there is no lag to "
-            "read. Stage (c) is the one to fix; this stage cannot run until it passes."
+            f"{cloud}: {ANALYTICS_STATUS_KEY}.{AVAILABLE_FIELD} is not true "
+            f"({section.get(AVAILABLE_FIELD)!r}, {REASON_FIELD}="
+            f"{section.get(REASON_FIELD)!r}), so there is no lag to read. Stage (c) is "
+            "the one to fix; this stage cannot run until it passes."
         ]
 
     blockers: list[str] = []
@@ -846,7 +881,21 @@ def drain_lag_blockers(
         )
     else:
         age = (now - generated_at).total_seconds()
-        if age > max_section_age_seconds:
+        if age < -MAX_SECTION_CLOCK_SKEW_SECONDS:
+            # A future timestamp does not just fail to be stale — it makes the
+            # staleness test unable to fire at all, however old the snapshot
+            # really is, because the age it computes is negative. Say that, and
+            # do not silently keep the half of this stage that still works.
+            blockers.append(
+                f"{cloud}: the {ANALYTICS_STATUS_KEY} section is stamped "
+                f"{-age:.0f}s in the FUTURE (skew allowance "
+                f"{MAX_SECTION_CLOCK_SKEW_SECONDS:.0f}s), so its age cannot be judged: a "
+                "control plane frozen a week ago that stamps tomorrow reads as fresh "
+                "forever. Fix: the publisher's clock or timezone — "
+                f"{GENERATED_AT_FIELD} must be UTC 'now' at the moment the snapshot is "
+                "built."
+            )
+        elif age > max_section_age_seconds:
             blockers.append(
                 f"{cloud}: the {ANALYTICS_STATUS_KEY} section is {age:.0f}s old "
                 f"(> {max_section_age_seconds:.0f}s) — the number is stale, so it says "
