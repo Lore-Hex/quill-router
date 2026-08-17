@@ -266,6 +266,8 @@ def test_verification_status_reports_shape_and_next_step_progression(
         "identity_status": "none",
         "identity_verified_at": None,
         "veriff_attempt_count": 0,
+        # Nothing to say at `none` — guidance appears only after a decision.
+        "identity_message": None,
         "verification_fee": 5.0,
         "verification_fee_microdollars": 5_000_000,
         "lifetime_topup_required": 25.0,

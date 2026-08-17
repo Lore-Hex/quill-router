@@ -987,6 +987,8 @@ class PostgresStore:
         session_id: str | None = None,
         session_url: str | None = None,
         decision_code: int | None = None,
+        decision_reason: str | None = None,
+        decision_reason_code: int | None = None,
         verified_name: str | None = None,
         increment_attempts: bool = False,
     ) -> User | None:
@@ -1006,6 +1008,10 @@ class PostgresStore:
                 user.veriff_session_url = session_url
             if decision_code is not None:
                 user.veriff_decision_code = decision_code
+            if decision_reason is not None:
+                user.veriff_decision_reason = decision_reason
+            if decision_reason_code is not None:
+                user.veriff_decision_reason_code = decision_reason_code
             if verified_name is not None:
                 user.identity_verified_name = verified_name
             if increment_attempts:
