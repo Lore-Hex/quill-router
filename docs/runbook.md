@@ -1074,38 +1074,34 @@ of the revision the cloud is running: it tells you what a deploy from this
 checkout would set, and stages (b)–(d) are the evidence about the running
 service.
 
-Setting `analytics_absent_reason` on the cloud's entry in
-`src/trusted_router/cloud_rollout_completeness.py` waives the STRUCTURAL
-blockers — stage (e), and a stage (c)/(d) failure where the cloud reports
-`available: false, reason: not_configured`, which is a control plane saying of
-itself that it runs no outbox. It does **not** waive a measurement: an outbox
-the control plane could not read (`unreachable`), a lag over the bound, or a
-stale section stays a failure whatever the registry says. A waived run prints
-`NOT VERIFIED`, lists what it suppressed, and exits **6** — not 0. Treat adding
-one as shipping a cloud you have decided not to know about.
+**There is no way to excuse a stage.** No waiver, no exemption field, no flag,
+no environment variable. A cloud that cannot be checked is NOT VERIFIED and the
+run exits non-zero with the reason printed. (An earlier revision had an
+`analytics_absent_reason` that waived "structural" blockers, plus the machinery
+to decide which failures counted as structural. Review found bugs inside that
+machinery twice, the second set introduced by the fix for the first, so it is
+gone.) `TR_MAX_DRAIN_LAG_SECONDS` and `TR_STATUS_URL` are read only so the
+script can tell you loudly that it is ignoring them.
 
 Exit codes (`scripts/deploy/cloud_complete_gate.sh` turns each into the same
 words for every bound script):
 
 | code | meaning |
 |---|---|
-| 0 | `COMPLETE`, or `COMPLETE WITH CAVEATS` — read the banner, they are not the same claim |
-| 1 | `INCOMPLETE` — a stage was measured and failed |
-| 2 | usage error, or output the gate could not classify (fatal on purpose) |
-| 4 | a diagnostic run using `--max-lag-seconds`/`--status-url`; never a verdict |
-| 5 | `NOT YET OBSERVABLE` — the page parses and carries no `analytics` section |
-| 6 | `NOT VERIFIED` — a stage was exempted in code rather than measured |
-| 7 | `UNREADABLE` — HTTP 200 and the body is not the status document at all |
+| 0 | `VERIFIED` — every stage was measured and held. The banner then says what that does *not* establish, which is that rows were seen moving |
+| 5 | `NOT YET OBSERVABLE` — the page parses and carries no `analytics` section, so the question cannot be asked from outside yet. Its own code because it is the state a cloud is in before its control plane publishes the section, and the run that installs a drain hits it by construction |
+| 1 | `NOT VERIFIED`, for everything else, with the reason printed: a stage failed, the page did not answer 200, the body was not the status document, the cloud is unknown, the arguments were wrong |
 
-No environment variable changes a verdict. `TR_MAX_DRAIN_LAG_SECONDS` and
-`TR_STATUS_URL` are read only so the script can tell you loudly that it is
-ignoring them.
+The AWS and Azure bring-up and control-plane scripts end by running this, so an
+exit of 0 from one of them means the check passed — which is a statement about
+what the check measures, not a certificate that the cloud works. Read the
+banner: it lists the five stages and then says, every time, that rows moving is
+not among them.
 
-The AWS and Azure bring-up and control-plane scripts end by running this, so
-those exiting 0 means the cloud works. That is not taken on trust: those scripts
-are executed end to end against a stub `PATH` in
-`tests/test_deploy_script_execution.py`, which asserts each one calls the gate
-and cannot exit 0 over a failing gate. The one exception is
+That binding is not taken on trust. Those scripts are executed end to end
+against a stub `PATH` in `tests/test_deploy_script_execution.py`, which asserts
+each one calls the gate, cannot exit 0 over a failing gate, and passes both exit
+codes through unchanged. The one exception is
 `aws_eu_clickhouse_drain_install.sh`, whose SSM-heavy middle cannot be stubbed
 honestly — its tail is claimed, not proven, and `ROLLOUT_REGISTRY` says so.
 
@@ -1114,7 +1110,8 @@ honestly — its tail is claimed, not proven, and `ROLLOUT_REGISTRY` says so.
 `trustedrouter.com/status.json` in the middle of deploying the cloud that serves
 it — the deploy that repairs an outage would abort partway. GCP is instead
 checked by the `verify-cloud-complete` job in that same workflow, which runs
-after every production mutation. You can always run
+after the deploy job whatever that job's result — including a deploy that failed
+partway, having already mutated production. You can always run
 `bash scripts/deploy/verify_cloud_complete.sh gcp` yourself.
 
 If a script exits non-zero it prints the exact next command; run it and re-run

@@ -251,8 +251,8 @@ from**, because a check that needs `aws`/`az` credentials is a check that does
 not get run. So it answers "would a deploy from this checkout enable the
 outbox?", not "did the running service have it enabled?" — a local edit reads as
 enabled, and a script that shipped a year ago reads the same as one deployed
-this morning. The runtime evidence is (b)–(d), and the verifier says so on the
-line where it passes.
+this morning. The runtime evidence is (b)–(d), and the verifier prints exactly
+what it read, and from which file, as a note under its outcome.
 
 When you finish a cloud, look once, from inside:
 
@@ -286,16 +286,30 @@ stop "printing the step counts as doing the step" was itself satisfied by
 printing the step.
 
 So the binding is now behavioural. `tests/test_deploy_script_execution.py` RUNS
-each bound script to completion in a hermetic harness — a `PATH` containing
-nothing but recording stubs for `aws`/`az`/`gcloud`/`curl`/`ssh`/`systemctl`/…,
-a `$HOME` and `$TMPDIR` inside a temp directory, and a stub
-`verify_cloud_complete.sh` that records that it was called and can be told to
-fail — and asserts three things about what the script DID:
+each bound script to completion in a harness (`tests/deploy_script_harness.py`)
+whose `PATH` is one directory: a recording stub for each cloud CLI, `curl`,
+`ssh`, `systemctl`, `sleep` and the rest of a named list, plus a symlink to
+every other entry of `/bin` and `/usr/bin`. `$HOME` and `$TMPDIR` are inside a
+temp directory and the repository the scripts see is a copy. The isolation is by
+NAME, and its boundary is that list — a script that reached the network through
+some tool nobody thought to stub would reach it. What the harness guarantees is
+what the assertions need: the gate is a recording stub that can be told to fail,
+and every cloud CLI is a stub. It asserts three things about what each script
+DID:
 
 1. it called the gate, for its own cloud;
 2. with the gate failing, the script exits non-zero;
 3. it issues no further cloud CLI calls after the gate answered (the measured
    form of "the check has to be the last thing it does").
+
+It also asserts that both of the gate's exit codes come out the far end
+unchanged — and, for `aws_eu_north_clickhouse.sh`, that they do so for an
+operator who has NOT set `TR_STOCKHOLM_REPLICA_WIRED`. That script ends by
+refusing to claim the Stockholm replica is wired until somebody attests to it,
+and that refusal used to overwrite the gate's status: on a first run, when
+nobody has ever set the variable, a gate exit of 5 and a gate exit of 1 both
+came out as 3. The propagation held only for the harness fixture, which supplies
+the variable so the script can reach its own end.
 
 **Proven by execution today:** `aws_eu_clickhouse.sh`,
 `aws_eu_control_plane.sh`, `aws_eu_north_clickhouse.sh`,
@@ -321,46 +335,47 @@ which runs on every merge to `main`. Ending *it* in this check would put a publi
 fetch of `trustedrouter.com/status.json` in the middle of deploying the cloud
 that *serves* `trustedrouter.com` — the deploy that repairs an outage would
 abort partway, because of the outage it repairs. So GCP carries a
-`ScriptExemption` with that reason in `ROLLOUT_REGISTRY`.
+`ScriptExemption` with that reason in `ROLLOUT_REGISTRY`. That is a statement
+about which SCRIPTS end in the gate. It is not permission for GCP to skip a
+stage; no such permission exists.
 
 That exemption used to cite "the scheduled analytics freshness workflow" as what
 checks GCP instead. That workflow ships with **no `schedule:` trigger**, on
 purpose and in its own header — so the citation was to a control that does not
 run, and the primary cloud had no automated completeness check at all behind a
 sentence saying it did. The control is now the `verify-cloud-complete` job in
-`.github/workflows/deploy.yml`: it `needs: [deploy]`, so it runs after every
-production mutation, where a failure makes the run red and can never leave GCP
-half-deployed. The exemption references that workflow and job as structured
-data, and CI resolves the reference — an exemption citing a job that is not
-there fails.
+`.github/workflows/deploy.yml`. The exemption references that workflow and job
+as structured data, and CI resolves the reference — an exemption citing a job
+that is not there fails.
+
+That job runs `if: always()` on `needs: [deploy]`, which is load-bearing and was
+missing: with a bare `needs:`, GitHub SKIPS a job when its dependency fails, and
+a deploy that failed PARTWAY has already mutated production. The check would
+have been absent from exactly the runs where it mattered, behind a comment
+saying it ran after every production mutation. It is skipped only when the
+deploy job itself was skipped, i.e. when nothing was deployed.
 
 Honest caveat, because this is a control that has never fired: it lands with
 this change and has not yet run on a merge.
 
-### The exemption, and what it may not excuse
+### There is no exemption
 
-There is exactly one way to run a cloud without an analytics pipeline: set
-`analytics_absent_reason` on that cloud's entry in
-`src/trusted_router/cloud_rollout_completeness.py`. That is a code change and
-therefore a review, and the check keeps printing the blocker it is suppressing.
+Earlier revisions of this design had one: `analytics_absent_reason` on a cloud's
+entry in `src/trusted_router/cloud_rollout_completeness.py` waived the
+"structural" blockers, a verdict taxonomy decided which failures counted as
+structural, and a waived run printed `NOT VERIFIED` and exited 6.
 
-Its reach is deliberately narrow in two directions:
+It is gone, machinery and all. Two rounds of review found bugs inside it rather
+than around it — one where the waiver path could not produce its own verdict at
+all and failed as "the gate could not classify its own output", one where the
+green banner was reachable on evidence this document says can never earn it —
+and the second set were regressions introduced by the fixes for the first. A
+mechanism whose failures upgrade a verdict has to earn its keep. This one did
+not.
 
-* **It may excuse an absence, never a measurement.** Stage (e) — a static read
-  of a deploy script — is waivable. So is a stage (c)/(d) failure where the
-  cloud reports `available: false, reason: not_configured`, which is a control
-  plane saying of *itself* that it runs no outbox. A control plane that could
-  not READ its outbox (`unreachable`), or a lag over the bound, or a stale
-  section, is a reading that failed, and no exemption touches it. The previous
-  version waived all of (c), (d) and (e) alike, so a cloud that had been
-  measured and had failed was let through by a sentence about a pipeline that
-  was never built.
-* **It does not exit 0.** A waived run prints `NOT VERIFIED`, lists what was
-  suppressed, and exits **6**. An exemption is a decision to ship without
-  knowing; the only machine-readable signal a caller reads must not say success
-  about something nobody measured.
-
-No cloud has one today.
+So: a cloud that cannot be checked is NOT VERIFIED. The run exits non-zero and
+prints the reason. To run a cloud without an analytics pipeline, run it and let
+the check say so; nothing in this repository will call it done.
 
 ### Exit codes
 
@@ -369,16 +384,22 @@ bound script, so an operator is never told to fix an install that did not fail:
 
 | code | meaning |
 |---|---|
-| 0 | `COMPLETE`, or `COMPLETE WITH CAVEATS` — every stage measured and passed |
-| 1 | `INCOMPLETE` — a stage was measured and failed |
-| 2 | usage error, or output the gate could not classify (fatal on purpose) |
-| 4 | `DIAGNOSTIC` — an override flag was used; not a verdict |
+| 0 | `VERIFIED` — every stage was measured and held |
 | 5 | `NOT YET OBSERVABLE` — the page parses and carries no `analytics` section |
-| 6 | `NOT VERIFIED` — a stage was exempted in code rather than measured |
-| 7 | `UNREADABLE` — 200, and the body is not the status document (CDN interstitial, truncated response) |
+| 1 | `NOT VERIFIED` — everything else, with the reason printed: a stage failed, the page did not answer 200, the body was not the status document, the cloud is unknown, the arguments were wrong |
 
-5 and 7 used to be the same code. They are not the same problem: deploying a
-newer control plane fixes 5 and does nothing whatever for 7.
+There were seven. The rest collapsed into 1, which says why in words rather than
+in a number nobody looks up. 5 survives because it is the one non-zero answer an
+operator must not read as "your install failed": it is the state every cloud is
+in until a control plane that publishes the section is deployed, and the run
+that INSTALLS a drain hits it by construction. All five bound scripts report it
+in the same words, which is the reason the mapping is one shared file.
+
+The verdict itself is the exit status of each stage's own process — nothing is
+parsed out of a stream. That replaces a tab-separated sentinel line carrying one
+of eight `kind` values, which replaced classification-by-first-word. Both
+earlier contracts existed so that a passing run could be graded; with one green
+outcome there is nothing to grade.
 
 ### What the check cannot do
 
@@ -399,9 +420,8 @@ one that is not trusted at all:
   runs.
 * **It cannot see rows move.** No status page can: an empty outbox and a
   switched-off one publish the same number. That evidence is the two in-cloud
-  counts, and the verifier refuses to imply otherwise — a stage that passed on
-  weaker evidence downgrades the final banner to `COMPLETE WITH CAVEATS` and
-  names what was not shown.
+  counts, and every passing run says so in the banner — not as a downgrade
+  earned by a stage, just as a fact about what the five stages are.
 * **One bound script's tail is claimed, not proven** —
   `aws_eu_clickhouse_drain_install.sh`, above.
 
@@ -450,6 +470,5 @@ history is unrecorded cannot answer the question canaries exist to answer.
 5. Build the pipeline: an outbox (enabled in the control-plane script), a
    ClickHouse the cloud owns, and a drain installed as a supervised unit.
 6. Run `bash scripts/deploy/verify_cloud_complete.sh <cloud>` until it exits 0
-   **with the plain `COMPLETE` banner** — `COMPLETE WITH CAVEATS` also exits 0
-   and is not the same claim — then watch two counts ten minutes apart from
-   inside the cloud.
+   and prints `VERIFIED`, then do the thing the banner tells you it did not do:
+   watch two counts ten minutes apart from inside the cloud.
