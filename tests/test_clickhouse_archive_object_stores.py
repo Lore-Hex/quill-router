@@ -543,3 +543,104 @@ def _json_bytes_for_test(value: dict[str, Any]) -> bytes:
     from clickhouse.archive_daily import _json_bytes
 
     return _json_bytes(value)
+
+
+# --------------------------------------------------------------------------
+# Running the exporter on a non-GCP node.
+#
+# The archiver shells out to clickhouse-client with an explicit --user. That
+# user was hardcoded to "tr", which only exists on the GCP cluster; the AWS-EU
+# node authenticates as "default" into database "default". An explicit --user
+# beats CLICKHOUSE_USER in the environment, so this could not be corrected
+# from the systemd unit -- the per-cloud object stores were necessary but not
+# sufficient to archive another cloud.
+# --------------------------------------------------------------------------
+
+
+def test_exporter_argv_carries_the_configured_user_and_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from clickhouse import archive_daily
+
+    seen: dict[str, Any] = {}
+
+    class _Result:
+        returncode = 0
+        stdout = b"{}"
+        stderr = b""
+
+    def _fake_run(argv: Any, **kwargs: Any) -> Any:
+        seen["argv"] = list(argv)
+        seen["env"] = kwargs.get("env") or {}
+        return _Result()
+
+    monkeypatch.setattr(archive_daily.subprocess, "run", _fake_run)
+    exporter = archive_daily.ClickHouseDailyExporter(
+        password="pw",  # noqa: S106 - test literal
+        database="default",
+        table="activity_generations",
+        user="default",
+    )
+    exporter._client("SELECT 1")
+
+    argv = seen["argv"]
+    assert argv[argv.index("--user") + 1] == "default"
+    assert argv[argv.index("--database") + 1] == "default"
+    # A leftover "tr" anywhere in argv means the AWS node authenticates as a
+    # user that does not exist there.
+    assert "tr" not in argv
+    assert seen["env"]["CLICKHOUSE_PASSWORD"] == "pw"
+
+
+def test_exporter_still_defaults_to_the_gcp_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GCP's units pass no user, so the default must keep them byte-identical."""
+
+    from clickhouse import archive_daily
+
+    seen: dict[str, Any] = {}
+
+    class _Result:
+        returncode = 0
+        stdout = b"{}"
+        stderr = b""
+
+    monkeypatch.setattr(
+        archive_daily.subprocess,
+        "run",
+        lambda argv, **kw: (seen.__setitem__("argv", list(argv)), _Result())[1],
+    )
+    archive_daily.ClickHouseDailyExporter(
+        password="pw",  # noqa: S106 - test literal
+    )._client("SELECT 1")
+
+    argv = seen["argv"]
+    assert argv[argv.index("--user") + 1] == "tr"
+    assert argv[argv.index("--database") + 1] == "tr"
+
+
+def test_exporter_rejects_a_non_identifier_user() -> None:
+    """The user reaches an argv, so it gets the same allowlist as the database."""
+
+    from clickhouse import archive_daily
+
+    with pytest.raises(ValueError, match="user must be a ClickHouse identifier"):
+        archive_daily.ClickHouseDailyExporter(
+            password="pw",  # noqa: S106 - test literal
+            user="default; DROP",
+        )
+
+
+def test_completion_log_names_the_store_actually_written(
+    s3: FakeS3, azure_container: FakeContainer
+) -> None:
+    """The success line hardcoded gs:// for every store, so an operator reading
+    AWS logs would be told the object landed in GCS."""
+
+    from clickhouse.archive_daily import GCSArchiveStore
+
+    assert GCSArchiveStore.scheme == "gs"
+    assert S3ArchiveStore.scheme == "s3"
+    assert AzureBlobArchiveStore.scheme == "azure"
+    # Every store must expose it, since the log reads it off whichever is live.
+    for cls in (GCSArchiveStore, S3ArchiveStore, AzureBlobArchiveStore):
+        assert isinstance(getattr(cls, "scheme", None), str)
