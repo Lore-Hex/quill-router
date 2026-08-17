@@ -187,8 +187,9 @@ echo "INSTANCE_ID=${INSTANCE_ID}"
 #
 # require_cloud_complete returns the gate's status unaltered, so this script's
 # exit status IS the gate's. tests/test_deploy_script_execution.py runs this
-# whole file under a hermetic stub PATH and asserts both halves: the gate is
-# called for aws, and a failing gate makes this script exit non-zero.
+# whole file under a stub PATH — isolation by name, not a sandbox — and asserts
+# both halves: the gate is called for aws, and a failing gate makes this script
+# exit non-zero.
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/cloud_complete_gate.sh

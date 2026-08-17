@@ -90,8 +90,11 @@ name: Check fleet analytics freshness
 #   1. Deploy all three control planes; verify with
 #        curl -s https://trustedrouter.com/status.json | jq .data.analytics
 #      (and the AWS/Azure URLs in ANALYTICS_FRESHNESS_FLEET) that each one
-#      returns an object rather than null. Verified 2026-08-17: all three
-#      returned null, i.e. NONE of them publishes the section yet.
+#      returns an object rather than null. Do not take this comment's word for
+#      where the fleet is -- it is a to-do list, and the fleet moves under it.
+#      `bash scripts/deploy/verify_cloud_complete.sh <cloud>` answers per cloud;
+#      exit 5 is the "still returns null" state. When this was written, all
+#      three returned null; the publisher ships in the same change.
 #   2. Run this workflow once with workflow_dispatch and read the result,
 #      including the `~` unchecked lines.
 #

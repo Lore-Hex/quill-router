@@ -394,7 +394,7 @@ class DeployScriptHarness:
             **{k: v for k, v in fixture.env.items() if k not in omit_env},
         }
 
-        proc = subprocess.run(  # noqa: S603 - fixed argv, hermetic PATH, repo-local script
+        proc = subprocess.run(  # noqa: S603 - fixed argv, stub PATH, repo-local script
             ["bash", str(self.mirror / script)],  # noqa: S607
             capture_output=True,
             text=True,

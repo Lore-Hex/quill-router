@@ -36,7 +36,8 @@
 # which creates and refreshes a virtualenv and a package cache like any other
 # uv invocation. That is a normal developer-machine side effect, not a cloud
 # mutation; nothing here writes to any cloud, and nothing writes into the
-# checkout except by way of uv's own venv.
+# checkout except by way of uv's own venv. (It used to drop __pycache__ into
+# src/ as well, on the .venv branch; PYTHONDONTWRITEBYTECODE closes that.)
 #
 # It provisions nothing and repairs nothing; it refuses to agree that an
 # incomplete cloud is finished.
@@ -190,8 +191,13 @@ fi
 # operator reads it as it happens; stdout is collected as notes. Merging them is
 # what let one stray interpreter line rewrite a verdict, back when a verdict was
 # something read out of a stream rather than an exit status.
+#
+# PYTHONDONTWRITEBYTECODE because this runs from a checkout: without it the
+# .venv branch leaves __pycache__ directories inside src/trusted_router/, i.e. a
+# read-only check writing into the repository it is reading. The header above
+# says what this script writes, and that has to stay a short list.
 tr_py() {
-  (cd "$REPO_ROOT" && PYTHONPATH=src:. "${PYTHON_CMD[@]}" \
+  (cd "$REPO_ROOT" && PYTHONPATH=src:. PYTHONDONTWRITEBYTECODE=1 "${PYTHON_CMD[@]}" \
     -m trusted_router.cloud_rollout_completeness "$@")
 }
 
@@ -230,14 +236,21 @@ stage() {
 printf '\n=== cloud rollout completeness: %s\n\n' "$CLOUD" >&2
 
 # ---------------------------------------------------------------------------
-# (a) Is anybody watching this cloud at all?
+# (a) Is this cloud in the registry the fleet check reads?
 #
 # First because it is the only stage whose failure means the others cannot even
-# be asked. The registry is imported from src/ — this script never carries its
-# own list of clouds, so a cloud added to the deployment tables cannot be
-# invisible here.
+# be asked: it is what supplies the URL the rest of the run fetches. The
+# registry is imported from src/ — this script never carries its own list of
+# clouds, so a cloud added to the deployment tables cannot be invisible here.
+#
+# The claim printed here used to be "somebody reads this cloud's drain lag on a
+# schedule", and nobody does: .github/workflows/check-analytics-freshness.yml
+# ships with `workflow_dispatch` as its ONLY trigger, deliberately and in its
+# own header, until every cloud publishes the section. So this stage passing
+# means the cloud is registered and reachable, not that anything is watching it.
 # ---------------------------------------------------------------------------
-stage "a: fleet freshness registry" "somebody reads this cloud's drain lag on a schedule" \
+stage "a: fleet freshness registry" \
+  "this cloud has a status endpoint in the registry the fleet check reads (that check has no schedule trigger today — it runs on manual dispatch)" \
   registry --cloud "$CLOUD"
 
 # The one place a stage's stdout is CONSUMED rather than reprinted. It still
@@ -288,7 +301,8 @@ stage "d: drain lag" "drain_lag_seconds within the bound the drain alarms on" \
 #     0.0 forever, and every stage above passes over a pipeline that carries no
 #     rows. This is the stage Azure fails today.
 # ---------------------------------------------------------------------------
-stage "e: control-plane outbox enabled" "control-plane outbox is enabled" \
+stage "e: control-plane outbox enabled" \
+  "the control-plane script in this checkout does not switch the outbox off" \
   outbox --cloud "$CLOUD"
 
 # ---------------------------------------------------------------------------
@@ -306,10 +320,14 @@ stage "e: control-plane outbox enabled" "control-plane outbox is enabled" \
 # ---------------------------------------------------------------------------
 printf '\nVERIFIED — %s passed every stage of the completeness check (%s)\n\n' \
   "$CLOUD" "$STATUS_URL" >&2
-printf 'That means: this cloud is watched by the fleet registry, publishes its\n' >&2
-printf 'analytics section, could read its own outbox, has a drain lag under the\n' >&2
-printf 'bound the drain itself alarms on, and its control-plane script in THIS\n' >&2
-printf 'CHECKOUT enables the outbox.\n\n' >&2
+printf 'That means: this cloud has an endpoint in the fleet registry, publishes\n' >&2
+printf 'its analytics section, could read its own outbox, has a drain lag under\n' >&2
+printf 'the bound the drain itself alarms on, and its control-plane script in\n' >&2
+printf 'THIS CHECKOUT does not switch the outbox off. That last one is a static\n' >&2
+printf 'read: where the script computes the value at deploy time — AWS sets it\n' >&2
+printf 'from whether a ClickHouse secret exists in the region, and can set it\n' >&2
+printf 'FALSE — the stage proves only that the script can enable it. The note\n' >&2
+printf 'below says so whenever that is what happened.\n\n' >&2
 printf 'It does not mean rows were seen moving. No public status page can show\n' >&2
 printf 'that. The remaining evidence is in-cloud and it is two numbers ten\n' >&2
 printf 'minutes apart: SELECT count() FROM activity_generations.\n' >&2

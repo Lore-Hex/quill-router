@@ -234,11 +234,20 @@ script — so it can be run from a laptop, by a reviewer, at any time:
 
 | # | Stage | Fails when |
 |---|---|---|
-| a | in the fleet freshness registry | nobody, on any schedule, reads this cloud's drain lag |
+| a | in the fleet freshness registry | the cloud has no status endpoint, so nothing can read its drain lag and this gate has nothing to fetch |
 | b | `/status.json` carries the `analytics` section | the cloud publishes no answer to the question |
 | c | `analytics.available` is true | the control plane cannot read its own outbox (**not** the same as an empty one) |
 | d | `drain_lag_seconds` under the bound | rows are enqueued and nothing is deleting them — the AWS-EU shape exactly |
 | e | the control plane's outbox is ENABLED | nothing is enqueued at all, so (c) and (d) pass over an empty pipe |
+
+Stage (a) means REGISTERED, not WATCHED, and the difference is worth one
+sentence because the check used to print the stronger claim on every pass
+("somebody reads this cloud's drain lag on a schedule"). Nobody does:
+`.github/workflows/check-analytics-freshness.yml` ships with `workflow_dispatch`
+as its only trigger, deliberately and in its own header, until every cloud
+publishes the section — see "Enable the fleet freshness cron" in that file.
+What (a) establishes is that there is an endpoint to read, which is what the
+rest of the run fetches.
 
 Stage (e) is not redundant with (d) and this is the subtle part: **a drained
 outbox and a disabled outbox look identical from outside.** Both publish
@@ -440,7 +449,7 @@ outcome there is nothing to grade.
 
 ### What the check cannot do
 
-Four limits, stated because a gate that is trusted past its reach is worse than
+Six limits, stated because a gate that is trusted past its reach is worse than
 one that is not trusted at all:
 
 * **It starts from the tables.** A cloud that is in none of the deployment

@@ -172,9 +172,11 @@ ANALYTICS_FRESHNESS_FLEET: tuple[FleetAnalyticsEndpoint, ...] = (
             "hold the same outbox shape as AWS -- but that deploy script sets no "
             "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED at all, the setting defaults "
             "to False (config.py), and PostgresStore therefore builds no outbox. "
-            "Verified 2026-08-17: no cloud published an `analytics` section yet, "
-            "so this is read off the deploy script and the default, not off the "
-            "wire. There is no drain here to be missing; expects_outbox=False "
+            "That is read off the deploy script and the default, not off the "
+            "wire -- Azure published no `analytics` section when this was "
+            "written, and the current answer is one command away: "
+            "curl -s https://azure.trustedrouter.com/status.json | jq .data.analytics . "
+            "There is no drain here to be missing; expects_outbox=False "
             "asserts that absence and fails the day it stops being true."
         ),
     ),

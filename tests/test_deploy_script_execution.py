@@ -7,8 +7,9 @@ printed instruction and a commented-out line all satisfy it. That is verbatim
 the bug the whole change exists to prevent — printing the step counted as doing
 the step — reproduced inside the check written to end it.
 
-So every bound script is RUN, in ``tests/deploy_script_harness.py``'s hermetic
-harness, and two things are asserted about what it did:
+So every bound script is RUN, in ``tests/deploy_script_harness.py``'s stub-PATH
+harness — isolation by NAME rather than a sandbox, which that module's own
+header spells out — and two things are asserted about what it did:
 
   1. it CALLED the gate, for its own cloud;
   2. when the gate FAILS, it exits non-zero.

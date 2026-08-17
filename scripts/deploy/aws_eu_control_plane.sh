@@ -382,8 +382,8 @@ fi
 # last statement in the file, so under `set -e` this script's exit status IS the
 # gate's — including 5 (NOT YET OBSERVABLE), which is not a plain failure and
 # which it reports in the same words as every other bound script.
-# tests/test_deploy_script_execution.py runs this whole file under a hermetic
-# stub PATH and asserts both halves.
+# tests/test_deploy_script_execution.py runs this whole file under a stub PATH
+# — isolation by name, not a sandbox — and asserts both halves.
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/cloud_complete_gate.sh

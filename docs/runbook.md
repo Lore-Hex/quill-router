@@ -1063,7 +1063,7 @@ It exits non-zero until all five stages hold, each naming its own fix:
 
 | # | Stage | Fix when it fails |
 |---|---|---|
-| a | in the fleet freshness registry | add a `FleetAnalyticsEndpoint` in `src/trusted_router/operational_analytics_fleet.py` |
+| a | in the fleet freshness registry (registered, not watched — that workflow has no schedule trigger yet) | add a `FleetAnalyticsEndpoint` in `src/trusted_router/operational_analytics_fleet.py` |
 | b | `/status.json` has the `analytics` section | deploy a control plane whose status snapshot publishes `drain_lag_seconds` |
 | c | `analytics.available` is true | the control plane cannot read its outbox — check its database connection |
 | d | `drain_lag_seconds` under bound | the drain is stopped or behind: `bash scripts/deploy/aws_eu_clickhouse_drain_install.sh` |

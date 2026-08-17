@@ -19,9 +19,12 @@ no drain" as an incomplete rollout.
 
 So this module answers one question, executably, for one cloud:
 
-    a. is the cloud in the fleet freshness registry — i.e. does ANYONE check it?
+    a. is the cloud in the fleet freshness registry — i.e. is there an endpoint
+       to read its drain lag from at all? (Registered, not watched: the fleet
+       workflow that reads that registry ships with ``workflow_dispatch`` as its
+       only trigger, deliberately, until every cloud publishes the section.)
     b. does its public ``/status.json`` carry the ``analytics`` section?
-    c. is ``analytics.available`` true (or is the absence explicitly recorded)?
+    c. is ``analytics.available`` true — the control plane could READ its outbox?
     d. is ``drain_lag_seconds`` under the bound the drain itself alarms on?
     e. does the control plane that feeds the outbox have the outbox ENABLED?
 
@@ -271,7 +274,9 @@ class ScriptExemption:
 
     #: Repo-relative path, so the test can assert the file exists.
     script: str
-    #: Why binding this one would be wrong. Printed by ``audit``.
+    #: Why binding this one would be wrong. Nothing prints this: it is read by
+    #: whoever opens this file and by the reviewer of the diff that adds it. CI
+    #: only requires that it is not blank.
     reason: str
     #: What checks the cloud instead. ``None`` is legal and means UNCHECKED —
     #: which must then be said out loud, here and in the docs, rather than
@@ -309,10 +314,20 @@ class CloudRollout:
     #: The command an operator runs to install/refresh this cloud's drain.
     #: Printed by the stage that fails, so the message names the fix.
     drain_install_command: str
-    #: Every deploy script for this cloud that must end in the completeness
-    #: gate. This is the list the behavioural harness EXECUTES; it is not itself
-    #: the assertion. Empty is legal only when every one of the cloud's scripts
-    #: is in :attr:`exempt_deploy_scripts`.
+    #: The deploy scripts for this cloud that end in the completeness gate. This
+    #: is the list the behavioural harness EXECUTES; it is not itself the
+    #: assertion.
+    #:
+    #: What :func:`script_binding_gaps` actually enforces, stated exactly
+    #: because an earlier version of this comment described a stricter rule that
+    #: no code enforced and no cloud satisfied: the cloud must name at least one
+    #: script here or one exemption; its :attr:`control_plane_script` must be in
+    #: one of the two; and no script anywhere under ``scripts/`` may invoke the
+    #: gate without appearing in one of the two. It does NOT enumerate a cloud's
+    #: scripts and require each to be bound — nothing here knows which of the
+    #: sixty files in ``scripts/deploy/`` belong to which cloud. A cloud can
+    #: still ship a bring-up script that neither runs the gate nor is named
+    #: here, and the check that catches that is a reviewer.
     deploy_scripts: tuple[DeployScript, ...] = ()
     #: Deploy scripts deliberately left unbound, each with its reason. Named in
     #: code so that "this cloud's script does not run the check" is a claim

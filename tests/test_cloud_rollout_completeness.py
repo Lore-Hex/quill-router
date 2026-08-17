@@ -930,9 +930,11 @@ class _Harness:
     """A throwaway checkout: the REAL verifier, a stub module, a fake curl.
 
     The shell is the thing under test, so it is copied verbatim; everything it
-    talks to is replaced by something that records what it was asked. A
-    ``.venv/bin/python`` symlink is what makes the run hermetic — it is the
-    interpreter the verifier prefers, so no `uv` resolution and no network.
+    talks to is replaced by something that records what it was asked. The
+    ``.venv/bin/python`` symlink is what keeps the run off the network — it is
+    the interpreter the verifier prefers, so no `uv` resolution happens. Like
+    the deploy-script harness, the isolation here is by NAME (`curl` is a stub
+    on PATH), not a sandbox.
     """
 
     def __init__(self, root: Path, plan: dict[str, Any], body: dict[str, Any]) -> None:
