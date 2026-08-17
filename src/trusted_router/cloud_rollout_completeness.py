@@ -433,11 +433,6 @@ ROLLOUT_REGISTRY: dict[str, CloudRollout] = {
 }
 
 
-def rollout_scripts(cloud: str) -> tuple[DeployScript, ...]:
-    entry = ROLLOUT_REGISTRY.get(cloud)
-    return entry.deploy_scripts if entry else ()
-
-
 def scripts_proven_by_execution() -> tuple[tuple[str, str], ...]:
     """``(script, cloud)`` for every script the behavioural harness runs."""
     return tuple(
@@ -715,14 +710,6 @@ def registry_blockers(cloud: str) -> list[str]:
             "/status.json in src/trusted_router/operational_analytics_fleet.py."
         )
     return blockers
-
-
-def status_url_for(cloud: str) -> str:
-    """The public status URL for a cloud. Raises if stage (a) does not hold."""
-    blockers = registry_blockers(cloud)
-    if blockers:
-        raise KeyError("; ".join(blockers))
-    return freshness_registry()[cloud]
 
 
 # ---------------------------------------------------------------------------

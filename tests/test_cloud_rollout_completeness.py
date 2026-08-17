@@ -138,8 +138,9 @@ def test_registry_is_bound_to_the_declared_clouds() -> None:
     """
     gaps = crc.registry_gaps()
     assert gaps == [], "\n".join(gaps)
+    registry = crc.freshness_registry()
     for cloud in crc.declared_clouds():
-        assert crc.status_url_for(cloud).startswith("https://")
+        assert registry[cloud].startswith("https://")
         assert cloud in crc.ROLLOUT_REGISTRY
 
 
