@@ -934,6 +934,7 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
 }
 .video-embed.is-loaded { cursor:default; background:#000; }
 .video-embed iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
+
 @media (prefers-reduced-motion: reduce) {
   .video-embed, .video-embed-play { transition:none; }
   .video-embed:hover .video-embed-play { transform:none; }
