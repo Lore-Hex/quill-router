@@ -14,6 +14,7 @@ unchanged.  What stays is the Spanner-specific writer.
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import Any
 
 from trusted_router.storage_gcp_codec import json_body
@@ -105,6 +106,44 @@ class SpannerOperationalAnalyticsOutbox:
             event_id=f"{payload['tenant_id']}:{payload['batch_id']}",
             payload=payload,
         )
+
+    def oldest_enqueued_at(self) -> dt.datetime | None:
+        """Commit timestamp of the oldest undelivered row, or ``None`` if empty.
+
+        Spanner's column is ``commit_ts``, not ``enqueued_at`` -- the method is
+        named for the contract it feeds (``analytics.oldest_enqueued_at`` in
+        /status.json) rather than for one backend's column, so the publisher
+        can hold either outbox without knowing which cloud it is on.
+
+        Per shard rather than one global ``ORDER BY commit_ts LIMIT 1``: the
+        table's primary key leads with ``shard``, so the global form is a scan
+        of the whole outbox and gets more expensive exactly as the backlog it
+        is measuring grows. Each shard read is a seek on the key prefix, and
+        the oldest of the 32 heads is the oldest row in the table.
+
+        This is the same read the Spanner drain performs
+        (``clickhouse.ingest_operational_outbox.oldest_commit_ts``); keeping
+        them identical is what stops the published number and the drain's own
+        ``backlog_alarm`` from meaning different things.
+        """
+        oldest: dt.datetime | None = None
+        with self._database.snapshot(multi_use=True) as snapshot:
+            for shard in range(self._shard_count):
+                rows = list(
+                    snapshot.execute_sql(
+                        "SELECT commit_ts FROM tr_operational_analytics_outbox "
+                        "WHERE shard=@shard ORDER BY commit_ts LIMIT 1",
+                        params={"shard": shard},
+                        param_types={"shard": self._pt.INT64},
+                    )
+                )
+                if not rows or rows[0][0] is None:
+                    continue
+                candidate: dt.datetime = rows[0][0]
+                if candidate.tzinfo is None:
+                    candidate = candidate.replace(tzinfo=dt.UTC)
+                oldest = candidate if oldest is None else min(oldest, candidate)
+        return oldest
 
     def _enqueue(
         self,

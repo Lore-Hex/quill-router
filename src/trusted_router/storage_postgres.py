@@ -31,6 +31,12 @@ from trusted_router.custom_model_billing import (
     user_model_authorization_id_from_payout_event_id,
 )
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
+from trusted_router.operational_analytics_freshness import (
+    BACKEND_POSTGRES,
+    REASON_NOT_CONFIGURED,
+    REASON_UNREACHABLE,
+    OutboxFreshness,
+)
 from trusted_router.postgres_dsn import (
     aws_dsql_connection_details,
     dsql_token_is_admin,
@@ -4169,6 +4175,31 @@ class PostgresStore:
             return [_dataclass_from_json(row[0], SyntheticProbeSample) for row in rows]
 
         return self._run_transaction(list_samples)
+
+    def operational_analytics_outbox_freshness(self) -> OutboxFreshness:
+        """The age of the oldest row the drain has not delivered yet.
+
+        This is the AWS and Azure answer, and it is the one the outage of
+        2026-08-02..17 needed: on AWS-EU the outbox held 470,370 rows and the
+        only process that could have said so had never been installed. The
+        control plane already holds the DSQL connection, so publishing this
+        costs one index seek behind the status cache and needs no new IAM, no
+        new unit, and no reachability into the VPC.
+
+        A failed read is `unreachable`, never an empty queue.
+        """
+        outbox = self._operational_analytics_outbox
+        if outbox is None:
+            return OutboxFreshness.unavailable(BACKEND_POSTGRES, REASON_NOT_CONFIGURED)
+        try:
+            oldest = outbox.oldest_enqueued_at()
+        except Exception as exc:
+            log.exception(
+                "postgres.operational_analytics_outbox_freshness_failed",
+                extra={"error_class": type(exc).__name__, "error_message": str(exc)[:500]},
+            )
+            return OutboxFreshness.unavailable(BACKEND_POSTGRES, REASON_UNREACHABLE)
+        return OutboxFreshness(backend=BACKEND_POSTGRES, oldest_enqueued_at=oldest)
 
     def synthetic_rollups(
         self,

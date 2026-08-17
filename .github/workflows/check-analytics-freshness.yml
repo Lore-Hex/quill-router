@@ -1,11 +1,11 @@
-name: Check AWS-EU analytics freshness
+name: Check fleet analytics freshness
 
-# The AWS-EU analytics pipeline is
-#   settle -> tr_operational_analytics_outbox (DSQL) -> drain -> ClickHouse (Paris)
-# and on 2026-08-17 it was found to have never started: no unit had been
-# installed on tr-eu-clickhouse-1, 465,119 rows had accumulated in the outbox
-# since 2026-08-02, and `SELECT count() FROM activity_generations` on the node
-# returned 0. Nothing reported it for fifteen days, for a structural reason
+# Every standalone cloud's analytics pipeline is
+#   settle -> tr_operational_analytics_outbox -> drain -> ClickHouse
+# and on 2026-08-17 the AWS-EU one was found to have never started: no unit had
+# been installed on tr-eu-clickhouse-1, 470,370 rows had accumulated in the
+# outbox since 2026-08-02, and `SELECT count() FROM activity_generations` on the
+# node returned 0. Nothing reported it for fifteen days, for a structural reason
 # worth stating plainly: every in-band signal for this pipeline -- the metrics
 # line, `degraded_targets=`, and the `backlog_alarm` that is the ONLY bound on
 # outbox growth -- is emitted by the drain process itself. A drain that does
@@ -14,71 +14,75 @@ name: Check AWS-EU analytics freshness
 # So this check runs somewhere else, on someone else's schedule, and asks the
 # database rather than the daemon.
 #
-# WHY IT READS /status.json AND NOT THE NODE
-# ------------------------------------------
-# The Paris ClickHouse node is private: it listens on its VPC address only and
+# WHY THE FLEET AND NOT JUST AWS
+# ------------------------------
+# GCP was healthy for all fifteen days, so the fleet looked fine. A monitor
+# pointed at one hardcoded URL has exactly that failure mode: it is green about
+# the cloud somebody happened to point it at. The URL list is therefore
+# `trusted_router.operational_analytics_fleet.ANALYTICS_FRESHNESS_FLEET`, and
+# `tests/test_analytics_freshness_registry.py` fails if that registry and
+# `byok_v1_attestations.STANDALONE_CLOUDS` disagree in either direction -- a
+# fourth cloud cannot be deployed without a drain-freshness signal.
+#
+# WHY IT READS /status.json AND NOT THE NODES
+# -------------------------------------------
+# Each ClickHouse node is private: AWS-EU's listens on its VPC address only and
 # its security group admits only the VPC CIDR, so a GitHub runner cannot reach
 # it to ask for max(created_at). Three ways to get the signal out were
 # considered; this is the one that adds no infrastructure at all.
 #
-#   1. CHOSEN -- the tr-eu control plane publishes an `analytics` section in
-#      its already-public /status.json, and this job reads it with NO
+#   1. CHOSEN -- each control plane publishes an `analytics` section in its
+#      already-public /status.json, and this job reads them with NO
 #      credentials, exactly as check-client-telemetry-freshness.yml reads the
-#      GCP one. tr-eu is already public, already holds dsql:DbConnect{,Admin}
-#      on the Paris cluster, and already opens a DSQL connection per request.
-#      The query is an index seek on tr_operational_analytics_outbox_enqueued_at_idx.
-#      New AWS resources: none. New IAM: none. New secrets in Actions: none.
+#      GCP one. Every control plane is already public, already holds its own
+#      database connection, and already opens one per request. On Postgres/DSQL
+#      the query is an index seek on
+#      tr_operational_analytics_outbox_enqueued_at_idx; on Spanner it is a
+#      per-shard key-prefix seek. New cloud resources: none. New IAM: none. New
+#      secrets in Actions: none.
 #
-#   2. Rejected -- this job queries Aurora DSQL directly. The DSQL endpoint IS
-#      publicly reachable, so it would work, but the repo has no GitHub OIDC
-#      provider and no Actions-assumable AWS role, so it needs a new OIDC
-#      provider plus a role and trust policy. More infrastructure, to learn
-#      the same number.
+#   2. Rejected -- this job queries each database directly. The DSQL endpoint IS
+#      publicly reachable, so it would work for AWS, but the repo has no GitHub
+#      OIDC provider and no Actions-assumable AWS role, so it needs a new OIDC
+#      provider plus a role and trust policy per cloud. More infrastructure, to
+#      learn the same number.
 #
-#   3. Rejected -- a systemd timer on the node writes a heartbeat somewhere
-#      Actions can read. The node's role can reach Secrets Manager and
-#      CloudWatch Logs, but Actions can read neither without the same new IAM
-#      as (2), and it adds a unit and a timer whose own failure is once again
-#      invisible.
+#   3. Rejected -- a systemd timer on each node writes a heartbeat somewhere
+#      Actions can read. Actions can read none of those sinks without the same
+#      new IAM as (2), and it adds a unit and a timer whose own failure is once
+#      again invisible.
 #
 # The number it checks is drain_lag_seconds: the age of the oldest row still in
-# the outbox. Rows are deleted only after ClickHouse accepts them, so this is an
-# end-to-end statement about the whole pipeline and it is strictly stronger than
-# a ClickHouse timestamp -- it cannot be satisfied by a drain that is writing
-# nowhere.
-#
-# OPERATOR STEPS BEFORE THE SCHEDULE IS ENABLED
-# ---------------------------------------------
-# The `schedule:` trigger is intentionally absent. Two things must land first,
-# and until they do this job would file a daily issue about a field that was
-# never deployed, which trains people to ignore it:
-#
-#   1. Install the drain:  bash scripts/deploy/aws_eu_clickhouse_drain_install.sh
-#      (it refuses to run until quill-enclave-role is granted dsql:DbConnect*,
-#      which it prints in full -- that grant is an IAM change and is step 0).
-#   2. Publish the section: wire
-#      trusted_router.operational_analytics_freshness.analytics_status_section
-#      into the /status.json payload on the AWS deployment, reading
-#      `SELECT enqueued_at FROM tr_operational_analytics_outbox
-#       ORDER BY enqueued_at LIMIT 1`. The builder and its contract are already
-#      in this repo and tested; only the wiring and a STORE read remain.
-#
-# Then add, here:
-#     schedule:
-#       - cron: "20 7 * * *"
-# and verify once with workflow_dispatch before trusting it.
+# that cloud's outbox. Rows are deleted only after ClickHouse accepts them, so
+# this is an end-to-end statement about the whole pipeline and it is strictly
+# stronger than a ClickHouse timestamp -- it cannot be satisfied by a drain that
+# is writing nowhere.
 
 on:
   push:
     branches: [main]
     paths:
+      - "clickhouse/check_fleet_analytics_freshness.py"
       - "clickhouse/check_aws_analytics_freshness.py"
       - "src/trusted_router/operational_analytics_freshness.py"
-      - ".github/workflows/check-aws-analytics-freshness.yml"
+      - "src/trusted_router/operational_analytics_fleet.py"
+      - ".github/workflows/check-analytics-freshness.yml"
+  # Daily, and deliberately not more often: the bound this enforces is the
+  # drain's own backlog_alarm at one hour, and the outbox is durable, so the
+  # cost of a late detection is freshness and storage, never data. The section
+  # is published by every cloud as of PR "analytics drain cannot be missing",
+  # which is what made a schedule honest rather than a daily issue about a
+  # field nobody deployed.
+  schedule:
+    - cron: "20 7 * * *"
   workflow_dispatch:
     inputs:
+      cloud:
+        description: "Restrict to one cloud (aws|azure|gcp). Empty checks the whole fleet."
+        required: false
+        default: ""
       status_url:
-        description: "status.json URL of the AWS-EU control plane"
+        description: "Override one cloud's status.json, as CLOUD=URL."
         required: false
         default: ""
       max_drain_lag_seconds:
@@ -91,7 +95,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: check-aws-analytics-freshness
+  group: check-analytics-freshness
   cancel-in-progress: false
 
 jobs:
@@ -106,23 +110,27 @@ jobs:
           python-version: "3.12"
 
       # No credentials, no cloud SDK, no VPC. The whole point of reading the
-      # public status feed is that this step is a plain HTTPS GET.
-      - name: Check the AWS-EU drain lag
+      # public status feeds is that this step is a handful of plain HTTPS GETs.
+      - name: Check every cloud's drain lag
         id: check
         env:
+          CLOUD: ${{ github.event.inputs.cloud }}
           STATUS_URL: ${{ github.event.inputs.status_url }}
           MAX_LAG: ${{ github.event.inputs.max_drain_lag_seconds }}
           PYTHONPATH: src
         run: |
           set -euo pipefail
           args=(--problems-file /tmp/problems.txt)
+          if [ -n "${CLOUD}" ]; then
+            args+=(--cloud "${CLOUD}")
+          fi
           if [ -n "${STATUS_URL}" ]; then
             args+=(--status-url "${STATUS_URL}")
           fi
           if [ -n "${MAX_LAG}" ]; then
             args+=(--max-drain-lag-seconds "${MAX_LAG}")
           fi
-          python3 -m clickhouse.check_aws_analytics_freshness "${args[@]}"
+          python3 -m clickhouse.check_fleet_analytics_freshness "${args[@]}"
 
       - name: Open or update the freshness issue
         if: failure()
@@ -136,7 +144,8 @@ jobs:
             echo "the freshness check failed before it could report; see the run log" > /tmp/detail.txt
           fi
           {
-            echo "The AWS-EU operational analytics drain is not observably delivering."
+            echo "An operational analytics drain is not observably delivering."
+            echo "Each line below is prefixed with the cloud it is about."
             echo
             echo '```'
             cat /tmp/detail.txt
@@ -144,9 +153,10 @@ jobs:
             echo
             echo "Rows are not lost while this is broken: the drain deletes an outbox row"
             echo "only after ClickHouse has accepted it, so a stopped drain means the outbox"
-            echo "GROWS. The cost is freshness now and DSQL storage later, not data."
+            echo "GROWS. The cost is freshness now and storage later, not data."
             echo
-            echo "What to look at, in order:"
+            echo "What to look at, in order (AWS-EU shown; the other clouds are the same"
+            echo "pipeline with a different database and a different node):"
             echo
             echo '```bash'
             echo "# 1. Is the unit even installed and running?"
@@ -175,10 +185,14 @@ jobs:
             echo "  \`scripts/deploy/aws_eu_clickhouse_drain_install.sh\`. This is what happened"
             echo "  between 2026-08-02 and 2026-08-17."
             echo
+            echo "If the line reads \`registry:\`, no drain is broken — the fleet registry in"
+            echo "\`src/trusted_router/operational_analytics_fleet.py\` disagrees with the"
+            echo "deployed-cloud list. Fix the registry."
+            echo
             echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           } > /tmp/issue-body.md
           gh label create aws-analytics-freshness \
-            --description "The AWS-EU operational analytics drain stopped delivering" \
+            --description "An operational analytics drain stopped delivering" \
             --color D93F0B --force >/dev/null
           # One open issue at a time: a daily duplicate trains people to ignore it.
           existing="$(gh issue list --label aws-analytics-freshness --state open --json number --jq '.[0].number' 2>/dev/null || true)"
@@ -186,7 +200,7 @@ jobs:
             gh issue comment "${existing}" --body-file /tmp/issue-body.md
           else
             gh issue create \
-              --title "AWS-EU analytics drain is not delivering" \
+              --title "An operational analytics drain is not delivering" \
               --label aws-analytics-freshness \
               --body-file /tmp/issue-body.md
           fi

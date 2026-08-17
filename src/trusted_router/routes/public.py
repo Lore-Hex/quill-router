@@ -111,6 +111,10 @@ from trusted_router.domains import (
     status_hostname_for_domain,
 )
 from trusted_router.og import OG_PNG_PATH
+from trusted_router.operational_analytics_freshness import (
+    ANALYTICS_STATUS_KEY,
+    analytics_status_from_reading,
+)
 from trusted_router.provider_contract import (
     PROVIDER_CATALOG_SCHEMA,
     PROVIDER_CATALOG_V2_SCHEMA,
@@ -2115,6 +2119,41 @@ def _merge_client_observed_status(
     return result
 
 
+def _merge_analytics_status(payload: dict[str, Any]) -> dict[str, Any]:
+    """Publish this cloud's operational-analytics drain lag.
+
+    One wiring covers every deployment because every deployment runs this
+    codebase; that is the property the fleet check in
+    :mod:`clickhouse.check_fleet_analytics_freshness` relies on, and the reason
+    the registry can insist that no cloud is missing the section.
+
+    The key is written unconditionally. Omitting it on failure would be the
+    original bug in a new place: the checker reads a missing section as "this
+    deployment does not publish drain lag", and a section that disappears
+    whenever the database is unhappy is a signal that is quietest exactly when
+    it matters. A read failure publishes `available: false` with a reason
+    instead, and never the last good number -- a stale-but-plausible lag is
+    indistinguishable from a healthy one.
+
+    Runs inside `_status_snapshot`, so it is behind `STATUS_SNAPSHOT_CACHE_SECONDS`
+    and costs one index seek per cache miss rather than one per request.
+    """
+    reading = None
+    try:
+        # Called through the declared `Store` surface rather than a getattr
+        # probe, so a backend that stops implementing it fails mypy instead of
+        # silently degrading every cloud's status page to "unreachable".
+        reading = STORE.operational_analytics_outbox_freshness()
+    except Exception:
+        log.exception("operational_analytics_outbox_freshness_read_failed")
+    result = dict(payload)
+    result[ANALYTICS_STATUS_KEY] = analytics_status_from_reading(
+        reading,
+        now=dt.datetime.now(dt.UTC),
+    )
+    return result
+
+
 def _status_snapshot(settings: Settings) -> dict[str, Any]:
     global _STATUS_CACHE
     now = time.monotonic()
@@ -2147,6 +2186,7 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
                     log.exception("public_analytics_snapshot_invalid name=status_inputs")
                 else:
                     payload = _merge_client_observed_status(payload, settings=settings)
+                    payload = _merge_analytics_status(payload)
                     _STATUS_CACHE = (now, payload)
                     return payload
     # Keep the fallback bounded. Current state and headline latency come from
@@ -2163,6 +2203,7 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
             return _STATUS_CACHE[1]
         raise
     payload = _merge_client_observed_status(payload, settings=settings)
+    payload = _merge_analytics_status(payload)
     if settings.environment != "test":
         _STATUS_CACHE = (now, payload)
     return payload
@@ -2311,6 +2352,12 @@ def _compact_status_json(snapshot: dict[str, Any]) -> dict[str, Any]:
     payload["components"] = compact_components
     if "client_observed" in snapshot:
         payload["client_observed"] = snapshot["client_observed"]
+    # Carried through explicitly. This function is what /status.json actually
+    # serves, and the fleet freshness check fails a cloud whose payload has no
+    # `analytics` key -- so dropping it here would look exactly like a cloud
+    # running code too old to publish drain lag.
+    if ANALYTICS_STATUS_KEY in snapshot:
+        payload[ANALYTICS_STATUS_KEY] = snapshot[ANALYTICS_STATUS_KEY]
     return payload
 
 

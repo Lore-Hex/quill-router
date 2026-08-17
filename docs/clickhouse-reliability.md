@@ -209,6 +209,58 @@ node, waits for 3/3 health, and synchronizes the replica.
 Parquet is the cross-version and cross-cloud recovery source. Disk snapshots
 are the faster same-platform recovery source.
 
+## Drain freshness: the out-of-band signal
+
+Every in-band signal for the outbox drain — the metrics line, `degraded_targets=`,
+and the `backlog_alarm` that is the only bound on outbox growth — is emitted by
+the drain process itself. A drain that was never installed cannot alarm about
+not existing. That is not hypothetical: on AWS-EU no unit had ever been
+installed, 470,370 rows accumulated in `tr_operational_analytics_outbox` between
+2026-08-02 and 2026-08-17, and nothing reported it. GCP was healthy throughout,
+so the fleet looked healthy.
+
+So every control plane publishes the signal itself, in its already-public
+`/status.json`:
+
+```json
+"analytics": {
+  "available": true,
+  "backend": "postgres",
+  "drain_lag_seconds": 12.5,
+  "outbox_depth": null,
+  "oldest_enqueued_at": "2026-08-17T11:59:47Z",
+  "generated_at": "2026-08-17T12:00:00Z"
+}
+```
+
+`drain_lag_seconds` is the age of the oldest **undelivered** outbox row. Rows
+are deleted only after every configured ClickHouse target has accepted them, so
+this is an end-to-end statement about the whole pipeline, and it is observable
+from outside the VPC — which the private ClickHouse nodes are not. A read
+failure publishes `{"available": false, "reason": ...}`; the key is never
+omitted and a stale number is never re-served.
+
+Cost: one index seek per status-cache miss. Postgres/DSQL uses
+`tr_operational_analytics_outbox_enqueued_at_idx`; Spanner reads the head of
+each of the 32 shards on the key prefix. `outbox_depth` is deliberately
+optional — `count(*)` over a large backlog is the expensive question and the
+lag already answers the important one.
+
+`.github/workflows/check-analytics-freshness.yml` reads it daily, with no
+credentials, for **every** cloud in
+`src/trusted_router/operational_analytics_fleet.py:ANALYTICS_FRESHNESS_FLEET`.
+`tests/test_analytics_freshness_registry.py` fails if that registry and
+`byok_v1_attestations.STANDALONE_CLOUDS` disagree in either direction, so a
+fourth deployment cannot exist without a drain-freshness signal or a written
+reason it has none. Missing section, unavailable, stale, unreachable, and
+over-lag are all failures — never skips.
+
+To ask about one cloud during an incident:
+
+```bash
+PYTHONPATH=src python3 -m clickhouse.check_fleet_analytics_freshness --cloud aws
+```
+
 ## Alerts and capacity
 
 Cloud Monitoring pages on node unavailability and disk use at 75 percent.

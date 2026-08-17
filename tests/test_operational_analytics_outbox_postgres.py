@@ -1183,3 +1183,72 @@ class TestClickHouseIdentityIsConfigurable:
         command = seen[0]
         assert command[command.index("--user") + 1] == "default"
         assert command[command.index("--database") + 1] == "default"
+
+
+# --------------------------------------------------------------------------
+# The published lag read
+# --------------------------------------------------------------------------
+
+
+def test_oldest_enqueued_at_reads_the_head_of_the_real_table() -> None:
+    """Run against the DDL the store applies, not a dict pretending to be one.
+
+    This is the number /status.json publishes as `analytics.drain_lag_seconds`,
+    and it is the only thing that would have made the fifteen-day AWS-EU
+    outage visible from outside the VPC: the drain that should have alarmed had
+    never been installed.
+    """
+    conn = _real_schema_conn()
+    outbox = PostgresOperationalAnalyticsOutbox(lambda operation: operation(conn))
+    oldest = dt.datetime(2026, 8, 2, 3, 0, tzinfo=dt.UTC)
+    for index, enqueued_at in enumerate(
+        [
+            dt.datetime(2026, 8, 17, 11, 0, tzinfo=dt.UTC),
+            oldest,
+            dt.datetime(2026, 8, 10, 0, 0, tzinfo=dt.UTC),
+        ]
+    ):
+        conn.execute(
+            _SEED_ROW_SQL,
+            (index, ACTIVITY_EVENT_KIND, f"gen-{index}", "{}", enqueued_at),
+        )
+
+    assert outbox.oldest_enqueued_at() == oldest
+
+
+def test_oldest_enqueued_at_is_none_on_a_fully_drained_table() -> None:
+    """None means delivered, not unknown -- the caller must not conflate them."""
+    conn = _real_schema_conn()
+    outbox = PostgresOperationalAnalyticsOutbox(lambda operation: operation(conn))
+
+    assert outbox.oldest_enqueued_at() is None
+
+
+def test_oldest_enqueued_at_propagates_read_failures_instead_of_returning_none() -> None:
+    """A swallowed exception would publish a dead database as a drained queue."""
+
+    def explode(_operation: Any) -> Any:
+        raise RuntimeError("dsql: connection refused")
+
+    outbox = PostgresOperationalAnalyticsOutbox(explode)
+
+    with pytest.raises(RuntimeError):
+        outbox.oldest_enqueued_at()
+
+
+def test_lag_read_is_an_index_seek_and_never_a_count() -> None:
+    """The index exists for this statement; count(*) is the expensive question.
+
+    Ordering by enqueued_at without the index is a full scan on every poll,
+    worst exactly when a backlog has made it expensive and most worth reading.
+    """
+    from trusted_router.storage_postgres_operational_analytics_outbox import (
+        SELECT_OLDEST_ENQUEUED_AT_SQL,
+    )
+
+    assert "ORDER BY enqueued_at LIMIT 1" in SELECT_OLDEST_ENQUEUED_AT_SQL
+    assert "count(" not in SELECT_OLDEST_ENQUEUED_AT_SQL.lower()
+    assert any(
+        "tr_operational_analytics_outbox_enqueued_at_idx" in statement
+        for statement in _outbox_schema_statements()
+    )

@@ -23,6 +23,7 @@ instead of a duplicate event.
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Callable
 from typing import Any
 
@@ -51,13 +52,35 @@ INSERT_EVENT_SQL = (
     "ON CONFLICT (shard, event_kind, event_id) DO NOTHING"
 )
 
+# The lag read, published in /status.json as `analytics.drain_lag_seconds`.
+#
+# Verbatim the statement the drain itself runs
+# (`clickhouse.ingest_operational_outbox_postgres.SELECT_OLDEST_SQL`), so the
+# number an outside observer reads and the number `backlog_alarm` fires on
+# cannot drift into meaning different things. One statement for the whole
+# table, not one per shard: this runs on the request path behind the status
+# cache, and 32 round trips per poll is what the drain's own metric used to
+# cost before it was collapsed.
+#
+# Backed by tr_operational_analytics_outbox_enqueued_at_idx, so it is an index
+# seek and its cost does not grow with the backlog -- which matters precisely
+# because a growing backlog is when this number is most worth reading. There is
+# deliberately no count(*) alongside it: that one IS a scan, and the lag already
+# answers "is the drain alive?".
+SELECT_OLDEST_ENQUEUED_AT_SQL = (
+    "SELECT enqueued_at FROM tr_operational_analytics_outbox ORDER BY enqueued_at LIMIT 1"
+)
+
 
 class PostgresOperationalAnalyticsOutbox:
     """Append immutable operational events to a Postgres-wire outbox table."""
 
     def __init__(
         self,
-        run_transaction: Callable[[Callable[[Any], None]], Any],
+        # Widened from `Callable[[Any], None]` because the lag read below
+        # returns a value; `PostgresStore._run_transaction` is generic in the
+        # operation's return type and satisfies both shapes.
+        run_transaction: Callable[[Callable[[Any], Any]], Any],
         *,
         shard_count: int = OPERATIONAL_ANALYTICS_OUTBOX_SHARDS,
     ) -> None:
@@ -109,6 +132,26 @@ class PostgresOperationalAnalyticsOutbox:
             event_id=f"{payload['tenant_id']}:{payload['batch_id']}",
             payload=payload,
         )
+
+    def oldest_enqueued_at(self) -> dt.datetime | None:
+        """``enqueued_at`` of the oldest undelivered row, or ``None`` if empty.
+
+        ``None`` is fully drained, not unknown: rows are deleted only after
+        every configured ClickHouse target has accepted them. Exceptions are
+        NOT swallowed here -- the caller has to be able to tell "I looked and
+        the queue is empty" from "I could not look", and a backend that
+        returned ``None`` for both would publish an outage as perfect health.
+        """
+
+        def read(conn: Any) -> dt.datetime | None:
+            row = conn.execute(SELECT_OLDEST_ENQUEUED_AT_SQL).fetchone()
+            if row is None or row[0] is None:
+                return None
+            value: dt.datetime = row[0]
+            return value if value.tzinfo else value.replace(tzinfo=dt.UTC)
+
+        result: dt.datetime | None = self._run_transaction(read)
+        return result
 
     def _enqueue(
         self,

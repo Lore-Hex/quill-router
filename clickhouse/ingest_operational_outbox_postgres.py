@@ -27,7 +27,19 @@ is routine rather than exceptional, so each statement runs under a retry.
 
 **Failures are contained, not fatal.**  This is a daemon whose silence looks
 exactly like success — nothing downstream notices undelivered rows except the
-lag metric — so it never exits on an error it could survive.  Shards are swept
+lag metric — so it never exits on an error it could survive.
+
+That silence has one bound this module cannot provide.  ``backlog_alarm`` below
+is emitted BY this process, so it says nothing when the process does not exist,
+which is what happened on AWS-EU for fifteen days (2026-08-02..17: no unit, no
+env file, 470,370 rows).  The out-of-band answer is the same number read from
+the outside: the control plane publishes ``SELECT_OLDEST_SQL``'s result as
+``analytics.drain_lag_seconds`` in ``/status.json``
+(:mod:`trusted_router.operational_analytics_freshness`), and
+:mod:`clickhouse.check_fleet_analytics_freshness` checks every cloud's daily
+with no credentials.  Keep this module's lag and that published lag the same
+query, or the alarm and the monitor stop meaning the same thing.
+  Shards are swept
 independently and a failing one is logged and counted rather than allowed to
 unwind the sweep, because a single undeliverable row would otherwise stop
 delivery for all 32 shards.  Non-retryable errors drop the connection so the

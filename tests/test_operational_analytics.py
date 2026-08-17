@@ -40,6 +40,7 @@ from trusted_router.storage_models import (
 )
 from trusted_router.storage_operational_analytics import (
     CLIENT_EVENTS_EVENT_KIND,
+    OPERATIONAL_ANALYTICS_OUTBOX_SHARDS,
     build_client_events_payload,
 )
 from trusted_router.storage_postgres_operational_analytics_outbox import (
@@ -957,3 +958,83 @@ def test_synthetic_rollup_rebuild_never_overwrites_partial_ttl_boundary() -> Non
     assert ("hour", "2026-07-17T12:00:00Z") not in starts
     assert ("day", "2026-07-17T00:00:00Z") not in starts
     assert ("day", "2026-07-18T00:00:00Z") in starts
+
+
+# ---------------------------------------------------------------------------
+# The published lag read: how old is the oldest row the drain has not moved?
+# ---------------------------------------------------------------------------
+
+
+class _SnapshotDatabase:
+    """A Spanner database whose snapshot answers per-shard oldest-row reads."""
+
+    def __init__(self, rows_by_shard: dict[int, list[dt.datetime]]) -> None:
+        self._rows_by_shard = rows_by_shard
+        self.queries: list[tuple[str, dict[str, Any]]] = []
+        self.multi_use: list[bool] = []
+
+    def snapshot(self, **kwargs: Any) -> Any:
+        self.multi_use.append(bool(kwargs.get("multi_use")))
+        outer = self
+
+        class _Snapshot:
+            def __enter__(self) -> Any:
+                return self
+
+            def __exit__(self, *_exc: Any) -> None:
+                return None
+
+            def execute_sql(
+                self,
+                sql: str,
+                *,
+                params: dict[str, Any],
+                param_types: dict[str, Any],
+            ) -> list[list[Any]]:
+                outer.queries.append((sql, params))
+                stamps = sorted(outer._rows_by_shard.get(int(params["shard"]), []))
+                return [[stamps[0]]] if stamps else []
+
+        return _Snapshot()
+
+
+def test_spanner_oldest_enqueued_at_is_the_minimum_across_every_shard() -> None:
+    """The oldest row can sit in any shard, so all 32 heads are read.
+
+    A single global `ORDER BY commit_ts LIMIT 1` would be a table scan -- the
+    primary key leads with `shard` -- and would get more expensive exactly as
+    the backlog it measures grows.
+    """
+    oldest = dt.datetime(2026, 8, 2, 3, 0, tzinfo=dt.UTC)
+    database = _SnapshotDatabase(
+        {
+            0: [dt.datetime(2026, 8, 17, 11, 0, tzinfo=dt.UTC)],
+            7: [oldest, dt.datetime(2026, 8, 10, 0, 0, tzinfo=dt.UTC)],
+            31: [dt.datetime(2026, 8, 5, 0, 0, tzinfo=dt.UTC)],
+        }
+    )
+    outbox = SpannerOperationalAnalyticsOutbox(database, _ParamTypes())
+
+    assert outbox.oldest_enqueued_at() == oldest
+    assert len(database.queries) == OPERATIONAL_ANALYTICS_OUTBOX_SHARDS
+    assert all("ORDER BY commit_ts LIMIT 1" in sql for sql, _ in database.queries)
+    assert all("count(" not in sql.lower() for sql, _ in database.queries)
+
+
+def test_spanner_oldest_enqueued_at_is_none_when_every_shard_is_drained() -> None:
+    """Fully drained is the healthiest state, and it is not an absence of data."""
+    outbox = SpannerOperationalAnalyticsOutbox(_SnapshotDatabase({}), _ParamTypes())
+
+    assert outbox.oldest_enqueued_at() is None
+
+
+def test_spanner_oldest_enqueued_at_returns_utc_aware_timestamps() -> None:
+    """A naive value would compare against `now` as if it were local time."""
+    database = _SnapshotDatabase({3: [dt.datetime(2026, 8, 2, 3, 0)]})
+    outbox = SpannerOperationalAnalyticsOutbox(database, _ParamTypes())
+
+    result = outbox.oldest_enqueued_at()
+
+    assert result is not None
+    assert result.tzinfo is not None
+    assert result == dt.datetime(2026, 8, 2, 3, 0, tzinfo=dt.UTC)

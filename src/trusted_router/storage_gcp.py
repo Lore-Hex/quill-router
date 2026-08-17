@@ -21,6 +21,12 @@ from trusted_router.operational_analytics import (
     OperationalAnalyticsClient,
     stable_rows_fingerprint,
 )
+from trusted_router.operational_analytics_freshness import (
+    BACKEND_SPANNER,
+    REASON_NOT_CONFIGURED,
+    REASON_UNREACHABLE,
+    OutboxFreshness,
+)
 from trusted_router.storage import (
     AcquisitionAttribution,
     ActivationReminderTask,
@@ -2933,6 +2939,27 @@ class SpannerBigtableStore:
 
     def public_analytics_snapshot(self, name: str) -> dict[str, Any] | None:
         return self._require_operational_analytics().public_snapshot(name)
+
+    def operational_analytics_outbox_freshness(self) -> OutboxFreshness:
+        """The age of the oldest row the drain has not delivered yet.
+
+        Failures are reported as `unreachable`, never as an empty outbox: the
+        two are one value apart in the naive shape (`None`) and opposite in
+        meaning, and this is the number an external check uses to decide the
+        pipeline is alive.
+        """
+        outbox = self._operational_analytics_outbox
+        if outbox is None:
+            return OutboxFreshness.unavailable(BACKEND_SPANNER, REASON_NOT_CONFIGURED)
+        try:
+            oldest = outbox.oldest_enqueued_at()
+        except Exception as exc:
+            log.exception(
+                "spanner.operational_analytics_outbox_freshness_failed",
+                extra={"error_class": type(exc).__name__, "error_message": str(exc)[:500]},
+            )
+            return OutboxFreshness.unavailable(BACKEND_SPANNER, REASON_UNREACHABLE)
+        return OutboxFreshness(backend=BACKEND_SPANNER, oldest_enqueued_at=oldest)
 
     def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:
         if self._operational_analytics_outbox is not None:

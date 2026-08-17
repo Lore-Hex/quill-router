@@ -38,14 +38,17 @@ LIMIT 1``), not a scan.  Note the asymmetry deliberately: ``outbox_depth`` is
 optional, because ``count(*)`` over a large backlog is the expensive question
 and the lag already answers the important one.
 
-Nothing here does IO.  The caller reads the two numbers and calls
-:func:`analytics_status_section`; :mod:`clickhouse.check_aws_analytics_freshness`
-reads the published result back with no credentials at all.
+Nothing here does IO.  The storage backend answers with an
+:class:`OutboxFreshness` and the publisher calls
+:func:`analytics_status_from_reading`;
+:mod:`clickhouse.check_fleet_analytics_freshness` reads the published result
+back, for every cloud, with no credentials at all.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import dataclass
 from typing import Any
 
 #: Key this section occupies in the ``/status.json`` ``data`` object.
@@ -71,6 +74,41 @@ DEFAULT_MAX_DRAIN_LAG_SECONDS = 3600.0
 #: ``reason`` values for the unavailable form.
 REASON_NO_DATA = "no_data"
 REASON_UNREACHABLE = "unreachable"
+#: The deployment has no outbox wired at all -- ``operational_analytics_outbox_enabled``
+#: is off, or the backend has no outbox to read.  Deliberately NOT collapsed into
+#: an empty outbox: "nothing is being enqueued" and "everything enqueued has been
+#: delivered" publish the same 0 rows and mean opposite things.
+REASON_NOT_CONFIGURED = "not_configured"
+
+#: ``backend`` values.  The column the lag comes from differs per backend --
+#: Spanner stamps ``commit_ts``, Postgres/DSQL defaults ``enqueued_at`` -- so
+#: publishing which one answered is what lets an operator read the right table.
+BACKEND_SPANNER = "spanner"
+BACKEND_POSTGRES = "postgres"
+BACKEND_MEMORY = "memory"
+
+
+@dataclass(frozen=True)
+class OutboxFreshness:
+    """One storage backend's answer to "how old is the oldest undelivered row?".
+
+    Carrying availability in the reading rather than returning a bare
+    ``datetime | None`` is the whole point.  ``None`` already means "the outbox
+    is empty", which is the healthiest state there is; a backend that could not
+    look, or has no outbox to look at, must not be able to express itself with
+    the same value.  Every backend answers with one of these, so a backend that
+    cannot answer is *loud* rather than absent.
+    """
+
+    backend: str
+    oldest_enqueued_at: dt.datetime | None = None
+    outbox_depth: int | None = None
+    available: bool = True
+    reason: str | None = None
+
+    @classmethod
+    def unavailable(cls, backend: str, reason: str) -> OutboxFreshness:
+        return cls(backend=backend, available=False, reason=reason)
 
 
 def _utc(value: dt.datetime) -> dt.datetime:
@@ -127,3 +165,29 @@ def analytics_status_section(
         OLDEST_ENQUEUED_AT_FIELD: oldest_iso,
         GENERATED_AT_FIELD: _iso(moment),
     }
+
+
+def analytics_status_from_reading(
+    reading: OutboxFreshness | None,
+    *,
+    now: dt.datetime,
+) -> dict[str, Any]:
+    """Publish one backend's reading, unavailable included.
+
+    ``None`` means the publisher never got a reading back -- the store raised,
+    or does not implement the surface.  It publishes as ``unreachable`` rather
+    than as a missing key, because the checker's "no ``analytics`` section"
+    branch is reserved for a deployment running code that does not publish the
+    field at all, and conflating the two would tell an operator to redeploy
+    when the real problem is the database.
+    """
+    if reading is None:
+        return analytics_status_unavailable(REASON_UNREACHABLE)
+    if not reading.available:
+        return analytics_status_unavailable(reading.reason or REASON_UNREACHABLE)
+    return analytics_status_section(
+        oldest_enqueued_at=reading.oldest_enqueued_at,
+        now=now,
+        outbox_depth=reading.outbox_depth,
+        backend=reading.backend,
+    )
