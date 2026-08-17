@@ -34,6 +34,9 @@ VOLUME_GB="${VOLUME_GB:-100}"
 NAME="${NAME:-tr-eu-clickhouse-1}"
 SG_NAME="${SG_NAME:-tr-eu-clickhouse-sg}"
 SECRET_ID="${SECRET_ID:-quill/tr-eu-clickhouse-password}"
+ROLE_NAME="${ROLE_NAME:-tr-eu-clickhouse-role}"
+INSTANCE_PROFILE="${INSTANCE_PROFILE:-tr-eu-clickhouse-instance-profile}"
+CLUSTER_ID="${CLUSTER_ID:-tnt642i3ofzpn5z62msacutpuu}"   # DSQL, matches the drain installer.
 
 log(){ printf '\n=== %s\n' "$*" >&2; }
 
@@ -69,7 +72,91 @@ fi
 log "security group: $SG_ID"
 
 # ---------------------------------------------------------------------------
-# 3. The node. user-data installs ClickHouse and binds it to the private IP.
+# 3. IAM: a least-privilege role for THIS node, created here so it exists.
+# ---------------------------------------------------------------------------
+# Until 2026-08-17 this script launched the node with
+# quill-enclave-instance-profile — the profile the Nitro Enclave hosts use.
+# That role grants secretsmanager:GetSecretValue on quill/* and kms:Decrypt on
+# arn:aws:kms:*:ACCOUNT:key/*, so an analytics box held every provider API key
+# (~40 of them), the Cloudflare token, the cross-cloud SA key, and the ability
+# to decrypt with any key in the account including the CloudTrail CMK.
+# Thirty days of CloudTrail showed this node using exactly one secret and one
+# key. The role below is that observed set and nothing more.
+#
+# It is created HERE rather than by hand because a control that lives only in
+# live cloud state dies with the resource: the role was split by CLI once, and
+# the next run of this script would have handed the node the enclave profile
+# straight back. Anything this script needs, this script creates.
+#
+# The KMS key is RESOLVED, not hardcoded — the secret uses the AWS-managed
+# aws/secretsmanager key, whose id differs per account and region, so a
+# literal arn would silently break the first time this runs anywhere else.
+SM_KEY_ARN="$(aws kms describe-key --region "$REGION" --key-id alias/aws/secretsmanager \
+  --query 'KeyMetadata.Arn' --output text)"
+log "secretsmanager kms key: $SM_KEY_ARN"
+
+ROLE_TRUST="$(cat <<JSON
+{"Version":"2012-10-17","Statement":[{"Effect":"Allow",
+ "Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole",
+ "Condition":{"StringEqualsIfExists":{"aws:SourceAccount":"$ACCOUNT"}}}]}
+JSON
+)"
+# StringEqualsIfExists, not StringEquals, and deliberately: EC2 instance-profile
+# assumption does not populate aws:SourceAccount, so a hard equality fails
+# CLOSED — and not at deploy time, but whenever cached IMDS credentials next
+# expire, presenting as an unrelated outage. Every other role in this account
+# uses hard StringEquals because every other one is a service principal
+# (ecs-tasks, apprunner, events, cloudtrail) that does populate it.
+
+ROLE_POLICY="$(cat <<JSON
+{"Version":"2012-10-17","Statement":[
+ {"Sid":"OwnPasswordSecretOnly","Effect":"Allow",
+  "Action":["secretsmanager:GetSecretValue","secretsmanager:DescribeSecret"],
+  "Resource":"arn:aws:secretsmanager:$REGION:$ACCOUNT:secret:$SECRET_ID-*"},
+ {"Sid":"DecryptSecretsManagerKeyOnly","Effect":"Allow",
+  "Action":["kms:Decrypt","kms:DescribeKey"],"Resource":"$SM_KEY_ARN"},
+ {"Sid":"DsqlOutboxDrain","Effect":"Allow","Action":["dsql:DbConnect"],
+  "Resource":"arn:aws:dsql:$REGION:$ACCOUNT:cluster/$CLUSTER_ID"},
+ {"Sid":"EcrPullOnly","Effect":"Allow",
+  "Action":["ecr:GetAuthorizationToken","ecr:BatchCheckLayerAvailability",
+            "ecr:GetDownloadUrlForLayer","ecr:BatchGetImage"],"Resource":"*"},
+ {"Sid":"QuillLogs","Effect":"Allow",
+  "Action":["logs:CreateLogGroup","logs:CreateLogStream","logs:PutLogEvents"],
+  "Resource":"arn:aws:logs:$REGION:$ACCOUNT:log-group:/quill/*"}]}
+JSON
+)"
+
+if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
+  log "reusing role $ROLE_NAME"
+else
+  log "creating role $ROLE_NAME"
+  aws iam create-role --role-name "$ROLE_NAME" \
+    --assume-role-policy-document "$ROLE_TRUST" \
+    --description "Least-privilege role for $NAME. Split from quill-enclave-role 2026-08-17." >/dev/null
+fi
+# Policy is put unconditionally: put-role-policy is idempotent and this is what
+# makes the script the source of truth rather than a one-time bootstrap. Drift
+# applied by hand is corrected on the next run.
+aws iam put-role-policy --role-name "$ROLE_NAME" \
+  --policy-name "${ROLE_NAME}-policy" --policy-document "$ROLE_POLICY"
+aws iam attach-role-policy --role-name "$ROLE_NAME" \
+  --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+if aws iam get-instance-profile --instance-profile-name "$INSTANCE_PROFILE" >/dev/null 2>&1; then
+  log "reusing instance profile $INSTANCE_PROFILE"
+else
+  log "creating instance profile $INSTANCE_PROFILE"
+  aws iam create-instance-profile --instance-profile-name "$INSTANCE_PROFILE" >/dev/null
+fi
+if ! aws iam get-instance-profile --instance-profile-name "$INSTANCE_PROFILE" \
+     --query 'InstanceProfile.Roles[].RoleName' --output text | grep -qw "$ROLE_NAME"; then
+  aws iam add-role-to-instance-profile \
+    --instance-profile-name "$INSTANCE_PROFILE" --role-name "$ROLE_NAME"
+fi
+log "instance profile ready: $INSTANCE_PROFILE -> $ROLE_NAME"
+
+# ---------------------------------------------------------------------------
+# 4. The node. user-data installs ClickHouse and binds it to the private IP.
 # ---------------------------------------------------------------------------
 EXISTING="$(aws ec2 describe-instances --region "$REGION" \
   --filters "Name=tag:Name,Values=$NAME" "Name=instance-state-name,Values=running,pending" \
@@ -78,6 +165,36 @@ EXISTING="$(aws ec2 describe-instances --region "$REGION" \
 if [ -n "$EXISTING" ] && [ "$EXISTING" != "None" ]; then
   log "reusing running instance $EXISTING"
   INSTANCE_ID="$EXISTING"
+
+  # Converge the profile on an instance that already exists, so this script is
+  # the source of truth for a NODE and not merely for a launch. Without this,
+  # every node provisioned before 2026-08-17 keeps the enclave profile forever
+  # and the fix only applies to hosts nobody has built yet.
+  #
+  # Safe to do online: replace-iam-instance-profile-association needs no reboot,
+  # and the instance keeps its CURRENT credentials until they expire (up to ~6h),
+  # so nothing breaks at the moment of the swap. That same property is why a
+  # BROKEN role here would fail late — hence the role above grants the set that
+  # CloudTrail shows this node actually using, rather than a guess.
+  CUR_ASSOC="$(aws ec2 describe-iam-instance-profile-associations --region "$REGION" \
+    --filters "Name=instance-id,Values=$INSTANCE_ID" \
+    --query 'IamInstanceProfileAssociations[?State==`associated`].[AssociationId,IamInstanceProfile.Arn]' \
+    --output text 2>/dev/null || true)"
+  CUR_ID="$(printf '%s\n' "$CUR_ASSOC" | awk 'NR==1{print $1}')"
+  CUR_ARN="$(printf '%s\n' "$CUR_ASSOC" | awk 'NR==1{print $2}')"
+  if [ -z "$CUR_ID" ]; then
+    log "attaching instance profile $INSTANCE_PROFILE to $INSTANCE_ID"
+    aws ec2 associate-iam-instance-profile --region "$REGION" \
+      --instance-id "$INSTANCE_ID" \
+      --iam-instance-profile Name="$INSTANCE_PROFILE" >/dev/null
+  elif [ "${CUR_ARN##*/}" != "$INSTANCE_PROFILE" ]; then
+    log "replacing instance profile ${CUR_ARN##*/} -> $INSTANCE_PROFILE on $INSTANCE_ID"
+    aws ec2 replace-iam-instance-profile-association --region "$REGION" \
+      --association-id "$CUR_ID" \
+      --iam-instance-profile Name="$INSTANCE_PROFILE" >/dev/null
+  else
+    log "instance profile already $INSTANCE_PROFILE"
+  fi
 else
   AMI="$(aws ssm get-parameter --region "$REGION" \
     --name /aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id \
@@ -139,7 +256,7 @@ USERDATA
     --subnet-id "$SUBNET_ID" --security-group-ids "$SG_ID" \
     --block-device-mappings "DeviceName=/dev/sda1,Ebs={VolumeSize=$VOLUME_GB,VolumeType=gp3,DeleteOnTermination=true}" \
     --metadata-options "HttpTokens=required,HttpEndpoint=enabled" \
-    --iam-instance-profile Name=quill-enclave-instance-profile \
+    --iam-instance-profile Name="$INSTANCE_PROFILE" \
     --user-data "$USER_DATA" \
     --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$NAME},{Key=Project,Value=tr-eu-analytics}]" \
     --query 'Instances[0].InstanceId' --output text)"
@@ -151,7 +268,7 @@ PRIVATE_IP="$(aws ec2 describe-instances --region "$REGION" --instance-ids "$INS
 log "instance $INSTANCE_ID at $PRIVATE_IP"
 
 # ---------------------------------------------------------------------------
-# 4. App Runner VPC connector, so tr-eu can reach a PRIVATE ClickHouse.
+# 5. App Runner VPC connector, so tr-eu can reach a PRIVATE ClickHouse.
 # ---------------------------------------------------------------------------
 CONNECTOR_ARN="$(aws apprunner list-vpc-connectors --region "$REGION" \
   --query "VpcConnectors[?VpcConnectorName=='tr-eu-vpc' && Status=='ACTIVE'].VpcConnectorArn | [0]" \

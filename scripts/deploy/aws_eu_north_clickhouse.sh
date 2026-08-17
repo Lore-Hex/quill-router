@@ -63,7 +63,14 @@ NAME="${NAME:-tr-eu-north-clickhouse-1}"
 VPC_NAME="${VPC_NAME:-tr-eu-north-analytics}"
 SG_NAME="${SG_NAME:-tr-eu-north-clickhouse-sg}"
 SECRET_ID="${SECRET_ID:-quill/tr-eu-north-clickhouse-password}"
-INSTANCE_PROFILE="${INSTANCE_PROFILE:-quill-enclave-instance-profile}"
+ROLE_NAME="${ROLE_NAME:-tr-eu-north-clickhouse-role}"
+INSTANCE_PROFILE="${INSTANCE_PROFILE:-tr-eu-north-clickhouse-instance-profile}"
+# NOT quill-enclave-instance-profile, which this defaulted to until 2026-08-17.
+# That is the Nitro Enclave hosts' profile: secretsmanager on quill/* (~40
+# provider API keys, the Cloudflare token, the cross-cloud SA key) and
+# kms:Decrypt on every key in the account. An analytics node needs one secret
+# and one key. The role is created below so this script, not an operator's
+# shell history, is what decides what this node can reach.
 PEER_WITH_PARIS="${PEER_WITH_PARIS:-1}"            # 0 to bring your own path.
 SCHEMA_FILE="${SCHEMA_FILE:-$(dirname "$0")/../../clickhouse/006_operational_analytics_single_node.sql}"
 CLIENT_SCHEMA_FILE="${CLIENT_SCHEMA_FILE:-$(dirname "$0")/../../clickhouse/009_client_events_single_node.sql}"
@@ -336,6 +343,37 @@ CLICKHOUSE_PASSWORD='${CH_PASSWORD}' clickhouse-client --user default --database
 rm -f /root/operational_schema.sql
 USERDATA
 )"
+  # IAM before the launch, so the profile named below actually exists. Same
+  # shape as scripts/deploy/aws_eu_clickhouse.sh section 3; kept self-contained
+  # because every deploy script in this directory is.
+  SM_KEY_ARN="$(aws kms describe-key --region "$REGION" --key-id alias/aws/secretsmanager \
+    --query 'KeyMetadata.Arn' --output text)"
+  if ! aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
+    log "creating role $ROLE_NAME"
+    # StringEqualsIfExists: EC2 instance-profile assumption does not populate
+    # aws:SourceAccount, so a hard equality fails closed when cached IMDS
+    # credentials expire — late, and looking like an unrelated outage.
+    aws iam create-role --role-name "$ROLE_NAME" \
+      --assume-role-policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"ec2.amazonaws.com\"},\"Action\":\"sts:AssumeRole\",\"Condition\":{\"StringEqualsIfExists\":{\"aws:SourceAccount\":\"$ACCOUNT\"}}}]}" \
+      --description "Least-privilege role for $NAME." >/dev/null
+  fi
+  aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name "${ROLE_NAME}-policy" \
+    --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[
+      {\"Sid\":\"OwnPasswordSecretOnly\",\"Effect\":\"Allow\",\"Action\":[\"secretsmanager:GetSecretValue\",\"secretsmanager:DescribeSecret\"],\"Resource\":\"arn:aws:secretsmanager:$REGION:$ACCOUNT:secret:$SECRET_ID-*\"},
+      {\"Sid\":\"DecryptSecretsManagerKeyOnly\",\"Effect\":\"Allow\",\"Action\":[\"kms:Decrypt\",\"kms:DescribeKey\"],\"Resource\":\"$SM_KEY_ARN\"},
+      {\"Sid\":\"QuillLogs\",\"Effect\":\"Allow\",\"Action\":[\"logs:CreateLogGroup\",\"logs:CreateLogStream\",\"logs:PutLogEvents\"],\"Resource\":\"arn:aws:logs:$REGION:$ACCOUNT:log-group:/quill/*\"}]}"
+  aws iam attach-role-policy --role-name "$ROLE_NAME" \
+    --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+  if ! aws iam get-instance-profile --instance-profile-name "$INSTANCE_PROFILE" >/dev/null 2>&1; then
+    aws iam create-instance-profile --instance-profile-name "$INSTANCE_PROFILE" >/dev/null
+  fi
+  if ! aws iam get-instance-profile --instance-profile-name "$INSTANCE_PROFILE" \
+       --query 'InstanceProfile.Roles[].RoleName' --output text | grep -qw "$ROLE_NAME"; then
+    aws iam add-role-to-instance-profile \
+      --instance-profile-name "$INSTANCE_PROFILE" --role-name "$ROLE_NAME"
+  fi
+  log "instance profile ready: $INSTANCE_PROFILE -> $ROLE_NAME"
+
   INSTANCE_ID="$(aws ec2 run-instances --region "$REGION" \
     --image-id "$AMI" --instance-type "$INSTANCE_TYPE" \
     --subnet-id "$SUBNET_ID" --security-group-ids "$SG_ID" \
