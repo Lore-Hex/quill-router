@@ -85,12 +85,24 @@ def _resolve(model_ids: list[str], explicit: str | None = None) -> int:
 
 # ------------------------------------------------------------- the law ---
 
+# These properties are about the SHAPE of the resolved floor, never its speed,
+# so Hypothesis's 200 ms per-example deadline is not a property under test --
+# it is a wall clock in disguise. It bites on the first example of a run (the
+# catalog import/warm-up lands inside one example) and on any contended
+# machine: observed locally as
+#   DeadlineExceeded: Test took 241.40ms, which exceeds the deadline of 200.00ms
+# on `test_floor_is_independent_of_model_order`, whose 4-model case resolves
+# 24 permutations in one example. Same defect class as the wall-clock
+# assertions removed from the synthetic fan-out and rollup tests; the fix is
+# the same -- assert the property, not the clock.
+_PROPERTY_SETTINGS = {"deadline": None}
+
 
 @given(
     model_ids=st.lists(st.sampled_from(ALL_MODELS), min_size=1, max_size=5),
     explicit=st.one_of(st.none(), st.sampled_from(["standard", "no_store", "zdr", "e2ee"])),
 )
-@settings(max_examples=500)
+@settings(max_examples=500, **_PROPERTY_SETTINGS)
 def test_resolved_floor_dominates_everything_requested(
     model_ids: list[str], explicit: str | None
 ) -> None:
@@ -109,7 +121,7 @@ def test_resolved_floor_dominates_everything_requested(
 
 
 @given(model_ids=st.lists(st.sampled_from(ALL_MODELS), min_size=2, max_size=4))
-@settings(max_examples=300)
+@settings(max_examples=300, **_PROPERTY_SETTINGS)
 def test_floor_is_independent_of_model_order(model_ids: list[str]) -> None:
     """Permuting the requested models must not move the floor.
 
@@ -125,7 +137,7 @@ def test_floor_is_independent_of_model_order(model_ids: list[str]) -> None:
     model_ids=st.lists(st.sampled_from(ALL_MODELS), min_size=1, max_size=4),
     extra=st.sampled_from(ALL_MODELS),
 )
-@settings(max_examples=300)
+@settings(max_examples=300, **_PROPERTY_SETTINGS)
 def test_adding_a_model_never_lowers_the_floor(model_ids: list[str], extra: str) -> None:
     """Monotonicity: a fallback entry can only tighten the floor, never relax it.
 
