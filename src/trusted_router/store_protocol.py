@@ -80,6 +80,8 @@ class Store(Protocol):
         session_id: str | None = ...,
         session_url: str | None = ...,
         decision_code: int | None = ...,
+        decision_reason: str | None = ...,
+        decision_reason_code: int | None = ...,
         verified_name: str | None = ...,
         increment_attempts: bool = ...,
     ) -> User | None: ...
