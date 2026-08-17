@@ -472,6 +472,275 @@ class GCSArchiveStore:
         )
 
 
+class S3ArchiveStore:
+    """The same immutable archive on S3, for the AWS deployment.
+
+    S3's conditional writes carry the same meaning as the GCS store's
+    generation preconditions: ``IfNoneMatch="*"`` is create-if-absent, and a
+    pointer move is a compare-and-set on the current ETag.  So a 412 here is
+    a concurrent writer or a genuine content difference -- never a transport
+    error -- and is resolved by re-reading and comparing, exactly as the GCS
+    store resolves ``PreconditionFailed``, rather than by retrying.
+
+    A retry would be the dangerous choice: retrying an unconditional write is
+    how an "immutable" archive quietly stops being immutable.
+    """
+
+    scheme = "s3"
+
+    def __init__(self, *, bucket: str, region: str | None = None) -> None:
+        import boto3
+
+        self._bucket = bucket
+        self._client = boto3.client("s3", region_name=region)
+
+    def _uri(self, key: str) -> str:
+        return f"s3://{self._bucket}/{key}"
+
+    @staticmethod
+    def _is_precondition_failure(error: Any) -> bool:
+        response = getattr(error, "response", {}) or {}
+        code = str(response.get("Error", {}).get("Code", ""))
+        status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        # ConditionalRequestConflict is S3's 409 for two conditional writes
+        # racing on the same key; it means the same thing as a 412 here.
+        return code in {"PreconditionFailed", "ConditionalRequestConflict"} or status in {409, 412}
+
+    @staticmethod
+    def _is_missing(error: Any) -> bool:
+        response = getattr(error, "response", {}) or {}
+        code = str(response.get("Error", {}).get("Code", ""))
+        status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        return code in {"NoSuchKey", "404", "NotFound"} or status == 404
+
+    def read_json(self, key: str) -> dict[str, Any] | None:
+        from botocore.exceptions import ClientError
+
+        try:
+            body = self._client.get_object(Bucket=self._bucket, Key=key)["Body"].read()
+        except ClientError as error:
+            if self._is_missing(error):
+                return None
+            raise
+        value = json.loads(body)
+        if not isinstance(value, dict):
+            raise RuntimeError(f"archive object {key} is not a JSON object")
+        return value
+
+    def _stored_sha256(self, key: str) -> str | None:
+        # S3 lowercases user metadata keys on the way out.
+        head = self._client.head_object(Bucket=self._bucket, Key=key)
+        metadata = {str(k).lower(): v for k, v in (head.get("Metadata") or {}).items()}
+        return metadata.get("sha256")
+
+    def put_file_if_absent(
+        self,
+        key: str,
+        path: Path,
+        *,
+        sha256: str,
+        metadata: dict[str, str],
+    ) -> None:
+        from botocore.exceptions import ClientError
+
+        with path.open("rb") as stream:
+            try:
+                self._client.put_object(
+                    Bucket=self._bucket,
+                    Key=key,
+                    Body=stream,
+                    ContentType="application/vnd.apache.parquet",
+                    Metadata={**metadata, "sha256": sha256},
+                    IfNoneMatch="*",
+                )
+            except ClientError as error:
+                if not self._is_precondition_failure(error):
+                    raise
+                if self._stored_sha256(key) != sha256:
+                    raise RuntimeError(
+                        f"immutable archive object differs: {self._uri(key)}"
+                    ) from None
+
+    def put_json_if_absent(self, key: str, value: dict[str, Any]) -> None:
+        from botocore.exceptions import ClientError
+
+        encoded = _json_bytes(value)
+        try:
+            self._client.put_object(
+                Bucket=self._bucket,
+                Key=key,
+                Body=encoded,
+                ContentType="application/json",
+                IfNoneMatch="*",
+            )
+        except ClientError as error:
+            if not self._is_precondition_failure(error):
+                raise
+            existing = self._client.get_object(Bucket=self._bucket, Key=key)["Body"].read()
+            if existing != encoded:
+                raise RuntimeError(
+                    f"immutable archive manifest differs: {self._uri(key)}"
+                ) from None
+
+    def put_json_pointer(self, key: str, value: dict[str, Any]) -> None:
+        from botocore.exceptions import ClientError
+
+        encoded = _json_bytes(value)
+        try:
+            head = self._client.head_object(Bucket=self._bucket, Key=key)
+        except ClientError as error:
+            if not self._is_missing(error):
+                raise
+            head = None
+        condition = {"IfNoneMatch": "*"} if head is None else {"IfMatch": head["ETag"]}
+        self._client.put_object(
+            Bucket=self._bucket,
+            Key=key,
+            Body=encoded,
+            ContentType="application/json",
+            **condition,
+        )
+
+
+class AzureBlobArchiveStore:
+    """The same immutable archive on Azure Blob Storage.
+
+    ``overwrite=False`` is Azure's create-if-absent, and a pointer move is an
+    ``If-Match`` on the current ETag, so the preconditions line up with the
+    other two stores.  ``ResourceExistsError`` and
+    ``ResourceModifiedError`` are the conflict signals, and both are resolved
+    by comparison rather than retry for the reason given on
+    :class:`S3ArchiveStore`.
+    """
+
+    scheme = "azure"
+
+    def __init__(self, *, account_url: str, container: str) -> None:
+        from azure.identity import DefaultAzureCredential
+        from azure.storage.blob import BlobServiceClient
+
+        self._container_name = container
+        self._container = BlobServiceClient(
+            account_url=account_url,
+            credential=DefaultAzureCredential(),
+        ).get_container_client(container)
+
+    def _uri(self, key: str) -> str:
+        return f"azure://{self._container_name}/{key}"
+
+    def read_json(self, key: str) -> dict[str, Any] | None:
+        from azure.core.exceptions import ResourceNotFoundError
+
+        try:
+            body = self._container.get_blob_client(key).download_blob().readall()
+        except ResourceNotFoundError:
+            return None
+        value = json.loads(body)
+        if not isinstance(value, dict):
+            raise RuntimeError(f"archive object {key} is not a JSON object")
+        return value
+
+    def put_file_if_absent(
+        self,
+        key: str,
+        path: Path,
+        *,
+        sha256: str,
+        metadata: dict[str, str],
+    ) -> None:
+        from azure.core.exceptions import ResourceExistsError
+        from azure.storage.blob import ContentSettings
+
+        blob = self._container.get_blob_client(key)
+        with path.open("rb") as stream:
+            try:
+                blob.upload_blob(
+                    stream,
+                    overwrite=False,
+                    metadata={**metadata, "sha256": sha256},
+                    content_settings=ContentSettings(
+                        content_type="application/vnd.apache.parquet"
+                    ),
+                )
+            except ResourceExistsError:
+                existing = blob.get_blob_properties().metadata or {}
+                if existing.get("sha256") != sha256:
+                    raise RuntimeError(
+                        f"immutable archive object differs: {self._uri(key)}"
+                    ) from None
+
+    def put_json_if_absent(self, key: str, value: dict[str, Any]) -> None:
+        from azure.core.exceptions import ResourceExistsError
+        from azure.storage.blob import ContentSettings
+
+        encoded = _json_bytes(value)
+        blob = self._container.get_blob_client(key)
+        try:
+            blob.upload_blob(
+                encoded,
+                overwrite=False,
+                content_settings=ContentSettings(content_type="application/json"),
+            )
+        except ResourceExistsError:
+            if blob.download_blob().readall() != encoded:
+                raise RuntimeError(
+                    f"immutable archive manifest differs: {self._uri(key)}"
+                ) from None
+
+    def put_json_pointer(self, key: str, value: dict[str, Any]) -> None:
+        from azure.core import MatchConditions
+        from azure.core.exceptions import ResourceNotFoundError
+        from azure.storage.blob import ContentSettings
+
+        encoded = _json_bytes(value)
+        blob = self._container.get_blob_client(key)
+        settings = ContentSettings(content_type="application/json")
+        try:
+            etag = blob.get_blob_properties().etag
+        except ResourceNotFoundError:
+            blob.upload_blob(encoded, overwrite=False, content_settings=settings)
+            return
+        blob.upload_blob(
+            encoded,
+            overwrite=True,
+            content_settings=settings,
+            etag=etag,
+            match_condition=MatchConditions.IfNotModified,
+        )
+
+
+def build_archive_store(
+    kind: str,
+    *,
+    project: str,
+    bucket: str,
+    region: str | None = None,
+    account_url: str | None = None,
+) -> ArchiveStore:
+    """Select this deployment's object store.
+
+    Each cloud archives to its own object store in its own account.  That is
+    the point rather than an accident: an archive written across a cloud
+    boundary would make the cloud it describes non-recoverable exactly when
+    the *other* cloud is the one that is unreachable.
+    """
+
+    if kind == "gcs":
+        return GCSArchiveStore(project=project, bucket=bucket)
+    # ARCHIVE_BUCKET names a GCP bucket. Reaching another cloud's store while
+    # still carrying it means --bucket was never set, and the useful failure
+    # is here rather than a 404 that reads like a permissions problem.
+    if bucket == ARCHIVE_BUCKET:
+        raise ValueError(f"--bucket must name this deployment's {kind} bucket, not {bucket!r}")
+    if kind == "s3":
+        return S3ArchiveStore(bucket=bucket, region=region)
+    if kind == "azure":
+        if not account_url:
+            raise ValueError("--account-url is required for the azure object store")
+        return AzureBlobArchiveStore(account_url=account_url, container=bucket)
+    raise ValueError(f"unsupported archive object store: {kind}")
+
+
 def _nullable_string(value: Any) -> str | None:
     if value is None or value == "":
         return None
@@ -683,13 +952,28 @@ def main() -> int:
     parser.add_argument("--lookback-days", type=int, default=7)
     parser.add_argument("--backfill", action="store_true")
     parser.add_argument("--rows-per-part", type=int, default=ROWS_PER_PART)
+    # Which cloud this node archives to. Defaults to gcs so the existing
+    # GCP units keep their current behaviour with no argv change.
+    parser.add_argument(
+        "--object-store",
+        choices=("gcs", "s3", "azure"),
+        default=os.environ.get("TR_ARCHIVE_OBJECT_STORE", "gcs"),
+    )
+    parser.add_argument("--region", default=os.environ.get("AWS_REGION"))
+    parser.add_argument("--account-url", default=os.environ.get("AZURE_STORAGE_ACCOUNT_URL"))
     args = parser.parse_args()
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    store = GCSArchiveStore(project=args.project, bucket=args.bucket)
+    store = build_archive_store(
+        args.object_store,
+        project=args.project,
+        bucket=args.bucket,
+        region=args.region,
+        account_url=args.account_url,
+    )
     tables = tuple(dict.fromkeys(args.table or tuple(DATASETS)))
     for table in tables:
         exporter = ClickHouseDailyExporter(
