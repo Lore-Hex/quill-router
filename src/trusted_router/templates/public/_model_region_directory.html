@@ -14,7 +14,7 @@
 
   <div class="seo-evidence-stats" aria-label="Catalog facts for this jurisdiction">
     <div><strong>{{ region.provider_count }}</strong><span>providers operated from {{ region.country_label }}</span></div>
-    <div><strong>{{ region.lab_count }}</strong><span>labs with models here</span></div>
+    <div><strong>{{ region.lab_count }}</strong><span>lab{{ "" if region.lab_count == 1 else "s" }} with models here</span></div>
     <div><strong>{{ region.origin_model_count }}</strong><span>models from those labs</span></div>
     <div><strong>{{ region.catalog_provider_count }}</strong><span>providers in the catalog</span></div>
     <div><strong>{{ region.directory_model_count }}</strong><span>callable catalog models</span></div>

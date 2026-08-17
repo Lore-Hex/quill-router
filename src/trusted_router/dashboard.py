@@ -1634,7 +1634,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         og_card="china-ai-models.png",
         title="Chinese AI Models: Labs, Routes & Where Prompts Go",
         description=(
-            "Every Chinese-lab model in the catalog, the providers that serve it, and how "
+            "Chinese-lab models in the catalog, the providers that serve each one, and how "
             "to run those weights on a US-operated route instead of the vendor endpoint."
         ),
         og_alt="Chinese AI model origins and the operator jurisdiction of each route",
