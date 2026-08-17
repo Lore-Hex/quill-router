@@ -27,7 +27,10 @@ cloud's payload and several tests read it directly.
 
 from __future__ import annotations
 
+import argparse
+
 from clickhouse.check_fleet_analytics_freshness import (
+    ANALYTICS_FRESHNESS_FLEET,
     DEFAULT_STATUS_URL,
     evaluate,
     fetch_status,
@@ -41,42 +44,54 @@ __all__ = ["DEFAULT_STATUS_URL", "evaluate", "fetch_status", "main"]
 AWS_CLOUD = "aws"
 
 
+def _read_argv(args: list[str]) -> tuple[argparse.Namespace, list[str]]:
+    """Read this alias's two options THE WAY ARGPARSE WILL, plus everything else.
+
+    Spelling out the guard by hand is what kept getting this wrong. `--cloud`
+    and `--cloud=gcp` were covered, and `--clo=gcp` was not: argparse accepts
+    unambiguous prefixes, so an abbreviation walked straight past a check that
+    compared strings and was then APPENDED after this function's own
+    `--cloud aws`, silently widening an AWS-only entrypoint into a two-cloud
+    one whose name says otherwise.
+
+    So the reading is delegated to argparse itself, on a throwaway parser
+    holding exactly the two options this alias cares about. Whatever argparse
+    would bind downstream, it binds here -- every spelling, including ones
+    nobody thought of -- and unrecognised arguments pass through untouched to
+    the real parser, which owns their meaning and their error messages.
+    """
+    probe = argparse.ArgumentParser(add_help=False)
+    probe.add_argument("--cloud", action="append", default=None)
+    probe.add_argument("--status-url", action="append", default=None)
+    return probe.parse_known_args(args)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the fleet check restricted to AWS, preserving this CLI's old shape.
 
     The one translation: this entrypoint's ``--status-url`` took a bare URL,
     while the fleet checker's takes ``CLOUD=URL``. A bare URL is rewritten to
     ``aws=<url>`` so an operator's muscle memory keeps working; anything that
-    already names a cloud is passed through.
+    already names a known cloud is passed through.
     """
-    args = list(argv or [])
-    # Both spellings. argparse accepts `--cloud=gcp` and `--cloud gcp`
-    # identically, so a guard that matched only the separated form let the
-    # joined one through -- and it would have been APPENDED after this
-    # function's own `--cloud aws`, silently widening an AWS-only entrypoint
-    # into a two-cloud one whose name says otherwise.
-    if any(arg == "--cloud" or arg.startswith("--cloud=") for arg in args):
+    selected, rest = _read_argv(list(argv or []))
+    if selected.cloud:
         raise SystemExit(
             "check_aws_analytics_freshness is the AWS-only alias; to select "
             "clouds use `python3 -m clickhouse.check_fleet_analytics_freshness "
             "--cloud <name>`"
         )
+
+    known_clouds = {entry.cloud for entry in ANALYTICS_FRESHNESS_FLEET}
     translated: list[str] = []
-    expect_url = False
-    for arg in args:
-        if expect_url:
-            translated.append(arg if "=" in arg else f"{AWS_CLOUD}={arg}")
-            expect_url = False
-            continue
-        if arg == "--status-url":
-            expect_url = True
-        elif arg.startswith("--status-url="):
-            value = arg.split("=", 1)[1]
-            translated.append("--status-url")
-            translated.append(value if value.startswith(f"{AWS_CLOUD}=") else f"{AWS_CLOUD}={value}")
-            continue
-        translated.append(arg)
-    return _fleet_main(["--cloud", AWS_CLOUD, *translated])
+    for raw in selected.status_url or []:
+        head, sep, _ = raw.partition("=")
+        # `CLOUD=URL` only when the head really names a cloud. A bare URL that
+        # happens to carry a query string (`...?probe=1`) contains an `=` too,
+        # and treating that as a cloud name produced a baffling
+        # "--status-url names unknown cloud(s)" instead of checking AWS.
+        translated += ["--status-url", raw if sep and head in known_clouds else f"{AWS_CLOUD}={raw}"]
+    return _fleet_main(["--cloud", AWS_CLOUD, *translated, *rest])
 
 
 if __name__ == "__main__":

@@ -65,7 +65,15 @@ name: Check fleet analytics freshness
 # OPERATOR STEPS BEFORE THE SCHEDULE IS ENABLED
 # ---------------------------------------------
 # The `schedule:` trigger is intentionally absent, exactly as it was in this
-# job's single-cloud predecessor and for the same reason one layer up.
+# job's single-cloud predecessor and for the same reason one layer up. So is
+# `push:`, and that one is worth stating outright rather than leaving to be
+# rediscovered: a push trigger on these paths fires on the very merge that
+# lands them, at which point NO control plane publishes the `analytics` section
+# yet. The run fails -- correctly -- and the failure step below opens a
+# labelled public issue about a state we already know about and have written
+# down here. An automated issue filed against a known, documented, not-yet-true
+# precondition is the cry-wolf failure in miniature, one hour after merge
+# instead of one morning after.
 #
 # PRECONDITION: every cloud in ANALYTICS_FRESHNESS_FLEET must actually be
 # SERVING the code that publishes the `analytics` section. Merging to main is
@@ -86,30 +94,29 @@ name: Check fleet analytics freshness
 #   2. Run this workflow once with workflow_dispatch and read the result,
 #      including the `~` unchecked lines.
 #
-# Then the follow-up is one line added here, under `on:`:
+# Then the follow-up is one commit: add these two triggers here, under `on:`,
+#
 #     schedule: [{cron: "20 7 * * *"}]
+#     push: {branches: [main], paths: ["clickhouse/check_fleet_analytics_freshness.py",
+#            "src/trusted_router/operational_analytics_fleet.py"]}
+#
+# AND delete the two tests that hold them out, in the same commit, because they
+# fail the moment either trigger appears. They are named here so nobody has to
+# find out from a red CI run what they just changed:
+#
+#   tests/test_analytics_freshness_registry.py
+#     ::test_workflow_ships_without_a_schedule_or_a_push_trigger
+#   tests/test_aws_analytics_drain_install.py
+#     ::test_workflow_still_does_not_page_before_the_field_is_deployed
+#
+# Their docstrings carry the argument; a commit deleting them is a commit that
+# has to say the precondition now holds, which is the point.
 #
 # Daily, and deliberately not more often: the bound this enforces is the
 # drain's own backlog_alarm at one hour, and the outbox is durable, so the cost
 # of a late detection is freshness and storage, never data.
-#
-# The `push:` trigger below is NOT the same hazard. It fires only when these
-# specific files change, i.e. on the merge that lands them, and it is aimed at
-# the person doing the merging while they are still looking: "you changed the
-# freshness check; here is what the fleet says right now." One run, addressed
-# to somebody holding the context, is a reminder. A daily 07:20 issue about a
-# cloud nobody has redeployed is the thing that trains people to close it
-# unread.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "clickhouse/check_fleet_analytics_freshness.py"
-      - "clickhouse/check_aws_analytics_freshness.py"
-      - "src/trusted_router/operational_analytics_freshness.py"
-      - "src/trusted_router/operational_analytics_fleet.py"
-      - ".github/workflows/check-analytics-freshness.yml"
   workflow_dispatch:
     inputs:
       cloud:

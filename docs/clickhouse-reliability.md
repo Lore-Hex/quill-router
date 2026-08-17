@@ -228,10 +228,13 @@ So every control plane publishes the signal itself, in its already-public
   "backend": "postgres",
   "drain_lag_seconds": 12.5,
   "outbox_depth": null,
-  "oldest_enqueued_at": "2026-08-17T11:59:47Z",
   "generated_at": "2026-08-17T12:00:00Z"
 }
 ```
+
+Those five keys are the whole contract, pinned by a test. The oldest row's own
+timestamp is deliberately not among them: nothing read it, and it is
+`generated_at` minus the lag in any case.
 
 `drain_lag_seconds` is the age of the oldest **undelivered** outbox row. Rows
 are deleted only after every configured ClickHouse target has accepted them, so
@@ -252,22 +255,33 @@ for **every** cloud in
 `tests/test_analytics_freshness_registry.py` fails if that registry disagrees,
 in either direction, with the union of every table in this repo that declares a
 deployment (`deployment_sources()`: the BYOK attestation tables,
-`regions.MULTICLOUD_REGION_GEO`, and the `external_live_regions` /
-`marketing_regions` settings), so a fourth deployment cannot exist without a
-drain-freshness signal or a written reason it has none — whichever of those
-tables it lands in first. Missing section, unavailable, stale, unreachable,
-over-lag, and a plane answering with the wrong storage backend are all
-failures — never skips.
+`regions.MULTICLOUD_REGION_GEO`, the `external_live_regions` /
+`marketing_regions` settings, and the `synthetic_fleet_peers` list every cloud
+already polls), so a fourth deployment cannot exist without a drain-freshness
+signal or a written reason it has none — whichever of those tables it lands in
+first. Each source must also be non-empty, since a union over an empty source
+is satisfied by anything. Missing section, unavailable, stale, unreachable,
+over-lag, a plane answering with the wrong storage backend, and a run that
+measured no cloud at all are all failures — never skips.
 
-**It ships without a `schedule:` trigger, on purpose.** Publishing the field in
-this repo is not the same as serving it: merging main auto-deploys the GCP
-control plane only, while AWS-EU and Azure are hand-run scripts. A cron enabled
-before those deploys land files an issue every morning about clouds nobody
-redeployed, and a check that cries wolf is a check people learn to ignore (the
-same failure the client-telemetry check's `CANARY_COUNT_GATE_FROM` ramp-up
-guard exists to avoid). Deploy all three, confirm each `/status.json` returns an
-`analytics` object, run the job once by `workflow_dispatch`, then add the one
-line the workflow header spells out.
+Values read back off a remote page (`reason`, `backend`) are narrowed through
+the publisher's own vocabulary before they are printed. The problems file is
+pasted verbatim into a public GitHub issue, so an unnarrowed value would let
+whatever answered choose text in an issue in this repository.
+
+**It ships with `workflow_dispatch` as its only trigger, on purpose.**
+Publishing the field in this repo is not the same as serving it: merging main
+auto-deploys the GCP control plane only, while AWS-EU and Azure are hand-run
+scripts. A cron enabled before those deploys land files an issue every morning
+about clouds nobody redeployed, and a check that cries wolf is a check people
+learn to ignore (the same failure the client-telemetry check's
+`CANARY_COUNT_GATE_FROM` ramp-up guard exists to avoid). A `push:` trigger is
+the same hazard with a shorter fuse — it fires on the merge that lands the
+publisher, when no plane serves the section yet, and opens that issue an hour
+after merge instead of a morning after. Deploy all three, confirm each
+`/status.json` returns an `analytics` object, run the job once by
+`workflow_dispatch`, then enable both triggers in the one commit the workflow
+header spells out.
 
 Two states are neither pass nor fail, and are printed as `(unchecked)` on every
 run rather than skipped: a cloud with no public status page (`reason=`), and a

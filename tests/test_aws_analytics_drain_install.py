@@ -27,8 +27,9 @@ from trusted_router.operational_analytics_freshness import (
     AVAILABLE_FIELD,
     DRAIN_LAG_FIELD,
     GENERATED_AT_FIELD,
-    OLDEST_ENQUEUED_AT_FIELD,
     OUTBOX_DEPTH_FIELD,
+    PUBLISHED_AVAILABLE_FIELDS,
+    PUBLISHED_UNAVAILABLE_FIELDS,
     analytics_status_section,
     analytics_status_unavailable,
 )
@@ -202,7 +203,26 @@ def test_empty_outbox_is_zero_lag_and_not_missing_data() -> None:
     assert section[AVAILABLE_FIELD] is True
     assert section[DRAIN_LAG_FIELD] == 0.0
     assert section[OUTBOX_DEPTH_FIELD] == 0
-    assert section[OLDEST_ENQUEUED_AT_FIELD] is None
+
+
+def test_the_published_section_carries_exactly_the_documented_fields() -> None:
+    """A public contract that grows by accident cannot be narrowed later.
+
+    An added key is a promise to whoever started reading it. `oldest_enqueued_at`
+    was published by an earlier revision of this PR and read by nothing: the
+    checker uses `drain_lag_seconds`, the runbook quotes the lag, and the value
+    is `generated_at` minus the lag anyway. Nothing serves the section yet, so
+    dropping it costs nobody anything -- and this pin is what keeps the next
+    field from arriving the same way.
+    """
+    available = analytics_status_section(
+        oldest_enqueued_at=NOW - dt.timedelta(seconds=30), now=NOW, outbox_depth=3
+    )
+    unavailable = analytics_status_unavailable()
+
+    assert set(available) == PUBLISHED_AVAILABLE_FIELDS
+    assert set(unavailable) == PUBLISHED_UNAVAILABLE_FIELDS
+    assert "oldest_enqueued_at" not in available
 
 
 def test_unavailable_is_distinguishable_from_drained() -> None:
@@ -222,7 +242,6 @@ def test_lag_is_the_age_of_the_oldest_undelivered_row() -> None:
 
     assert section[DRAIN_LAG_FIELD] == 7200.0
     assert section[OUTBOX_DEPTH_FIELD] == 465_119
-    assert section[OLDEST_ENQUEUED_AT_FIELD] == "2026-08-17T10:00:00Z"
 
 
 def test_clock_skew_cannot_publish_a_negative_age() -> None:
@@ -344,6 +363,12 @@ def test_workflow_still_does_not_page_before_the_field_is_deployed() -> None:
     would file an issue every morning about clouds nobody redeployed, and a
     check that cries wolf is a check people learn to ignore.
 
+    The same goes for `push:`. It looked different -- one run, on the merge,
+    addressed to whoever is still holding the context -- but on that merge no
+    plane publishes the section yet, so the run fails and the failure step
+    opens a labelled PUBLIC issue about the precondition this header already
+    documents as unmet.
+
     The structural version of this assertion, on parsed YAML, is in
     `tests/test_analytics_freshness_registry.py`; this one keeps the
     predecessor's own guard alive where the predecessor's tests live.
@@ -353,6 +378,7 @@ def test_workflow_still_does_not_page_before_the_field_is_deployed() -> None:
     # Matched at the two-space indent a real trigger sits at under `on:`, so
     # the enabling instructions in the header do not satisfy it.
     assert "\n  schedule:" not in workflow
+    assert "\n  push:" not in workflow
     assert "\n  workflow_dispatch:" in workflow
     assert "OPERATOR STEPS BEFORE THE SCHEDULE IS ENABLED" in workflow
 
@@ -406,18 +432,76 @@ def test_aws_alias_still_accepts_a_bare_status_url(monkeypatch) -> None:
     assert fetched == ["https://tr-eu.example/status.json"] * 2
 
 
-@pytest.mark.parametrize("spelling", [["--cloud", "gcp"], ["--cloud=gcp"]])
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        ["--cloud", "gcp"],
+        ["--cloud=gcp"],
+        # argparse accepts any unambiguous prefix. Each of these binds `--cloud`
+        # downstream just as surely as the two above, and each walked past the
+        # string-comparison guard that only knew the two exact spellings -- into
+        # an argv where it landed AFTER this alias's own `--cloud aws`, i.e. a
+        # two-cloud run from an entrypoint whose name promises one.
+        ["--clo=gcp"],
+        ["--clo", "gcp"],
+        ["--c", "gcp"],
+        ["--cl=gcp"],
+    ],
+)
 def test_aws_alias_refuses_to_be_used_as_a_cloud_selector(spelling: list[str]) -> None:
-    """`--cloud` on the alias would quietly widen an AWS-only entrypoint.
+    """`--cloud`, however it is spelled, must not widen an AWS-only entrypoint.
 
-    BOTH spellings. argparse treats `--cloud=gcp` and `--cloud gcp` as the same
-    option, so a guard that tested only for the bare token `--cloud` let the
-    joined form straight through -- and since this alias appends the caller's
-    arguments AFTER its own `--cloud aws`, the result was a two-cloud run from
-    an entrypoint whose name promises one.
+    The guard reads argv the way argparse will rather than comparing strings,
+    which is the only version of this that covers spellings nobody listed.
     """
     with pytest.raises(SystemExit):
         aws_check.main(spelling)
+
+
+def test_aws_alias_accepts_an_abbreviated_status_url_too(monkeypatch) -> None:
+    """The same reading applies to the option this alias translates.
+
+    An abbreviation used to slip past the hand-written translator and arrive at
+    the fleet parser as a bare URL, which failed with "--status-url expects
+    CLOUD=URL" -- an error about an argument the operator never typed.
+    """
+    fetched: list[str] = []
+
+    def fake_fetch(url: str) -> dict[str, object]:
+        fetched.append(url)
+        return _payload(**{GENERATED_AT_FIELD: _now_iso()})
+
+    monkeypatch.setattr(fleet_check, "fetch_status", fake_fetch)
+
+    assert aws_check.main(["--status-u", "https://tr-eu.example/status.json"]) == 0
+    assert fetched == ["https://tr-eu.example/status.json"]
+
+
+def test_aws_alias_reads_cloud_prefixes_by_name_not_by_the_first_equals_sign(
+    monkeypatch,
+) -> None:
+    """A URL containing `=` is still a URL, and a cloud prefix names a cloud.
+
+    The translation used to be "contains `=` -> already CLOUD=URL", which turned
+    any URL with an `=` in it into a cloud named `https://tr-eu.example/tenant`
+    and answered with "--status-url names unknown cloud(s)" -- an error about an
+    argument the operator never typed. Both forms below must reach the fetcher
+    unchanged.
+    """
+    fetched: list[str] = []
+
+    def fake_fetch(url: str) -> dict[str, object]:
+        fetched.append(url)
+        return _payload(**{GENERATED_AT_FIELD: _now_iso()})
+
+    monkeypatch.setattr(fleet_check, "fetch_status", fake_fetch)
+
+    assert aws_check.main(["--status-url", "https://tr-eu.example/tenant=eu/status.json"]) == 0
+    assert aws_check.main(["--status-url", "aws=https://tr-eu.example/status.json"]) == 0
+    assert fetched == [
+        "https://tr-eu.example/tenant=eu/status.json",
+        "https://tr-eu.example/status.json",
+    ]
 
 
 def test_aws_alias_fails_when_aws_publishes_nothing(monkeypatch) -> None:
