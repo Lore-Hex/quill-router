@@ -2582,9 +2582,22 @@ async def test_one_probe_pass_keeps_gateway_accounting_probes_ordered(
         events.append("fallback-end")
         return [_sample(id="fallback", probe_type="provider_fallback", status="up")]
 
+    async def fake_canary_probe(_client: object, **kwargs: object) -> SyntheticProbeSample:
+        events.append("canary")
+        return SyntheticProbeSample(
+            id="syn_canary",
+            probe_type="client_telemetry_ingest",
+            target="control_plane",
+            target_url="https://control.example/v1/client-events",
+            monitor_region=str(kwargs["monitor_region"]),
+            status="up",
+            created_at="2026-08-17T03:00:00Z",
+        )
+
     monkeypatch.setattr(cli_module, "run_synthetic_once", fake_run_synthetic_once)
     monkeypatch.setattr(cli_module, "gateway_billing_probe", fake_billing_probe)
     monkeypatch.setattr(cli_module, "gateway_fallback_probe", fake_fallback_probe)
+    monkeypatch.setattr(cli_module, "client_telemetry_canary_probe", fake_canary_probe)
 
     samples = await cli_module._one_probe_pass(
         settings=Settings(environment="test", api_base_url="https://api.trustedrouter.com/v1"),
@@ -2599,8 +2612,11 @@ async def test_one_probe_pass_keeps_gateway_accounting_probes_ordered(
         "tls_health",
         "gateway_authorize_settle",
         "provider_fallback",
+        "client_telemetry_ingest",
     ]
     assert events.index("billing-end") < events.index("fallback-start")
+    # The canary is not a ledger probe; it runs after the ordered pair.
+    assert events.index("fallback-start") < events.index("canary")
 
 
 @pytest.mark.asyncio

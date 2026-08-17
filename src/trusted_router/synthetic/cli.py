@@ -19,6 +19,7 @@ from trusted_router.synthetic.probes import (
     SyntheticTarget,
     _attested_ssl_context,
     choose_rotation_target,
+    client_telemetry_canary_probe,
     gateway_billing_probe,
     gateway_fallback_probe,
     provider_rotation_probe,
@@ -78,8 +79,25 @@ async def _one_probe_pass(
             billing_semaphore=limiter,
         )
     )
-    if not (api_key and internal_token):
+    if not api_key:
         return await synthetic_task
+    canary_samples: list[SyntheticProbeSample] = []
+    if not internal_token:
+        # No internal token means no ledger probes, but the client-telemetry
+        # canary needs only the monitor key: it is the positive control that
+        # proves the beacon path (route -> outbox -> ClickHouse) is alive on
+        # every cloud, and the GCP monitor is THIS job, not the in-process
+        # scheduler behind /internal/synthetic/run.
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            canary_samples.append(
+                await client_telemetry_canary_probe(
+                    client,
+                    control_plane_base_url=control_plane,
+                    monitor_region=monitor_region,
+                    api_key=api_key,
+                )
+            )
+        return [*(await synthetic_task), *canary_samples]
     # Keep ledger-style probes ordered. They reserve, settle, and refund
     # against the same synthetic key; running them concurrently turns the
     # monitor into a Spanner/key-row contention test and can create false
@@ -108,6 +126,17 @@ async def _one_probe_pass(
                     model=settings.synthetic_monitor_model,
                 )
             )
+        # Client-telemetry canary: one schema-valid synthetic batch per pass
+        # through the public beacon route with the monitor key. Not a ledger
+        # probe (no reserve/settle), so it needs no limiter slot.
+        gateway_samples.append(
+            await client_telemetry_canary_probe(
+                client,
+                control_plane_base_url=control_plane,
+                monitor_region=monitor_region,
+                api_key=api_key,
+            )
+        )
     synthetic_samples = await synthetic_task
     return [*synthetic_samples, *gateway_samples]
 

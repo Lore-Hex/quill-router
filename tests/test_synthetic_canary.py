@@ -113,3 +113,75 @@ def test_client_telemetry_canary_is_an_ops_only_sample() -> None:
     )
     assert snapshot["samples"] == []
     assert snapshot["recent_events"] == []
+
+
+@pytest.mark.asyncio
+async def test_monitor_cli_pass_posts_the_canary_on_every_cloud(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The GCP monitor is `trusted_router.synthetic.cli` (a Cloud Run Job), not
+    the in-process scheduler. Its probe pass must include the client-telemetry
+    canary -- with the ledger probes when an internal token is present, and on
+    its own when only the monitor key is -- or the positive control that proves
+    the beacon path is alive would run everywhere except production's monitor."""
+    from trusted_router.synthetic import cli
+
+    calls: list[dict[str, object]] = []
+
+    async def fake_run_synthetic_once(
+        *_args: object, **_kwargs: object
+    ) -> list[SyntheticProbeSample]:
+        return []
+
+    async def fake_canary(_client: object, **kwargs: object) -> SyntheticProbeSample:
+        calls.append(kwargs)
+        return SyntheticProbeSample(
+            id="syn_canary",
+            probe_type="client_telemetry_ingest",
+            target="control_plane",
+            target_url="https://control.example/v1/client-events",
+            monitor_region=str(kwargs["monitor_region"]),
+            status="up",
+            created_at="2026-08-17T03:00:00Z",
+        )
+
+    async def fake_ledger_probe(_client: object, **_kwargs: object) -> list[SyntheticProbeSample]:
+        return []
+
+    monkeypatch.setattr(cli, "run_synthetic_once", fake_run_synthetic_once)
+    monkeypatch.setattr(cli, "client_telemetry_canary_probe", fake_canary)
+    monkeypatch.setattr(cli, "gateway_billing_probe", fake_ledger_probe)
+    monkeypatch.setattr(cli, "gateway_fallback_probe", fake_ledger_probe)
+    settings = Settings(environment="test")
+
+    with_token = await cli._one_probe_pass(
+        settings=settings,
+        monitor_region="us-central1",
+        control_plane="https://control.example",
+        internal_token="internal",  # noqa: S106 - test fixture
+        api_key="sk-monitor",
+        timeout=httpx.Timeout(1.0),
+    )
+    without_token = await cli._one_probe_pass(
+        settings=settings,
+        monitor_region="europe-west4",
+        control_plane="https://control.example",
+        internal_token=None,
+        api_key="sk-monitor",
+        timeout=httpx.Timeout(1.0),
+    )
+    no_key = await cli._one_probe_pass(
+        settings=settings,
+        monitor_region="us-east4",
+        control_plane="https://control.example",
+        internal_token=None,
+        api_key=None,
+        timeout=httpx.Timeout(1.0),
+    )
+
+    assert [sample.probe_type for sample in with_token] == ["client_telemetry_ingest"]
+    assert [sample.probe_type for sample in without_token] == ["client_telemetry_ingest"]
+    assert no_key == []
+    assert [call["monitor_region"] for call in calls] == ["us-central1", "europe-west4"]
+    assert all(call["api_key"] == "sk-monitor" for call in calls)
+    assert all(call["control_plane_base_url"] == "https://control.example" for call in calls)

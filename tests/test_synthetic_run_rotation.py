@@ -232,3 +232,43 @@ def test_run_calls_client_watch_and_swallows_its_exception(
     assert response.status_code == 200
     assert calls == [1]
     assert [record.message for record in caplog.records].count("client_watch.pass_failed") == 1
+
+
+def test_samples_ingest_runs_client_watch_and_swallows_its_exception(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The GCP monitor is a Cloud Run Job (synthetic.cli) that POSTs its samples
+    to /internal/synthetic/samples and never runs _run_and_record. The client
+    watch must therefore evaluate on the ingest side too, or the invisible-
+    outage / stale alerts would only ever fire on the clouds with an in-process
+    scheduler -- configured everywhere, working nowhere that matters."""
+    calls: list[int] = []
+
+    def broken_watch(_settings: Settings, samples: list[SyntheticProbeSample]) -> None:
+        calls.append(len(samples))
+        raise RuntimeError("watch exploded")
+
+    monkeypatch.setattr(synthetic_route, "_client_watch_pass", broken_watch)
+    monkeypatch.setattr(synthetic_route, "_record_probe_samples", lambda _s: None)
+    client = TestClient(create_app(_settings(), init_observability=False))
+    sample = SyntheticProbeSample(
+        id="syn_ingest_watch",
+        probe_type="tls_health",
+        target="canonical",
+        target_url="https://api.trustedrouter.com/health",
+        monitor_region="us-central1",
+        status="up",
+        created_at="2026-08-17T03:00:00Z",
+    )
+    with caplog.at_level("WARNING"):
+        response = client.post(
+            "/v1/internal/synthetic/samples",
+            json={"samples": [sample.public_dict()]},
+            headers={"x-trustedrouter-internal-token": INTERNAL_TOKEN},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"data": {"recorded": 1}}
+    assert calls == [1]
+    assert [record.message for record in caplog.records].count("client_watch.pass_failed") == 1
