@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from pathlib import Path
 
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import baseten, wafer
+from trusted_router import provider_lifecycle
+
+# Wafer retires GLM 5.1 / GLM 5.2 Fast / Kimi K3 Fast at 2026-08-17 00:00 UTC
+# (provider_lifecycle.WAFER_AUGUST_2026_RETIREMENT_AT). These tests exercise
+# discovery MECHANICS with fixture rows that include those ids, so they pin the
+# lifecycle clock just before the cutover instead of drifting with the wall clock.
+_BEFORE_WAFER_AUGUST_RETIREMENT = provider_lifecycle.WAFER_AUGUST_2026_RETIREMENT_AT - timedelta(seconds=1)
 
 
 class FakeResponse:
@@ -353,6 +361,7 @@ def test_baseten_provider_appends_new_priced_models_to_manifest(
 
 
 def test_wafer_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _BEFORE_WAFER_AUGUST_RETIREMENT)
     payload = {
         "data": [
             {
@@ -511,6 +520,7 @@ def test_wafer_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # no
 
 
 def test_wafer_provider_appends_new_priced_models_to_manifest(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _BEFORE_WAFER_AUGUST_RETIREMENT)
     manifest_path = tmp_path / "wafer.json"
     manifest_path.write_text(
         json.dumps(
