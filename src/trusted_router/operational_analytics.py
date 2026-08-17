@@ -15,6 +15,7 @@ from typing import Any, TypeVar, cast
 
 import httpx
 
+from trusted_router.client_reliability import tenant_client_reliability_summary
 from trusted_router.storage_models import (
     Generation,
     ProviderBenchmarkSample,
@@ -228,6 +229,71 @@ FORMAT JSON
         )
         return [_generation(row, tenant_id=tenant_id) for row in rows]
 
+    def client_reliability_summary(
+        self,
+        tenant_id_surrogate: str,
+        *,
+        window_minutes: int,
+    ) -> dict[str, Any]:
+        rows = self._query(
+            """
+SELECT
+  period, host, endpoint, sdk, requests, successes, tr_fault_failures,
+  excluded_failures, aborted, attempts, attempt_tr_fault, failover_used,
+  first_attempt_success, total_ms_hist, first_event_ms_hist
+FROM client_availability_rollups FINAL
+WHERE scope = 'tenant'
+  AND tenant_id = {tenant_id:String}
+  AND period IN ('5m', 'hour')
+  AND period_start >= now() - INTERVAL {window_minutes:UInt32} MINUTE
+  AND endpoint = ''
+  AND sdk = ''
+ORDER BY period_start DESC, host
+FORMAT JSON
+""",
+            params={
+                "tenant_id": tenant_id_surrogate,
+                "window_minutes": max(1, window_minutes),
+            },
+        )
+        return tenant_client_reliability_summary(
+            rows,
+            window_minutes=max(1, window_minutes),
+        )
+
+    def client_events_recent(
+        self,
+        tenant_id_surrogate: str,
+        *,
+        since: dt.datetime,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=dt.UTC)
+        else:
+            since = since.astimezone(dt.UTC)
+        normalized_limit = max(1, min(limit, 50))
+        rows = self._query(
+            """
+SELECT
+  created_at, endpoint, model, attempt_host, attempt_count, final_outcome,
+  final_http_status, first_error_class, sdk, sdk_version, attempt_request_id
+FROM client_request_events FINAL
+WHERE tenant_id = {tenant_id:String}
+  AND created_at >= parseDateTime64BestEffort({since:String}, 3)
+  AND final_outcome != 'ok'
+ORDER BY created_at DESC
+LIMIT {limit:UInt32}
+FORMAT JSON
+""",
+            params={
+                "tenant_id": tenant_id_surrogate,
+                "since": since.isoformat().replace("+00:00", "Z"),
+                "limit": normalized_limit,
+            },
+        )
+        return [_client_event(row) for row in rows]
+
     def synthetic_samples(
         self,
         *,
@@ -387,6 +453,25 @@ def _generation(row: dict[str, Any], *, tenant_id: str) -> Generation:
         tags={str(key): str(value) for key, value in (row.get("tags") or {}).items()},
         created_at=_iso(row["created_at"]),
     )
+
+
+def _client_event(row: dict[str, Any]) -> dict[str, Any]:
+    status = _optional_int(row.get("final_http_status"))
+    return {
+        "created_at": _iso(row.get("created_at")),
+        "endpoint": str(row.get("endpoint") or ""),
+        "model": str(row.get("model") or "") or None,
+        "attempt_host": [str(item) for item in row.get("attempt_host") or []],
+        "attempt_count": int(row.get("attempt_count") or 0),
+        "final_outcome": str(row.get("final_outcome") or ""),
+        "final_http_status": status if status else None,
+        "first_error_class": str(row.get("first_error_class") or "") or None,
+        "sdk": str(row.get("sdk") or ""),
+        "sdk_version": str(row.get("sdk_version") or ""),
+        "attempt_request_id": [
+            str(item) for item in row.get("attempt_request_id") or [] if item
+        ],
+    }
 
 
 def _optional_int(value: Any) -> int | None:

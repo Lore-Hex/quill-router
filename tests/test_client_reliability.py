@@ -11,7 +11,9 @@ from trusted_router.client_reliability import (
     availability,
     build_client_reliability,
     classify_tr_fault,
+    client_observed_status_section,
     is_excluded,
+    tenant_client_reliability_summary,
     timeout_floor_met,
 )
 
@@ -317,3 +319,148 @@ def test_timeout_floor_met_table(
     expected: bool,
 ) -> None:
     assert timeout_floor_met(phase, configured_ms) is expected
+
+
+def _public_snapshot(**updates: Any) -> dict[str, Any]:
+    value = {
+        "generated_at": "2026-08-17T12:00:00Z",
+        "methodology_version": 1,
+        "published": False,
+        "windows": {
+            name: {
+                "requests": 1_000,
+                "successes": 990,
+                "tr_fault": 10,
+                "excluded": 2,
+                "aborted": 1,
+                "distinct_tenants": 3,
+                "coverage": 0.9,
+                "p50_total_ms": 100,
+                "p95_total_ms": 200,
+                "p50_ttft_ms": 100,
+                "availability_percent": 99.0,
+            }
+            for name in ("5m", "1h", "24h", "7d", "30d")
+        },
+        "by_host_24h": {
+            "apex": {"attempts": 100, "attempt_tr_fault": 2, "rate": 0.02}
+        },
+        "canary": {"last_seen_age_seconds": 10, "last_24h_count": 24},
+        "freshness": {"age_seconds": 10},
+    }
+    value.update(updates)
+    return value
+
+
+@pytest.mark.parametrize(
+    ("snapshot", "expected"),
+    [
+        (None, {"available": False, "reason": "no_data"}),
+        (
+            _public_snapshot(freshness={"age_seconds": 901}),
+            {"available": False, "reason": "stale"},
+        ),
+    ],
+)
+def test_client_observed_status_unavailable_table(
+    snapshot: dict[str, Any] | None,
+    expected: dict[str, Any],
+) -> None:
+    assert client_observed_status_section(
+        snapshot,
+        now=dt.datetime(2026, 8, 17, 12, tzinfo=dt.UTC),
+    ) == expected
+
+
+def test_client_observed_status_calibrates_then_passes_percentages() -> None:
+    now = dt.datetime(2026, 8, 17, 12, tzinfo=dt.UTC)
+
+    calibrating = client_observed_status_section(_public_snapshot(), now=now)
+    published = client_observed_status_section(
+        _public_snapshot(published=True),
+        now=now,
+    )
+
+    assert calibrating["state"] == "calibrating"
+    assert calibrating["windows"]["24h"]["availability_percent"] is None
+    assert published["state"] == "published"
+    assert published["slo_id"] == "client_observed"
+    assert published["windows"]["24h"]["availability_percent"] == 99.0
+
+
+def test_client_observed_status_whitelists_every_nested_field() -> None:
+    snapshot = _public_snapshot(
+        tenant_id="private-tenant",
+        windows={
+            "24h": {
+                "requests": 100,
+                "successes": 99,
+                "tr_fault": 1,
+                "tenant_id": "private-window-tenant",
+            }
+        },
+        by_host_24h={
+            "apex": {
+                "attempts": 10,
+                "attempt_tr_fault": 1,
+                "tenant_id": "private-host-tenant",
+            },
+            "private-tenant": {"attempts": 1, "attempt_tr_fault": 1},
+        },
+        canary={
+            "last_seen_age_seconds": 10,
+            "last_24h_count": 1,
+            "tenant_id": "private-canary-tenant",
+        },
+    )
+
+    section = client_observed_status_section(
+        snapshot,
+        now=dt.datetime(2026, 8, 17, 12, tzinfo=dt.UTC),
+    )
+
+    encoded = json.dumps(section, sort_keys=True)
+    assert "tenant_id" not in encoded
+    for private_value in (
+        "private-tenant",
+        "private-window-tenant",
+        "private-host-tenant",
+        "private-canary-tenant",
+    ):
+        assert private_value not in encoded
+
+
+def test_tenant_summary_uses_one_rollup_granularity_and_exact_counts() -> None:
+    rows = [
+        _rollup(
+            period="5m",
+            requests=100,
+            successes=98,
+            tr_fault_failures=2,
+            attempts=110,
+            failover_used=4,
+            first_attempt_success=92,
+        ),
+        _rollup(
+            period="5m",
+            host="apex",
+            requests=0,
+            attempts=110,
+            attempt_tr_fault=3,
+        ),
+        _rollup(period="hour", requests=10_000),
+    ]
+
+    summary = tenant_client_reliability_summary(rows, window_minutes=60)
+
+    assert summary["requests"] == 100
+    assert summary["successes"] == 98
+    assert summary["tr_fault"] == 2
+    assert summary["attempts"] == 110
+    assert summary["failover_used"] == 4
+    assert summary["first_attempt_success"] == 92
+    assert summary["by_host"]["apex"] == {
+        "attempts": 110,
+        "attempt_tr_fault": 3,
+        "rate": 0.027273,
+    }
