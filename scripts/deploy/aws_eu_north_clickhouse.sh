@@ -593,8 +593,11 @@ echo "on this node and this node is not a complete copy until it is."
 # look identical.
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/deploy/cloud_complete_gate.sh
+. "${SCRIPT_DIR}/cloud_complete_gate.sh"
+
 COMPLETE=0
-bash "${SCRIPT_DIR}/verify_cloud_complete.sh" aws || COMPLETE=$?
+require_cloud_complete aws || COMPLETE=$?
 
 if [ "${TR_STOCKHOLM_REPLICA_WIRED:-0}" != "1" ]; then
   cat >&2 <<NEXT

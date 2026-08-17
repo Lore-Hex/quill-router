@@ -339,19 +339,26 @@ NOTE
 #
 # So this deploy now ends by asking whether the CLOUD works rather than whether
 # the script finished, and today, on Azure, it says no. That is the correct
-# answer, and it is not suppressible from the environment this script inherits:
-# the verifier reads no environment variable at all (it says so, loudly, if it
-# finds TR_MAX_DRAIN_LAG_SECONDS or TR_STATUS_URL set), its bound is a constant
-# in src/ and its URL comes from the fleet registry. Overrides exist only as
-# flags nobody here passes. The way to make this exit 0 is to build the
-# pipeline, or to record the absence as analytics_absent_reason on the azure
-# entry in src/trusted_router/cloud_rollout_completeness.py — a code change,
-# therefore a review, and one that makes every run print NOT VERIFIED rather
-# than COMPLETE.
+# answer, and no variable this script inherits changes it: the verifier's bound
+# is a constant in src/ and its URL comes from the fleet registry, and the two
+# variables it reads at all -- TR_MAX_DRAIN_LAG_SECONDS and TR_STATUS_URL -- it
+# reads only in order to print that they are being IGNORED. (An earlier version
+# of this comment said the verifier "reads no environment variable at all",
+# which was a tidier sentence and not true.) Overrides exist only as flags
+# nobody here passes.
+#
+# The way to make this exit 0 is to build the pipeline. Recording the absence as
+# analytics_absent_reason on the azure entry in
+# src/trusted_router/cloud_rollout_completeness.py does NOT make it exit 0: that
+# is a reviewed code change which turns the verdict into NOT VERIFIED and exit
+# 6, because an exemption is a decision to ship without knowing and must not
+# read as success to anything downstream.
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if ! bash "${SCRIPT_DIR}/verify_cloud_complete.sh" azure; then
-  cat >&2 <<'NEXT'
+# shellcheck source=scripts/deploy/cloud_complete_gate.sh
+. "${SCRIPT_DIR}/cloud_complete_gate.sh"
+
+require_cloud_complete azure "$(cat <<'NEXT'
 The Azure app is deployed and serving. The Azure CLOUD is not complete: it has
 no operational-analytics pipeline at all. To finish it:
 
@@ -364,7 +371,5 @@ no operational-analytics pipeline at all. To finish it:
   3. install a drain against it, mirroring
      scripts/deploy/aws_eu_clickhouse_drain_install.sh;
   4. bash scripts/deploy/verify_cloud_complete.sh azure
-
 NEXT
-  exit 1
-fi
+)"

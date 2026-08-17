@@ -184,17 +184,17 @@ echo "INSTANCE_ID=${INSTANCE_ID}"
 # and a redeploy decision. What changes is the exit code. A finished script and
 # a working cloud are now the same thing, or this exits non-zero saying which
 # one you have.
+#
+# require_cloud_complete returns the gate's status unaltered, so this script's
+# exit status IS the gate's. tests/test_deploy_script_execution.py runs this
+# whole file under a hermetic stub PATH and asserts both halves: the gate is
+# called for aws, and a failing gate makes this script exit non-zero.
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if bash "${SCRIPT_DIR}/verify_cloud_complete.sh" aws; then
-  echo
-  echo "The node is up and the check reached a verdict for aws — read its banner"
-  echo "above for which one: COMPLETE, COMPLETE WITH CAVEATS, or NOT VERIFIED."
-  echo "This script does not restate it in stronger words than it earned."
-  exit 0
-fi
+# shellcheck source=scripts/deploy/cloud_complete_gate.sh
+. "${SCRIPT_DIR}/cloud_complete_gate.sh"
 
-cat >&2 <<NEXT
+NEXT_STEPS=$(cat <<NEXT
 
 The node is up but the AWS cloud is NOT complete. Run these, in order, and this
 script will exit 0 the next time it is run:
@@ -218,4 +218,10 @@ script will exit 0 the next time it is run:
        bash scripts/deploy/verify_cloud_complete.sh aws
 
 NEXT
-exit 1
+)
+
+require_cloud_complete aws "$NEXT_STEPS"
+echo
+echo "The node is up and the gate reached a verdict for aws — read its banner"
+echo "above for which one: COMPLETE or COMPLETE WITH CAVEATS."
+echo "This script does not restate it in stronger words than it earned."

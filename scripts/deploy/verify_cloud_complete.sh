@@ -20,18 +20,20 @@
 #
 # and exiting 0. A human ran it, read the echoes, and stopped. "The script
 # finished" and "the cloud works" were different things. This script is what
-# makes them the same thing: every bring-up script for a cloud now ENDS here,
-# and this exits non-zero until the whole pipeline is real.
+# makes them the same thing: bring-up scripts for a cloud call
+# require_cloud_complete (scripts/deploy/cloud_complete_gate.sh), which runs
+# this and returns its exit status unaltered.
 #
 # WHAT IT COSTS TO RUN
 # --------------------
-# One HTTPS GET of a public status page. No credentials, no cloud CLI, no
-# writes — runnable from a laptop, which is the point: a check that needs
+# One HTTPS GET of a public status page. No credentials, no cloud CLI. The only
+# thing it writes anywhere is one mktemp file holding the fetched body, removed
+# on exit — runnable from a laptop, which is the point: a check that needs
 # production credentials is a check that does not get run. Stage (e) reads a
 # deploy script in this repository as text.
 #
-# Read-only. It provisions nothing and repairs nothing; it refuses to agree
-# that an incomplete cloud is finished.
+# It provisions nothing and repairs nothing; it refuses to agree that an
+# incomplete cloud is finished.
 #
 # NOTHING HERE IS CONFIGURABLE FROM THE ENVIRONMENT
 # -------------------------------------------------
@@ -41,26 +43,53 @@
 # and a cloud with 470,897 rows rotting in its outbox reports COMPLETE. An
 # earlier draft of this file read exactly that variable, and TR_STATUS_URL too,
 # which pointed the whole check at any page that answered the way you wanted.
-# Both are gone. The bound is a constant in
-# src/trusted_router/cloud_rollout_completeness.py, the URL comes from the fleet
-# registry in src/, and TR_SYNTHETIC_FLEET_PEERS is read from its config-as-code
-# default rather than from a live Settings() for the same reason.
+#
+# Both are gone. To be precise about the claim, because a sweeping one was
+# printed here before and was not true: this script reads PATH, HOME and the
+# usual things any process reads, and it reads TR_MAX_DRAIN_LAG_SECONDS and
+# TR_STATUS_URL for the sole purpose of telling you loudly that they are being
+# IGNORED. No environment variable changes a verdict. The bound is a constant in
+# src/trusted_router/cloud_rollout_completeness.py and the status URL comes from
+# the fleet registry in src/trusted_router/operational_analytics_fleet.py.
 #
 # Overrides still exist for diagnosis, as FLAGS — which a deploy script cannot
 # acquire by inheritance, only by someone typing them. A run that uses one is
 # marked DIAGNOSTIC, never prints COMPLETE, and exits 4.
 #
+# HOW IT READS ITS OWN JUDGEMENTS
+# -------------------------------
+# Every judgement is made in Python. This file used to capture that process with
+# `2>&1` and classify the answer by its FIRST WORD, so one stray line on stderr
+# — a DeprecationWarning, a pip notice — could collapse the waived/caveat/fact
+# distinction into the flat green COMPLETE banner, which is the one sentence
+# this work exists to make unprintable. Now the streams are separate: human text
+# goes to stderr and stdout carries exactly one machine line,
+#
+#     TR_VERDICT<TAB><kind><TAB><summary>
+#
+# read from the END of stdout. If that line is absent this script reaches NO
+# verdict and fails: a gate that cannot classify its own output must not be the
+# thing that says a cloud is finished.
+#
 # EXIT CODES
 # ----------
-#   0  a verdict was reached and it is not a failure (COMPLETE / COMPLETE WITH
-#      CAVEATS / NOT VERIFIED-because-exempted; the banner says which)
-#   1  INCOMPLETE: a stage failed
-#   2  usage error
+#   0  COMPLETE, or COMPLETE WITH CAVEATS — every stage was measured and passed
+#   1  INCOMPLETE: a stage was measured and failed
+#   2  usage error, or output this script could not classify
 #   4  DIAGNOSTIC run (an override flag was used) — not a verdict
-#   5  NOT YET OBSERVABLE: this cloud publishes no analytics section at all, so
-#      the question cannot be asked from outside yet. Distinct from 1 because
-#      the honest report is "nobody can see this cloud", not "your install
-#      failed" — see the tail of aws_eu_clickhouse_drain_install.sh.
+#   5  NOT YET OBSERVABLE: this cloud's status page parses and publishes no
+#      analytics section at all, so the question cannot be asked from outside
+#      yet. Distinct from 1 because the honest report is "nobody can see this
+#      cloud", not "your install failed".
+#   6  NOT VERIFIED: a stage was EXEMPTED in code rather than measured. Never 0
+#      — an exemption is a decision to ship without knowing, and the only
+#      machine-readable signal must not read as success.
+#   7  UNREADABLE: the status URL answered 200 and the body is not the JSON
+#      status document. Distinct from 5 because deploying a newer control plane
+#      fixes 5 and does nothing at all for this.
+#
+# scripts/deploy/cloud_complete_gate.sh turns each of these into the same words
+# for every caller.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -70,6 +99,8 @@ EXIT_INCOMPLETE=1
 EXIT_USAGE=2
 EXIT_DIAGNOSTIC=4
 EXIT_NOT_OBSERVABLE=5
+EXIT_NOT_VERIFIED=6
+EXIT_UNREADABLE=7
 
 CLOUD=""
 MAX_LAG_SECONDS=""       # empty => the bound compiled into the Python module
@@ -131,7 +162,7 @@ log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" >&2; }
 
 # Non-zero and loud. The failure mode this whole file exists to prevent is a
 # script that says its piece and returns 0, so every exit path below that is
-# not a complete cloud goes through here.
+# not a complete cloud goes through one of these.
 die() {
   printf '\n' >&2
   printf 'INCOMPLETE ROLLOUT — %s is not VERIFIABLY in service\n' "$CLOUD" >&2
@@ -149,8 +180,7 @@ die() {
 # a plain failure is how you teach an operator to ignore exit codes: the run
 # that INSTALLS the drain and watches rows move from inside the VPC would end in
 # a red "INCOMPLETE ROLLOUT" it can do nothing about, every time, by design.
-# Callers that know the difference (aws_eu_clickhouse_drain_install.sh) report
-# it in those words. It is still non-zero: a cloud nobody can see is not done.
+# It is still non-zero: a cloud nobody can see is not done.
 not_observable() {
   printf '\n' >&2
   printf 'NOT YET OBSERVABLE — %s answers, but not about analytics\n' "$CLOUD" >&2
@@ -161,6 +191,37 @@ not_observable() {
   printf 'reads. Until a control plane built from a commit that publishes it is\n' >&2
   printf 'deployed to %s, this cloud cannot be verified from outside at all.\n' "$CLOUD" >&2
   exit "$EXIT_NOT_OBSERVABLE"
+}
+
+# ...and the one that used to be folded INTO the above, wrongly. "This cloud
+# publishes no analytics section" and "the body is not the status document at
+# all" were both reported as NOT YET OBSERVABLE, with a fix instruction that
+# only helps the first. A Cloudflare challenge page, a captive portal and a
+# truncated response are not a control plane that predates the publisher.
+unreadable() {
+  printf '\n' >&2
+  printf 'UNREADABLE STATUS PAGE — %s answered 200 with something else\n' "$CLOUD" >&2
+  printf '%s\n' "$*" >&2
+  printf '\n' >&2
+  printf 'Deploying a newer control plane does not fix this. Fetch %s\n' "$STATUS_URL" >&2
+  printf 'by hand and look at what came back.\n' >&2
+  exit "$EXIT_UNREADABLE"
+}
+
+# A verdict this script could not read is not a pass. It is the shape of the bug
+# that made the classification structural in the first place, so it fails hard
+# and says what it saw.
+unclassified() {
+  printf '\n' >&2
+  printf 'GATE FAILURE — could not classify its own output for %s\n' "$CLOUD" >&2
+  printf 'stage: %s\n' "$1" >&2
+  printf 'expected a final stdout line beginning "%s<TAB>"; got:\n' "$VERDICT_SENTINEL" >&2
+  printf '%s\n' "${2:-(nothing on stdout)}" >&2
+  printf '\n' >&2
+  printf 'This is deliberately fatal. The classification used to be the first word\n' >&2
+  printf 'of a stream with stderr merged into it, so an interpreter warning could\n' >&2
+  printf 'turn an exemption into the green banner.\n' >&2
+  exit "$EXIT_USAGE"
 }
 
 # The judgements all live in src/trusted_router/cloud_rollout_completeness.py so
@@ -174,9 +235,37 @@ else
   PYTHON_CMD=(python3)
 fi
 
+# NOT `2>&1`. Human text goes to this script's stderr, where an operator reads
+# it; stdout carries only the verdict line. Merging them is what let one stray
+# interpreter line rewrite the verdict.
 tr_py() {
   (cd "$REPO_ROOT" && PYTHONPATH=src:. "${PYTHON_CMD[@]}" \
-    -m trusted_router.cloud_rollout_completeness "$@") 2>&1
+    -m trusted_router.cloud_rollout_completeness "$@")
+}
+
+VERDICT_SENTINEL="TR_VERDICT"
+KIND=""
+SUMMARY=""
+
+# Parse the LAST line of stdout. Not the first, and not "whatever matched a
+# prefix somewhere in the stream": anything a library prints before the module
+# finishes is ignored by construction rather than by hope.
+classify() {
+  local out="$1" line rest
+  line="${out##*$'\n'}"
+  case "$line" in
+    "${VERDICT_SENTINEL}"$'\t'*) ;;
+    *) return 1 ;;
+  esac
+  rest="${line#"${VERDICT_SENTINEL}"$'\t'}"
+  if [ "$rest" = "${rest#*$'\t'}" ]; then
+    KIND="$rest"
+    SUMMARY=""
+  else
+    KIND="${rest%%$'\t'*}"
+    SUMMARY="${rest#*$'\t'}"
+  fi
+  [ -n "$KIND" ]
 }
 
 # What the run is allowed to claim at the end. A stage that was WAIVED was not
@@ -188,45 +277,40 @@ UNVERIFIED_LINES=""
 CAVEAT_COUNT=0
 CAVEAT_LINES=""
 
-# Every stage: run it, and on failure die with what Python said. The message is
-# built there because it names the fix, and the fix is data (which script to
-# edit, which install command to run) rather than a constant of this file.
-#
-# On success the stage prints AT MOST one line, whose first word says what kind
-# of pass it was — waived:/caveat:/fact: (see _report in
-# src/trusted_router/cloud_rollout_completeness.py). The success sentence this
-# file prints is chosen from that, rather than being an unconditional green line
-# printed one line under Python's honest caveat and contradicting it.
+# Every stage: run it, classify what it said, and act on the KIND. The blocker
+# prose has already gone to stderr from Python, where it names the fix; what
+# comes back here is the one-line summary and the machine-readable kind.
 stage() {
   local label="$1" claim="$2"; shift 2
-  local out
+  local out rc=0
   local step="${label%%:*}"
-  if ! out="$(tr_py "$@")"; then
-    die "$(printf '(%s) %s' "$label" "$out")"
-  fi
-  case "$out" in
-    waived:*)
-      out="${out#waived: }"
+  out="$(tr_py "$@")" || rc=$?
+  classify "$out" || unclassified "$label" "$out"
+  case "$KIND" in
+    blocked)      die "$(printf '(%s) %s' "$label" "$SUMMARY")" ;;
+    unobservable) not_observable "$(printf '(%s) %s' "$label" "$SUMMARY")" ;;
+    unreadable)   unreadable "$(printf '(%s) %s' "$label" "$SUMMARY")" ;;
+    waived)
       UNVERIFIED_COUNT=$((UNVERIFIED_COUNT + 1))
-      UNVERIFIED_LINES="${UNVERIFIED_LINES}  (${step}) ${claim} — NOT MEASURED: ${out}
+      UNVERIFIED_LINES="${UNVERIFIED_LINES}  (${step}) ${claim} — NOT MEASURED: ${SUMMARY}
 "
-      log "(${step}) NOT MEASURED (exempted in code): ${out}"
+      log "(${step}) NOT MEASURED (exempted in code): ${SUMMARY}"
       ;;
-    caveat:*)
-      out="${out#caveat: }"
+    caveat)
       CAVEAT_COUNT=$((CAVEAT_COUNT + 1))
-      CAVEAT_LINES="${CAVEAT_LINES}  (${step}) ${claim} — but ${out}
+      CAVEAT_LINES="${CAVEAT_LINES}  (${step}) ${claim} — but ${SUMMARY}
 "
-      log "(${step}) ${claim} — but ${out}"
+      log "(${step}) ${claim} — but ${SUMMARY}"
       ;;
-    fact:*)
-      log "(${step}) ${out#fact: }"
-      ;;
-    "")
-      log "(${step}) ${claim}"
-      ;;
-    *)
-      log "(${step}) ${claim}: ${out}"
+    fact) log "(${step}) ${SUMMARY}" ;;
+    ok)   log "(${step}) ${claim}" ;;
+    *)    unclassified "$label" "$out" ;;
+  esac
+  # A pass kind over a non-zero exit means the module said one thing and died
+  # doing something else. Refuse rather than pick the friendlier half.
+  case "$KIND" in
+    waived|caveat|fact|ok)
+      [ "$rc" -eq 0 ] || unclassified "$label (exit ${rc} under a passing verdict)" "$out"
       ;;
   esac
 }
@@ -243,7 +327,12 @@ printf '\n=== cloud rollout completeness: %s\n\n' "$CLOUD" >&2
 # ---------------------------------------------------------------------------
 stage "a: fleet freshness registry" "somebody reads this cloud's drain lag on a schedule" \
   registry --cloud "$CLOUD"
-REGISTRY_URL="$(tr_py status-url --cloud "$CLOUD")" || die "(a) $REGISTRY_URL"
+
+URL_OUT="$(tr_py status-url --cloud "$CLOUD")" || true
+classify "$URL_OUT" || unclassified "a: status url" "$URL_OUT"
+[ "$KIND" = "value" ] || die "$(printf '(a) %s' "$SUMMARY")"
+REGISTRY_URL="$SUMMARY"
+
 if [ -n "$STATUS_URL_OVERRIDE" ]; then
   STATUS_URL="$STATUS_URL_OVERRIDE"
   log "(a) registry says ${REGISTRY_URL}; DIAGNOSTIC: asking ${STATUS_URL} instead"
@@ -263,10 +352,8 @@ if [ "$HTTP_CODE" != "200" ]; then
 serving its public status page, so nothing downstream can be checked.
 Fix: deploy this cloud's control plane and confirm ${STATUS_URL} answers 200."
 fi
-if ! SECTION_OUT="$(tr_py section --cloud "$CLOUD" --status-file "$BODY")"; then
-  not_observable "$(printf '(b) %s' "$SECTION_OUT")"
-fi
-log "(b) /status.json carries the analytics section"
+stage "b: analytics section published" "/status.json carries the analytics section" \
+  section --cloud "$CLOUD" --status-file "$BODY"
 
 # ---------------------------------------------------------------------------
 # (c) Could the control plane actually read its outbox? "Unavailable" is NOT
@@ -319,10 +406,13 @@ if [ "$UNVERIFIED_COUNT" -gt 0 ]; then
   printf '\nNOT VERIFIED — %s has %d stage(s) that were EXEMPTED, not measured:\n%s' \
     "$CLOUD" "$UNVERIFIED_COUNT" "$UNVERIFIED_LINES" >&2
   printf '\nNothing here is a claim that this cloud'"'"'s analytics pipeline works; an\n' >&2
-  printf 'exemption is a decision to ship without knowing. Delete the\n' >&2
+  printf 'exemption is a decision to ship without knowing. This exits %d rather than 0\n' \
+    "$EXIT_NOT_VERIFIED" >&2
+  printf 'for exactly that reason: the only machine-readable signal a caller reads must\n' >&2
+  printf 'not say success about something nobody measured. Delete the\n' >&2
   printf 'analytics_absent_reason in src/trusted_router/cloud_rollout_completeness.py\n' >&2
   printf 'to get the question asked again.\n\n' >&2
-  exit 0
+  exit "$EXIT_NOT_VERIFIED"
 fi
 
 if [ "$CAVEAT_COUNT" -gt 0 ]; then

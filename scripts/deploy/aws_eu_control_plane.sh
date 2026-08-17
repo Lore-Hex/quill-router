@@ -377,16 +377,23 @@ fi
 # plus a text read of this file) and provisions nothing; if it fails, the
 # service that was just deployed stays deployed and the message names what is
 # still missing.
+#
+# require_cloud_complete returns the gate's status unaltered, and this is the
+# last statement in the file, so under `set -e` this script's exit status IS the
+# gate's — including the codes that are not plain failures (5 NOT YET
+# OBSERVABLE, 6 NOT VERIFIED, 7 UNREADABLE), which it reports in the same words
+# as every other bound script. tests/test_deploy_script_execution.py runs this
+# whole file under a hermetic stub PATH and asserts both halves.
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if ! bash "${SCRIPT_DIR}/verify_cloud_complete.sh" aws; then
-  cat >&2 <<'NEXT'
+# shellcheck source=scripts/deploy/cloud_complete_gate.sh
+. "${SCRIPT_DIR}/cloud_complete_gate.sh"
+
+require_cloud_complete aws "$(cat <<'NEXT'
 The service is deployed but the AWS cloud is not complete. Most often this is
 the drain — the step that has been missed before:
 
   bash scripts/deploy/aws_eu_clickhouse_drain_install.sh
   bash scripts/deploy/verify_cloud_complete.sh aws
-
 NEXT
-  exit 1
-fi
+)"

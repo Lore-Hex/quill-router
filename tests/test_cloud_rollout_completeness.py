@@ -8,27 +8,22 @@ exiting 0.
 
 Four things are pinned here.
 
-1. **The cloud binding.** `declared_clouds()` reads the deployment-declaring
-   tables — `byok_v1_attestations.clouds_that_must_attest()`,
-   `regions.MULTICLOUD_REGION_GEO` and the fleet registry — so a cloud added to
-   any one of them is a cloud the completeness check immediately expects to know
-   about, and `registry_gaps()` fails until it does.
+1. **The cloud binding.** `declared_clouds()` delegates to
+   `operational_analytics_fleet.deployed_clouds()` — the union of every table in
+   this repo that declares a deployment — so a cloud added to any one of them is
+   a cloud the completeness check immediately expects to know about, and
+   `registry_gaps()` fails until it does.
    `test_a_new_cloud_fails_ci_until_it_is_checkable` adds a fake cloud and
    asserts the failure, which is the whole mechanism: you cannot get a cloud
    into this codebase quietly.
 
-   (The fleet registry module from the in-flight PR that publishes
-   `drain_lag_seconds` in `/status.json` does not exist on `main` yet, so the
-   binding reads the tables above plus `Settings.synthetic_fleet_peers`. When
-   that module lands, `freshness_registry()` prefers it and this test is
-   unchanged.)
-
-2. **The script binding.** Which deploy scripts must END in the verifier is read
-   from `CloudRollout.deploy_scripts`, not from a list in this file. It was such
-   a list for one commit — five hand-written (script, cloud) rows, i.e. a fourth
-   copy of the fleet in the suite whose subject is that copies drift — and a
-   fourth cloud could ship a script that printed "Next: ..." and exited 0 with
-   CI green. An unbound script now fails here, and the message names the file.
+2. **The script registry, and what it is FOR.** Which deploy scripts must end in
+   the gate is data on `CloudRollout`, not a list in this file. What is checked
+   here is structural — the file exists, an exemption carries a reason, nothing
+   unclaimed calls the verifier. Whether a script really runs the gate is proven
+   by RUNNING it, in `tests/test_deploy_script_execution.py`; this file
+   deliberately makes no claim it cannot support, because the previous version
+   made exactly that mistake with a regex.
 
 3. **The gate takes no input from the environment.** Deploy scripts inherit
    their caller's environment, so an env-tunable bound or status URL is a remote
@@ -36,11 +31,12 @@ Four things are pinned here.
    exported and assert on what it FETCHED and what argv it PASSED, not on what
    it printed.
 
-4. **The stages, and what the banner may claim.** Each stage fails for the
-   reason it exists, with a message naming the fix — in particular stage (e) is
-   not redundant with stage (d), because a drained outbox and a disabled outbox
-   publish the same `drain_lag_seconds: 0.0` — and a stage that was exempted or
-   caveated may not end in the flat green banner.
+4. **The stages, what the banner may claim, and what an exemption may excuse.**
+   Stage (e) is not redundant with stage (d), because a drained outbox and a
+   disabled outbox publish the same `drain_lag_seconds: 0.0`; a stage that was
+   exempted or caveated may not end in the flat green banner; and an exemption
+   may excuse a pipeline that was never built but never a measurement that
+   failed — and never exits 0.
 """
 
 from __future__ import annotations
@@ -55,12 +51,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from trusted_router import cloud_rollout_completeness as crc
+from trusted_router import operational_analytics_fleet as fleet
 from trusted_router import regions
 from trusted_router.operational_analytics_freshness import (
     ANALYTICS_STATUS_KEY,
     DEFAULT_MAX_DRAIN_LAG_SECONDS,
+    REASON_NOT_CONFIGURED,
+    REASON_UNREACHABLE,
     analytics_status_section,
     analytics_status_unavailable,
 )
@@ -95,7 +95,7 @@ def test_registry_is_bound_to_the_declared_clouds() -> None:
     """Every declared cloud is reachable by the completeness check.
 
     No list of clouds is written here on purpose — a test that hard-codes
-    {aws, azure, gcp} is a fourth copy of the fleet, and the copies are what
+    {aws, azure, gcp} is another copy of the fleet, and the copies are what
     drift. The assertion is the relation: whatever the deployment tables
     declare, `verify_cloud_complete.sh` can check it.
     """
@@ -106,17 +106,32 @@ def test_registry_is_bound_to_the_declared_clouds() -> None:
         assert cloud in crc.ROLLOUT_REGISTRY
 
 
-def test_declared_clouds_reads_both_deployment_tables() -> None:
-    """Neither table alone can weaken the requirement by omission.
+def test_the_cloud_list_is_the_fleet_module_s_and_not_a_second_copy() -> None:
+    """One union, in one place, named by the module that owns the question.
 
-    The union is the safe direction: a cloud named in only one place is still a
-    cloud that must be finishable.
+    An earlier revision re-derived the union here from three of the five tables
+    `operational_analytics_fleet.deployment_sources()` reads. Two unions that
+    disagree is the outage's shape with the halves swapped, so this asserts the
+    delegation rather than the answer.
     """
-    from trusted_router.byok_v1_attestations import clouds_that_must_attest
+    assert crc.declared_clouds() == fleet.deployed_clouds()
 
-    declared = set(crc.declared_clouds())
-    assert set(clouds_that_must_attest()) <= declared
-    assert {geo.cloud for geo in regions.MULTICLOUD_REGION_GEO.values()} <= declared
+
+def test_the_gate_asks_the_front_end_that_holds_the_dsql_connection() -> None:
+    """The AWS URL is the App Runner plane, not the vanity hostname.
+
+    This is the concrete reason stage (a) reads the fleet registry instead of
+    anything else. `aws.trustedrouter.com` fronts the Fargate control plane
+    through Global Accelerator; the deployment that holds the Aurora DSQL
+    connection — and whose drain was missing for fifteen days — is the tr-eu App
+    Runner service. A gate pointed at the wrong AWS front end would have been
+    green throughout the outage.
+    """
+    aws = crc.freshness_registry()["aws"]
+    entry = fleet.fleet_endpoint("aws")
+    assert entry is not None and entry.status_url == aws
+    assert "aws.trustedrouter.com" not in aws
+    assert "awsapprunner.com" in aws
 
 
 def test_a_new_cloud_fails_ci_until_it_is_checkable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -141,7 +156,7 @@ def test_a_new_cloud_fails_ci_until_it_is_checkable(monkeypatch: pytest.MonkeyPa
     # The message has to name the fix, not just the fact. A CI failure that says
     # "oracle: missing" teaches nobody what a complete cloud is.
     assert "oracle: declared as a deployment" in joined
-    assert "Settings.synthetic_fleet_peers" in joined
+    assert "operational_analytics_fleet.py" in joined
     assert "ROLLOUT_REGISTRY" in joined
     assert "verify_cloud_complete.sh" in joined
 
@@ -151,7 +166,7 @@ def test_registry_gap_survives_a_half_finished_addition(
 ) -> None:
     """Wiring the status URL but not the rollout entry is still a gap.
 
-    The likelier real mistake: someone adds the peer so the fleet page looks
+    The likelier real mistake: someone adds the endpoint so the fleet page looks
     complete, and never adds what "done" means for that cloud.
     """
     monkeypatch.setitem(
@@ -170,6 +185,32 @@ def test_registry_gap_survives_a_half_finished_addition(
     gaps = crc.registry_gaps()
     assert len(gaps) == 1
     assert "absent from ROLLOUT_REGISTRY" in gaps[0]
+
+
+def test_a_cloud_the_fleet_declares_uncheckable_is_still_a_gap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`reason=` in the fleet registry is not a pass here.
+
+    The fleet checker treats a cloud with no public status URL as EXPLICITLY
+    UNCHECKED and does not fail — reasonably, since a daily job that fails
+    forever about something nobody can fix is a job people mute. A ROLLOUT is a
+    different question: a cloud nobody outside can measure cannot be declared
+    done, whatever the reason, so this reports it with the reason attached.
+    """
+    monkeypatch.setattr(
+        fleet,
+        "ANALYTICS_FRESHNESS_FLEET",
+        (
+            *[e for e in fleet.ANALYTICS_FRESHNESS_FLEET if e.cloud != "azure"],
+            fleet.FleetAnalyticsEndpoint(cloud="azure", reason="internal-only ALB, no public page"),
+        ),
+    )
+    monkeypatch.setattr(
+        crc, "ANALYTICS_FRESHNESS_FLEET", fleet.ANALYTICS_FRESHNESS_FLEET
+    )
+    gaps = crc.registry_gaps()
+    assert any("UNCHECKABLE over HTTP" in gap and "internal-only ALB" in gap for gap in gaps), gaps
 
 
 def test_every_registered_cloud_names_a_control_plane_script_that_exists() -> None:
@@ -197,19 +238,64 @@ def test_missing_analytics_section_fails() -> None:
     assert "publishes no 'analytics' section" in blockers[0]
 
 
+def test_a_body_that_is_not_the_status_document_is_its_own_finding() -> None:
+    """"No analytics section" and "not the status page at all" are different.
+
+    Both used to end in NOT YET OBSERVABLE, whose fix instruction is "deploy a
+    control plane built from a newer commit". That does nothing about a
+    Cloudflare challenge page, a captive portal, or a body cut off mid-stream.
+    """
+    with pytest.raises(crc.UnreadableStatusPage):
+        crc.unwrap_status_payload(["not", "an", "object"])
+
+
 def test_unavailable_is_not_the_same_as_empty() -> None:
-    """ "I could not look" must never collapse into "there was nothing to see"."""
-    blockers = crc.available_blockers("aws", _payload(analytics_status_unavailable()))
+    """"I could not look" must never collapse into "there was nothing to see"."""
+    blockers = crc.available_blockers(
+        "aws", _payload(analytics_status_unavailable(REASON_UNREACHABLE))
+    )
     assert blockers
     assert "available is false" in blockers[0]
     # Names the actual command, from the registry.
     assert "aws_eu_clickhouse_drain_install.sh" in blockers[0]
+    # ...and says it cannot be waived, because it is a reading.
+    assert "never a reading that failed" in blockers[0]
+
+
+def test_not_configured_is_not_the_same_as_unreachable() -> None:
+    """A cloud saying "I run no outbox" is a configuration, not a fault.
+
+    It is the ONE shape of (c)/(d) failure an exemption may excuse, so it has to
+    be distinguishable in code rather than by reading the reason by eye.
+    """
+    configured_off = _payload(analytics_status_unavailable(REASON_NOT_CONFIGURED))
+    broken = _payload(analytics_status_unavailable(REASON_UNREACHABLE))
+    assert crc.structurally_absent(configured_off)
+    assert not crc.structurally_absent(broken)
+    assert not crc.structurally_absent(_payload(_healthy_section()))
+    assert "runs NO operational-analytics outbox" in crc.available_blockers(
+        "azure", configured_off
+    )[0]
 
 
 def test_healthy_section_passes_c_and_d() -> None:
     payload = _payload(_healthy_section())
     assert crc.available_blockers("aws", payload) == []
     assert crc.drain_lag_blockers("aws", payload, now=NOW) == []
+
+
+def test_stage_d_defers_to_stage_c_rather_than_inventing_a_second_failure() -> None:
+    """An unavailable section has no lag to read, and must not pretend otherwise.
+
+    Reporting "drain_lag_seconds is missing" about a section that says
+    `available: false` is the same condition twice, in words that point at the
+    wrong fix.
+    """
+    blockers = crc.drain_lag_blockers(
+        "azure", _payload(analytics_status_unavailable(REASON_NOT_CONFIGURED)), now=NOW
+    )
+    assert len(blockers) == 1
+    assert "Stage (c) is the one to fix" in blockers[0]
 
 
 def test_the_aws_eu_backlog_would_have_failed_stage_d() -> None:
@@ -252,7 +338,9 @@ def test_lag_bound_matches_the_alarm_the_drain_itself_fires() -> None:
 
 def test_empty_outbox_passes_but_says_so() -> None:
     """The caveat that keeps green from meaning more than it measured."""
-    payload = _payload(analytics_status_section(oldest_enqueued_at=None, now=NOW))
+    payload = _payload(
+        analytics_status_section(oldest_enqueued_at=None, now=NOW, outbox_depth=0)
+    )
     assert crc.drain_lag_blockers("aws", payload, now=NOW) == []
     caveat = crc.drain_lag_caveat(payload)
     assert caveat is not None
@@ -310,6 +398,36 @@ def test_instructions_to_set_the_variable_are_not_the_variable(tmp_path: Path) -
     )
     assert crc.declared_outbox_value("azure", root=tmp_path) is None
     assert crc.outbox_enabled_blockers("azure", root=tmp_path)
+
+
+def test_a_here_string_is_not_a_heredoc(tmp_path: Path) -> None:
+    """The false claim in `_executable_text`, made checkable.
+
+    Its docstring said `<<<` here-strings "are left alone". They were not: the
+    opener pattern could start one character in, so `<<<WORD` matched as a
+    heredoc named WORD and everything after it was swallowed until a line
+    reading WORD turned up, which never happens. A here-string sitting above the
+    assignment therefore hid the assignment, and the cloud that PASSES this
+    stage would have failed it.
+    """
+    script_dir = tmp_path / "scripts" / "deploy"
+    script_dir.mkdir(parents=True)
+    (script_dir / "azure_control_plane.sh").write_text(
+        "#!/usr/bin/env bash\n"
+        "python3 -c 'import sys; print(sys.stdin.read())' <<<PAYLOAD\n"
+        f"{crc.OUTBOX_ENABLED_ENV}=true\n"
+    )
+    assert crc.declared_outbox_value("azure", root=tmp_path) == "true"
+
+    # ...and a real heredoc still hides its body, which is the behaviour the
+    # here-string case was wrongly getting.
+    (script_dir / "azure_control_plane.sh").write_text(
+        "#!/usr/bin/env bash\n"
+        "cat <<PAYLOAD\n"
+        f"{crc.OUTBOX_ENABLED_ENV}=true\n"
+        "PAYLOAD\n"
+    )
+    assert crc.declared_outbox_value("azure", root=tmp_path) is None
 
 
 def test_the_three_declaration_shapes_are_all_recognised(tmp_path: Path) -> None:
@@ -392,7 +510,7 @@ def test_no_cloud_is_currently_exempt() -> None:
 
 def test_an_exemption_waives_but_still_prints_what_it_waives() -> None:
     blockers = crc.outbox_enabled_blockers("azure")
-    waived, note = crc.apply_exemption("azure", blockers)
+    waived, note = crc.apply_exemption("azure", blockers, waivable=True)
     assert waived == blockers and note is None  # no reason recorded -> no waiver
 
     patched = crc.CloudRollout(
@@ -404,7 +522,7 @@ def test_an_exemption_waives_but_still_prints_what_it_waives() -> None:
     original = crc.ROLLOUT_REGISTRY["azure"]
     crc.ROLLOUT_REGISTRY["azure"] = patched
     try:
-        waived, note = crc.apply_exemption("azure", blockers)
+        waived, note = crc.apply_exemption("azure", blockers, waivable=True)
         assert waived == []
         assert note is not None
         assert "ACCEPTED-ABSENT" in note
@@ -416,8 +534,224 @@ def test_an_exemption_waives_but_still_prints_what_it_waives() -> None:
         crc.ROLLOUT_REGISTRY["azure"] = original
 
 
+def test_an_exemption_cannot_launder_a_measured_failure() -> None:
+    """The hole round 2 found, closed.
+
+    The old `apply_exemption` waived stages (c), (d) AND (e) alike, so a cloud
+    that had been MEASURED and had FAILED — an outbox the control plane could
+    not read, a lag over the bound — was excused by a sentence about a pipeline
+    that was never built, and the run exited 0. An exemption may excuse an
+    absence. It may not rewrite a reading.
+    """
+    patched = crc.CloudRollout(
+        cloud="azure",
+        control_plane_script="scripts/deploy/azure_control_plane.sh",
+        drain_install_command="build it",
+        analytics_absent_reason="no ClickHouse budgeted for this cloud yet",
+    )
+    original = crc.ROLLOUT_REGISTRY["azure"]
+    crc.ROLLOUT_REGISTRY["azure"] = patched
+    try:
+        broken = _payload(analytics_status_unavailable(REASON_UNREACHABLE))
+        assert not crc.structurally_absent(broken)
+        blockers = crc.available_blockers("azure", broken)
+        kept, note = crc.apply_exemption("azure", blockers, waivable=False)
+        assert kept == blockers, "a measured failure must survive every exemption"
+        assert note is None
+
+        stale = analytics_status_section(
+            oldest_enqueued_at=NOW - dt.timedelta(days=15), now=NOW, outbox_depth=470_897
+        )
+        lag_blockers = crc.drain_lag_blockers("azure", _payload(stale), now=NOW)
+        kept, note = crc.apply_exemption("azure", lag_blockers, waivable=False)
+        assert kept == lag_blockers and note is None
+    finally:
+        crc.ROLLOUT_REGISTRY["azure"] = original
+
+
 # ---------------------------------------------------------------------------
-# The shell entry point, and the scripts that must end in it.
+# The script registry: structure only. Behaviour is proven by execution in
+# tests/test_deploy_script_execution.py.
+# ---------------------------------------------------------------------------
+
+
+def test_the_script_registry_is_well_formed() -> None:
+    gaps = crc.script_binding_gaps()
+    assert gaps == [], "\n".join(gaps)
+    assert crc.scripts_proven_by_execution(), "nothing is proven by execution"
+
+
+def test_a_new_cloud_with_no_wired_script_fails_ci_naming_the_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The BLOCKING case: a fourth cloud ships a script nothing binds.
+
+    Registering the cloud is not enough — that only makes it checkABLE. This is
+    the step that makes it checkED, and it has to fail loudly enough to be
+    actionable: the message names the registry file, the field, and the line to
+    put at the end of the script.
+    """
+    monkeypatch.setitem(
+        crc.ROLLOUT_REGISTRY,
+        "oracle",
+        crc.CloudRollout(
+            cloud="oracle",
+            control_plane_script="scripts/deploy/rollout.sh",
+            drain_install_command="build it",
+        ),
+    )
+    gaps = crc.script_binding_gaps()
+    joined = "\n".join(gaps)
+    assert gaps
+    assert "src/trusted_router/cloud_rollout_completeness.py" in joined
+    assert "deploy_scripts" in joined
+    assert "verify_cloud_complete.sh" in joined
+    assert "oracle" in joined
+
+
+def test_a_script_that_runs_the_verifier_unclaimed_fails_ci(tmp_path: Path) -> None:
+    """Wiring nobody claims is wiring nobody would miss.
+
+    A script that verifies a cloud, with no registry entry naming it, is one
+    delete away from silence — and the deletion looks like a cleanup.
+    """
+    for cloud, entry in crc.ROLLOUT_REGISTRY.items():
+        for path in (entry.control_plane_script, *(s.path for s in entry.deploy_scripts)):
+            target = tmp_path / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(f"require_cloud_complete {cloud}\n")
+    for item in crc.ROLLOUT_REGISTRY["gcp"].exempt_deploy_scripts:
+        (tmp_path / item.script).write_text("# exempt\n")
+    (tmp_path / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".github" / "workflows" / "deploy.yml").write_text("jobs: {}\n")
+    assert crc.script_binding_gaps(root=tmp_path) == []
+
+    (tmp_path / "scripts" / "deploy" / "oracle_bring_up.sh").write_text(
+        'bash "${SCRIPT_DIR}/verify_cloud_complete.sh" oracle\n'
+    )
+    gaps = crc.script_binding_gaps(root=tmp_path)
+    assert any("oracle_bring_up.sh" in gap and "no CloudRollout claims it" in gap for gap in gaps)
+
+
+def test_a_script_in_a_subdirectory_does_not_escape_the_scan(tmp_path: Path) -> None:
+    """The glob was `scripts/deploy/*.sh`, and one directory down was invisible.
+
+    A bring-up script at `scripts/deploy/aws/bring_up.sh` could call the
+    verifier with nothing claiming it — the "wiring nobody would miss" case,
+    hidden by a non-recursive pattern.
+    """
+    for cloud, entry in crc.ROLLOUT_REGISTRY.items():
+        for path in (entry.control_plane_script, *(s.path for s in entry.deploy_scripts)):
+            target = tmp_path / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(f"require_cloud_complete {cloud}\n")
+    for item in crc.ROLLOUT_REGISTRY["gcp"].exempt_deploy_scripts:
+        (tmp_path / item.script).write_text("# exempt\n")
+    (tmp_path / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".github" / "workflows" / "deploy.yml").write_text("jobs: {}\n")
+
+    nested = tmp_path / "scripts" / "deploy" / "oracle" / "bring_up.sh"
+    nested.parent.mkdir(parents=True, exist_ok=True)
+    nested.write_text('bash "${SCRIPT_DIR}/../verify_cloud_complete.sh" oracle\n')
+    gaps = crc.script_binding_gaps(root=tmp_path)
+    assert any("oracle/bring_up.sh" in gap for gap in gaps), gaps
+
+
+def test_an_unbound_script_must_carry_a_named_reason_and_a_real_control() -> None:
+    """GCP is exempt, and the exemption is a sentence somebody signed.
+
+    `rollout.sh` runs inside the deploy workflow, so ending IT in a public fetch
+    of the page that same cloud serves would abort the deploy that repairs an
+    outage, partway through. That is a real reason.
+
+    What round 2 caught is the other half: the exemption cited "the scheduled
+    analytics freshness workflow" as the compensating control, and that workflow
+    ships with no `schedule:` trigger by design — so the primary cloud had no
+    automated completeness check at all, behind a sentence saying it did. A
+    claimed control is now a structured reference, and this resolves it.
+    """
+    exemptions = [
+        (cloud, item)
+        for cloud, entry in crc.ROLLOUT_REGISTRY.items()
+        for item in entry.exempt_deploy_scripts
+    ]
+    assert exemptions, "if nothing is exempt, this test is stale — delete it"
+    for cloud, item in exemptions:
+        assert (ROOT / item.script).is_file(), f"{cloud}: {item.script} does not exist"
+        assert len(item.reason) > 80, f"{cloud}: {item.script} exemption reason is a shrug"
+
+        control = item.compensating_control
+        if control is None:
+            continue
+        workflow = yaml.safe_load((ROOT / control.workflow).read_text())
+        assert control.job in workflow["jobs"], (
+            f"{cloud}: {item.script} cites {control.workflow} job {control.job!r}, which "
+            "does not exist in that workflow"
+        )
+        job = workflow["jobs"][control.job]
+        runs = " ".join(str(step.get("run", "")) for step in job.get("steps", []))
+        assert f"verify_cloud_complete.sh {cloud}" in runs, (
+            f"{cloud}: {control.workflow} job {control.job!r} exists but does not run the "
+            "completeness gate for this cloud"
+        )
+
+    gcp = crc.ROLLOUT_REGISTRY["gcp"]
+    assert [item.script for item in gcp.exempt_deploy_scripts] == ["scripts/deploy/rollout.sh"]
+    assert gcp.exempt_deploy_scripts[0].compensating_control is not None
+
+
+def test_an_exemption_citing_a_workflow_that_is_not_there_fails_ci(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The generalisation of the GCP finding: a phantom control is a defect."""
+    monkeypatch.setitem(
+        crc.ROLLOUT_REGISTRY,
+        "gcp",
+        crc.CloudRollout(
+            cloud="gcp",
+            control_plane_script="scripts/deploy/rollout.sh",
+            drain_install_command="build it",
+            exempt_deploy_scripts=(
+                crc.ScriptExemption(
+                    script="scripts/deploy/rollout.sh",
+                    reason="x" * 100,
+                    compensating_control=crc.CompensatingControl(
+                        workflow=".github/workflows/no-such-workflow.yml",
+                        job="imaginary",
+                        description="a control that does not exist",
+                    ),
+                ),
+            ),
+        ),
+    )
+    (tmp_path / "scripts" / "deploy").mkdir(parents=True)
+    (tmp_path / "scripts" / "deploy" / "rollout.sh").write_text("# exempt\n")
+    gaps = crc.script_binding_gaps(root=tmp_path)
+    assert any("no-such-workflow.yml" in gap and "does not exist" in gap for gap in gaps), gaps
+
+
+def test_a_not_proven_script_must_say_why(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """"The harness cannot run this one" is allowed. Silence is not."""
+    monkeypatch.setitem(
+        crc.ROLLOUT_REGISTRY,
+        "azure",
+        crc.CloudRollout(
+            cloud="azure",
+            control_plane_script="scripts/deploy/azure_control_plane.sh",
+            drain_install_command="build it",
+            deploy_scripts=(
+                crc.DeployScript("scripts/deploy/azure_control_plane.sh", crc.NOT_PROVEN),
+            ),
+        ),
+    )
+    (tmp_path / "scripts" / "deploy").mkdir(parents=True)
+    (tmp_path / "scripts" / "deploy" / "azure_control_plane.sh").write_text("# nothing\n")
+    gaps = crc.script_binding_gaps(root=tmp_path)
+    assert any("NOT_PROVEN with no reason" in gap for gap in gaps), gaps
+
+
+# ---------------------------------------------------------------------------
+# The shell entry point.
 # ---------------------------------------------------------------------------
 
 
@@ -445,20 +779,25 @@ def test_verifier_is_read_only() -> None:
     assert "set -euo pipefail" in text
 
     forbidden = re.compile(r"(?:^|[;&|(]|\bthen\b|\bdo\b|\$\()\s*(aws|az|gcloud|gc)\s+\S")
+    executable = []
     for number, line in enumerate(text.splitlines(), start=1):
         if line.lstrip().startswith("#"):
             continue
+        executable.append(line)
         match = forbidden.search(line)
         assert match is None, (
             f"verifier line {number} shells out to {match.group(1) if match else ''}: {line!r}"
         )
 
-    # Exactly one network call, and it is a GET.
-    assert text.count("curl ") == 1
-    assert '-o "$BODY"' in text
+    # Counted over CODE, not over the file: the header explains what the one
+    # curl and the one mktemp are for, and prose that describes a rule is not
+    # an instance of breaking it.
+    code = "\n".join(executable)
+    assert code.count("curl ") == 1
+    assert '-o "$BODY"' in code
     # And nothing writes anywhere but the one temp file it cleans up.
-    assert text.count("mktemp") == 1
-    assert len(re.findall(r">\s*\"?\$\{?REPO_ROOT", text)) == 0
+    assert code.count("mktemp") == 1
+    assert len(re.findall(r">\s*\"?\$\{?REPO_ROOT", code)) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -468,9 +807,7 @@ def test_verifier_is_read_only() -> None:
 # URL from TR_STATUS_URL, both `${VAR:-default}` at the top of the script. Every
 # wired deploy script inherits its caller's environment, so a single `export` in
 # a shell profile turned 470,897 undelivered rows into
-# "COMPLETE: aws publishes a live analytics pipeline" — while the comment added
-# to azure_control_plane.sh in the same commit told the reader the gate was "not
-# suppressible from the environment".
+# "COMPLETE: aws publishes a live analytics pipeline".
 #
 # These tests run the REAL shell script, with a fake `curl` on PATH so no test
 # touches the network, and a stub of the Python module that records the argv the
@@ -479,16 +816,26 @@ def test_verifier_is_read_only() -> None:
 # ---------------------------------------------------------------------------
 
 _STUB_MODULE = '''
-"""Stand-in for the judgement module: replays a scripted plan, records argv."""
+"""Stand-in for the judgement module: replays a scripted plan, records argv.
+
+Speaks the verdict contract the real module speaks: human text on stderr, and
+one machine line on stdout. STUB_STDERR_NOISE and STUB_STDOUT_NOISE exist so a
+test can reproduce the bug that made the contract structural.
+"""
 import json, os, sys
 
 with open(os.environ["STUB_ARGV_LOG"], "a", encoding="utf-8") as handle:
     handle.write(json.dumps(sys.argv[1:]) + "\\n")
 
 plan = json.loads(os.environ["STUB_PLAN"])
-code, out = plan.get(sys.argv[1], [0, ""])
-if out:
-    print(out)
+code, kind, summary = plan.get(sys.argv[1], [0, "ok", "passed"])
+noise = os.environ.get("STUB_STDERR_NOISE")
+if noise:
+    print(noise, file=sys.stderr)
+extra = os.environ.get("STUB_STDOUT_NOISE")
+if extra:
+    print(extra)
+print("TR_VERDICT\\t%s\\t%s" % (kind, summary))
 sys.exit(code)
 '''
 
@@ -555,7 +902,9 @@ class _Harness:
                 return argv
         raise AssertionError(f"the shell never ran the {command!r} subcommand")
 
-    def run(self, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    def run(
+        self, *args: str, env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
         environment = dict(os.environ)
         environment.update(
             {
@@ -576,22 +925,20 @@ class _Harness:
         )
 
 
-def _harness(
-    root: Path, *, plan: dict[str, Any], body: dict[str, Any] | None = None
-) -> _Harness:
+def _harness(root: Path, *, plan: dict[str, Any], body: dict[str, Any] | None = None) -> _Harness:
     root.mkdir(parents=True, exist_ok=True)
     return _Harness(root, plan, body if body is not None else {"data": {}})
 
 
 REGISTRY_URL = "https://registry.example/status.json"
 
-_ALL_PASS = {
-    "registry": [0, ""],
-    "status-url": [0, REGISTRY_URL],
-    "section": [0, ""],
-    "available": [0, ""],
-    "lag": [0, ""],
-    "outbox": [0, "fact: TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED='true' in the working tree"],
+_ALL_PASS: dict[str, list[Any]] = {
+    "registry": [0, "ok", "passed"],
+    "status-url": [0, "value", REGISTRY_URL],
+    "section": [0, "ok", "the analytics section is published"],
+    "available": [0, "ok", "passed"],
+    "lag": [0, "ok", "passed"],
+    "outbox": [0, "fact", "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED='true' in the working tree"],
 }
 
 
@@ -629,7 +976,7 @@ def test_exported_lag_bound_cannot_widen_the_gate(tmp_path: Path) -> None:
     assert result.returncode == 0
 
 
-def test_the_env_is_ignored_by_the_real_verifier_too(tmp_path: Path) -> None:
+def test_the_env_is_ignored_by_the_real_verifier_too() -> None:
     """The same, against the real module: no fixture, no network, no verdict change.
 
     `oracle` fails stage (a) before anything is fetched, so this exercises the
@@ -684,7 +1031,7 @@ def test_an_override_flag_suppresses_the_complete_banner(tmp_path: Path) -> None
 
 
 def test_a_clean_run_is_the_only_one_that_prints_complete(tmp_path: Path) -> None:
-    harness = _harness(tmp_path, plan={**_ALL_PASS, "outbox": [0, ""]})
+    harness = _harness(tmp_path, plan={**_ALL_PASS, "outbox": [0, "ok", "passed"]})
     result = harness.run("aws")
     assert result.returncode == 0
     assert "COMPLETE: aws publishes a live analytics pipeline" in result.stderr
@@ -694,7 +1041,7 @@ def test_a_clean_run_is_the_only_one_that_prints_complete(tmp_path: Path) -> Non
 def test_a_caveated_stage_downgrades_the_banner(tmp_path: Path) -> None:
     """The empty-outbox caveat used to be printed one line ABOVE "COMPLETE"."""
     caveat = "outbox is empty: lag 0 proves nothing is STUCK, not that anything is moving"
-    harness = _harness(tmp_path, plan={**_ALL_PASS, "lag": [0, f"caveat: {caveat}"]})
+    harness = _harness(tmp_path, plan={**_ALL_PASS, "lag": [0, "caveat", caveat]})
     result = harness.run("aws")
 
     assert result.returncode == 0
@@ -703,19 +1050,21 @@ def test_a_caveated_stage_downgrades_the_banner(tmp_path: Path) -> None:
     assert caveat in result.stderr
 
 
-def test_an_exempted_stage_never_reads_as_complete(tmp_path: Path) -> None:
+def test_an_exempted_stage_never_reads_as_complete_and_never_exits_zero(tmp_path: Path) -> None:
     """The worst line the old script could print, and the reason for this rule.
 
     On the exemption path every stage printed its unconditional green sentence
     and the run ended "COMPLETE: azure publishes a live analytics pipeline" —
     about a cloud whose analytics had, one line earlier, been formally excused
-    for not existing.
+    for not existing. The banner was fixed first; round 2 caught the other half,
+    which is that it still exited 0, so the only machine-readable signal any
+    caller reads still said success.
     """
     waived = "ACCEPTED-ABSENT (azure): canary only — suppressing: never sets the outbox"
-    harness = _harness(tmp_path, plan={**_ALL_PASS, "outbox": [0, f"waived: {waived}"]})
+    harness = _harness(tmp_path, plan={**_ALL_PASS, "outbox": [0, "waived", waived]})
     result = harness.run("azure")
 
-    assert result.returncode == 0
+    assert result.returncode == 6
     assert "COMPLETE" not in result.stderr
     assert "NOT VERIFIED" in result.stderr
     assert "NOT MEASURED" in result.stderr
@@ -725,13 +1074,17 @@ def test_an_exempted_stage_never_reads_as_complete(tmp_path: Path) -> None:
 def test_an_unpublished_analytics_section_is_its_own_exit_code(tmp_path: Path) -> None:
     """Stage (b) failing means "nobody can see this cloud", not "you broke it".
 
-    aws_eu_clickhouse_drain_install.sh depends on the distinction: the run that
-    INSTALLS the drain hits this state by construction today, and reporting it
-    as a flat failure is what teaches operators to ignore exit codes.
+    Every bound script depends on the distinction through
+    scripts/deploy/cloud_complete_gate.sh: the run that INSTALLS a drain hits
+    this state by construction today, and reporting it as a flat failure is what
+    teaches operators to ignore exit codes.
     """
     harness = _harness(
         tmp_path,
-        plan={**_ALL_PASS, "section": [1, "aws: /status.json publishes no 'analytics' section"]},
+        plan={
+            **_ALL_PASS,
+            "section": [1, "unobservable", "aws: /status.json publishes no 'analytics' section"],
+        },
     )
     result = harness.run("aws")
 
@@ -741,161 +1094,65 @@ def test_an_unpublished_analytics_section_is_its_own_exit_code(tmp_path: Path) -
     assert "INCOMPLETE ROLLOUT" not in result.stderr
 
 
-def test_the_drain_install_reports_the_pre_deploy_state_in_those_words() -> None:
-    """And the caller that knows what exit 5 means says so, rather than failing."""
-    text = (ROOT / "scripts" / "deploy" / "aws_eu_clickhouse_drain_install.sh").read_text()
-    tail = text[text.index("verify_cloud_complete.sh") :]
-    assert "-eq 5" in tail
-    assert "DRAIN INSTALLED; NOT YET OBSERVABLE FROM OUTSIDE." in tail
-    # Still not zero: a pipeline nobody outside can see is not a finished cloud.
-    assert "exit 5" in tail
-    assert re.search(r'exit "\$VERIFY_RC"', tail)
+def test_an_unparseable_body_is_not_reported_as_a_missing_section(tmp_path: Path) -> None:
+    """Round 2: exit 5 was doing two jobs, and one of its fixes is useless.
 
-
-def test_bring_up_scripts_end_in_the_completeness_check() -> None:
-    """ "The script finished" and "the cloud works" must be the same claim.
-
-    THE OTHER binding test, and note what is NOT here: a list of scripts. Until
-    2026-08-17 this assertion was a five-row `parametrize` of (script, cloud)
-    pairs — a fourth copy of the fleet, in the file whose whole subject is that
-    copies drift. A fourth cloud could ship a bring-up script that printed
-    "Next: ..." and exited 0 and this suite stayed green, because nobody had
-    typed its row.
-
-    The pairs are now fields on the CloudRollout, so a cloud that ships a script
-    without wiring it fails here, and the failure says which file to edit.
+    "Deploy a control plane built from a newer commit" is the right advice for a
+    page that omits the section, and no advice at all for a CDN interstitial.
     """
-    gaps = crc.script_binding_gaps()
-    assert gaps == [], "\n".join(gaps)
-
-    bound = {
-        (script, cloud)
-        for cloud, entry in crc.ROLLOUT_REGISTRY.items()
-        for script in entry.deploy_scripts
-    }
-    assert bound, "no cloud binds any deploy script — the mechanism is not connected"
-    for script, cloud in sorted(bound):
-        text = (ROOT / script).read_text()
-        assert f'verify_cloud_complete.sh" {cloud}' in text, (
-            f"{script} must end by verifying the {cloud} cloud"
-        )
-        tail = text.rstrip().splitlines()[-crc.VERIFIER_TAIL_LINES :]
-        assert any("verify_cloud_complete.sh" in line for line in tail), (
-            f"{script} runs the check but not at the end"
-        )
-
-
-def test_a_new_cloud_with_no_wired_script_fails_ci_naming_the_file(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The BLOCKING case: a fourth cloud ships a script nothing binds.
-
-    Registering the cloud is not enough — that only makes it checkABLE. This is
-    the step that makes it checkED, and it has to fail loudly enough to be
-    actionable: the message names the registry file, the field, and the line to
-    put at the end of the script.
-    """
-    monkeypatch.setitem(
-        crc.ROLLOUT_REGISTRY,
-        "oracle",
-        crc.CloudRollout(
-            cloud="oracle",
-            control_plane_script="scripts/deploy/rollout.sh",
-            drain_install_command="build it",
-        ),
+    harness = _harness(
+        tmp_path,
+        plan={
+            **_ALL_PASS,
+            "section": [
+                1,
+                "unreadable",
+                "aws: the status URL answered 200 but the body is not JSON. First bytes: "
+                "'<!DOCTYPE html><title>Just a moment...'",
+            ],
+        },
     )
-    gaps = crc.script_binding_gaps()
-    joined = "\n".join(gaps)
-    assert gaps
-    assert "src/trusted_router/cloud_rollout_completeness.py" in joined
-    assert "deploy_scripts" in joined
-    assert "verify_cloud_complete.sh" in joined
-    assert "oracle" in joined
+    result = harness.run("aws")
+
+    assert result.returncode == 7
+    assert "UNREADABLE STATUS PAGE" in result.stderr
+    assert "NOT YET OBSERVABLE" not in result.stderr
+    assert "Just a moment" in result.stderr
 
 
-def test_a_bound_script_that_loses_the_call_fails_ci(tmp_path: Path) -> None:
-    """Wiring that is deleted later must fail the same way as wiring never added."""
-    for cloud, entry in crc.ROLLOUT_REGISTRY.items():
-        for script in (entry.control_plane_script, *entry.deploy_scripts):
-            path = tmp_path / script
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(f'bash "${{SCRIPT_DIR}}/verify_cloud_complete.sh" {cloud}\n')
-    for item in crc.ROLLOUT_REGISTRY["gcp"].exempt_deploy_scripts:
-        (tmp_path / item.script).parent.mkdir(parents=True, exist_ok=True)
-        (tmp_path / item.script).write_text("# exempt, no verifier call\n")
-    assert crc.script_binding_gaps(root=tmp_path) == []
+def test_a_stray_interpreter_line_cannot_restore_the_green_banner(tmp_path: Path) -> None:
+    """The bug the verdict contract exists to make impossible.
 
-    victim = crc.ROLLOUT_REGISTRY["azure"].deploy_scripts[0]
-    (tmp_path / victim).write_text('echo "Next: build the pipeline"\n')
-    gaps = crc.script_binding_gaps(root=tmp_path)
-    assert any(victim in gap and "does not END in" in gap for gap in gaps), gaps
-
-
-def test_a_script_that_runs_the_verifier_unclaimed_fails_ci(tmp_path: Path) -> None:
-    """Wiring nobody claims is wiring nobody would miss.
-
-    A script that verifies a cloud, with no registry entry naming it, is one
-    delete away from silence — and the deletion looks like a cleanup.
+    The shell used to capture the module with `2>&1` and classify by the first
+    word. A DeprecationWarning at import time therefore made an EXEMPTED stage
+    unclassifiable — and the fall-through printed the flat green banner. Here
+    the same warning is emitted, on stderr and on stdout, and the verdict is
+    still read correctly because it is the last line of a stream nothing else
+    owns.
     """
-    for cloud, entry in crc.ROLLOUT_REGISTRY.items():
-        for script in (entry.control_plane_script, *entry.deploy_scripts):
-            path = tmp_path / script
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(f'bash "${{SCRIPT_DIR}}/verify_cloud_complete.sh" {cloud}\n')
-    for item in crc.ROLLOUT_REGISTRY["gcp"].exempt_deploy_scripts:
-        (tmp_path / item.script).write_text("# exempt\n")
-    (tmp_path / "scripts" / "deploy" / "oracle_bring_up.sh").write_text(
-        'bash "${SCRIPT_DIR}/verify_cloud_complete.sh" oracle\n'
+    waived = "ACCEPTED-ABSENT (azure): canary only — suppressing: never sets the outbox"
+    harness = _harness(tmp_path, plan={**_ALL_PASS, "outbox": [0, "waived", waived]})
+    result = harness.run(
+        "azure",
+        env={
+            "STUB_STDERR_NOISE": "DeprecationWarning: pkg_resources is deprecated as an API",
+            "STUB_STDOUT_NOISE": "warning: a library printed this to stdout",
+        },
     )
-    gaps = crc.script_binding_gaps(root=tmp_path)
-    assert any("oracle_bring_up.sh" in gap and "no CloudRollout claims it" in gap for gap in gaps)
+    assert result.returncode == 6
+    assert "NOT VERIFIED" in result.stderr
+    assert "COMPLETE" not in result.stderr
 
 
-def test_an_unbound_script_must_carry_a_named_reason() -> None:
-    """GCP is exempt, and the exemption is a sentence somebody signed.
+def test_output_with_no_verdict_line_is_fatal_rather_than_green(tmp_path: Path) -> None:
+    """A gate that cannot classify its own output must not clear a cloud."""
+    harness = _harness(tmp_path, plan=_ALL_PASS)
+    verifier_dir = harness.verifier.parent
+    broken = harness.root / "src" / "trusted_router" / "cloud_rollout_completeness.py"
+    broken.write_text("import sys\nprint('no sentinel here')\nsys.exit(0)\n")
+    assert verifier_dir.is_dir()
 
-    `rollout.sh` runs inside the deploy workflow, so ending it in a public fetch
-    of the page that same cloud serves would make an outage un-deployable
-    through. That is a real reason — and the requirement is that it be stated in
-    code, next to the exemption, rather than being a row absent from a list.
-    """
-    exemptions = [
-        (cloud, item)
-        for cloud, entry in crc.ROLLOUT_REGISTRY.items()
-        for item in entry.exempt_deploy_scripts
-    ]
-    assert exemptions, "if nothing is exempt, this test is stale — delete it"
-    for cloud, item in exemptions:
-        assert (ROOT / item.script).is_file(), f"{cloud}: {item.script} does not exist"
-        assert len(item.reason) > 80, f"{cloud}: {item.script} exemption reason is a shrug"
-
-    gcp = crc.ROLLOUT_REGISTRY["gcp"]
-    assert [item.script for item in gcp.exempt_deploy_scripts] == ["scripts/deploy/rollout.sh"]
-    assert "deploy.yml" in gcp.exempt_deploy_scripts[0].reason
-
-
-def test_no_bring_up_script_prints_next_steps_and_returns_zero() -> None:
-    """The regression guard for the actual outage mechanism.
-
-    `aws_eu_clickhouse.sh` ended with `echo "Next: ..."` and exited 0 on
-    2026-08-02. A script whose final word is an instruction has to make that
-    instruction load-bearing, so the assertion is positional and not just
-    "the file contains the string `exit 1` somewhere": the verifier must be
-    invoked, and a failing exit path must come AFTER it. An `exit 1` a hundred
-    lines earlier, in some unrelated precondition, is not this guarantee.
-    """
-    checked = 0
-    for cloud, entry in crc.ROLLOUT_REGISTRY.items():
-        for script in entry.deploy_scripts:
-            lines = (ROOT / script).read_text().splitlines()
-            invocations = [
-                i for i, line in enumerate(lines) if "verify_cloud_complete.sh" in line
-            ]
-            assert invocations, f"{script} never runs the check"
-            after = "\n".join(lines[invocations[0] :])
-            assert re.search(r"^\s*exit\s+(?!0\b)\S+", after, re.MULTILINE), (
-                f"{script} runs the check for {cloud} but has no non-zero exit after it, "
-                "so its result cannot change the script's exit status"
-            )
-            checked += 1
-    assert checked >= 5
+    result = harness.run("aws")
+    assert result.returncode == 2
+    assert "could not classify its own output" in result.stderr
+    assert "COMPLETE" not in result.stderr

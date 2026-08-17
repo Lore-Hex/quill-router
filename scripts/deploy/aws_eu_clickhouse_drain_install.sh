@@ -423,43 +423,57 @@ EOF
 # ---------------------------------------------------------------------------
 # 10. The outside view.
 #
-# Step 9 proves the drain is alive from INSIDE the VPC, using this operator's
-# session on the node. That is the strongest evidence available here and it is
-# still not the question a rollout has to answer, which is whether anyone
-# without a session on that node can tell. Ending on the public check means an
-# install that works only from the installer's shell cannot be mistaken for a
-# finished cloud.
+# Step 9 ran systemctl, the journal and a ClickHouse count on the node and
+# PRINTED them. Be exact about what that is: this script does not assert on any
+# of those three outputs, so what step 9 establishes is that the commands ran —
+# a human still has to read `copies=`, `rows=` and the two counts and decide.
+# An earlier version of the paragraph below said the run had established that
+# the unit "swept, and moved rows out of the outbox", which is the same
+# printing-is-doing mistake one level down, inside the file written to end it.
+#
+# What the gate below adds is the question a rollout has to answer and no
+# in-VPC command can: whether anyone WITHOUT a session on that node can tell.
+# Ending here means an install visible only from the installer's shell cannot
+# be mistaken for a finished cloud.
 #
 # Non-zero on failure on purpose: this script's whole reason for existing is
 # that the previous version of this step was a paragraph of prose and an exit 0.
-#
-# ONE HONEST EXCEPTION, AND IT IS TODAY'S STATE.
-# The outside check reads an `analytics` section that no deployed control plane
-# publishes yet — the field ships with the branch that publishes per-cloud drain
-# lag. So on THE VERY RUN THAT FIXES THE OUTAGE, an unqualified check would
-# print "INCOMPLETE ROLLOUT", every time, with nothing the operator could do
-# about it. That is how you train someone to stop reading exit codes, which is
-# the habit this file exists to break. The verifier gives that state its own
-# exit code (5) and this reports it in those words: the install worked, the
-# outside view does not exist yet, and here is what closes it.
+# require_cloud_complete returns the gate's status unaltered, including 5 (NOT
+# YET OBSERVABLE), which is today's expected state on the very run that fixes
+# the outage — no deployed control plane on this cloud publishes the `analytics`
+# section yet, so an unqualified failure would be a red banner the operator can
+# do nothing about, every time, by design. All five bound scripts report that
+# state in the same words now; the extra paragraph below is the part specific to
+# having just installed a drain.
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/deploy/cloud_complete_gate.sh
+. "${SCRIPT_DIR}/cloud_complete_gate.sh"
+
 VERIFY_RC=0
-bash "${SCRIPT_DIR}/verify_cloud_complete.sh" aws || VERIFY_RC=$?
+require_cloud_complete aws "$(cat <<'NEXT'
+The drain install itself did not fail. Read step 9's output above before
+touching anything: `copies=`, `drain_lag_seconds`, and the two ClickHouse
+counts are printed there and asserted nowhere.
+NEXT
+)" || VERIFY_RC=$?
 
 if [ "$VERIFY_RC" -eq 5 ]; then
   cat >&2 <<'PREDEPLOY'
 
 DRAIN INSTALLED; NOT YET OBSERVABLE FROM OUTSIDE.
 
-What this run established, from inside the VPC (step 9 above): the unit is
-enabled, it swept, and it moved rows out of the outbox.
+What this run did: shipped the code, installed and enabled the unit, and then
+printed the drain's journal and a ClickHouse row count from the node (step 9).
+Read those. Nothing in this script asserts on them.
 
-What it could not establish: that anyone WITHOUT a session on this node can
-tell. https://aws.trustedrouter.com/status.json publishes no `analytics`
+What it could not do at all: tell whether anyone WITHOUT a session on this node
+can see the drain. The tr-eu App Runner control plane -- the deployment holding
+the Aurora DSQL connection, whose /status.json is the URL in
+src/trusted_router/operational_analytics_fleet.py -- publishes no `analytics`
 section, because no control plane deployed to this cloud is built from a commit
 that includes trusted_router.operational_analytics_freshness. Until then the
-drain's health is visible only to whoever is logged in — which is the property
+drain's health is visible only to whoever is logged in, which is the property
 that let it be missing for fifteen days.
 
 To close it:
@@ -468,9 +482,7 @@ To close it:
        bash scripts/deploy/aws_eu_control_plane.sh
   2. bash scripts/deploy/verify_cloud_complete.sh aws
 
-Exiting 5 (not 0): a pipeline nobody outside can see is not a finished cloud.
 PREDEPLOY
-  exit 5
 fi
 
 exit "$VERIFY_RC"
