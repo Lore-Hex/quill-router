@@ -429,7 +429,20 @@ def test_the_postgres_lag_read_bounds_the_pool_wait_and_the_statement() -> None:
 
 
 def test_the_spanner_lag_read_bounds_the_whole_shard_sweep() -> None:
-    """A per-statement timeout across 32 shards is a 32x bound, i.e. not one."""
+    """The budget bounds the CALL, and the call is now a single statement.
+
+    The previous shape handed each of 32 statements the REMAINING budget and
+    raised TimeoutError itself when it ran out. That arithmetic existed to stop
+    a per-statement bound from silently becoming a 32x one -- and it worked,
+    but the underlying read still cost 9.76s against a 3.0s budget in
+    production, so it timed out every time and published `unreachable` for a
+    healthy drain. One statement removes the arithmetic and the problem
+    together: what the client is given IS the ceiling on the whole call.
+
+    The remaining risk -- a client that ignores its own timeout -- is covered
+    not here but by the caller-side bound, proven behaviourally in
+    test_a_backend_that_answers_slowly_does_not_hold_the_status_build_open.
+    """
     from trusted_router.storage_gcp_operational_analytics_outbox import (
         SpannerOperationalAnalyticsOutbox,
     )
@@ -443,10 +456,9 @@ def test_the_spanner_lag_read_bounds_the_whole_shard_sweep() -> None:
         def __exit__(self, *_exc):
             return None
 
-        def execute_sql(self, _sql, *, params, param_types, **kwargs):
+        def execute_sql(self, _sql, **kwargs):
             calls.append(kwargs["timeout"])
-            time.sleep(0.02)
-            return []
+            return [[None]]
 
     class _Database:
         def snapshot(self, **_kwargs):
@@ -457,9 +469,6 @@ def test_the_spanner_lag_read_bounds_the_whole_shard_sweep() -> None:
 
     outbox = SpannerOperationalAnalyticsOutbox(_Database(), _ParamTypes())
 
-    with pytest.raises(TimeoutError):
-        outbox.oldest_enqueued_at(timeout=0.1)
+    outbox.oldest_enqueued_at(timeout=0.1)
 
-    # Each statement got the REMAINING budget, not a fresh copy of it.
-    assert calls == sorted(calls, reverse=True)
-    assert calls[-1] < calls[0]
+    assert calls == [0.1]
