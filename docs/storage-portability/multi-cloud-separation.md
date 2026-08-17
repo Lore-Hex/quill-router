@@ -273,49 +273,146 @@ exists on a node), the script prints the exact command **and exits non-zero**.
 It never prints and returns 0; that behaviour is the outage.
 
 That list is not typed here twice: it is `deploy_scripts` on each `CloudRollout`
-in `src/trusted_router/cloud_rollout_completeness.py`, and CI asserts that every
-named script really does end in the check and that no script runs the check
-unclaimed. Adding a cloud whose bring-up script is unwired fails CI with a
-message naming the file to edit.
+in `src/trusted_router/cloud_rollout_completeness.py`.
+
+### How "this script runs the gate" is established — and where it is only claimed
+
+This is worth reading before trusting the paragraph above, because the first
+version of that binding was a lie of exactly the kind this whole section is
+about. It was a regex: *does the string `verify_cloud_complete.sh <cloud>`
+appear in the script's last N lines?* A heredoc body satisfies that. So does a
+printed instruction. So does a commented-out line. The check that was written to
+stop "printing the step counts as doing the step" was itself satisfied by
+printing the step.
+
+So the binding is now behavioural. `tests/test_deploy_script_execution.py` RUNS
+each bound script to completion in a hermetic harness — a `PATH` containing
+nothing but recording stubs for `aws`/`az`/`gcloud`/`curl`/`ssh`/`systemctl`/…,
+a `$HOME` and `$TMPDIR` inside a temp directory, and a stub
+`verify_cloud_complete.sh` that records that it was called and can be told to
+fail — and asserts three things about what the script DID:
+
+1. it called the gate, for its own cloud;
+2. with the gate failing, the script exits non-zero;
+3. it issues no further cloud CLI calls after the gate answered (the measured
+   form of "the check has to be the last thing it does").
+
+**Proven by execution today:** `aws_eu_clickhouse.sh`,
+`aws_eu_control_plane.sh`, `aws_eu_north_clickhouse.sh`,
+`azure_control_plane.sh`.
+
+**Not proven, and therefore only CLAIMED:**
+`aws_eu_clickhouse_drain_install.sh`. Its middle ships a tarball to the node in
+base64 chunks over SSM and then reads the drain's own journal back to establish
+that rows moved; a stub SSM that answers `Status=Success` to everything would
+make that verification an assertion about the stub. It is recorded as
+`NOT_PROVEN` in `ROLLOUT_REGISTRY` with that reason, and a `NOT_PROVEN` entry
+with a blank reason fails CI. What *is* proven about it is that the shared
+fragment it calls — `scripts/deploy/cloud_complete_gate.sh` — returns the gate's
+exit status unaltered for every code the gate can produce. What is not proven is
+that a real run reaches that call.
+
+A smaller true claim beats a larger false one; that is the whole thesis here, so
+it applies to this section too.
 
 **GCP is the exception, and it is named in code.** `rollout.sh` is not a script
 a human runs; it is a step of the deploy job in `.github/workflows/deploy.yml`,
-which runs on every merge to `main`. Ending it in this check would put a public
-fetch of `trustedrouter.com/status.json` on the deploy path of the cloud that
-*serves* `trustedrouter.com` — the deploy that repairs an outage would fail
-because of the outage it repairs. So GCP carries a `ScriptExemption` with that
-reason in `ROLLOUT_REGISTRY`, and is checked out of band by running
-`bash scripts/deploy/verify_cloud_complete.sh gcp`. An exemption with an empty
-reason fails CI; the mechanism this section replaced allowed the reason to be
-"nobody typed a row".
+which runs on every merge to `main`. Ending *it* in this check would put a public
+fetch of `trustedrouter.com/status.json` in the middle of deploying the cloud
+that *serves* `trustedrouter.com` — the deploy that repairs an outage would
+abort partway, because of the outage it repairs. So GCP carries a
+`ScriptExemption` with that reason in `ROLLOUT_REGISTRY`.
+
+That exemption used to cite "the scheduled analytics freshness workflow" as what
+checks GCP instead. That workflow ships with **no `schedule:` trigger**, on
+purpose and in its own header — so the citation was to a control that does not
+run, and the primary cloud had no automated completeness check at all behind a
+sentence saying it did. The control is now the `verify-cloud-complete` job in
+`.github/workflows/deploy.yml`: it `needs: [deploy]`, so it runs after every
+production mutation, where a failure makes the run red and can never leave GCP
+half-deployed. The exemption references that workflow and job as structured
+data, and CI resolves the reference — an exemption citing a job that is not
+there fails.
+
+Honest caveat, because this is a control that has never fired: it lands with
+this change and has not yet run on a merge.
+
+### The exemption, and what it may not excuse
 
 There is exactly one way to run a cloud without an analytics pipeline: set
 `analytics_absent_reason` on that cloud's entry in
 `src/trusted_router/cloud_rollout_completeness.py`. That is a code change and
 therefore a review, and the check keeps printing the blocker it is suppressing.
-Be clear about its reach: it waives stages (c), (d) **and (e)** — every stage
-that is about analytics at all — for that cloud, until someone deletes it. A run
-under a waiver reports `NOT VERIFIED`, lists what was suppressed, and cannot
-print `COMPLETE`. No cloud has one today.
+
+Its reach is deliberately narrow in two directions:
+
+* **It may excuse an absence, never a measurement.** Stage (e) — a static read
+  of a deploy script — is waivable. So is a stage (c)/(d) failure where the
+  cloud reports `available: false, reason: not_configured`, which is a control
+  plane saying of *itself* that it runs no outbox. A control plane that could
+  not READ its outbox (`unreachable`), or a lag over the bound, or a stale
+  section, is a reading that failed, and no exemption touches it. The previous
+  version waived all of (c), (d) and (e) alike, so a cloud that had been
+  measured and had failed was let through by a sentence about a pipeline that
+  was never built.
+* **It does not exit 0.** A waived run prints `NOT VERIFIED`, lists what was
+  suppressed, and exits **6**. An exemption is a decision to ship without
+  knowing; the only machine-readable signal a caller reads must not say success
+  about something nobody measured.
+
+No cloud has one today.
+
+### Exit codes
+
+`scripts/deploy/cloud_complete_gate.sh` maps these to the same words for every
+bound script, so an operator is never told to fix an install that did not fail:
+
+| code | meaning |
+|---|---|
+| 0 | `COMPLETE`, or `COMPLETE WITH CAVEATS` — every stage measured and passed |
+| 1 | `INCOMPLETE` — a stage was measured and failed |
+| 2 | usage error, or output the gate could not classify (fatal on purpose) |
+| 4 | `DIAGNOSTIC` — an override flag was used; not a verdict |
+| 5 | `NOT YET OBSERVABLE` — the page parses and carries no `analytics` section |
+| 6 | `NOT VERIFIED` — a stage was exempted in code rather than measured |
+| 7 | `UNREADABLE` — 200, and the body is not the status document (CDN interstitial, truncated response) |
+
+5 and 7 used to be the same code. They are not the same problem: deploying a
+newer control plane fixes 5 and does nothing whatever for 7.
 
 ### What the check cannot do
 
-Three limits, stated because a gate that is trusted past its reach is worse than
+Four limits, stated because a gate that is trusted past its reach is worse than
 one that is not trusted at all:
 
-* **It starts from the tables.** A cloud that is in neither deployment table,
-  not in the fleet peers, and named nowhere in `src/` — provisioned by hand,
-  serving traffic — is invisible to all of this, exactly as it is invisible to
-  `/v1/regions` and the marketing map. Step 1 of the checklist below is
-  unavoidable *for a cloud somebody adds properly*; it is not a law of physics.
-* **Stage (e) reads this checkout, not the deployed revision** (above).
+* **It starts from the tables.** A cloud that is in none of the deployment
+  tables `operational_analytics_fleet.deployment_sources()` reads — provisioned
+  by hand, serving traffic, named nowhere in `src/` — is invisible to all of
+  this, exactly as it is invisible to `/v1/regions` and the marketing map. Step 1
+  of the checklist below is unavoidable *for a cloud somebody adds properly*; it
+  is not a law of physics.
+* **Stage (e) reads this checkout, not the deployed revision** (above). It is
+  also the one judgement still made by reading text, and it is the weakest thing
+  in the gate: somebody who wants to beat it can, exactly as the old script
+  binding was beatable. It is kept because the alternative needs cloud
+  credentials, and a check that needs production credentials is a check nobody
+  runs.
 * **It cannot see rows move.** No status page can: an empty outbox and a
   switched-off one publish the same number. That evidence is the two in-cloud
   counts, and the verifier refuses to imply otherwise — a stage that passed on
   weaker evidence downgrades the final banner to `COMPLETE WITH CAVEATS` and
   names what was not shown.
+* **One bound script's tail is claimed, not proven** —
+  `aws_eu_clickhouse_drain_install.sh`, above.
 
 ### What is missing right now
+
+**No cloud publishes the `analytics` section yet.** Verified 2026-08-17 by
+fetching all three status pages: `verify_cloud_complete.sh` exits 5 (NOT YET
+OBSERVABLE) for `gcp`, `aws` and `azure`. The publisher ships in the same change
+as this section; each cloud starts answering when a control plane built from it
+is deployed there. Until then the gate is honest and red, which is the true
+state of the fleet rather than a defect in the gate.
 
 **Azure has no operational-analytics outbox.** `azure_control_plane.sh` sets no
 `TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED` at all, so the cloud enqueues nothing,
@@ -326,20 +423,33 @@ history is unrecorded cannot answer the question canaries exist to answer.
 ### Checklist for the next cloud
 
 1. Add it to the deployment tables (`byok_v1_attestations.STANDALONE_CLOUDS`,
-   `regions.MULTICLOUD_REGION_GEO`). CI now fails until steps 2 and 3 are done.
-2. Add its public base URL to `Settings.synthetic_fleet_peers` so the fleet
-   watches it.
+   `regions.MULTICLOUD_REGION_GEO`, …). CI now fails until steps 2 and 3 are
+   done.
+2. Add a `FleetAnalyticsEndpoint` for it in
+   `src/trusted_router/operational_analytics_fleet.py`, pointing at the public
+   `/status.json` of its **control plane** — the deployment that holds the
+   database connection, which is not always the friendliest hostname. (AWS's is
+   the tr-eu App Runner service, not `aws.trustedrouter.com`.)
 3. Add a `CloudRollout` entry in
    `src/trusted_router/cloud_rollout_completeness.py` naming its control-plane
    deploy script and its drain install command.
 4. List every deploy script for it in that entry's `deploy_scripts`, and end
    each of those scripts with
-   `bash "${SCRIPT_DIR}/verify_cloud_complete.sh" <cloud>`, letting its exit
-   code stand. CI fails until this is done, naming the file. A script that must
-   not be bound goes in `exempt_deploy_scripts` with the reason why.
+
+       SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+       . "${SCRIPT_DIR}/cloud_complete_gate.sh"
+       require_cloud_complete <cloud> "$(cat <<'NEXT'
+       ...what to do about it...
+       NEXT
+       )"
+
+   letting its exit status stand. Add a fixture for it in
+   `tests/deploy_script_harness.py` so the behavioural test can run it; if it
+   cannot be run honestly under stubs, mark it `NOT_PROVEN` with the reason and
+   say so here. CI fails on a `NOT_PROVEN` entry with no reason.
 5. Build the pipeline: an outbox (enabled in the control-plane script), a
    ClickHouse the cloud owns, and a drain installed as a supervised unit.
 6. Run `bash scripts/deploy/verify_cloud_complete.sh <cloud>` until it exits 0
-   **with the plain `COMPLETE` banner** — `COMPLETE WITH CAVEATS` and
-   `NOT VERIFIED` also exit 0 and are not the same claim — then watch two counts
-   ten minutes apart from inside the cloud.
+   **with the plain `COMPLETE` banner** — `COMPLETE WITH CAVEATS` also exits 0
+   and is not the same claim — then watch two counts ten minutes apart from
+   inside the cloud.

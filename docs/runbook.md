@@ -1063,7 +1063,7 @@ It exits non-zero until all five stages hold, each naming its own fix:
 
 | # | Stage | Fix when it fails |
 |---|---|---|
-| a | in the fleet freshness registry | add the cloud to `Settings.synthetic_fleet_peers` |
+| a | in the fleet freshness registry | add a `FleetAnalyticsEndpoint` in `src/trusted_router/operational_analytics_fleet.py` |
 | b | `/status.json` has the `analytics` section | deploy a control plane whose status snapshot publishes `drain_lag_seconds` |
 | c | `analytics.available` is true | the control plane cannot read its outbox — check its database connection |
 | d | `drain_lag_seconds` under bound | the drain is stopped or behind: `bash scripts/deploy/aws_eu_clickhouse_drain_install.sh` |
@@ -1074,37 +1074,57 @@ of the revision the cloud is running: it tells you what a deploy from this
 checkout would set, and stages (b)–(d) are the evidence about the running
 service.
 
-Stages (c), (d) **and (e)** — everything about analytics, i.e. every stage
-except "is anyone watching" and "does the page answer" — are waived together by
-setting `analytics_absent_reason` on the cloud's entry in
-`src/trusted_router/cloud_rollout_completeness.py`. That is a code change and
-therefore a review, and a run with a waiver prints `NOT VERIFIED`, lists what it
-suppressed, and never prints `COMPLETE`. It is a broad hatch; treat adding one
-as shipping a cloud you have decided not to know about.
+Setting `analytics_absent_reason` on the cloud's entry in
+`src/trusted_router/cloud_rollout_completeness.py` waives the STRUCTURAL
+blockers — stage (e), and a stage (c)/(d) failure where the cloud reports
+`available: false, reason: not_configured`, which is a control plane saying of
+itself that it runs no outbox. It does **not** waive a measurement: an outbox
+the control plane could not read (`unreachable`), a lag over the bound, or a
+stale section stays a failure whatever the registry says. A waived run prints
+`NOT VERIFIED`, lists what it suppressed, and exits **6** — not 0. Treat adding
+one as shipping a cloud you have decided not to know about.
 
-Exit codes: `0` a verdict (the banner says `COMPLETE`, `COMPLETE WITH CAVEATS`,
-or `NOT VERIFIED` — read it, they are not the same claim), `1` incomplete,
-`4` a diagnostic run using `--max-lag-seconds`/`--status-url` (never a verdict),
-`5` the cloud publishes no `analytics` section yet, so it cannot be checked from
-outside at all. Nothing about the check can be changed from the environment;
-`TR_MAX_DRAIN_LAG_SECONDS` and `TR_STATUS_URL` are read by nothing and the
-script says so if it sees them.
+Exit codes (`scripts/deploy/cloud_complete_gate.sh` turns each into the same
+words for every bound script):
+
+| code | meaning |
+|---|---|
+| 0 | `COMPLETE`, or `COMPLETE WITH CAVEATS` — read the banner, they are not the same claim |
+| 1 | `INCOMPLETE` — a stage was measured and failed |
+| 2 | usage error, or output the gate could not classify (fatal on purpose) |
+| 4 | a diagnostic run using `--max-lag-seconds`/`--status-url`; never a verdict |
+| 5 | `NOT YET OBSERVABLE` — the page parses and carries no `analytics` section |
+| 6 | `NOT VERIFIED` — a stage was exempted in code rather than measured |
+| 7 | `UNREADABLE` — HTTP 200 and the body is not the status document at all |
+
+No environment variable changes a verdict. `TR_MAX_DRAIN_LAG_SECONDS` and
+`TR_STATUS_URL` are read only so the script can tell you loudly that it is
+ignoring them.
 
 The AWS and Azure bring-up and control-plane scripts end by running this, so
-those exiting 0 means the cloud works. **GCP is the exception:** `rollout.sh`
-runs inside `.github/workflows/deploy.yml`, and ending it here would put a fetch
-of `trustedrouter.com/status.json` on the deploy path of the cloud that serves
-it — the deploy that repairs an outage would fail because of the outage. Run
-`bash scripts/deploy/verify_cloud_complete.sh gcp` yourself instead. The
-exemption and this reason are in `ROLLOUT_REGISTRY`; which scripts must end in
-the check is data there too, so a new cloud whose script is unwired fails CI.
+those exiting 0 means the cloud works. That is not taken on trust: those scripts
+are executed end to end against a stub `PATH` in
+`tests/test_deploy_script_execution.py`, which asserts each one calls the gate
+and cannot exit 0 over a failing gate. The one exception is
+`aws_eu_clickhouse_drain_install.sh`, whose SSM-heavy middle cannot be stubbed
+honestly — its tail is claimed, not proven, and `ROLLOUT_REGISTRY` says so.
+
+**GCP is the exception:** `rollout.sh` runs inside
+`.github/workflows/deploy.yml`, and ending it here would put a fetch of
+`trustedrouter.com/status.json` in the middle of deploying the cloud that serves
+it — the deploy that repairs an outage would abort partway. GCP is instead
+checked by the `verify-cloud-complete` job in that same workflow, which runs
+after every production mutation. You can always run
+`bash scripts/deploy/verify_cloud_complete.sh gcp` yourself.
 
 If a script exits non-zero it prints the exact next command; run it and re-run
 the script, which is idempotent. Do not work around the exit code — that is the
 failure mode this exists to stop.
 
-**Known state as of 2026-08-17:** `azure` fails stage (e). Azure has no
-operational-analytics outbox at all. See
+**Known state as of 2026-08-17, measured:** all three clouds exit 5. No deployed
+control plane publishes the `analytics` section yet; the publisher ships in this
+same change and each cloud starts answering when it is redeployed there. Azure
+additionally fails stage (e): it has no operational-analytics outbox at all. See
 `docs/storage-portability/multi-cloud-separation.md` §7 for the full definition
 of done and the checklist for a new cloud.
 
