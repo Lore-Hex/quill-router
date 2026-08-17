@@ -28,7 +28,8 @@
     {% elif phone_error == 'expired' %}<p class="notice bad">That code expired. Send a new one.</p>
     {% elif phone_error == 'too_many_attempts' %}<p class="notice bad">Too many attempts — that code is now dead. Send a new one.</p>
     {% elif phone_error == 'no_pending' %}<p class="notice bad">No code is waiting. Send one first.</p>
-    {% elif phone_error == 'rate' %}<p class="notice bad">A code was just sent. Wait a moment before asking for another.</p>{% endif %}
+    {% elif phone_error == 'rate' %}<p class="notice bad">A code was just sent. Wait a moment before asking for another.</p>
+    {% elif phone_error == 'consent' %}<p class="notice bad">Tick the consent box before we can text or call you.</p>{% endif %}
     {% if phone_error == 'funding' %}<p class="notice bad">Add credits first — phone verification is available after your first top-up. <a href="/console/credits?purpose=identity_verification">Add credits</a></p>
     {% elif phone_error == 'email' %}<p class="notice bad">Add an email address before verifying a phone. <a href="/console/account/preferences">Add email</a></p>{% endif %}
     {% if phone_sent == 'voice' %}<p class="notice ok">We're calling {{ phone_pending }} now — pick up to hear your code. It expires in 10 minutes.</p>
@@ -94,6 +95,22 @@
           <p><strong>Phone call</strong></p>
           <p class="muted">We'll call this number and read you a 6-digit code. (Text messages are coming once carrier registration completes.)</p>
         {% endif %}
+        {# The Call to Action. Every element below is required by CTIA and is what a
+           10DLC campaign vetter looks for at the point a number is collected: who
+           is sending, what is sent, how often, cost, how to stop, how to get help,
+           and the two policy links. It is a real gate — the server refuses a
+           submission without `sms_consent`, so it cannot be bypassed by posting
+           the form directly.
+
+           The sentence comes from _sms_consent.html, the same partial the PUBLIC
+           /sms page renders, because the console is behind a login and a CTA a
+           vetter cannot see is a CTA that does not count. Campaign 30909 was
+           exactly that: the submission and /sms both described this checkbox
+           while it existed in neither. #}
+        <label class="consent">
+          <input type="checkbox" name="sms_consent" value="yes" required>
+          <span>{% with consent_links_new_tab = true %}{% include "_sms_consent.html" %}{% endwith %}</span>
+        </label>
         <button class="btn primary" type="submit" {% if resend_wait_seconds %}disabled{% endif %}>{% if resend_wait_seconds %}You can request a code in {{ resend_wait_seconds }}s{% else %}Send code{% endif %}</button>
       </form>
       <p class="muted">A phone call works on any number, including landlines and desk phones, and needs no carrier registration. <a href="/docs/notify">What we send</a>.</p>

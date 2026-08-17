@@ -81,6 +81,7 @@ def register(app: FastAPI) -> None:
         settings: SettingsDep,
         phone: str = Form(""),
         channel: str = Form("voice"),
+        sms_consent: str = Form(""),
     ) -> Response:
         """Send a verification code to a number the visitor claims."""
         # Fresh read, not the session snapshot: the floor must see the send
@@ -90,6 +91,20 @@ def register(app: FastAPI) -> None:
         missing_requirements = missing_phone_verification_requirements(current, settings)
         if missing_requirements:
             return _back(f"error={missing_requirements[0]}")
+
+        # Consent is a GATE, not a notice: a checkbox enforced only in the
+        # browser is decoration, since anyone can post this form without it, and
+        # the consent record we would then show a carrier would be a claim with
+        # nothing behind it. 10DLC campaign 30909 was rejected for a Call to
+        # Action that could not be verified, and the honest reason was that the
+        # checkbox described in the submission did not exist at all.
+        #
+        # Checked AFTER the funding and email requirements, matching the sibling
+        # /notify/phone/start route: those are eligibility, and an unfunded
+        # account is not even shown this form, so "you cannot do this yet" is
+        # the useful answer rather than "tick a box you never saw".
+        if sms_consent.strip().lower() not in {"yes", "on", "true", "1"}:
+            return _back("error=consent")
         allowed, wait = pv.can_resend(current)
         if not allowed:
             # Without a floor, this form is a way to ring someone else's phone
