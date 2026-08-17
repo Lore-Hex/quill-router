@@ -361,6 +361,21 @@ class BlogIndexPost:
     image: str
 
 
+OPENROUTER_ALTERNATIVES_VERIFIED_ON = "2026-08-17"
+OPENROUTER_ALTERNATIVE_ITEMS: tuple[tuple[str, str], ...] = (
+    ("TrustedRouter", "/compare/openrouter"),
+    ("LiteLLM", "/compare/litellm"),
+    ("Portkey", "/compare/portkey"),
+    ("Vercel AI Gateway", "/compare/vercel-ai-gateway"),
+    ("Cloudflare AI Gateway", "/compare/cloudflare-ai-gateway"),
+    ("Helicone", "/compare/helicone"),
+    ("Requesty", "/compare/requesty"),
+    ("Amazon Bedrock", "/compare/aws-bedrock"),
+    ("Google Vertex AI", "/compare/google-vertex-ai"),
+    ("Direct provider APIs", "/providers"),
+)
+
+
 _NOT_FOUND_PAGE = PublicPage(
     template="public/not_found.html",
     title="Page Not Found",
@@ -1171,10 +1186,32 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "openrouter-alternative": PublicPage(
         template="public/seo_openrouter_alternative.html",
         og_card="openrouter-alternative.png",
-        title="OpenRouter Alternative — TrustedRouter",
+        title="OpenRouter Alternatives: 10 AI Gateways Compared (2026)",
         description=(
-            "Keep the OpenAI SDK and change one base URL. Route the same model IDs "
-            "through an open-source, hardware-attested gateway with no prompt or output logs."
+            "Compare ten OpenRouter alternatives by model access, self-hosting, privacy, "
+            "fallback, observability, and price. Keep your SDK and choose the right gateway."
+        ),
+        faq_items=(
+            (
+                "What is the best OpenRouter alternative in 2026?",
+                "There is no single best choice. TrustedRouter fits teams that want hosted multi-provider access with a hardware-attested prompt path. LiteLLM fits teams that want to self-host. Portkey fits governance-heavy gateway deployments. Vercel AI Gateway fits Vercel and AI SDK applications. Bedrock and Vertex AI fit cloud-native procurement and IAM.",
+            ),
+            (
+                "What is the easiest OpenRouter alternative to migrate to?",
+                "An OpenAI-compatible hosted gateway is usually the easiest migration because the SDK can stay in place. With TrustedRouter, change the base URL to https://api.trustedrouter.com/v1, replace the API key, and test the model IDs and provider controls used by your application.",
+            ),
+            (
+                "Which OpenRouter alternative can I self-host?",
+                "LiteLLM is designed for teams that want to operate their own OpenAI-compatible proxy. Portkey and Helicone also publish self-hosting options. TrustedRouter publishes its gateway and control-plane source for teams that want the same routing and attestation architecture under their own control.",
+            ),
+            (
+                "Which OpenRouter alternative is best for privacy?",
+                "Compare the entire request path, not only the gateway policy. TrustedRouter's attested gateway never stores prompt or output content. Every downstream route separately identifies zero-data-retention status and independently verified end-to-end confidential compute so sensitive workloads can fail closed on the required privacy tier.",
+            ),
+            (
+                "Can I keep using the OpenAI SDK?",
+                "Yes. TrustedRouter, LiteLLM, Portkey, Vercel AI Gateway, Cloudflare AI Gateway, Helicone, and Requesty all offer OpenAI-compatible paths. Compatibility varies for advanced fields, Responses API features, tools, images, streaming events, and provider-specific controls, so test the exact surface your application uses.",
+            ),
         ),
     ),
     "private-llm-api": PublicPage(
@@ -2037,6 +2074,31 @@ def _render_public_page(
         if page_key is not None and page.template.startswith("public/seo_")
         else None
     )
+    verified_on_label: str | None = None
+    page_specific_json_ld: tuple[dict[str, object], ...] = ()
+    if page_key == "openrouter-alternative":
+        verified_on_label = datetime.fromisoformat(
+            OPENROUTER_ALTERNATIVES_VERIFIED_ON
+        ).strftime("%B %-d, %Y")
+        page_specific_json_ld = (
+            {
+                "@type": "WebPage",
+                "name": page.title,
+                "url": canonical_url,
+                "description": page.description,
+                "dateModified": OPENROUTER_ALTERNATIVES_VERIFIED_ON,
+            },
+            _item_list_node(
+                name="OpenRouter alternatives compared by TrustedRouter",
+                items=[
+                    {
+                        "name": name,
+                        "url": f"https://{settings.trusted_domain}{href}",
+                    }
+                    for name, href in OPENROUTER_ALTERNATIVE_ITEMS
+                ],
+            ),
+        )
     return (
         _env()
         .get_template(page.template)
@@ -2058,8 +2120,10 @@ def _render_public_page(
             robots_meta=robots_meta,
             faq_items=page.faq_items,
             catalog_evidence=catalog_evidence,
+            verified_on_label=verified_on_label,
             json_ld_blob=_json_ld_graph(
                 _breadcrumb_node(settings, (("Home", "/"), (page.title, path))),
+                *page_specific_json_ld,
                 _faq_node(page.faq_items),
                 _catalog_evidence_item_list_node(settings, catalog_evidence),
             ),

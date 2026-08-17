@@ -1199,7 +1199,7 @@ def test_high_authority_pages_link_the_primary_intent_hubs(client: TestClient) -
         "AI gateways",
         "Private and ZDR APIs",
         "EU AI infrastructure",
-        "OpenRouter migration",
+        "OpenRouter alternatives",
         "Agents and coding tools",
         "Production use cases",
     ]:
@@ -1215,6 +1215,64 @@ def test_high_authority_pages_link_the_primary_intent_hubs(client: TestClient) -
     assert 'href="/docs/migrate-from-openrouter"' in migration.text
     assert 'href="/compare/models"' in agents.text
     assert 'href="/leaderboard"' in comparisons.text
+
+
+def test_openrouter_alternatives_page_matches_comparison_intent(
+    client: TestClient,
+) -> None:
+    response = client.get("/openrouter-alternative")
+
+    assert response.status_code == 200
+    assert (
+        "<title>OpenRouter Alternatives: 10 AI Gateways Compared (2026)</title>"
+        in response.text
+    )
+    assert "TrustedRouter | TrustedRouter" not in response.text
+    assert (
+        '<link rel="canonical" href="https://trustedrouter.com/openrouter-alternative">'
+        in response.text
+    )
+    assert "<h1>OpenRouter Alternatives: 10 AI Gateways Compared (2026)</h1>" in response.text
+    assert "Reviewed August 17, 2026" in response.text
+    assert "The best OpenRouter alternative depends on why you are changing." in response.text
+    assert "10 OpenRouter alternatives compared" in response.text
+    for path in [
+        "/compare/openrouter",
+        "/compare/litellm",
+        "/compare/portkey",
+        "/compare/vercel-ai-gateway",
+        "/compare/cloudflare-ai-gateway",
+        "/compare/helicone",
+        "/compare/requesty",
+        "/compare/aws-bedrock",
+        "/compare/google-vertex-ai",
+        "/providers",
+    ]:
+        assert f'href="{path}"' in response.text
+    for official_source in [
+        "https://openrouter.ai/docs/faq",
+        "https://docs.litellm.ai/",
+        "https://portkey.ai/docs/product/ai-gateway",
+        "https://vercel.com/docs/ai-gateway",
+        "https://developers.cloudflare.com/ai-gateway/",
+        "https://docs.helicone.ai/gateway/overview",
+        "https://www.requesty.ai/pricing",
+    ]:
+        assert f'href="{official_source}"' in response.text
+
+    payload = _json_ld(response.text)
+    graph = payload["@graph"]
+    graph_types = {item["@type"] for item in graph}
+    assert {"BreadcrumbList", "WebPage", "ItemList", "FAQPage"}.issubset(graph_types)
+    alternatives = next(
+        item
+        for item in graph
+        if item["@type"] == "ItemList"
+        and item["name"] == "OpenRouter alternatives compared by TrustedRouter"
+    )
+    assert alternatives["numberOfItems"] == 10
+    assert "Which OpenRouter alternative can I self-host?" in response.text
+    assert response.text.count("Create my API key") == 2
 
 
 def test_exact_intent_search_landings_are_message_matched(client: TestClient) -> None:
