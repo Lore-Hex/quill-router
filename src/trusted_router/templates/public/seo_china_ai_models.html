@@ -34,7 +34,7 @@ reply = client.chat.completions.create(
 <section class="compare-matrix" aria-label="Vendor endpoint compared with a US-operated route">
   <div class="matrix-row matrix-head"><span></span><strong>The lab's own API</strong><strong>A US-operated route for the same weights</strong></div>
   <div class="matrix-row"><span>Who built the model</span><span>The Chinese lab</span><span>The same Chinese lab. Routing does not change this.</span></div>
-  <div class="matrix-row"><span>Who operates the endpoint</span><span>A company whose operating home is China &mdash; named in its own policy where one is published, otherwise the group&rsquo;s own filing</span><span>A company registered in the United States, named in its own terms or filing</span></div>
+  <div class="matrix-row"><span>Who operates the endpoint</span><span>A company whose operating home is China &mdash; named in its own policy where one is published, otherwise the group&rsquo;s own filing</span><span>A company headquartered in the United States, named in its own terms or filing</span></div>
   <div class="matrix-row"><span>Where the request is sent</span><span>To the lab's operator</span><span>To that US provider. The request is not sent on to the originating lab.</span></div>
   <div class="matrix-row"><span>How you select it</span><span>Call the vendor route directly</span><span>Set <span class="mono">provider.jurisdiction</span> to <span class="mono">us</span>, or pin operators with <span class="mono">provider.only</span></span></div>
   <div class="matrix-row"><span>Retention posture</span><span>Whatever that vendor's policy says</span><span>A separate field per provider. Jurisdiction and retention are independent; the table below shows both.</span></div>
