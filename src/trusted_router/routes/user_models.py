@@ -5,11 +5,22 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, NoReturn
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from trusted_router.auth import ManagementPrincipal, Principal, SettingsDep
-from trusted_router.custom_model_billing import validate_custom_model_price
+from trusted_router.auth import (
+    ManagementPrincipal,
+    Principal,
+    SettingsDep,
+    require_management,
+)
+from trusted_router.byok_crypto import decrypt_user_model_secret
+from trusted_router.config import Settings
+from trusted_router.custom_model_billing import (
+    HUMAN_PRICE_MAX_MICRODOLLARS_PER_M,
+    MACHINE_PRICE_MAX_MICRODOLLARS_PER_M,
+    validate_custom_model_price,
+)
 from trusted_router.custom_model_rules import assert_user_can_create_custom_models
 from trusted_router.errors import api_error
 from trusted_router.money import format_money_display
@@ -21,6 +32,7 @@ from trusted_router.schemas import (
 from trusted_router.serialization import user_model_owner_shape
 from trusted_router.services.user_model_probe import probe_user_model
 from trusted_router.services.user_model_secrets import (
+    USER_MODEL_SIGNING_PURPOSE,
     encrypt_user_model_endpoint_key,
     encrypt_user_model_signing_secret,
 )
@@ -33,6 +45,7 @@ from trusted_router.user_model_rules import (
     validate_endpoint_url,
     validate_user_model_display_name,
     validate_user_model_slug,
+    verify_clock_signature,
 )
 
 
@@ -249,10 +262,10 @@ def register_user_model_routes(router: APIRouter) -> None:
     @router.post("/user-models/{model_id:path}/clock-in")
     async def clock_in_user_model(
         model_id: str,
-        principal: ManagementPrincipal,
+        request: Request,
         settings: SettingsDep,
     ) -> dict[str, Any]:
-        existing = _require_owner_user_model(model_id, principal)
+        existing = await _clock_target(model_id, request, settings)
         result = await probe_user_model(existing, settings)
         if not result.ok:
             STORE.set_user_model_online(
@@ -271,9 +284,10 @@ def register_user_model_routes(router: APIRouter) -> None:
     @router.post("/user-models/{model_id:path}/clock-out")
     async def clock_out_user_model(
         model_id: str,
-        principal: ManagementPrincipal,
+        request: Request,
+        settings: SettingsDep,
     ) -> dict[str, Any]:
-        existing = _require_owner_user_model(model_id, principal)
+        existing = await _clock_target(model_id, request, settings)
         updated = STORE.set_user_model_online(
             existing.id,
             owner_user_id=existing.owner_user_id,
@@ -284,9 +298,10 @@ def register_user_model_routes(router: APIRouter) -> None:
     @router.post("/user-models/{model_id:path}/heartbeat")
     async def heartbeat_user_model(
         model_id: str,
-        principal: ManagementPrincipal,
+        request: Request,
+        settings: SettingsDep,
     ) -> dict[str, Any]:
-        existing = _require_owner_user_model(model_id, principal)
+        existing = await _clock_target(model_id, request, settings)
         interval = existing.heartbeat_interval_seconds
         if interval is None:
             raise api_error(
@@ -404,6 +419,49 @@ def _earnings_summary_shape(summary: dict[str, int]) -> dict[str, int | str]:
     }
 
 
+async def _clock_target(
+    model_id: str,
+    request: Request,
+    settings: Settings,
+) -> UserProvidedModel:
+    """Resolve the model for an availability call.
+
+    Two ways in. A management principal (a session or a management key) is the
+    console path. The other is a signature made with the model's OWN signing
+    secret — the credential the owner already holds and already uses to check
+    the requests TrustedRouter sends them. That is what the harness uses: a
+    laptop that can clock one model in and out should not also be able to mint
+    API keys or spend the workspace's credits, which is everything a management
+    key can do. It deliberately does NOT extend to editing the model: changing
+    endpoint_url decides where prompts go, so it stays with the owner's account.
+    """
+    model = STORE.get_user_model(normalize_custom_model_id(model_id))
+    signature = request.headers.get("tr-signature")
+    if signature and model is not None and model.encrypted_signing_secret is not None:
+        try:
+            secret = decrypt_user_model_secret(
+                model.encrypted_signing_secret,
+                settings,
+                workspace_id=model.owner_workspace_id,
+                purpose=USER_MODEL_SIGNING_PURPOSE,
+            )
+            verify_clock_signature(
+                secret,
+                signature,
+                await request.body(),
+                now=datetime.now(UTC),
+            )
+        except ValueError as exc:
+            raise api_error(
+                401,
+                "Invalid model signature",
+                ErrorType.UNAUTHORIZED,
+            ) from exc
+        return model
+    principal = require_management(request, settings)
+    return _require_owner_user_model(model_id, principal)
+
+
 def _require_owner_user_model(
     model_id: str,
     principal: Principal,
@@ -419,9 +477,15 @@ def _validate_price(prompt_price: int, completion_price: int, *, kind: str) -> N
     try:
         validate_custom_model_price(prompt_price, completion_price, kind=kind)
     except ValueError as exc:
+        cap = (
+            HUMAN_PRICE_MAX_MICRODOLLARS_PER_M
+            if kind == "human"
+            else MACHINE_PRICE_MAX_MICRODOLLARS_PER_M
+        )
         raise api_error(
             400,
-            "Custom model price is outside the allowed range for this kind",
+            f"A {kind} model prices between 0 and {cap} microdollars per million "
+            f"tokens; got {prompt_price} prompt and {completion_price} completion",
             ErrorType.BAD_REQUEST,
         ) from exc
 

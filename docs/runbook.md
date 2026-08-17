@@ -102,7 +102,12 @@ ClickHouse degraded:
 1. Keep inference and Spanner settlement alive. Never make ClickHouse part of
    the synchronous prompt or billing path.
 2. Check `tr_operational_analytics_outbox` and `tr_analytics_outbox` oldest-row
-   lag. The drainer must catch up before either queue's retention window.
+   lag. The drainer must catch up before either queue's retention window. The
+   first of those is published without credentials as `analytics.drain_lag_seconds`
+   in every cloud's `/status.json`; `PYTHONPATH=src python3 -m
+   clickhouse.check_fleet_analytics_freshness` reads it for the whole fleet.
+   A `not_configured` reason means that deployment has no outbox wired at all,
+   which is a different problem from a stopped drain.
 3. Check all three ClickHouse replicas, disk capacity, and Keeper delay.
 4. Start `tr-clickhouse-operational-ingest.service`, then run
    `clickhouse.verify_spanner_delivery` and confirm no missing or mismatched

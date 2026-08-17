@@ -21,6 +21,12 @@ from trusted_router.operational_analytics import (
     OperationalAnalyticsClient,
     stable_rows_fingerprint,
 )
+from trusted_router.operational_analytics_freshness import (
+    BACKEND_SPANNER,
+    REASON_NOT_CONFIGURED,
+    REASON_UNREACHABLE,
+    OutboxFreshness,
+)
 from trusted_router.storage import (
     AcquisitionAttribution,
     ActivationReminderTask,
@@ -143,6 +149,11 @@ from trusted_router.types import IdentityVerificationStatus, UsageType
 
 T = TypeVar("T")
 log = logging.getLogger(__name__)
+
+#: Whole-call budget for the /status.json outbox-lag read. Same 3s as
+#: `readiness_check`, and the same rule: a public page degrades rather than
+#: waits. See `SpannerBigtableStore.operational_analytics_outbox_freshness`.
+OUTBOX_FRESHNESS_TIMEOUT_SECONDS = 3.0
 
 
 def _empty_usage_bucket(bucket: str) -> dict[str, Any]:
@@ -900,6 +911,8 @@ class SpannerBigtableStore:
         session_id: str | None = None,
         session_url: str | None = None,
         decision_code: int | None = None,
+        decision_reason: str | None = None,
+        decision_reason_code: int | None = None,
         verified_name: str | None = None,
         increment_attempts: bool = False,
     ) -> User | None:
@@ -919,6 +932,10 @@ class SpannerBigtableStore:
                 user.veriff_session_url = session_url
             if decision_code is not None:
                 user.veriff_decision_code = decision_code
+            if decision_reason is not None:
+                user.veriff_decision_reason = decision_reason
+            if decision_reason_code is not None:
+                user.veriff_decision_reason_code = decision_reason_code
             if verified_name is not None:
                 user.identity_verified_name = verified_name
             if increment_attempts:
@@ -2927,6 +2944,34 @@ class SpannerBigtableStore:
 
     def public_analytics_snapshot(self, name: str) -> dict[str, Any] | None:
         return self._require_operational_analytics().public_snapshot(name)
+
+    def operational_analytics_outbox_freshness(self) -> OutboxFreshness:
+        """The age of the oldest row the drain has not delivered yet.
+
+        Failures are reported as `unreachable`, never as an empty outbox: the
+        two are one value apart in the naive shape (`None`) and opposite in
+        meaning, and this is the number an external check uses to decide the
+        pipeline is alive.
+
+        Bounded like `readiness_check` above, and for the sharper reason that
+        this read is on the PUBLIC /status.json path inside an async handler --
+        a blocking wait there stops the event loop, not one thread. The budget
+        covers the whole 32-shard sweep rather than each statement, so the cap
+        is a real ceiling on how long the status page can be held up; a timeout
+        raises and degrades to `unreachable` here, and never propagates.
+        """
+        outbox = self._operational_analytics_outbox
+        if outbox is None:
+            return OutboxFreshness.unavailable(BACKEND_SPANNER, REASON_NOT_CONFIGURED)
+        try:
+            oldest = outbox.oldest_enqueued_at(timeout=OUTBOX_FRESHNESS_TIMEOUT_SECONDS)
+        except Exception as exc:
+            log.exception(
+                "spanner.operational_analytics_outbox_freshness_failed",
+                extra={"error_class": type(exc).__name__, "error_message": str(exc)[:500]},
+            )
+            return OutboxFreshness.unavailable(BACKEND_SPANNER, REASON_UNREACHABLE)
+        return OutboxFreshness(backend=BACKEND_SPANNER, oldest_enqueued_at=oldest)
 
     def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:
         if self._operational_analytics_outbox is not None:

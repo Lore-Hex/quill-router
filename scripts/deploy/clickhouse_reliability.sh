@@ -12,7 +12,15 @@ NAME="${TR_CLICKHOUSE_NAME:-tr-clickhouse-1}"
 DISK="${TR_CLICKHOUSE_DISK:-${NAME}}"
 ARCHIVE_BUCKET="${TR_CLICKHOUSE_ARCHIVE_BUCKET:-${PROJECT_ID}-tr-clickhouse-archive}"
 SNAPSHOT_POLICY="${TR_CLICKHOUSE_SNAPSHOT_POLICY:-tr-clickhouse-daily-snapshots}"
-NODE_SERVICE_ACCOUNT="${TR_CLICKHOUSE_SERVICE_ACCOUNT:-${PROJECT_NUMBER}-compute@developer.gserviceaccount.com}"
+# The dedicated node identity, NOT the compute default. All three ClickHouse
+# nodes were moved onto tr-clickhouse@ as a least-privilege change, but this
+# default kept naming the old broad compute-default SA -- so the archive
+# bucket's objectUser binding named an identity the nodes no longer used, and
+# the archiver plus the restore drill failed 403 for ten hours before anyone
+# noticed (SOC 2 NC-005, 2026-08-16). Re-running this script with the old
+# default reproduces that outage, which is why the default is the fix and not
+# just the runbook.
+NODE_SERVICE_ACCOUNT="${TR_CLICKHOUSE_SERVICE_ACCOUNT:-tr-clickhouse@${PROJECT_ID}.iam.gserviceaccount.com}"
 ALERT_CHANNEL_DISPLAY_NAME="${TR_CLICKHOUSE_ALERT_CHANNEL_DISPLAY_NAME:-TrustedRouter Spanner on-call}"
 ALERT_EMAIL="${TR_CLICKHOUSE_ALERT_EMAIL:-security@trustedrouter.com}"
 APPLY=0

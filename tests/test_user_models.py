@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.custom_model_billing import (
+    HUMAN_PRICE_MAX_MICRODOLLARS_PER_M,
+    MACHINE_PRICE_MAX_MICRODOLLARS_PER_M,
     custom_model_cost_microdollars,
     owner_share_microdollars,
     user_model_payout_event_id,
@@ -1373,3 +1375,152 @@ def test_local_user_model_streaming_bills_from_the_usage_chunk_and_pays_owner(
     generation = next(iter(STORE.target.generation_store.generations.values()))
     assert generation.custom_model_id == created["id"]
     assert generation.tokens_completion == 20
+
+
+def _clock_signature(secret: str, body: bytes = b"") -> str:
+    import hashlib
+    import hmac
+    import time
+
+    timestamp = int(time.time())
+    digest = hmac.new(
+        secret.encode("utf-8"),
+        str(timestamp).encode("ascii") + b"." + body,
+        hashlib.sha256,
+    ).hexdigest()
+    return f"t={timestamp},v1={digest}"
+
+
+def test_clock_calls_accept_the_models_own_signing_secret(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A laptop that clocks one model in should not hold a key that can mint
+    API keys or spend the workspace's credits."""
+
+    async def passing_probe(*_args: Any, **_kwargs: Any) -> ProbeResult:
+        return ProbeResult(ok=True, detail="ok")
+
+    monkeypatch.setattr("trusted_router.routes.user_models.probe_user_model", passing_probe)
+    created = _create(client)
+    secret = created["signing_secret"]
+    signed = {"TR-Signature": _clock_signature(secret)}
+
+    clocked_in = client.post(f"/v1/user-models/{created['id']}/clock-in", headers=signed)
+    assert clocked_in.status_code == 200, clocked_in.text
+    assert clocked_in.json()["data"]["online"] is True
+
+    beat = client.post(f"/v1/user-models/{created['id']}/heartbeat", headers=signed)
+    assert beat.status_code == 200, beat.text
+    assert beat.json()["data"]["heartbeat_expires_at"]
+
+    clocked_out = client.post(f"/v1/user-models/{created['id']}/clock-out", headers=signed)
+    assert clocked_out.status_code == 200, clocked_out.text
+    assert clocked_out.json()["data"]["online"] is False
+
+
+def test_clock_signature_is_rejected_when_wrong_stale_or_for_another_model(
+    client: TestClient,
+) -> None:
+    import hashlib
+    import hmac
+
+    created = _create(client)
+    other = _create(client, body=_body(slug="second-signed-model"))
+    secret = created["signing_secret"]
+    model = created["id"]
+
+    wrong = client.post(
+        f"/v1/user-models/{model}/heartbeat",
+        headers={"TR-Signature": _clock_signature("not-the-secret")},
+    )
+    assert wrong.status_code == 401
+
+    stale_timestamp = 1_700_000_000
+    stale_digest = hmac.new(
+        secret.encode("utf-8"),
+        str(stale_timestamp).encode("ascii") + b".",
+        hashlib.sha256,
+    ).hexdigest()
+    stale = client.post(
+        f"/v1/user-models/{model}/heartbeat",
+        headers={"TR-Signature": f"t={stale_timestamp},v1={stale_digest}"},
+    )
+    assert stale.status_code == 401
+
+    # A signature valid for one model must not clock in a different one.
+    crossed = client.post(
+        f"/v1/user-models/{other['id']}/heartbeat",
+        headers={"TR-Signature": _clock_signature(secret)},
+    )
+    assert crossed.status_code == 401
+
+    malformed = client.post(
+        f"/v1/user-models/{model}/heartbeat",
+        headers={"TR-Signature": "garbage"},
+    )
+    assert malformed.status_code == 401
+
+    # No credential at all is still a management-auth failure, not a 401 bypass.
+    none = client.post(f"/v1/user-models/{model}/heartbeat")
+    assert none.status_code in {401, 403}
+
+
+def test_editing_a_model_still_requires_the_owner_account(client: TestClient) -> None:
+    """The signing secret buys availability, not control: whoever holds it must
+    not be able to re-point endpoint_url and take the traffic."""
+    created = _create(client)
+    response = client.patch(
+        f"/v1/user-models/{created['id']}",
+        headers={"TR-Signature": _clock_signature(created["signing_secret"])},
+        json={"endpoint_url": "https://attacker.example/v1"},
+    )
+    assert response.status_code in {401, 403}
+
+
+def test_console_form_states_the_price_bounds_and_explains_the_id_fields(
+    client: TestClient,
+) -> None:
+    """A price the API will reject must not be submittable, and the three
+    id-ish fields have to say which is which — 'price is outside the allowed
+    range' after a round trip is the worst possible way to learn the rule."""
+    user = STORE.ensure_user("console-help@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    raw_session, _ = STORE.create_auth_session(
+        user_id=user.id,
+        provider="test",
+        label="user model console help",
+        ttl_seconds=3600,
+        workspace_id=workspace.id,
+    )
+    client.cookies.set("tr_session", raw_session)
+
+    page = client.get("/console/user-models")
+    assert page.status_code == 200
+    # the caps the API enforces, available to the form before submit
+    assert str(HUMAN_PRICE_MAX_MICRODOLLARS_PER_M) in page.text
+    assert str(MACHINE_PRICE_MAX_MICRODOLLARS_PER_M) in page.text
+    assert 'id="price-bounds"' in page.text
+    assert "data-price-echo" in page.text
+    # slug vs handle vs upstream model id
+    assert "The last part of the id callers type" in page.text
+    assert "Who callers see as the operator" in page.text
+    assert "Callers never see it" in page.text
+
+
+def test_a_human_model_can_be_registered_for_free(client: TestClient) -> None:
+    """Pricing a human model at zero is the first thing anyone does to test one."""
+    body = _body(slug="free-human", kind="human")
+    body["prompt_price_microdollars_per_million_tokens"] = 0
+    body["completion_price_microdollars_per_million_tokens"] = 0
+    created = _create(client, body=body)
+    assert created["prompt_price_microdollars_per_million_tokens"] == 0
+
+    over = _body(slug="too-expensive-human", kind="human")
+    over["prompt_price_microdollars_per_million_tokens"] = (
+        HUMAN_PRICE_MAX_MICRODOLLARS_PER_M + 1
+    )
+    response = client.post("/v1/user-models", headers=HEADERS, json=over)
+    assert response.status_code == 400
+    # the message says the rule, not just that a rule exists
+    assert str(HUMAN_PRICE_MAX_MICRODOLLARS_PER_M) in response.json()["error"]["message"]

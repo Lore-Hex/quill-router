@@ -110,6 +110,13 @@ class User:
     veriff_session_url: str | None = None
     veriff_session_created_at: str | None = None
     veriff_decision_code: int | None = None
+    #: Veriff's granular reason for the last decision, kept for OPERATORS.
+    #: Never rendered to the person being verified when the decision is a
+    #: decline: codes 503/504/505/515-518/526 name the exact fraud signal that
+    #: fired, and Veriff publishes no end-user guidance for them. Resubmission
+    #: reasons are different — Veriff asks integrators to show those.
+    veriff_decision_reason: str | None = None
+    veriff_decision_reason_code: int | None = None
     veriff_attempt_count: int = 0
 
     @property

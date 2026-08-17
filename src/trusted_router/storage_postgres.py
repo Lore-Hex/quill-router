@@ -31,6 +31,12 @@ from trusted_router.custom_model_billing import (
     user_model_authorization_id_from_payout_event_id,
 )
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
+from trusted_router.operational_analytics_freshness import (
+    BACKEND_POSTGRES,
+    REASON_NOT_CONFIGURED,
+    REASON_UNREACHABLE,
+    OutboxFreshness,
+)
 from trusted_router.postgres_dsn import (
     aws_dsql_connection_details,
     dsql_token_is_admin,
@@ -127,6 +133,43 @@ T = TypeVar("T")
 log = logging.getLogger(__name__)
 
 _AWS_DSQL_IAM_AUTH = "aws-dsql"
+
+# SQLSTATEs meaning "the server rolled your transaction back whole; replaying
+# it is the correct response". _run_transaction retries exactly these.
+#
+# Keyed on the SQLSTATE string rather than on a psycopg exception class, and
+# that is the entire point. psycopg generates ONE FLAT CLASS PER SQLSTATE, each
+# deriving straight from its DB-API base, so `SerializationFailure` (40001) and
+# `DeadlockDetected` (40P01) are SIBLINGS of `TransactionRollback` (40000), not
+# subclasses of it. `except psycopg.errors.TransactionRollback` therefore
+# caught only a bare 40000 -- which no server in this fleet emits -- and every
+# real abort fell through to the generic handler as a caller-visible
+# StoreUnavailable. That is how a routine concurrent reserve came back as
+# "Postgres could not service the storage operation" instead of retrying and
+# reporting "insufficient credits" (CI run 31996299784). SQLSTATE is the
+# DATABASE's contract; psycopg's class layout is not.
+#
+# The other two class-40 codes are deliberately absent:
+#   40002 transaction_integrity_constraint_violation -- deterministic, so a
+#         replay fails identically forever.
+#   40003 statement_completion_unknown -- the statement may in fact have
+#         COMMITTED, so replaying it could double-apply money.
+_RETRYABLE_ROLLBACK_SQLSTATES = frozenset(
+    {
+        "40000",  # transaction_rollback
+        "40001",  # serialization_failure -- Spanner ABORTED, DSQL OCC abort
+        "40P01",  # deadlock_detected -- ordinary Postgres lock ordering
+    }
+)
+
+
+#: Hard cap on the /status.json outbox-lag read, applied to BOTH the pool wait
+#: and the statement. Matches `readiness_check`'s 3s, and for the same reason:
+#: a public page must degrade rather than wait. It is far above the read's real
+#: cost -- an index seek on tr_operational_analytics_outbox_enqueued_at_idx --
+#: so hitting it means the database is not answering, which is exactly the
+#: state that should publish `unreachable` instead of hanging the event loop.
+OUTBOX_FRESHNESS_TIMEOUT_SECONDS = 3.0
 
 
 class _IamTokenConnectionPool(ConnectionPool):
@@ -405,22 +448,20 @@ class PostgresStore:
                 with self._pool.connection() as conn:
                     with conn.transaction():
                         return operation(conn)
-            except psycopg.errors.TransactionRollback as exc:
-                # Covers SerializationFailure (40001) *and* DeadlockDetected
-                # (40P01). Both mean "the server rolled you back, try again",
-                # and both are routine: 40001 is how Aurora DSQL reports every
-                # optimistic-concurrency abort, and 40P01 is ordinary Postgres
-                # lock ordering. Retrying only the first would surface
-                # deadlocks to callers as hard failures.
+            except psycopg.Error as exc:
+                # Retry on SQLSTATE, NOT on psycopg's exception classes. See
+                # _RETRYABLE_ROLLBACK_SQLSTATES: psycopg gives every SQLSTATE
+                # its own flat class, so the obvious `except TransactionRollback`
+                # silently caught neither 40001 nor 40P01.
                 #
                 # Safe to retry because the transaction rolled back whole: an
                 # idempotency row inserted on the failed attempt is gone, so
                 # the retry re-inserts and credits exactly once.
-                last_serialization_error = exc
-                continue
-            except psycopg.IntegrityError as exc:
-                raise StoreConflict("Postgres write conflict") from exc
-            except psycopg.Error as exc:
+                if exc.sqlstate in _RETRYABLE_ROLLBACK_SQLSTATES:
+                    last_serialization_error = exc
+                    continue
+                if isinstance(exc, psycopg.IntegrityError):
+                    raise StoreConflict("Postgres write conflict") from exc
                 raise StoreUnavailable("Postgres could not service the storage operation") from exc
         raise StoreConflict(
             "Postgres transaction repeatedly rolled back (serialization failure or deadlock)"
@@ -961,6 +1002,8 @@ class PostgresStore:
         session_id: str | None = None,
         session_url: str | None = None,
         decision_code: int | None = None,
+        decision_reason: str | None = None,
+        decision_reason_code: int | None = None,
         verified_name: str | None = None,
         increment_attempts: bool = False,
     ) -> User | None:
@@ -980,6 +1023,10 @@ class PostgresStore:
                 user.veriff_session_url = session_url
             if decision_code is not None:
                 user.veriff_decision_code = decision_code
+            if decision_reason is not None:
+                user.veriff_decision_reason = decision_reason
+            if decision_reason_code is not None:
+                user.veriff_decision_reason_code = decision_reason_code
             if verified_name is not None:
                 user.identity_verified_name = verified_name
             if increment_attempts:
@@ -4137,6 +4184,59 @@ class PostgresStore:
             return [_dataclass_from_json(row[0], SyntheticProbeSample) for row in rows]
 
         return self._run_transaction(list_samples)
+
+    def operational_analytics_outbox_freshness(self) -> OutboxFreshness:
+        """The age of the oldest row the drain has not delivered yet.
+
+        This is the AWS and Azure answer, and it is the one the outage of
+        2026-08-02..17 needed: on AWS-EU the outbox held 470,370 rows and the
+        only process that could have said so had never been installed. The
+        control plane already holds the DSQL connection, so publishing this
+        costs one index seek behind the status cache and needs no new IAM, no
+        new unit, and no reachability into the VPC.
+
+        BOUNDED ON BOTH AXES, the same way `readiness_check` above is, and for
+        a sharper reason: this read sits on the PUBLIC /status.json build path,
+        inside an async handler. A blocking call there does not tie up one
+        worker thread, it stops the event loop, so an unbounded wait on a hung
+        DSQL cluster would take the status page -- and every other request this
+        process is serving -- down with it. Two separate waits have to be
+        capped, because either one alone is unbounded:
+
+        * `connection(timeout=)`  -- the wait for a pool slot. An exhausted or
+          unreachable pool blocks here having issued no SQL at all, so a
+          statement timeout never gets the chance to fire.
+        * `SET LOCAL statement_timeout` -- the server-side cap on the query,
+          which is what covers a connection that is up but a cluster that is
+          not answering.
+
+        Deliberately NOT run through `_run_transaction`: that retries
+        serialization failures, and a retry loop is the one thing that turns a
+        bounded read back into an unbounded one.
+
+        Every failure -- timeout included -- degrades to `unreachable`. It must
+        never raise: the caller publishes this section unconditionally, and an
+        exception escaping here would drop the key, which the fleet checker
+        reads as "this deployment is running code too old to publish drain
+        lag" and answers by telling somebody to redeploy a healthy service.
+        """
+        outbox = self._operational_analytics_outbox
+        if outbox is None:
+            return OutboxFreshness.unavailable(BACKEND_POSTGRES, REASON_NOT_CONFIGURED)
+        try:
+            with self._pool.connection(timeout=OUTBOX_FRESHNESS_TIMEOUT_SECONDS) as conn:
+                with conn.transaction():
+                    conn.execute(
+                        f"SET LOCAL statement_timeout = '{OUTBOX_FRESHNESS_TIMEOUT_SECONDS:g}s'"
+                    )
+                    oldest = outbox.oldest_enqueued_at_tx(conn)
+        except Exception as exc:
+            log.exception(
+                "postgres.operational_analytics_outbox_freshness_failed",
+                extra={"error_class": type(exc).__name__, "error_message": str(exc)[:500]},
+            )
+            return OutboxFreshness.unavailable(BACKEND_POSTGRES, REASON_UNREACHABLE)
+        return OutboxFreshness(backend=BACKEND_POSTGRES, oldest_enqueued_at=oldest)
 
     def synthetic_rollups(
         self,

@@ -10,6 +10,7 @@ import pytest
 from fastapi import Request
 from fastapi.testclient import TestClient
 
+from trusted_router import storage_rate_limits
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.routes.helpers import (
@@ -311,8 +312,21 @@ async def test_bounded_stream_stops_reading_as_soon_as_cap_is_crossed() -> None:
 
 def test_client_events_rate_limits_the_61st_post_per_key(
     test_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client, headers, _ = _client_with_key(test_settings)
+
+    # The limiter buckets on a TUMBLING window aligned to wall-clock minutes
+    # (`epoch // window_seconds`), not a sliding one. So these 61 posts only
+    # share a bucket if none of them crosses a real minute boundary -- and when
+    # one does, the count restarts and the 61st post is allowed, which fails
+    # this test for a reason that has nothing to do with the limiter being
+    # wrong. Observed on CI 2026-08-17.
+    #
+    # Pinning the clock tests what the name claims (the 61st request *within a
+    # window* is refused) instead of also testing what time it happens to be.
+    fixed_now = dt.datetime(2026, 1, 1, 0, 0, 30, tzinfo=dt.UTC)
+    monkeypatch.setattr(storage_rate_limits, "utcnow", lambda: fixed_now)
 
     responses = [
         client.post("/v1/client-events", headers=headers, json=_batch()) for _ in range(61)

@@ -1700,3 +1700,15 @@ body.console {
     animation: none;
   }
 }
+
+/* Field help under a form input: what the field means, and for prices what the
+   number you just typed actually costs. Small, muted, never a second column. */
+.field-help {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  font-weight: 400;
+}
+.field-help .mono { font-size: 11.5px; }

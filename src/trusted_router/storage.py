@@ -18,6 +18,11 @@ from trusted_router.custom_model_billing import (
     user_model_authorization_id_from_payout_event_id,
 )
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
+from trusted_router.operational_analytics_freshness import (
+    BACKEND_MEMORY,
+    REASON_NOT_CONFIGURED,
+    OutboxFreshness,
+)
 from trusted_router.storage_attribution import InMemoryAcquisitionAttribution
 from trusted_router.storage_auth_sessions import InMemoryAuthSessions
 from trusted_router.storage_broadcast import InMemoryBroadcastDestinations
@@ -558,6 +563,8 @@ class InMemoryStore:
         session_id: str | None = None,
         session_url: str | None = None,
         decision_code: int | None = None,
+        decision_reason: str | None = None,
+        decision_reason_code: int | None = None,
         verified_name: str | None = None,
         increment_attempts: bool = False,
     ) -> User | None:
@@ -577,6 +584,10 @@ class InMemoryStore:
                 user.veriff_session_url = session_url
             if decision_code is not None:
                 user.veriff_decision_code = decision_code
+            if decision_reason is not None:
+                user.veriff_decision_reason = decision_reason
+            if decision_reason_code is not None:
+                user.veriff_decision_reason_code = decision_reason_code
             if verified_name is not None:
                 user.identity_verified_name = verified_name
             if increment_attempts:
@@ -1830,6 +1841,18 @@ class InMemoryStore:
 
     def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:
         self.synthetic_store.record(sample)
+
+    def operational_analytics_outbox_freshness(self) -> OutboxFreshness:
+        """No outbox exists in memory, and this says so rather than returning 0.
+
+        The in-memory backend never enqueues an operational-analytics row and
+        has no drain behind it, so an empty queue here is not evidence that a
+        drain is keeping up -- it is evidence that there is nothing to keep up
+        with. Reporting `not_configured` keeps a dev or test deployment from
+        publishing the healthiest possible number for a pipeline it does not
+        run.
+        """
+        return OutboxFreshness.unavailable(BACKEND_MEMORY, REASON_NOT_CONFIGURED)
 
     def synthetic_probe_samples(
         self,
