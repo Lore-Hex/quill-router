@@ -401,6 +401,7 @@ def test_client_events_marks_configured_and_monitor_workspaces_synthetic(
         synthetic_monitor_api_key="placeholder",
     )
     client.app.state.settings.synthetic_monitor_api_key = raw_key
+    assert _batch()["synthetic"] is False
     response = client.post("/v1/client-events", headers=headers, json=_batch())
     assert response.status_code == 202
     assert STORE.in_memory_target.client_events_batches[0]["synthetic"] is True

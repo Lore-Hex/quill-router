@@ -7,6 +7,7 @@ import sys
 import textwrap
 from pathlib import Path
 
+import clickhouse.build_public_snapshots as snapshot_builder
 from clickhouse.build_public_snapshots import _clickhouse_string_array, build_snapshots
 from trusted_router.config import Settings
 from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
@@ -143,6 +144,31 @@ def test_snapshot_builder_encodes_clickhouse_array_parameters() -> None:
     assert _clickhouse_string_array(["model/a", "model/o'clock", r"model\b"]) == (
         r"['model/a','model/o\'clock','model\\b']"
     )
+
+
+def test_client_reliability_signals_query_contains_bounded_aggregates(monkeypatch) -> None:
+    queries: list[str] = []
+
+    def fake_query(_password: str, sql: str, **_kwargs: object) -> str:
+        queries.append(sql)
+        return (
+            '{"canary_last_received_at":"2026-08-17 11:59:00",'
+            '"canary_last_24h":12,"newest_received_at":"2026-08-17 11:59:30"}\n'
+        )
+
+    monkeypatch.setattr(snapshot_builder, "_query", fake_query)
+
+    row = snapshot_builder._client_reliability_signals(
+        "test-password",
+        now=dt.datetime(2026, 8, 17, 12, tzinfo=dt.UTC),
+    )
+
+    assert row["canary_last_24h"] == 12
+    [query] = queries
+    assert "maxIf(received_at, synthetic = 1)" in query
+    assert "countIf(synthetic = 1 AND received_at >= now() - INTERVAL 24 HOUR)" in query
+    assert "max(received_at)" in query
+    assert "WHERE received_at >= now() - INTERVAL 48 HOUR" in query
 
 
 def test_video_page_uses_shared_snapshot_without_raw_scan(monkeypatch) -> None:

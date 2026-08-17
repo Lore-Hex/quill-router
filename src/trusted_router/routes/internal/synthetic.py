@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import logging
 import random
 from dataclasses import asdict
 from typing import Any
@@ -13,14 +14,18 @@ from starlette.concurrency import run_in_threadpool
 from trusted_router.auth import SettingsDep
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
+from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
 from trusted_router.routes.helpers import json_body
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.storage import STORE, ProviderBenchmarkSample, SyntheticProbeSample
 from trusted_router.storage_models import FUTURE_SAMPLE_SKEW_SECONDS, scrub_provider_error_message
 from trusted_router.synthetic.alerts import alert_on_failure_streak
 from trusted_router.synthetic.cli import rotation_pass
+from trusted_router.synthetic.client_watch import evaluate_client_watch, report_client_watch
+from trusted_router.synthetic.components import OPS_PROBE_TYPES, sample_slo_class_ids
 from trusted_router.synthetic.fleet import record_heartbeat
 from trusted_router.synthetic.probes import (
+    client_telemetry_canary_probe,
     gateway_billing_probe,
     gateway_fallback_probe,
     run_synthetic_once,
@@ -33,6 +38,8 @@ from trusted_router.synthetic.route_health import (
     report_video_generation_failures,
 )
 from trusted_router.types import ErrorType
+
+log = logging.getLogger(__name__)
 
 
 async def _run_and_record(settings: Settings, body: dict[str, Any]) -> dict[str, Any]:
@@ -49,33 +56,44 @@ async def _run_and_record(settings: Settings, body: dict[str, Any]) -> dict[str,
         or "https://trustedrouter.com"
     )
     samples = await run_synthetic_once(settings, monitor_region=monitor_region)
-    if settings.synthetic_monitor_api_key and settings.internal_gateway_token:
+    if settings.synthetic_monitor_api_key:
         timeout = httpx.Timeout(settings.synthetic_monitor_timeout_seconds)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            samples.extend(
-                await gateway_billing_probe(
+            samples.append(
+                await client_telemetry_canary_probe(
                     client,
                     control_plane_base_url=control_plane_base_url,
                     monitor_region=monitor_region
                     or settings.synthetic_monitor_region
                     or settings.primary_region,
                     api_key=settings.synthetic_monitor_api_key,
-                    internal_token=settings.internal_gateway_token,
-                    model=settings.synthetic_monitor_model,
                 )
             )
-            samples.extend(
-                await gateway_fallback_probe(
-                    client,
-                    control_plane_base_url=control_plane_base_url,
-                    monitor_region=monitor_region
-                    or settings.synthetic_monitor_region
-                    or settings.primary_region,
-                    api_key=settings.synthetic_monitor_api_key,
-                    internal_token=settings.internal_gateway_token,
-                    model=settings.synthetic_monitor_model,
+            if settings.internal_gateway_token:
+                samples.extend(
+                    await gateway_billing_probe(
+                        client,
+                        control_plane_base_url=control_plane_base_url,
+                        monitor_region=monitor_region
+                        or settings.synthetic_monitor_region
+                        or settings.primary_region,
+                        api_key=settings.synthetic_monitor_api_key,
+                        internal_token=settings.internal_gateway_token,
+                        model=settings.synthetic_monitor_model,
+                    )
                 )
-            )
+                samples.extend(
+                    await gateway_fallback_probe(
+                        client,
+                        control_plane_base_url=control_plane_base_url,
+                        monitor_region=monitor_region
+                        or settings.synthetic_monitor_region
+                        or settings.primary_region,
+                        api_key=settings.synthetic_monitor_api_key,
+                        internal_token=settings.internal_gateway_token,
+                        model=settings.synthetic_monitor_model,
+                    )
+                )
     benchmark_recorded = 0
     rotation_count = _rotation_count(body)
     if rotation_count and settings.synthetic_monitor_api_key:
@@ -99,6 +117,10 @@ async def _run_and_record(settings: Settings, body: dict[str, Any]) -> dict[str,
         await run_in_threadpool(_record_benchmark_samples, benchmark_samples)
         benchmark_recorded = len(benchmark_samples)
     await run_in_threadpool(_record_probe_samples, samples)
+    try:
+        await run_in_threadpool(_client_watch_pass, settings, samples)
+    except Exception:
+        log.warning("client_watch.pass_failed", exc_info=True)
     return {
         "data": {
             "recorded": len(samples),
@@ -226,6 +248,35 @@ def _record_probe_samples(samples: list[SyntheticProbeSample]) -> None:
 def _record_benchmark_samples(samples: list[ProviderBenchmarkSample]) -> None:
     for sample in samples:
         STORE.record_provider_benchmark(sample)
+
+
+def _client_watch_pass(settings: Settings, samples: list[SyntheticProbeSample]) -> None:
+    if not settings.client_events_enabled:
+        return
+    if not (
+        settings.operational_analytics_clickhouse_url
+        and settings.operational_analytics_clickhouse_password
+    ):
+        return
+    reader = getattr(STORE, "public_analytics_snapshot", None)
+    if not callable(reader):
+        return
+    snapshot = current_public_analytics_snapshot("client_reliability", reader=reader)
+    router_core_samples = [
+        sample
+        for sample in samples
+        if sample.probe_type not in OPS_PROBE_TYPES
+        and "router_core" in sample_slo_class_ids(sample)
+    ]
+    router_core_up = bool(router_core_samples) and all(
+        sample.status == "up" for sample in router_core_samples
+    )
+    alerts = evaluate_client_watch(
+        snapshot,
+        router_core_up=router_core_up,
+        now=dt.datetime.now(dt.UTC),
+    )
+    report_client_watch(alerts, settings=settings)
 
 
 def _sample_from_body(body: Any) -> SyntheticProbeSample:

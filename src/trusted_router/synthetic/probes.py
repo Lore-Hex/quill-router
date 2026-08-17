@@ -23,6 +23,7 @@ import httpx
 from cryptography import x509
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
+from trusted_router import __version__
 from trusted_router.config import Settings, parse_gateway_region_targets
 from trusted_router.provider_reliability import model_deadlines
 from trusted_router.regions import choose_region, region_payload
@@ -849,6 +850,131 @@ async def control_plane_health_probe(
             status="down",
             latency_milliseconds=_elapsed_ms(started),
             error_type=exc.__class__.__name__,
+        )
+
+
+async def client_telemetry_canary_probe(
+    client: httpx.AsyncClient,
+    *,
+    control_plane_base_url: str,
+    monitor_region: str,
+    api_key: str,
+) -> SyntheticProbeSample:
+    """Prove that the client-observed telemetry ingest accepts one event."""
+
+    url = f"{control_plane_base_url.rstrip('/')}/v1/client-events"
+    target = SyntheticTarget("control-plane", control_plane_base_url, None)
+    batch = {
+        "schema_version": 1,
+        "batch_id": secrets.token_hex(16),
+        "instance_id": secrets.token_hex(8),
+        "seq": 0,
+        "sdk": {
+            "name": "tr-py",
+            "version": str(__version__ or "0.0.0"),
+            "lang": "python",
+            "runtime": "cpython/0.0.0",
+            "os": "other",
+            "arch": "other",
+        },
+        "synthetic": True,
+        "dropped_since_last": 0,
+        "events": [
+            {
+                "age_ms": 0,
+                "plane": "inference",
+                "endpoint": "chat_completions",
+                "method": "POST",
+                "streaming": False,
+                "provider_pinned": False,
+                "model": None,
+                "attempts": [
+                    {
+                        "index": 0,
+                        "host": "apex",
+                        "outcome": "ok",
+                        "http_status": 200,
+                        "error_class": None,
+                        "error_source": None,
+                        "should_retry": "absent",
+                        "retry_after_ms": None,
+                        "elapsed_ms": 0,
+                        "ttfb_ms": 0,
+                        "request_id": None,
+                        "moved": False,
+                    }
+                ],
+                "final_outcome": "ok",
+                "final_http_status": 200,
+                "total_ms": 0,
+                "ttft_ms": None,
+                "failover_used": False,
+                "timeout_phase": "none",
+                "configured_timeout_ms": None,
+                "sample_rate": 1.0,
+                "sample_reason": "random",
+            }
+        ],
+        "counters": [
+            {
+                "window_start_age_ms": 0,
+                "level": "request",
+                "endpoint": "chat_completions",
+                "streaming": False,
+                "host": "apex",
+                "outcome": "ok",
+                "error_class": None,
+                "http_status_class": "2xx",
+                "timeout_phase": "none",
+                "timeout_floor_met": False,
+                "provider_pinned": False,
+                "requests": 1,
+                "attempts": 1,
+                "failover_used": 0,
+                "first_attempt_success": 1,
+                "total_ms_hist": {"lt100": 1},
+                "first_event_ms_hist": {},
+            }
+        ],
+    }
+    started = time.perf_counter()
+    try:
+        response = await client.post(
+            url,
+            headers={"Authorization": f"Bearer {api_key}"},
+            json=batch,
+        )
+        latency_ms = _elapsed_ms(started)
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {}
+        data = payload.get("data") if isinstance(payload, dict) else None
+        policy = payload.get("policy") if isinstance(payload, dict) else None
+        accepted_events = data.get("accepted_events") if isinstance(data, dict) else None
+        pause_seconds = policy.get("pause_seconds") if isinstance(policy, dict) else None
+        paused = response.status_code == 202 and isinstance(pause_seconds, int) and pause_seconds > 0
+        ok = response.status_code == 202 and accepted_events == 1 and not paused
+        return _sample(
+            "client_telemetry_ingest",
+            target,
+            monitor_region,
+            url,
+            status="degraded" if paused else ("up" if ok else "down"),
+            latency_milliseconds=latency_ms,
+            ttfb_milliseconds=latency_ms,
+            http_status=response.status_code,
+            error_type="paused" if paused else (None if ok else f"http_{response.status_code}"),
+        )
+    except httpx.HTTPError:
+        return _sample(
+            "client_telemetry_ingest",
+            target,
+            monitor_region,
+            url,
+            status="down",
+            latency_milliseconds=_elapsed_ms(started),
+            error_type="transport",
         )
 
 
