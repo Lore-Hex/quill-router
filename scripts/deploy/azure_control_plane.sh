@@ -326,3 +326,46 @@ cat >&2 <<NOTE
                 model — which is the whole point of measuring it here.
   verify        bash scripts/deploy/verify_deployment.sh (cloud-agnostic)
 NOTE
+
+# ---------------------------------------------------------------------------
+# ...and then the part that is NOT a note.
+#
+# Everything above provisions a control plane that serves, measures itself, and
+# publishes a status page. None of it gives this cloud an operational-analytics
+# pipeline: the ENV_VARS block sets no TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED,
+# so settle enqueues nothing, there is no outbox to drain, and no drain. On AWS
+# that same gap ran for fifteen days behind an entirely green status page
+# because the only alarm is emitted by the missing process.
+#
+# So this deploy now ends by asking whether the CLOUD works rather than whether
+# the script finished, and today, on Azure, it says no. That is the correct
+# answer, and no variable this script inherits changes it: the verifier's bound
+# is a constant in src/ and its URL comes from the fleet registry, and the two
+# variables it reads at all -- TR_MAX_DRAIN_LAG_SECONDS and TR_STATUS_URL -- it
+# reads only in order to print that they are being IGNORED. (An earlier version
+# of this comment said the verifier "reads no environment variable at all",
+# which was a tidier sentence and not true.) It takes no flags either.
+#
+# The only way to make this exit 0 is to build the pipeline. There is no
+# exemption, no waiver and no registry field that excuses a stage: a cloud that
+# cannot be checked is NOT VERIFIED and this script exits non-zero.
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/deploy/cloud_complete_gate.sh
+. "${SCRIPT_DIR}/cloud_complete_gate.sh"
+
+require_cloud_complete azure "$(cat <<'NEXT'
+The Azure app is deployed and serving. The Azure CLOUD is not complete: it has
+no operational-analytics pipeline at all. To finish it:
+
+  1. give it somewhere to drain TO (a ClickHouse this cloud owns, mirroring
+     scripts/deploy/aws_eu_clickhouse.sh) — this is a COST decision, so it is
+     not made by a deploy script;
+  2. add to the ENV_VARS block in this file:
+       TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true
+       TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=...  (+ user/database/password)
+  3. install a drain against it, mirroring
+     scripts/deploy/aws_eu_clickhouse_drain_install.sh;
+  4. bash scripts/deploy/verify_cloud_complete.sh azure
+NEXT
+)"

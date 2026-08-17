@@ -771,3 +771,71 @@ jobs:
           SPANNER_INSTANCE_ID: trusted-router-nam6
           SPANNER_DATABASE_ID: trusted-router
         run: scripts/deploy/retire_settle_outbox_hot_index.sh
+
+  # ---------------------------------------------------------------------------
+  # Did the CLOUD end up working, or did only the deploy finish?
+  #
+  # scripts/deploy/rollout.sh is GCP's control-plane deploy and it is the one
+  # bring-up script in this repo deliberately NOT ending in the completeness
+  # gate: it is a STEP of the job above, and a public HTTPS fetch of
+  # trustedrouter.com/status.json in the middle of deploying the cloud that
+  # SERVES trustedrouter.com would abort the deploy that repairs an outage,
+  # partway, because of the outage it repairs.
+  #
+  # That exemption is recorded in code, in ROLLOUT_REGISTRY
+  # (src/trusted_router/cloud_rollout_completeness.py), and it used to cite "the
+  # scheduled analytics freshness workflow" as the thing that checks GCP
+  # instead. That workflow ships with no `schedule:` trigger, on purpose and in
+  # its own header, so the citation was to a control that does not run: the
+  # primary cloud had no automated completeness check at all, behind a sentence
+  # saying it did. THIS JOB is that control.
+  #
+  # THE BODY OF THIS JOB IS ONE LINE, AND THAT IS THE POINT.
+  # For one revision the retry loop lived here in YAML, and all that bound it to
+  # anything was a substring search over this job's `run:` blocks for
+  # "verify_cloud_complete.sh gcp". Replacing this entire body with
+  # `echo "Next: bash scripts/deploy/verify_cloud_complete.sh gcp"; exit 0` kept
+  # the suite green -- the primary cloud's only binding was satisfied by the
+  # three saboteur shapes this whole change exists to kill. So the body is
+  # scripts/deploy/verify_gcp_complete.sh, which is in GCP's deploy_scripts and
+  # is RUN by tests/test_deploy_script_execution.py like every other bound
+  # script. What remains a text read is this YAML, and CI requires the step
+  # below to be an exact invocation of a script the registry proves by
+  # execution -- not a mention of one.
+  #
+  # Out of band by construction: it runs after the deploy job, so it can make
+  # the run red and can never leave GCP half-deployed. Read-only -- one public
+  # GET, no credentials, no cloud SDK.
+  #
+  # `if: always()` is load-bearing and was missing. With a bare `needs:
+  # [deploy]`, GitHub SKIPS this job when deploy fails -- and a deploy that
+  # failed PARTWAY has already mutated production, which is exactly the state
+  # somebody needs to know the completeness of. The check would have been absent
+  # from every run where it mattered most.
+  #
+  # What it still does NOT cover, stated because a comment here once claimed it
+  # ran "after every production mutation" and that is false: `migrate-schema`
+  # and `sync-runtime-secrets` mutate production BEFORE `deploy`, and this job
+  # is skipped when `deploy` is skipped -- which is exactly what happens when
+  # `confirm-current-main` says do not proceed. A run can therefore migrate the
+  # schema, rotate runtime secrets, skip the deploy, and never reach this check.
+  # The coverage is: every run in which the deploy job ran, whatever its result.
+  # ---------------------------------------------------------------------------
+  verify-cloud-complete:
+    needs: [deploy]
+    if: ${{ always() && needs.deploy.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - name: Install runtime
+        run: uv sync --frozen
+
+      # Exactly this, on one line. tests/test_cloud_rollout_completeness.py
+      # requires a step whose `run` IS an invocation of a script GCP's registry
+      # entry proves by execution; an echo, a comment or a `|| true` is not one.
+      - name: Is the GCP cloud complete, or only deployed?
+        run: bash scripts/deploy/verify_gcp_complete.sh

@@ -169,7 +169,60 @@ echo
 echo "CLICKHOUSE_PRIVATE_URL=http://${PRIVATE_IP}:8123"
 echo "VPC_CONNECTOR_ARN=${CONNECTOR_ARN}"
 echo "INSTANCE_ID=${INSTANCE_ID}"
+
+# ---------------------------------------------------------------------------
+# 5. Does the CLOUD work, or did only this script finish?
+#
+# This block used to be three `echo "Next: ..."` lines and an exit 0. That is
+# the whole outage: on 2026-08-02 someone ran this script, read the echoes, and
+# stopped. The node existed, the connector existed, and no drain was ever
+# installed — so for fifteen days settle enqueued rows into DSQL that nothing
+# collected (470,897 of them) while every alarm stayed quiet, because the
+# backlog alarm is emitted BY the drain that was missing.
+#
+# The remaining steps are still human steps: they need the ClickHouse password
+# and a redeploy decision. What changes is the exit code. A finished script and
+# a working cloud are now the same thing, or this exits non-zero saying which
+# one you have.
+#
+# require_cloud_complete returns the gate's status unaltered, so this script's
+# exit status IS the gate's. tests/test_deploy_script_execution.py runs this
+# whole file under a stub PATH — isolation by name, not a sandbox — and asserts
+# both halves: the gate is called for aws, and a failing gate makes this script
+# exit non-zero.
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/deploy/cloud_complete_gate.sh
+. "${SCRIPT_DIR}/cloud_complete_gate.sh"
+
+NEXT_STEPS=$(cat <<NEXT
+
+The node is up but the AWS cloud is NOT complete. Run these, in order, and this
+script will exit 0 the next time it is run:
+
+  1. apply the schema to the node (from inside the VPC):
+       for f in clickhouse/00*.sql; do
+         clickhouse-client --host ${PRIVATE_IP} --user default --multiquery < "\$f"
+       done
+
+  2. redeploy the control plane so settle enqueues and the outbox is readable.
+     Its own knobs, not the TR_* names — it builds those:
+       CLICKHOUSE_URL=http://${PRIVATE_IP}:8123 \\
+       VPC_CONNECTOR_ARN=${CONNECTOR_ARN} \\
+       bash scripts/deploy/aws_eu_control_plane.sh
+     (EgressConfiguration=VPC follows from a non-empty VPC_CONNECTOR_ARN.)
+
+  3. install the process that actually MOVES rows — the step that was missed:
+       bash scripts/deploy/aws_eu_clickhouse_drain_install.sh
+
+  4. re-run this script, or just the check:
+       bash scripts/deploy/verify_cloud_complete.sh aws
+
+NEXT
+)
+
+require_cloud_complete aws "$NEXT_STEPS"
 echo
-echo "Next: apply clickhouse/*.sql, then redeploy tr-eu with"
-echo "  TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=http://${PRIVATE_IP}:8123"
-echo "  EgressConfiguration=VPC + the connector above."
+echo "The node is up and the gate VERIFIED aws — read its banner above for what"
+echo "that does and does not establish. This script does not restate it in"
+echo "stronger words than it earned."

@@ -419,3 +419,79 @@ Rollback: systemctl disable --now $SERVICE, then
   mv ${REMOTE_ROOT}.previous $REMOTE_ROOT   (kept from this run)
 Nothing is lost by stopping the drain: undelivered rows stay in the outbox.
 EOF
+
+# ---------------------------------------------------------------------------
+# 10. The outside view.
+#
+# Step 9 ran systemctl, the journal and a ClickHouse count on the node and
+# PRINTED them. Be exact about what that is: this script does not assert on any
+# of those three outputs, so what step 9 establishes is that the commands ran —
+# a human still has to read `copies=`, `rows=` and the two counts and decide.
+# An earlier version of the paragraph below said the run had established that
+# the unit "swept, and moved rows out of the outbox", which is the same
+# printing-is-doing mistake one level down, inside the file written to end it.
+#
+# What the gate below adds is the question a rollout has to answer and no
+# in-VPC command can: whether anyone WITHOUT a session on that node can tell.
+# Ending here means an install visible only from the installer's shell cannot
+# be mistaken for a finished cloud.
+#
+# Non-zero on failure on purpose: this script's whole reason for existing is
+# that the previous version of this step was a paragraph of prose and an exit 0.
+# require_cloud_complete returns the gate's status unaltered, including 5 (NOT
+# YET OBSERVABLE), which is today's expected state on the very run that fixes
+# the outage — no deployed control plane on this cloud publishes the `analytics`
+# section yet, so an unqualified failure would be a red banner the operator can
+# do nothing about, every time, by design. All five bound scripts report that
+# state in the same words now; the extra paragraph below is the part specific to
+# having just installed a drain.
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/deploy/cloud_complete_gate.sh
+. "${SCRIPT_DIR}/cloud_complete_gate.sh"
+
+# The next-steps text is built with a plain heredoc into a variable, NOT as
+# "$(cat <<'NEXT' ... )". Nesting a heredoc inside a command substitution is a
+# syntax error in bash 3.2 -- which is /bin/bash on every macOS -- as soon as
+# the BODY contains an apostrophe: the parser looks for a matching quote inside
+# the substitution and runs off the end of the file. This body said "step 9's
+# output", so on a Mac this entire script failed to parse and did nothing at
+# all, gate included, while CI (Linux, bash 5) stayed green. The script whose
+# absence caused the outage could not be run by the person most likely to run
+# it. tests/test_deploy_script_execution.py now parses every deploy script with
+# the local shell, so a repeat is caught wherever the old shell is.
+NEXT_STEPS='The drain install itself did not fail. Read step 9 output above before
+touching anything: copies=, drain_lag_seconds, and the two ClickHouse
+counts are printed there and asserted nowhere.'
+
+VERIFY_RC=0
+require_cloud_complete aws "$NEXT_STEPS" || VERIFY_RC=$?
+
+if [ "$VERIFY_RC" -eq 5 ]; then
+  cat >&2 <<'PREDEPLOY'
+
+DRAIN INSTALLED; NOT YET OBSERVABLE FROM OUTSIDE.
+
+What this run did: shipped the code, installed and enabled the unit, and then
+printed the drain's journal and a ClickHouse row count from the node (step 9).
+Read those. Nothing in this script asserts on them.
+
+What it could not do at all: tell whether anyone WITHOUT a session on this node
+can see the drain. The tr-eu App Runner control plane -- the deployment holding
+the Aurora DSQL connection, whose /status.json is the URL in
+src/trusted_router/operational_analytics_fleet.py -- publishes no `analytics`
+section, because no control plane deployed to this cloud is built from a commit
+that includes trusted_router.operational_analytics_freshness. Until then the
+drain's health is visible only to whoever is logged in, which is the property
+that let it be missing for fifteen days.
+
+To close it:
+
+  1. deploy a control plane built from a commit that publishes the section:
+       bash scripts/deploy/aws_eu_control_plane.sh
+  2. bash scripts/deploy/verify_cloud_complete.sh aws
+
+PREDEPLOY
+fi
+
+exit "$VERIFY_RC"

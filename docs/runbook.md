@@ -27,6 +27,7 @@ Index:
 - [Sentry "Aborted ... deadlock/wounded" burst on gateway authorize](#authorize-deadlock-burst)
 - [One workspace 503s "Workspace billing is paused" (interrupted reshard)](#reshard-interrupted)
 - [DNS-vendor-split symptoms (Cloudflare vs Cloud DNS)](#dns-vendor-split)
+- [Adding a cloud (and when it is allowed to be called done)](#adding-a-cloud)
 
 ---
 
@@ -1039,6 +1040,114 @@ After deploys that add SEO pages:
    not contain secrets.
 4. Follow `docs/marketing/llm-seo-opportunities.md` for Ahrefs exports
    and new page prioritization.
+
+---
+
+## <a id="adding-a-cloud"></a>Adding a cloud (and when it is allowed to be called done)
+
+**Symptom this prevents:** a cloud that serves traffic, shows an all-green
+status page, and records none of its operational history — because the process
+that moves rows out of its outbox was never installed, and the only alarm for
+that is emitted by the missing process. AWS-EU ran that way from 2026-08-02 to
+2026-08-17: 470,897 undelivered rows, `activity_generations` empty, no page.
+
+**The rule: a cloud is not in service until rows are observed moving.**
+
+Check any cloud, from anywhere, with no credentials:
+
+```bash
+bash scripts/deploy/verify_cloud_complete.sh aws     # or azure, gcp
+```
+
+It exits non-zero until all five stages hold, each naming its own fix:
+
+| # | Stage | Fix when it fails |
+|---|---|---|
+| a | in the fleet freshness registry (registered, not watched — that workflow has no schedule trigger yet) | add a `FleetAnalyticsEndpoint` in `src/trusted_router/operational_analytics_fleet.py` |
+| b | `/status.json` has the `analytics` section | deploy a control plane whose status snapshot publishes `drain_lag_seconds` |
+| c | `analytics.available` is true | the control plane cannot read its outbox — check its database connection |
+| d | `drain_lag_seconds` under bound | the drain is stopped or behind: `bash scripts/deploy/aws_eu_clickhouse_drain_install.sh` |
+| e | control-plane outbox enabled | set `TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true` in that cloud's deploy script |
+
+Stage (e) is a static read of that deploy script **in your working tree**, not
+of the revision the cloud is running: it tells you what a deploy from this
+checkout would set, and stages (b)–(d) are the evidence about the running
+service.
+
+**There is no way to excuse a stage.** No waiver, no exemption field, no flag,
+no environment variable. A cloud that cannot be checked is NOT VERIFIED and the
+run exits non-zero with the reason printed. (An earlier revision had an
+`analytics_absent_reason` that waived "structural" blockers, plus the machinery
+to decide which failures counted as structural. Review found bugs inside that
+machinery twice, the second set introduced by the fix for the first, so it is
+gone.) `TR_MAX_DRAIN_LAG_SECONDS` and `TR_STATUS_URL` are read only so the
+script can tell you loudly that it is ignoring them.
+
+Exit codes (`scripts/deploy/cloud_complete_gate.sh` turns each into the same
+words for every bound script):
+
+| code | meaning |
+|---|---|
+| 0 | `VERIFIED` — every stage was measured and held. The banner then says what that does *not* establish, which is that rows were seen moving |
+| 5 | `NOT YET OBSERVABLE` — the page parses and carries no `analytics` section, so the question cannot be asked from outside yet. Its own code because it is the state a cloud is in before its control plane publishes the section, and the run that installs a drain hits it by construction |
+| 1 | `NOT VERIFIED`, for everything else, with the reason printed: a stage failed, the page did not answer 200, the body was not the status document, the cloud is unknown, the arguments were wrong |
+
+The AWS and Azure bring-up and control-plane scripts end by running this, so an
+exit of 0 from one of them means the check passed — which is a statement about
+what the check measures, not a certificate that the cloud works. Read the
+banner: it lists the five stages and then says, every time, that rows moving is
+not among them.
+
+That binding is not taken on trust. Those scripts — GCP's included — are
+executed end to end against a stub `PATH` in
+`tests/test_deploy_script_execution.py`, which asserts each one calls the gate,
+cannot exit 0 over a failing gate, runs no cloud CLI after the gate answered,
+and passes both exit codes through unchanged. The one exception is
+`aws_eu_clickhouse_drain_install.sh`, whose SSM-heavy middle cannot be stubbed
+honestly — its tail is claimed, not proven, and `ROLLOUT_REGISTRY` says so.
+Which scripts are in which list is checked for exact set equality against
+`docs/storage-portability/multi-cloud-separation.md`, so a script cannot quietly
+lose its behavioural coverage while the docs still call it proven.
+
+**GCP's exempt file is `rollout.sh`, not GCP:** `rollout.sh` runs inside
+`.github/workflows/deploy.yml`, and ending it here would put a fetch of
+`trustedrouter.com/status.json` in the middle of deploying the cloud that serves
+it — the deploy that repairs an outage would abort partway. GCP is instead
+checked out of band by `scripts/deploy/verify_gcp_complete.sh`, which the
+`verify-cloud-complete` job in that same workflow runs as its whole body, and
+which the behavioural harness executes like every other bound script. Coverage,
+exactly: every run in which the `deploy` job ran, whatever its result —
+including a deploy that failed partway having already mutated production. It
+does NOT cover a run that skipped `deploy`, and `migrate-schema` and
+`sync-runtime-secrets` mutate production before `deploy` gets there. You can
+always run it yourself, from anywhere, with no credentials:
+
+```bash
+bash scripts/deploy/verify_gcp_complete.sh
+```
+
+If a script exits non-zero it prints the exact next command; run it and re-run
+the script, which is idempotent. Do not work around the exit code — that is the
+failure mode this exists to stop.
+
+**Do not read the fleet's state out of this runbook — run the gate.** A cloud
+starts answering when a control plane built from the publisher is deployed to
+it, and exits 5 until then. The last reading taken while editing this section
+was `gcp` VERIFIED with `aws` and `azure` both at 5, and it is a note about a
+moment rather than a claim about now. Azure additionally fails stage (e): it has
+no operational-analytics outbox at all. See
+`docs/storage-portability/multi-cloud-separation.md` §7 for the full definition
+of done and the checklist for a new cloud.
+
+**Last check that cannot be automated from outside:** once a cloud passes, look
+at the count from inside it, twice, ten minutes apart:
+
+```bash
+clickhouse-client --query 'SELECT count() FROM activity_generations'
+```
+
+Two numbers, the second larger. A drained outbox and a disabled outbox both
+publish `drain_lag_seconds: 0.0`; only the count tells them apart.
 
 ---
 
