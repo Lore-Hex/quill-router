@@ -167,6 +167,18 @@ def test_old_activity_payload_gets_exact_optional_defaults() -> None:
     )
 
 
+def test_activity_payload_explicit_nulls_get_clickhouse_string_defaults() -> None:
+    payload = activity_payload(_generation())
+    row = OperationalOutboxRow(1, COMMIT_TS, "activity", "gen-null", json.dumps(payload))
+
+    [event] = normalise_operational_event(row)
+
+    for field, default in ACTIVITY_OPTIONAL_DEFAULTS.items():
+        if default is not None:
+            assert event.row[field] == default
+            assert type(event.row[field]) is type(default)
+
+
 def test_old_activity_payload_still_rejects_missing_required_field() -> None:
     payload = activity_payload(_generation())
     payload.pop("generation_id")

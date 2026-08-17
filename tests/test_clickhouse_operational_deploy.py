@@ -1,8 +1,35 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
+
+
+def test_clickhouse_worker_projection_import_does_not_require_pydantic() -> None:
+    script = """
+import builtins
+
+real_import = builtins.__import__
+def guarded_import(name, *args, **kwargs):
+    if name == "pydantic" or name.startswith("pydantic."):
+        raise ModuleNotFoundError("pydantic is intentionally unavailable")
+    return real_import(name, *args, **kwargs)
+
+builtins.__import__ = guarded_import
+import trusted_router.storage_operational_analytics
+"""
+
+    result = subprocess.run(  # noqa: S603 - fixed interpreter and inert test script.
+        [sys.executable, "-c", script],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_operational_schema_is_replicated_bounded_and_content_free() -> None:
