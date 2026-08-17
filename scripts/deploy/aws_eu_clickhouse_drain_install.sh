@@ -280,6 +280,9 @@ test -f '$STAGE_DIR/trusted_router/postgres_dsn.py'
 ssm "drain: user, state dir, venv" "
 set -eux
 id -u '$SERVICE_USER' >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin '$SERVICE_USER'
+# The unit pins HOME here (see its comment: ProtectHome + libpq's cert lookup).
+# Create it whether or not the user already existed with a /home entry.
+install -d -o '$SERVICE_USER' -g '$SERVICE_USER' -m 0750 /var/lib/tr-clickhouse-ingest
 install -d -o '$SERVICE_USER' -g '$SERVICE_USER' -m 0750 '$STATE_DIR'
 test -x '$PYTHON_BIN' || { echo 'missing $PYTHON_BIN; provision 3.12 (deadsnakes on 22.04)'; exit 1; }
 '$PYTHON_BIN' -m venv '$STAGE_DIR/venv'
