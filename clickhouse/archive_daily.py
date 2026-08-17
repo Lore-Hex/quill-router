@@ -282,6 +282,10 @@ class ArchiveStore(Protocol):
 
     def put_json_pointer(self, key: str, value: dict[str, Any]) -> None: ...
 
+    # The restore drill reads the archive back through this same store, so a
+    # cloud that can be written but not read would only fail at drill time.
+    def download_file(self, key: str, destination: Path) -> None: ...
+
 
 class ClickHouseDailyExporter:
     def __init__(
@@ -428,6 +432,9 @@ class GCSArchiveStore:
             raise RuntimeError(f"archive object {key} is not a JSON object")
         return value
 
+    def download_file(self, key: str, destination: Path) -> None:
+        self._bucket.blob(key).download_to_filename(str(destination))
+
     def put_file_if_absent(
         self,
         key: str,
@@ -544,6 +551,9 @@ class S3ArchiveStore:
         metadata = {str(k).lower(): v for k, v in (head.get("Metadata") or {}).items()}
         return metadata.get("sha256")
 
+    def download_file(self, key: str, destination: Path) -> None:
+        self._client.download_file(self._bucket, key, str(destination))
+
     def put_file_if_absent(
         self,
         key: str,
@@ -650,6 +660,10 @@ class AzureBlobArchiveStore:
         if not isinstance(value, dict):
             raise RuntimeError(f"archive object {key} is not a JSON object")
         return value
+
+    def download_file(self, key: str, destination: Path) -> None:
+        with destination.open("wb") as stream:
+            self._container.get_blob_client(key).download_blob().readinto(stream)
 
     def put_file_if_absent(
         self,

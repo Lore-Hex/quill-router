@@ -83,6 +83,12 @@ class FakeS3:
             raise _client_error("NotFound", 404)
         return self.objects[Key]
 
+    def download_file(self, bucket: str, key: str, filename: str) -> None:
+        del bucket
+        if key not in self.objects:
+            raise _client_error("NoSuchKey", 404)
+        Path(filename).write_bytes(self.objects[key]["Body"])
+
 
 class _Reader:
     def __init__(self, payload: bytes) -> None:
@@ -210,7 +216,11 @@ class FakeBlob:
     def download_blob(self) -> Any:
         if self._key not in self._container.blobs:
             raise _AzureResourceNotFound(self._key)
-        return types.SimpleNamespace(readall=lambda: self._container.blobs[self._key]["data"])
+        payload = self._container.blobs[self._key]["data"]
+        return types.SimpleNamespace(
+            readall=lambda: payload,
+            readinto=lambda stream: stream.write(payload),
+        )
 
     def get_blob_properties(self) -> Any:
         if self._key not in self._container.blobs:
@@ -644,3 +654,58 @@ def test_completion_log_names_the_store_actually_written(
     # Every store must expose it, since the log reads it off whichever is live.
     for cls in (GCSArchiveStore, S3ArchiveStore, AzureBlobArchiveStore):
         assert isinstance(getattr(cls, "scheme", None), str)
+
+
+# --------------------------------------------------------------------------
+# Reading the archive back.
+#
+# verify_archive_restore.py had its own GCS-only store, so a cloud could be
+# written but never drilled -- an archive nobody has proven restorable. The
+# restore drill now shares these stores, so download_file is part of the same
+# per-cloud contract as the writes.
+# --------------------------------------------------------------------------
+
+
+def test_s3_download_file_round_trips(s3: FakeS3, tmp_path: Path) -> None:
+    store = _store(s3)
+    source = tmp_path / "part.parquet"
+    source.write_bytes(b"parquet-bytes")
+    store.put_file_if_absent("k", source, sha256="abc", metadata={})
+
+    destination = tmp_path / "restored.parquet"
+    store.download_file("k", destination)
+    assert destination.read_bytes() == b"parquet-bytes"
+
+
+def test_azure_download_file_round_trips(
+    azure_container: FakeContainer, tmp_path: Path
+) -> None:
+    store = _azure_store()
+    source = tmp_path / "part.parquet"
+    source.write_bytes(b"parquet-bytes")
+    store.put_file_if_absent("k", source, sha256="abc", metadata={})
+
+    destination = tmp_path / "restored.parquet"
+    store.download_file("k", destination)
+    assert destination.read_bytes() == b"parquet-bytes"
+
+
+def test_every_store_can_be_read_back_not_only_written() -> None:
+    from clickhouse.archive_daily import ArchiveStore, GCSArchiveStore
+
+    assert "download_file" in dir(ArchiveStore)
+    for cls in (GCSArchiveStore, S3ArchiveStore, AzureBlobArchiveStore):
+        assert callable(getattr(cls, "download_file", None)), f"{cls.__name__} cannot be read back"
+
+
+def test_restore_drill_selects_the_same_per_cloud_stores() -> None:
+    """The drill must not carry its own GCS-only store, or 'the archive is
+    restorable' would only ever be true of one cloud."""
+
+    from clickhouse import verify_archive_restore
+
+    source = Path(verify_archive_restore.__file__).read_text()
+    assert "build_archive_store" in source
+    assert "--object-store" in source
+    # The near-duplicate is gone rather than merely unused.
+    assert "class GCSRestoreStore" not in source
