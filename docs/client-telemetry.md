@@ -308,6 +308,18 @@ the control plane emits new outbox kinds or declares new activity columns. 4. En
 7. Python SDK; header-only PRs in the other five SDKs. 8. Surfaces. 9. Calibration → publication.
 Enum vocabulary grows **server-first**; SDKs last. Enclave merges auto-deploy production.
 
+### Calibration
+
+Run the read-only weekly report on `tr-clickhouse-1` with
+`CH_PASSWORD=... python3 -m clickhouse.calibrate_client_availability --days 7 --json-out /tmp/cal.json`.
+The report compares five-minute client and `router_core` outcomes (putting
+`client_down_server_up` first), audits `gateway_request_id` joins and RTT, lists tenant and SDK-version
+outliers, and records the publication gates for each closed UTC day. Flip `published` only after 14
+consecutive clean days: per-tenant/hour counter and generation successes agree within 1%; on incident-free
+days client availability is no more than 0.05 percentage points below synthetic; every day has at least the
+configured negative-control count (200 by default); and every day has at least 1,000 requests from at least
+three tenants.
+
 ## 10. What NOT to do
 No OTel/metrics runtime in SDKs or enclave; no free-text fields; no beacon retries; no idempotency keys in
 telemetry; no forging `x-stainless-*`; no `client` on authorize; no client fields on `/v1/generation`;
