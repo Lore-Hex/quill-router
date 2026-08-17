@@ -12,6 +12,7 @@ import datetime as dt
 import json
 import os
 import subprocess
+from collections.abc import Callable
 from typing import Any
 
 from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup, iso_now
@@ -76,7 +77,13 @@ def build_raw_rollups(
     samples: list[SyntheticProbeSample],
     *,
     periods: set[str],
+    now: Callable[[], str] = iso_now,
 ) -> list[SyntheticRollup]:
+    """Rebuild rollups from raw samples.
+
+    ``now`` supplies the ``updated_at`` stamp shared by every rollup in one
+    build, so the output is a pure function of the samples and the clock.
+    """
     rollups: dict[str, SyntheticRollup] = {}
     for sample in _deduplicate_samples(samples):
         for period, component in sample_rollup_ids(sample):
@@ -92,7 +99,11 @@ def build_raw_rollups(
                 rollups[update.id] = update
             else:
                 apply_sample_to_rollup(existing, sample)
-    return list(rollups.values())
+    built = list(rollups.values())
+    stamp = now()
+    for rollup in built:
+        rollup.updated_at = stamp
+    return built
 
 
 def _deduplicate_samples(
