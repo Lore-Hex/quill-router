@@ -104,7 +104,7 @@ class TestVerifying:
     def test_a_code_can_be_requested_and_confirmed(self, client, carrier) -> None:
         started = client.post(
             "/console/settings/phone/start",
-            data={"phone": "+1 (305) 951-1381", "channel": "voice"},
+            data={"phone": "+1 (305) 951-1381", "channel": "voice", "sms_consent": "yes"},
         )
         assert started.status_code == 303, started.text
         assert carrier.sent, "no code was sent"
@@ -122,7 +122,7 @@ class TestVerifying:
     def test_the_page_then_shows_the_verified_number(self, client, carrier) -> None:
         client.post(
             "/console/settings/phone/start",
-            data={"phone": "+13059511381", "channel": "voice"},
+            data={"phone": "+13059511381", "channel": "voice", "sms_consent": "yes"},
         )
         _c, _t, spoken = carrier.sent[0]
         code = "".join(ch for ch in spoken.split("is")[1] if ch.isdigit())[:6]
@@ -136,7 +136,7 @@ class TestVerifying:
     def test_a_bad_number_never_reaches_a_carrier(self, client, carrier) -> None:
         response = client.post(
             "/console/settings/phone/start",
-            data={"phone": "3059511381", "channel": "voice"},
+            data={"phone": "3059511381", "channel": "voice", "sms_consent": "yes"},
         )
 
         assert response.status_code == 303
@@ -146,7 +146,7 @@ class TestVerifying:
     def test_a_wrong_code_does_not_verify(self, client, carrier) -> None:
         client.post(
             "/console/settings/phone/start",
-            data={"phone": "+13059511381", "channel": "voice"},
+            data={"phone": "+13059511381", "channel": "voice", "sms_consent": "yes"},
         )
 
         response = client.post("/console/settings/phone/confirm", data={"code": "000000"})
@@ -157,7 +157,7 @@ class TestVerifying:
     def test_an_immediate_resend_is_refused(self, client, carrier) -> None:
         # Otherwise this form rings a stranger's phone as fast as it can be
         # submitted.
-        body = {"phone": "+13059511381", "channel": "voice"}
+        body = {"phone": "+13059511381", "channel": "voice", "sms_consent": "yes"}
         client.post("/console/settings/phone/start", data=body)
 
         second = client.post("/console/settings/phone/start", data=body)
@@ -169,13 +169,13 @@ class TestVerifying:
         # "Use a different number" must not be a way around the resend floor:
         # cancel, start, cancel, start would otherwise ring any number as fast
         # as the two forms can be submitted.
-        body = {"phone": "+13059511381", "channel": "voice"}
+        body = {"phone": "+13059511381", "channel": "voice", "sms_consent": "yes"}
         client.post("/console/settings/phone/start", data=body)
         client.post("/console/settings/phone/cancel")
 
         again = client.post(
             "/console/settings/phone/start",
-            data={"phone": "+13059511382", "channel": "voice"},
+            data={"phone": "+13059511382", "channel": "voice", "sms_consent": "yes"},
         )
 
         assert "error=rate" in again.headers["location"]
@@ -187,7 +187,7 @@ class TestVerifying:
     def test_sms_is_defensively_delivered_as_voice_while_unavailable(self, client, carrier) -> None:
         response = client.post(
             "/console/settings/phone/start",
-            data={"phone": "+13059511381", "channel": "sms"},
+            data={"phone": "+13059511381", "channel": "sms", "sms_consent": "yes"},
         )
 
         assert response.headers["location"].endswith("sent=voice")
@@ -200,7 +200,7 @@ class TestVerifying:
     def test_pending_voice_renders_call_again_after_the_floor(self, client, carrier) -> None:
         client.post(
             "/console/settings/phone/start",
-            data={"phone": "+13059511381", "channel": "voice"},
+            data={"phone": "+13059511381", "channel": "voice", "sms_consent": "yes"},
         )
         _user().phone_code_sent_at = "2000-01-01T00:00:00Z"
 
@@ -215,7 +215,7 @@ class TestVerifying:
     ) -> None:
         response = sms_client.post(
             "/console/settings/phone/start",
-            data={"phone": "+13059511381", "channel": "sms"},
+            data={"phone": "+13059511381", "channel": "sms", "sms_consent": "yes"},
         )
         assert _user().phone_code_channel == "sms"
         sent_page = sms_client.get(response.headers["location"])
@@ -230,7 +230,7 @@ class TestVerifying:
     def test_pending_page_disables_resend_and_shows_the_wait(self, client, carrier) -> None:
         client.post(
             "/console/settings/phone/start",
-            data={"phone": "+13059511381", "channel": "voice"},
+            data={"phone": "+13059511381", "channel": "voice", "sms_consent": "yes"},
         )
 
         page = client.get("/console/settings")
@@ -243,7 +243,7 @@ class TestPostRedirectGet:
         # A refresh on a rendered POST would ring the phone again.
         response = client.post(
             "/console/settings/phone/start",
-            data={"phone": "+13059511381", "channel": "voice"},
+            data={"phone": "+13059511381", "channel": "voice", "sms_consent": "yes"},
         )
 
         assert response.status_code == 303
@@ -254,7 +254,7 @@ class TestRemoval:
     def test_a_number_can_be_removed(self, client, carrier) -> None:
         client.post(
             "/console/settings/phone/start",
-            data={"phone": "+13059511381", "channel": "voice"},
+            data={"phone": "+13059511381", "channel": "voice", "sms_consent": "yes"},
         )
         _c, _t, spoken = carrier.sent[0]
         code = "".join(ch for ch in spoken.split("is")[1] if ch.isdigit())[:6]
@@ -300,7 +300,7 @@ class TestCancellation:
 
         client.post(
             "/console/settings/phone/start",
-            data={"phone": "+13059511381", "channel": "voice"},
+            data={"phone": "+13059511381", "channel": "voice", "sms_consent": "yes"},
         )
         cancelled = client.post("/console/settings/phone/cancel")
         assert cancelled.status_code == 303
@@ -310,9 +310,96 @@ class TestCancellation:
         monkeypatch.setattr(pv, "utcnow", lambda: later)
         restarted = client.post(
             "/console/settings/phone/start",
-            data={"phone": "+442071838750", "channel": "voice"},
+            data={"phone": "+442071838750", "channel": "voice", "sms_consent": "yes"},
         )
 
         assert restarted.headers["location"].endswith("sent=voice")
         assert len(carrier.sent) == 2
         assert _user().pending_phone == "+442071838750"
+
+
+class TestSmsConsentIsRealAndVerifiable:
+    """10DLC campaign 30909: rejected for a Call to Action that could not be
+    verified. The honest cause was that the consent checkbox described in the
+    campaign submission — and promised verbatim on the public /sms page — did not
+    exist in the console at all. These tests exist so that cannot recur.
+    """
+
+    ANCHOR = (
+        "I agree to receive account alerts and one-time verification codes "
+        "from Trusted Router at this number."
+    )
+
+    @staticmethod
+    def _flat(text: str) -> str:
+        import re
+
+        return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text))
+
+    def test_the_form_has_a_required_consent_checkbox(self, client) -> None:
+        page = client.get("/console/settings")
+
+        assert 'name="sms_consent"' in page.text, "no consent checkbox in the form"
+        assert 'type="checkbox"' in page.text
+        # `required` keeps an honest user from missing it; the server check below
+        # is what makes it a gate.
+        checkbox = page.text.split('name="sms_consent"')[0].rsplit("<input", 1)[-1] + \
+            page.text.split('name="sms_consent"')[1].split(">")[0]
+        assert "required" in checkbox
+
+    def test_a_number_cannot_be_submitted_without_consent(self, client, carrier) -> None:
+        # The gate. A checkbox enforced only in the browser is decoration: this
+        # posts the form directly, exactly as anyone could.
+        response = client.post(
+            "/console/settings/phone/start",
+            data={"phone": "+13059511381", "channel": "voice"},
+        )
+
+        assert not carrier.sent, "a code was sent to a number that never consented"
+        assert "error=consent" in response.headers.get("location", "")
+
+    def test_consent_must_be_affirmative_not_merely_present(self, client, carrier) -> None:
+        for value in ("", "no", "false", "0", "maybe"):
+            carrier.sent.clear()
+            client.post(
+                "/console/settings/phone/start",
+                data={"phone": "+13059511381", "channel": "voice", "sms_consent": value},
+            )
+            assert not carrier.sent, f"sms_consent={value!r} was treated as consent"
+
+    def test_with_consent_the_code_is_sent(self, client, carrier) -> None:
+        response = client.post(
+            "/console/settings/phone/start",
+            data={"phone": "+13059511381", "channel": "voice", "sms_consent": "yes"},
+        )
+
+        assert response.status_code == 303, response.text
+        assert carrier.sent, "consent given and still no code sent"
+
+    def test_the_console_and_the_public_page_show_THE_SAME_wording(self, client) -> None:
+        """The /sms page tells a campaign vetter these are "the exact steps and
+        the exact consent language shown". If the two ever differ, the public
+        claim is false and the CTA fails review again — which is what happened.
+        """
+        console = self._flat(client.get("/console/settings").text)
+        public = self._flat(client.get("/sms").text)
+
+        assert self.ANCHOR in console, "console checkbox lost the agreed wording"
+        assert self.ANCHOR in public, "public /sms page lost the agreed wording"
+
+    def test_both_places_carry_every_required_disclosure(self, client) -> None:
+        # CTIA wants sender, frequency, cost, stop, help, and both policies at
+        # the point of collection.
+        for path in ("/console/settings", "/sms"):
+            flat = self._flat(client.get(path).text)
+            for required in (
+                "Trusted Router",
+                "Message frequency varies",
+                "Message and data rates may apply",
+                "STOP",
+                "HELP",
+                "Terms of Service",
+                "Privacy Policy",
+            ):
+                assert required in flat, f"{path} is missing {required!r}"
+

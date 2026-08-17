@@ -23,8 +23,10 @@
     <li>Open <strong>Settings &rarr; Notifications</strong>.</li>
     <li>Enter your own mobile number and tick the consent checkbox, which reads:</li>
   </ol>
+  {# Same partial the console checkbox renders, so this page cannot promise
+     wording the live form does not show. #}
   <blockquote>
-    <p>I agree to receive account alerts and one-time verification codes from Trusted Router at this number. Message frequency varies. Message and data rates may apply. Reply STOP to unsubscribe or HELP for help. See the <a href="/terms">Terms of Service</a> and <a href="/privacy">Privacy Policy</a>.</p>
+    <p>{% include "_sms_consent.html" %}</p>
   </blockquote>
   <ol start="4">
     <li>We call or text a one-time code to that number; entering it confirms you control the number and completes enrolment.</li>

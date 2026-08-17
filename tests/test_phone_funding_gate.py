@@ -181,7 +181,7 @@ def test_console_start_works_after_any_funding(
 
     response = client.post(
         "/console/settings/phone/start",
-        data={"phone": "+13059511381", "channel": "voice"},
+        data={"phone": "+13059511381", "channel": "voice", "sms_consent": "yes"},
     )
 
     assert response.status_code == 303
