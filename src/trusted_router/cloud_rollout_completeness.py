@@ -133,7 +133,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: rows at all. Config-level truth: with this false the outbox stays empty, the
 #: published ``drain_lag_seconds`` is 0.0 forever, and every stage above reads
 #: green while ZERO rows move. Stages (b)-(d) cannot tell "fully drained" from
-#: "never enqueued" — see the caveat in :func:`drain_lag_caveat`.
+#: "never enqueued" — see :data:`DRAIN_LAG_LIMIT_NOTE`, which says so on every
+#: run that passes stage (d).
 OUTBOX_ENABLED_ENV = "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED"
 
 #: Values of :data:`OUTBOX_ENABLED_ENV` that mean "off". Anything else — a
