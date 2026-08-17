@@ -465,6 +465,13 @@ def test_concurrent_reserves_cannot_oversubscribe(
     assert all(not thread.is_alive() for thread in threads), "reserve threads hung"
     assert len(reservations) == 1
     assert len(errors) == 1
+    # The loser gets the DOMAIN's refusal, never an infrastructure error. On a
+    # backend that resolves the race by ABORTING the loser rather than by
+    # blocking it -- Spanner PG and Aurora DSQL both do -- the store owes the
+    # caller a replay, not a StoreUnavailable. This assertion is the contract,
+    # so if it ever goes flaky again the bug is in the retry policy
+    # (PostgresStore._RETRYABLE_ROLLBACK_SQLSTATES, covered by
+    # tests/test_postgres_transaction_retry.py), NOT in this line.
     assert isinstance(errors[0], ValueError)
     assert str(errors[0]) == "insufficient credits"
     with pytest.raises(ValueError, match="insufficient credits"):
@@ -1575,6 +1582,10 @@ def test_concurrent_transfers_cannot_overdraw(store: Store, workspace_id: str, u
         pytest.skip("backend does not implement cross-plane credit transfer")
 
     moved: list[bool] = []
+    # Anything that is neither "moved" nor the domain's refusal. Without this
+    # an escaping exception just left the tally SHORT, and the failure read
+    # `assert 0 == 1` with no hint that a store error had reached the caller.
+    escaped: list[BaseException] = []
     lock = threading.Lock()
 
     def attempt(index: int) -> None:
@@ -1588,6 +1599,10 @@ def test_concurrent_transfers_cannot_overdraw(store: Store, workspace_id: str, u
             outcome = True
         except ValueError:
             outcome = False
+        except BaseException as exc:  # noqa: BLE001 - reported, then re-asserted below
+            with lock:
+                escaped.append(exc)
+            return
         with lock:
             moved.append(outcome)
 
@@ -1597,4 +1612,9 @@ def test_concurrent_transfers_cannot_overdraw(store: Store, workspace_id: str, u
     for thread in threads:
         thread.join(timeout=30)
 
+    # Same contract as the concurrent-reserve race: a loser gets the domain's
+    # refusal, never an infrastructure error. A backend that resolves the race
+    # by ABORTING owes the caller a replay -- see
+    # PostgresStore._RETRYABLE_ROLLBACK_SQLSTATES.
+    assert not escaped, f"store errors reached the caller: {escaped}"
     assert moved.count(True) == 1, f"oversubscribed the balance: {moved}"
