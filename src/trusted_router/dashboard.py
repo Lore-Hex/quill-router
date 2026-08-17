@@ -74,6 +74,7 @@ from trusted_router.content.legal import (
 from trusted_router.content_handling import CONTENT_HANDLING_CLAIM
 from trusted_router.domains import canonical_public_url
 from trusted_router.measured import measured_for_model, measured_for_provider
+from trusted_router.model_regions import MODEL_REGION_SLUGS, model_region_evidence
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR, format_money_precise
 from trusted_router.og import OG_DESCRIPTION, OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, OG_TITLE
 from trusted_router.provider_branding import (
@@ -144,6 +145,9 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/latest-model-apis",
     "/eu-ai-act-llm-compliance",
     "/x402-llm-api",
+    # Jurisdiction directories, one path each. MODEL_REGION_SLUGS is the single
+    # source, so adding a region adds its sitemap entry with it.
+    *(f"/{slug}" for slug in MODEL_REGION_SLUGS),
     "/",
     "/choose",
     "/models",
@@ -1564,6 +1568,95 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "evaluations, billing, and infrastructure that developers and customers can verify."
         ),
     ),
+    # Jurisdiction directories. These answer the two questions "US/EU/Chinese AI
+    # models" searches conflate — which lab built the weights, and which company
+    # operates the endpoint a request reaches — from the two separate catalog
+    # tables that record them. Rendered by public_model_region_html, which adds
+    # the per-region lists to the usual SEO page context.
+    "us-ai-models": PublicPage(
+        template="public/seo_us_ai_models.html",
+        og_card="us-ai-models.png",
+        title="US AI Models & US-Operated Providers",
+        description=(
+            "Which AI models come from US labs, which providers are operated by US "
+            "companies, and how to require US-operated routes on a request. Both facts, kept apart."
+        ),
+        og_alt="US AI model origins and US-operated provider routes on TrustedRouter",
+        faq_items=(
+            (
+                "What counts as a US AI model?",
+                "Two different things, so TrustedRouter records them separately. A model's origin is the country of the lab that built the weights, read from that lab's own licence, terms, or regulatory filing. A route's jurisdiction is the country of the company operating the endpoint the request reaches, read from that company's own terms or filing. A model from a US lab is regularly served by providers registered outside the US, and open-weights models from other countries are regularly served by US providers, so neither fact implies the other.",
+            ),
+            (
+                "How do I make sure my prompts only reach US providers?",
+                "Set provider.jurisdiction to \"us\" on the request. The router then considers only providers whose recorded operator country is the United States and fails closed when none qualify, rather than falling back to a provider you did not approve. For an exact list rather than a country test, use provider.only with the provider slugs you approved.",
+            ),
+            (
+                "Does a US provider mean my data stays in the United States?",
+                "No, and this site does not claim it. The recorded country is the legal home of the company operating the endpoint, taken from its published terms, privacy policy, or regulatory filing. It says nothing about which datacentre answers a given request. Where processing location is a contractual requirement, it comes from an agreed provider allowlist and a signed agreement, not from a country code in a catalog.",
+            ),
+            (
+                "What is the Liberty model family?",
+                "Liberty is TrustedRouter's own set of panel routes: each id calls several component models and returns one answer. Every component model under every Liberty route resolves to a lab recorded as US-based in the catalog's model-origin table, and the US-AI-models page shows that as a count computed when the page renders rather than as a fixed claim. US-operated provider routes are available for each Liberty id; the default candidate pool also includes operators outside the US, so add provider.jurisdiction=\"us\" when US-operated serving is a requirement.",
+            ),
+        ),
+    ),
+    "eu-ai-models": PublicPage(
+        template="public/seo_eu_ai_models.html",
+        og_card="eu-ai-models.png",
+        title="EU AI Models & EU-Operated Providers",
+        description=(
+            "Models built by EU labs, providers operated from EU member states, and why "
+            "an EU-registered provider is not by itself EU data residency."
+        ),
+        og_alt="EU AI model origins and EU-operated provider routes on TrustedRouter",
+        faq_items=(
+            (
+                "Which AI models are made in the EU?",
+                "TrustedRouter groups catalog models by the lab that built them, using a country read from that lab's own legal notice or filing. The EU AI models page lists every lab registered in an EU member state alongside its models and the source the country came from. A vendor prefix earns an origin row once at least three of its models are in the catalog, so smaller prefixes appear on no region page rather than being assigned a country by guesswork.",
+            ),
+            (
+                "Does the trustedrouter/eu route guarantee EU data residency?",
+                "No. trustedrouter/eu is a routing preference: it narrows candidates to an EU-focused provider pool led by Mistral. Membership in that pool is based on EU-focused availability and privacy posture, and some of its providers are operated by companies registered outside the EU. For a hard requirement, set provider.only to the operators you approved, which fails closed instead of falling back, and put that allowlist in the contract.",
+            ),
+            (
+                "Can I require an EU provider the way I can require a US one?",
+                "Not with the jurisdiction preference. provider.jurisdiction accepts \"us\" and nothing else today, so an EU requirement is expressed with provider.only and the provider list on this page. Separately, the EU gateway region is chosen by base URL: https://api-europe-west4.quillrouter.com/v1 begins authentication, policy checks, provider selection, and streaming in Europe West inside the attested gateway.",
+            ),
+            (
+                "Is provider jurisdiction the same as provider privacy posture?",
+                "No, they are independent fields. A provider registered in an EU member state can have no recorded zero-retention or confidential-compute claim, and a provider registered elsewhere can have both. Jurisdiction is filtered with provider.only; retention and confidentiality are filtered with provider.min_privacy set to zdr or confidential.",
+            ),
+        ),
+    ),
+    "china-ai-models": PublicPage(
+        template="public/seo_china_ai_models.html",
+        og_card="china-ai-models.png",
+        title="Chinese AI Models: Labs, Routes & Where Prompts Go",
+        description=(
+            "Chinese-lab models in the catalog, the providers that serve each one, and how "
+            "to run those weights on a US-operated route instead of the vendor endpoint."
+        ),
+        og_alt="Chinese AI model origins and the operator jurisdiction of each route",
+        faq_items=(
+            (
+                "Does using a Chinese model send my prompts to China?",
+                "Only if you route it to a provider operated from China. The model's origin and the endpoint's operator are separate facts in the catalog. Most of these are open-weights models that US-registered providers also serve; a request routed to one of those reaches that provider's endpoint and is not sent on to the originating lab. A request to the vendor's own API does reach a China-registered operator, which is what the provider table on this page lists.",
+            ),
+            (
+                "How do I use a Chinese model without China-bound traffic?",
+                "Set provider.jurisdiction to \"us\" on the request. The router then considers only providers whose recorded operator country is the United States, and fails closed when none serve that model, rather than silently routing elsewhere. provider.only pins an exact operator allowlist when a country test is not specific enough.",
+            ),
+            (
+                "Which providers are operated from China?",
+                "The provider table on this page is generated from the catalog, listing every provider whose operator is a China-registered company according to that company's own privacy policy, terms, or regulatory filing. Some familiar Chinese AI brands are not on it: the api.z.ai and api.siliconflow.com services are operated by Singapore-registered companies under Singapore law per their own terms, so they are recorded under Singapore while the weights they serve stay grouped under the labs that built them.",
+            ),
+            (
+                "Are Chinese models worse or less safe?",
+                "That is not a question a jurisdiction directory can answer, and this page does not try to. Benchmark scores, prices, and measured latency per route are on each model page and the live leaderboard. What the catalog records is the origin country and the operator country, each with the source it was read from, so a procurement review can weigh them alongside measurements rather than instead of them.",
+            ),
+        ),
+    ),
 }
 
 
@@ -1956,6 +2049,70 @@ def public_page_html(
     )
 
 
+def _region_list_items(
+    settings: Settings,
+    rows: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    """Name/URL pairs for a schema.org ItemList, from directory rows that
+    already carry a display name and a site-relative href."""
+    return [
+        {
+            "name": str(row["name"]),
+            "url": f"https://{settings.trusted_domain}{row['detail_href']}",
+        }
+        for row in rows
+    ]
+
+
+def public_model_region_html(settings: Settings, slug: str) -> str:
+    """Render one jurisdiction directory: /us-ai-models, /eu-ai-models, or
+    /china-ai-models.
+
+    The provider and model lists are built from the catalog on every render, the
+    way /models is, so a route added to the catalog shows up here without a
+    second edit and a route removed stops being advertised. dateModified carries
+    the day the page was built, which is what the on-page "as of" stamp reports.
+    """
+    page = PUBLIC_PAGES[slug]
+    region = model_region_evidence(slug)
+    path = f"/{slug}"
+    canonical_url = canonical_public_url(settings, path)
+    provider_items = _region_list_items(
+        settings,
+        cast(list[Mapping[str, object]], region["provider_rows"]),
+    )
+    model_rows = [
+        model
+        for lab in cast(list[Mapping[str, object]], region["labs"])
+        for model in cast(list[Mapping[str, object]], lab["models"])
+    ]
+    model_items = _region_list_items(settings, model_rows[:200])
+    return _render_public_page(
+        settings,
+        page,
+        path=path,
+        page_key=slug,
+        extra_context={"region": region},
+        extra_json_ld=(
+            {
+                "@type": "WebPage",
+                "name": page.title,
+                "url": canonical_url,
+                "description": page.description,
+                "dateModified": datetime.now(UTC).date().isoformat(),
+            },
+            _item_list_node(
+                name=f"Providers operated from {region['country_label']}",
+                items=provider_items,
+            ),
+            _item_list_node(
+                name=f"Models built by labs in {region['country_label']}",
+                items=model_items,
+            ),
+        ),
+    )
+
+
 def public_competitor_compare_index_html(settings: Settings) -> str:
     grouped: dict[str, list[CompetitorComparison]] = {}
     for comparison in COMPETITOR_COMPARISONS:
@@ -2066,6 +2223,8 @@ def _render_public_page(
     page_key: str | None = None,
     site_url: str | None = None,
     robots_meta: str | None = None,
+    extra_context: Mapping[str, object] | None = None,
+    extra_json_ld: Sequence[dict[str, object]] = (),
 ) -> str:
     canonical_url = canonical_public_url(settings, path)
     resolved_site_url = site_url or canonical_url
@@ -2124,6 +2283,7 @@ def _render_public_page(
             json_ld_blob=_json_ld_graph(
                 _breadcrumb_node(settings, (("Home", "/"), (page.title, path))),
                 *page_specific_json_ld,
+                *extra_json_ld,
                 _faq_node(page.faq_items),
                 _catalog_evidence_item_list_node(settings, catalog_evidence),
             ),
@@ -2138,6 +2298,7 @@ def _render_public_page(
                 PROVIDER_CATALOG_V2_EXAMPLE,
                 indent=2,
             ),
+            **dict(extra_context or {}),
         )
     )
 
@@ -3410,6 +3571,11 @@ def llms_txt(settings: Settings) -> str:
         f"- Providers: https://{domain}/providers",
         f"- AI gateway comparisons: https://{domain}/compare",
         f"- Provider marketplace: https://{domain}/providers/marketplace",
+        (
+            "- Model origin vs serving jurisdiction directories (the lab that built a "
+            f"model and the company operating each route are separate): https://{domain}"
+            f"/us-ai-models, https://{domain}/eu-ai-models, https://{domain}/china-ai-models"
+        ),
         f"- EU routing: https://{domain}/eu",
         f"- TrustedOS for AI clouds: https://{domain}/trustedos",
         f"- Benchmarks: https://{domain}/benchmarks",

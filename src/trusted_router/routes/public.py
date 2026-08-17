@@ -76,6 +76,7 @@ from trusted_router.dashboard import (
     public_model_compare_index_html,
     public_model_detail_html,
     public_model_not_found_html,
+    public_model_region_html,
     public_model_section_html,
     public_models_html,
     public_not_found_html,
@@ -182,6 +183,11 @@ CHOOSE_PAGE_CACHE_SECONDS = 300
 CHOOSE_PAGE_STALE_SECONDS = 86_400
 CHOOSE_CATALOG_CACHE_SECONDS = 300
 CHOOSE_CATALOG_STALE_SECONDS = 86_400
+# Jurisdiction directories walk every model's endpoints on each build, so they
+# cache on the same terms as /choose: fresh for five minutes, servable stale for
+# a day while a background rebuild runs.
+MODEL_REGION_PAGE_CACHE_SECONDS = 300
+MODEL_REGION_PAGE_STALE_SECONDS = 86_400
 INDEXNOW_KEY = "360a02e48445d297f9612a4c3fef878b"
 _STATUS_CACHE: tuple[float, dict[str, Any]] | None = None
 # /fleet fans out to every peer's status.json, so its cache TTL is what keeps
@@ -859,6 +865,21 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/chinese-ai-models-us-hosted")
     async def seo_chinese_ai_models_us_hosted() -> str:
         return public_page_html(settings, "chinese-ai-models-us-hosted")
+
+    # Jurisdiction directories. Their provider and model lists are rebuilt from
+    # the catalog on each render, so they are cached like the other
+    # catalog-derived pages rather than recomputed per request.
+    @public_html_route("/us-ai-models")
+    async def seo_us_ai_models(background_tasks: BackgroundTasks) -> Response:
+        return _model_region_response(settings, "us-ai-models", background_tasks)
+
+    @public_html_route("/eu-ai-models")
+    async def seo_eu_ai_models(background_tasks: BackgroundTasks) -> Response:
+        return _model_region_response(settings, "eu-ai-models", background_tasks)
+
+    @public_html_route("/china-ai-models")
+    async def seo_china_ai_models(background_tasks: BackgroundTasks) -> Response:
+        return _model_region_response(settings, "china-ai-models", background_tasks)
 
     @public_html_route("/minimax-m3-api")
     async def seo_minimax_m3_api() -> str:
@@ -1753,6 +1774,22 @@ def _status_render_host(settings: Settings, host: str) -> str:
     if is_status_hostname(settings, hostname):
         return hostname
     return settings.trusted_domain
+
+
+def _model_region_response(
+    settings: Settings,
+    slug: str,
+    background_tasks: BackgroundTasks,
+) -> Response:
+    return _cached_public_response(
+        settings,
+        key=f"model-region:{slug}:{settings.release}",
+        media_type="text/html",
+        ttl_seconds=MODEL_REGION_PAGE_CACHE_SECONDS,
+        stale_seconds=MODEL_REGION_PAGE_STALE_SECONDS,
+        background_tasks=background_tasks,
+        build=lambda: public_model_region_html(settings, slug).encode(),
+    )
 
 
 def _cached_public_response(

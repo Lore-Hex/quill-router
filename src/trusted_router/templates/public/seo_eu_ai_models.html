@@ -1,0 +1,52 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="EU AI models and EU-operated routes">
+  <div class="marketing-copy">
+    <span class="eyebrow">European labs, European operators, and the gap between them</span>
+    <h2>An EU-registered provider is not the same thing as EU data residency. This page keeps the two apart.</h2>
+    <p>Two facts get sold as one. The lab that trained a model has a country: {{ region.origin_model_count }} models in the catalog come from {{ region.lab_count }} lab{{ '' if region.lab_count == 1 else 's' }} registered in an EU member state. The company operating the endpoint a request reaches has its own country, and it is a different field: {{ region.provider_count }} of the {{ region.catalog_provider_count }} providers here are operated by a company registered in the EU.</p>
+    <p>Neither field is a residency guarantee. TrustedRouter records the operator's legal home, read from its own terms or filing. It does not record which datacentre answers a given request, so nothing on this page should be read as one. Where residency is contractual, it comes from an allowlist you pin and a contract you sign, not from a country code on a directory page.</p>
+    <p><a class="btn primary" href="/eu">Read the EU routing guide</a> <a class="btn" href="/gdpr-compliant-llm-api">GDPR evidence</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>eu_route.py</span><span>Python</span></div>
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    # EU gateway region, separate from provider choice
+    base_url="https://api-europe-west4.quillrouter.com/v1",
+    api_key="sk-tr-...",  # your TrustedRouter key
+)
+
+reply = client.chat.completions.create(
+    model="trustedrouter/eu",
+    messages=[{"role": "user",
+               "content": "Summarize this contract."}],
+    # strict mode: the exact operators you approved
+    extra_body={"provider": {"only": ["mistral", "nebius"]}},
+)</code></pre>
+  </div>
+</section>
+
+<section class="panel" aria-label="The trustedrouter/eu route">
+  <div class="panel-head"><h2>What <span class="mono">trustedrouter/eu</span> does, and what it does not do</h2><span class="pill">routing preference</span></div>
+  <div class="panel-body">
+    <p><span class="mono">trustedrouter/eu</span> is a model alias. Calling it routes over an EU-focused candidate pool led by Mistral, followed by providers with EU regions and privacy-forward posture. That pool is a preference expressed in the catalog, and its members are chosen for EU-focused availability rather than for being EU-registered companies. Most of that pool is operated from outside the EU, and the directory below names every operator country in the catalog so you can check rather than assume.</p>
+    <ol class="plain-list">
+      <li><strong>Gateway region</strong> is the base URL. <span class="mono">https://api-europe-west4.quillrouter.com/v1</span> begins authentication, policy checks, provider selection, and streaming in Europe West, inside the attested gateway.</li>
+      <li><strong>Provider selection</strong> is the model id and the request preferences. <span class="mono">trustedrouter/eu</span> prefers the EU-focused pool; <span class="mono">provider.only</span> narrows it to an exact allowlist and fails closed instead of falling back elsewhere.</li>
+      <li><strong>Privacy posture</strong> is <span class="mono">provider.min_privacy</span>, set to <span class="mono">zdr</span> or <span class="mono">confidential</span>. It is orthogonal to jurisdiction: an EU-registered provider can record no privacy claim, and a non-EU one can be zero-retention.</li>
+    </ol>
+    <p class="muted">The <span class="mono">provider.jurisdiction</span> preference accepts <span class="mono">us</span> and nothing else today. There is no <span class="mono">eu</span> value to set, so an EU jurisdiction requirement is expressed with <span class="mono">provider.only</span> and the providers listed below. Saying otherwise would give you a filter that does not exist. {{ content_handling_claim }}</p>
+    <p class="muted">The full EU deployment checklist, including the regional hostname and the strict-mode request shape, is on the <a href="/eu">EU routing page</a>. Compliance context for deployers is on <a href="/eu-ai-act-llm-compliance">EU AI Act evidence</a> and <a href="/llm-data-residency">data residency</a>.</p>
+  </div>
+</section>
+
+{% include "public/_model_region_directory.html" %}
+
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Choice</span><h3>EU model or EU operator.</h3><p>You can run an EU-built model on a US operator, or a US-built model on an EU operator. The two columns above let you pick each one deliberately instead of inheriting whichever the brand name suggests.</p></div>
+  <div class="marketing-card"><span class="card-label">Contract</span><h3>Paper, where paper is required.</h3><p>A directory is evidence, not a commitment. The <a href="/legal/dpa">DPA</a>, <a href="/legal/subprocessors">subprocessor list</a>, and an agreed <span class="mono">provider.only</span> allowlist are what a European procurement review can hold someone to.</p></div>
+  <div class="marketing-card"><span class="card-label">Proof</span><h3>The gateway hop is checkable.</h3><p>Whichever provider serves the request, the TrustedRouter hop can be attested live: a JWT signed by the CPU vendor's root key, bound to your TLS session. The procedure is on the <a href="/security">security page</a>.</p></div>
+</section>
+{% endblock %}
