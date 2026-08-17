@@ -243,8 +243,18 @@ script — so it can be run from a laptop, by a reviewer, at any time:
 Stage (e) is not redundant with (d) and this is the subtle part: **a drained
 outbox and a disabled outbox look identical from outside.** Both publish
 `drain_lag_seconds: 0.0`. Stage (d) proves nothing is stuck; only (e) plus an
-in-cloud count proves anything moves. When you finish a cloud, look once, from
-inside:
+in-cloud count proves anything moves.
+
+Stage (e) is also the one stage that reads a FILE rather than the cloud: it
+parses that cloud's control-plane deploy script **in the working tree you run it
+from**, because a check that needs `aws`/`az` credentials is a check that does
+not get run. So it answers "would a deploy from this checkout enable the
+outbox?", not "did the running service have it enabled?" — a local edit reads as
+enabled, and a script that shipped a year ago reads the same as one deployed
+this morning. The runtime evidence is (b)–(d), and the verifier says so on the
+line where it passes.
+
+When you finish a cloud, look once, from inside:
 
     clickhouse-client --query 'SELECT count() FROM activity_generations'
 
@@ -252,21 +262,58 @@ and then again ten minutes later. Two numbers, the second larger. That is the
 observation the rule above is named after; nothing in a status page substitutes
 for it.
 
-### The analytics stage is not optional
+### The analytics stage is not optional (with one named exception)
 
-Bring-up is not a menu. Every cloud bring-up and control-plane deploy script
-ends by running the check and exits non-zero when it fails —
+Bring-up is not a menu. The AWS and Azure bring-up and control-plane deploy
+scripts end by running the check and exit non-zero when it fails —
 `aws_eu_clickhouse.sh`, `aws_eu_north_clickhouse.sh`, `aws_eu_control_plane.sh`,
 `aws_eu_clickhouse_drain_install.sh`, `azure_control_plane.sh`. Where a
 remaining step genuinely needs a human (a cost decision, a password that only
 exists on a node), the script prints the exact command **and exits non-zero**.
 It never prints and returns 0; that behaviour is the outage.
 
+That list is not typed here twice: it is `deploy_scripts` on each `CloudRollout`
+in `src/trusted_router/cloud_rollout_completeness.py`, and CI asserts that every
+named script really does end in the check and that no script runs the check
+unclaimed. Adding a cloud whose bring-up script is unwired fails CI with a
+message naming the file to edit.
+
+**GCP is the exception, and it is named in code.** `rollout.sh` is not a script
+a human runs; it is a step of the deploy job in `.github/workflows/deploy.yml`,
+which runs on every merge to `main`. Ending it in this check would put a public
+fetch of `trustedrouter.com/status.json` on the deploy path of the cloud that
+*serves* `trustedrouter.com` — the deploy that repairs an outage would fail
+because of the outage it repairs. So GCP carries a `ScriptExemption` with that
+reason in `ROLLOUT_REGISTRY`, and is checked out of band by running
+`bash scripts/deploy/verify_cloud_complete.sh gcp`. An exemption with an empty
+reason fails CI; the mechanism this section replaced allowed the reason to be
+"nobody typed a row".
+
 There is exactly one way to run a cloud without an analytics pipeline: set
 `analytics_absent_reason` on that cloud's entry in
 `src/trusted_router/cloud_rollout_completeness.py`. That is a code change and
 therefore a review, and the check keeps printing the blocker it is suppressing.
-No cloud has one today.
+Be clear about its reach: it waives stages (c), (d) **and (e)** — every stage
+that is about analytics at all — for that cloud, until someone deletes it. A run
+under a waiver reports `NOT VERIFIED`, lists what was suppressed, and cannot
+print `COMPLETE`. No cloud has one today.
+
+### What the check cannot do
+
+Three limits, stated because a gate that is trusted past its reach is worse than
+one that is not trusted at all:
+
+* **It starts from the tables.** A cloud that is in neither deployment table,
+  not in the fleet peers, and named nowhere in `src/` — provisioned by hand,
+  serving traffic — is invisible to all of this, exactly as it is invisible to
+  `/v1/regions` and the marketing map. Step 1 of the checklist below is
+  unavoidable *for a cloud somebody adds properly*; it is not a law of physics.
+* **Stage (e) reads this checkout, not the deployed revision** (above).
+* **It cannot see rows move.** No status page can: an empty outbox and a
+  switched-off one publish the same number. That evidence is the two in-cloud
+  counts, and the verifier refuses to imply otherwise — a stage that passed on
+  weaker evidence downgrades the final banner to `COMPLETE WITH CAVEATS` and
+  names what was not shown.
 
 ### What is missing right now
 
@@ -285,7 +332,14 @@ history is unrecorded cannot answer the question canaries exist to answer.
 3. Add a `CloudRollout` entry in
    `src/trusted_router/cloud_rollout_completeness.py` naming its control-plane
    deploy script and its drain install command.
-4. Build the pipeline: an outbox (enabled in the control-plane script), a
+4. List every deploy script for it in that entry's `deploy_scripts`, and end
+   each of those scripts with
+   `bash "${SCRIPT_DIR}/verify_cloud_complete.sh" <cloud>`, letting its exit
+   code stand. CI fails until this is done, naming the file. A script that must
+   not be bound goes in `exempt_deploy_scripts` with the reason why.
+5. Build the pipeline: an outbox (enabled in the control-plane script), a
    ClickHouse the cloud owns, and a drain installed as a supervised unit.
-5. Run `bash scripts/deploy/verify_cloud_complete.sh <cloud>` until it exits 0,
-   then watch two counts ten minutes apart from inside the cloud.
+6. Run `bash scripts/deploy/verify_cloud_complete.sh <cloud>` until it exits 0
+   **with the plain `COMPLETE` banner** — `COMPLETE WITH CAVEATS` and
+   `NOT VERIFIED` also exit 0 and are not the same claim — then watch two counts
+   ten minutes apart from inside the cloud.

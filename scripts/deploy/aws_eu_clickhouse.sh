@@ -188,7 +188,9 @@ echo "INSTANCE_ID=${INSTANCE_ID}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if bash "${SCRIPT_DIR}/verify_cloud_complete.sh" aws; then
   echo
-  echo "aws is complete: the analytics pipeline is live and observable."
+  echo "The node is up and the check reached a verdict for aws — read its banner"
+  echo "above for which one: COMPLETE, COMPLETE WITH CAVEATS, or NOT VERIFIED."
+  echo "This script does not restate it in stronger words than it earned."
   exit 0
 fi
 

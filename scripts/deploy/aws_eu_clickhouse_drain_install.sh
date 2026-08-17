@@ -432,6 +432,45 @@ EOF
 #
 # Non-zero on failure on purpose: this script's whole reason for existing is
 # that the previous version of this step was a paragraph of prose and an exit 0.
+#
+# ONE HONEST EXCEPTION, AND IT IS TODAY'S STATE.
+# The outside check reads an `analytics` section that no deployed control plane
+# publishes yet — the field ships with the branch that publishes per-cloud drain
+# lag. So on THE VERY RUN THAT FIXES THE OUTAGE, an unqualified check would
+# print "INCOMPLETE ROLLOUT", every time, with nothing the operator could do
+# about it. That is how you train someone to stop reading exit codes, which is
+# the habit this file exists to break. The verifier gives that state its own
+# exit code (5) and this reports it in those words: the install worked, the
+# outside view does not exist yet, and here is what closes it.
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-bash "${SCRIPT_DIR}/verify_cloud_complete.sh" aws
+VERIFY_RC=0
+bash "${SCRIPT_DIR}/verify_cloud_complete.sh" aws || VERIFY_RC=$?
+
+if [ "$VERIFY_RC" -eq 5 ]; then
+  cat >&2 <<'PREDEPLOY'
+
+DRAIN INSTALLED; NOT YET OBSERVABLE FROM OUTSIDE.
+
+What this run established, from inside the VPC (step 9 above): the unit is
+enabled, it swept, and it moved rows out of the outbox.
+
+What it could not establish: that anyone WITHOUT a session on this node can
+tell. https://aws.trustedrouter.com/status.json publishes no `analytics`
+section, because no control plane deployed to this cloud is built from a commit
+that includes trusted_router.operational_analytics_freshness. Until then the
+drain's health is visible only to whoever is logged in — which is the property
+that let it be missing for fifteen days.
+
+To close it:
+
+  1. deploy a control plane built from a commit that publishes the section:
+       bash scripts/deploy/aws_eu_control_plane.sh
+  2. bash scripts/deploy/verify_cloud_complete.sh aws
+
+Exiting 5 (not 0): a pipeline nobody outside can see is not a finished cloud.
+PREDEPLOY
+  exit 5
+fi
+
+exit "$VERIFY_RC"

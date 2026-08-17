@@ -339,11 +339,15 @@ NOTE
 #
 # So this deploy now ends by asking whether the CLOUD works rather than whether
 # the script finished, and today, on Azure, it says no. That is the correct
-# answer and it is deliberately not suppressible from the environment: the way
-# to make this exit 0 is to build the pipeline, or to record the absence as
-# analytics_absent_reason on the azure entry in
-# src/trusted_router/cloud_rollout_completeness.py — a code change, therefore a
-# review.
+# answer, and it is not suppressible from the environment this script inherits:
+# the verifier reads no environment variable at all (it says so, loudly, if it
+# finds TR_MAX_DRAIN_LAG_SECONDS or TR_STATUS_URL set), its bound is a constant
+# in src/ and its URL comes from the fleet registry. Overrides exist only as
+# flags nobody here passes. The way to make this exit 0 is to build the
+# pipeline, or to record the absence as analytics_absent_reason on the azure
+# entry in src/trusted_router/cloud_rollout_completeness.py — a code change,
+# therefore a review, and one that makes every run print NOT VERIFIED rather
+# than COMPLETE.
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if ! bash "${SCRIPT_DIR}/verify_cloud_complete.sh" azure; then

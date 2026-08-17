@@ -30,22 +30,46 @@ shell entry point is ``scripts/deploy/verify_cloud_complete.sh``, which does the
 HTTPS fetch and calls back into the subcommands here; every judgement lives in
 Python so it can be unit-tested without a network.
 
-Two rules this module exists to enforce, in code rather than in prose:
+Three rules this module exists to enforce, in code rather than in prose:
 
 * **The cloud list is never re-typed.** :func:`declared_clouds` reads the
-  deployment-declaring tables (:func:`byok_v1_attestations.clouds_that_must_attest`
-  and :data:`regions.MULTICLOUD_REGION_GEO`), so a fourth cloud added to either
-  one shows up here whether or not anybody remembered this file.
-  :func:`registry_gaps` then FAILS for a declared cloud that has no entry —
-  which is the CI binding in ``tests/test_cloud_rollout_completeness.py``.
+  deployment-declaring tables (:func:`byok_v1_attestations.clouds_that_must_attest`,
+  :data:`regions.MULTICLOUD_REGION_GEO` and the fleet freshness registry), so a
+  fourth cloud added to any one of them shows up here whether or not anybody
+  remembered this file. :func:`registry_gaps` then FAILS for a declared cloud
+  that has no entry — which is the CI binding in
+  ``tests/test_cloud_rollout_completeness.py``.
+
+* **The scripts are never re-typed either.** Which deploy scripts must END in
+  ``verify_cloud_complete.sh`` is DATA on the :class:`CloudRollout`
+  (``deploy_scripts``), not a list in a test — a hand-written list is a fourth
+  copy of the fleet and copies are what drift. :func:`script_binding_gaps`
+  fails when a registered cloud names no script, when a named script does not
+  invoke the verifier, or when a script invokes it for a cloud that never
+  claimed it. A script deliberately NOT bound (GCP's ``rollout.sh``, which runs
+  inside ``.github/workflows/deploy.yml``) must say so in
+  ``exempt_deploy_scripts`` WITH ITS REASON; silence fails CI.
 
 * **Absence must be signed for.** A cloud whose analytics genuinely cannot be
   checked yet is allowed through only by an entry in :data:`ROLLOUT_REGISTRY`
   carrying ``analytics_absent_reason``, which is a code change and therefore a
-  review. Silence is not an exemption; today no cloud has one.
+  review. Silence is not an exemption; today no cloud has one. The waiver is
+  reported by the shell as NOT VERIFIED, never as COMPLETE.
 
-Nothing here does IO or touches a cloud API. The only file it reads is a deploy
-script already in this repository, and it reads it as text.
+Nothing this module decides comes from the environment. That is not an
+accident: the bound in stage (d) and the URL in stage (a) are what an attacker
+of the *process* — a tired operator with an ``export`` in their shell profile —
+would reach for, and a deploy script inherits every variable its caller had.
+The bound is a constant here, the URL comes from the registry, and even
+``Settings.synthetic_fleet_peers`` is read from its config-as-code default
+rather than from a live ``Settings()`` (which would honour
+``TR_SYNTHETIC_FLEET_PEERS`` from the same inherited environment). Overrides
+exist, but only as explicit command-line flags on
+``scripts/deploy/verify_cloud_complete.sh``, and a run that uses one is a
+DIAGNOSTIC run that may not print the COMPLETE banner.
+
+Nothing here does IO or touches a cloud API. The only files it reads are deploy
+scripts already in this repository, and it reads them as text.
 """
 
 from __future__ import annotations
@@ -102,16 +126,60 @@ _OUTBOX_DISABLED_LITERALS = frozenset({"", "false", "0", "no", "off", "none"})
 #: is none of them. A future script that assigns the variable some other way
 #: fails this stage rather than passing it silently, which is the safe
 #: direction: the message says exactly which file and which variable.
+#:
+#: Matched against the WHOLE file, heredocs included — AWS declares its map
+#: inside ``CONFIG=$(cat <<JSON``, so stripping heredocs here would blind the
+#: stage to the one cloud that passes it.
 _OUTBOX_DECLARATION_PATTERNS = (
     rf'"{OUTBOX_ENABLED_ENV}"\s*:\s*"([^"]*)"',
     rf'"{OUTBOX_ENABLED_ENV}=([^"]*)"',
     rf"^[ \t]*export[ \t]+{OUTBOX_ENABLED_ENV}=(\S*)",
 )
 
+#: The fourth shape, and the reason it needs its own pass: a plain
+#: ``TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true`` line is EXACTLY what the
+#: failure message tells an operator to write, and the patterns above rejected
+#: it — a gate that refuses the fix it prescribes teaches people the gate is
+#: wrong. It cannot be matched against the whole file, because the same text
+#: appears inside the heredoc where ``azure_control_plane.sh`` prints that
+#: advice; it is matched against :func:`_executable_text`, which is the script
+#: with heredoc bodies and whole-line comments removed. Instructions stay
+#: instructions, and an assignment counts.
+_OUTBOX_BARE_ASSIGNMENT_PATTERN = rf"^[ \t]*{OUTBOX_ENABLED_ENV}=(\S*)"
+
+#: Repo-relative path of the shell entry point every bound deploy script ends in.
+VERIFIER_SCRIPT = "scripts/deploy/verify_cloud_complete.sh"
+
+#: Where deploy scripts live, scanned by :func:`script_binding_gaps` for
+#: invocations of the verifier that no registry entry claims.
+DEPLOY_SCRIPT_DIR = "scripts/deploy"
+
+#: How many trailing lines count as "ends in". The check is that the verifier is
+#: the LAST thing a bring-up script does, not merely that it appears somewhere:
+#: a call in the middle followed by twenty more steps is a check of a cloud that
+#: does not exist yet.
+VERIFIER_TAIL_LINES = 45
+
 #: How stale the published section may be before it is a frozen control plane
 #: rather than a healthy one. Mirrors the default in
 #: :mod:`clickhouse.check_aws_analytics_freshness`.
 DEFAULT_MAX_SECTION_AGE_SECONDS = 3_600.0
+
+
+@dataclass(frozen=True)
+class ScriptExemption:
+    """A deploy script that deliberately does NOT end in the verifier.
+
+    Both fields are required, which is the entire design: the failure mode this
+    replaces was a cloud being absent from a hand-written list, and absence
+    carries no reason. An exemption is a sentence somebody wrote and a reviewer
+    read.
+    """
+
+    #: Repo-relative path, so the test can assert the file exists.
+    script: str
+    #: Why binding this one would be wrong. Printed by ``audit``.
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -131,6 +199,17 @@ class CloudRollout:
     #: The command an operator runs to install/refresh this cloud's drain.
     #: Printed by the stage that fails, so the message names the fix.
     drain_install_command: str
+    #: Every deploy script for this cloud that must END in
+    #: ``verify_cloud_complete.sh <cloud>``. THIS is the script -> verifier
+    #: binding: :func:`script_binding_gaps` reads it, so adding a cloud whose
+    #: bring-up script prints "Next: ..." and exits 0 fails CI with a message
+    #: naming the file. Empty is legal only when every one of the cloud's
+    #: scripts is in :attr:`exempt_deploy_scripts`.
+    deploy_scripts: tuple[str, ...] = ()
+    #: Deploy scripts deliberately left unbound, each with its reason. Named in
+    #: code so that "this cloud's script does not run the check" is a claim
+    #: somebody made and a reviewer saw, rather than a row missing from a list.
+    exempt_deploy_scripts: tuple[ScriptExemption, ...] = ()
     #: Set ONLY to record a reviewed, deliberate absence of the analytics
     #: pipeline on this cloud. A non-empty string downgrades stages (c)-(e)
     #: from failures to loud warnings. Empty for every cloud today, on purpose:
@@ -151,11 +230,34 @@ ROLLOUT_REGISTRY: dict[str, CloudRollout] = {
             "bash scripts/deploy/clickhouse_operational_analytics.sh  "
             "# GCP drain: systemd units on the ClickHouse cluster"
         ),
+        exempt_deploy_scripts=(
+            ScriptExemption(
+                script="scripts/deploy/rollout.sh",
+                reason=(
+                    "GCP has no bring-up script a human runs: rollout.sh is a step of the "
+                    "deploy JOB (.github/workflows/deploy.yml), which runs on every merge to "
+                    "main. Ending it in this verifier would put a public HTTPS fetch of "
+                    "trustedrouter.com/status.json on the deploy path of the cloud that "
+                    "SERVES trustedrouter.com — so the deploy that repairs an outage would "
+                    "fail because of the outage it repairs, and the primary cloud would have "
+                    "the gate exactly when it could not satisfy it. GCP is checked instead "
+                    "by running 'bash scripts/deploy/verify_cloud_complete.sh gcp' out of "
+                    "band (docs/runbook.md, 'Adding a cloud') and by the scheduled analytics "
+                    "freshness workflow, neither of which can deadlock a deploy."
+                ),
+            ),
+        ),
     ),
     "aws": CloudRollout(
         cloud="aws",
         control_plane_script="scripts/deploy/aws_eu_control_plane.sh",
         drain_install_command="bash scripts/deploy/aws_eu_clickhouse_drain_install.sh",
+        deploy_scripts=(
+            "scripts/deploy/aws_eu_control_plane.sh",
+            "scripts/deploy/aws_eu_clickhouse.sh",
+            "scripts/deploy/aws_eu_north_clickhouse.sh",
+            "scripts/deploy/aws_eu_clickhouse_drain_install.sh",
+        ),
     ),
     "azure": CloudRollout(
         cloud="azure",
@@ -169,6 +271,7 @@ ROLLOUT_REGISTRY: dict[str, CloudRollout] = {
             "installed against its ClickHouse, mirroring "
             "scripts/deploy/aws_eu_clickhouse_drain_install.sh"
         ),
+        deploy_scripts=("scripts/deploy/azure_control_plane.sh",),
     ),
 }
 
@@ -181,17 +284,27 @@ ROLLOUT_REGISTRY: dict[str, CloudRollout] = {
 def declared_clouds() -> tuple[str, ...]:
     """Every cloud this repository DECLARES it deploys, from the real tables.
 
-    The union of the two places a deployment is announced today:
+    The union of the three places a deployment announces itself today:
 
     * :func:`byok_v1_attestations.clouds_that_must_attest` — the standalone
       deployments plus the enclave failover topology;
     * :data:`regions.MULTICLOUD_REGION_GEO` — the regions the marketing map and
-      ``/v1/regions`` advertise, each tagged with its cloud.
+      ``/v1/regions`` advertise, each tagged with its cloud;
+    * :func:`freshness_registry` — the fleet peers every deployment watches, so
+      that wiring a cloud's status URL first (the likelier half-finished order)
+      is enough to make it visible here.
 
-    Neither is re-typed here. A cloud added to either table is a cloud this
+    None of them is re-typed here. A cloud added to any table is a cloud this
     module immediately expects to be finishable, which is the whole mechanism:
     the list that grows when someone adds a cloud is the same list the
     completeness check reads.
+
+    The residual gap, stated because the docs must not overstate this: a cloud
+    that enters NO table — provisioned by hand, serving traffic, named nowhere
+    in ``src/`` — is invisible to every check here, exactly as a cloud that
+    nobody declares is invisible to the marketing map and to ``/v1/regions``.
+    Three tables is not "any conceivable cloud"; it is every way this repository
+    currently learns that a cloud exists.
     """
     found: list[str] = []
     for cloud in clouds_that_must_attest():
@@ -200,6 +313,9 @@ def declared_clouds() -> tuple[str, ...]:
     for geo in regions.MULTICLOUD_REGION_GEO.values():
         if geo.cloud not in found:
             found.append(geo.cloud)
+    for cloud in freshness_registry():
+        if cloud not in found:
+            found.append(cloud)
     return tuple(found)
 
 
@@ -248,18 +364,29 @@ def _status_url(base_or_url: str) -> str:
 
 
 def _fleet_peers_setting() -> str:
-    """``synthetic_fleet_peers`` from live settings, else its config-as-code default.
+    """``synthetic_fleet_peers`` as CODE: the class default, not a live ``Settings()``.
 
-    Constructing ``Settings`` can fail on a machine with a partially-populated
-    key file, and this verifier has to run from a laptop. The class default is
-    the config-as-code source of truth every cloud rolls out with, so falling
-    back to it changes nothing about which clouds are checked.
+    The order here is the point, and it is the opposite of the obvious one.
+    ``Settings`` is a ``BaseSettings`` with ``env_prefix="TR_"``, so
+    ``Settings().synthetic_fleet_peers`` honours ``TR_SYNTHETIC_FLEET_PEERS``
+    from the environment — and this module is called by deploy scripts, which
+    inherit whatever the operator's shell exported. Reading live settings first
+    would therefore leave the gate with exactly the hole that
+    ``TR_STATUS_URL`` used to be: one exported variable and every cloud's
+    status page becomes whichever page answers the way you want.
+
+    The class default is the config-as-code source of truth every cloud rolls
+    out with, it is a code change to edit, and it lists the same clouds. So the
+    gate reads it, and only falls back to a live ``Settings()`` if the default
+    were ever emptied — which would itself be a reviewed change.
     """
+    default = Settings.model_fields["synthetic_fleet_peers"].default
+    if isinstance(default, str) and default.strip():
+        return default
     try:
         return Settings().synthetic_fleet_peers or ""
     except Exception:
-        default = Settings.model_fields["synthetic_fleet_peers"].default
-        return default if isinstance(default, str) else ""
+        return ""
 
 
 def freshness_registry() -> dict[str, str]:
@@ -298,9 +425,9 @@ def registry_gaps() -> list[str]:
     for cloud in declared_clouds():
         if cloud not in registry:
             gaps.append(
-                f"{cloud}: declared as a deployment (byok_v1_attestations.STANDALONE_CLOUDS "
-                "or regions.MULTICLOUD_REGION_GEO) but absent from the fleet freshness "
-                "registry, so no one ever reads its analytics freshness. Fix: add "
+                f"{cloud}: declared as a deployment (byok_v1_attestations.STANDALONE_CLOUDS, "
+                "regions.MULTICLOUD_REGION_GEO or the fleet peer list) but absent from the "
+                "fleet freshness registry, so no one ever reads its analytics freshness. Fix: add "
                 f"'{cloud}=https://<its public base url>' to Settings.synthetic_fleet_peers "
                 "in src/trusted_router/config.py (or to the fleet registry module)."
             )
@@ -312,6 +439,138 @@ def registry_gaps() -> list[str]:
                 "can be called done with no analytics pipeline at all. Fix: add a "
                 "CloudRollout entry naming its control-plane deploy script and its drain "
                 "install command."
+            )
+    return gaps
+
+
+# ---------------------------------------------------------------------------
+# The other binding: which SCRIPTS must end in the verifier.
+#
+# A cloud can be perfectly registered here and still ship a bring-up script
+# that prints "Next: ..." and exits 0 — which is not a hypothetical, it is what
+# happened. Until this function existed the script -> verifier binding was a
+# hand-written list of five (script, cloud) pairs in the test file: a fourth
+# copy of the fleet, in the file whose docstring says copies are the enemy.
+# Now the pairs are fields on the registry entry, and this is what CI asserts.
+# ---------------------------------------------------------------------------
+
+
+def _invokes_verifier(text: str, cloud: str) -> bool:
+    """Does this script text run the verifier FOR THIS CLOUD, at the end?
+
+    Two conditions, because either alone is satisfiable without meaning it:
+    the invocation must name this cloud (a script that verifies a different
+    cloud proves nothing about its own), and it must be within the last
+    :data:`VERIFIER_TAIL_LINES` lines (a check in the middle is a check of a
+    cloud that does not exist yet, followed by more steps that can fail).
+    """
+    pattern = re.compile(rf"verify_cloud_complete\.sh\"?\s+{re.escape(cloud)}\b")
+    if not pattern.search(text):
+        return False
+    tail = "\n".join(text.rstrip().splitlines()[-VERIFIER_TAIL_LINES:])
+    return bool(pattern.search(tail))
+
+
+def _deploy_scripts_invoking_the_verifier(root: Path) -> list[str]:
+    """Every script under ``scripts/deploy`` that mentions the verifier at all."""
+    directory = root / DEPLOY_SCRIPT_DIR
+    if not directory.is_dir():
+        return []
+    found: list[str] = []
+    for path in sorted(directory.glob("*.sh")):
+        if path.name == Path(VERIFIER_SCRIPT).name:
+            continue
+        if "verify_cloud_complete.sh" in path.read_text(encoding="utf-8"):
+            found.append(f"{DEPLOY_SCRIPT_DIR}/{path.name}")
+    return found
+
+
+def script_binding_gaps(root: Path | None = None) -> list[str]:
+    """Deploy scripts that are not bound to the verifier. Empty means bound.
+
+    Four ways to be wrong, all of them things a new cloud does by accident:
+
+    1. the cloud names no script at all and claims no exemption — the shape the
+       old hand-written list allowed silently, because a cloud that is simply
+       absent from a list looks the same as a cloud with nothing to bind;
+    2. a named script does not exist, or does not end in the verifier;
+    3. the cloud's own ``control_plane_script`` — the file that IS the source
+       of truth for its environment — is neither bound nor exempt;
+    4. some script invokes the verifier for a cloud that never named it, so the
+       wiring exists but no registry entry would notice it disappearing.
+
+    Every message names the file to edit, because the fix is a code change and
+    a CI failure that does not say where to go teaches nobody.
+    """
+    root = root or REPO_ROOT
+    gaps: list[str] = []
+    here = "src/trusted_router/cloud_rollout_completeness.py"
+    claimed: dict[str, str] = {}
+
+    for cloud, entry in sorted(ROLLOUT_REGISTRY.items()):
+        exempt = {item.script: item.reason for item in entry.exempt_deploy_scripts}
+        for script in entry.deploy_scripts:
+            claimed[script] = cloud
+        for script, reason in exempt.items():
+            claimed.setdefault(script, cloud)
+            if not reason.strip():
+                gaps.append(
+                    f"{cloud}: {script} is exempt from ending in {VERIFIER_SCRIPT} with an "
+                    f"EMPTY reason. An exemption with no reason is the missing row it "
+                    f"replaced. Fix: write why in ScriptExemption.reason in {here}."
+                )
+            if not (root / script).is_file():
+                gaps.append(
+                    f"{cloud}: exempt script {script} does not exist. Fix: correct or drop "
+                    f"the ScriptExemption in {here}."
+                )
+
+        if not entry.deploy_scripts and not exempt:
+            gaps.append(
+                f"{cloud}: ROLLOUT_REGISTRY names no deploy script for this cloud, so "
+                f"nothing binds its bring-up to {VERIFIER_SCRIPT} and it can ship a script "
+                'that prints "Next: ..." and exits 0 with CI green — the AWS-EU outage '
+                f"exactly. Fix: in {here}, add every deploy script for {cloud} to "
+                "deploy_scripts=(...) on its CloudRollout, and end each of those scripts "
+                f'with: bash "${{SCRIPT_DIR}}/verify_cloud_complete.sh" {cloud}. If one of '
+                "them must NOT be bound, say so in exempt_deploy_scripts=(ScriptExemption("
+                "script=..., reason=...),)."
+            )
+
+        if entry.control_plane_script not in entry.deploy_scripts and (
+            entry.control_plane_script not in exempt
+        ):
+            gaps.append(
+                f"{cloud}: {entry.control_plane_script} is this cloud's control-plane "
+                "script — the source of truth for its service environment — but it is "
+                "neither in deploy_scripts nor exempt, so deploying this cloud never asks "
+                f"whether the cloud works. Fix: add it to deploy_scripts in {here} and end "
+                f'it with: bash "${{SCRIPT_DIR}}/verify_cloud_complete.sh" {cloud}'
+            )
+
+        for script in entry.deploy_scripts:
+            path = root / script
+            if not path.is_file():
+                gaps.append(
+                    f"{cloud}: deploy_scripts names {script}, which does not exist. Fix: "
+                    f"correct the path in {here}."
+                )
+                continue
+            if not _invokes_verifier(path.read_text(encoding="utf-8"), cloud):
+                gaps.append(
+                    f"{cloud}: {script} does not END in "
+                    f'`bash "${{SCRIPT_DIR}}/verify_cloud_complete.sh" {cloud}`, so running '
+                    "it to completion says nothing about whether the cloud works. Fix: add "
+                    f"that invocation as the last step of {script} (within its final "
+                    f"{VERIFIER_TAIL_LINES} lines) and let its exit code stand."
+                )
+
+    for script in _deploy_scripts_invoking_the_verifier(root):
+        if script not in claimed:
+            gaps.append(
+                f"{script} runs {VERIFIER_SCRIPT} but no CloudRollout claims it, so nothing "
+                "would notice if that call were deleted. Fix: add it to deploy_scripts (or "
+                f"exempt_deploy_scripts) of the cloud it belongs to in {here}."
             )
     return gaps
 
@@ -509,6 +768,38 @@ def drain_lag_caveat(payload: dict[str, Any]) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _executable_text(text: str) -> str:
+    """The script with heredoc BODIES and whole-line comments removed.
+
+    Just enough shell awareness to tell an assignment from a paragraph that
+    contains one. ``cat <<'NEXT' ... NEXT`` is how every one of these scripts
+    prints operator instructions, and those instructions quote the very
+    assignment the operator is being asked to add; a bare-assignment pattern
+    over the raw text would read that advice back as compliance, which is the
+    bug :data:`_OUTBOX_DECLARATION_PATTERNS` documents having already made once.
+
+    The line that OPENS a heredoc is kept — it is code — and ``<<<`` here-strings
+    are not heredocs and are left alone.
+    """
+    kept: list[str] = []
+    terminator: str | None = None
+    opener = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+    for line in text.splitlines():
+        if terminator is not None:
+            if line.strip() == terminator:
+                terminator = None
+            continue
+        match = opener.search(line)
+        if match is not None:
+            terminator = match.group(2)
+            kept.append(line)
+            continue
+        if line.lstrip().startswith("#"):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
 def declared_outbox_value(cloud: str, root: Path | None = None) -> str | None:
     """The value the cloud's control-plane deploy script declares for the outbox.
 
@@ -535,6 +826,9 @@ def declared_outbox_value(cloud: str, root: Path | None = None) -> str | None:
         match = re.search(pattern, text, re.MULTILINE)
         if match is not None:
             return match.group(1).strip().strip('"').strip("'")
+    bare = re.search(_OUTBOX_BARE_ASSIGNMENT_PATTERN, _executable_text(text), re.MULTILINE)
+    if bare is not None:
+        return bare.group(1).strip().strip('"').strip("'")
     return None
 
 
@@ -562,6 +856,26 @@ def outbox_enabled_blockers(cloud: str, root: Path | None = None) -> list[str]:
             f"{script} and redeploy."
         ]
     return []
+
+
+def outbox_fact(cloud: str, root: Path | None = None) -> str:
+    """What a PASSING stage (e) actually established, said precisely.
+
+    Not a caveat — a caveat means "weaker than it sounds" and changes the
+    verdict banner. This is the plain description of the measurement, and it
+    exists because "control-plane outbox is enabled" overstates it in a way
+    worth one clause: this is a static read of a file in the WORKING TREE, not
+    of the revision that is deployed. A local edit that has not shipped reads as
+    enabled here; so does a script that shipped six months ago. What the running
+    service does with the variable is stages (b)-(d)'s business.
+    """
+    entry = ROLLOUT_REGISTRY.get(cloud)
+    script = entry.control_plane_script if entry else "its control-plane script"
+    value = declared_outbox_value(cloud, root=root)
+    return (
+        f"{OUTBOX_ENABLED_ENV}={value!r} in the working tree's {script} "
+        "(static read of this checkout, not of the deployed revision)"
+    )
 
 
 def outbox_note(cloud: str, root: Path | None = None) -> str | None:
@@ -628,13 +942,37 @@ def _load(path: str) -> dict[str, Any]:
         return unwrap_status_payload(json.load(handle))
 
 
-def _report(blockers: list[str], *, note: str | None = None) -> int:
+#: Prefixes on a PASSING stage's one line of output. The shell reads the first
+#: word and nothing else, and the three mean genuinely different things, which
+#: is why they are not all "note:":
+#:
+#:   ``waived:`` this stage was NOT measured; an exemption in code suppressed
+#:               it. The run may not print COMPLETE.
+#:   ``caveat:`` measured, but the evidence is weaker than the stage's headline
+#:               claim (an empty outbox, a value computed at deploy time).
+#:   ``fact:``   measured; here is precisely what was measured.
+WAIVED_PREFIX = "waived: "
+CAVEAT_PREFIX = "caveat: "
+FACT_PREFIX = "fact: "
+
+
+def _report(
+    blockers: list[str],
+    *,
+    waived: str | None = None,
+    caveat: str | None = None,
+    fact: str | None = None,
+) -> int:
     for blocker in blockers:
         print(blocker)
     if blockers:
         return 1
-    if note:
-        print(f"note: {note}")
+    if waived:
+        print(f"{WAIVED_PREFIX}{waived}")
+    elif caveat:
+        print(f"{CAVEAT_PREFIX}{caveat}")
+    elif fact:
+        print(f"{FACT_PREFIX}{fact}")
     return 0
 
 
@@ -662,7 +1000,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "audit":
-        return _report(registry_gaps())
+        return _report(registry_gaps() + script_binding_gaps())
     if args.command == "clouds":
         for cloud in declared_clouds():
             print(cloud)
@@ -677,7 +1015,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "outbox":
         blockers, waived = apply_exemption(args.cloud, outbox_enabled_blockers(args.cloud))
-        return _report(blockers, note=waived or outbox_note(args.cloud))
+        return _report(
+            blockers,
+            waived=waived,
+            caveat=outbox_note(args.cloud),
+            fact=outbox_fact(args.cloud),
+        )
 
     payload = _load(args.status_file)
     if args.command == "section":
@@ -686,7 +1029,7 @@ def main(argv: list[str] | None = None) -> int:
         return _report(section_blockers(args.cloud, payload))
     if args.command == "available":
         blockers, waived = apply_exemption(args.cloud, available_blockers(args.cloud, payload))
-        return _report(blockers, note=waived)
+        return _report(blockers, waived=waived)
     blockers, waived = apply_exemption(
         args.cloud,
         drain_lag_blockers(
@@ -697,7 +1040,7 @@ def main(argv: list[str] | None = None) -> int:
             max_section_age_seconds=args.max_section_age_seconds,
         ),
     )
-    return _report(blockers, note=waived or drain_lag_caveat(payload))
+    return _report(blockers, waived=waived, caveat=drain_lag_caveat(payload))
 
 
 if __name__ == "__main__":  # pragma: no cover
