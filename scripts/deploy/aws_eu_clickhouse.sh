@@ -169,7 +169,51 @@ echo
 echo "CLICKHOUSE_PRIVATE_URL=http://${PRIVATE_IP}:8123"
 echo "VPC_CONNECTOR_ARN=${CONNECTOR_ARN}"
 echo "INSTANCE_ID=${INSTANCE_ID}"
-echo
-echo "Next: apply clickhouse/*.sql, then redeploy tr-eu with"
-echo "  TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=http://${PRIVATE_IP}:8123"
-echo "  EgressConfiguration=VPC + the connector above."
+
+# ---------------------------------------------------------------------------
+# 5. Does the CLOUD work, or did only this script finish?
+#
+# This block used to be three `echo "Next: ..."` lines and an exit 0. That is
+# the whole outage: on 2026-08-02 someone ran this script, read the echoes, and
+# stopped. The node existed, the connector existed, and no drain was ever
+# installed — so for fifteen days settle enqueued rows into DSQL that nothing
+# collected (470,897 of them) while every alarm stayed quiet, because the
+# backlog alarm is emitted BY the drain that was missing.
+#
+# The remaining steps are still human steps: they need the ClickHouse password
+# and a redeploy decision. What changes is the exit code. A finished script and
+# a working cloud are now the same thing, or this exits non-zero saying which
+# one you have.
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if bash "${SCRIPT_DIR}/verify_cloud_complete.sh" aws; then
+  echo
+  echo "aws is complete: the analytics pipeline is live and observable."
+  exit 0
+fi
+
+cat >&2 <<NEXT
+
+The node is up but the AWS cloud is NOT complete. Run these, in order, and this
+script will exit 0 the next time it is run:
+
+  1. apply the schema to the node (from inside the VPC):
+       for f in clickhouse/00*.sql; do
+         clickhouse-client --host ${PRIVATE_IP} --user default --multiquery < "\$f"
+       done
+
+  2. redeploy the control plane so settle enqueues and the outbox is readable.
+     Its own knobs, not the TR_* names — it builds those:
+       CLICKHOUSE_URL=http://${PRIVATE_IP}:8123 \\
+       VPC_CONNECTOR_ARN=${CONNECTOR_ARN} \\
+       bash scripts/deploy/aws_eu_control_plane.sh
+     (EgressConfiguration=VPC follows from a non-empty VPC_CONNECTOR_ARN.)
+
+  3. install the process that actually MOVES rows — the step that was missed:
+       bash scripts/deploy/aws_eu_clickhouse_drain_install.sh
+
+  4. re-run this script, or just the check:
+       bash scripts/deploy/verify_cloud_complete.sh aws
+
+NEXT
+exit 1

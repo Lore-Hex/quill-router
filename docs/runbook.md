@@ -27,6 +27,7 @@ Index:
 - [Sentry "Aborted ... deadlock/wounded" burst on gateway authorize](#authorize-deadlock-burst)
 - [One workspace 503s "Workspace billing is paused" (interrupted reshard)](#reshard-interrupted)
 - [DNS-vendor-split symptoms (Cloudflare vs Cloud DNS)](#dns-vendor-split)
+- [Adding a cloud (and when it is allowed to be called done)](#adding-a-cloud)
 
 ---
 
@@ -1034,6 +1035,58 @@ After deploys that add SEO pages:
    not contain secrets.
 4. Follow `docs/marketing/llm-seo-opportunities.md` for Ahrefs exports
    and new page prioritization.
+
+---
+
+## <a id="adding-a-cloud"></a>Adding a cloud (and when it is allowed to be called done)
+
+**Symptom this prevents:** a cloud that serves traffic, shows an all-green
+status page, and records none of its operational history — because the process
+that moves rows out of its outbox was never installed, and the only alarm for
+that is emitted by the missing process. AWS-EU ran that way from 2026-08-02 to
+2026-08-17: 470,897 undelivered rows, `activity_generations` empty, no page.
+
+**The rule: a cloud is not in service until rows are observed moving.**
+
+Check any cloud, from anywhere, with no credentials:
+
+```bash
+bash scripts/deploy/verify_cloud_complete.sh aws     # or azure, gcp
+```
+
+It exits non-zero until all five stages hold, each naming its own fix:
+
+| # | Stage | Fix when it fails |
+|---|---|---|
+| a | in the fleet freshness registry | add the cloud to `Settings.synthetic_fleet_peers` |
+| b | `/status.json` has the `analytics` section | deploy a control plane whose status snapshot publishes `drain_lag_seconds` |
+| c | `analytics.available` is true | the control plane cannot read its outbox — check its database connection |
+| d | `drain_lag_seconds` under bound | the drain is stopped or behind: `bash scripts/deploy/aws_eu_clickhouse_drain_install.sh` |
+| e | control-plane outbox enabled | set `TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true` in that cloud's deploy script |
+
+Stages (c) and (d) can be waived only by setting `analytics_absent_reason` on
+the cloud's entry in `src/trusted_router/cloud_rollout_completeness.py` — a code
+change, therefore a review, and the waiver still prints what it is suppressing.
+
+Every bring-up and control-plane deploy script now ends by running this, so a
+script that exits 0 means the cloud works. If one exits non-zero it prints the
+exact next command; run it and re-run the script, which is idempotent. Do not
+work around the exit code — that is the failure mode this exists to stop.
+
+**Known state as of 2026-08-17:** `azure` fails stage (e). Azure has no
+operational-analytics outbox at all. See
+`docs/storage-portability/multi-cloud-separation.md` §7 for the full definition
+of done and the checklist for a new cloud.
+
+**Last check that cannot be automated from outside:** once a cloud passes, look
+at the count from inside it, twice, ten minutes apart:
+
+```bash
+clickhouse-client --query 'SELECT count() FROM activity_generations'
+```
+
+Two numbers, the second larger. A drained outbox and a disabled outbox both
+publish `drain_lag_seconds: 0.0`; only the count tells them apart.
 
 ---
 

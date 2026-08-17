@@ -364,3 +364,29 @@ PY
   aws events put-targets --region "$REGION" --rule tr-eu-synthetic-1min --targets "$TARGETS" >/dev/null
   log "rule aligned: rotation_count=8, full catalogue (unpinned)"
 fi
+
+# ---------------------------------------------------------------------------
+# The deploy is not done until the CLOUD is done.
+#
+# This script is the source of truth for the service env, and the env it sets
+# includes TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED — so from 2026-08-02 it was
+# faithfully enqueueing operational rows into DSQL while no drain existed to
+# collect them. Every part of this file succeeded. The cloud did not work.
+#
+# Ending here makes those the same claim. It is READ-ONLY (one public HTTPS GET
+# plus a text read of this file) and provisions nothing; if it fails, the
+# service that was just deployed stays deployed and the message names what is
+# still missing.
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if ! bash "${SCRIPT_DIR}/verify_cloud_complete.sh" aws; then
+  cat >&2 <<'NEXT'
+The service is deployed but the AWS cloud is not complete. Most often this is
+the drain — the step that has been missed before:
+
+  bash scripts/deploy/aws_eu_clickhouse_drain_install.sh
+  bash scripts/deploy/verify_cloud_complete.sh aws
+
+NEXT
+  exit 1
+fi

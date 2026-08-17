@@ -419,3 +419,19 @@ Rollback: systemctl disable --now $SERVICE, then
   mv ${REMOTE_ROOT}.previous $REMOTE_ROOT   (kept from this run)
 Nothing is lost by stopping the drain: undelivered rows stay in the outbox.
 EOF
+
+# ---------------------------------------------------------------------------
+# 10. The outside view.
+#
+# Step 9 proves the drain is alive from INSIDE the VPC, using this operator's
+# session on the node. That is the strongest evidence available here and it is
+# still not the question a rollout has to answer, which is whether anyone
+# without a session on that node can tell. Ending on the public check means an
+# install that works only from the installer's shell cannot be mistaken for a
+# finished cloud.
+#
+# Non-zero on failure on purpose: this script's whole reason for existing is
+# that the previous version of this step was a paragraph of prose and an exit 0.
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+bash "${SCRIPT_DIR}/verify_cloud_complete.sh" aws

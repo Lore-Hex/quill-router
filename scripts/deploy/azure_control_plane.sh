@@ -326,3 +326,41 @@ cat >&2 <<NOTE
                 model — which is the whole point of measuring it here.
   verify        bash scripts/deploy/verify_deployment.sh (cloud-agnostic)
 NOTE
+
+# ---------------------------------------------------------------------------
+# ...and then the part that is NOT a note.
+#
+# Everything above provisions a control plane that serves, measures itself, and
+# publishes a status page. None of it gives this cloud an operational-analytics
+# pipeline: the ENV_VARS block sets no TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED,
+# so settle enqueues nothing, there is no outbox to drain, and no drain. On AWS
+# that same gap ran for fifteen days behind an entirely green status page
+# because the only alarm is emitted by the missing process.
+#
+# So this deploy now ends by asking whether the CLOUD works rather than whether
+# the script finished, and today, on Azure, it says no. That is the correct
+# answer and it is deliberately not suppressible from the environment: the way
+# to make this exit 0 is to build the pipeline, or to record the absence as
+# analytics_absent_reason on the azure entry in
+# src/trusted_router/cloud_rollout_completeness.py — a code change, therefore a
+# review.
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if ! bash "${SCRIPT_DIR}/verify_cloud_complete.sh" azure; then
+  cat >&2 <<'NEXT'
+The Azure app is deployed and serving. The Azure CLOUD is not complete: it has
+no operational-analytics pipeline at all. To finish it:
+
+  1. give it somewhere to drain TO (a ClickHouse this cloud owns, mirroring
+     scripts/deploy/aws_eu_clickhouse.sh) — this is a COST decision, so it is
+     not made by a deploy script;
+  2. add to the ENV_VARS block in this file:
+       TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true
+       TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=...  (+ user/database/password)
+  3. install a drain against it, mirroring
+     scripts/deploy/aws_eu_clickhouse_drain_install.sh;
+  4. bash scripts/deploy/verify_cloud_complete.sh azure
+
+NEXT
+  exit 1
+fi

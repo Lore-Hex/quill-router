@@ -198,3 +198,94 @@ first thing the conformance suite should be pointed at once a cluster exists.
    region-style selector. Affects key scoping and the 402 message.
 4. **Signup credit per cloud?** Granting the trial credit once per cloud
    multiplies the giveaway by the number of clouds.
+
+---
+
+## 7. Adding a cloud: the definition of done
+
+> **A cloud is not in service until rows are observed moving through its
+> analytics pipeline.** Not provisioned, not deployed, not "green on the status
+> page" — moving.
+
+This section exists because the previous, unwritten definition was "the
+bring-up scripts finished", and on 2026-08-02 that definition was satisfied by
+an AWS-EU cloud with no analytics pipeline at all. `aws_eu_clickhouse.sh` built
+the Paris node and ended by printing
+
+    Next: apply clickhouse/*.sql, then redeploy tr-eu with ...
+
+A human ran it, read the echoes, and stopped. For fifteen days settle enqueued
+operational rows into the DSQL outbox that nothing collected — 470,897 of them
+by 2026-08-17, with `activity_generations` on the node still empty — and no
+alarm fired, because the backlog alarm is emitted BY the drain that was never
+installed. The pipeline is
+
+    settle -> tr_operational_analytics_outbox (this cloud's OLTP db)
+           -> drain -> this cloud's ClickHouse
+
+and every stage after the first is invisible from outside the VPC, so "the
+control plane is up" says nothing about any of them.
+
+### The stages, in order
+
+A cloud is done when `scripts/deploy/verify_cloud_complete.sh <cloud>` exits 0.
+It needs no credentials — one public HTTPS GET and a text read of a deploy
+script — so it can be run from a laptop, by a reviewer, at any time:
+
+| # | Stage | Fails when |
+|---|---|---|
+| a | in the fleet freshness registry | nobody, on any schedule, reads this cloud's drain lag |
+| b | `/status.json` carries the `analytics` section | the cloud publishes no answer to the question |
+| c | `analytics.available` is true | the control plane cannot read its own outbox (**not** the same as an empty one) |
+| d | `drain_lag_seconds` under the bound | rows are enqueued and nothing is deleting them — the AWS-EU shape exactly |
+| e | the control plane's outbox is ENABLED | nothing is enqueued at all, so (c) and (d) pass over an empty pipe |
+
+Stage (e) is not redundant with (d) and this is the subtle part: **a drained
+outbox and a disabled outbox look identical from outside.** Both publish
+`drain_lag_seconds: 0.0`. Stage (d) proves nothing is stuck; only (e) plus an
+in-cloud count proves anything moves. When you finish a cloud, look once, from
+inside:
+
+    clickhouse-client --query 'SELECT count() FROM activity_generations'
+
+and then again ten minutes later. Two numbers, the second larger. That is the
+observation the rule above is named after; nothing in a status page substitutes
+for it.
+
+### The analytics stage is not optional
+
+Bring-up is not a menu. Every cloud bring-up and control-plane deploy script
+ends by running the check and exits non-zero when it fails —
+`aws_eu_clickhouse.sh`, `aws_eu_north_clickhouse.sh`, `aws_eu_control_plane.sh`,
+`aws_eu_clickhouse_drain_install.sh`, `azure_control_plane.sh`. Where a
+remaining step genuinely needs a human (a cost decision, a password that only
+exists on a node), the script prints the exact command **and exits non-zero**.
+It never prints and returns 0; that behaviour is the outage.
+
+There is exactly one way to run a cloud without an analytics pipeline: set
+`analytics_absent_reason` on that cloud's entry in
+`src/trusted_router/cloud_rollout_completeness.py`. That is a code change and
+therefore a review, and the check keeps printing the blocker it is suppressing.
+No cloud has one today.
+
+### What is missing right now
+
+**Azure has no operational-analytics outbox.** `azure_control_plane.sh` sets no
+`TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED` at all, so the cloud enqueues nothing,
+has nothing to drain, and stage (e) fails. It is a canary
+(`aws-eu-and-azure-canary.md` §3) and it still counts: a canary whose operational
+history is unrecorded cannot answer the question canaries exist to answer.
+
+### Checklist for the next cloud
+
+1. Add it to the deployment tables (`byok_v1_attestations.STANDALONE_CLOUDS`,
+   `regions.MULTICLOUD_REGION_GEO`). CI now fails until steps 2 and 3 are done.
+2. Add its public base URL to `Settings.synthetic_fleet_peers` so the fleet
+   watches it.
+3. Add a `CloudRollout` entry in
+   `src/trusted_router/cloud_rollout_completeness.py` naming its control-plane
+   deploy script and its drain install command.
+4. Build the pipeline: an outbox (enabled in the control-plane script), a
+   ClickHouse the cloud owns, and a drain installed as a supervised unit.
+5. Run `bash scripts/deploy/verify_cloud_complete.sh <cloud>` until it exits 0,
+   then watch two counts ten minutes apart from inside the cloud.

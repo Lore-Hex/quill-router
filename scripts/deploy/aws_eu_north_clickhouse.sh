@@ -575,3 +575,42 @@ echo "public_analytics_snapshots; on this cloud nothing does today"
 echo "(those are GCP timers), so both nodes hold them empty."
 echo "If a rollup or snapshot job is ever run against Paris, its output is NOT"
 echo "on this node and this node is not a complete copy until it is."
+
+# ---------------------------------------------------------------------------
+# The exit code, which is the only part of the above a pipeline can read.
+#
+# Everything printed so far is a HUMAN step: it needs a shell on the Paris node
+# and the Stockholm password. Printing it and returning 0 is exactly how the
+# Paris drain came to not exist for fifteen days — a script said its piece,
+# exited successfully, and nothing anywhere disagreed. So this ends by
+# checking the cloud, and then by refusing to claim the replica is wired until
+# somebody says it is.
+#
+# TR_STOCKHOLM_REPLICA_WIRED=1 is that attestation. It is deliberately a
+# statement an operator makes AFTER watching the drain log 'copies=2
+# degraded_targets=-', not something this script can infer: from here, a
+# second node that is provisioned and a second node that is receiving rows
+# look identical.
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+COMPLETE=0
+bash "${SCRIPT_DIR}/verify_cloud_complete.sh" aws || COMPLETE=$?
+
+if [ "${TR_STOCKHOLM_REPLICA_WIRED:-0}" != "1" ]; then
+  cat >&2 <<NEXT
+
+STOCKHOLM NOT WIRED. The node exists; the drain does not know about it, so this
+is one copy of the history, not two. Do the steps printed above on the PARIS
+node, watch for 'copies=2 degraded_targets=-' in
+
+  journalctl -u tr-clickhouse-operational-ingest-postgres -f | grep outbox.metrics
+
+and then record it by re-running:
+
+  TR_STOCKHOLM_REPLICA_WIRED=1 bash scripts/deploy/aws_eu_north_clickhouse.sh
+
+NEXT
+  exit 3
+fi
+
+exit "$COMPLETE"
