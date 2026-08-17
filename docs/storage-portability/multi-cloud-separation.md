@@ -264,13 +264,14 @@ for it.
 
 ### The analytics stage is not optional (with one named exception)
 
-Bring-up is not a menu. The AWS and Azure bring-up and control-plane deploy
-scripts end by running the check and exit non-zero when it fails —
+Bring-up is not a menu. Every cloud's bring-up and control-plane deploy scripts
+end by running the check and exit non-zero when it fails —
 `aws_eu_clickhouse.sh`, `aws_eu_north_clickhouse.sh`, `aws_eu_control_plane.sh`,
-`aws_eu_clickhouse_drain_install.sh`, `azure_control_plane.sh`. Where a
-remaining step genuinely needs a human (a cost decision, a password that only
-exists on a node), the script prints the exact command **and exits non-zero**.
-It never prints and returns 0; that behaviour is the outage.
+`aws_eu_clickhouse_drain_install.sh`, `azure_control_plane.sh`, and for GCP the
+out-of-band `verify_gcp_complete.sh`. Where a remaining step genuinely needs a
+human (a cost decision, a password that only exists on a node), the script
+prints the exact command **and exits non-zero**. It never prints and returns 0;
+that behaviour is the outage.
 
 That list is not typed here twice: it is `deploy_scripts` on each `CloudRollout`
 in `src/trusted_router/cloud_rollout_completeness.py`.
@@ -424,15 +425,33 @@ one that is not trusted at all:
   earned by a stage, just as a fact about what the five stages are.
 * **One bound script's tail is claimed, not proven** —
   `aws_eu_clickhouse_drain_install.sh`, above.
+* **GCP's job is half declaration.** What the check DOES is executed like every
+  other cloud's (`verify_gcp_complete.sh`). That the `verify-cloud-complete` job
+  exists, depends on `deploy` and runs `if: always()` is read as text out of
+  `.github/workflows/deploy.yml`, because nothing here can run a workflow. Its
+  coverage is every run in which `deploy` ran — not every production mutation;
+  see above.
+* **`bash -n` covers this repo's scripts, not a future one.** The parse check in
+  `tests/test_deploy_script_execution.py` walks `scripts/**/*.sh` with the local
+  shell, which is how the bash 3.2 heredoc-in-`$( )` bomb was found. It cannot
+  see a script somebody writes from the checklist below and has not committed,
+  and it does not run on the reviewer's machine's bash unless the reviewer runs
+  it.
 
 ### What is missing right now
 
-**No cloud publishes the `analytics` section yet.** Verified 2026-08-17 by
-fetching all three status pages: `verify_cloud_complete.sh` exits 5 (NOT YET
-OBSERVABLE) for `gcp`, `aws` and `azure`. The publisher ships in the same change
-as this section; each cloud starts answering when a control plane built from it
-is deployed there. Until then the gate is honest and red, which is the true
-state of the fleet rather than a defect in the gate.
+**A cloud publishes the `analytics` section once a control plane built from the
+publisher is deployed to it, and not before.** Until then the gate exits 5 (NOT
+YET OBSERVABLE) — honest and red, which is the true state of that cloud rather
+than a defect in the gate.
+
+Do not read the fleet's state off this page. It is a document; the fleet moves
+under it, and this paragraph has already been wrong once. Ask:
+
+    bash scripts/deploy/verify_cloud_complete.sh gcp    # or aws, azure
+
+The last reading taken while editing this section: `gcp` VERIFIED, `aws` and
+`azure` both 5. That is a note about a moment, not a claim about now.
 
 **Azure has no operational-analytics outbox.** `azure_control_plane.sh` sets no
 `TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED` at all, so the cloud enqueues nothing,

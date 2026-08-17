@@ -43,10 +43,19 @@ a proof-by-text: the next careless edit always wins.
 
 So the binding is now behavioural, and it lives in the test suite
 (``tests/test_deploy_script_execution.py``): each bound script is RUN to
-completion in a hermetic harness whose ``PATH`` contains nothing but recording
-stubs, with a stub ``verify_cloud_complete.sh``, and two properties are
-asserted — the verifier was CALLED with this cloud, and when the verifier FAILS
-the script exits non-zero. A printed instruction fails both by construction.
+completion in a harness whose ``PATH`` holds a recording stub for every command
+that leaves the machine plus a symlink to everything else in ``/bin`` and
+``/usr/bin`` — isolation BY NAME, not a sandbox, and ``tests/deploy_script_harness.py``
+says so in its own header — with a stub ``verify_cloud_complete.sh``, and two
+properties are asserted: the verifier was CALLED with this cloud, and when the
+verifier FAILS the script exits non-zero. A printed instruction fails both by
+construction.
+
+Every cloud is in that harness, GCP included. It was not, for one revision: the
+primary cloud's only binding was a substring search over the ``run:`` blocks of
+a workflow job, which a printed instruction satisfies — the exception had become
+the hole. The job's body now lives in ``scripts/deploy/verify_gcp_complete.sh``,
+which is bound here and executed like the rest.
 
 :data:`ROLLOUT_REGISTRY` is therefore the list of what to EXECUTE, not the
 assertion itself. Each :class:`DeployScript` says how it is proven:
@@ -224,10 +233,22 @@ class CompensatingControl:
 
     So a claimed control is a structured reference, and
     ``tests/test_cloud_rollout_completeness.py`` opens the workflow, finds the
-    job, and fails if it does not run the verifier for that cloud. That is a
-    check of a DECLARATION — a YAML file cannot be executed here — and it is
-    weaker than the behavioural harness. It is enough to stop an exemption
-    citing a control that does not exist, which is what happened.
+    job, and requires one of its steps to be an EXACT invocation of a script
+    this cloud's :attr:`CloudRollout.deploy_scripts` records as
+    :data:`PROVEN_BY_EXECUTION`.
+
+    Both halves of that sentence were learned. The check used to concatenate the
+    job's ``run:`` blocks and look for the substring
+    ``verify_cloud_complete.sh gcp``; a reviewer replaced the whole body with an
+    ``echo`` of that string plus ``exit 0`` and the suite stayed green, as it
+    did for a commented-out line and for ``|| true``. All three are the shapes
+    this module exists to kill, and they satisfied the only binding covering the
+    primary cloud. Requiring an exact invocation kills them here, and pointing
+    it at a proven script moves the interesting half — what the check does — out
+    of YAML and into the behavioural harness.
+
+    What remains a DECLARATION, because a workflow cannot be executed here: that
+    the job exists, what it depends on, and whether GitHub reaches it on a merge.
     """
 
     #: Repo-relative path of the workflow file.
@@ -314,6 +335,9 @@ ROLLOUT_REGISTRY: dict[str, CloudRollout] = {
             "bash scripts/deploy/clickhouse_operational_analytics.sh  "
             "# GCP drain: systemd units on the ClickHouse cluster"
         ),
+        deploy_scripts=(
+            DeployScript("scripts/deploy/verify_gcp_complete.sh", PROVEN_BY_EXECUTION),
+        ),
         exempt_deploy_scripts=(
             ScriptExemption(
                 script="scripts/deploy/rollout.sh",
@@ -324,18 +348,24 @@ ROLLOUT_REGISTRY: dict[str, CloudRollout] = {
                     "fetch of trustedrouter.com/status.json in the MIDDLE of the deploy of the "
                     "cloud that SERVES trustedrouter.com — the deploy that repairs an outage "
                     "would abort partway because of the outage it repairs. So the gate runs in "
-                    "the same workflow but AFTER every production mutation, as its own job, "
-                    "where a failure is a red run and never a half-finished rollout."
+                    "the same workflow as its own job, out of band, where a failure is a red "
+                    "run and never a half-finished rollout. That job's body is "
+                    "scripts/deploy/verify_gcp_complete.sh, which is bound above and proven "
+                    "by execution: the exemption is now about WHICH FILE ends in the gate, "
+                    "not about GCP being checked differently from anyone else."
                 ),
                 compensating_control=CompensatingControl(
                     workflow=".github/workflows/deploy.yml",
                     job="verify-cloud-complete",
                     description=(
-                        "Runs 'bash scripts/deploy/verify_cloud_complete.sh gcp' after the "
-                        "deploy job has finished mutating production, retrying while the new "
-                        "revision takes traffic. Out of band by construction: it can only "
-                        "make the run red, never leave GCP half-deployed. It has never run "
-                        "on a merge as of this commit — it lands with this change."
+                        "Runs 'bash scripts/deploy/verify_gcp_complete.sh' — nothing else — "
+                        "after the deploy job has finished mutating production, retrying "
+                        "while the new revision takes traffic. Out of band by construction: "
+                        "it can only make the run red, never leave GCP half-deployed. Its "
+                        "COVERAGE is every run in which the deploy job ran, whatever the "
+                        "result; migrate-schema and sync-runtime-secrets mutate production "
+                        "before deploy, and a run that skips deploy skips this. It has never "
+                        "run on a merge as of this commit — it lands with this change."
                     ),
                 ),
             ),

@@ -1098,30 +1098,44 @@ what the check measures, not a certificate that the cloud works. Read the
 banner: it lists the five stages and then says, every time, that rows moving is
 not among them.
 
-That binding is not taken on trust. Those scripts are executed end to end
-against a stub `PATH` in `tests/test_deploy_script_execution.py`, which asserts
-each one calls the gate, cannot exit 0 over a failing gate, and passes both exit
-codes through unchanged. The one exception is
+That binding is not taken on trust. Those scripts — GCP's included — are
+executed end to end against a stub `PATH` in
+`tests/test_deploy_script_execution.py`, which asserts each one calls the gate,
+cannot exit 0 over a failing gate, runs no cloud CLI after the gate answered,
+and passes both exit codes through unchanged. The one exception is
 `aws_eu_clickhouse_drain_install.sh`, whose SSM-heavy middle cannot be stubbed
 honestly — its tail is claimed, not proven, and `ROLLOUT_REGISTRY` says so.
+Which scripts are in which list is checked for exact set equality against
+`docs/storage-portability/multi-cloud-separation.md`, so a script cannot quietly
+lose its behavioural coverage while the docs still call it proven.
 
-**GCP is the exception:** `rollout.sh` runs inside
+**GCP's exempt file is `rollout.sh`, not GCP:** `rollout.sh` runs inside
 `.github/workflows/deploy.yml`, and ending it here would put a fetch of
 `trustedrouter.com/status.json` in the middle of deploying the cloud that serves
 it — the deploy that repairs an outage would abort partway. GCP is instead
-checked by the `verify-cloud-complete` job in that same workflow, which runs
-after the deploy job whatever that job's result — including a deploy that failed
-partway, having already mutated production. You can always run
-`bash scripts/deploy/verify_cloud_complete.sh gcp` yourself.
+checked out of band by `scripts/deploy/verify_gcp_complete.sh`, which the
+`verify-cloud-complete` job in that same workflow runs as its whole body, and
+which the behavioural harness executes like every other bound script. Coverage,
+exactly: every run in which the `deploy` job ran, whatever its result —
+including a deploy that failed partway having already mutated production. It
+does NOT cover a run that skipped `deploy`, and `migrate-schema` and
+`sync-runtime-secrets` mutate production before `deploy` gets there. You can
+always run it yourself, from anywhere, with no credentials:
+
+```bash
+bash scripts/deploy/verify_gcp_complete.sh
+```
 
 If a script exits non-zero it prints the exact next command; run it and re-run
 the script, which is idempotent. Do not work around the exit code — that is the
 failure mode this exists to stop.
 
-**Known state as of 2026-08-17, measured:** all three clouds exit 5. No deployed
-control plane publishes the `analytics` section yet; the publisher ships in this
-same change and each cloud starts answering when it is redeployed there. Azure
-additionally fails stage (e): it has no operational-analytics outbox at all. See
+**Do not read the fleet's state out of this runbook — run the gate.** A cloud
+starts answering when a control plane built from the publisher is deployed to
+it, and exits 5 until then. The last reading taken while editing this section
+was `gcp` VERIFIED with `aws` and `azure` both at 5, and it is a note about a
+moment rather than a claim about now. Azure additionally fails stage (e): it has
+no operational-analytics outbox at all. See
 `docs/storage-portability/multi-cloud-separation.md` §7 for the full definition
 of done and the checklist for a new cloud.
 

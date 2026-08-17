@@ -189,6 +189,12 @@ class ScriptFixture:
 
 SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
     "scripts/deploy/aws_eu_clickhouse.sh": ScriptFixture(),
+    # GCP's out-of-band check needs nothing from an operator: it runs the gate,
+    # retries while a Cloud Run revision takes traffic, and returns the gate's
+    # status. Listed explicitly rather than falling through to the default so
+    # that "GCP is in the harness" is visible here and not only in the registry.
+    # `sleep` is stubbed, so its retry loop costs the suite nothing.
+    "scripts/deploy/verify_gcp_complete.sh": ScriptFixture(),
     "scripts/deploy/aws_eu_control_plane.sh": ScriptFixture(
         # PCR0 is a required operator input: the script refuses to run without
         # the enclave measurement to pin, which is the point of the probe.

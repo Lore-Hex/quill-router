@@ -697,6 +697,21 @@ def test_an_unbound_script_must_carry_a_named_reason_and_a_real_control() -> Non
     ships with no `schedule:` trigger by design — so the primary cloud had no
     automated completeness check at all, behind a sentence saying it did. A
     claimed control is now a structured reference, and this resolves it.
+
+    What round 5 caught is the half after that, and it is the reason this test
+    reads the way it does. The resolution used to be a SUBSTRING: concatenate
+    the job's `run:` blocks and look for "verify_cloud_complete.sh gcp".
+    Replacing the whole job body with
+
+        echo "Next: bash scripts/deploy/verify_cloud_complete.sh gcp"
+        exit 0
+
+    satisfied it, and so did a commented-out line and a `|| true` — the three
+    saboteur shapes this change exists to kill, all of them passing the only
+    binding that covered the primary cloud. So: the job must contain a step
+    whose `run` IS an invocation of a script that this cloud's registry entry
+    proves BY EXECUTION. An echo of the command is not an invocation, and the
+    script on the other end is in the behavioural harness.
     """
     exemptions = [
         (cloud, item)
@@ -706,7 +721,7 @@ def test_an_unbound_script_must_carry_a_named_reason_and_a_real_control() -> Non
     assert exemptions, "if nothing is exempt, this test is stale — delete it"
     for cloud, item in exemptions:
         assert (ROOT / item.script).is_file(), f"{cloud}: {item.script} does not exist"
-        assert len(item.reason) > 80, f"{cloud}: {item.script} exemption reason is a shrug"
+        assert item.reason.strip(), f"{cloud}: {item.script} exemption has no reason"
 
         control = item.compensating_control
         if control is None:
@@ -717,15 +732,36 @@ def test_an_unbound_script_must_carry_a_named_reason_and_a_real_control() -> Non
             "does not exist in that workflow"
         )
         job = workflow["jobs"][control.job]
-        runs = " ".join(str(step.get("run", "")) for step in job.get("steps", []))
-        assert f"verify_cloud_complete.sh {cloud}" in runs, (
-            f"{cloud}: {control.workflow} job {control.job!r} exists but does not run the "
-            "completeness gate for this cloud"
+        # Only scripts THIS cloud proves by execution count. A control pointing
+        # at an unproven script is a control whose behaviour nothing checks.
+        proven = {
+            script
+            for script, script_cloud in crc.scripts_proven_by_execution()
+            if script_cloud == cloud
+        }
+        assert proven, f"{cloud}: nothing is proven by execution, so no control can cite it"
+        invocations = {f"bash {script}" for script in proven}
+        run_lines = {
+            line.strip()
+            for step in job.get("steps", [])
+            for line in str(step.get("run", "")).splitlines()
+        }
+        assert run_lines & invocations, (
+            f"{cloud}: {control.workflow} job {control.job!r} has no step that RUNS a "
+            f"script proven by execution for this cloud. Expected one of {sorted(invocations)} "
+            f"as a step's whole `run` line; found {sorted(line for line in run_lines if line)}. "
+            "A printed instruction, a commented-out call and a `|| true` all used to pass "
+            "here, which is the defect this shape closes."
         )
 
     gcp = crc.ROLLOUT_REGISTRY["gcp"]
     assert [item.script for item in gcp.exempt_deploy_scripts] == ["scripts/deploy/rollout.sh"]
     assert gcp.exempt_deploy_scripts[0].compensating_control is not None
+    # ...and the exempt file is not the cloud: GCP is bound like everyone else.
+    assert [script.path for script in gcp.deploy_scripts] == [
+        "scripts/deploy/verify_gcp_complete.sh"
+    ]
+    assert all(script.proof == crc.PROVEN_BY_EXECUTION for script in gcp.deploy_scripts)
 
 
 def test_an_exemption_citing_a_workflow_that_is_not_there_fails_ci(

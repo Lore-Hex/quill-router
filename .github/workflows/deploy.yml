@@ -788,8 +788,20 @@ jobs:
   # instead. That workflow ships with no `schedule:` trigger, on purpose and in
   # its own header, so the citation was to a control that does not run: the
   # primary cloud had no automated completeness check at all, behind a sentence
-  # saying it did. THIS JOB is that control, and the exemption now names it as a
-  # structured reference that tests/test_cloud_rollout_completeness.py resolves.
+  # saying it did. THIS JOB is that control.
+  #
+  # THE BODY OF THIS JOB IS ONE LINE, AND THAT IS THE POINT.
+  # For one revision the retry loop lived here in YAML, and all that bound it to
+  # anything was a substring search over this job's `run:` blocks for
+  # "verify_cloud_complete.sh gcp". Replacing this entire body with
+  # `echo "Next: bash scripts/deploy/verify_cloud_complete.sh gcp"; exit 0` kept
+  # the suite green -- the primary cloud's only binding was satisfied by the
+  # three saboteur shapes this whole change exists to kill. So the body is
+  # scripts/deploy/verify_gcp_complete.sh, which is in GCP's deploy_scripts and
+  # is RUN by tests/test_deploy_script_execution.py like every other bound
+  # script. What remains a text read is this YAML, and CI requires the step
+  # below to be an exact invocation of a script the registry proves by
+  # execution -- not a mention of one.
   #
   # Out of band by construction: it runs after the deploy job, so it can make
   # the run red and can never leave GCP half-deployed. Read-only -- one public
@@ -799,13 +811,15 @@ jobs:
   # [deploy]`, GitHub SKIPS this job when deploy fails -- and a deploy that
   # failed PARTWAY has already mutated production, which is exactly the state
   # somebody needs to know the completeness of. The check would have been absent
-  # from every run where it mattered most, behind a comment saying it ran after
-  # every production mutation. It is skipped only when the deploy job itself was
-  # skipped, i.e. when nothing was deployed.
+  # from every run where it mattered most.
   #
-  # It retries because a Cloud Run revision takes traffic gradually and the
-  # status snapshot behind the CDN is not instant. A failure that survives five
-  # minutes is a real one.
+  # What it still does NOT cover, stated because a comment here once claimed it
+  # ran "after every production mutation" and that is false: `migrate-schema`
+  # and `sync-runtime-secrets` mutate production BEFORE `deploy`, and this job
+  # is skipped when `deploy` is skipped -- which is exactly what happens when
+  # `confirm-current-main` says do not proceed. A run can therefore migrate the
+  # schema, rotate runtime secrets, skip the deploy, and never reach this check.
+  # The coverage is: every run in which the deploy job ran, whatever its result.
   # ---------------------------------------------------------------------------
   verify-cloud-complete:
     needs: [deploy]
@@ -820,22 +834,8 @@ jobs:
       - name: Install runtime
         run: uv sync --frozen
 
+      # Exactly this, on one line. tests/test_cloud_rollout_completeness.py
+      # requires a step whose `run` IS an invocation of a script GCP's registry
+      # entry proves by execution; an echo, a comment or a `|| true` is not one.
       - name: Is the GCP cloud complete, or only deployed?
-        run: |
-          set -uo pipefail
-          rc=0
-          for attempt in 1 2 3 4 5; do
-            rc=0
-            bash scripts/deploy/verify_cloud_complete.sh gcp || rc=$?
-            if [ "$rc" -eq 0 ]; then
-              break
-            fi
-            echo "::notice::verify_cloud_complete.sh gcp exited ${rc} on attempt ${attempt}; the new revision may not be taking traffic yet"
-            if [ "$attempt" -lt 5 ]; then
-              sleep 60
-            fi
-          done
-          if [ "$rc" -ne 0 ]; then
-            echo "::error::GCP deployed but its rollout is not complete (exit ${rc}). See the banner above; docs/storage-portability/multi-cloud-separation.md has the stage table."
-          fi
-          exit "$rc"
+        run: bash scripts/deploy/verify_gcp_complete.sh
