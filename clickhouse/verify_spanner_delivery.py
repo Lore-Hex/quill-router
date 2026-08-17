@@ -12,6 +12,10 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from clickhouse.backfill_operational_analytics import ClickHouse
+from clickhouse.ingest_operational_outbox import (
+    OperationalOutboxRow,
+    normalise_operational_event,
+)
 from clickhouse.operational_fingerprint import canonical_fingerprint, clickhouse_rows
 from trusted_router.storage_gcp_operational_analytics_outbox import activity_payload
 from trusted_router.storage_models import Generation
@@ -83,7 +87,19 @@ def verify_delivery(
     limit: int,
 ) -> dict[str, Any]:
     generations = source.fetch(start=start, end=end, limit=limit)
-    expected = {generation.id: activity_payload(generation) for generation in generations}
+    expected: dict[str, dict[str, Any]] = {}
+    for generation in generations:
+        [event] = normalise_operational_event(
+            OperationalOutboxRow(
+                shard=0,
+                commit_ts=end,
+                event_kind="activity",
+                event_id=generation.id,
+                payload=json.dumps(activity_payload(generation)),
+            )
+        )
+        event.row.pop("ingest_version", None)
+        expected[generation.id] = event.row
     actual = clickhouse_rows(
         clickhouse,
         table="activity_generations",

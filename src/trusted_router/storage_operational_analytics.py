@@ -16,16 +16,18 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from trusted_router.catalog import MODELS
-from trusted_router.client_events_schema import ClientEventsBatch
 from trusted_router.client_reliability import (
     METHODOLOGY_VERSION,
     classify_tr_fault,
     timeout_floor_met,
 )
 from trusted_router.storage_models import Generation, SyntheticProbeSample
+
+if TYPE_CHECKING:
+    from trusted_router.client_events_schema import ClientEventsBatch
 
 OPERATIONAL_ANALYTICS_OUTBOX_SHARDS = 32
 ACTIVITY_EVENT_KIND = "activity"
