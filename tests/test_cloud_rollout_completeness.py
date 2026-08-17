@@ -19,34 +19,39 @@ Four things are pinned here.
 
 2. **The script registry, and what it is FOR.** Which deploy scripts must end in
    the gate is data on `CloudRollout`, not a list in this file. What is checked
-   here is structural — the file exists, an exemption carries a reason, nothing
-   unclaimed calls the verifier. Whether a script really runs the gate is proven
-   by RUNNING it, in `tests/test_deploy_script_execution.py`; this file
-   deliberately makes no claim it cannot support, because the previous version
-   made exactly that mistake with a regex.
+   here is structural — the file exists, an unbound script carries a reason,
+   nothing unclaimed calls the verifier. Whether a script really runs the gate
+   is proven by RUNNING it, in `tests/test_deploy_script_execution.py`; this
+   file deliberately makes no claim it cannot support, because the previous
+   version made exactly that mistake with a regex.
 
-3. **The gate takes no input from the environment.** Deploy scripts inherit
-   their caller's environment, so an env-tunable bound or status URL is a remote
-   control for the gate. The tests below run the real shell with those variables
+3. **The gate takes no input from anywhere.** Deploy scripts inherit their
+   caller's environment, so an env-tunable bound or status URL is a remote
+   control for the gate; a flag needs an outcome of its own to be safe, and an
+   outcome that exists to make an override safe is more machinery to get wrong.
+   There is neither. The tests below run the real shell with those variables
    exported and assert on what it FETCHED and what argv it PASSED, not on what
    it printed.
 
-4. **The stages, what the banner may claim, and what an exemption may excuse.**
-   Stage (e) is not redundant with stage (d), because a drained outbox and a
-   disabled outbox publish the same `drain_lag_seconds: 0.0`; a stage that was
-   exempted or caveated may not end in the flat green banner; and an exemption
-   may excuse a pipeline that was never built but never a measurement that
-   failed — and never exits 0.
+4. **The stages, and the one thing a passing run may claim.** Stage (e) is not
+   redundant with stage (d), because a drained outbox and a disabled outbox
+   publish the same `drain_lag_seconds: 0.0`. A run either VERIFIED the cloud or
+   it did not: there is no waiver, no exemption and no verdict taxonomy, because
+   two review rounds found bugs inside that machinery rather than around it. The
+   green sentence is written so that it is true of every run that reaches it.
 """
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
+import io
 import json
 import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +74,38 @@ ROOT = Path(__file__).resolve().parents[1]
 VERIFIER = ROOT / "scripts" / "deploy" / "verify_cloud_complete.sh"
 
 NOW = dt.datetime(2026, 8, 17, 12, 0, tzinfo=dt.UTC)
+
+
+@dataclass(frozen=True)
+class _ModuleRun:
+    """What one CLI invocation exited with, and what it wrote to each stream."""
+
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+def _verified(stderr: str) -> bool:
+    """Did the run print the ONE green outcome?
+
+    Spelled with the leading newline on purpose: "NOT VERIFIED" contains
+    "VERIFIED", so the naive check passes on the failure banner and every
+    assertion written with it is vacuous.
+    """
+    return "\nVERIFIED —" in stderr
+
+
+def _run_module(*argv: str) -> _ModuleRun:
+    """Call the module's CLI in process. The exit status IS the verdict.
+
+    Worth stating once, since it is the whole output contract: nothing is parsed
+    out of either stream to decide whether a stage held. stdout carries plain
+    notes the shell reprints under the outcome; stderr carries the blockers.
+    """
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = crc.main(list(argv))
+    return _ModuleRun(code, out.getvalue(), err.getvalue())
 
 
 def _payload(section: dict[str, Any] | None) -> dict[str, Any]:
@@ -238,6 +275,33 @@ def test_missing_analytics_section_fails() -> None:
     assert "publishes no 'analytics' section" in blockers[0]
 
 
+def test_the_absent_section_and_the_unreadable_body_get_different_exits(
+    tmp_path: Path,
+) -> None:
+    """The two states stage (b) can be in, and why only one of them keeps a code.
+
+    "This cloud publishes no analytics section" is the state every cloud is in
+    until a control plane that publishes it is deployed, and the run installing
+    a drain hits it by construction — so it keeps its own exit, 5, and its own
+    words. A body that is not the status document at all (a CDN interstitial, a
+    captive portal, a truncated response) is a plain failure: deploying a newer
+    control plane does nothing for it, and the message says so instead of
+    borrowing the other one's advice.
+    """
+    absent = tmp_path / "absent.json"
+    absent.write_text(json.dumps({"data": {"overall_status": "up"}}))
+    run = _run_module("section", "--cloud", "aws", "--status-file", str(absent))
+    assert run.returncode == crc.EXIT_NOT_OBSERVABLE
+    assert "publishes no 'analytics' section" in run.stderr
+
+    interstitial = tmp_path / "interstitial.html"
+    interstitial.write_text("<!DOCTYPE html><title>Just a moment...</title>")
+    run = _run_module("section", "--cloud", "aws", "--status-file", str(interstitial))
+    assert run.returncode == 1
+    assert "Just a moment" in run.stderr
+    assert "redeploying will not change it" in run.stderr
+
+
 def test_a_body_that_is_not_the_status_document_is_its_own_finding() -> None:
     """"No analytics section" and "not the status page at all" are different.
 
@@ -258,24 +322,23 @@ def test_unavailable_is_not_the_same_as_empty() -> None:
     assert "available is false" in blockers[0]
     # Names the actual command, from the registry.
     assert "aws_eu_clickhouse_drain_install.sh" in blockers[0]
-    # ...and says it cannot be waived, because it is a reading.
-    assert "never a reading that failed" in blockers[0]
 
 
 def test_not_configured_is_not_the_same_as_unreachable() -> None:
     """A cloud saying "I run no outbox" is a configuration, not a fault.
 
-    It is the ONE shape of (c)/(d) failure an exemption may excuse, so it has to
-    be distinguishable in code rather than by reading the reason by eye.
+    Both fail, and neither is excusable — there is no exemption any more — but
+    they send the reader to different places, so they get different sentences.
     """
-    configured_off = _payload(analytics_status_unavailable(REASON_NOT_CONFIGURED))
-    broken = _payload(analytics_status_unavailable(REASON_UNREACHABLE))
-    assert crc.structurally_absent(configured_off)
-    assert not crc.structurally_absent(broken)
-    assert not crc.structurally_absent(_payload(_healthy_section()))
-    assert "runs NO operational-analytics outbox" in crc.available_blockers(
-        "azure", configured_off
-    )[0]
+    configured_off = crc.available_blockers(
+        "azure", _payload(analytics_status_unavailable(REASON_NOT_CONFIGURED))
+    )
+    broken = crc.available_blockers(
+        "azure", _payload(analytics_status_unavailable(REASON_UNREACHABLE))
+    )
+    assert "runs NO operational-analytics outbox" in configured_off[0]
+    assert "could not read its own" in broken[0]
+    assert configured_off != broken
 
 
 def test_healthy_section_passes_c_and_d() -> None:
@@ -336,15 +399,34 @@ def test_lag_bound_matches_the_alarm_the_drain_itself_fires() -> None:
     assert crc.drain_lag_blockers("aws", _payload(section), now=NOW)
 
 
-def test_empty_outbox_passes_but_says_so() -> None:
-    """The caveat that keeps green from meaning more than it measured."""
+def test_the_limit_of_a_passing_lag_is_printed_on_every_passing_run(tmp_path: Path) -> None:
+    """What green means, said on the runs that are green — all of them.
+
+    This used to be conditional: the sentence was printed only when the section
+    reported `outbox_depth == 0`. No storage backend in this repository ever
+    populates that field (both build `OutboxFreshness` without it), so against a
+    real cloud the condition was never true and the sentence was never printed —
+    while the banner it was supposed to weaken printed every time. The
+    limitation does not depend on the depth, so neither does the sentence.
+    """
     payload = _payload(
-        analytics_status_section(oldest_enqueued_at=None, now=NOW, outbox_depth=0)
+        analytics_status_section(oldest_enqueued_at=None, now=NOW, outbox_depth=None)
     )
     assert crc.drain_lag_blockers("aws", payload, now=NOW) == []
-    caveat = crc.drain_lag_caveat(payload)
-    assert caveat is not None
-    assert "not that anything is moving" in caveat
+    assert "does not prove rows are moving" in crc.DRAIN_LAG_LIMIT_NOTE
+
+    # ...and it reaches the operator, on stdout, where the shell reprints it.
+    # Generated at the real clock: the CLI compares the section's age to now.
+    live = dt.datetime.now(dt.UTC)
+    status = tmp_path / "status.json"
+    status.write_text(
+        json.dumps(
+            _payload(analytics_status_section(oldest_enqueued_at=None, now=live))
+        )
+    )
+    captured = _run_module("lag", "--cloud", "aws", "--status-file", str(status))
+    assert captured.returncode == 0
+    assert crc.DRAIN_LAG_LIMIT_NOTE.split(";")[0] in captured.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -498,75 +580,21 @@ def test_a_hard_disabled_outbox_fails(tmp_path: Path) -> None:
     assert "vacuously green" in blockers[0]
 
 
-# ---------------------------------------------------------------------------
-# The exemption, and its narrowness.
-# ---------------------------------------------------------------------------
+def test_a_control_plane_script_that_is_not_there_says_so(tmp_path: Path) -> None:
+    """A missing FILE is not "the file does not set the variable".
 
-
-def test_no_cloud_is_currently_exempt() -> None:
-    """Silence is not an exemption. Nobody has signed for one."""
-    assert [c for c in crc.ROLLOUT_REGISTRY if crc.exemption(c)] == []
-
-
-def test_an_exemption_waives_but_still_prints_what_it_waives() -> None:
-    blockers = crc.outbox_enabled_blockers("azure")
-    waived, note = crc.apply_exemption("azure", blockers, waivable=True)
-    assert waived == blockers and note is None  # no reason recorded -> no waiver
-
-    patched = crc.CloudRollout(
-        cloud="azure",
-        control_plane_script="scripts/deploy/azure_control_plane.sh",
-        drain_install_command="build it",
-        analytics_absent_reason="canary only, tracked in #644",
-    )
-    original = crc.ROLLOUT_REGISTRY["azure"]
-    crc.ROLLOUT_REGISTRY["azure"] = patched
-    try:
-        waived, note = crc.apply_exemption("azure", blockers, waivable=True)
-        assert waived == []
-        assert note is not None
-        assert "ACCEPTED-ABSENT" in note
-        assert "canary only, tracked in #644" in note
-        # The suppressed blocker is still in the output: an exemption may not
-        # hide what it exempts.
-        assert "never sets TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED" in note
-    finally:
-        crc.ROLLOUT_REGISTRY["azure"] = original
-
-
-def test_an_exemption_cannot_launder_a_measured_failure() -> None:
-    """The hole round 2 found, closed.
-
-    The old `apply_exemption` waived stages (c), (d) AND (e) alike, so a cloud
-    that had been MEASURED and had FAILED — an outbox the control plane could
-    not read, a lag over the bound — was excused by a sentence about a pipeline
-    that was never built, and the run exited 0. An exemption may excuse an
-    absence. It may not rewrite a reading.
+    `declared_outbox_value` answers None for both, and stage (e) used to print
+    the same sentence either way: "<script> — the source of truth for this
+    cloud's control-plane environment — never sets TR_...", about a path that
+    does not exist. That sends the reader to open a file that is not there and
+    teaches them the gate is confused, which is how a gate stops being read.
     """
-    patched = crc.CloudRollout(
-        cloud="azure",
-        control_plane_script="scripts/deploy/azure_control_plane.sh",
-        drain_install_command="build it",
-        analytics_absent_reason="no ClickHouse budgeted for this cloud yet",
-    )
-    original = crc.ROLLOUT_REGISTRY["azure"]
-    crc.ROLLOUT_REGISTRY["azure"] = patched
-    try:
-        broken = _payload(analytics_status_unavailable(REASON_UNREACHABLE))
-        assert not crc.structurally_absent(broken)
-        blockers = crc.available_blockers("azure", broken)
-        kept, note = crc.apply_exemption("azure", blockers, waivable=False)
-        assert kept == blockers, "a measured failure must survive every exemption"
-        assert note is None
-
-        stale = analytics_status_section(
-            oldest_enqueued_at=NOW - dt.timedelta(days=15), now=NOW, outbox_depth=470_897
-        )
-        lag_blockers = crc.drain_lag_blockers("azure", _payload(stale), now=NOW)
-        kept, note = crc.apply_exemption("azure", lag_blockers, waivable=False)
-        assert kept == lag_blockers and note is None
-    finally:
-        crc.ROLLOUT_REGISTRY["azure"] = original
+    (tmp_path / "scripts" / "deploy").mkdir(parents=True)
+    blockers = crc.outbox_enabled_blockers("azure", root=tmp_path)
+    assert blockers
+    assert "DOES NOT EXIST in this checkout" in blockers[0]
+    assert "never sets" not in blockers[0]
+    assert "control_plane_script" in blockers[0]
 
 
 # ---------------------------------------------------------------------------
@@ -763,7 +791,7 @@ def test_verifier_refuses_an_unknown_cloud_without_touching_the_network() -> Non
         cwd=ROOT,
     )
     assert result.returncode == 1
-    assert "INCOMPLETE ROLLOUT" in result.stderr
+    assert "NOT VERIFIED" in result.stderr
     assert "no ROLLOUT_REGISTRY entry" in result.stderr
 
 
@@ -801,13 +829,16 @@ def test_verifier_is_read_only() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The gate cannot be turned off from the environment.
+# The gate cannot be turned off from the environment, or from anywhere else.
 #
 # It could, for one commit: the bound came from TR_MAX_DRAIN_LAG_SECONDS and the
 # URL from TR_STATUS_URL, both `${VAR:-default}` at the top of the script. Every
 # wired deploy script inherits its caller's environment, so a single `export` in
-# a shell profile turned 470,897 undelivered rows into
-# "COMPLETE: aws publishes a live analytics pipeline".
+# a shell profile turned 470,897 undelivered rows into a green verdict. The
+# replacement was a pair of `--max-lag-seconds` / `--status-url` FLAGS plus a
+# fourth outcome ("this run is only a diagnosis") to keep them safe; both are
+# gone too, because an outcome that exists to make an override safe is one more
+# thing that can be got wrong, and this file has had two rounds of exactly that.
 #
 # These tests run the REAL shell script, with a fake `curl` on PATH so no test
 # touches the network, and a stub of the Python module that records the argv the
@@ -818,9 +849,10 @@ def test_verifier_is_read_only() -> None:
 _STUB_MODULE = '''
 """Stand-in for the judgement module: replays a scripted plan, records argv.
 
-Speaks the verdict contract the real module speaks: human text on stderr, and
-one machine line on stdout. STUB_STDERR_NOISE and STUB_STDOUT_NOISE exist so a
-test can reproduce the bug that made the contract structural.
+Speaks the contract the real module speaks, which is now just the exit status
+plus plain lines: stderr is the operator's explanation, stdout is notes for the
+shell to reprint. STUB_STDERR_NOISE and STUB_STDOUT_NOISE exist so a test can
+fire the interpreter-warning shape that used to be able to rewrite a verdict.
 """
 import json, os, sys
 
@@ -828,14 +860,15 @@ with open(os.environ["STUB_ARGV_LOG"], "a", encoding="utf-8") as handle:
     handle.write(json.dumps(sys.argv[1:]) + "\\n")
 
 plan = json.loads(os.environ["STUB_PLAN"])
-code, kind, summary = plan.get(sys.argv[1], [0, "ok", "passed"])
+code, lines = plan.get(sys.argv[1], [0, []])
 noise = os.environ.get("STUB_STDERR_NOISE")
 if noise:
     print(noise, file=sys.stderr)
 extra = os.environ.get("STUB_STDOUT_NOISE")
 if extra:
     print(extra)
-print("TR_VERDICT\\t%s\\t%s" % (kind, summary))
+for line in lines:
+    print(line)
 sys.exit(code)
 '''
 
@@ -932,13 +965,15 @@ def _harness(root: Path, *, plan: dict[str, Any], body: dict[str, Any] | None = 
 
 REGISTRY_URL = "https://registry.example/status.json"
 
+#: ``subcommand -> [exit status, stdout lines]``. The exit status is the entire
+#: verdict; the lines are notes the shell reprints under the outcome.
 _ALL_PASS: dict[str, list[Any]] = {
-    "registry": [0, "ok", "passed"],
-    "status-url": [0, "value", REGISTRY_URL],
-    "section": [0, "ok", "the analytics section is published"],
-    "available": [0, "ok", "passed"],
-    "lag": [0, "ok", "passed"],
-    "outbox": [0, "fact", "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED='true' in the working tree"],
+    "registry": [0, []],
+    "status-url": [0, [REGISTRY_URL]],
+    "section": [0, []],
+    "available": [0, []],
+    "lag": [0, ["a lag under the bound proves nothing is STUCK"]],
+    "outbox": [0, ["TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED='true' in the working tree"]],
 }
 
 
@@ -963,8 +998,8 @@ def test_exported_lag_bound_cannot_widen_the_gate(tmp_path: Path) -> None:
 
     The old script read the variable into `MAX_LAG_SECONDS` and passed it
     through on every run, so `export TR_MAX_DRAIN_LAG_SECONDS=99999999` made the
-    fifteen-day backlog pass stage (d). Now the shell asks for no bound at all
-    unless someone typed the flag, and the number comes from the Python module.
+    fifteen-day backlog pass stage (d). Now the shell asks for no bound at all —
+    there is no flag to ask with — and the number comes from the Python module.
     """
     harness = _harness(tmp_path, plan=_ALL_PASS)
     result = harness.run("aws", env={"TR_MAX_DRAIN_LAG_SECONDS": "99999999"})
@@ -995,80 +1030,64 @@ def test_the_env_is_ignored_by_the_real_verifier_too() -> None:
         },
     )
     assert result.returncode == 1
-    assert "INCOMPLETE ROLLOUT" in result.stderr
+    assert "NOT VERIFIED" in result.stderr
     assert "IGNORED: TR_STATUS_URL" in result.stderr
     assert "IGNORED: TR_MAX_DRAIN_LAG_SECONDS" in result.stderr
-    assert "COMPLETE:" not in result.stderr
+    assert not _verified(result.stderr)
 
 
-def test_an_override_flag_suppresses_the_complete_banner(tmp_path: Path) -> None:
-    """(ii) The escape hatch exists, and it cannot mint a green verdict.
+def test_there_is_no_override_flag_left_to_pass(tmp_path: Path) -> None:
+    """The flags are gone, and gone means REJECTED rather than quietly accepted.
 
-    An override is legitimate for diagnosis ("what would a 4-hour bound say?").
-    What it must never do is produce the sentence a deploy script and a reviewer
-    read as done — so every stage passing under a flag ends in DIAGNOSTIC, and
-    the exit status is its own code rather than 0.
+    `--max-lag-seconds` and `--status-url` were the sanctioned way to ask the
+    gate a different question, and they needed a whole fourth outcome
+    (DIAGNOSTIC, exit 4) to keep them from minting a green verdict. Deleting
+    them deletes that outcome; this pins that an unknown flag is a failure
+    rather than something the script quietly treats as a cloud id.
     """
     harness = _harness(tmp_path, plan=_ALL_PASS)
-    result = harness.run("--max-lag-seconds", "99999999", "aws")
-
-    assert result.returncode == 4
-    assert "DIAGNOSTIC RUN" in result.stderr
-    assert "COMPLETE" not in result.stderr
-    assert "--max-lag-seconds 99999999" in result.stderr
-    assert harness.argv_for("lag")[-2:] == ["--max-lag-seconds", "99999999"]
-
-    harness = _harness(tmp_path / "second", plan=_ALL_PASS)
-    result = harness.run("--status-url", "https://elsewhere.example/status.json", "aws")
-    assert result.returncode == 4
-    assert "COMPLETE" not in result.stderr
-    assert harness.fetched_urls == ["https://elsewhere.example/status.json"]
+    for flag in ("--max-lag-seconds", "--status-url"):
+        result = harness.run(flag, "99999999", "aws")
+        assert result.returncode == 1
+        assert "unknown option" in result.stderr
+        assert not _verified(result.stderr)
+        assert harness.fetched_urls == []
 
 
 # ---------------------------------------------------------------------------
-# The banner says what was measured, and nothing more.
+# The outcome says what was measured, and nothing more.
 # ---------------------------------------------------------------------------
 
 
-def test_a_clean_run_is_the_only_one_that_prints_complete(tmp_path: Path) -> None:
-    harness = _harness(tmp_path, plan={**_ALL_PASS, "outbox": [0, "ok", "passed"]})
-    result = harness.run("aws")
-    assert result.returncode == 0
-    assert "COMPLETE: aws publishes a live analytics pipeline" in result.stderr
-    assert "CAVEAT" not in result.stderr
+def test_a_passing_run_says_verified_and_says_what_it_did_not_show(tmp_path: Path) -> None:
+    """The one green sentence, and the limit printed next to it every time.
 
-
-def test_a_caveated_stage_downgrades_the_banner(tmp_path: Path) -> None:
-    """The empty-outbox caveat used to be printed one line ABOVE "COMPLETE"."""
-    caveat = "outbox is empty: lag 0 proves nothing is STUCK, not that anything is moving"
-    harness = _harness(tmp_path, plan={**_ALL_PASS, "lag": [0, "caveat", caveat]})
-    result = harness.run("aws")
-
-    assert result.returncode == 0
-    assert "COMPLETE WITH CAVEATS" in result.stderr
-    assert "COMPLETE: aws publishes a live analytics pipeline" not in result.stderr
-    assert caveat in result.stderr
-
-
-def test_an_exempted_stage_never_reads_as_complete_and_never_exits_zero(tmp_path: Path) -> None:
-    """The worst line the old script could print, and the reason for this rule.
-
-    On the exemption path every stage printed its unconditional green sentence
-    and the run ended "COMPLETE: azure publishes a live analytics pipeline" —
-    about a cloud whose analytics had, one line earlier, been formally excused
-    for not existing. The banner was fixed first; round 2 caught the other half,
-    which is that it still exited 0, so the only machine-readable signal any
-    caller reads still said success.
+    The banner used to read "COMPLETE: <cloud> publishes a live analytics
+    pipeline", downgraded to "COMPLETE WITH CAVEATS" when a stage came back
+    flagged. The only flag that could have downgraded it was raised off a field
+    (`outbox_depth`) that no storage backend in this repository populates — so
+    the strong sentence was what every passing run printed, including over an
+    outbox nothing had ever been enqueued into. There is one outcome now and it
+    is true of every run that reaches it.
     """
-    waived = "ACCEPTED-ABSENT (azure): canary only — suppressing: never sets the outbox"
-    harness = _harness(tmp_path, plan={**_ALL_PASS, "outbox": [0, "waived", waived]})
-    result = harness.run("azure")
+    harness = _harness(tmp_path, plan=_ALL_PASS)
+    result = harness.run("aws")
 
-    assert result.returncode == 6
-    assert "COMPLETE" not in result.stderr
-    assert "NOT VERIFIED" in result.stderr
-    assert "NOT MEASURED" in result.stderr
-    assert waived in result.stderr
+    assert result.returncode == 0
+    assert _verified(result.stderr) and "aws passed every stage" in result.stderr
+    assert "publishes a live analytics pipeline" not in result.stderr
+    assert "It does not mean rows were seen moving" in result.stderr
+
+
+def test_stage_notes_are_reprinted_verbatim_under_the_outcome(tmp_path: Path) -> None:
+    """Notes are text, not a taxonomy. They inform; they never re-rank a run."""
+    note = "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED is computed at deploy time"
+    harness = _harness(tmp_path, plan={**_ALL_PASS, "outbox": [0, [note]]})
+    result = harness.run("aws")
+
+    assert result.returncode == 0
+    assert note in result.stderr
+    assert "Notes from the stages, verbatim:" in result.stderr
 
 
 def test_an_unpublished_analytics_section_is_its_own_exit_code(tmp_path: Path) -> None:
@@ -1077,82 +1096,65 @@ def test_an_unpublished_analytics_section_is_its_own_exit_code(tmp_path: Path) -
     Every bound script depends on the distinction through
     scripts/deploy/cloud_complete_gate.sh: the run that INSTALLS a drain hits
     this state by construction today, and reporting it as a flat failure is what
-    teaches operators to ignore exit codes.
+    teaches operators to ignore exit codes. It is the ONE code kept beside 0 and
+    1, for that reason.
     """
-    harness = _harness(
-        tmp_path,
-        plan={
-            **_ALL_PASS,
-            "section": [1, "unobservable", "aws: /status.json publishes no 'analytics' section"],
-        },
-    )
+    harness = _harness(tmp_path, plan={**_ALL_PASS, "section": [5, []]})
     result = harness.run("aws")
 
     assert result.returncode == 5
     assert "NOT YET OBSERVABLE" in result.stderr
-    assert "COMPLETE" not in result.stderr
-    assert "INCOMPLETE ROLLOUT" not in result.stderr
+    assert not _verified(result.stderr)
 
 
-def test_an_unparseable_body_is_not_reported_as_a_missing_section(tmp_path: Path) -> None:
-    """Round 2: exit 5 was doing two jobs, and one of its fixes is useless.
-
-    "Deploy a control plane built from a newer commit" is the right advice for a
-    page that omits the section, and no advice at all for a CDN interstitial.
-    """
-    harness = _harness(
-        tmp_path,
-        plan={
-            **_ALL_PASS,
-            "section": [
-                1,
-                "unreadable",
-                "aws: the status URL answered 200 but the body is not JSON. First bytes: "
-                "'<!DOCTYPE html><title>Just a moment...'",
-            ],
-        },
-    )
+def test_a_failing_stage_ends_the_run_non_zero(tmp_path: Path) -> None:
+    """Everything that is not stage (b)'s absence is one code, and it says why."""
+    harness = _harness(tmp_path, plan={**_ALL_PASS, "available": [1, []]})
     result = harness.run("aws")
 
-    assert result.returncode == 7
-    assert "UNREADABLE STATUS PAGE" in result.stderr
-    assert "NOT YET OBSERVABLE" not in result.stderr
-    assert "Just a moment" in result.stderr
+    assert result.returncode == 1
+    assert "NOT VERIFIED" in result.stderr
+    assert "c: analytics available" in result.stderr
+    assert not _verified(result.stderr)
 
 
-def test_a_stray_interpreter_line_cannot_restore_the_green_banner(tmp_path: Path) -> None:
-    """The bug the verdict contract exists to make impossible.
+def test_noise_on_either_stream_cannot_change_an_outcome(tmp_path: Path) -> None:
+    """The bug the old verdict contract existed to survive, now impossible.
 
     The shell used to capture the module with `2>&1` and classify by the first
-    word. A DeprecationWarning at import time therefore made an EXEMPTED stage
-    unclassifiable — and the fall-through printed the flat green banner. Here
-    the same warning is emitted, on stderr and on stdout, and the verdict is
-    still read correctly because it is the last line of a stream nothing else
-    owns.
+    word; a DeprecationWarning at import time could therefore turn one outcome
+    into another, and the fall-through was the green banner. The successor
+    contract read a tab-separated sentinel out of stdout, which had its own ways
+    to go wrong. Nothing is read out of a stream now: a failing stage that also
+    prints noise still fails, and a passing run's stray stdout line is a note.
     """
-    waived = "ACCEPTED-ABSENT (azure): canary only — suppressing: never sets the outbox"
-    harness = _harness(tmp_path, plan={**_ALL_PASS, "outbox": [0, "waived", waived]})
-    result = harness.run(
-        "azure",
-        env={
-            "STUB_STDERR_NOISE": "DeprecationWarning: pkg_resources is deprecated as an API",
-            "STUB_STDOUT_NOISE": "warning: a library printed this to stdout",
-        },
-    )
-    assert result.returncode == 6
+    noise = {
+        "STUB_STDERR_NOISE": "DeprecationWarning: pkg_resources is deprecated as an API",
+        "STUB_STDOUT_NOISE": "warning: a library printed this to stdout",
+    }
+    failing = _harness(tmp_path, plan={**_ALL_PASS, "outbox": [1, []]})
+    result = failing.run("azure", env=noise)
+    assert result.returncode == 1
     assert "NOT VERIFIED" in result.stderr
-    assert "COMPLETE" not in result.stderr
+    assert not _verified(result.stderr)
+
+    passing = _harness(tmp_path / "second", plan=_ALL_PASS)
+    result = passing.run("aws", env=noise)
+    assert result.returncode == 0
+    assert _verified(result.stderr) and "aws passed every stage" in result.stderr
+    assert "a library printed this to stdout" in result.stderr
 
 
-def test_output_with_no_verdict_line_is_fatal_rather_than_green(tmp_path: Path) -> None:
-    """A gate that cannot classify its own output must not clear a cloud."""
-    harness = _harness(tmp_path, plan=_ALL_PASS)
-    verifier_dir = harness.verifier.parent
-    broken = harness.root / "src" / "trusted_router" / "cloud_rollout_completeness.py"
-    broken.write_text("import sys\nprint('no sentinel here')\nsys.exit(0)\n")
-    assert verifier_dir.is_dir()
+def test_a_status_url_that_is_not_a_url_stops_the_run(tmp_path: Path) -> None:
+    """The one stdout line the shell CONSUMES, and its guard.
 
+    Stage (a) answers with a URL, which is the only place the shell takes a
+    value rather than an exit status. A stray line there can only make the run
+    fail — never pass, and never fetch something that is not an https:// page.
+    """
+    harness = _harness(tmp_path, plan={**_ALL_PASS, "status-url": [0, ["not-a-url"]]})
     result = harness.run("aws")
-    assert result.returncode == 2
-    assert "could not classify its own output" in result.stderr
-    assert "COMPLETE" not in result.stderr
+
+    assert result.returncode == 1
+    assert "not an https:// URL" in result.stderr
+    assert harness.fetched_urls == []

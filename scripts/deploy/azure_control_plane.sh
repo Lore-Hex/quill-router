@@ -344,15 +344,11 @@ NOTE
 # variables it reads at all -- TR_MAX_DRAIN_LAG_SECONDS and TR_STATUS_URL -- it
 # reads only in order to print that they are being IGNORED. (An earlier version
 # of this comment said the verifier "reads no environment variable at all",
-# which was a tidier sentence and not true.) Overrides exist only as flags
-# nobody here passes.
+# which was a tidier sentence and not true.) It takes no flags either.
 #
-# The way to make this exit 0 is to build the pipeline. Recording the absence as
-# analytics_absent_reason on the azure entry in
-# src/trusted_router/cloud_rollout_completeness.py does NOT make it exit 0: that
-# is a reviewed code change which turns the verdict into NOT VERIFIED and exit
-# 6, because an exemption is a decision to ship without knowing and must not
-# read as success to anything downstream.
+# The only way to make this exit 0 is to build the pipeline. There is no
+# exemption, no waiver and no registry field that excuses a stage: a cloud that
+# cannot be checked is NOT VERIFIED and this script exits non-zero.
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/cloud_complete_gate.sh

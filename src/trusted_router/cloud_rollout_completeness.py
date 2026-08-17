@@ -60,7 +60,7 @@ The functions in this file still do static checks — that a claimed script
 exists, that no unclaimed script calls the verifier, that an exemption carries a
 reason — but none of them is the "does it run the gate?" assertion any more.
 
-Three further rules this module enforces in code rather than in prose:
+Two further rules this module enforces in code rather than in prose:
 
 * **The cloud list is never re-typed.** :func:`declared_clouds` delegates to
   :func:`operational_analytics_fleet.deployed_clouds`, which is the union of
@@ -76,25 +76,23 @@ Three further rules this module enforces in code rather than in prose:
   Fargate plane through Global Accelerator. A gate pointed at the wrong AWS
   front end answers a question nobody asked.
 
-* **Absence must be signed for, and never launders a measurement.** A cloud
-  whose analytics genuinely cannot exist yet is allowed through only by
-  ``analytics_absent_reason`` in :data:`ROLLOUT_REGISTRY` — a code change, and
-  therefore a review. The waiver applies ONLY to stages whose failure is
-  structural (a file that sets no variable; a control plane that publishes
-  ``not_configured``, i.e. says of itself that it runs no outbox). A MEASURED
-  failure — an unreadable outbox, a lag over the bound, a stale section — is
-  never waivable, and an exempted run exits non-zero and prints NOT VERIFIED. An
-  exemption is a decision to ship without knowing; it must never be the thing
-  that makes the machine-readable signal say success.
+THERE IS NO WAY TO EXCUSE A STAGE
+---------------------------------
+Earlier revisions of this module carried an exemption: a cloud could record
+``analytics_absent_reason`` and have some stages "waived" rather than measured,
+with a verdict taxonomy deciding which failures a waiver was allowed to touch.
+Two review rounds found bugs in that machinery, and the second set were
+regressions introduced by the fixes to the first. It is gone. A cloud that
+cannot be checked is simply NOT VERIFIED: the run exits non-zero and prints the
+reason. Nothing in this file can turn a failure into a pass.
 
-Nothing this module decides comes from the environment. That is not an
-accident: the bound in stage (d) and the URL in stage (a) are what an attacker
-of the *process* — a tired operator with an ``export`` in their shell profile —
-would reach for, and a deploy script inherits every variable its caller had.
-The bound is a constant here and the URL comes from the fleet registry in
-``src/``. Overrides exist, but only as explicit command-line flags on
-``scripts/deploy/verify_cloud_complete.sh``, and a run that uses one is a
-DIAGNOSTIC run that may not print the COMPLETE banner.
+Nothing this module decides comes from the environment or from a flag, either.
+That is not an accident: the bound in stage (d) and the URL in stage (a) are
+what an attacker of the *process* — a tired operator with an ``export`` in their
+shell profile — would reach for, and a deploy script inherits every variable its
+caller had. The bound is a constant here; the URL comes from the fleet registry
+in ``src/``; and neither this module nor the shell entry point accepts an
+override for either.
 
 This module opens no socket and shells out to nothing. It reads two kinds of
 file: deploy scripts in this repository (as text, for stage (e)) and the
@@ -123,7 +121,6 @@ from trusted_router.operational_analytics_freshness import (
     DEFAULT_MAX_DRAIN_LAG_SECONDS,
     DRAIN_LAG_FIELD,
     GENERATED_AT_FIELD,
-    OUTBOX_DEPTH_FIELD,
     REASON_FIELD,
     REASON_NOT_CONFIGURED,
 )
@@ -298,14 +295,10 @@ class CloudRollout:
     #: Deploy scripts deliberately left unbound, each with its reason. Named in
     #: code so that "this cloud's script does not run the check" is a claim
     #: somebody made and a reviewer saw, rather than a row missing from a list.
+    #:
+    #: This is about which SCRIPTS end in the gate. It is not, and cannot become,
+    #: permission for a cloud to skip a stage: there is no such permission.
     exempt_deploy_scripts: tuple[ScriptExemption, ...] = ()
-    #: Set ONLY to record a reviewed, deliberate absence of the analytics
-    #: pipeline on this cloud. A non-empty string downgrades the STRUCTURAL
-    #: blockers — never a measurement — to a NOT VERIFIED verdict that still
-    #: exits non-zero. Empty for every cloud today, on purpose: the AWS-EU
-    #: outage was fifteen days of exactly this exemption granted by nobody, in
-    #: silence.
-    analytics_absent_reason: str | None = None
 
 
 #: Every cloud that must be finishable. Keys are checked against
@@ -686,43 +679,6 @@ def status_url_for(cloud: str) -> str:
     return freshness_registry()[cloud]
 
 
-def exemption(cloud: str) -> str | None:
-    """The recorded reason this cloud is allowed to have no analytics, if any."""
-    entry = ROLLOUT_REGISTRY.get(cloud)
-    reason = entry.analytics_absent_reason if entry else None
-    return reason or None
-
-
-def apply_exemption(
-    cloud: str, blockers: list[str], *, waivable: bool
-) -> tuple[list[str], str | None]:
-    """Downgrade STRUCTURAL blockers to a NOT VERIFIED note when signed for.
-
-    The single escape hatch, and it is narrow in two directions since round 2.
-
-    First, only a ``analytics_absent_reason`` written into
-    :data:`ROLLOUT_REGISTRY` — a code change, therefore a review — can waive
-    anything, and the note still carries the original blocker so the exemption
-    cannot hide what it is exempting.
-
-    Second, and this is the part that was wrong: ``waivable`` must be False for
-    any blocker that came from a MEASUREMENT. The previous version waived stages
-    (c), (d) and (e) alike, so a cloud that had been measured and had FAILED —
-    an unreadable outbox, a lag over the bound — was let through by a sentence
-    about a pipeline that was never built, and the run still exited 0. An
-    exemption may excuse the ABSENCE of a pipeline. It may never launder a
-    reading, and (see the shell) it never exits 0.
-    """
-    reason = exemption(cloud)
-    if not blockers or reason is None or not waivable:
-        return blockers, None
-    detail = " | ".join(blockers)
-    return [], (
-        f"ACCEPTED-ABSENT ({cloud}): {reason} — suppressing: {detail}. Remove "
-        "analytics_absent_reason from ROLLOUT_REGISTRY when this is fixed."
-    )
-
-
 # ---------------------------------------------------------------------------
 # (b)-(d) What the cloud publishes about itself.
 # ---------------------------------------------------------------------------
@@ -767,22 +723,6 @@ def section_blockers(cloud: str, payload: dict[str, Any]) -> list[str]:
     ]
 
 
-def structurally_absent(payload: dict[str, Any]) -> bool:
-    """Does the cloud SAY OF ITSELF that it runs no outbox?
-
-    ``available=false`` with ``reason=not_configured`` is a control plane
-    reporting a configuration, not a reading that went wrong: the outbox flag is
-    off, so there is no table to read and never was. That is the one shape of
-    stage (c)/(d) failure an ``analytics_absent_reason`` may excuse. Every other
-    reason — ``unreachable``, ``no_data``, anything unrecognised — is a
-    measurement, and a measurement is never waivable.
-    """
-    section = payload.get(ANALYTICS_STATUS_KEY)
-    if not isinstance(section, dict) or section.get(AVAILABLE_FIELD):
-        return False
-    return section.get(REASON_FIELD) == REASON_NOT_CONFIGURED
-
-
 def available_blockers(cloud: str, payload: dict[str, Any]) -> list[str]:
     """Stage (c): the section says the outbox could actually be read."""
     section = payload.get(ANALYTICS_STATUS_KEY)
@@ -799,18 +739,15 @@ def available_blockers(cloud: str, payload: dict[str, Any]) -> list[str]:
             f"{REASON_NOT_CONFIGURED!r} — the deployed control plane reports that it "
             "runs NO operational-analytics outbox, so nothing is enqueued, nothing is "
             "drained, and every freshness number this cloud can publish is vacuously "
-            f"green. Fix: {install}. To accept the absence instead, record it as "
-            "analytics_absent_reason on the cloud's CloudRollout in "
-            "src/trusted_router/cloud_rollout_completeness.py; that is a reviewed code "
-            "change, and the run still reports NOT VERIFIED and exits non-zero."
+            f"green. Fix: {install}. Nothing in this repository excuses this: a cloud "
+            "that runs no analytics pipeline is not a finished cloud, and there is no "
+            "flag, variable or registry field that makes this run exit 0."
         ]
     return [
         f"{cloud}: {ANALYTICS_STATUS_KEY}.{AVAILABLE_FIELD} is false "
         f"({REASON_FIELD}={reason!r}) — the control plane could not read its own "
         "operational-analytics outbox, which is not the same as an empty one and not "
-        f"the same as not having one. Fix: {install}. This is a MEASUREMENT, so no "
-        "analytics_absent_reason waives it: an exemption may excuse a pipeline that was "
-        "never built, never a reading that failed."
+        f"the same as not having one. Fix: {install}"
     ]
 
 
@@ -886,28 +823,22 @@ def drain_lag_blockers(
     return blockers
 
 
-def drain_lag_caveat(payload: dict[str, Any]) -> str | None:
-    """The sentence to print alongside a PASSING stage (d), when it applies.
-
-    An empty outbox is the healthiest state there is AND the state a cloud with
-    the outbox switched off is permanently in. Saying so out loud is what keeps
-    a green run from being read as "rows are moving".
-
-    Read off ``outbox_depth`` alone. The section used to carry
-    ``oldest_enqueued_at`` as well and this function read both; that field was
-    dropped before anything published it, so depth is what there is.
-    """
-    section = payload.get(ANALYTICS_STATUS_KEY)
-    if not isinstance(section, dict):
-        return None
-    depth = _as_int(section.get(OUTBOX_DEPTH_FIELD))
-    if depth is None or depth > 0:
-        return None
-    return (
-        "outbox is empty: lag 0 proves nothing is STUCK, not that anything is moving. "
-        "Rows observed moving is the bar — see stage (e) and, in-cloud, "
-        "SELECT count() FROM activity_generations."
-    )
+#: Printed under every PASSING stage (d), unconditionally.
+#:
+#: It used to be conditional on ``outbox_depth == 0`` — "say this only when the
+#: outbox is empty" — and that was worse than useless: no storage backend in
+#: this repository populates ``outbox_depth`` (both build ``OutboxFreshness``
+#: with the field left ``None``), so the condition was never true against a real
+#: cloud and the sentence was never printed where it mattered. The limitation it
+#: describes does not depend on the depth anyway: a lag under the bound says
+#: nothing is STUCK, whatever the depth, and an outbox nobody enqueues into
+#: publishes the same number as one that is being drained perfectly.
+DRAIN_LAG_LIMIT_NOTE = (
+    "a lag under the bound proves nothing is STUCK; it does not prove rows are moving. "
+    "An empty outbox and a switched-off one publish the same number. Rows observed "
+    "moving is the bar — see stage (e) and, in-cloud, "
+    "SELECT count() FROM activity_generations twice, ten minutes apart."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -995,8 +926,20 @@ def outbox_enabled_blockers(cloud: str, root: Path | None = None) -> list[str]:
     entry = ROLLOUT_REGISTRY.get(cloud)
     if entry is None:
         return registry_blockers(cloud)
-    value = declared_outbox_value(cloud, root=root)
     script = entry.control_plane_script
+    if not ((root or REPO_ROOT) / script).is_file():
+        # Not the same finding as "the script does not set the variable", and
+        # the fix is not the same either. Saying "SCRIPT never sets X" about a
+        # file that is not there sends the reader to open it, and it teaches
+        # them the gate is confused — which is how a gate stops being read.
+        return [
+            f"{cloud}: {script} — named in ROLLOUT_REGISTRY as this cloud's control-plane "
+            "script, the source of truth for its service environment — DOES NOT EXIST in "
+            "this checkout, so nothing here can say whether the cloud enqueues anything "
+            "at all. Fix: correct control_plane_script on this cloud's CloudRollout in "
+            "src/trusted_router/cloud_rollout_completeness.py, or write the script."
+        ]
+    value = declared_outbox_value(cloud, root=root)
     if value is None:
         return [
             f"{cloud}: {script} — the source of truth for this cloud's control-plane "
@@ -1019,10 +962,10 @@ def outbox_enabled_blockers(cloud: str, root: Path | None = None) -> list[str]:
 def outbox_fact(cloud: str, root: Path | None = None) -> str:
     """What a PASSING stage (e) actually established, said precisely.
 
-    Not a caveat — a caveat means "weaker than it sounds" and changes the
-    verdict banner. This is the plain description of the measurement, and it
-    exists because "control-plane outbox is enabled" overstates it in a way
-    worth one clause: this is a static read of a file in the WORKING TREE, not
+    Printed verbatim under the outcome, and it changes nothing: the stage passed
+    or it did not. It exists because "control-plane outbox is enabled"
+    overstates what was done in a way worth one clause: this is a static read of
+    a file in the WORKING TREE, not
     of the revision that is deployed. A local edit that has not shipped reads as
     enabled here; so does a script that shipped six months ago. What the running
     service does with the variable is stages (b)-(d)'s business.
@@ -1037,7 +980,7 @@ def outbox_fact(cloud: str, root: Path | None = None) -> str:
 
 
 def outbox_note(cloud: str, root: Path | None = None) -> str | None:
-    """Caveat for a stage (e) that passes on a COMPUTED value.
+    """The extra line a stage (e) that passes on a COMPUTED value needs.
 
     ``aws_eu_control_plane.sh`` writes ``"${OUTBOX_ENABLED}"``, which it sets to
     ``false`` when no ClickHouse secret exists in the region. Statically that is
@@ -1070,15 +1013,6 @@ def _as_float(value: Any) -> float | None:
         return None
 
 
-def _as_int(value: Any) -> int | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _parse_time(value: Any) -> dt.datetime | None:
     if not isinstance(value, str) or not value:
         return None
@@ -1093,69 +1027,56 @@ def _parse_time(value: Any) -> dt.datetime | None:
 # CLI. One subcommand per stage; the shell script owns the ordering and the
 # single HTTPS fetch, this owns every judgement.
 #
-# THE OUTPUT CONTRACT, which round 2 made structural.
+# THE OUTPUT CONTRACT, which is now as small as it can be.
 #
-# The shell used to capture this process with `2>&1` and classify the result by
-# its FIRST WORD. One stray line on stderr — a DeprecationWarning, a pip notice,
-# a urllib3 warning from some transitive import — landed at the top of the
-# captured text, the first word became something else, and the whole
-# waived:/caveat:/fact: distinction collapsed back into the flat green COMPLETE
-# banner. That banner is the exact sentence this work exists to make
-# unprintable, and an interpreter warning could restore it.
+# A stage HELD if this process exits 0. That is the whole contract. There is no
+# verdict word to parse, no kind, no sentinel, and nothing printed by anything
+# at all — an interpreter warning, a pip notice, a library writing to stdout on
+# import — can turn a non-zero exit into a pass.
 #
-# So the streams are separate now and the classification is a record, not a
-# prefix: every human sentence goes to STDERR, and stdout carries exactly one
-# line, the last thing written, of the form
+# It used to be bigger. The shell captured this process with `2>&1` and
+# classified the result by its FIRST WORD; the fix for that was a tab-separated
+# sentinel line carrying one of eight `kind` values, each of which the shell
+# turned into a different outcome. Two review rounds then found bugs IN THE
+# TAXONOMY, including one where the exemption kind could not be produced at all
+# and one where the flat green banner was reachable on evidence the module says
+# can never earn it. Classification whose misclassification can upgrade a
+# verdict has to earn its keep, and this one did not.
 #
-#     TR_VERDICT<TAB><kind><TAB><one-line summary>
+# So:
 #
-# The shell reads the LAST line of stdout, requires the sentinel, and refuses to
-# reach any verdict at all if it is not there. Anything else printed to stdout
-# by anything at all is ignored, and an absent sentinel is a hard failure rather
-# than a green default — a gate that cannot classify its own output must not be
-# the thing that says a cloud is finished.
+#   exit status  0 = this stage held. Anything else = it did not.
+#   stderr       the human sentences: what failed and what to do about it.
+#   stdout       zero or more PLAIN lines the shell prints verbatim under the
+#                outcome, and one special case, `status-url`, whose single line
+#                IS the answer the shell asked for.
+#
+# Stdout carries no authority: an extra line is an extra note under the banner,
+# never a different verdict.
 # ---------------------------------------------------------------------------
 
-#: Marks the one machine-readable line on stdout.
-VERDICT_SENTINEL = "TR_VERDICT"
-
-#: ``kind`` values in that line. Every one of them means something different to
-#: the shell, and none of them is inferred from prose.
-KIND_OK = "ok"  # measured, passed, nothing more to say
-KIND_FACT = "fact"  # measured, passed, here is precisely what was measured
-KIND_CAVEAT = "caveat"  # measured, passed, weaker than the stage's headline
-KIND_WAIVED = "waived"  # NOT measured; an exemption in code suppressed it
-KIND_BLOCKED = "blocked"  # measured, failed
-KIND_UNOBSERVABLE = "unobservable"  # parsed fine, publishes no analytics section
-KIND_UNREADABLE = "unreadable"  # the body is not the status document at all
-KIND_VALUE = "value"  # not a verdict: the answer to a question (a URL)
+#: The one non-zero exit that means something other than "this cloud is broken":
+#: the status page parses and carries no ``analytics`` section at all, so the
+#: question cannot be asked from outside yet. Every cloud is in this state until
+#: a control plane built from a commit that publishes the section is deployed to
+#: it, and the run that INSTALLS a drain hits it by construction. Reporting that
+#: as "your install failed" is how an operator learns to stop reading exit
+#: codes. It is still a failure: a cloud nobody can see is not a finished cloud.
+EXIT_NOT_OBSERVABLE = 5
 
 
-def _emit(kind: str, summary: str, detail: list[str] | None = None) -> int:
-    """Write the human text to stderr and the one machine line to stdout."""
-    for line in detail or []:
+def _fail(blockers: list[str]) -> int:
+    """Every blocker to stderr, verbatim; the process is the verdict."""
+    for line in blockers:
         print(line, file=sys.stderr)
-    flat = " ".join(summary.split())
-    print(f"{VERDICT_SENTINEL}\t{kind}\t{flat}")
-    return 0 if kind in (KIND_OK, KIND_FACT, KIND_CAVEAT, KIND_VALUE) else 1
+    return 1
 
 
-def _report(
-    blockers: list[str],
-    *,
-    waived: str | None = None,
-    caveat: str | None = None,
-    fact: str | None = None,
-) -> int:
-    if blockers:
-        return _emit(KIND_BLOCKED, blockers[0], detail=blockers)
-    if waived:
-        return _emit(KIND_WAIVED, waived, detail=[waived])
-    if caveat:
-        return _emit(KIND_CAVEAT, caveat, detail=[caveat])
-    if fact:
-        return _emit(KIND_FACT, fact, detail=[fact])
-    return _emit(KIND_OK, "passed")
+def _pass(notes: list[str] | None = None) -> int:
+    """Notes to stdout for the shell to print under the outcome. Exit 0."""
+    for note in notes or []:
+        print(" ".join(note.split()))
+    return 0
 
 
 def _load(path: str) -> dict[str, Any]:
@@ -1178,83 +1099,73 @@ def main(argv: list[str] | None = None) -> int:
     for name in ("registry", "status-url", "outbox"):
         child = sub.add_parser(name)
         child.add_argument("--cloud", required=True)
-    for name in ("section", "available"):
+    # No --max-lag-seconds and no --status-url. The bound is
+    # DEFAULT_MAX_DRAIN_LAG_SECONDS and the URL is the fleet registry's; a gate
+    # with a knob for either is a gate with a way to pass a cloud that failed.
+    for name in ("section", "available", "lag"):
         child = sub.add_parser(name)
         child.add_argument("--cloud", required=True)
         child.add_argument("--status-file", required=True)
-    lag_parser = sub.add_parser("lag")
-    lag_parser.add_argument("--cloud", required=True)
-    lag_parser.add_argument("--status-file", required=True)
-    lag_parser.add_argument("--max-lag-seconds", type=float, default=DEFAULT_MAX_DRAIN_LAG_SECONDS)
-    lag_parser.add_argument(
-        "--max-section-age-seconds", type=float, default=DEFAULT_MAX_SECTION_AGE_SECONDS
-    )
     sub.add_parser("audit")
     sub.add_parser("clouds")
 
     args = parser.parse_args(argv)
 
     if args.command == "audit":
-        return _report(registry_gaps() + script_binding_gaps())
+        gaps = registry_gaps() + script_binding_gaps()
+        return _fail(gaps) if gaps else _pass()
     if args.command == "clouds":
-        for cloud in declared_clouds():
-            print(cloud, file=sys.stderr)
-        return _emit(KIND_VALUE, ",".join(declared_clouds()))
+        return _pass([",".join(declared_clouds())])
     if args.command == "registry":
-        return _report(registry_blockers(args.cloud))
+        blockers = registry_blockers(args.cloud)
+        return _fail(blockers) if blockers else _pass()
     if args.command == "status-url":
         blockers = registry_blockers(args.cloud)
         if blockers:
-            return _report(blockers)
-        return _emit(KIND_VALUE, freshness_registry()[args.cloud])
+            return _fail(blockers)
+        # The one subcommand whose stdout the shell CONSUMES rather than
+        # reprints. It still carries no authority: the shell refuses anything
+        # that is not an https:// URL, and a refusal is a failure.
+        return _pass([freshness_registry()[args.cloud]])
     if args.command == "outbox":
-        # Stage (e) reads a file in this checkout. Nothing about it is a
-        # measurement of a running cloud, so it is the one stage an exemption
-        # may waive outright.
-        blockers, waived = apply_exemption(
-            args.cloud, outbox_enabled_blockers(args.cloud), waivable=True
-        )
-        return _report(
-            blockers,
-            waived=waived,
-            caveat=outbox_note(args.cloud),
-            fact=outbox_fact(args.cloud),
-        )
+        blockers = outbox_enabled_blockers(args.cloud)
+        if blockers:
+            return _fail(blockers)
+        notes = [outbox_fact(args.cloud)]
+        note = outbox_note(args.cloud)
+        if note:
+            notes.append(note)
+        return _pass(notes)
 
     try:
         payload = _load(args.status_file)
     except UnreadableStatusPage as exc:
-        return _emit(KIND_UNREADABLE, str(exc), detail=[f"{args.cloud}: {exc}"])
+        # NOT the "publishes no analytics section" state, and deploying a newer
+        # control plane does nothing for it, so it does not get that state's
+        # exit code. It is a plain failure with its own sentence.
+        return _fail(
+            [
+                f"{args.cloud}: {exc}. This is not 'the cloud publishes no analytics "
+                "section' — a CDN interstitial, a captive portal or a truncated body is "
+                "not an older control plane, and redeploying will not change it. Fetch "
+                "the URL by hand and look at what came back."
+            ]
+        )
 
     if args.command == "section":
-        # Never exempt: a status page that answers nothing about analytics is a
-        # cloud you cannot check at all, whatever the reason for the absence.
         blockers = section_blockers(args.cloud, payload)
         if blockers:
-            return _emit(KIND_UNOBSERVABLE, blockers[0], detail=blockers)
-        return _emit(KIND_OK, "the analytics section is published")
+            for line in blockers:
+                print(line, file=sys.stderr)
+            return EXIT_NOT_OBSERVABLE
+        return _pass()
 
-    # Stages (c) and (d) read a MEASUREMENT. The only shape of failure an
-    # exemption may excuse is the cloud reporting of ITSELF that it runs no
-    # outbox; a reading that went wrong is never waivable.
-    waivable = structurally_absent(payload)
     if args.command == "available":
-        blockers, waived = apply_exemption(
-            args.cloud, available_blockers(args.cloud, payload), waivable=waivable
-        )
-        return _report(blockers, waived=waived)
-    blockers, waived = apply_exemption(
-        args.cloud,
-        drain_lag_blockers(
-            args.cloud,
-            payload,
-            now=dt.datetime.now(dt.UTC),
-            max_drain_lag_seconds=args.max_lag_seconds,
-            max_section_age_seconds=args.max_section_age_seconds,
-        ),
-        waivable=waivable,
-    )
-    return _report(blockers, waived=waived, caveat=drain_lag_caveat(payload))
+        blockers = available_blockers(args.cloud, payload)
+        return _fail(blockers) if blockers else _pass()
+
+    blockers = drain_lag_blockers(args.cloud, payload, now=dt.datetime.now(dt.UTC))
+    return _fail(blockers) if blockers else _pass([DRAIN_LAG_LIMIT_NOTE])
 
 
 if __name__ == "__main__":  # pragma: no cover

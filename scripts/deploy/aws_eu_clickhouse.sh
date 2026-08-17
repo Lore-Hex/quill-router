@@ -222,6 +222,6 @@ NEXT
 
 require_cloud_complete aws "$NEXT_STEPS"
 echo
-echo "The node is up and the gate reached a verdict for aws — read its banner"
-echo "above for which one: COMPLETE or COMPLETE WITH CAVEATS."
-echo "This script does not restate it in stronger words than it earned."
+echo "The node is up and the gate VERIFIED aws — read its banner above for what"
+echo "that does and does not establish. This script does not restate it in"
+echo "stronger words than it earned."

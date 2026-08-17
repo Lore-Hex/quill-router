@@ -35,6 +35,7 @@ that list ever grows without a reason, or if the docs stop saying so.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -57,6 +58,35 @@ UNPROVEN = crc.scripts_not_proven()
 def harness(tmp_path_factory: pytest.TempPathFactory) -> DeployScriptHarness:
     """One mirrored checkout and one stub PATH for the whole module."""
     return DeployScriptHarness(tmp_path_factory.mktemp("deploy-harness"))
+
+
+def test_every_deploy_script_parses_in_this_machine_s_shell() -> None:
+    """`bash -n` over every deploy script, with whatever bash is here.
+
+    Cheap, and it caught a real one: `aws_eu_clickhouse_drain_install.sh` built
+    its next-steps text as `"$(cat <<'NEXT' ... )"`, and a heredoc nested inside
+    a command substitution is a syntax error in bash 3.2 — /bin/bash on every
+    macOS — the moment the BODY contains an apostrophe. The body said "step 9's
+    output". So on a Mac the whole file failed to parse and did nothing at all,
+    gate included, while CI on Linux bash 5 parsed it happily.
+
+    What this proves is therefore shell-specific, and saying so is the point: on
+    a modern bash it proves the scripts are well-formed there, and on an old one
+    it proves they are runnable by the operator sitting in front of it. The
+    class of defect only shows up on the second kind of machine, which is why
+    the check runs the LOCAL shell rather than a pinned one.
+    """
+    for script in sorted((ROOT / "scripts").rglob("*.sh")):
+        result = subprocess.run(  # noqa: S603
+            ["bash", "-n", str(script)],  # noqa: S607
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, (
+            f"{script.relative_to(ROOT)} does not parse under "
+            f"{subprocess.run(['bash', '--version'], capture_output=True, text=True).stdout.splitlines()[0]}"  # noqa: E501,S603,S607
+            f":\n{result.stderr}"
+        )
 
 
 def test_the_registry_actually_binds_something() -> None:
@@ -108,22 +138,53 @@ def test_a_failing_gate_makes_the_script_fail(
 def test_every_gate_exit_code_survives_the_script(
     harness: DeployScriptHarness, script: str, cloud: str
 ) -> None:
-    """All bound scripts understand the gate's codes, or none of them do.
+    """All bound scripts understand the gate's two codes, or none of them do.
 
     Exit 5 (NOT YET OBSERVABLE) used to be taught to exactly one of five: the
     other four reported today's real state — no deployed control plane publishes
-    the `analytics` section — as INCOMPLETE ROLLOUT with a fix that would not
+    the `analytics` section — as a flat install failure with a fix that would not
     have fixed it, which is how an operator learns to stop reading exit codes.
     The mapping is one shared file now, and this asserts the consequence rather
-    than the mechanism: each distinct code comes out the far end unchanged.
+    than the mechanism: each code comes out the far end unchanged.
+
+    There are two codes because 5 is the only one that earns its own words. The
+    gate used to have seven; the rest are collapsed into 1, which prints why.
     """
-    for rc in (1, 5, 6, 7):
+    for rc in (1, 5):
         run = harness.run(script, verifier_rc=rc)
         assert run.returncode == rc, (
-            f"{script} turned gate exit {rc} into {run.returncode}. The codes mean "
+            f"{script} turned gate exit {rc} into {run.returncode}. 5 and 1 mean "
             f"different things to an operator; collapsing them is the defect.\n"
             f"{summarise(run)}"
         )
+
+
+def test_the_gate_status_survives_without_the_operator_attestation(
+    harness: DeployScriptHarness,
+) -> None:
+    """The propagation claim, asked the way a FIRST RUN asks it.
+
+    `aws_eu_north_clickhouse.sh` refuses to claim the Stockholm replica is wired
+    until an operator says so with TR_STOCKHOLM_REPLICA_WIRED=1, and exits 3
+    when they have not. That check used to run AFTER the gate and unconditionally
+    overwrite its status — so on a first run, when nobody has ever set the
+    variable, the gate's 5 and the gate's 1 both came out as 3. The only reason
+    the parametrised test above passed for this script is that the harness
+    fixture sets the variable; the operator does not have it.
+    """
+    script = "scripts/deploy/aws_eu_north_clickhouse.sh"
+    for rc in (1, 5):
+        run = harness.run(script, verifier_rc=rc, omit_env=("TR_STOCKHOLM_REPLICA_WIRED",))
+        assert run.returncode == rc, (
+            f"{script} turned gate exit {rc} into {run.returncode} for an operator who "
+            f"has not set TR_STOCKHOLM_REPLICA_WIRED, i.e. on every first run.\n"
+            f"{summarise(run)}"
+        )
+
+    # ...and with the gate passing, the unwired replica is still its own answer.
+    unwired = harness.run(script, verifier_rc=0, omit_env=("TR_STOCKHOLM_REPLICA_WIRED",))
+    assert unwired.returncode == 3, summarise(unwired)
+    assert "STOCKHOLM NOT WIRED" in unwired.stderr
 
 
 @pytest.mark.parametrize(("script", "cloud"), PROVEN, ids=[s for s, _ in PROVEN])
@@ -157,9 +218,16 @@ def test_the_shared_gate_library_returns_the_verifier_status_unaltered(
     Every non-zero code the verifier can produce has to come back out. This is
     what makes "all five scripts understand exit 5" a property of one file
     rather than five copies of a `case` statement, one of which had it.
-    """
-    import subprocess
 
+    Note what is NOT set here: the gate library used to read
+    CLOUD_COMPLETE_GATE_DIR to decide which verifier to run, "for the test
+    harness". Every bound deploy script inherits its operator's environment, so
+    that variable was a redirect for the gate itself — the third appearance of
+    the class of defect the verifier spends a section of its header closing. It
+    is gone, and nothing was lost: the caller below sources the gate out of the
+    MIRRORED checkout, and the gate resolves the verifier next to itself, which
+    is the mirror's recording stub.
+    """
     caller = tmp_path / "caller.sh"
     caller.write_text(
         "#!/usr/bin/env bash\n"
@@ -167,26 +235,8 @@ def test_the_shared_gate_library_returns_the_verifier_status_unaltered(
         f'. "{harness.mirror}/scripts/deploy/cloud_complete_gate.sh"\n'
         'require_cloud_complete "$1" "next steps for the operator"\n'
     )
-    for rc in (0, 1, 5, 6, 7):
-        result = subprocess.run(  # noqa: S603
-            ["bash", str(caller), "aws"],  # noqa: S607
-            capture_output=True,
-            text=True,
-            env={
-                "PATH": str(harness.bin),
-                "HOME": str(tmp_path),
-                "HARNESS_ARGV_LOG": str(tmp_path / "argv.log"),
-                "HARNESS_VERIFIER_RC": str(rc),
-                "CLOUD_COMPLETE_GATE_DIR": str(harness.mirror / "scripts" / "deploy"),
-            },
-        )
-        assert result.returncode == rc, (rc, result.returncode, result.stderr)
-        if rc != 0:
-            assert "next steps for the operator" in result.stderr
 
-    # ...and each non-zero code gets its own words, so an operator is not told
-    # to fix an install that did not fail.
-    def stderr_for(rc: int) -> str:
+    def run_with(rc: int) -> subprocess.CompletedProcess[str]:
         return subprocess.run(  # noqa: S603
             ["bash", str(caller), "aws"],  # noqa: S607
             capture_output=True,
@@ -196,13 +246,19 @@ def test_the_shared_gate_library_returns_the_verifier_status_unaltered(
                 "HOME": str(tmp_path),
                 "HARNESS_ARGV_LOG": str(tmp_path / "argv.log"),
                 "HARNESS_VERIFIER_RC": str(rc),
-                "CLOUD_COMPLETE_GATE_DIR": str(harness.mirror / "scripts" / "deploy"),
             },
-        ).stderr
+        )
 
-    assert "NOT YET OBSERVABLE" in stderr_for(5)
-    assert "NOT VERIFIED" in stderr_for(6)
-    assert "UNREADABLE STATUS PAGE" in stderr_for(7)
+    for rc in (0, 1, 5):
+        result = run_with(rc)
+        assert result.returncode == rc, (rc, result.returncode, result.stderr)
+        if rc != 0:
+            assert "next steps for the operator" in result.stderr
+
+    # ...and each non-zero code gets its own words, so an operator is not told
+    # to fix an install that did not fail.
+    assert "NOT YET OBSERVABLE" in run_with(5).stderr
+    assert "NOT VERIFIED" in run_with(1).stderr
 
 
 @pytest.mark.parametrize(("script", "cloud"), PROVEN, ids=[s for s, _ in PROVEN])
@@ -213,14 +269,13 @@ def test_each_gate_outcome_gets_the_same_words_from_every_script(
 
     Exit 5 used to be taught to exactly one of five bound scripts: the other
     four reported today's real state — no control plane publishes the analytics
-    section yet — as "INCOMPLETE ROLLOUT" with a fix that would not have fixed
+    section yet — as a flat install failure with a fix that would not have fixed
     it. So this does not check that a file sources a file; it runs the script
     under each outcome and reads what the operator would have been told.
     """
     expected = {
+        1: "NOT VERIFIED",
         5: "NOT YET OBSERVABLE",
-        6: "NOT VERIFIED",
-        7: "UNREADABLE STATUS PAGE",
     }
     for rc, phrase in expected.items():
         run = harness.run(script, verifier_rc=rc)
@@ -320,6 +375,12 @@ def test_the_unprovable_script_really_is_unprovable(harness: DeployScriptHarness
     if "scripts/deploy/aws_eu_clickhouse_drain_install.sh" not in unproven_paths:
         pytest.skip("the drain installer is no longer claimed to be unprovable")
     run = harness.run("scripts/deploy/aws_eu_clickhouse_drain_install.sh", verifier_rc=0)
+    # It has to have RUN and stopped, not failed to parse. Those are the same
+    # two observations — non-zero, gate never reached — and for a while they
+    # were the same outcome here: this file did not parse under bash 3.2 at all
+    # (see test_every_deploy_script_parses_in_this_machine_s_shell), so this
+    # test was passing on a Mac without the script executing a single line.
+    assert run.calls, f"the script never ran a command at all.\n{summarise(run)}"
     assert not run.gate_ran_for("aws"), (
         "the drain installer now reaches the gate under stubs — promote it to "
         "PROVEN_BY_EXECUTION in ROLLOUT_REGISTRY and delete this test's premise"

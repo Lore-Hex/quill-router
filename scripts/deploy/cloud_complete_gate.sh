@@ -12,20 +12,18 @@
 #
 # WHY THIS IS SHARED AND NOT COPIED
 # ---------------------------------
-# verify_cloud_complete.sh has more than one non-zero answer, and they mean
-# different things to an operator:
+# verify_cloud_complete.sh has two non-zero answers, and they mean different
+# things to an operator:
 #
 #   5  NOT YET OBSERVABLE — the cloud answers, but publishes no `analytics`
 #      section, so nobody outside can see its drain at all. On the run that
 #      INSTALLS a drain, today, this is the expected state and the installer did
 #      nothing wrong.
-#   6  NOT VERIFIED — a stage was EXEMPTED in code rather than measured.
-#   7  UNREADABLE — the status URL answered 200 with something that is not the
-#      status document: a CDN interstitial, a captive portal, a truncated body.
-#      Deploying a newer control plane does not fix this one.
+#   1  NOT VERIFIED, for every other reason, with the reason printed by the
+#      verifier itself.
 #
 # Exactly one of five bound scripts used to understand code 5, so the other four
-# reported today's real state as "INCOMPLETE ROLLOUT" with a fix instruction
+# reported today's real state as a flat install failure with a fix instruction
 # that would not have fixed it. That is how you teach someone to stop reading
 # exit codes, which is the habit this whole change exists to break. Either all
 # of them understand the codes or none of them do — so the mapping lives here,
@@ -39,25 +37,31 @@
 # file against a stub verifier that is told to fail, and asserts the caller
 # exits non-zero — that assertion is the reason this file exists.
 #
-# CLOUD_COMPLETE_GATE_DIR overrides where the verifier is looked up. It is for
-# the test harness, which puts a recording stub there, and it is the only input
-# this file reads from the environment. It cannot weaken the gate: pointing it
-# somewhere with no verifier makes `bash` fail, which is a non-zero return.
+# WHICH VERIFIER IT RUNS IS NOT AN INPUT
+# --------------------------------------
+# The path is the verifier sitting next to this file, resolved from
+# BASH_SOURCE, and there is no way to point it elsewhere. A previous revision
+# read CLOUD_COMPLETE_GATE_DIR from the environment "for the test harness",
+# which made every bound deploy script — each of which inherits its operator's
+# whole environment — redirectable to any script on the machine by one export.
+# The harness needs no such hook: it runs the scripts against a mirrored
+# checkout whose own verify_cloud_complete.sh is the recording stub, so
+# BASH_SOURCE resolution finds it.
 
 require_cloud_complete() {
   local cloud="${1:?require_cloud_complete needs a cloud id}"
   local next_steps="${2:-}"
   local here rc=0
 
-  here="${CLOUD_COMPLETE_GATE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   bash "${here}/verify_cloud_complete.sh" "$cloud" </dev/null || rc=$?
 
-  case "$rc" in
-    0)
-      return 0
-      ;;
-    5)
-      cat >&2 <<EOF
+  if [ "$rc" -eq 0 ]; then
+    return 0
+  fi
+
+  if [ "$rc" -eq 5 ]; then
+    cat >&2 <<EOF
 
 NOT YET OBSERVABLE FROM OUTSIDE (${cloud}).
 
@@ -73,36 +77,18 @@ trusted_router.operational_analytics_freshness, then re-run:
 
 Exiting ${rc}, not 0: a pipeline nobody outside can see is not a finished cloud.
 EOF
-      ;;
-    6)
-      cat >&2 <<EOF
+  else
+    cat >&2 <<EOF
 
 NOT VERIFIED (${cloud}).
 
-A stage was EXEMPTED in code (analytics_absent_reason in
-src/trusted_router/cloud_rollout_completeness.py) instead of being measured.
-That is a decision to ship without knowing, and it is not success: nothing here
-claims this cloud's analytics pipeline works.
+The completeness check did not pass, and it printed which stage and why above.
+Nothing here excuses a stage: this cloud is not finished until the check exits
+0 on its own.
 
-Exiting ${rc}, not 0. Delete the analytics_absent_reason to get the question
-asked again.
+Exiting ${rc}, not 0.
 EOF
-      ;;
-    7)
-      cat >&2 <<EOF
-
-UNREADABLE STATUS PAGE (${cloud}).
-
-The status URL answered, and the body is not the JSON document /status.json
-serves — an edge/CDN interstitial, a captive portal, or a truncated response.
-This is NOT "the cloud publishes no analytics section", and deploying a newer
-control plane will not change it. Fetch the URL by hand and look at what came
-back.
-
-Exiting ${rc}.
-EOF
-      ;;
-  esac
+  fi
 
   if [ -n "$next_steps" ]; then
     printf '%s\n' "$next_steps" >&2
