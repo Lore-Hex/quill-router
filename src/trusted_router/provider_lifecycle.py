@@ -7,8 +7,21 @@ billing do not depend on an hourly refresh landing at exactly the right second.
 
 from __future__ import annotations
 
+import os
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
+
+# Test-only clock override, e.g. TR_LIFECYCLE_CLOCK_OVERRIDE=2027-01-01T00:00:00Z.
+# Every effective-dated cutover below is a scheduled change of behaviour: a
+# test that fixtures a soon-to-retire id passes right up to the announced
+# minute and then turns main red with no code change (Wafer, 2026-08-17 00:00
+# UTC, CI run 31980690855). CI runs the suite a second time with this clock
+# pinned past the latest cutover so that class of test fails on the pull
+# request that introduces it. The override is honoured ONLY under pytest or
+# with TR_ENVIRONMENT=test; anywhere else it is ignored so a stray variable
+# can never move routing or billing off the real clock.
+LIFECYCLE_CLOCK_OVERRIDE_ENV = "TR_LIFECYCLE_CLOCK_OVERRIDE"
 
 PHALA_JULY_2026_EFFECTIVE_AT = datetime(2026, 7, 29, 18, 0, tzinfo=UTC)
 TOGETHER_MINIMAX_M27_RETIREMENT_AT = datetime(2026, 7, 27, 0, 0, tzinfo=UTC)
@@ -344,8 +357,35 @@ _RETIREMENTS = (
 )
 
 
+def _clock_override_permitted() -> bool:
+    return (
+        os.environ.get("TR_ENVIRONMENT", "").lower() == "test"
+        or "pytest" in sys.modules
+        or bool(os.environ.get("PYTEST_CURRENT_TEST"))
+    )
+
+
 def _utc_now() -> datetime:
+    override = os.environ.get(LIFECYCLE_CLOCK_OVERRIDE_ENV)
+    if override and _clock_override_permitted():
+        # A malformed override raises rather than falling back to the wall
+        # clock: a run that silently used the real clock would report the
+        # very time-bomb coverage it failed to provide.
+        return _effective_time(override)
     return datetime.now(UTC)
+
+
+def latest_scheduled_cutover() -> datetime:
+    """The latest effective-dated change this module schedules.
+
+    CI pins the lifecycle clock one day past this so tests that only pass
+    before a scheduled cutover fail on the pull request, not at midnight.
+    """
+    return max(
+        DEEPSEEK_V4_PRICING_EFFECTIVE_AT,
+        PHALA_JULY_2026_EFFECTIVE_AT,
+        *(retirement.effective_at for retirement in _RETIREMENTS),
+    )
 
 
 def _effective_time(at: datetime | str | None) -> datetime:

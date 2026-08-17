@@ -7,6 +7,7 @@ import pytest
 from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import friendli
+from tests.lifecycle_clock import catalog_predates
 from trusted_router import provider_lifecycle
 from trusted_router.catalog import endpoints_for_model
 
@@ -75,14 +76,19 @@ def test_friendli_qwen_retirement_is_provider_scoped(
 def test_friendli_exaone_catalog_route_retires_on_schedule(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        provider_lifecycle,
-        "_utc_now",
-        lambda: _EXAONE_CUTOFF - timedelta(microseconds=1),
-    )
-    assert "friendli" in {
-        endpoint.provider for endpoint in endpoints_for_model(_EXAONE)
-    }
+    # The catalog registry applies retirements at IMPORT, so the live route is
+    # only observable while the process itself was started before the cutover.
+    # `provider_model_retired` is asserted at both instants regardless, by
+    # test_friendli_exaone_retires_at_announced_instant above.
+    if catalog_predates(_EXAONE_CUTOFF):
+        monkeypatch.setattr(
+            provider_lifecycle,
+            "_utc_now",
+            lambda: _EXAONE_CUTOFF - timedelta(microseconds=1),
+        )
+        assert "friendli" in {
+            endpoint.provider for endpoint in endpoints_for_model(_EXAONE)
+        }
 
     monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _EXAONE_CUTOFF)
     assert "friendli" not in {

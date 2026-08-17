@@ -94,6 +94,48 @@ jobs:
       - name: Tests and coverage
         run: uv run pytest -q -n 4 --dist loadgroup --cov=trusted_router --cov-report=term-missing --cov-fail-under=70
 
+  # The same suite, run once with the provider-lifecycle clock pinned PAST every
+  # scheduled cutover.
+  #
+  # provider_lifecycle.py schedules effective-dated retirements and price
+  # changes. A test written on the near side of one passes right up to the
+  # announced minute and then turns main red for every open pull request with
+  # no code change -- Wafer's three routes at 2026-08-17 00:00 UTC did exactly
+  # that (CI run 31980690855), and the fix landed hours later in PR #628. This
+  # job moves that failure to the pull request that writes the test.
+  #
+  # Cheap: no service containers and no coverage, so the conformance backends
+  # skip and this is the plain suite once more. It is a separate job rather
+  # than a second step in `test` so the two clocks report separately -- a red
+  # here means "this will break on <date>", not "this is broken".
+  test-post-cutover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Sync
+        run: uv sync --frozen
+      # Computed from _RETIREMENTS rather than hard-coded, so adding a
+      # retirement moves this clock with it and no one has to remember. The
+      # max() with now() keeps the clock in the future once every announced
+      # cutover is in the past.
+      - name: Pin the lifecycle clock past the latest scheduled cutover
+        run: |
+          uv run python -c '
+          import os
+          from datetime import UTC, datetime, timedelta
+          from trusted_router.provider_lifecycle import latest_scheduled_cutover
+          clock = max(latest_scheduled_cutover(), datetime.now(UTC)) + timedelta(days=1)
+          stamp = clock.strftime("%Y-%m-%dT%H:%M:%SZ")
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              env.write(f"TR_LIFECYCLE_CLOCK_OVERRIDE={stamp}\n")
+          print(f"lifecycle clock pinned to {stamp}")
+          '
+      - name: Tests with every scheduled cutover already past
+        run: uv run pytest -q -n 4 --dist loadgroup
+
   browser:
     runs-on: ubuntu-latest
     steps:

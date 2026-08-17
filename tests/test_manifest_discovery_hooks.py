@@ -15,6 +15,12 @@ from trusted_router import catalog_ingest, provider_lifecycle
 # discovery MECHANICS with fixture rows that include those ids, so they pin the
 # lifecycle clock just before the cutover instead of drifting with the wall clock.
 _BEFORE_WAFER_AUGUST_RETIREMENT = provider_lifecycle.WAFER_AUGUST_2026_RETIREMENT_AT - timedelta(seconds=1)
+# Same for Friendli's K-EXAONE-236B-A23B at 2026-08-20 00:00 UTC: the tombstone
+# mechanics below re-list that id from a fixture feed, which the retirement
+# would otherwise filter out.
+_BEFORE_FRIENDLI_EXAONE_RETIREMENT = (
+    provider_lifecycle.FRIENDLI_K_EXAONE_236B_RETIREMENT_AT - timedelta(seconds=1)
+)
 
 
 def _manifest_row(model_id: str, upstream_id: str, **metadata: object) -> dict[str, object]:
@@ -51,6 +57,9 @@ def _write_manifest(path: Path, provider: str, rows: list[dict[str, object]]) ->
 def test_friendli_tombstones_second_miss_then_restores_annotations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(
+        provider_lifecycle, "_utc_now", lambda: _BEFORE_FRIENDLI_EXAONE_RETIREMENT
+    )
     manifest_path = tmp_path / "friendli.json"
     _write_manifest(
         manifest_path,
