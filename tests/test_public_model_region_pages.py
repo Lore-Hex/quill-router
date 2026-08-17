@@ -182,9 +182,7 @@ def test_region_pages_report_operator_jurisdiction_per_model(client: TestClient)
     for lab in labs:
         for model in lab["models"]:
             operators = {str(operator["slug"]) for operator in model["operators"]}
-            configured = {
-                endpoint.provider for endpoint in endpoints_for_model(str(model["id"]))
-            }
+            configured = {endpoint.provider for endpoint in endpoints_for_model(str(model["id"]))}
             assert operators <= configured, model["id"]
             counted = sum(int(str(chip["operator_count"])) for chip in model["jurisdiction_chips"])
             assert counted == len(configured), model["id"]
@@ -277,3 +275,38 @@ def test_liberty_routes_are_meta_routes_the_catalog_actually_defines() -> None:
     from the catalog must not keep a section on the page."""
     for model_id in LIBERTY_MODEL_IDS:
         assert model_id in MODELS, model_id
+
+
+def test_liberty_leads_the_us_page_and_is_framed_as_open_weight(client: TestClient) -> None:
+    """Liberty is the first thing on /us-ai-models, above the lab catalogue.
+
+    Every Liberty route is open weight -- `model_open_weights` is recursive and
+    every component under every Liberty id qualifies -- so it belongs at the
+    top of a page about US open-weight models rather than after them. Ordering
+    is asserted by position because a heading can be renamed without moving,
+    and the point here is which section a reader meets first.
+    """
+    body = client.get("/us-ai-models").text
+
+    liberty_at = body.find('aria-label="Liberty model family"')
+    open_weight_at = body.find('aria-label="US open-weight models"')
+    assert liberty_at != -1, "Liberty panel missing from /us-ai-models"
+    assert open_weight_at != -1, "open-weight panel missing from /us-ai-models"
+    assert liberty_at < open_weight_at, "Liberty must come before the lab open-weight list"
+    assert "open weight" in body[liberty_at : liberty_at + 400].lower()
+
+
+def test_every_liberty_route_really_is_open_weight() -> None:
+    """The claim the panel makes, checked against the catalog rather than the copy.
+
+    If a Liberty component were ever swapped for a closed-weights model this
+    fails, which is what lets the page state it without hedging.
+    """
+    from trusted_router.catalog import MODELS, model_open_weights
+
+    models = MODELS if isinstance(MODELS, (list, tuple)) else list(MODELS.values())
+    liberty = [model for model in models if "liberty" in model.id.lower()]
+
+    assert liberty, "no Liberty routes found in the catalog"
+    not_open = [model.id for model in liberty if not model_open_weights(model)]
+    assert not not_open, f"Liberty routes that are not open weight: {not_open}"
