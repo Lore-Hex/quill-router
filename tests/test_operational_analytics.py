@@ -851,8 +851,9 @@ def test_synthetic_rollups_preserve_exact_counts_histograms_and_costs() -> None:
         ),
     ]
 
-    first = build_raw_rollups(samples, periods={"hour", "day"})
-    second = build_raw_rollups(samples, periods={"hour", "day"})
+    fixed_now = "2026-07-31T12:03:00Z"
+    first = build_raw_rollups(samples, periods={"hour", "day"}, now=lambda: fixed_now)
+    second = build_raw_rollups(samples, periods={"hour", "day"}, now=lambda: fixed_now)
     assert [dataclasses.asdict(item) for item in first] == [
         dataclasses.asdict(item) for item in second
     ]
