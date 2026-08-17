@@ -42,30 +42,23 @@ async def probe_user_model(
     try:
         signing_secret = _decrypt_signing_secret(model, settings)
         endpoint_api_key = _decrypt_endpoint_key(model, settings)
-        buffered = await _probe_once(
+        # Probe the transport DISPATCH will actually use, and only that one.
+        # `_owner_request` sends `stream: model.supports_streaming` on every
+        # real call, whatever the caller asked for, and adapts the answer at
+        # our end. Probing the other direction tests a request the endpoint
+        # will never receive in production, so a streaming-only endpoint —
+        # which is what the docs tell owners to build, and what a human
+        # harness naturally is — failed to clock in while being perfectly
+        # able to serve.
+        answer = await _probe_once(
             model,
             settings,
             signing_secret=signing_secret,
             endpoint_api_key=endpoint_api_key,
-            stream=False,
+            stream=model.supports_streaming,
         )
-        if not _valid_chat_completion(buffered):
-            return _recorded_result(
-                model,
-                ok=False,
-                detail="Endpoint response was not an OpenAI chat completion",
-                checked_at=checked_at,
-                store=store,
-            )
         if model.supports_streaming:
-            streamed = await _probe_once(
-                model,
-                settings,
-                signing_secret=signing_secret,
-                endpoint_api_key=endpoint_api_key,
-                stream=True,
-            )
-            if not _valid_stream(streamed):
+            if not _valid_stream(answer):
                 return _recorded_result(
                     model,
                     ok=False,
@@ -73,6 +66,14 @@ async def probe_user_model(
                     checked_at=checked_at,
                     store=store,
                 )
+        elif not _valid_chat_completion(answer):
+            return _recorded_result(
+                model,
+                ok=False,
+                detail="Endpoint response was not an OpenAI chat completion",
+                checked_at=checked_at,
+                store=store,
+            )
     except httpx.TimeoutException:
         return _recorded_result(
             model,
