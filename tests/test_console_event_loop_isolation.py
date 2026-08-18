@@ -25,6 +25,7 @@ import pytest
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.routes.console import credits as console_credits
 from trusted_router.routes.console import user_models as console_user_models
 from trusted_router.services import user_model_probe
 from trusted_router.storage import STORE, InMemoryStore
@@ -352,6 +353,58 @@ def test_async_console_kms_store_and_template_segment_runs_off_loop(
             response = await asyncio.wait_for(request, timeout=5.0)
             assert response.status_code == 201, response.text
             assert threads["template"] and all(tid != loop_thread for tid in threads["template"])
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=10.0))
+
+
+def test_stripe_fragment_template_render_runs_off_loop_and_keeps_heartbeat_alive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = create_app(Settings(environment="test"), init_observability=False)
+    raw_session = _active_console_session(app, "stripe-render-loop@example.com")
+    started = threading.Event()
+    release = threading.Event()
+    render_thread: dict[str, int] = {}
+    original_render = console_credits.render_template
+
+    monkeypatch.setattr(
+        console_credits,
+        "_load_saved_payment_method",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        console_credits,
+        "_load_workspace_payments",
+        lambda *_args, **_kwargs: ([], True),
+    )
+
+    def blocking_render(*args: Any, **kwargs: Any) -> str:
+        render_thread["id"] = threading.get_ident()
+        started.set()
+        assert release.wait(timeout=2.0), "Stripe template blocked the event loop"
+        return original_render(*args, **kwargs)
+
+    monkeypatch.setattr(console_credits, "render_template", blocking_render)
+
+    async def scenario() -> None:
+        loop_thread = threading.get_ident()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+            cookies={"tr_session": raw_session},
+        ) as client:
+            request = asyncio.create_task(
+                client.get("/console/credits/stripe-details")
+            )
+            try:
+                await _wait_until_started(started)
+                await _five_heartbeats()
+                assert render_thread["id"] != loop_thread
+            finally:
+                release.set()
+            response = await asyncio.wait_for(request, timeout=5.0)
+            assert response.status_code == 200
 
     asyncio.run(asyncio.wait_for(scenario(), timeout=10.0))
 
