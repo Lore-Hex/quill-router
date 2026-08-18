@@ -651,9 +651,8 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
     assert "One Unified Interface." in response.text
     assert "Privacy with proof." in response.text
     assert "Better privacy, better prices, better uptime, no subscriptions." in response.text
-    assert '<strong>7</strong><span>Live regions</span>' in response.text
-    assert '<strong>3</strong><span>Clouds</span>' in response.text
-    assert '<strong>4</strong><span>Continents</span>' in response.text
+    assert '<strong>3 clouds</strong><span>GCP · AWS · Azure</span>' in response.text
+    assert 'class="region-map-card"' not in response.text
     assert "Provable privacy." not in response.text
     assert "ATTESTED GATEWAY" in response.text  # attestation record
     assert "Get API key" in response.text  # primary CTA

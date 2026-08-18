@@ -94,9 +94,7 @@
 
     <section class="charter-stat-band" aria-label="{{ brand_name }} facts">
       <div class="charter-stat"><strong>550+</strong><span>AI models</span></div>
-      <div class="charter-stat"><strong>{{ live_region_count }}</strong><span>Live regions</span></div>
-      <div class="charter-stat"><strong>{{ live_cloud_count }}</strong><span>Clouds</span></div>
-      <div class="charter-stat"><strong>4</strong><span>Continents</span></div>
+      <div class="charter-stat"><strong>3 clouds</strong><span>GCP · AWS · Azure</span></div>
     </section>
 
     <section class="home-section" aria-label="How {{ brand_name }} works">
@@ -275,36 +273,19 @@ response = client.chat.completions.create(
     </section>
 
     <section class="home-section">
-      <div class="home-wrap charter-map-grid">
-        <div>
-          <div class="kicker">Regional reliability</div>
-          <h2>Routing that does not depend on one provider or one region.</h2>
-          <p class="section-sub">Regional gateways, provider health measurements, and explicit fallback keep failures visible and contained. The public status page separates router-core health from upstream model health.</p>
-          <ul class="check-list">
-            <li>{{ api_region_count }} live API regions</li>
-            <li>Provider and model health measured continuously</li>
-            <li>Public latency and availability history</li>
-            <li>No silent fallback to a non-attested prompt path</li>
-          </ul>
-          <a class="btn" href="/status">View public status</a>
+      <div class="home-wrap narrow">
+        <div class="section-lead">
+          <div class="kicker">Multi-cloud reliability</div>
+          <h2>Routing that does not depend on one provider or one cloud.</h2>
+          <p>TrustedRouter runs across GCP, AWS, and Azure. Provider health measurements and explicit fallback keep failures visible and contained.</p>
         </div>
-        <div class="region-map-card" aria-label="{{ brand_name }} regional footprint">
-          <div class="region-map-visual">
-            <img src="/static/world-map.svg?v={{ static_version }}" alt="TrustedRouter regional routing map" loading="lazy">
-            <svg viewBox="0 0 1000 500" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
-              {% for region in map_regions %}
-              <g class="region-dot {% if region.primary %}primary{% endif %} {% if region.serving %}live{% else %}edge{% endif %}" transform="translate({{ '%.1f'|format(region.x) }} {{ '%.1f'|format(region.y) }})">
-                <circle r="{% if region.primary %}9{% else %}7{% endif %}"></circle>
-                <text x="{{ region.label_dx }}" y="{{ region.label_dy }}" text-anchor="{{ region.label_anchor }}">{{ region.city }}{% if region.cloud == "aws" %} · AWS{% elif region.cloud == "azure" %} · Azure{% endif %}</text>
-              </g>
-              {% endfor %}
-            </svg>
-          </div>
-          <div class="region-map-copy">
-            <strong>{{ live_region_count }} live regions across {{ live_cloud_count }} clouds and 4 continents</strong>
-            <span>TrustedRouter runs across GCP, AWS, and Azure, serving North America, South America, Europe, and Australia today.</span>
-          </div>
-        </div>
+        <ul class="check-list">
+          <li>GCP, AWS, and Azure</li>
+          <li>Provider and model health measured continuously</li>
+          <li>Public latency and availability history</li>
+          <li>No silent fallback to a non-attested prompt path</li>
+        </ul>
+        <a class="btn" href="/status">View public status</a>
       </div>
     </section>
 

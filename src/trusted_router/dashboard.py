@@ -87,7 +87,6 @@ from trusted_router.provider_contract import (
     PROVIDER_CATALOG_V2_EXAMPLE,
 )
 from trusted_router.provider_lifecycle import provider_pricing_schedule
-from trusted_router.regions import configured_regions, region_map_payload
 from trusted_router.seo_catalog import seo_catalog_evidence
 from trusted_router.seo_meta import (
     SEO_TITLE_MAX_LENGTH,
@@ -1751,11 +1750,6 @@ def dashboard_html(
         "googleEnabled": settings.google_oauth_enabled,
         "githubEnabled": settings.github_oauth_enabled,
     }
-    map_regions = region_map_payload(settings)
-    live_map_regions = [region for region in map_regions if region["serving"]]
-    live_region_count = len(live_map_regions)
-    live_cloud_count = len({region["cloud"] for region in live_map_regions})
-    api_region_count = len(configured_regions(settings))
     return (
         _env()
         .get_template("dashboard.html")
@@ -1774,10 +1768,6 @@ def dashboard_html(
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
             paypal_enabled=settings.paypal_enabled,
-            map_regions=map_regions,
-            api_region_count=api_region_count,
-            live_region_count=live_region_count,
-            live_cloud_count=live_cloud_count,
             primary_region=settings.primary_region,
             static_version=_static_version(settings),
         )

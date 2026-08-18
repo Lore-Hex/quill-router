@@ -264,15 +264,15 @@ def test_regions_list_covers_all_ten_gcp_regions(client: httpx.Client) -> None:
 def test_marketing_page_advertises_production_not_alpha(client: httpx.Client) -> None:
     """Belt-and-suspenders for the alpha-removal: if a future deploy
     accidentally restores 'Public Alpha' framing, this test fails. The
-    regions copy is also the smoke check that the regions panel
-    rendered (Jinja didn't error out on map_regions)."""
+    cloud copy also verifies that the multi-cloud reliability section rendered."""
     response = client.get("/")
     assert response.status_code == 200
     body = response.text
     assert "Public Alpha" not in body
-    assert "Live regions" in body
-    assert "regional routing" in body or "multi-region" in body
-    assert "world-map.svg" in body or "<svg" in body  # map renders
+    assert "3 clouds" in body
+    assert "GCP · AWS · Azure" in body
+    assert "GCP, AWS, and Azure" in body
+    assert "world-map.svg" not in body
 
 
 def test_oauth_login_redirects_to_provider(client: httpx.Client) -> None:
