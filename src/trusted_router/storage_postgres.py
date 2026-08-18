@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Never, TypeVar, cast
 
 import psycopg
+from psycopg.types.numeric import Int8
 from psycopg_pool import ConnectionPool
 
 from trusted_router import credit_transfer
@@ -175,6 +176,19 @@ _RETRYABLE_ROLLBACK_SQLSTATES = frozenset(
 #: so hitting it means the database is not answering, which is exactly the
 #: state that should publish `unreachable` instead of hanging the event loop.
 OUTBOX_FRESHNESS_TIMEOUT_SECONDS = 3.0
+
+
+def _int8_param(value: int | None) -> Int8 | None:
+    """Bind a BIGINT value with the wire width PGAdapter expects.
+
+    Psycopg normally chooses the smallest integer type that can hold a Python
+    ``int``. PostgreSQL widens that value for a BIGINT column, but PGAdapter's
+    INT64 parser rejects the resulting two-byte binary payload for values such
+    as 1_000. The explicit Int8 wrapper is portable to PostgreSQL and keeps the
+    Spanner PostgreSQL-dialect bind eight bytes wide.
+    """
+
+    return None if value is None else Int8(value)
 
 
 class _IamTokenConnectionPool(ConnectionPool):
@@ -1556,11 +1570,11 @@ class PostgresStore:
                 (
                     workspace_id,
                     key.hash,
-                    limit_microdollars,
+                    _int8_param(limit_microdollars),
                     include_byok_in_limit,
-                    limit_daily_microdollars,
-                    limit_weekly_microdollars,
-                    limit_monthly_microdollars,
+                    _int8_param(limit_daily_microdollars),
+                    _int8_param(limit_weekly_microdollars),
+                    _int8_param(limit_monthly_microdollars),
                 ),
             )
 

@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from psycopg.types.numeric import Int8
 
 from tests.fakes.spanner import make_fake_store
 from trusted_router.config import Settings
@@ -468,3 +469,56 @@ def test_postgres_bulk_key_projection_uses_one_portable_statement(
     assert len(snapshots) == 1
     assert snapshots[0].usage_microdollars == 42
     assert snapshots[0].windows["daily"] == 7
+
+
+def test_postgres_key_limit_seed_binds_small_limits_as_int8(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PGAdapter must not receive Psycopg's two-byte encoding for small ints."""
+
+    class Result:
+        rowcount = 1
+
+    class Connection:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, tuple[Any, ...]]] = []
+
+        def execute(
+            self,
+            sql: str,
+            params: tuple[Any, ...],
+            *,
+            prepare: bool | None = None,
+        ) -> Result:
+            del prepare
+            self.calls.append((sql, params))
+            return Result()
+
+    connection = Connection()
+    monkeypatch.setattr(
+        PostgresStore,
+        "_run_transaction",
+        lambda _self, operation: operation(connection),
+    )
+    store = PostgresStore.__new__(PostgresStore)
+
+    store.create_api_key(
+        workspace_id="ws-int8",
+        name="small limits",
+        creator_user_id="user-int8",
+        limit_microdollars=1,
+        limit_daily_microdollars=1_000,
+        limit_weekly_microdollars=2_000,
+        limit_monthly_microdollars=3_000,
+    )
+
+    sql, params = next(
+        (sql, params) for sql, params in connection.calls if "INSERT INTO tr_key_limit" in sql
+    )
+    assert "limit_micro" in sql
+    assert [type(value) for value in (params[2], params[4], params[5], params[6])] == [
+        Int8,
+        Int8,
+        Int8,
+        Int8,
+    ]
