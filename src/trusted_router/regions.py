@@ -20,12 +20,22 @@ class RegionGeo:
     lat: float
     lng: float
     cloud: str = "gcp"
+    label_dx: float = 12.0
+    label_dy: float = -8.0
+    label_anchor: str = "start"
 
 
 # GCP region locations — the cities Cloud Run actually runs in. Keep in
 # sync with https://cloud.google.com/about/locations when adding rows.
 GCP_REGION_GEO: dict[str, RegionGeo] = {
-    "us-central1": RegionGeo("us-central1", "Iowa", 41.262, -95.860),
+    "us-central1": RegionGeo(
+        "us-central1",
+        "Iowa",
+        41.262,
+        -95.860,
+        label_dx=-12,
+        label_anchor="end",
+    ),
     "us-east1": RegionGeo("us-east1", "S. Carolina", 33.836, -81.163),
     "us-east4": RegionGeo("us-east4", "N. Virginia", 39.045, -77.487),
     "us-west1": RegionGeo("us-west1", "Oregon", 45.523, -122.676),
@@ -35,7 +45,9 @@ GCP_REGION_GEO: dict[str, RegionGeo] = {
     "europe-west1": RegionGeo("europe-west1", "Belgium", 50.503, 4.469),
     "europe-west2": RegionGeo("europe-west2", "London", 51.507, -0.128),
     "europe-west3": RegionGeo("europe-west3", "Frankfurt", 50.111, 8.682),
-    "europe-west4": RegionGeo("europe-west4", "Netherlands", 52.379, 4.900),
+    "europe-west4": RegionGeo(
+        "europe-west4", "Netherlands", 52.379, 4.900, label_dy=-14
+    ),
     "europe-west6": RegionGeo("europe-west6", "Zürich", 47.376, 8.541),
     "me-west1": RegionGeo("me-west1", "Tel Aviv", 32.085, 34.781),
     "africa-south1": RegionGeo("africa-south1", "Johannesburg", -26.204, 28.047),
@@ -63,13 +75,38 @@ def _lookup_region_geo(region: str) -> RegionGeo | None:
 # must correspond to a deployment that actually serves; the live/staged
 # split is settings.external_live_regions, not this table.
 MULTICLOUD_REGION_GEO: dict[str, RegionGeo] = {
-    "aws-eu-west-1": RegionGeo("aws-eu-west-1", "Dublin", 53.349, -6.260, cloud="aws"),
+    "aws-eu-west-1": RegionGeo(
+        "aws-eu-west-1",
+        "Dublin",
+        53.349,
+        -6.260,
+        cloud="aws",
+        label_dx=-12,
+        label_dy=4,
+        label_anchor="end",
+    ),
+    "aws-eu-west-3": RegionGeo(
+        "aws-eu-west-3",
+        "Paris",
+        48.857,
+        2.352,
+        cloud="aws",
+        label_dy=18,
+    ),
     # Stockholm is the DSQL replication peer of the AWS-EU deployment. It
     # holds live data but no compute yet, so it defaults to "staged" on the
     # map until compute lands there.
-    "aws-eu-north-1": RegionGeo("aws-eu-north-1", "Stockholm", 59.329, 18.068, cloud="aws"),
+    "aws-eu-north-1": RegionGeo(
+        "aws-eu-north-1", "Stockholm", 59.329, 18.068, cloud="aws", label_dy=-14
+    ),
     "azure-australiaeast": RegionGeo(
-        "azure-australiaeast", "Sydney", -33.868, 151.209, cloud="azure"
+        "azure-australiaeast",
+        "Sydney",
+        -33.868,
+        151.209,
+        cloud="azure",
+        label_dx=-12,
+        label_anchor="end",
     ),
 }
 
@@ -245,6 +282,9 @@ def region_map_payload(settings: Settings) -> list[dict[str, Any]]:
                 "cloud": geo.cloud,
                 "serving": serving,
                 "status_label": "live" if serving else "edge",
+                "label_dx": geo.label_dx,
+                "label_dy": geo.label_dy,
+                "label_anchor": geo.label_anchor,
             }
         )
     return out

@@ -3,11 +3,20 @@ const { expect, test } = require("@playwright/test");
 test("homepage opens sign-in modal and handles missing MetaMask", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "Every model. Privacy with proof." })).toBeVisible();
+  await expect(page.getByRole("heading", {
+    name: "550+ AI Models at your fingertips. One Unified Interface. Privacy with proof.",
+  })).toBeVisible();
   const headlineLines = page.locator(".charter-home-hero h1 .hero-line");
-  await expect(headlineLines).toHaveCount(2);
+  await expect(headlineLines).toHaveCount(3);
   await expect(headlineLines.first()).toHaveCSS("display", "block");
   await expect(headlineLines.last()).toHaveCSS("display", "block");
+  await expect(page.locator(".charter-home-hero .lead-claim")).toHaveText(
+    "Better privacy, better prices, better uptime, no subscriptions.",
+  );
+  await expect(page.locator(".charter-stat-band")).toContainText("550+AI models");
+  await expect(page.locator(".charter-stat-band")).toContainText("7Live regions");
+  await expect(page.locator(".charter-stat-band")).toContainText("3Clouds");
+  await expect(page.locator(".charter-stat-band")).toContainText("4Continents");
   await expect(page.locator("body")).toHaveCSS("font-size", "15.5px");
   await expect(page.locator(".charter-pillar p a").first()).toHaveCSS("text-decoration-line", "underline");
 
@@ -395,7 +404,9 @@ test("homepage and console redirect are usable on mobile width", async ({ page }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "Every model. Privacy with proof." })).toBeVisible();
+  await expect(page.getByRole("heading", {
+    name: "550+ AI Models at your fingertips. One Unified Interface. Privacy with proof.",
+  })).toBeVisible();
   let overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(2);
 
