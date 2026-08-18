@@ -54,6 +54,7 @@ from trusted_router.security import (
 from trusted_router.spend_windows import KeyWindowLimitExceeded, window_floors
 from trusted_router.storage_auth_context import build_session_auth_context
 from trusted_router.storage_codec import json_body
+from trusted_router.storage_custom_models import normalize_custom_model_id
 from trusted_router.storage_errors import (
     DeferredSettlementCapReached,
     StoreConflict,
@@ -2419,7 +2420,9 @@ class PostgresStore:
         self,
         model_ids: list[str],
     ) -> dict[str, UserProvidedModel]:
-        unique_ids = list(dict.fromkeys(model_ids))
+        unique_ids = list(
+            dict.fromkeys(normalize_custom_model_id(model_id) for model_id in model_ids)
+        )
         if not unique_ids:
             return {}
 

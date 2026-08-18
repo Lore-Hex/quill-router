@@ -2373,6 +2373,12 @@ def _execute_owner_model_list(
     _require_pred(sql, "STARTS_WITH(model_ref.id, @prefix)", f"{marker} owner index")
     _require_pred(
         sql,
+        "model_ref.id=CONCAT(@owner_user_id, '#', "
+        "JSON_VALUE(model_ref.body, '$.model_id'))",
+        f"{marker} canonical index id",
+    )
+    _require_pred(
+        sql,
         "JSON_VALUE(model_record.body, '$.owner_user_id')=@owner_user_id",
         f"{marker} body owner boundary",
     )
@@ -2388,6 +2394,8 @@ def _execute_owner_model_list(
         if row_kind != index_kind or not ref_id.startswith(prefix):
             continue
         model_id = str(json.loads(ref_row.body).get("model_id") or "")
+        if ref_id != f"{owner_user_id}#{model_id}":
+            continue
         model_row = db.rows.get((model_kind, model_id))
         if model_row is None:
             continue

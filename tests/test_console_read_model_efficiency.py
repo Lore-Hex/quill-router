@@ -122,7 +122,12 @@ def test_postgres_user_model_batch_lookup_is_one_statement(
     )
 
     result = store.get_user_models_by_ids(
-        [models[0].id, models[1].id, models[0].id, models[2].id]
+        [
+            f" {models[0].id.upper()} ",
+            models[1].id.removeprefix("trustedrouter/"),
+            models[0].id,
+            models[2].id,
+        ]
     )
 
     assert list(result) == [model.id for model in models]
@@ -132,7 +137,7 @@ def test_postgres_user_model_batch_lookup_is_one_statement(
     assert params == ("user_provided_model", [model.id for model in models])
 
 
-def test_spanner_owner_model_join_drops_dangling_and_cross_owner_pointers() -> None:
+def test_spanner_owner_model_join_rejects_noncanonical_and_unsafe_pointers() -> None:
     store, database, _bigtable = make_fake_store()
     alice = store.ensure_user("owner-index-alice@example.com")
     bob = store.ensure_user("owner-index-bob@example.com")
@@ -154,6 +159,24 @@ def test_spanner_owner_model_join_drops_dangling_and_cross_owner_pointers() -> N
         hidden_prompt="bob",
         slug="owner-index-bob",
     )
+    alice_user_model = store.create_user_model(
+        owner_user_id=alice.id,
+        owner_workspace_id=alice_workspace.id,
+        name="Alice operator",
+        kind="machine",
+        endpoint_url="https://alice-operator.example/v1",
+        slug="owner-index-alice-operator",
+    )
+    store._write_entity(
+        "custom_model_by_user",
+        f"{alice.id}#same-owner-alias",
+        {"model_id": alice_model.id},
+    )
+    store._write_entity(
+        "user_provided_model_by_user",
+        f"{alice.id}#same-owner-alias",
+        {"model_id": alice_user_model.id},
+    )
     store._write_entity(
         "custom_model_by_user",
         f"{alice.id}#cross-owner",
@@ -166,10 +189,12 @@ def test_spanner_owner_model_join_drops_dangling_and_cross_owner_pointers() -> N
     )
 
     database.snapshot_execute_sql_calls = 0
-    listed = store.list_custom_models_for_user(alice.id)
+    listed_custom = store.list_custom_models_for_user(alice.id)
+    listed_user = store.list_user_models_for_user(alice.id)
 
-    assert [model.id for model in listed] == [alice_model.id]
-    assert database.snapshot_execute_sql_calls == 1
+    assert [model.id for model in listed_custom] == [alice_model.id]
+    assert [model.id for model in listed_user] == [alice_user_model.id]
+    assert database.snapshot_execute_sql_calls == 2
 
 
 def test_spanner_batched_model_decoders_ignore_future_fields() -> None:
@@ -223,6 +248,110 @@ def test_user_model_owner_shape_reuses_known_owner(
     shape = user_model_owner_shape(model, owner=owner)
 
     assert shape["operator"]["display"] == "Ada Owner"
+
+
+def test_console_earnings_bulk_hydrates_model_names(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = STORE.ensure_user("earnings-batch-route@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    raw_session, _session = STORE.create_auth_session(
+        user_id=user.id,
+        provider="test",
+        label="earnings batch route",
+        ttl_seconds=3600,
+        workspace_id=workspace.id,
+    )
+    client.cookies.set("tr_session", raw_session)
+    models = [
+        STORE.create_user_model(
+            owner_user_id=user.id,
+            owner_workspace_id=workspace.id,
+            name=f"Batch earnings model {index}",
+            kind="machine",
+            endpoint_url=f"https://earnings-batch-{index}.example/v1",
+            slug=f"earnings-batch-route-{index}",
+        )
+        for index in range(2)
+    ]
+    for index, model in enumerate(models):
+        assert STORE.credit_user_earnings(
+            user.id,
+            (index + 1) * 1_000_000,
+            f"custom_model_payout:earnings-batch-route-{index}",
+            custom_model_id=model.id,
+            payer_workspace_id=workspace.id,
+        )
+
+    original_batch = getattr(InMemoryStore, "get_user_models_by_ids", None)
+    batch_calls: list[list[str]] = []
+
+    def count_batch(
+        store: InMemoryStore,
+        model_ids: list[str],
+    ) -> dict[str, UserProvidedModel]:
+        batch_calls.append(list(model_ids))
+        assert original_batch is not None
+        return original_batch(store, model_ids)
+
+    def reject_point_read(_store: InMemoryStore, model_id: str):
+        raise AssertionError(f"earnings rendered with point read for {model_id}")
+
+    monkeypatch.setattr(
+        InMemoryStore,
+        "get_user_models_by_ids",
+        count_batch,
+        raising=False,
+    )
+    monkeypatch.setattr(InMemoryStore, "get_user_model", reject_point_read)
+
+    response = client.get("/console/earnings")
+
+    assert response.status_code == 200
+    assert batch_calls == [[model.id for model in models]]
+    assert all(model.name in response.text for model in models)
+
+
+def test_console_user_models_passes_authenticated_owner_to_serializer(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = STORE.ensure_user("user-model-owner-route@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    user.identity_status = "approved"
+    user.identity_verified_name = "Ada Console Owner"
+    STORE.create_user_model(
+        owner_user_id=user.id,
+        owner_workspace_id=workspace.id,
+        name="Owner reuse route model",
+        kind="machine",
+        endpoint_url="https://owner-reuse-route.example/v1",
+        slug="owner-reuse-route",
+        display_identity="verified_name",
+    )
+    raw_session, _session = STORE.create_auth_session(
+        user_id=user.id,
+        provider="test",
+        label="owner reuse route",
+        ttl_seconds=3600,
+        workspace_id=workspace.id,
+    )
+    client.cookies.set("tr_session", raw_session)
+    original_get_user = InMemoryStore.get_user
+    user_reads: list[str] = []
+
+    def count_user(store: InMemoryStore, user_id: str):
+        user_reads.append(user_id)
+        return original_get_user(store, user_id)
+
+    monkeypatch.setattr(InMemoryStore, "get_user", count_user)
+
+    response = client.get("/console/user-models")
+
+    assert response.status_code == 200
+    assert "Owner reuse route model" in response.text
+    assert user_reads == []
 
 
 def test_session_context_keeps_management_role_for_console_fallback() -> None:

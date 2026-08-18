@@ -144,6 +144,8 @@ class SpannerUserProvidedModels:
                 "AND model_record.id=JSON_VALUE(model_ref.body, '$.model_id') "
                 "WHERE model_ref.kind='user_provided_model_by_user' "
                 "AND STARTS_WITH(model_ref.id, @prefix) "
+                "AND model_ref.id=CONCAT(@owner_user_id, '#', "
+                "JSON_VALUE(model_ref.body, '$.model_id')) "
                 "AND JSON_VALUE(model_record.body, '$.owner_user_id')=@owner_user_id "
                 "ORDER BY JSON_VALUE(model_record.body, '$.created_at'), model_ref.id",
                 params={
