@@ -30,6 +30,7 @@ Design choices:
 from __future__ import annotations
 
 import atexit
+import copy
 import importlib
 import logging
 import logging.handlers
@@ -37,6 +38,7 @@ import os
 import queue
 import re
 import sys
+import threading
 import time
 from collections.abc import Callable
 from typing import Any
@@ -45,7 +47,7 @@ from urllib.parse import urlparse
 from urllib3.util.retry import Retry
 
 from trusted_router.config import Settings
-from trusted_router.sentry_config import _scrub, _scrub_string
+from trusted_router.sentry_config import _is_sensitive_key, _scrub, _scrub_string
 
 log = logging.getLogger(__name__)
 HTTPAdapter: Any = importlib.import_module("requests.adapters").HTTPAdapter
@@ -54,6 +56,48 @@ HTTPAdapter: Any = importlib.import_module("requests.adapters").HTTPAdapter
 # the args-safe complement (PR #124 review P2).
 _AXIOM_SECRET_VALUE_RE = re.compile(r"(?i)(token|secret|key|password|authorization)=([^&\s\"']+)")
 _AXIOM_EMAIL_VALUE_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+
+
+def _scrub_axiom_string(value: str) -> str:
+    """Apply Axiom's message redactions to any string in the payload."""
+    return _scrub_string(
+        _AXIOM_EMAIL_VALUE_RE.sub(
+            "[Filtered-email]",
+            _AXIOM_SECRET_VALUE_RE.sub(r"\1=[Filtered]", value),
+        )
+    )
+
+
+def _scrub_axiom_value(value: Any) -> Any:
+    """Run the shared safe-value scrubber, then redact Axiom-wide PII.
+
+    ``sentry_config._scrub`` makes arbitrary values finite and serializable,
+    but its string policy intentionally targets known secret formats. Axiom's
+    payload is a flattened ``LogRecord.__dict__``, so its e-mail and
+    ``key=value`` rules must also apply recursively to every custom extra.
+    """
+
+    def redact_strings(scrubbed: Any) -> Any:
+        if isinstance(scrubbed, str):
+            return _scrub_axiom_string(scrubbed)
+        if isinstance(scrubbed, dict):
+            out: dict[Any, Any] = {}
+            for key, item in scrubbed.items():
+                if isinstance(key, str):
+                    safe_key: Any = _scrub_axiom_string(key)
+                elif key is None or isinstance(key, (bool, int, float)):
+                    safe_key = key
+                else:
+                    safe_key = f"[Filtered-{type(key).__name__}-key]"
+                out[safe_key] = redact_strings(item)
+            return out
+        if isinstance(scrubbed, list):
+            return [redact_strings(item) for item in scrubbed]
+        if isinstance(scrubbed, tuple):
+            return tuple(redact_strings(item) for item in scrubbed)
+        return scrubbed
+
+    return redact_strings(_scrub(value))
 
 
 def init_axiom(settings: Settings) -> None:
@@ -94,27 +138,25 @@ def init_axiom(settings: Settings) -> None:
         return
 
     resolved_level = _resolve_level(settings.axiom_log_level)
+    raw_handler = AxiomHandler(client, dataset)
     handler, listener = build_axiom_pipeline(
-        AxiomHandler(client, dataset),
+        raw_handler,
         resolved_level=resolved_level,
     )
     listener.start()
 
-    # Flush what is still queued at shutdown. The Axiom client already runs
-    # before_shutdown hooks; stopping the listener there drains the queue
-    # through the shipper first. atexit is the backstop for paths that never
-    # reach the client's own shutdown.
-    def _stop_listener() -> None:
-        try:
-            listener.stop()
-        except Exception as exc:  # noqa: BLE001 - shutdown must not raise.
-            sys.stderr.write(f"axiom.listener_stop_failed err={exc!r}\n")
+    # The callback owns shutdown ordering: drain the queue into axiom-py's
+    # buffer, then flush that buffer. axiom-py registers its own flush before
+    # this callback, so relying on its FIFO callback order would strand records
+    # that the listener delivers afterward. The same idempotent callback is an
+    # atexit backstop for paths that never reach the client's shutdown hook.
+    shutdown_pipeline = _make_axiom_shutdown(listener, raw_handler)
 
     try:
-        client.before_shutdown(_stop_listener)
+        client.before_shutdown(shutdown_pipeline)
     except Exception as exc:  # noqa: BLE001 - hook registration is best effort.
         log.warning("axiom.listener_shutdown_hook_failed err=%s", exc)
-    atexit.register(_stop_listener)
+    atexit.register(shutdown_pipeline)
 
     root = logging.getLogger()
     root.addHandler(handler)
@@ -147,8 +189,8 @@ def build_axiom_pipeline(
     early under pytest by design, so a test that only exercised `init_axiom`
     could not assert on the wiring at all — and a test that builds its own
     handlers asserts a stdlib property rather than this function's choices. The
-    security-relevant choice here is WHICH handler carries the scrub filter,
-    and that is only checkable against the objects this returns.
+    security-relevant choice here is that the queue handler scrubs a private
+    copy during ``prepare()``, before that copy can enter the queue.
 
     Returns the handler to attach to the root logger and the not-yet-started
     listener; the caller starts it and registers shutdown.
@@ -167,11 +209,10 @@ def build_axiom_pipeline(
     # may never slow a response.
     handler = _DroppingQueueHandler(queue.Queue(maxsize=max_queued))
     handler.setLevel(resolved_level)
-    # SCRUB BEFORE THE QUEUE, NOT AT THE SHIPPER. Filters run inside
-    # `Handler.handle()` before `emit()`, so attaching here scrubs on the
-    # logging thread and no unscrubbed record ever sits in the queue. Reuses
-    # sentry_config's `_scrub` so the PII rules have one home.
-    handler.addFilter(_AxiomScrubFilter())
+    # Scrubbing is owned by `_DroppingQueueHandler.prepare()`, not a handler
+    # filter. A filter would mutate the caller's shared LogRecord before a
+    # sibling stdout or Sentry handler sees it. `prepare()` first copies, then
+    # sanitizes, and only its private copy may cross the queue boundary.
     # Drop third-party transport chatter before it ships. Measured 2026-07-04:
     # urllib3.connectionpool (Sentry's envelope uploads) was 235 of 238 events
     # in a 2h window — observability traffic generating observability traffic.
@@ -179,7 +220,7 @@ def build_axiom_pipeline(
 
     # respect_handler_level=True so the shipper's level still governs what is
     # sent if either level is changed later.
-    listener = logging.handlers.QueueListener(
+    listener = _IdempotentQueueListener(
         handler.queue,
         shipper,
         respect_handler_level=True,
@@ -187,6 +228,43 @@ def build_axiom_pipeline(
     # No daemon flag to set: QueueListener.start() creates its monitor thread
     # with daemon=True itself, so the process is never held open by shipping.
     return handler, listener
+
+
+def _make_axiom_shutdown(
+    listener: logging.handlers.QueueListener,
+    raw_handler: logging.Handler,
+) -> Callable[[], None]:
+    """Return a once-only queue-drain-then-buffer-flush callback."""
+    lock = threading.Lock()
+    complete = False
+
+    def shutdown() -> None:
+        nonlocal complete
+        with lock:
+            if complete:
+                return
+            try:
+                listener.stop()
+            except Exception as exc:  # noqa: BLE001 - shutdown must not raise.
+                # Leave `complete` false so the atexit backstop can retry.
+                sys.stderr.write(f"axiom.listener_stop_failed err={exc!r}\n")
+                return
+            try:
+                raw_handler.flush()
+            except Exception as exc:  # noqa: BLE001 - defensive for test/custom handlers.
+                sys.stderr.write(f"axiom.flush_failed dropped=true err={exc!r}\n")
+            # axiom-py's emit starts a new timer after adding each drained
+            # record. Its earlier FIFO shutdown callback canceled the old
+            # timer, so cancel the replacement created during this drain.
+            timer = getattr(raw_handler, "timer", None)
+            if timer is not None:
+                try:
+                    timer.cancel()
+                except Exception:  # noqa: BLE001 - shutdown remains best effort.
+                    sys.stderr.write("axiom.timer_cancel_failed dropped=true\n")
+            complete = True
+
+    return shutdown
 
 
 def _client_kwargs(*, token: str, org_id: str | None, axiom_url: str) -> dict[str, Any]:
@@ -268,48 +346,39 @@ def _running_under_pytest(settings: Settings) -> bool:
 
 
 class _AxiomScrubFilter(logging.Filter):
-    """Scrub PII fields out of LogRecord.__dict__ before it leaves the
-    process. The AxiomHandler reads `record.__dict__` to build the
-    event payload, so mutating it here is the right hook.
+    """Scrub PII fields out of a private ``LogRecord`` copy.
+
+    The AxiomHandler reads ``record.__dict__`` to build the event payload, so
+    every outgoing key and value must be covered. The production queue handler
+    invokes this only after copying the caller's record; using it directly as
+    a handler filter would mutate records seen by sibling handlers.
 
     Reuses `sentry_config._scrub`, which walks the value recursively
     and replaces keys matching SENSITIVE_KEYS (prompt, content, key,
     authorization, ...) with '[Filtered]'. Same rules that protect
     Sentry breadcrumbs apply here."""
 
-    # Standard LogRecord fields we don't want to scrub (their values
-    # are usually filename/line numbers/etc., never secrets, and
-    # passing them through `_scrub` would needlessly walk them).
+    # These fields require structural handling rather than the generic value
+    # scrub below. Exception and stack data are removed in ``prepare()`` before
+    # a formatter can fold their arbitrary free text into the Axiom message.
     _SKIP_FIELDS = frozenset(
         {
-            "name",
             "msg",
             "args",
-            "levelname",
-            "levelno",
-            "pathname",
-            "filename",
-            "module",
             "exc_info",
             "exc_text",
             "stack_info",
-            "lineno",
-            "funcName",
-            "created",
-            "msecs",
-            "relativeCreated",
-            "thread",
-            "threadName",
-            "processName",
-            "process",
-            "taskName",
-            "asctime",
         }
     )
     _MAX_MESSAGE_CHARS = 2_000
     _TRUNCATION_SUFFIX = "…[truncated]"
 
     def filter(self, record: logging.LogRecord) -> bool:
+        # Never invoke arbitrary ``__str__`` code from a custom message object.
+        # The shared scrubber reduces unknown objects to a safe type marker.
+        if type(record.msg) is not str:
+            record.msg = _scrub_axiom_value(record.msg)
+            record.args = None
         try:
             collapsed = record.getMessage()
         except Exception:  # noqa: BLE001 - logging filters must not break logging.
@@ -321,32 +390,27 @@ class _AxiomScrubFilter(logging.Filter):
             # Collapsing args means Axiom loses structured args fields and gets
             # the final formatted message only. That is the point: nothing
             # unscrubbed can leave the process.
-            # _scrub_string last: the two regexes above only catch secrets in
-            # `key=value` shape and e-mail addresses, so a bare `sk-tr-v1-…` in
-            # an ordinary message ("rotating sk-tr-v1-ABC…") passed straight
-            # through to the shipper. _scrub_string applies the same declared
-            # fragment/prefix blocklist the structured fields already get.
-            record.msg = _scrub_string(
-                _AXIOM_EMAIL_VALUE_RE.sub(
-                    "[Filtered-email]",
-                    _AXIOM_SECRET_VALUE_RE.sub(r"\1=[Filtered]", collapsed),
-                )
-            )
+            record.msg = _scrub_axiom_string(collapsed)
             if len(record.msg) > self._MAX_MESSAGE_CHARS:
                 record.msg = (
                     record.msg[: self._MAX_MESSAGE_CHARS - len(self._TRUNCATION_SUFFIX)]
                     + self._TRUNCATION_SUFFIX
                 )
             record.args = None
+            # QueueHandler.prepare() adds ``message`` alongside ``msg``. Keep
+            # both payload fields identical so a downstream handler cannot
+            # read the pre-scrub formatted value from the former.
+            if "message" in record.__dict__:
+                record.message = record.msg
 
         for key, value in list(record.__dict__.items()):
             if key in self._SKIP_FIELDS:
                 continue
-            if key.startswith("_"):
-                continue
-            scrubbed = _scrub(value)
-            if scrubbed is not value:
-                record.__dict__[key] = scrubbed
+            safe_key = _scrub_axiom_string(key)
+            scrubbed = "[Filtered]" if _is_sensitive_key(key) else _scrub_axiom_value(value)
+            if safe_key != key:
+                del record.__dict__[key]
+            record.__dict__[safe_key] = scrubbed
         return True
 
 
@@ -383,6 +447,29 @@ class _AxiomNoiseFilter(logging.Filter):
         return True
 
 
+class _IdempotentQueueListener(logging.handlers.QueueListener):
+    """QueueListener with stable start/stop semantics across Python 3.11+."""
+
+    def __init__(self, *handlers: Any, **kwargs: Any) -> None:
+        super().__init__(*handlers, **kwargs)
+        self._lifecycle_lock = threading.Lock()
+        self._running = False
+
+    def start(self) -> None:
+        with self._lifecycle_lock:
+            if self._running:
+                return
+            super().start()
+            self._running = True
+
+    def stop(self) -> None:
+        with self._lifecycle_lock:
+            if not self._running:
+                return
+            super().stop()
+            self._running = False
+
+
 class _DroppingQueueHandler(logging.handlers.QueueHandler):
     """Enqueue for the shipper thread, and drop rather than block when full.
 
@@ -401,30 +488,66 @@ class _DroppingQueueHandler(logging.handlers.QueueHandler):
     stderr breadcrumb is written. Dropping observability under backpressure is
     the correct trade; blocking a request on log shipping is not.
 
-    FILTERS RUN BEFORE THE QUEUE, DELIBERATELY. `logging.Handler.handle()`
-    applies filters and then calls `emit()`, so a filter attached to THIS
-    handler runs on the request thread before the record is enqueued. The PII
-    scrubbing filter is attached here rather than to the shipping handler for
-    exactly that reason: an unscrubbed record must never exist in the queue,
-    where a crash dump or a future queue implementation could expose it.
+    SCRUBBING RUNS BEFORE THE QUEUE, DELIBERATELY. ``prepare()`` copies the
+    caller's record, scrubs its ordinary message and all custom extras, removes
+    arbitrary exception/stack free text, then formats and scrubs the final
+    payload again. Thus neither the shared caller record nor anything that
+    reaches the queue contains a newly exposed traceback or unsanitized extra.
     """
 
     def __init__(self, queue: Any) -> None:
         super().__init__(queue)
         self._dropped = 0
         self._last_drop_log_at: float | None = None
+        self._queue_scrubber = _AxiomScrubFilter()
+
+    def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
+        """Format, then scrub the exact copy that will cross the queue.
+
+        Axiom is the structured-event tier; Sentry owns exception detail.
+        ``QueueHandler.prepare`` would otherwise format arbitrary exception and
+        stack text into ``msg``. Remove it from the copied record before stdlib
+        formatting, then scrub the fully prepared payload a second time for
+        custom formatter output. The caller's record remains untouched for
+        sibling stdout and Sentry handlers.
+        """
+        prepared = copy.copy(record)
+        self._queue_scrubber.filter(prepared)
+        prepared.exc_info = None
+        prepared.exc_text = None
+        prepared.stack_info = None
+        prepared = super().prepare(prepared)
+        self._queue_scrubber.filter(prepared)
+        return prepared
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Prepare without letting stdlib print the raw record on failure.
+
+        ``QueueHandler.emit`` delegates preparation errors to
+        ``handleError(record)``. With ``logging.raiseExceptions`` enabled that
+        fallback writes the *original*, unsanitized message and arguments to
+        stderr. A pathological custom extra must cost one log record, never
+        create a second PII channel.
+        """
+        try:
+            prepared = self.prepare(record)
+        except Exception:  # noqa: BLE001 - malformed extras must fail closed.
+            self._note_drop(event="record_dropped", reason="scrub_failed")
+            return
+        self.enqueue(prepared)
 
     def enqueue(self, record: logging.LogRecord) -> None:
         try:
             self.queue.put_nowait(record)
         except Exception:  # noqa: BLE001 - a full queue must not break a request.
-            self._dropped += 1
-            now = time.monotonic()
-            if self._last_drop_log_at is None or now - self._last_drop_log_at > 60:
-                self._last_drop_log_at = now
-                sys.stderr.write(
-                    f"axiom.queue_full dropped_total={self._dropped} reason=shipper_thread_behind\n"
-                )
+            self._note_drop(event="queue_full", reason="shipper_thread_behind")
+
+    def _note_drop(self, *, event: str, reason: str) -> None:
+        self._dropped += 1
+        now = time.monotonic()
+        if self._last_drop_log_at is None or now - self._last_drop_log_at > 60:
+            self._last_drop_log_at = now
+            sys.stderr.write(f"axiom.{event} dropped_total={self._dropped} reason={reason}\n")
 
 
 class _SafeAxiomHandler(logging.Handler):

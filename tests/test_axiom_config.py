@@ -286,6 +286,69 @@ def test_axiom_timer_flush_wrapper_success_delivers_buffer(capsys) -> None:
     assert raw_handler.buffer == []
 
 
+def test_real_axiom_handler_ingests_only_the_sanitized_queue_payload() -> None:
+    """Exercise axiom-py's actual ``record.__dict__`` serialization path."""
+    exception_canary = "AXIOM-SINK-ARBITRARY-NARRATIVE-41729"
+    email_canary = "axiom-sink-canary@example.com"
+    secret_canary = "sk-tr-v1-AXIOMSINKCANARY"  # noqa: S105 - redaction canary
+    authorization_canary = "Bearer opaque-axiom-sink-authorization"
+    try:
+        raise RuntimeError(exception_canary)
+    except RuntimeError as exc:
+        record = logging.LogRecord(
+            name="trusted_router.test",
+            level=logging.ERROR,
+            pathname=__file__,
+            lineno=1,
+            msg="provider request failed",
+            args=(),
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+    record.stack_info = f"raw stack {exception_canary}"
+    record.email = email_canary
+    record.authorization = authorization_canary
+    record._private = secret_canary
+    record.context = {"contacts": (email_canary,), "prompt": "patient narrative"}
+
+    client = _StubAxiomClient()
+    raw_handler = axiom_logging.AxiomHandler(client, "test-logs", interval=60)
+    queue_handler, listener = axiom_config.build_axiom_pipeline(
+        raw_handler,
+        resolved_level=logging.INFO,
+    )
+    shutdown = axiom_config._make_axiom_shutdown(listener, raw_handler)
+    client.before_shutdown(shutdown)
+    listener.start()
+    queue_handler.handle(record)
+
+    # axiom-py registered its own flush first. Execute the client's real FIFO
+    # callback order and require our later owner callback to drain then flush
+    # the record that the first callback could not yet see.
+    for callback in client.shutdown_callbacks:
+        callback()
+    shutdown()
+
+    assert len(client.ingested) == 1
+    dataset, events = client.ingested[0]
+    assert dataset == "test-logs"
+    assert len(events) == 1
+    payload = repr(events[0])
+    for canary in (
+        exception_canary,
+        email_canary,
+        secret_canary,
+        authorization_canary,
+    ):
+        assert canary not in payload
+    assert events[0]["email"] == "[Filtered-email]"
+    assert events[0]["authorization"] == "[Filtered]"
+    assert events[0]["_private"] == "[Filtered]"
+    assert events[0]["context"] == {
+        "contacts": ("[Filtered-email]",),
+        "prompt": "[Filtered]",
+    }
+
+
 def test_axiom_client_session_mounts_post_retry_adapter() -> None:
     client = _StubAxiomClient()
 
