@@ -51,6 +51,7 @@ from trusted_router.security import (
     verify_api_key,
 )
 from trusted_router.spend_windows import KeyWindowLimitExceeded, window_floors
+from trusted_router.storage_auth_context import build_session_auth_context
 from trusted_router.storage_codec import json_body
 from trusted_router.storage_errors import (
     DeferredSettlementCapReached,
@@ -70,6 +71,7 @@ from trusted_router.storage_models import (
     AcquisitionAttribution,
     ActivationReminderTask,
     ApiKey,
+    ApiKeyAuthContext,
     AuthSession,
     BedrockGroupBuyAggregate,
     BedrockGroupBuyPledge,
@@ -91,6 +93,7 @@ from trusted_router.storage_models import (
     ProviderBenchmarkSample,
     RateLimitHit,
     Reservation,
+    SessionAuthContext,
     SignupResult,
     SyntheticProbeSample,
     SyntheticRollup,
@@ -273,6 +276,51 @@ _CREDIT_TRANSFER_CLAIM_KIND = "credit_transfer_claim"
 # transition in this design that was not guarded by an insert-once row, and the
 # only place the module's own conservation claim was false.
 _CREDIT_TRANSFER_RESOLUTION_KIND = "credit_transfer_resolution"
+
+_SESSION_AUTH_CONTEXT_SQL = """
+    /* auth_session_context */
+    WITH resolved_session AS (
+      SELECT
+        session_record.body AS session_body,
+        session_record.body ->> 'user_id' AS user_id
+      FROM tr_entities AS lookup_record
+      JOIN tr_entities AS session_record
+        ON session_record.kind = 'auth_session'
+       AND session_record.id = lookup_record.body ->> 'session_id'
+      WHERE lookup_record.kind = 'auth_session_lookup'
+        AND lookup_record.id = %s
+    )
+    SELECT
+      resolved.session_body,
+      user_record.body,
+      workspace_record.body,
+      member_record.body
+    FROM resolved_session AS resolved
+    LEFT JOIN tr_entities AS user_record
+      ON user_record.kind = 'user' AND user_record.id = resolved.user_id
+    LEFT JOIN tr_entities AS member_record
+      ON member_record.kind = 'member'
+     AND member_record.body ->> 'user_id' = resolved.user_id
+     AND member_record.id = ((member_record.body ->> 'workspace_id') || '#' || resolved.user_id)
+    LEFT JOIN tr_entities AS workspace_record
+      ON workspace_record.kind = 'workspace'
+     AND workspace_record.id = member_record.body ->> 'workspace_id'
+    ORDER BY member_record.id
+"""
+
+_API_KEY_AUTH_CONTEXT_SQL = """
+    /* api_key_auth_context */
+    SELECT key_record.body, workspace_record.body
+    FROM tr_entities AS lookup_record
+    JOIN tr_entities AS key_record
+      ON key_record.kind = 'api_key'
+     AND key_record.id = lookup_record.body ->> 'key_id'
+    LEFT JOIN tr_entities AS workspace_record
+      ON workspace_record.kind = 'workspace'
+     AND workspace_record.id = key_record.body ->> 'workspace_id'
+    WHERE lookup_record.kind = 'api_key_lookup'
+      AND lookup_record.id = %s
+"""
 
 
 def _split_sql_statements(schema: str) -> list[str]:
@@ -1154,6 +1202,51 @@ class PostgresStore:
 
         return self._run_transaction(delete)
 
+    def session_auth_context(
+        self,
+        raw_token: str,
+        *,
+        requested_workspace_id: str | None = None,
+    ) -> SessionAuthContext | None:
+        """Resolve session principal state in one portable SQL statement."""
+        lookup_hash = lookup_hash_api_key(raw_token)
+
+        def resolve(conn: Any) -> SessionAuthContext | None:
+            rows = conn.execute(
+                _SESSION_AUTH_CONTEXT_SQL,
+                (lookup_hash,),
+            ).fetchall()
+            if not rows:
+                return None
+            session = _dataclass_from_json(rows[0][0], AuthSession)
+            if _is_expired(session.expires_at):
+                self._delete_entity_tx(conn, "auth_session", session.hash)
+                self._delete_entity_tx(conn, "auth_session_lookup", lookup_hash)
+                return None
+            if not verify_api_key(raw_token, session.salt, session.secret_hash):
+                return None
+
+            user = (
+                _dataclass_from_json(rows[0][1], User)
+                if rows[0][1] is not None
+                else None
+            )
+            memberships: list[tuple[Member, Workspace]] = []
+            for _session_body, _user_body, workspace_body, member_body in rows:
+                if workspace_body is None or member_body is None:
+                    continue
+                member = _dataclass_from_json(member_body, Member)
+                workspace = _dataclass_from_json(workspace_body, Workspace)
+                memberships.append((member, workspace))
+            return build_session_auth_context(
+                session=session,
+                user=user,
+                memberships=memberships,
+                requested_workspace_id=requested_workspace_id,
+            )
+
+        return self._run_transaction(resolve)
+
     # Wallet, verification, and OAuth one-shot secrets ----------------------
 
     def create_wallet_challenge(
@@ -1555,6 +1648,31 @@ class PostgresStore:
         ):
             return key
         return None
+
+    def api_key_auth_context(self, raw_key: str) -> ApiKeyAuthContext | None:
+        """Resolve and verify an API key with its workspace in one query."""
+        lookup_hash = lookup_hash_api_key(raw_key)
+
+        def resolve(conn: Any) -> ApiKeyAuthContext | None:
+            row = conn.execute(
+                _API_KEY_AUTH_CONTEXT_SQL,
+                (lookup_hash,),
+            ).fetchone()
+            if row is None:
+                return None
+            api_key = _dataclass_from_json(row[0], ApiKey)
+            if not verify_api_key(raw_key, api_key.salt, api_key.secret_hash):
+                return None
+            workspace = (
+                _dataclass_from_json(row[1], Workspace)
+                if row[1] is not None
+                else None
+            )
+            if workspace is not None and workspace.deleted:
+                workspace = None
+            return ApiKeyAuthContext(api_key=api_key, workspace=workspace)
+
+        return self._run_transaction(resolve)
 
     def list_keys(self, workspace_id: str) -> list[ApiKey]:
         self._not_implemented("list_keys")

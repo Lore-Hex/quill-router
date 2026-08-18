@@ -9,7 +9,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from trusted_router import phone_verification
 from trusted_router import storage_gcp_credit_transfer as spanner_credit_transfer
@@ -27,6 +27,7 @@ from trusted_router.operational_analytics_freshness import (
     REASON_UNREACHABLE,
     OutboxFreshness,
 )
+from trusted_router.security import lookup_hash_api_key, verify_api_key
 from trusted_router.storage import (
     AcquisitionAttribution,
     ActivationReminderTask,
@@ -69,6 +70,7 @@ from trusted_router.storage_activity import (
     summarize_activity_result,
     usage_bucket_key,
 )
+from trusted_router.storage_auth_context import build_session_auth_context
 from trusted_router.storage_errors import is_duplicate_key_error
 from trusted_router.storage_gcp_analytics_outbox import SpannerAnalyticsOutbox
 from trusted_router.storage_gcp_attribution import SpannerAcquisitionAttribution
@@ -138,12 +140,15 @@ from trusted_router.storage_gcp_verification_tokens import SpannerVerificationTo
 from trusted_router.storage_gcp_video_jobs import SpannerVideoJobs
 from trusted_router.storage_gcp_wallet_challenges import SpannerWalletChallenges
 from trusted_router.storage_models import (
+    ApiKeyAuthContext,
     BedrockGroupBuyAggregate,
     BedrockGroupBuyPledge,
     BedrockGroupBuyPublicMessage,
     CreditMovement,
+    SessionAuthContext,
     TypedFinalizeResult,
     UserModelPayout,
+    _is_expired,
 )
 from trusted_router.types import IdentityVerificationStatus, UsageType
 
@@ -154,6 +159,57 @@ log = logging.getLogger(__name__)
 #: `readiness_check`, and the same rule: a public page degrades rather than
 #: waits. See `SpannerBigtableStore.operational_analytics_outbox_freshness`.
 OUTBOX_FRESHNESS_TIMEOUT_SECONDS = 3.0
+
+_SESSION_AUTH_CONTEXT_SQL = """
+    /* auth_session_context */
+    WITH resolved_session AS (
+      SELECT
+        session_record.body AS session_body,
+        JSON_VALUE(session_record.body, '$.user_id') AS user_id
+      FROM tr_entities AS lookup_record
+      JOIN tr_entities AS session_record
+        ON session_record.kind='auth_session'
+       AND session_record.id=JSON_VALUE(lookup_record.body, '$.session_id')
+      WHERE lookup_record.kind='auth_session_lookup'
+        AND lookup_record.id=@lookup_hash
+    )
+    SELECT
+      resolved.session_body,
+      user_record.body,
+      workspace_record.body,
+      member_record.body
+    FROM resolved_session AS resolved
+    LEFT JOIN tr_entities AS user_record
+      ON user_record.kind='user' AND user_record.id=resolved.user_id
+    LEFT JOIN tr_entities AS member_record
+      ON member_record.kind='member'
+     AND JSON_VALUE(member_record.body, '$.user_id')=resolved.user_id
+     AND member_record.id=CONCAT(JSON_VALUE(member_record.body, '$.workspace_id'), '#', resolved.user_id)
+    LEFT JOIN tr_entities AS workspace_record
+      ON workspace_record.kind='workspace'
+     AND workspace_record.id=JSON_VALUE(member_record.body, '$.workspace_id')
+    ORDER BY member_record.id
+"""
+
+_API_KEY_AUTH_CONTEXT_SQL = """
+    /* api_key_auth_context */
+    SELECT key_record.body, workspace_record.body
+    FROM tr_entities AS lookup_record
+    JOIN tr_entities AS key_record
+      ON key_record.kind='api_key'
+     AND key_record.id=JSON_VALUE(lookup_record.body, '$.key_id')
+    LEFT JOIN tr_entities AS workspace_record
+      ON workspace_record.kind='workspace'
+     AND workspace_record.id=JSON_VALUE(key_record.body, '$.workspace_id')
+    WHERE lookup_record.kind='api_key_lookup'
+      AND lookup_record.id=@lookup_hash
+"""
+
+
+def _auth_record(raw: str, cls: type[T]) -> T:
+    data = json.loads(raw)
+    known = {field.name for field in dataclasses.fields(cast(Any, cls))}
+    return cls(**{key: value for key, value in data.items() if key in known})
 
 
 def _empty_usage_bucket(bucket: str) -> dict[str, Any]:
@@ -663,6 +719,63 @@ class SpannerBigtableStore:
 
     def delete_auth_session_by_raw(self, raw_token: str) -> bool:
         return self.auth_session_store.delete_by_raw(raw_token)
+
+    def session_auth_context(
+        self,
+        raw_token: str,
+        *,
+        requested_workspace_id: str | None = None,
+    ) -> SessionAuthContext | None:
+        """Resolve session, user, workspaces, and selected role in one RPC.
+
+        This is deliberately a strong read: session invalidation and membership
+        removal are authorization changes and must be visible on the next
+        request.  A cache or bounded-staleness read would extend access.
+        """
+        lookup_hash = lookup_hash_api_key(raw_token)
+        with self._database.snapshot() as snapshot:
+            rows = list(
+                snapshot.execute_sql(
+                    _SESSION_AUTH_CONTEXT_SQL,
+                    params={"lookup_hash": lookup_hash},
+                    param_types={"lookup_hash": self._param_types.STRING},
+                )
+            )
+        if not rows:
+            return None
+
+        session = _auth_record(str(rows[0][0]), AuthSession)
+        if _is_expired(session.expires_at):
+            # Preserve get_auth_session_by_raw's expired-record cleanup.  The
+            # valid-request path above remains exactly one read RPC.
+            with self._database.batch() as batch:
+                batch.delete(
+                    self.entity_table,
+                    self._spanner.KeySet(
+                        keys=[
+                            ("auth_session", session.hash),
+                            ("auth_session_lookup", lookup_hash),
+                        ]
+                    ),
+                )
+            return None
+        if not verify_api_key(raw_token, session.salt, session.secret_hash):
+            return None
+
+        user = _auth_record(str(rows[0][1]), User) if rows[0][1] is not None else None
+        memberships: list[tuple[Member, Workspace]] = []
+        for _session_body, _user_body, workspace_body, member_body in rows:
+            if workspace_body is None or member_body is None:
+                continue
+            member = _auth_record(str(member_body), Member)
+            workspace = _auth_record(str(workspace_body), Workspace)
+            memberships.append((member, workspace))
+        return build_session_auth_context(
+            session=session,
+            user=user,
+            memberships=memberships,
+            requested_workspace_id=requested_workspace_id,
+        )
 
     def create_workspace(
         self,
@@ -1210,6 +1323,31 @@ class SpannerBigtableStore:
 
     def get_key_by_raw(self, raw_key: str) -> ApiKey | None:
         return self.api_keys.get_by_raw(raw_key)
+
+    def api_key_auth_context(self, raw_key: str) -> ApiKeyAuthContext | None:
+        """Resolve and verify an API key with its workspace in one strong RPC."""
+        lookup_hash = lookup_hash_api_key(raw_key)
+        with self._database.snapshot() as snapshot:
+            rows = list(
+                snapshot.execute_sql(
+                    _API_KEY_AUTH_CONTEXT_SQL,
+                    params={"lookup_hash": lookup_hash},
+                    param_types={"lookup_hash": self._param_types.STRING},
+                )
+            )
+        if not rows:
+            return None
+        api_key = _auth_record(str(rows[0][0]), ApiKey)
+        if not verify_api_key(raw_key, api_key.salt, api_key.secret_hash):
+            return None
+        workspace = (
+            _auth_record(str(rows[0][1]), Workspace)
+            if rows[0][1] is not None
+            else None
+        )
+        if workspace is not None and workspace.deleted:
+            workspace = None
+        return ApiKeyAuthContext(api_key=api_key, workspace=workspace)
 
     def list_keys(self, workspace_id: str) -> list[ApiKey]:
         return self.api_keys.list_for_workspace(workspace_id)

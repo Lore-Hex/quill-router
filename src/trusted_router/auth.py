@@ -8,7 +8,14 @@ from fastapi import Depends, Request, Response
 
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
-from trusted_router.storage import STORE, ApiKey, AuthSession, User, Workspace
+from trusted_router.storage import (
+    STORE,
+    ApiKey,
+    ApiKeyAuthContext,
+    SessionAuthContext,
+    User,
+    Workspace,
+)
 from trusted_router.types import ErrorType
 
 SESSION_COOKIE_NAME = "tr_session"
@@ -105,28 +112,34 @@ def principal_from_request(request: Request, settings: Settings) -> Principal:
         # Browser console only ever sends the cookie. Resolve as a session;
         # don't fall through to the API-key lookup since we don't have a
         # bearer to look up.
-        session = STORE.get_auth_session_by_raw(cookie_token)
-        if session is None or session.state != "active":
+        session_context = STORE.session_auth_context(
+            cookie_token,
+            requested_workspace_id=(request.headers.get("x-trustedrouter-workspace") or None),
+        )
+        if session_context is None:
             raise api_error(401, "Invalid session", "unauthorized")
-        return _principal_for_session(request, session)
+        return _principal_for_session(request, session_context)
     if not raw_bearer:
         raise api_error(401, "Missing Authentication header", "unauthorized")
 
     bootstrap_management_key(settings)
 
     if raw_bearer.startswith(_API_KEY_BEARER_PREFIX):
-        api_key = STORE.get_key_by_raw(raw_bearer)
-        if api_key is None:
+        api_key_context = STORE.api_key_auth_context(raw_bearer)
+        if api_key_context is None:
             raise api_error(401, "Invalid API key", "unauthorized")
-        return _principal_for_api_key(api_key)
+        return _principal_for_api_key(api_key_context)
 
     if raw_bearer.startswith(_SESSION_BEARER_PREFIX):
         # Bearer-shaped session token. Used by management programs that
         # prefer a bearer header over the browser session cookie.
-        session = STORE.get_auth_session_by_raw(raw_bearer)
-        if session is None:
+        session_context = STORE.session_auth_context(
+            raw_bearer,
+            requested_workspace_id=(request.headers.get("x-trustedrouter-workspace") or None),
+        )
+        if session_context is None:
             raise api_error(401, "Invalid session token", "unauthorized")
-        return _principal_for_session(request, session)
+        return _principal_for_session(request, session_context)
 
     # Neither shape matched. Don't claim "Invalid API key" — the token
     # was never API-key-shaped to begin with. Surface the actual issue
@@ -160,7 +173,10 @@ def _principal_from_dev_header(
     )
 
 
-def _principal_for_session(request: Request, session: AuthSession) -> Principal:
+def _principal_for_session(
+    request: Request,
+    context: SessionAuthContext,
+) -> Principal:
     # The state gate lives here rather than at each call site so that every
     # conversion from a session into an authenticated principal enforces one
     # invariant. It used to sit only on the cookie branch, so the same
@@ -169,30 +185,33 @@ def _principal_for_session(request: Request, session: AuthSession) -> Principal:
     # token hash only. Note this is deliberately not pushed down into
     # get_auth_session_by_raw: the pending-email attach flow needs to fetch a
     # pending session directly, it just must not get a principal from one.
+    session = context.session
     if session.state != "active":
         raise api_error(401, "Invalid session", "unauthorized")
-    user = STORE.get_user(session.user_id)
+    user = context.user
     if user is None:
         raise api_error(401, "Invalid session", "unauthorized")
-    workspace = _resolve_workspace_for_user(
-        request,
-        user.id,
-        suggested_workspace_id=session.workspace_id,
-    )
+    selected_workspace_id = request.headers.get("x-trustedrouter-workspace") or session.workspace_id
+    workspace = context.workspace
+    if workspace is None or not context.is_member:
+        if selected_workspace_id:
+            raise api_error(403, "Forbidden", "forbidden")
+        raise api_error(403, "Workspace is unavailable", "forbidden")
     return Principal(
         user=user,
         workspace=workspace,
         api_key=None,
-        is_management=STORE.user_can_manage(user.id, workspace.id),
+        is_management=context.is_management,
     )
 
 
-def _principal_for_api_key(api_key: ApiKey) -> Principal:
+def _principal_for_api_key(context: ApiKeyAuthContext) -> Principal:
+    api_key = context.api_key
     if api_key.disabled:
         raise api_error(401, "Invalid API key", "unauthorized")
     if is_api_key_expired(api_key.expires_at):
         raise api_error(401, "API key expired", "unauthorized")
-    workspace = STORE.get_workspace(api_key.workspace_id)
+    workspace = context.workspace
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", "forbidden")
     return Principal(

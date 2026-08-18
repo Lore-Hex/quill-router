@@ -193,6 +193,11 @@ class FakeSpannerDatabase:
         # money / authorization read.  The fake does not model historical row
         # versions; this records the contract without pretending that it does.
         self.snapshot_calls: list[dict[str, Any]] = []
+        # Read-RPC instrumentation for fan-out tests.  Count the statement
+        # handed to a snapshot, not helper calls, so a hidden fallback lookup
+        # cannot masquerade as one logical Store operation.
+        self.snapshot_execute_sql_calls = 0
+        self.snapshot_sql: list[str] = []
 
     def run_in_transaction(self, fn: Any, *, timeout_secs: float | None = None) -> Any:
         # timeout_secs mirrors google-cloud-spanner's Database.run_in_transaction
@@ -328,12 +333,12 @@ class FakeSpannerDatabase:
                     self.entity_kind_versions[kind] = new_version
             return True
 
-    def snapshot(self, *, multi_use: bool = False, **_kwargs: Any) -> _FakeSnapshot:
+    def snapshot(self, *, multi_use: bool = False, **kwargs: Any) -> _FakeSnapshot:
         # Models real Spanner: a single-use snapshot (the default) permits exactly
         # ONE read; a second read on it raises. Only multi_use=True allows many.
         # Prod bug fa9f5d4 was a single-use snapshot that grew a second read and
         # faulted live — the old fake "allowed repeated reads regardless" and hid it.
-        call = dict(_kwargs)
+        call = dict(kwargs)
         if multi_use:
             call["multi_use"] = True
         self.snapshot_calls.append(call)
@@ -1272,6 +1277,8 @@ class _FakeSnapshot:
                 "database.snapshot(multi_use=True) for multiple reads "
                 "(models real Spanner — see prod fix fa9f5d4)"
             )
+        self.db.snapshot_execute_sql_calls += 1
+        self.db.snapshot_sql.append(sql)
         return _execute_sql(self.db, None, sql, params or {})
 
 
@@ -1490,6 +1497,118 @@ def _execute_sql(
     params: dict[str, Any],
 ) -> list[list[str]]:
     kind = params.get("kind", "")
+    if "/* auth_session_context */" in sql:
+        _require_pred(
+            sql,
+            "lookup_record.kind='auth_session_lookup'",
+            "session-auth-context lookup kind",
+        )
+        _require_pred(
+            sql,
+            "session_record.id=JSON_VALUE(lookup_record.body, '$.session_id')",
+            "session-auth-context lookup join",
+        )
+        _require_pred(
+            sql,
+            "user_record.kind='user' AND user_record.id=resolved.user_id",
+            "session-auth-context user join",
+        )
+        _require_pred(
+            sql,
+            "member_record.kind='member'",
+            "session-auth-context membership kind",
+        )
+        _require_pred(
+            sql,
+            "JSON_VALUE(member_record.body, '$.user_id')=resolved.user_id",
+            "session-auth-context membership boundary",
+        )
+        _require_pred(
+            sql,
+            "member_record.id=CONCAT(JSON_VALUE(member_record.body, '$.workspace_id'), '#', resolved.user_id)",
+            "session-auth-context canonical membership key",
+        )
+        _require_pred(
+            sql,
+            "workspace_record.id=JSON_VALUE(member_record.body, '$.workspace_id')",
+            "session-auth-context workspace join",
+        )
+        _require_pred(
+            sql,
+            "ORDER BY member_record.id",
+            "session-auth-context deterministic workspace order",
+        )
+        lookup = db.rows.get(("auth_session_lookup", str(params["lookup_hash"])))
+        if lookup is None:
+            return []
+        session_id = str(json.loads(lookup.body)["session_id"])
+        session = db.rows.get(("auth_session", session_id))
+        if session is None:
+            return []
+        user_id = str(json.loads(session.body)["user_id"])
+        user = db.rows.get(("user", user_id))
+        members = sorted(
+            (
+                (entity_id, row)
+                for (row_kind, entity_id), row in db.rows.items()
+                if row_kind == "member"
+                and str(json.loads(row.body).get("user_id")) == user_id
+                and entity_id
+                == f"{json.loads(row.body).get('workspace_id')}#{user_id}"
+            ),
+            key=lambda item: item[0],
+        )
+        if not members:
+            return [[session.body, user.body if user is not None else None, None, None]]
+        rows: list[list[Any]] = []
+        for _member_id, member in members:
+            workspace_id = str(json.loads(member.body)["workspace_id"])
+            workspace = db.rows.get(("workspace", workspace_id))
+            rows.append(
+                [
+                    session.body,
+                    user.body if user is not None else None,
+                    workspace.body if workspace is not None else None,
+                    member.body,
+                ]
+            )
+        return rows
+    if "/* api_key_auth_context */" in sql:
+        _require_pred(
+            sql,
+            "lookup_record.kind='api_key_lookup'",
+            "API-key-auth-context lookup kind",
+        )
+        _require_pred(
+            sql,
+            "key_record.kind='api_key'",
+            "API-key-auth-context key kind",
+        )
+        _require_pred(
+            sql,
+            "key_record.id=JSON_VALUE(lookup_record.body, '$.key_id')",
+            "API-key-auth-context lookup join",
+        )
+        _require_pred(
+            sql,
+            "workspace_record.id=JSON_VALUE(key_record.body, '$.workspace_id')",
+            "API-key-auth-context workspace join",
+        )
+        lookup = db.rows.get(("api_key_lookup", str(params["lookup_hash"])))
+        if lookup is None:
+            return []
+        key_id = str(json.loads(lookup.body)["key_id"])
+        api_key = db.rows.get(("api_key", key_id))
+        if api_key is None:
+            return []
+        workspace_id = str(json.loads(api_key.body)["workspace_id"])
+        workspace = db.rows.get(("workspace", workspace_id))
+        return [
+            [
+                api_key.body,
+                workspace.body if workspace is not None else None,
+            ]
+        ]
     if (
         "FROM tr_credit_movement " in sql
         and "WHERE kind='custom_model_payout' AND created_at>=@since" in sql

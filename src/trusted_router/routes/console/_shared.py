@@ -46,13 +46,18 @@ def require_console_context(request: Request, settings: SettingsDep) -> ConsoleC
     """FastAPI dependency. Resolves the active console session or raises a
     302 redirect to the marketing page so it can pop the sign-in modal."""
     cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
-    session = STORE.get_auth_session_by_raw(cookie_token) if cookie_token else None
-    if session is None or session.state != "active":
+    context = (
+        STORE.session_auth_context(cookie_token, requested_workspace_id=None)
+        if cookie_token
+        else None
+    )
+    if context is None or context.session.state != "active":
         raise HTTPException(status_code=302, headers={"Location": "/?reason=signin"})
-    user = STORE.get_user(session.user_id)
+    session = context.session
+    user = context.user
     if user is None:
         raise HTTPException(status_code=302, headers={"Location": "/?reason=signin"})
-    workspaces = STORE.list_workspaces_for_user(user.id)
+    workspaces = list(context.workspaces)
     if not workspaces:
         raise HTTPException(status_code=302, headers={"Location": "/?reason=signin"})
     workspace = _selected_console_workspace(session, workspaces)
