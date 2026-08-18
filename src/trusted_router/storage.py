@@ -24,6 +24,7 @@ from trusted_router.operational_analytics_freshness import (
     OutboxFreshness,
 )
 from trusted_router.storage_attribution import InMemoryAcquisitionAttribution
+from trusted_router.storage_auth_context import build_session_auth_context
 from trusted_router.storage_auth_sessions import InMemoryAuthSessions
 from trusted_router.storage_broadcast import InMemoryBroadcastDestinations
 from trusted_router.storage_byok import InMemoryByok
@@ -37,6 +38,7 @@ from trusted_router.storage_models import (
     AcquisitionAttribution,
     ActivationReminderTask,
     ApiKey,
+    ApiKeyAuthContext,
     AuthSession,
     BedrockGroupBuyAggregate,
     BedrockGroupBuyPledge,
@@ -59,6 +61,7 @@ from trusted_router.storage_models import (
     ProviderBenchmarkSample,
     RateLimitHit,
     Reservation,
+    SessionAuthContext,
     SignupResult,
     SyntheticProbeSample,
     SyntheticRollup,
@@ -387,6 +390,39 @@ class InMemoryStore:
 
     def delete_auth_session_by_raw(self, raw_token: str) -> bool:
         return self.auth_session_store.delete_by_raw(raw_token)
+
+    def session_auth_context(
+        self,
+        raw_token: str,
+        *,
+        requested_workspace_id: str | None = None,
+    ) -> SessionAuthContext | None:
+        """Resolve a session principal under one lock.
+
+        Production backends implement the same contract with one strong SQL
+        statement.  Keeping the in-memory implementation atomic makes tests
+        model the same point-in-time membership decision instead of a sequence
+        of independently locked lookups.
+        """
+        with self._lock:
+            session = self.auth_session_store.get_by_raw(raw_token)
+            if session is None:
+                return None
+            user = self.users.get(session.user_id)
+            memberships: list[tuple[Member, Workspace]] = []
+            for (workspace_id, user_id), candidate_member in self.members.items():
+                if user_id != session.user_id:
+                    continue
+                candidate = self.workspaces.get(workspace_id)
+                if candidate is None:
+                    continue
+                memberships.append((candidate_member, candidate))
+            return build_session_auth_context(
+                session=session,
+                user=user,
+                memberships=memberships,
+                requested_workspace_id=requested_workspace_id,
+            )
 
     def create_workspace(
         self,
@@ -738,6 +774,17 @@ class InMemoryStore:
 
     def get_key_by_raw(self, raw_key: str) -> ApiKey | None:
         return self.api_keys.get_by_raw(raw_key)
+
+    def api_key_auth_context(self, raw_key: str) -> ApiKeyAuthContext | None:
+        """Resolve the key and its workspace atomically, without a cache."""
+        with self._lock:
+            api_key = self.api_keys.get_by_raw(raw_key)
+            if api_key is None:
+                return None
+            workspace = self.workspaces.get(api_key.workspace_id)
+            if workspace is not None and workspace.deleted:
+                workspace = None
+            return ApiKeyAuthContext(api_key=api_key, workspace=workspace)
 
     def list_keys(self, workspace_id: str) -> list[ApiKey]:
         return self.api_keys.list_for_workspace(workspace_id)

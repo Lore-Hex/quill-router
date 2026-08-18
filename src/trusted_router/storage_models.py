@@ -1432,6 +1432,26 @@ class AuthSession:
     state: str = "active"  # "active" | "pending_email" (legacy wallet email attach)
 
 
+@dataclass(frozen=True)
+class SessionAuthContext:
+    """Strong, point-in-time view used to authenticate a browser session."""
+
+    session: AuthSession
+    user: User | None
+    workspace: Workspace | None
+    workspaces: tuple[Workspace, ...]
+    is_member: bool
+    is_management: bool
+
+
+@dataclass(frozen=True)
+class ApiKeyAuthContext:
+    """Strong, point-in-time view used to authenticate an API key."""
+
+    api_key: ApiKey
+    workspace: Workspace | None
+
+
 @dataclass
 class EmailSendBlock:
     """Record of an email address that should not receive further sends.

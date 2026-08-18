@@ -17,6 +17,7 @@ from trusted_router.storage_models import (
     AcquisitionAttribution,
     ActivationReminderTask,
     ApiKey,
+    ApiKeyAuthContext,
     AuthSession,
     BedrockGroupBuyAggregate,
     BedrockGroupBuyPledge,
@@ -38,6 +39,7 @@ from trusted_router.storage_models import (
     ProviderBenchmarkSample,
     RateLimitHit,
     Reservation,
+    SessionAuthContext,
     SignupResult,
     SyntheticProbeSample,
     SyntheticRollup,
@@ -188,6 +190,12 @@ class Store(Protocol):
     ) -> tuple[str, AuthSession]: ...
     def get_auth_session_by_raw(self, raw_token: str) -> AuthSession | None: ...
     def delete_auth_session_by_raw(self, raw_token: str) -> bool: ...
+    def session_auth_context(
+        self,
+        raw_token: str,
+        *,
+        requested_workspace_id: str | None = ...,
+    ) -> SessionAuthContext | None: ...
     def upgrade_auth_session(self, raw_token: str, *, state: str) -> AuthSession | None: ...
     def set_auth_session_workspace(
         self, raw_token: str, workspace_id: str
@@ -346,6 +354,7 @@ class Store(Protocol):
         ...
 
     def get_key_by_raw(self, raw_key: str) -> ApiKey | None: ...
+    def api_key_auth_context(self, raw_key: str) -> ApiKeyAuthContext | None: ...
     def list_keys(self, workspace_id: str) -> list[ApiKey]: ...
     def delete_key(self, key_hash: str) -> bool: ...
     def update_key(self, key_hash: str, patch: dict[str, Any]) -> ApiKey | None: ...
