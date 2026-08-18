@@ -415,6 +415,8 @@ class SpannerBigtableStore:
     def readiness_check(self) -> None:
         """Verify the strongly consistent billing store within a hard deadline."""
 
+        # This is the billing-store health signal, not a display value: keep it
+        # strong so readiness cannot be certified from an older database view.
         with self._database.snapshot() as snapshot:
             list(
                 snapshot.execute_sql(
@@ -1962,9 +1964,20 @@ class SpannerBigtableStore:
 
         self._run_in_transaction(txn)
 
-    def earnings_summary(self, user_id: str) -> dict[str, int]:
+    def earnings_summary(
+        self,
+        user_id: str,
+        *,
+        allow_stale: bool = False,
+    ) -> dict[str, int]:
         pt = self._param_types
-        with self._database.snapshot() as snapshot:
+        # Display callers may accept five seconds of staleness. The default is
+        # strong because transfer POSTs return the just-committed balance (or
+        # current insufficient-funds detail) from this same method.
+        snapshot_options: dict[str, Any] = {}
+        if allow_stale:
+            snapshot_options["exact_staleness"] = dt.timedelta(seconds=5)
+        with self._database.snapshot(**snapshot_options) as snapshot:
             rows = list(
                 snapshot.execute_sql(
                     "SELECT total_earned, total_transferred "
@@ -2008,7 +2021,10 @@ class SpannerBigtableStore:
             where += " AND created_at < @before"
             params["before"] = _parse_iso_timestamp(before)
             param_types["before"] = pt.TIMESTAMP
-        with self._database.snapshot() as snapshot:
+        # This is paginated ledger history and never authorizes a transfer.
+        # Thirty seconds is imperceptible for history while keeping the read
+        # local to a nearby Spanner replica.
+        with self._database.snapshot(exact_staleness=dt.timedelta(seconds=30)) as snapshot:
             rows = list(
                 snapshot.execute_sql(
                     "SELECT account_id, movement_id, kind, amount_microdollars, "  # noqa: S608 -- fixed clauses only.
@@ -2041,7 +2057,9 @@ class SpannerBigtableStore:
         since: str,
     ) -> dict[str, int]:
         pt = self._param_types
-        with self._database.snapshot() as snapshot:
+        # A 30-day display aggregate does not gate payout or transfer logic.
+        # One minute of staleness is small relative to its reporting window.
+        with self._database.snapshot(exact_staleness=dt.timedelta(seconds=60)) as snapshot:
             rows = list(
                 snapshot.execute_sql(
                     "SELECT custom_model_id, SUM(amount_microdollars) "
@@ -2058,9 +2076,20 @@ class SpannerBigtableStore:
             )
         return {str(row[0]): int(row[1]) for row in rows}
 
-    def get_lifetime_topup_microdollars(self, user_id: str) -> int:
+    def get_lifetime_topup_microdollars(
+        self,
+        user_id: str,
+        *,
+        allow_stale: bool = False,
+    ) -> int:
         pt = self._param_types
-        with self._database.snapshot() as snapshot:
+        # Display callers may accept five seconds of staleness. The default is
+        # strong because verification gates and the lifetime-top-up backfill
+        # read immediately before/after a durable increment.
+        snapshot_options: dict[str, Any] = {}
+        if allow_stale:
+            snapshot_options["exact_staleness"] = dt.timedelta(seconds=5)
+        with self._database.snapshot(**snapshot_options) as snapshot:
             rows = list(
                 snapshot.execute_sql(
                     "SELECT total_microdollars FROM tr_user_lifetime_topup WHERE user_id=@user_id",
@@ -2260,6 +2289,8 @@ class SpannerBigtableStore:
         )
 
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None:
+        # Settlement and durable-outbox recovery consume this state. A stale
+        # authorization could replay terminal work, so this point read is strong.
         with self._database.snapshot() as snapshot:
             typed = read_gateway_authorization(
                 snapshot,
@@ -2697,7 +2728,12 @@ class SpannerBigtableStore:
 
         return _reap(self._database, self._param_types, now=now, limit=limit)
 
-    def typed_key_usage(self, key_hash: str) -> dict[str, Any] | None:
+    def typed_key_usage(
+        self,
+        key_hash: str,
+        *,
+        allow_stale: bool = False,
+    ) -> dict[str, Any] | None:
         """One point-read of the typed tr_key_limit row: live lifetime counters
         (post-flip the JSON api_key copies are frozen/stale) + the lazy window
         usage (stale windows read as zero). None when the row is missing —
@@ -2705,7 +2741,13 @@ class SpannerBigtableStore:
         from trusted_router.spend_windows import utcnow, window_floors
 
         pt = self._param_types
-        with self._database.snapshot(multi_use=True) as snapshot:
+        # Display callers opt into five-second staleness. The default remains
+        # strong because the same method decides whether to emit a one-shot
+        # budget alert; a stale below-threshold read could suppress that email.
+        snapshot_options: dict[str, Any] = {"multi_use": True}
+        if allow_stale:
+            snapshot_options["exact_staleness"] = dt.timedelta(seconds=5)
+        with self._database.snapshot(**snapshot_options) as snapshot:
             key = self._read_entity_from(snapshot, "api_key", key_hash, ApiKey)
             if key is None:
                 return None
@@ -2796,6 +2838,8 @@ class SpannerBigtableStore:
         """
         from trusted_router.storage_gcp_counter_dml import read_reservation
 
+        # Lost-claim recovery decides whether money was already booked; keep its
+        # reservation read strong.
         with self._database.snapshot() as snapshot:
             return read_reservation(snapshot, self._param_types, reservation_id)
 
@@ -2810,6 +2854,8 @@ class SpannerBigtableStore:
             return False
         from trusted_router.storage_gcp_counter_dml import read_reservation
 
+        # This selects the settle/refund implementation, so an old answer could
+        # route money through the wrong ledger. Keep it strong.
         with self._database.snapshot() as snapshot:
             res = read_reservation(snapshot, self._param_types, reservation_id)
         return res is not None and res.get("authorization_id") == authorization_id
@@ -2826,6 +2872,7 @@ class SpannerBigtableStore:
         )
 
         scope = _gateway_authorization_idempotency_index_id(workspace_id, key_hash, idempotency_key)
+        # This is the authorize replay/double-hold guard, not display state.
         with self._database.snapshot() as snapshot:
             existing = read_reservation_by_idempotency(snapshot, self._param_types, scope)
         if existing is None:
@@ -3570,6 +3617,8 @@ class SpannerBigtableStore:
         return None
 
     def _read_entity(self, kind: str, entity_id: str, cls: type[T]) -> T | None:
+        # This generic helper serves membership, key, and workspace authorization
+        # reads as well as display reads, so weakening it globally is unsafe.
         with self._database.snapshot() as snapshot:
             return self._read_entity_from(snapshot, kind, entity_id, cls)
 
@@ -3638,6 +3687,8 @@ class SpannerBigtableStore:
             suffix_sql += " LIMIT @limit"
             params["limit"] = int(limit)
             param_types["limit"] = self._param_types.INT64
+        # Membership and provider-access checks share this generic list helper;
+        # a blanket stale policy here could preserve revoked authorization.
         with self._database.snapshot() as snapshot:
             rows = snapshot.execute_sql(
                 f"SELECT body FROM tr_entities WHERE {where}{suffix_sql}",  # noqa: S608 - where/suffix are built from fixed predicates; values are bound params.

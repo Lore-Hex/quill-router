@@ -379,7 +379,8 @@ def _earnings_data(user_id: str, *, before: str | None = None) -> dict[str, Any]
         before=before,
     )
     return {
-        "summary": _earnings_summary_shape(STORE.earnings_summary(user_id)),
+        # GET response only; transfer POSTs keep the strong default.
+        "summary": _earnings_summary_shape(STORE.earnings_summary(user_id, allow_stale=True)),
         "by_model_30d": [
             {"model_id": model_id, "earned_microdollars": amount}
             for model_id, amount in sorted(

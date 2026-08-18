@@ -1440,7 +1440,12 @@ class PostgresStore:
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None:
         return self._read_entity("api_key", key_hash, ApiKey)
 
-    def typed_key_usage(self, key_hash: str) -> dict[str, Any] | None:
+    def typed_key_usage(
+        self,
+        key_hash: str,
+        *,
+        allow_stale: bool = False,
+    ) -> dict[str, Any] | None:
         self._not_implemented("typed_key_usage")
 
     def upsert_federated_api_key(self, record: dict[str, Any]) -> ApiKey:
@@ -2850,7 +2855,12 @@ class PostgresStore:
 
         self._run_transaction(ensure)
 
-    def earnings_summary(self, user_id: str) -> dict[str, int]:
+    def earnings_summary(
+        self,
+        user_id: str,
+        *,
+        allow_stale: bool = False,
+    ) -> dict[str, int]:
         def read(conn: Any) -> dict[str, int]:
             row = conn.execute(
                 "SELECT total_earned, total_transferred "
@@ -2928,7 +2938,12 @@ class PostgresStore:
 
         return self._run_transaction(read)
 
-    def get_lifetime_topup_microdollars(self, user_id: str) -> int:
+    def get_lifetime_topup_microdollars(
+        self,
+        user_id: str,
+        *,
+        allow_stale: bool = False,
+    ) -> int:
         def read(conn: Any) -> int:
             row = conn.execute(
                 "SELECT total_microdollars FROM tr_user_lifetime_topup WHERE user_id = %s",

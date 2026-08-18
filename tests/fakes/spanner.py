@@ -188,6 +188,11 @@ class FakeSpannerDatabase:
         self.aborts = 0
         self.commits = 0
         self.last_timeout_secs: float | None = None
+        # Preserve the exact consistency options passed by production code so
+        # tests can distinguish a deliberate stale display read from a strong
+        # money / authorization read.  The fake does not model historical row
+        # versions; this records the contract without pretending that it does.
+        self.snapshot_calls: list[dict[str, Any]] = []
 
     def run_in_transaction(self, fn: Any, *, timeout_secs: float | None = None) -> Any:
         # timeout_secs mirrors google-cloud-spanner's Database.run_in_transaction
@@ -328,6 +333,10 @@ class FakeSpannerDatabase:
         # ONE read; a second read on it raises. Only multi_use=True allows many.
         # Prod bug fa9f5d4 was a single-use snapshot that grew a second read and
         # faulted live — the old fake "allowed repeated reads regardless" and hid it.
+        call = dict(_kwargs)
+        if multi_use:
+            call["multi_use"] = True
+        self.snapshot_calls.append(call)
         return _FakeSnapshot(self, multi_use=multi_use)
 
     def batch(self) -> _FakeBatch:

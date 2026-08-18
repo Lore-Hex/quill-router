@@ -59,7 +59,9 @@ def register(app: FastAPI) -> None:
 
 def _render_page(request: Request, ctx: ConsoleDep, settings: SettingsDep) -> str:
     since = (datetime.now(UTC) - timedelta(days=30)).isoformat().replace("+00:00", "Z")
-    summary = STORE.earnings_summary(ctx.user.id)
+    # Page rendering only; transfer POSTs use the strong default for their
+    # operation result.
+    summary = STORE.earnings_summary(ctx.user.id, allow_stale=True)
     model_totals = STORE.custom_model_earnings_by_model(ctx.user.id, since=since)
     by_model: list[dict[str, Any]] = []
     for model_id, amount in sorted(

@@ -78,7 +78,8 @@ def register(app: FastAPI) -> None:
         verification_remaining = max(
             0,
             VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS
-            - STORE.get_lifetime_topup_microdollars(ctx.user.id),
+            # Display-only nudge; verification enforcement reads strongly.
+            - STORE.get_lifetime_topup_microdollars(ctx.user.id, allow_stale=True),
         )
         verification_nudge = (
             {
@@ -200,7 +201,11 @@ def register(app: FastAPI) -> None:
                     max(
                         0,
                         VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS
-                        - STORE.get_lifetime_topup_microdollars(ctx.user.id),
+                        # Response metadata only; it does not approve checkout.
+                        - STORE.get_lifetime_topup_microdollars(
+                            ctx.user.id,
+                            allow_stale=True,
+                        ),
                     ),
                 )
             )
