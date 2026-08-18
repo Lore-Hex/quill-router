@@ -105,7 +105,11 @@ def register_billing_routes(router: APIRouter) -> None:
             )
         )
         if body.purpose == "identity_verification":
-            lifetime_topup = STORE.get_lifetime_topup_microdollars(initiating_user_id)
+            # Checkout response metadata only; verification gates read strongly.
+            lifetime_topup = STORE.get_lifetime_topup_microdollars(
+                initiating_user_id,
+                allow_stale=True,
+            )
             checkout_data.update(
                 money_pair(
                     "verification_topup_remaining",

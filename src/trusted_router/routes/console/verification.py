@@ -29,7 +29,12 @@ def register(app: FastAPI) -> None:
         dev: str = "",
     ) -> Response:
         user = STORE.get_user(ctx.user.id) or ctx.user
-        lifetime_topup = STORE.get_lifetime_topup_microdollars(user.id)
+        # Page progress only; `missing_identity_verification_requirements`
+        # below performs the actual gate with the strong default.
+        lifetime_topup = STORE.get_lifetime_topup_microdollars(
+            user.id,
+            allow_stale=True,
+        )
         required = VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS
         missing = missing_identity_verification_requirements(user, settings)
         guidance = guidance_for(

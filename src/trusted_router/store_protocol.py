@@ -273,7 +273,12 @@ class Store(Protocol):
         tags: dict[str, str] | None = ...,
     ) -> tuple[str, ApiKey]: ...
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None: ...
-    def typed_key_usage(self, key_hash: str) -> dict[str, Any] | None: ...
+    def typed_key_usage(
+        self,
+        key_hash: str,
+        *,
+        allow_stale: bool = ...,
+    ) -> dict[str, Any] | None: ...
     def get_key_by_lookup_hash(self, lookup_hash: str) -> ApiKey | None: ...
 
     def upsert_federated_api_key(self, record: dict[str, Any]) -> ApiKey:
@@ -608,7 +613,12 @@ class Store(Protocol):
         event_id: str,
     ) -> str: ...
     def ensure_earnings_account(self, user_id: str) -> None: ...
-    def earnings_summary(self, user_id: str) -> dict[str, int]: ...
+    def earnings_summary(
+        self,
+        user_id: str,
+        *,
+        allow_stale: bool = ...,
+    ) -> dict[str, int]: ...
     def list_credit_movements(
         self,
         account_id: str,
@@ -629,7 +639,12 @@ class Store(Protocol):
         amount_microdollars: int,
         event_id: str,
     ) -> bool: ...
-    def get_lifetime_topup_microdollars(self, user_id: str) -> int: ...
+    def get_lifetime_topup_microdollars(
+        self,
+        user_id: str,
+        *,
+        allow_stale: bool = ...,
+    ) -> int: ...
 
     def reserve(
         self,

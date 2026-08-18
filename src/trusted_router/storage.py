@@ -674,7 +674,12 @@ class InMemoryStore:
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None:
         return self.api_keys.get_by_hash(key_hash)
 
-    def typed_key_usage(self, key_hash: str) -> dict[str, Any] | None:
+    def typed_key_usage(
+        self,
+        key_hash: str,
+        *,
+        allow_stale: bool = False,
+    ) -> dict[str, Any] | None:
         """InMemory twin of the Spanner typed point-read: lifetime counters are
         already live on the ApiKey; windows come from the lazy snapshot."""
         key = self.api_keys.get_by_hash(key_hash)
@@ -1356,7 +1361,12 @@ class InMemoryStore:
         with self._lock:
             self.earnings_money.setdefault(user_id, (0, 0))
 
-    def earnings_summary(self, user_id: str) -> dict[str, int]:
+    def earnings_summary(
+        self,
+        user_id: str,
+        *,
+        allow_stale: bool = False,
+    ) -> dict[str, int]:
         with self._lock:
             earned, transferred = self.earnings_money.get(user_id, (0, 0))
             return {
@@ -1414,7 +1424,12 @@ class InMemoryStore:
                     )
         return totals
 
-    def get_lifetime_topup_microdollars(self, user_id: str) -> int:
+    def get_lifetime_topup_microdollars(
+        self,
+        user_id: str,
+        *,
+        allow_stale: bool = False,
+    ) -> int:
         with self._lock:
             return self.lifetime_topups.get(user_id, 0)
 

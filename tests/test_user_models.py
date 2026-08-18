@@ -28,7 +28,7 @@ from trusted_router.services.user_model_secrets import (
     USER_MODEL_SECRET_NAMESPACE,
     USER_MODEL_SIGNING_PURPOSE,
 )
-from trusted_router.storage import STORE
+from trusted_router.storage import STORE, InMemoryStore
 from trusted_router.storage_user_models import InMemoryUserProvidedModels
 
 HEADERS = {"x-trustedrouter-user": "user-model-owner@example.com"}
@@ -1031,6 +1031,7 @@ def test_public_user_model_health_reports_dispatch_and_probe_degradation(
 
 def test_owner_earnings_api_lists_summary_models_movements_and_transfers(
     client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     created = _create(client, body=_body(slug="earnings-api"))
     owner_user_id = created["owner_user_id"]
@@ -1060,6 +1061,21 @@ def test_owner_earnings_api_lists_summary_models_movements_and_transfers(
     assert data["recent"][0]["kind"] == "custom_model_payout"
     assert data["recent"][0]["amount_display"] == "$2.50"
 
+    summary_staleness: list[bool] = []
+    original_summary = InMemoryStore.earnings_summary
+
+    def recording_summary(
+        store: InMemoryStore,
+        user_id: str,
+        *,
+        allow_stale: bool = False,
+    ) -> dict[str, int]:
+        summary_staleness.append(allow_stale)
+        return original_summary(store, user_id, allow_stale=allow_stale)
+
+    # Patch the backend class, never the module-global STORE proxy.
+    monkeypatch.setattr(InMemoryStore, "earnings_summary", recording_summary)
+
     body = {
         "workspace_id": workspace.id,
         "amount_microdollars": 1_000_000,
@@ -1071,6 +1087,7 @@ def test_owner_earnings_api_lists_summary_models_movements_and_transfers(
         json=body,
     )
     assert accepted.status_code == 200, accepted.text
+    assert summary_staleness == [False]
     assert accepted.json()["data"] == {
         "deduplicated": False,
         "summary": {
@@ -1089,6 +1106,7 @@ def test_owner_earnings_api_lists_summary_models_movements_and_transfers(
     )
     assert duplicate.status_code == 200
     assert duplicate.json()["data"]["deduplicated"] is True
+    assert summary_staleness == [False, False]
 
     insufficient = client.post(
         "/v1/user-models/earnings/transfer",
@@ -1098,6 +1116,7 @@ def test_owner_earnings_api_lists_summary_models_movements_and_transfers(
     assert insufficient.status_code == 402
     assert insufficient.json()["error"]["type"] == "insufficient_credits"
     assert insufficient.json()["error"]["available"] == 1_500_000
+    assert summary_staleness == [False, False, False]
 
 
 def test_owner_earnings_transfer_hides_membership_and_refuses_invalid_targets(

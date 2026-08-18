@@ -198,9 +198,10 @@ def _checkbox(value: str) -> bool:
 def _key_view(key: ApiKey) -> dict[str, Any]:
     limit_display = "none" if key.limit_microdollars is None else money(key.limit_microdollars)
     # One typed point-read for live usage + current window spend (falls back to
-    # the JSON values when typed is off / row missing).
+    # the JSON values when typed is off / row missing). This only renders the
+    # key card; authorize uses a separate strong read for hard limits.
     typed = getattr(STORE, "typed_key_usage", None)
-    usage = typed(key.hash) if typed is not None else None
+    usage = typed(key.hash, allow_stale=True) if typed is not None else None
     windows_used = (usage or {}).get("windows", {})
     lifetime_used = usage["usage"] if usage is not None else key.usage_microdollars
     window_views = []

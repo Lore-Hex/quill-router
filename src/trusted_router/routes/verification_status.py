@@ -25,7 +25,12 @@ def register_verification_status_routes(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> dict[str, dict[str, Any]]:
         user = _principal_user(principal)
-        lifetime_topup = STORE.get_lifetime_topup_microdollars(user.id)
+        # Response progress only; `missing_identity_verification_requirements`
+        # below evaluates the gate with the strong default.
+        lifetime_topup = STORE.get_lifetime_topup_microdollars(
+            user.id,
+            allow_stale=True,
+        )
         guidance = guidance_for(
             user.identity_status,
             reason_code=user.veriff_decision_reason_code,
