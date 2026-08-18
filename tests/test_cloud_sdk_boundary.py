@@ -37,6 +37,7 @@ ALLOWED = {
     # what these exist to do.
     "storage_gcp.py",
     "storage_gcp_authorize.py",
+    "storage_gcp_google_ads.py",
     "storage_gcp_io.py",
     "storage_gcp_settle_outbox.py",
     "storage_gcp_synthetic_rollups.py",

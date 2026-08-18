@@ -1,7 +1,7 @@
 {% extends "public/_base.html" %}
 {% block body %}
 <section class="public-proof-strip">
-  <div><strong>Effective</strong><span>August 4, 2026</span></div>
+  <div><strong>Effective</strong><span>August 18, 2026</span></div>
   <div><strong>Controller</strong><span>{{ entity.name }}</span></div>
   <div><strong>Prompt and output logs</strong><span>Never</span></div>
   <div><strong>Contact</strong><span><a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a></span></div>
@@ -21,13 +21,14 @@
   <h3>Prompts and outputs</h3>
   <p>{{ content_handling_claim }} Submitting a Batch request is an explicit instruction to use that temporary retention mode. Prompt traffic and Batch encryption are designed to terminate inside the attested gateway. If a workspace explicitly enables a content-bearing Broadcast destination, the selected content is sent to that destination under the workspace's configuration and the destination's terms; it is not retained as a TrustedRouter log. Downstream model providers process content according to the selected route and provider terms.</p>
   <h3>Website information</h3>
-  <p>We may collect IP address, browser and device information, referring page, coarse location derived from IP, cookie or session identifiers, and page interaction data needed to operate, secure, and improve the service. Our first-party campaign cookie is signed, HttpOnly, and limited to source, campaign, landing page, pseudonymous click identifiers, and an anonymous identifier. It does not contain prompts, outputs, API keys, BYOK credentials, email addresses, or payment details. TrustedRouter honors browser Global Privacy Control and Do Not Track signals by not creating or using this attribution cookie for that request.</p>
+  <p>We may collect IP address, browser and device information, referring page, coarse location derived from IP, cookie or session identifiers, and page interaction data needed to operate, secure, and improve the service. Our first-party campaign cookie is encrypted, authenticated, HttpOnly, and limited to source, campaign, landing page, pseudonymous click fingerprints, an anonymous identifier, and, for Google ad traffic, Google's click identifier. It does not contain prompts, outputs, API keys, BYOK credentials, email addresses, or payment details. Google click identifiers are retained only as encrypted ciphertext outside the cookie, for up to 90 days. TrustedRouter honors browser Global Privacy Control and Do Not Track signals by not creating or using this attribution cookie for that request.</p>
 
   <h2>How we use information</h2>
   <p>We use information to provide and secure the service, authenticate users, route requests, meter usage, process payments, prevent abuse, respond to support, maintain reliability, comply with law, and improve product performance. We do not use customer prompts or outputs to train our own models.</p>
 
   <h2>How we disclose information</h2>
   <p>We disclose information to infrastructure, authentication, payment, communications, monitoring, and model-provider subprocessors as needed to provide the service. The current platform and downstream model-provider list is published at <a href="/legal/subprocessors">/legal/subprocessors</a>. We may also disclose information when required by law, to protect rights and safety, during a corporate transaction, or with your direction or consent.</p>
+  <p>For a visitor who arrived through a Google ad, a server-side conversion worker may return Google's own click identifier, conversion class, event time, an opaque deduplication identifier, and, for a settled purchase, amount and currency to Google Ads. This reporting does not include email, name, account or workspace identifiers, API keys, model or provider choices, prompts, outputs, request bodies, or payment credentials. TrustedRouter does not load Google Analytics, Google Tag Manager, a Google Ads browser tag, or an X pixel.</p>
 
   <h2>Retention</h2>
   <p>We retain account, billing, security, and service metadata only as reasonably necessary for the purposes described above, including legal, tax, accounting, fraud-prevention, dispute, and security obligations. Retention periods vary by record type and contractual requirements. Ordinary inference does not retain prompt or output content. Encrypted Batch artifacts are scheduled for deletion after 30 days. Deleting an account does not require us to delete records that law, security, fraud prevention, or financial controls require us to preserve.</p>

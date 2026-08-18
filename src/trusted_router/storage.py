@@ -55,6 +55,7 @@ from trusted_router.storage_models import (
     EncryptedSecretEnvelope,
     GatewayAuthorization,
     Generation,
+    GoogleAdsConversion,
     Member,
     OAuthAuthorizationCode,
     ProviderAccessGrant,
@@ -314,6 +315,63 @@ class InMemoryStore:
             workspace_id,
             amount_microdollars=amount_microdollars,
             occurred_at=occurred_at,
+        )
+
+    def repair_google_ads_delivery_queue(self, *, since: str, limit: int) -> int:
+        return self.acquisition_store.repair_google_ads_delivery_queue(
+            since=since,
+            limit=limit,
+        )
+
+    def purge_expired_google_ads_click_ids(self, *, before: str, limit: int) -> int:
+        return self.acquisition_store.purge_expired_google_ads_click_ids(
+            before=before,
+            limit=limit,
+        )
+
+    def claim_google_ads_deliveries(
+        self,
+        *,
+        limit: int,
+        lease_seconds: int,
+    ) -> list[GoogleAdsConversion]:
+        return self.acquisition_store.claim_google_ads_deliveries(
+            limit=limit,
+            lease_seconds=lease_seconds,
+        )
+
+    def mark_google_ads_delivery_submitted(
+        self,
+        *,
+        order_id: str,
+        occurred_at: str,
+        lease_owner: str,
+        request_id: str,
+    ) -> GoogleAdsConversion | None:
+        return self.acquisition_store.mark_google_ads_delivery_submitted(
+            order_id=order_id,
+            occurred_at=occurred_at,
+            lease_owner=lease_owner,
+            request_id=request_id,
+        )
+
+    def mark_google_ads_delivery_failed(
+        self,
+        *,
+        order_id: str,
+        occurred_at: str,
+        lease_owner: str,
+        error: str,
+        retryable: bool,
+        max_attempts: int,
+    ) -> GoogleAdsConversion | None:
+        return self.acquisition_store.mark_google_ads_delivery_failed(
+            order_id=order_id,
+            occurred_at=occurred_at,
+            lease_owner=lease_owner,
+            error=error,
+            retryable=retryable,
+            max_attempts=max_attempts,
         )
 
     def list_activation_reminders(self, *, limit: int = 100) -> list[ActivationReminderTask]:

@@ -348,6 +348,23 @@ class Settings(BaseSettings):
     # error log lines we just enriched. DEBUG would flood; ERROR alone
     # would miss the request_id correlation in 429s.
     axiom_log_level: str = "INFO"
+    # Metadata-only Google Ads conversion delivery. The application writes an
+    # encrypted outbox; a separate scheduled worker decrypts only Google's own
+    # click ID and sends signup, activation, and settled-purchase events.
+    google_data_manager_enabled: bool = False
+    google_data_manager_account_id: str | None = None
+    google_data_manager_login_account_id: str | None = None
+    google_data_manager_signup_action_id: str | None = None
+    google_data_manager_activated_action_id: str | None = None
+    google_data_manager_purchase_action_id: str | None = None
+    google_data_manager_kms_key_name: str | None = None
+    google_data_manager_batch_size: int = 500
+    google_data_manager_lease_seconds: int = 300
+    google_data_manager_max_attempts: int = 20
+    google_data_manager_timeout_seconds: float = 20.0
+    google_data_manager_repair_lookback_days: int = 90
+    google_data_manager_status_poll_attempts: int = 6
+    google_data_manager_status_poll_seconds: float = 2.0
     enable_sentry_test_route: bool = False
     sentry_floodgate_enabled: bool = True
     sentry_floodgate_window_seconds: int = 60 * 60
@@ -1039,6 +1056,58 @@ class Settings(BaseSettings):
             not url.startswith("https://") for url in ops_chat_urls
         ):
             raise ValueError("TR_OPS_CHAT_WEBHOOK_URLS must contain only HTTPS URLs in production")
+        if not 1 <= self.google_data_manager_batch_size <= 2_000:
+            raise ValueError("TR_GOOGLE_DATA_MANAGER_BATCH_SIZE must be between 1 and 2000")
+        if self.google_data_manager_lease_seconds < 30:
+            raise ValueError("TR_GOOGLE_DATA_MANAGER_LEASE_SECONDS must be at least 30")
+        if not 1 <= self.google_data_manager_max_attempts <= 20:
+            raise ValueError("TR_GOOGLE_DATA_MANAGER_MAX_ATTEMPTS must be between 1 and 20")
+        if not 1.0 <= self.google_data_manager_timeout_seconds <= 120.0:
+            raise ValueError(
+                "TR_GOOGLE_DATA_MANAGER_TIMEOUT_SECONDS must be between 1 and 120"
+            )
+        if not 1 <= self.google_data_manager_repair_lookback_days <= 90:
+            raise ValueError(
+                "TR_GOOGLE_DATA_MANAGER_REPAIR_LOOKBACK_DAYS must be between 1 and 90"
+            )
+        if not 1 <= self.google_data_manager_status_poll_attempts <= 30:
+            raise ValueError(
+                "TR_GOOGLE_DATA_MANAGER_STATUS_POLL_ATTEMPTS must be between 1 and 30"
+            )
+        if not 0.1 <= self.google_data_manager_status_poll_seconds <= 30.0:
+            raise ValueError(
+                "TR_GOOGLE_DATA_MANAGER_STATUS_POLL_SECONDS must be between 0.1 and 30"
+            )
+        if self.google_data_manager_enabled:
+            missing_google_data_manager = [
+                name
+                for name, value in (
+                    ("TR_GOOGLE_DATA_MANAGER_ACCOUNT_ID", self.google_data_manager_account_id),
+                    (
+                        "TR_GOOGLE_DATA_MANAGER_SIGNUP_ACTION_ID",
+                        self.google_data_manager_signup_action_id,
+                    ),
+                    (
+                        "TR_GOOGLE_DATA_MANAGER_ACTIVATED_ACTION_ID",
+                        self.google_data_manager_activated_action_id,
+                    ),
+                    (
+                        "TR_GOOGLE_DATA_MANAGER_PURCHASE_ACTION_ID",
+                        self.google_data_manager_purchase_action_id,
+                    ),
+                )
+                if not value
+            ]
+            if (
+                environment not in {"local", "test"}
+                and not self.google_data_manager_kms_key_name
+            ):
+                missing_google_data_manager.append("TR_GOOGLE_DATA_MANAGER_KMS_KEY_NAME")
+            if missing_google_data_manager:
+                raise ValueError(
+                    "Google Data Manager is enabled but missing "
+                    + ", ".join(missing_google_data_manager)
+                )
         if self.x402_allow_mock_payments and environment not in {"local", "test"}:
             raise ValueError("TR_X402_ALLOW_MOCK_PAYMENTS is only allowed in local/test")
         if self.identity_session_stale_after_days <= 0:

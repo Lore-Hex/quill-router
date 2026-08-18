@@ -238,6 +238,18 @@ class EncryptedSecretEnvelope:
 
 
 @dataclass
+class EncryptedGoogleClickEnvelope:
+    """Dedicated-KMS envelope that is never part of the BYOK migration surface."""
+
+    algorithm: str
+    key_ref: str
+    encrypted_dek: str
+    dek_nonce: str
+    ciphertext: str
+    nonce: str
+
+
+@dataclass
 class ByokProviderConfig:
     workspace_id: str
     provider: str
@@ -1289,10 +1301,10 @@ class SignupResult:
 class AcquisitionAttribution:
     """Privacy-bounded acquisition record for one workspace.
 
-    Raw click identifiers are converted to keyed, non-reversible fingerprints
-    before this record is created. Neither identifiers nor fingerprints are
-    uploaded to ad platforms or copied into public APIs, generation metadata,
-    or the prompt path.
+    Advertising click identifiers are retained only as envelope-encrypted
+    control-plane secrets. Fingerprints remain available for first-party
+    reporting. Neither form is copied into public APIs, generation metadata,
+    logs, or the prompt path.
     """
 
     workspace_id: str
@@ -1307,7 +1319,52 @@ class AcquisitionAttribution:
     purchase_microdollars: int = 0
     first_purchase_at: str | None = None
     last_purchase_at: str | None = None
+    google_click_id_kind: str | None = None
+    encrypted_google_click_id: EncryptedGoogleClickEnvelope | None = None
+    google_click_expires_at: str | None = None
     updated_at: str = field(default_factory=iso_now)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.encrypted_google_click_id, dict):
+            self.encrypted_google_click_id = EncryptedGoogleClickEnvelope(
+                **self.encrypted_google_click_id
+            )
+
+
+@dataclass
+class GoogleAdsConversion:
+    """Metadata-only, encrypted conversion queued for Google Ads.
+
+    The row has no user, email, workspace, API-key, prompt, output, model, or
+    provider identifier. ``attribution_id`` is a random value used only as the
+    encryption context and to derive an opaque transaction ID.
+    """
+
+    order_id: str
+    conversion_action: str
+    occurred_at: str
+    attribution_id: str
+    click_id_kind: str
+    encrypted_click_id: EncryptedGoogleClickEnvelope | None
+    click_expires_at: str | None = None
+    value_microdollars: int = 0
+    currency_code: str = "USD"
+    created_at: str = field(default_factory=iso_now)
+    delivery_status: str = "pending"
+    delivery_attempts: int = 0
+    next_attempt_at: str = field(default_factory=iso_now)
+    last_error: str | None = None
+    lease_owner: str | None = None
+    leased_until: str | None = None
+    google_request_id: str | None = None
+    submitted_at: str | None = None
+    updated_at: str = field(default_factory=iso_now)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.encrypted_click_id, dict):
+            self.encrypted_click_id = EncryptedGoogleClickEnvelope(
+                **self.encrypted_click_id
+            )
 
 
 ACTIVATION_REMINDER_DELAYS_SECONDS: tuple[tuple[str, int], ...] = (

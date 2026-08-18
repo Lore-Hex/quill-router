@@ -72,6 +72,8 @@ BIGTABLE_INSTANCE_TYPE="${TR_BIGTABLE_INSTANCE_TYPE:-PRODUCTION}"
 KMS_KEYRING_ID="${TR_KMS_KEYRING_ID:-trusted-router}"
 BYOK_KMS_KEY_ID="${TR_BYOK_KMS_KEY_ID:-byok-envelope}"
 BYOK_KMS_KEY_NAME="${TR_BYOK_KMS_KEY_NAME:-projects/${PROJECT_ID}/locations/${REGION}/keyRings/${KMS_KEYRING_ID}/cryptoKeys/${BYOK_KMS_KEY_ID}}"
+GOOGLE_ADS_KMS_KEY_ID="${TR_GOOGLE_DATA_MANAGER_KMS_KEY_ID:-google-ads-click-envelope}"
+GOOGLE_ADS_KMS_KEY_NAME="${TR_GOOGLE_DATA_MANAGER_KMS_KEY_NAME:-projects/${PROJECT_ID}/locations/${REGION}/keyRings/${KMS_KEYRING_ID}/cryptoKeys/${GOOGLE_ADS_KMS_KEY_ID}}"
 TRUST_FILE="${TRUST_FILE:-/Users/jperla/claude/quill-cloud-proxy/trust-page/gcp-release.json}"
 TRUST_FILE_URL="${TRUST_FILE_URL:-https://trust.trustedrouter.com/trust/gcp-release.json}"
 
