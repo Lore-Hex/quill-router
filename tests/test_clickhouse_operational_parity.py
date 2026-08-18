@@ -10,6 +10,7 @@ from clickhouse.verify_operational_parity import (
     _source_rollups_from_raw,
     _source_rows,
     _stable_source_row,
+    _stable_source_write,
 )
 from trusted_router.storage_models import SyntheticProbeSample
 
@@ -83,6 +84,65 @@ def test_parity_grace_excludes_recent_raw_rows() -> None:
         surface="synthetic",
         cutoff=cutoff,
     )
+
+
+def test_parity_grace_excludes_rows_written_recently_even_with_old_event_time() -> None:
+    cutoff = dt.datetime(2026, 7, 31, 17, 0, tzinfo=dt.UTC)
+
+    def row(write_time: dt.datetime) -> object:
+        cell = SimpleNamespace(
+            value=b"{}",
+            timestamp_micros=int(write_time.timestamp() * 1_000_000),
+        )
+        return SimpleNamespace(cells={"benchmark": {b"body": [cell]}})
+
+    assert _stable_source_write(
+        row(cutoff - dt.timedelta(seconds=1)),
+        families=("benchmark", "m"),
+        cutoff=cutoff,
+    )
+    assert not _stable_source_write(
+        row(cutoff + dt.timedelta(seconds=1)),
+        families=("benchmark", "m"),
+        cutoff=cutoff,
+    )
+
+
+def test_benchmark_parity_applies_grace_to_bigtable_write_time() -> None:
+    now = dt.datetime.now(dt.UTC)
+
+    def row(sample_id: str, write_time: dt.datetime) -> object:
+        payload = {
+            "id": sample_id,
+            "model": "test/model",
+            "provider": "test",
+            "provider_name": "Test",
+            "status": "completed",
+            "usage_type": "credits",
+            "streamed": False,
+            "created_at": (now - dt.timedelta(hours=1)).isoformat(),
+        }
+        cell = SimpleNamespace(
+            value=json.dumps(payload).encode("utf-8"),
+            timestamp_micros=int(write_time.timestamp() * 1_000_000),
+        )
+        return SimpleNamespace(cells={"benchmark": {b"body": [cell]}})
+
+    class Table:
+        def read_rows(self, **_: object) -> list[object]:
+            return [
+                row("recent-write", now),
+                row("stable-write", now - dt.timedelta(minutes=10)),
+            ]
+
+    samples = _source_rows(
+        Table(),
+        surface="benchmark",
+        limit=2,
+        grace_seconds=120,
+    )
+
+    assert set(samples) == {"stable-write"}
 
 
 def test_parity_waits_for_shared_heartbeat_bucket_to_close() -> None:

@@ -66,6 +66,26 @@ def _parse(cls: type[T], payload: dict[str, Any] | None) -> T | None:
         return None
 
 
+def _stable_source_write(
+    row: Any,
+    *,
+    families: tuple[str, ...],
+    cutoff: dt.datetime,
+) -> bool:
+    """Exclude rows whose Bigtable write may still be in flight to ClickHouse."""
+    for family in families:
+        cells = row.cells.get(family, {}).get(b"body", [])
+        if not cells:
+            continue
+        timestamp_micros = getattr(cells[0], "timestamp_micros", None)
+        if not isinstance(timestamp_micros, int):
+            # Lightweight test and operator fakes may not carry cell metadata.
+            return True
+        written_at = dt.datetime.fromtimestamp(timestamp_micros / 1_000_000, tz=dt.UTC)
+        return written_at <= cutoff
+    return False
+
+
 def _stable_source_row(
     payload: dict[str, Any],
     *,
@@ -139,6 +159,8 @@ def _source_rows(
     cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=max(0, grace_seconds))
     for row in rows:
         raw = _body(row, families)
+        if not _stable_source_write(row, families=families, cutoff=cutoff):
+            continue
         if surface == "benchmark":
             benchmark_sample = _parse(ProviderBenchmarkSample, raw)
             if benchmark_sample is None:
@@ -195,6 +217,12 @@ def _source_rollups_from_raw(
     )
     samples: list[SyntheticProbeSample] = []
     for row in rows:
+        if not _stable_source_write(
+            row,
+            families=("synthetic", "m"),
+            cutoff=cutoff,
+        ):
+            continue
         sample = _parse(SyntheticProbeSample, _body(row, ("synthetic", "m")))
         if sample is not None:
             samples.append(sample)
