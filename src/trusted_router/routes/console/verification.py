@@ -21,7 +21,7 @@ from trusted_router.verification_gates import missing_identity_verification_requ
 
 def register(app: FastAPI) -> None:
     @app.get("/console/account/verification")
-    async def console_verification(
+    def console_verification(
         ctx: ConsoleDep,
         settings: SettingsDep,
         error: str = "",
@@ -98,7 +98,7 @@ def register(app: FastAPI) -> None:
         )
 
     @app.post("/console/account/verification/identity/start")
-    async def console_start_identity(
+    def console_start_identity(
         ctx: ConsoleDep,
         settings: SettingsDep,
     ) -> Response:

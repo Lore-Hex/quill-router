@@ -200,7 +200,7 @@ def _client_reliability_data(
 
 def register(app: FastAPI) -> None:
     @app.get("/console/activity")
-    async def console_activity(ctx: ConsoleDep, settings: SettingsDep) -> Response:
+    def console_activity(ctx: ConsoleDep, settings: SettingsDep) -> Response:
         events = STORE.activity_events(ctx.workspace.id, limit=50)
         for event in events:
             event["cost_display"] = format_money_precise(int(event.get("cost_microdollars") or 0))
@@ -215,7 +215,7 @@ def register(app: FastAPI) -> None:
         ))
 
     @app.get("/console/activity/usage.json")
-    async def console_activity_usage(
+    def console_activity_usage(
         ctx: ConsoleDep,
         range_: str = Query("30d", alias="range"),
         by_model: bool = False,
@@ -259,7 +259,7 @@ def register(app: FastAPI) -> None:
         return result
 
     @app.get("/console/activity/client-reliability.json")
-    async def console_activity_client_reliability(
+    def console_activity_client_reliability(
         ctx: ConsoleDep,
         settings: SettingsDep,
         range_: str = Query("24h", alias="range"),

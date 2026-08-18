@@ -65,7 +65,7 @@ def register(app: FastAPI) -> None:
         ))
 
     @app.get("/console/api-keys")
-    async def console_api_keys(
+    def console_api_keys(
         ctx: ConsoleDep,
         settings: SettingsDep,
         saved: str | None = None,
@@ -74,7 +74,7 @@ def register(app: FastAPI) -> None:
         return _render_page(ctx, settings, saved=saved, error=error)
 
     @app.post("/console/api-keys")
-    async def console_create_api_key(
+    def console_create_api_key(
         ctx: ConsoleDep,
         settings: SettingsDep,
         name: str = Form("API key", min_length=1, max_length=120),
@@ -108,7 +108,7 @@ def register(app: FastAPI) -> None:
         return _render_page(ctx, settings, created_key=raw)
 
     @app.post("/console/api-keys/{key_hash}/limit")
-    async def console_update_api_key_limit(
+    def console_update_api_key_limit(
         ctx: ConsoleDep,
         key_hash: str,
         limit: str = Form(""),
@@ -140,19 +140,19 @@ def register(app: FastAPI) -> None:
         return RedirectResponse(url="/console/api-keys?saved=limit", status_code=303)
 
     @app.post("/console/api-keys/{key_hash}/disable")
-    async def console_disable_api_key(ctx: ConsoleDep, key_hash: str) -> Response:
+    def console_disable_api_key(ctx: ConsoleDep, key_hash: str) -> Response:
         _require_key(ctx, key_hash, manage=True)
         STORE.update_key(key_hash, {"disabled": True})
         return RedirectResponse(url="/console/api-keys?saved=disabled", status_code=303)
 
     @app.post("/console/api-keys/{key_hash}/enable")
-    async def console_enable_api_key(ctx: ConsoleDep, key_hash: str) -> Response:
+    def console_enable_api_key(ctx: ConsoleDep, key_hash: str) -> Response:
         _require_key(ctx, key_hash, manage=True)
         STORE.update_key(key_hash, {"disabled": False})
         return RedirectResponse(url="/console/api-keys?saved=enabled", status_code=303)
 
     @app.post("/console/api-keys/{key_hash}/delete")
-    async def console_delete_api_key(ctx: ConsoleDep, key_hash: str) -> Response:
+    def console_delete_api_key(ctx: ConsoleDep, key_hash: str) -> Response:
         key = _require_key(ctx, key_hash, manage=True)
         # Disable-first, then delete: an ACTIVE key may have in-flight typed
         # holds; deleting it mid-flight strands them (issue #29). Disabling

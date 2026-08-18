@@ -33,6 +33,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.gzip import GZipMiddleware
 
 from trusted_router.acquisition import (
@@ -271,7 +272,7 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         # drops the flag.
         if settings.read_only:
             return await call_next(request)
-        limited = _rate_limit_request(
+        limited = await _rate_limit_request(
             request,
             settings,
             public_read_rate_limits=public_read_rate_limits,
@@ -316,7 +317,7 @@ def _apex_public_url(settings: Settings, request: Request, hostname: str) -> str
     return f"https://{domain}{request.url.path}{suffix}"
 
 
-def _rate_limit_request(
+async def _rate_limit_request(
     request: Request,
     settings: Settings,
     *,
@@ -351,6 +352,7 @@ def _rate_limit_request(
         subject = _fingerprint(ip)
         limit = settings.rate_limit_ip_per_window
         hit_rate_limit = public_read_rate_limits.hit
+        durable = False
     elif path.startswith(("/internal/", "/v1/internal/")):
         namespace = "internal"
         # Subject cardinality must be BOUNDED against unauthenticated input:
@@ -378,24 +380,36 @@ def _rate_limit_request(
         # bucket keeps the backstop off the money path; fleet capacity is limit
         # times the number of instances.
         hit_rate_limit = public_read_rate_limits.hit
+        durable = False
     elif bearer:
         namespace = "key"
         subject = _fingerprint(bearer)
         limit = settings.rate_limit_key_per_window
         hit_rate_limit = STORE.hit_rate_limit
+        durable = True
     else:
         namespace = "ip"
         subject = _fingerprint(user or ip)
         limit = settings.rate_limit_ip_per_window
         hit_rate_limit = STORE.hit_rate_limit
+        durable = True
 
     try:
-        hit = hit_rate_limit(
-            namespace=namespace,
-            subject=subject,
-            limit=limit,
-            window_seconds=settings.rate_limit_window_seconds,
-        )
+        if durable:
+            hit = await run_in_threadpool(
+                hit_rate_limit,
+                namespace=namespace,
+                subject=subject,
+                limit=limit,
+                window_seconds=settings.rate_limit_window_seconds,
+            )
+        else:
+            hit = hit_rate_limit(
+                namespace=namespace,
+                subject=subject,
+                limit=limit,
+                window_seconds=settings.rate_limit_window_seconds,
+            )
     except Exception as exc:  # noqa: BLE001 — best-effort guard, must not 500
         # Rate limiting is a best-effort guard, not core request logic. The
         # Spanner read-modify-write on the (namespace#subject#bucket) counter

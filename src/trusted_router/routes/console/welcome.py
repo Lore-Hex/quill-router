@@ -13,7 +13,7 @@ from trusted_router.typed_balance import live_credit_summary
 
 def register(app: FastAPI) -> None:
     @app.get("/console/welcome")
-    async def console_welcome(
+    def console_welcome(
         request: Request,
         ctx: ConsoleDep,
         settings: SettingsDep,

@@ -60,7 +60,7 @@ _PRIVATE_CREDITS_HEADERS = {
 
 def register(app: FastAPI) -> None:
     @app.get("/console/credits")
-    async def console_credits(
+    def console_credits(
         ctx: ConsoleDep,
         settings: SettingsDep,
         purpose: str = "",
@@ -179,11 +179,11 @@ def register(app: FastAPI) -> None:
         )
 
     @app.get("/console/credits/checkout")
-    async def console_credit_checkout_get(_ctx: ConsoleDep) -> Response:
+    def console_credit_checkout_get(_ctx: ConsoleDep) -> Response:
         return RedirectResponse(url="/console/credits", status_code=302)
 
     @app.post("/console/credits/checkout")
-    async def console_credit_checkout(
+    def console_credit_checkout(
         request: Request,
         ctx: ConsoleDep,
         settings: SettingsDep,
@@ -298,7 +298,7 @@ def register(app: FastAPI) -> None:
         return RedirectResponse(url=str(data["url"]), status_code=303)
 
     @app.get("/console/credits/paypal/capture")
-    async def console_paypal_capture(
+    def console_paypal_capture(
         ctx: ConsoleDep,
         settings: SettingsDep,
         token: str = "",
@@ -319,7 +319,7 @@ def register(app: FastAPI) -> None:
         return RedirectResponse(url=f"/console/credits?checkout=success&{suffix}", status_code=303)
 
     @app.post("/console/credits/payment-methods/add")
-    async def console_add_payment_method(
+    def console_add_payment_method(
         request: Request,
         ctx: ConsoleDep,
         settings: SettingsDep,
@@ -344,7 +344,7 @@ def register(app: FastAPI) -> None:
         return RedirectResponse(url=str(data["url"]), status_code=303)
 
     @app.post("/console/credits/payment-methods/manage")
-    async def console_manage_payment_methods(
+    def console_manage_payment_methods(
         request: Request,
         ctx: ConsoleDep,
         settings: SettingsDep,
@@ -364,7 +364,7 @@ def register(app: FastAPI) -> None:
         return RedirectResponse(url=data["url"], status_code=303)
 
     @app.post("/console/credits/payment-methods/remove")
-    async def console_remove_payment_method(
+    def console_remove_payment_method(
         ctx: ConsoleDep,
         settings: SettingsDep,
     ) -> Response:
@@ -379,7 +379,7 @@ def register(app: FastAPI) -> None:
         return RedirectResponse(url=f"/console/credits?payment_method={suffix}", status_code=303)
 
     @app.post("/console/credits/auto-refill")
-    async def console_save_auto_refill(
+    def console_save_auto_refill(
         ctx: ConsoleDep,
         settings: SettingsDep,
         enabled: str = Form(""),
