@@ -228,6 +228,8 @@ def test_confidential_cowork_is_self_serve_and_fail_closed(client: TestClient) -
     assert "Confidential Cowork by TrustedRouter" in response.text
     assert "Confidential-Cowork-macOS-universal.dmg" in response.text
     assert "trustedrouter/confidential" in response.text
+    assert "searchable catalog of specific models and providers" in response.text
+    assert "Default route</span><strong>trustedrouter/confidential" in response.text
     assert "Data collection</span><strong>deny" in response.text
     assert "United States or European Union" in response.text
     assert "No eligible confidential provider means no model request" in response.text
