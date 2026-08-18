@@ -44,6 +44,7 @@ from trusted_router.spend_windows import (
 from trusted_router.storage_errors import DeferredSettlementCapReached
 from trusted_router.storage_models import (
     ApiKey,
+    ApiKeyUsageSnapshot,
     CreditAccount,
     CreditMoney,
     GatewayAuthorization,
@@ -171,6 +172,21 @@ class InMemoryApiKeys:
     def list_for_workspace(self, workspace_id: str) -> list[ApiKey]:
         with self._lock:
             return [key for key in self.keys.values() if key.workspace_id == workspace_id]
+
+    def list_with_usage_for_workspace(self, workspace_id: str) -> list[ApiKeyUsageSnapshot]:
+        """Atomically snapshot every key and its display counters."""
+        with self._lock:
+            keys = [key for key in self.keys.values() if key.workspace_id == workspace_id]
+            return [
+                ApiKeyUsageSnapshot(
+                    api_key=key,
+                    usage_microdollars=key.usage_microdollars,
+                    byok_usage_microdollars=key.byok_usage_microdollars,
+                    reserved_microdollars=key.reserved_microdollars,
+                    windows=self.window_usage_snapshot(key.hash),
+                )
+                for key in keys
+            ]
 
     def delete(self, key_hash: str) -> bool:
         with self._lock:

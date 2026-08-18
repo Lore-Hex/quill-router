@@ -31,13 +31,50 @@ from trusted_router.storage_gcp_counters import (
     key_limit_mirror_rows,
 )
 from trusted_router.storage_gcp_io import SpannerIO, run_in_transaction_with_retry
+from trusted_router.storage_key_usage import api_key_from_json, api_key_usage_snapshot
 from trusted_router.storage_models import (
     ApiKey,
+    ApiKeyUsageSnapshot,
     GatewayAuthorization,
     _is_byok,
     iso_now,
 )
 from trusted_router.types import UsageType
+
+_CONSOLE_API_KEYS_SQL = """
+    /* console_api_keys */
+    SELECT
+      key_record.body,
+      key_limit.shard,
+      key_limit.usage,
+      key_limit.byok_usage,
+      key_limit.reserved,
+      key_limit.day_usage,
+      key_limit.day_start,
+      key_limit.week_usage,
+      key_limit.week_start,
+      key_limit.month_usage,
+      key_limit.month_start
+    FROM tr_entities AS key_index
+    JOIN tr_entities AS key_record
+      ON key_record.kind='api_key'
+     AND key_record.id=JSON_VALUE(key_index.body, '$.key_id')
+     AND JSON_VALUE(key_record.body, '$.hash')=key_record.id
+    LEFT JOIN tr_key_limit AS key_limit
+      ON key_limit.key_hash=key_record.id
+     AND key_limit.shard>=0
+     AND key_limit.shard<COALESCE(
+       CAST(JSON_VALUE(key_record.body, '$.usage_shard_count') AS INT64),
+       1
+     )
+    WHERE key_index.kind='api_key_by_workspace'
+      AND STARTS_WITH(key_index.id, @prefix)
+      AND key_index.id=CONCAT(@workspace_id, '#', key_record.id)
+      AND JSON_VALUE(key_record.body, '$.workspace_id')=@workspace_id
+    ORDER BY JSON_VALUE(key_record.body, '$.created_at') DESC,
+             key_record.id,
+             key_limit.shard
+"""
 
 
 class SpannerApiKeys:
@@ -138,6 +175,46 @@ class SpannerApiKeys:
                 keys.append(key)
         keys.sort(key=lambda item: item.created_at, reverse=True)
         return keys
+
+    def list_with_usage_for_workspace(self, workspace_id: str) -> list[ApiKeyUsageSnapshot]:
+        """Fetch every page key and all configured usage shards in one RPC.
+
+        The snapshot is deliberately strong.  Key creation, deletion, and
+        budget edits are management operations with read-your-write semantics;
+        weakening the combined read just to make display counters stale would
+        make the newly-created or deleted key itself stale too.
+        """
+        pt = self._io.param_types
+        with self._io.database.snapshot() as snapshot:
+            rows = list(
+                snapshot.execute_sql(
+                    _CONSOLE_API_KEYS_SQL,
+                    params={
+                        "workspace_id": workspace_id,
+                        "prefix": f"{workspace_id}#",
+                    },
+                    param_types={
+                        "workspace_id": pt.STRING,
+                        "prefix": pt.STRING,
+                    },
+                )
+            )
+
+        grouped: dict[str, tuple[ApiKey, list[list[Any]]]] = {}
+        for row in rows:
+            api_key = api_key_from_json(row[0])
+            # SQL carries the same ownership predicate.  Keep the boundary in
+            # Python as defense in depth if a future query edit or backend
+            # adapter returns a broader row set.
+            if api_key.workspace_id != workspace_id:
+                continue
+            entry = grouped.setdefault(api_key.hash, (api_key, []))
+            if row[1] is not None:
+                entry[1].append(list(row[1:]))
+        return [
+            api_key_usage_snapshot(api_key, usage_rows)
+            for api_key, usage_rows in grouped.values()
+        ]
 
     def delete(self, key_hash: str) -> bool:
         key = self.get_by_hash(key_hash)

@@ -66,12 +66,14 @@ from trusted_router.storage_gcp_codec import (
     workspace_key_id,
 )
 from trusted_router.storage_gcp_counters import credit_shard_count, distribute_credit_amount
+from trusted_router.storage_key_usage import api_key_from_json, api_key_usage_snapshot
 from trusted_router.storage_models import (
     FUTURE_SAMPLE_SKEW_SECONDS,
     AcquisitionAttribution,
     ActivationReminderTask,
     ApiKey,
     ApiKeyAuthContext,
+    ApiKeyUsageSnapshot,
     AuthSession,
     BedrockGroupBuyAggregate,
     BedrockGroupBuyPledge,
@@ -320,6 +322,41 @@ _API_KEY_AUTH_CONTEXT_SQL = """
      AND workspace_record.id = key_record.body ->> 'workspace_id'
     WHERE lookup_record.kind = 'api_key_lookup'
       AND lookup_record.id = %s
+"""
+
+_CONSOLE_API_KEYS_SQL = """
+    /* console_api_keys */
+    SELECT
+      key_record.body,
+      key_limit.shard,
+      key_limit.usage,
+      key_limit.byok_usage,
+      key_limit.reserved,
+      key_limit.day_usage,
+      key_limit.day_start,
+      key_limit.week_usage,
+      key_limit.week_start,
+      key_limit.month_usage,
+      key_limit.month_start
+    FROM tr_entities AS key_index
+    JOIN tr_entities AS key_record
+      ON key_record.kind = 'api_key'
+     AND key_record.id = key_index.body ->> 'key_id'
+     AND key_record.body ->> 'hash' = key_record.id
+    LEFT JOIN tr_key_limit AS key_limit
+      ON key_limit.workspace_id = %s
+     AND key_limit.key_hash = key_record.id
+     AND key_limit.shard >= 0
+     AND key_limit.shard < COALESCE(
+       CAST(key_record.body ->> 'usage_shard_count' AS BIGINT),
+       1
+     )
+    WHERE key_index.kind = 'api_key_by_workspace'
+      AND key_index.id = (%s || '#' || key_record.id)
+      AND key_record.body ->> 'workspace_id' = %s
+    ORDER BY key_record.body ->> 'created_at' DESC,
+             key_record.id,
+             key_limit.shard
 """
 
 
@@ -1676,6 +1713,29 @@ class PostgresStore:
 
     def list_keys(self, workspace_id: str) -> list[ApiKey]:
         self._not_implemented("list_keys")
+
+    def list_api_keys_with_usage(self, workspace_id: str) -> list[ApiKeyUsageSnapshot]:
+        """Portable one-statement key-management page projection."""
+
+        def read(conn: Any) -> list[ApiKeyUsageSnapshot]:
+            rows = conn.execute(
+                _CONSOLE_API_KEYS_SQL,
+                (workspace_id, workspace_id, workspace_id),
+            ).fetchall()
+            grouped: dict[str, tuple[ApiKey, list[list[Any]]]] = {}
+            for row in rows:
+                api_key = api_key_from_json(row[0])
+                if api_key.workspace_id != workspace_id:
+                    continue
+                entry = grouped.setdefault(api_key.hash, (api_key, []))
+                if row[1] is not None:
+                    entry[1].append(list(row[1:]))
+            return [
+                api_key_usage_snapshot(api_key, usage_rows)
+                for api_key, usage_rows in grouped.values()
+            ]
+
+        return self._run_transaction(read)
 
     def delete_key(self, key_hash: str) -> bool:
         def delete(conn: Any) -> bool:

@@ -1497,6 +1497,99 @@ def _execute_sql(
     params: dict[str, Any],
 ) -> list[list[str]]:
     kind = params.get("kind", "")
+    if "/* console_api_keys */" in sql:
+        _require_pred(
+            sql,
+            "key_index.kind='api_key_by_workspace'",
+            "console-api-keys index kind",
+        )
+        _require_pred(
+            sql,
+            "key_record.id=JSON_VALUE(key_index.body, '$.key_id')",
+            "console-api-keys index target",
+        )
+        _require_pred(
+            sql,
+            "JSON_VALUE(key_record.body, '$.hash')=key_record.id",
+            "console-api-keys canonical key id",
+        )
+        _require_pred(
+            sql,
+            "STARTS_WITH(key_index.id, @prefix)",
+            "console-api-keys workspace prefix",
+        )
+        _require_pred(
+            sql,
+            "key_index.id=CONCAT(@workspace_id, '#', key_record.id)",
+            "console-api-keys canonical workspace index",
+        )
+        _require_pred(
+            sql,
+            "JSON_VALUE(key_record.body, '$.workspace_id')=@workspace_id",
+            "console-api-keys ownership boundary",
+        )
+        _require_pred(
+            sql,
+            "key_limit.shard<COALESCE(",
+            "console-api-keys configured shard bound",
+        )
+        _require_pred(
+            sql,
+            "ORDER BY JSON_VALUE(key_record.body, '$.created_at') DESC",
+            "console-api-keys newest-first ordering",
+        )
+
+        workspace_id = str(params["workspace_id"])
+        prefix = str(params["prefix"])
+        keys: list[tuple[str, str, dict[str, Any]]] = []
+        for (row_kind, index_id), index_row in db.rows.items():
+            if row_kind != "api_key_by_workspace" or not index_id.startswith(prefix):
+                continue
+            key_id = str(json.loads(index_row.body).get("key_id", ""))
+            key_row = db.rows.get(("api_key", key_id))
+            if key_row is None:
+                continue
+            key_body = json.loads(key_row.body)
+            if (
+                index_id != f"{workspace_id}#{key_id}"
+                or key_body.get("hash") != key_id
+                or key_body.get("workspace_id") != workspace_id
+            ):
+                continue
+            keys.append((str(key_body.get("created_at", "")), key_id, key_body))
+        keys.sort(key=lambda item: item[1])
+        keys.sort(key=lambda item: item[0], reverse=True)
+
+        output: list[list[Any]] = []
+        usage_columns = (
+            "shard",
+            "usage",
+            "byok_usage",
+            "reserved",
+            "day_usage",
+            "day_start",
+            "week_usage",
+            "week_start",
+            "month_usage",
+            "month_start",
+        )
+        for _created_at, key_id, key_body in keys:
+            shard_count = int(key_body.get("usage_shard_count", 1))
+            usage_rows = [
+                record
+                for record in db.typed.get("tr_key_limit", {}).values()
+                if record.get("key_hash") == key_id
+                and 0 <= int(record.get("shard", 0)) < shard_count
+            ]
+            usage_rows.sort(key=lambda record: int(record.get("shard", 0)))
+            if not usage_rows:
+                output.append([json.dumps(key_body), *([None] * len(usage_columns))])
+                continue
+            output.extend(
+                [json.dumps(key_body), *(record.get(column) for column in usage_columns)]
+                for record in usage_rows
+            )
+        return output
     if "/* auth_session_context */" in sql:
         _require_pred(
             sql,

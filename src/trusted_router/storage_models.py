@@ -227,6 +227,23 @@ class ApiKey:
     federated_home: str = ""
 
 
+@dataclass(frozen=True)
+class ApiKeyUsageSnapshot:
+    """One API key plus the live counters needed by key-management pages.
+
+    Keeping this as a storage value (rather than making the route point-read
+    usage for every key) lets each backend fetch the whole page in one
+    strongly-consistent operation.  ``windows`` contains current-window
+    microdollar usage under the ``daily``/``weekly``/``monthly`` keys.
+    """
+
+    api_key: ApiKey
+    usage_microdollars: int
+    byok_usage_microdollars: int
+    reserved_microdollars: int
+    windows: dict[str, int]
+
+
 @dataclass
 class EncryptedSecretEnvelope:
     algorithm: str
