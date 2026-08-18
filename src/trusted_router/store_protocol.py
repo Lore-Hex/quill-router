@@ -33,6 +33,7 @@ from trusted_router.storage_models import (
     EncryptedSecretEnvelope,
     GatewayAuthorization,
     Generation,
+    GoogleAdsConversion,
     Member,
     OAuthAuthorizationCode,
     ProviderAccessGrant,
@@ -121,6 +122,32 @@ class Store(Protocol):
         amount_microdollars: int,
         occurred_at: str,
     ) -> AcquisitionAttribution | None: ...
+    def repair_google_ads_delivery_queue(self, *, since: str, limit: int) -> int: ...
+    def purge_expired_google_ads_click_ids(self, *, before: str, limit: int) -> int: ...
+    def claim_google_ads_deliveries(
+        self,
+        *,
+        limit: int,
+        lease_seconds: int,
+    ) -> list[GoogleAdsConversion]: ...
+    def mark_google_ads_delivery_submitted(
+        self,
+        *,
+        order_id: str,
+        occurred_at: str,
+        lease_owner: str,
+        request_id: str,
+    ) -> GoogleAdsConversion | None: ...
+    def mark_google_ads_delivery_failed(
+        self,
+        *,
+        order_id: str,
+        occurred_at: str,
+        lease_owner: str,
+        error: str,
+        retryable: bool,
+        max_attempts: int,
+    ) -> GoogleAdsConversion | None: ...
     def list_activation_reminders(self, *, limit: int = ...) -> list[ActivationReminderTask]: ...
     def delete_activation_reminders(self, reminder_ids: list[str]) -> None: ...
     def claim_activation_reminder(

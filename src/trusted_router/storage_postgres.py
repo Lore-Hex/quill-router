@@ -87,6 +87,7 @@ from trusted_router.storage_models import (
     EncryptedSecretEnvelope,
     GatewayAuthorization,
     Generation,
+    GoogleAdsConversion,
     Member,
     OAuthAuthorizationCode,
     ProviderAccessGrant,
@@ -928,6 +929,42 @@ class PostgresStore:
         occurred_at: str,
     ) -> AcquisitionAttribution | None:
         self._not_implemented("record_acquisition_purchase")
+
+    def repair_google_ads_delivery_queue(self, *, since: str, limit: int) -> int:
+        self._not_implemented("repair_google_ads_delivery_queue")
+
+    def purge_expired_google_ads_click_ids(self, *, before: str, limit: int) -> int:
+        self._not_implemented("purge_expired_google_ads_click_ids")
+
+    def claim_google_ads_deliveries(
+        self,
+        *,
+        limit: int,
+        lease_seconds: int,
+    ) -> list[GoogleAdsConversion]:
+        self._not_implemented("claim_google_ads_deliveries")
+
+    def mark_google_ads_delivery_submitted(
+        self,
+        *,
+        order_id: str,
+        occurred_at: str,
+        lease_owner: str,
+        request_id: str,
+    ) -> GoogleAdsConversion | None:
+        self._not_implemented("mark_google_ads_delivery_submitted")
+
+    def mark_google_ads_delivery_failed(
+        self,
+        *,
+        order_id: str,
+        occurred_at: str,
+        lease_owner: str,
+        error: str,
+        retryable: bool,
+        max_attempts: int,
+    ) -> GoogleAdsConversion | None:
+        self._not_implemented("mark_google_ads_delivery_failed")
 
     def list_activation_reminders(self, *, limit: int = 100) -> list[ActivationReminderTask]:
         self._not_implemented("list_activation_reminders")
