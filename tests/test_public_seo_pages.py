@@ -81,6 +81,7 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert "<loc>https://trustedrouter.com/badge</loc>" in core.text
     assert "<loc>https://trustedrouter.com/customers/robot-robot-human</loc>" in core.text
     assert "<loc>https://trustedrouter.com/careers</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/confidential-cowork</loc>" in core.text
 
     models = client.get("/sitemap-models.xml")
     assert models.status_code == 200

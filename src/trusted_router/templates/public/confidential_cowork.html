@@ -1,0 +1,78 @@
+{% extends "public/_base.html" %}
+
+{% block hero %}
+<section class="cc-hero" aria-labelledby="confidential-cowork-title">
+  <div class="kicker">Confidential Cowork by TrustedRouter</div>
+  <h1 id="confidential-cowork-title">Confidential Cowork</h1>
+  <p class="lead">A native agent for code, documents, research, and team workflows where confidential routing is a requirement, not a preference.</p>
+  <div class="hero-actions">
+    <a class="btn primary" href="https://github.com/Lore-Hex/QuillCode/releases/download/confidential-cowork-latest/Confidential-Cowork-macOS-universal.dmg">Download for macOS</a>
+    <button class="btn" type="button" data-action="open-signin">Start with TrustedRouter</button>
+    <a class="btn" href="mailto:support@trustedrouter.com?subject=Confidential%20Cowork%20enterprise">Enterprise deployment <span aria-hidden="true">→</span></a>
+  </div>
+  <p class="cc-platform-note">One universal download for Apple silicon and Intel Macs. OpenAI compatible API.</p>
+  <figure class="cc-product-shot">
+    <img src="/static/confidential-cowork-desktop.png" alt="Confidential Cowork desktop app showing its native workspace, confidential model route, and Auto safety mode" width="1094" height="768" loading="eager" fetchpriority="high">
+    <figcaption>Every LLM request carries the confidential provider policy. The app cannot silently fall back to an ordinary route.</figcaption>
+  </figure>
+</section>
+{% endblock %}
+
+{% block body %}
+<section class="public-proof-strip cc-proof" aria-label="Confidential Cowork guarantees">
+  <div><strong>Fail closed</strong><span>No eligible confidential provider means no model request.</span></div>
+  <div><strong>US or EU</strong><span>Select the required processing jurisdiction in the app.</span></div>
+  <div><strong>Whole-agent policy</strong><span>Primary model, safety reviewer, summaries, and model search share one boundary.</span></div>
+  <div><strong>Native Swift</strong><span>Fast macOS app, local projects, terminal, tools, and Computer Use.</span></div>
+</section>
+
+<section class="marketing-split cc-explanation" aria-labelledby="boundary-heading">
+  <div class="marketing-copy">
+    <div class="kicker">A product boundary users can see</div>
+    <h2 id="boundary-heading">Confidentiality cannot be clicked away</h2>
+    <p>Confidential Cowork removes custom routing controls from the user interface and sends every inference request through <code>trustedrouter/confidential</code> with data collection denied and a minimum privacy tier of confidential.</p>
+    <p>Provider selection stays available only inside that eligible set. Choose the model your work needs without creating an accidental route around policy.</p>
+  </div>
+  <div class="cc-policy-ledger" aria-label="Enforced routing policy">
+    <span>Model route</span><strong>trustedrouter/confidential</strong>
+    <span>Data collection</span><strong>deny</strong>
+    <span>Minimum privacy</span><strong>confidential</strong>
+    <span>Jurisdiction</span><strong>United States or European Union</strong>
+    <span>Fallback</span><strong>Confidential only, otherwise stop</strong>
+  </div>
+</section>
+
+<section class="cc-section" aria-labelledby="work-heading">
+  <div class="cc-section-heading">
+    <div class="kicker">Designed for real work</div>
+    <h2 id="work-heading">Give teams an agent without creating an unreviewed data path</h2>
+  </div>
+  <div class="marketing-grid four">
+    <div class="marketing-card"><span class="card-label">Financial services</span><h3>Analysis inside policy</h3><p>Work across models, code, reports, and internal tools while requiring an approved confidential route.</p></div>
+    <div class="marketing-card"><span class="card-label">Biotech</span><h3>Research without casual disclosure</h3><p>Keep experimental notes, scripts, and document workflows behind one enforceable inference boundary.</p></div>
+    <div class="marketing-card"><span class="card-label">Legal</span><h3>Privilege-aware workflows</h3><p>Reduce accidental provider drift when people summarize matters, review documents, and automate repetitive work.</p></div>
+    <div class="marketing-card"><span class="card-label">Enterprise engineering</span><h3>Agent utility, governed centrally</h3><p>Use local tools and repositories with a model route that cannot be weakened by an individual setting.</p></div>
+  </div>
+</section>
+
+<section class="cc-section" aria-labelledby="start-heading">
+  <div class="cc-section-heading">
+    <div class="kicker">Start now, grow into your deployment</div>
+    <h2 id="start-heading">Self-serve in minutes. Enterprise controls when you need them.</h2>
+  </div>
+  <ol class="flow-steps cc-flow">
+    <li><span>1</span><strong>Download</strong><p>Install the signed macOS app and open a local project.</p></li>
+    <li><span>2</span><strong>Sign in</strong><p>Use TrustedRouter OAuth. No custom gateway can replace the confidential boundary.</p></li>
+    <li><span>3</span><strong>Choose a region</strong><p>Require United States or European Union processing, then start working.</p></li>
+  </ol>
+</section>
+
+<section class="cc-enterprise" aria-labelledby="enterprise-heading">
+  <div>
+    <div class="kicker">Private deployment</div>
+    <h2 id="enterprise-heading">Keep approved models and token capacity inside your enterprise boundary</h2>
+    <p>Move from self-serve to organization identity, policy, private model access, internal token capacity, and deployment support without retraining employees on a different agent.</p>
+  </div>
+  <a class="btn primary" href="mailto:support@trustedrouter.com?subject=Confidential%20Cowork%20enterprise">Plan an enterprise deployment</a>
+</section>
+{% endblock %}

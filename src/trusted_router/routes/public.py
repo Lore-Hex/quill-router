@@ -837,6 +837,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def trustedos() -> str:
         return public_page_html(settings, "trustedos")
 
+    @public_html_route("/confidential-cowork")
+    async def confidential_cowork() -> str:
+        return public_page_html(settings, "confidential-cowork")
+
     @app.post("/trustedos/inquiry", include_in_schema=False)
     async def trustedos_inquiry(request: Request) -> JSONResponse:
         return await _handle_trustedos_inquiry(settings, request)
