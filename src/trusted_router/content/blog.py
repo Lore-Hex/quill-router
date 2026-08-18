@@ -30,55 +30,54 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
-        slug="models-we-have-not-verified",
-        title="TrustedRouter now sells models we have not verified",
+        slug="you-are-a-model-provider",
+        title="You are a model provider now",
         description=(
-            "Anybody who clears an identity check can put an endpoint URL on "
-            "TrustedRouter, price it per token, and keep 70% of what callers "
-            "spend. I registered myself as a model, typed two answers by hand "
-            "for $2.73, and explain why an endpoint we cannot verify belongs "
-            "in a product about verification."
+            "TrustedRouter now takes user-provided models: register an HTTPS endpoint that speaks the OpenAI chat API, set a price per million tokens, and keep 70% of what callers pay. One npx command puts your local model, your agent, or you personally in front of everyone holding TrustedRouter credits."
         ),
         published_date="2026-08-17",
         source_label=None,
         source_url=None,
         body_html="""
-<figure class="blog-hero-image"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="We verified the person. We never saw the machine.">
+<figure class="blog-hero-image"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="Sell tokens from your laptop: one command, your price, 70% yours">
   <rect width="1200" height="630" fill="#ffffff"/>
   <rect x="0" y="0" width="1200" height="8" fill="#0f6e56"/>
   <text x="72" y="118" font-size="26" font-weight="600" fill="#6b7280" letter-spacing="2">USER-PROVIDED MODELS</text>
-  <text x="72" y="212" font-size="62" font-weight="700" fill="#111827">We verified the person.</text>
-  <text x="72" y="288" font-size="62" font-weight="700" fill="#111827">We never saw the machine.</text>
-  <rect x="72" y="336" width="1056" height="1" fill="#eef0f2"/>
+  <text x="72" y="216" font-size="66" font-weight="700" fill="#111827">Sell tokens from your laptop.</text>
+  <text x="72" y="286" font-size="40" font-weight="500" fill="#374151">One command, your price, 70% yours.</text>
+  <rect x="72" y="330" width="1056" height="1" fill="#eef0f2"/>
   <g>
-    <text x="72" y="416" font-size="54" font-weight="700" fill="#0f6e56">70%</text>
-    <text x="72" y="454" font-size="24" fill="#6b7280">to the owner, in credits</text>
+    <text x="72" y="410" font-size="52" font-weight="700" fill="#0f6e56">70%</text>
+    <text x="72" y="448" font-size="24" fill="#6b7280">of the price, to you, in credits</text>
   </g>
   <g>
-    <text x="452" y="416" font-size="54" font-weight="700" fill="#0f6e56">$2.73</text>
-    <text x="452" y="454" font-size="24" fill="#6b7280">two answers, typed by hand</text>
+    <text x="492" y="410" font-size="52" font-weight="700" fill="#0f6e56">3 modes</text>
+    <text x="492" y="448" font-size="24" fill="#6b7280">your model, your agent, or you</text>
   </g>
   <g>
-    <text x="872" y="416" font-size="54" font-weight="700" fill="#111827">15 min</text>
-    <text x="872" y="454" font-size="24" fill="#6b7280">a human model's budget</text>
+    <text x="912" y="410" font-size="52" font-weight="700" fill="#111827">$0</text>
+    <text x="912" y="448" font-size="24" fill="#6b7280">to turn a request down</text>
   </g>
-  <rect x="72" y="516" width="1056" height="62" rx="8" fill="#eef0f2"/>
-  <text x="96" y="556" font-size="25" fill="#374151">Not attested. Not covered by zero-data-retention. Said so on the model page.</text>
+  <rect x="72" y="512" width="1056" height="62" rx="8" fill="#111827"/>
+  <text x="600" y="552" font-size="30" fill="#f8fafc" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,monospace">npx reverse-harness --mode proxy</text>
 </svg></figure>
-<p>TrustedRouter now sells models we have not verified. Anybody who clears an identity check can register an endpoint URL, put a per-token price on it, and take paid calls through our gateway, and whatever answers at that URL is somebody else's process on somebody else's machine. The first one of these is mine.</p>
+<p>You can sell tokens on TrustedRouter now, and the seller can be anyone who has an endpoint and a price. You register an HTTPS endpoint that speaks the OpenAI chat API, you set a price per million tokens, and your model appears in the user-provided section with an id that any TrustedRouter customer can call. The model running on your laptop right now qualifies. So does the agent script you wrote last month, the fine-tune sitting on a rented A100, and you personally, answering questions with your hands.</p>
 
-<p>The id is <code>trustedrouter/user-joseph-live</code>, the handle on it is jperla, and the endpoint behind it was a cloudflared quick tunnel to the laptop on my desk, which is the least serious infrastructure I have ever billed anyone through. I priced it at ten cents a token, prompt and completion alike, which is a hundred thousand dollars per million tokens, and the ceiling for a human model is ten times that. Then I sat there and waited for my terminal to print a prompt. It printed two. I typed both answers with my hands, and the gateway streamed my typing back to the caller as a completion, holding the connection open with an SSE comment every fifteen seconds while I read the question. A human model gets five minutes before the first byte has to appear and fifteen minutes to finish, which is about what a person needs. I earned $2.73. The owner keeps 70% of what the caller pays, taken out of the caller's price, paid as TrustedRouter credits into an earnings wallet that never becomes cash. Calling your own model nets you minus thirty percent, which is the correct incentive.</p>
+<p>Getting there is one command. Run <code>npx reverse-harness --mode proxy --upstream http://localhost:11434/v1</code> and the ollama instance you already have starts taking paid requests from everybody holding TrustedRouter credits. Point the same flag at llama.cpp, vLLM, or LM Studio and it works the same way. Swap to <code>npx reverse-harness --mode exec --command "python my_agent.py"</code> and the thing you are selling is your program, running on your machine, with your data on the same disk. The third mode is you: <code>npx reverse-harness --mode human</code> drops incoming prompts into a browser queue and waits for you to type. The client verifies every TrustedRouter signature before it hands you a request, opens a tunnel so we can reach you behind your router, keeps your clock, and answers the health canary itself so nobody has to get out of bed for it. It is Apache 2.0, it is on npm, and it lives at <a href="https://github.com/Lore-Hex/reverse-harness">github.com/Lore-Hex/reverse-harness</a>, so you can read all of it before you run any of it.</p>
 
-<p>Ten cents a token is something like a hundred thousand times what a good open model charges, so nothing sane routes a summarization job to me. The requests worth that much are the ones where the model already failed and the answer still has to be right: a judgment somebody will be held to, a question about a system four people have ever operated, a translation where being wrong is expensive. Those requests exist inside agent pipelines today, and the current answer to them is that the pipeline stops and files a ticket, and a human gets to it on Tuesday. With a person registered as a model, the loop issues a chat completion, pays for it, and keeps going, using the same client code it uses for everything else. The price is my hourly rate restated in the only unit an agent can budget against. Nobody needs to build a labor market for human work inside AI systems, because the labor market is a model id.</p>
+<p>You set the price the caller pays, and 70% of that price lands in your earnings wallet as TrustedRouter credits, which you can move into any of your workspaces and spend on anything in the catalog. Our 30% comes out of the same number, so the price you publish is the price the buyer sees. Route your own traffic to yourself and you lose 30% on the round trip, which is the correct incentive and stops the obvious game before anyone bothers to play it.</p>
 
-<p>The same registration takes machines, and that is where the volume will be. The model on your desk is already running. <code>npx reverse-harness --mode proxy --upstream http://localhost:11434/v1</code> puts the ollama instance you already have in front of everyone holding TrustedRouter credits, and exec mode does the same for an agent script you wrote, which can answer questions no hosted model can because your data is sitting next to it. The client is <a href="https://github.com/Lore-Hex/reverse-harness">open source</a>, Apache 2.0. Selling inference has always been a billing problem, an auth problem, and a customer problem, and the hardest part was always finding one person willing to send a request to a URL they have never heard of. The model was the part you already had. Refusing a job costs the owner nothing, and you are penalized only for accepting work and then dropping it, which is the arrangement that makes any of this workable for someone doing it out of a kitchen.</p>
+<p>There are three kinds of model you can register, and they differ mostly in patience. A machine model can charge up to $1,000 per million tokens and has thirty seconds to produce a first byte, sixty seconds of idle between bytes, and five minutes on the wall clock. An agent model gets the same ceiling with a minute for the first byte and ten minutes to finish, because agents think and call tools before they talk. Those two are where the volume is: a GPU box in a closet serving a fine-tune, or a retrieval loop sitting next to a corpus nobody is ever going to upload. A human model gets five minutes for the first byte, two minutes of idle, fifteen minutes total, and a ceiling of one dollar per token, which is a million dollars per million tokens. The ceiling is that high because when the model is a person, one sentence can be worth what an hour of that person is worth, and the buyer is a pipeline that would otherwise stop and file a ticket somebody reads on Tuesday.</p>
 
-<p>A stranger's laptop can log every prompt it receives. That is the objection, and it is correct. The owner of a user-provided model reads your prompt in plaintext, can keep it forever, and can train on it, and the identity check we require does nothing about any of that. What the check buys is a name. To create or edit one of these you need an email, then one funded top-up of any amount above zero before we will let you verify a phone at all, then a phone verified by call or SMS, then a government ID check through Veriff that requires $25 of lifetime top-ups to attempt and charges $5 against your credits every time you try. I went through all of it on my own account and it is tedious. A person who has spent $25, burned $5 on an ID check, and put a passport in front of a camera in order to earn credits that only spend inside TrustedRouter is not a throwaway account, and $5 a try makes a fake identity a bad business. That gives a caller somebody to complain to. It leaves the prompt exactly as exposed as it was.</p>
+<p>I went first, with the least serious infrastructure I own, because I wanted to know whether the money would move. My id is <code>trustedrouter/user-joseph-live</code>, the handle on it is jperla, I priced it at ten cents a token, and the endpoint behind it was a cloudflared quick tunnel pointed at the laptop on my desk. Two real requests came in through the production enclave and landed in my terminal. I typed both answers by hand while the gateway held the connection open and streamed my typing back as a completion, and I earned $2.73 in credits, which is 70% of what the caller paid.</p>
 
-<p>What protects the prompt is that nobody arrives at one of these by accident. A user-provided model is not attested and carries no zero-data-retention guarantee, and it says so on the model page, in the API shape our clients read, and on <a href="https://trust.trustedrouter.com/">trust.trustedrouter.com</a>, in the same fields where our first-party models make the opposite claim. These models stay out of the main catalog, out of the routing pools, off the comparison pages, and out of search, and the public page at <code>/models/{id}</code> renders with a noindex tag. You get to one by being handed the id and typing it. So the only way your prompt reaches my laptop is that you went looking for the id, read a page telling you whose laptop it is, and sent it anyway.</p>
+<p>Who buys from an endpoint they have never heard of? Nobody, by accident. There is no browsing your way to a user-provided model. You get called by id, so every request that reaches you came from somebody who went looking for you. Two requests and $2.73 is a small pile of money and a large fact: somebody paid a dime a token for sentences a person typed into a text box. The catalog cannot quote that price, because the catalog has no people in it, and it has none of your data in it either. A fine-tune that knows a schema living in four heads, an agent wired into your company's file share, a person who knows why the pipeline broke: those are worth more per token than any commodity model gets paid, and until this week there was no way to charge anybody for one of them.</p>
 
-<p>That is why an endpoint we cannot verify belongs in a product about verification. TrustedRouter sells claims you can check against the running build, and a catalog where every entry is stamped attested tells you nothing about whether the stamp means anything. The test of a claim system is what it prints when the truth is unflattering, and the truth here is that we looked at a passport and never saw the machine. A marketplace where the buyer is confused about what he bought burns down in a month. The claim printed on these models is that we verified the person and nothing else.</p>
-""",
+<p>Serving those calls is bounded work. You POST clock-in, we probe you before we believe you and hand back a 409 if the probe fails, you heartbeat on an interval, and you clock out when you are done. Turning work down is an HTTP error: any 4xx means you looked at the request and judged it, and it costs you nothing at all. Only a 5xx counts against you, because that means you took the job and dropped it, and it takes three consecutive failures of yours to clock you out. A caller who hangs up mid-stream never counts.</p>
+
+<p>The traffic reaching your hardware is fenced on our side. Requests come from an attested enclave over HTTPS with the resolved IP pinned for the life of the connection, redirects refused, and only allowlisted chat fields forwarded, and your credentials are decrypted inside that enclave and nowhere else. Every request carries <code>TR-Signature: t=&lt;unix&gt;,v1=&lt;hex hmac-sha256 of "t." + raw body&gt;</code> with a 300 second skew window, and the harness checks it before your model sees a token. You can tell whether a request is really from us by doing arithmetic.</p>
+
+<p>Buyers get told what they are buying: a user-provided model is not attested and is not covered by zero-data-retention, and we print that on the model page, in the API shape our clients read, and on the public trust page. Getting listed costs you an email on file, one funded top-up of any amount above zero, which is what unlocks phone verification, a phone verified by call or SMS, and then a government ID check through Veriff that wants $25 of lifetime top-ups to attempt and charges $5 against your credits each try. That is enough friction to make a fake seller a losing business and nowhere near enough to stop a motivated one. The morning after my model went live, somebody I have never met signed up, walked every step of that gate alone without asking me a single question, and registered a real hosted Qwen endpoint at forty cents per million tokens, working from nothing but the docs. They were in business before I finished my coffee. Go get paid for the GPU that is idling in your apartment tonight.</p>""",
     ),
     BlogPost(
         slug="proofs-in-production",
