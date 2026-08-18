@@ -167,14 +167,18 @@ def register(app: FastAPI) -> None:
         )
         payments, payments_available = payment_result
 
-        return HTMLResponse(
-            render_template(
+        def render_stripe_details() -> str:
+            return render_template(
                 "console/_credits_stripe_details.html",
                 saved_payment_method=saved_payment_method,
                 payments=payments,
                 payments_available=payments_available,
                 wallet_only_billing=is_wallet_only_user(ctx.user),
-            ),
+            )
+
+        stripe_details_html = await run_in_threadpool(render_stripe_details)
+        return HTMLResponse(
+            stripe_details_html,
             headers=_PRIVATE_CREDITS_HEADERS,
         )
 

@@ -2,11 +2,11 @@
 
 Console pages are dominated by synchronous storage, KMS, payment-provider, and
 template work.  FastAPI only moves that work to AnyIO's worker pool when the
-decorated endpoint is a plain ``def``.  The three console endpoints that really
-await network I/O keep ``async def`` and place each synchronous segment behind
-``run_in_threadpool`` explicitly.
+decorated endpoint is a plain ``def``.  The four console endpoints that really
+await network I/O or coordinate concurrent provider calls keep ``async def`` and
+place each synchronous segment behind ``run_in_threadpool`` explicitly.
 
-The AST checks make the 45/3 split non-vacuous; the thread-id and heartbeat
+The AST checks make the 45/4 split non-vacuous; the thread-id and heartbeat
 checks prove the framework/runtime behavior instead of merely matching source
 text.  Storage methods are patched on ``InMemoryStore`` rather than the global
 ``STORE`` proxy so pytest restores them without poisoning later tests.
@@ -34,6 +34,7 @@ from trusted_router.storage_rate_limits import InMemoryRateLimits
 _ROOT = Path(__file__).resolve().parents[1]
 _CONSOLE_DIR = _ROOT / "src" / "trusted_router" / "routes" / "console"
 _ASYNC_CONSOLE_HANDLERS = {
+    "console_credit_stripe_details",
     "console_create_user_model",
     "console_update_user_model",
     "console_clock_in_user_model",
@@ -91,6 +92,18 @@ def _offload_targets(function: ast.FunctionDef | ast.AsyncFunctionDef) -> list[s
     return targets
 
 
+def _threadpool_targets(function: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
+    """Include workers passed to an awaited ``asyncio.gather`` call."""
+    return [
+        ast.unparse(node.args[0])
+        for node in _walk_without_nested_functions(function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_in_threadpool"
+        and node.args
+    ]
+
+
 def _nested_function(
     function: ast.FunctionDef | ast.AsyncFunctionDef, name: str
 ) -> ast.FunctionDef | ast.AsyncFunctionDef:
@@ -110,12 +123,18 @@ def _nested_function(
 
 def test_console_route_async_split_and_worker_boundaries_are_total() -> None:
     routes = _console_route_functions()
-    assert len(routes) == 48, "guard must inspect every decorated console route"
+    assert len(routes) == 49, "guard must inspect every decorated console route"
     async_routes = {node.name for node in routes if isinstance(node, ast.AsyncFunctionDef)}
     assert async_routes == _ASYNC_CONSOLE_HANDLERS
     assert sum(isinstance(node, ast.FunctionDef) for node in routes) == 45
 
     by_name = {node.name: node for node in routes}
+    assert set(_threadpool_targets(by_name["console_credit_stripe_details"])) == {
+        "STORE.get_credit_account",
+        "_load_saved_payment_method",
+        "_load_workspace_payments",
+        "render_stripe_details",
+    }
     assert _offload_targets(by_name["console_create_user_model"]) == ["create_and_render"]
     assert set(_offload_targets(by_name["console_update_user_model"])) == {
         "_require_owner_model",
@@ -147,6 +166,14 @@ def test_console_route_async_split_and_worker_boundaries_are_total() -> None:
     )
     assert "STORE.update_user_model" in update_callback
     assert "encrypt_user_model_endpoint_key" in update_callback
+
+    stripe_render_callback = ast.unparse(
+        _nested_function(
+            by_name["console_credit_stripe_details"], "render_stripe_details"
+        )
+    )
+    assert "render_template" in stripe_render_callback
+    assert "is_wallet_only_user" in stripe_render_callback
 
 
 def test_probe_and_durable_limiter_keep_explicit_worker_boundaries() -> None:
@@ -212,15 +239,21 @@ def test_sync_console_handler_runs_storage_off_loop_and_keeps_heartbeat_alive(
     started = threading.Event()
     release = threading.Event()
     storage_thread: dict[str, int] = {}
-    original = InMemoryStore.list_keys
+    original = InMemoryStore.list_api_keys_with_usage
 
-    def blocking_list_keys(self: InMemoryStore, workspace_id: str) -> Any:
+    def blocking_list_api_keys_with_usage(
+        self: InMemoryStore, workspace_id: str
+    ) -> Any:
         storage_thread["id"] = threading.get_ident()
         started.set()
         assert release.wait(timeout=2.0), "console storage ran on the blocked event loop"
         return original(self, workspace_id)
 
-    monkeypatch.setattr(InMemoryStore, "list_keys", blocking_list_keys)
+    monkeypatch.setattr(
+        InMemoryStore,
+        "list_api_keys_with_usage",
+        blocking_list_api_keys_with_usage,
+    )
 
     async def scenario() -> None:
         loop_thread = threading.get_ident()
