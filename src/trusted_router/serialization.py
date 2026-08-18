@@ -22,6 +22,7 @@ from trusted_router.storage import (
     ByokProviderConfig,
     CustomModel,
     Member,
+    User,
     UserProvidedModel,
     Workspace,
 )
@@ -175,8 +176,13 @@ def user_model_public_shape(
     model: UserProvidedModel,
     *,
     now: datetime | None = None,
+    owner: User | None = None,
 ) -> dict[str, Any]:
-    owner = STORE.get_user(model.owner_user_id)
+    owner = (
+        owner
+        if owner is not None and owner.id == model.owner_user_id
+        else STORE.get_user(model.owner_user_id)
+    )
     verified_name = (
         owner.identity_verified_name
         if owner is not None and owner.identity_verified and owner.identity_verified_name
@@ -227,8 +233,12 @@ def user_model_public_shape(
     }
 
 
-def user_model_owner_shape(model: UserProvidedModel) -> dict[str, Any]:
-    shape = user_model_public_shape(model)
+def user_model_owner_shape(
+    model: UserProvidedModel,
+    *,
+    owner: User | None = None,
+) -> dict[str, Any]:
+    shape = user_model_public_shape(model, owner=owner)
     shape.update(
         {
             "owner_user_id": model.owner_user_id,

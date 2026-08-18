@@ -63,12 +63,13 @@ def _render_page(request: Request, ctx: ConsoleDep, settings: SettingsDep) -> st
     # operation result.
     summary = STORE.earnings_summary(ctx.user.id, allow_stale=True)
     model_totals = STORE.custom_model_earnings_by_model(ctx.user.id, since=since)
+    models_by_id = STORE.get_user_models_by_ids(list(model_totals))
     by_model: list[dict[str, Any]] = []
     for model_id, amount in sorted(
         model_totals.items(),
         key=lambda item: (-item[1], item[0]),
     ):
-        model = STORE.get_user_model(model_id)
+        model = models_by_id.get(model_id)
         by_model.append(
             {
                 "model_id": model_id,
