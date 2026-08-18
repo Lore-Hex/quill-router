@@ -258,7 +258,7 @@ def _render_page(
 ) -> str:
     missing = missing_custom_model_requirements(ctx.user, settings)
     models = [
-        user_model_owner_shape(model)
+        user_model_owner_shape(model, owner=ctx.user)
         for model in STORE.list_user_models_for_user(ctx.user.id)
     ]
     return render(

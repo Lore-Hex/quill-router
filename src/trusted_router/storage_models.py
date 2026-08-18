@@ -1516,6 +1516,7 @@ class SessionAuthContext:
     workspaces: tuple[Workspace, ...]
     is_member: bool
     is_management: bool
+    management_workspace_ids: frozenset[str]
 
 
 @dataclass(frozen=True)

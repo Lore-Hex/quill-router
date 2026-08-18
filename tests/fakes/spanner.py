@@ -1590,6 +1590,33 @@ def _execute_sql(
                 for record in usage_rows
             )
         return output
+    if "/* custom_model_list_for_user */" in sql:
+        return _execute_owner_model_list(
+            db,
+            sql,
+            params,
+            index_kind="custom_model_by_user",
+            model_kind="custom_model",
+        )
+    if "/* user_model_list_for_user */" in sql:
+        return _execute_owner_model_list(
+            db,
+            sql,
+            params,
+            index_kind="user_provided_model_by_user",
+            model_kind="user_provided_model",
+        )
+    if "/* user_models_by_id */" in sql:
+        _require_pred(
+            sql,
+            "WHERE kind='user_provided_model' AND id IN UNNEST(@model_ids)",
+            "user-model batch IDs",
+        )
+        return [
+            [model_id, row.body]
+            for model_id in params["model_ids"]
+            if (row := db.rows.get(("user_provided_model", str(model_id)))) is not None
+        ]
     if "/* auth_session_context */" in sql:
         _require_pred(
             sql,
@@ -2324,6 +2351,60 @@ def _execute_sql(
             rows = rows[: int(params["limit"])]
         return [[body] for _, body in rows]
     raise NotImplementedError(sql)
+
+
+def _execute_owner_model_list(
+    db: FakeSpannerDatabase,
+    sql: str,
+    params: dict[str, Any],
+    *,
+    index_kind: str,
+    model_kind: str,
+) -> list[list[str]]:
+    """Model the one-statement owner-index hydration queries exactly."""
+    marker = f"{model_kind}-owner-list"
+    _require_pred(sql, f"model_ref.kind='{index_kind}'", f"{marker} index kind")
+    _require_pred(sql, f"model_record.kind='{model_kind}'", f"{marker} model kind")
+    _require_pred(
+        sql,
+        "model_record.id=JSON_VALUE(model_ref.body, '$.model_id')",
+        f"{marker} pointer join",
+    )
+    _require_pred(sql, "STARTS_WITH(model_ref.id, @prefix)", f"{marker} owner index")
+    _require_pred(
+        sql,
+        "model_ref.id=CONCAT(@owner_user_id, '#', "
+        "JSON_VALUE(model_ref.body, '$.model_id'))",
+        f"{marker} canonical index id",
+    )
+    _require_pred(
+        sql,
+        "JSON_VALUE(model_record.body, '$.owner_user_id')=@owner_user_id",
+        f"{marker} body owner boundary",
+    )
+    _require_pred(
+        sql,
+        "ORDER BY JSON_VALUE(model_record.body, '$.created_at'), model_ref.id",
+        f"{marker} deterministic order",
+    )
+    prefix = str(params["prefix"])
+    owner_user_id = str(params["owner_user_id"])
+    hydrated: list[tuple[str, str, str]] = []
+    for (row_kind, ref_id), ref_row in db.rows.items():
+        if row_kind != index_kind or not ref_id.startswith(prefix):
+            continue
+        model_id = str(json.loads(ref_row.body).get("model_id") or "")
+        if ref_id != f"{owner_user_id}#{model_id}":
+            continue
+        model_row = db.rows.get((model_kind, model_id))
+        if model_row is None:
+            continue
+        body = json.loads(model_row.body)
+        if str(body.get("owner_user_id")) != owner_user_id:
+            continue
+        hydrated.append((str(body.get("created_at") or ""), ref_id, model_row.body))
+    hydrated.sort(key=lambda item: (item[0], item[1]))
+    return [[body] for _created_at, _ref_id, body in hydrated]
 
 
 class FakeBigtableTable:

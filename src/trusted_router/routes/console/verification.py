@@ -28,15 +28,22 @@ def register(app: FastAPI) -> None:
         veriff: str = "",
         dev: str = "",
     ) -> Response:
-        user = STORE.get_user(ctx.user.id) or ctx.user
-        # Page progress only; `missing_identity_verification_requirements`
-        # below performs the actual gate with the strong default.
+        # The console dependency resolved this user in the same strong read as
+        # the session; fetching it again would only add another round trip.
+        user = ctx.user
+        # Page progress only. Reuse this bounded-stale total for the displayed
+        # checklist; the identity-start POST calls the same helper without an
+        # override and therefore retains its strong authorization read.
         lifetime_topup = STORE.get_lifetime_topup_microdollars(
             user.id,
             allow_stale=True,
         )
         required = VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS
-        missing = missing_identity_verification_requirements(user, settings)
+        missing = missing_identity_verification_requirements(
+            user,
+            settings,
+            lifetime_topup_microdollars=lifetime_topup,
+        )
         guidance = guidance_for(
             user.identity_status,
             reason_code=user.veriff_decision_reason_code,

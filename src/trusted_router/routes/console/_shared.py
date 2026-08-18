@@ -39,6 +39,7 @@ class ConsoleContext:
     session: AuthSession
     workspace: Workspace
     workspaces: list[Workspace]
+    can_manage: bool
     api_base_url: str
 
 
@@ -66,6 +67,7 @@ def require_console_context(request: Request, settings: SettingsDep) -> ConsoleC
         session=session,
         workspace=workspace,
         workspaces=workspaces,
+        can_manage=workspace.id in context.management_workspace_ids,
         api_base_url=request_api_base_url(request, settings),
     )
 

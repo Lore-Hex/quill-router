@@ -41,10 +41,9 @@ def register(app: FastAPI) -> None:
         phone_saved: str = "",
         detail: str = "",
     ) -> Response:
-        # Read the user fresh. ctx.user is the session's snapshot, so a number
-        # verified moments ago on this same page would otherwise still render
-        # as unverified and invite the visitor to start over.
-        user = STORE.get_user(ctx.user.id) or ctx.user
+        # session_auth_context is one fresh strong read for every request, so
+        # ctx already contains the current user and selected membership role.
+        user = ctx.user
         phone_missing_requirements = missing_phone_verification_requirements(user, settings)
         _resend_allowed, resend_wait_seconds = pv.can_resend(user)
         return HTMLResponse(
@@ -55,7 +54,7 @@ def register(app: FastAPI) -> None:
                 active="settings",
                 page_title="Workspace settings",
                 page_subtitle="Names, content storage, integrations.",
-                can_manage=STORE.user_can_manage(ctx.user.id, ctx.workspace.id),
+                can_manage=ctx.can_manage,
                 saved=bool(saved),
                 error=error,
                 phone=user.phone,

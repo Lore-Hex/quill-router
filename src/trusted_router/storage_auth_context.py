@@ -53,4 +53,9 @@ def build_session_auth_context(
         workspaces=visible_workspaces,
         is_member=member is not None,
         is_management=(member is not None and member.role in {"owner", "admin"}),
+        management_workspace_ids=frozenset(
+            workspace.id
+            for candidate_member, workspace in current_memberships
+            if candidate_member.role in {"owner", "admin"}
+        ),
     )

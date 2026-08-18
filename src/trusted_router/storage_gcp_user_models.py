@@ -4,6 +4,7 @@ import datetime as dt
 import json
 import secrets
 from collections.abc import Callable
+from dataclasses import fields
 from typing import Any
 
 from trusted_router.storage_custom_models import (
@@ -129,21 +130,34 @@ class SpannerUserProvidedModels:
         return run_in_transaction_with_retry(self._io.database, txn)
 
     def list_for_user(self, owner_user_id: str) -> list[UserProvidedModel]:
-        rows = self._io.list_entities(
-            "user_provided_model_by_user",
-            prefix=f"{owner_user_id}#",
-            cls=dict,
-        )
-        models: list[UserProvidedModel] = []
-        for row in rows:
-            model_id = str(row.get("model_id", ""))
-            if not model_id:
-                continue
-            model = self.get(model_id)
-            if model is not None and model.owner_user_id == owner_user_id:
-                models.append(model)
-        models.sort(key=lambda item: item.created_at)
-        return models
+        # Join the owner index to its model rows in one strong statement.  The
+        # body-owner predicate retains the old fail-closed check for a dangling
+        # or mis-keyed index row rather than trusting the denormalized pointer.
+        pt = self._io.param_types
+        with self._io.database.snapshot() as snapshot:
+            rows = snapshot.execute_sql(
+                "/* user_model_list_for_user */ "
+                "SELECT model_record.body "
+                "FROM tr_entities AS model_ref "
+                "JOIN tr_entities AS model_record "
+                "ON model_record.kind='user_provided_model' "
+                "AND model_record.id=JSON_VALUE(model_ref.body, '$.model_id') "
+                "WHERE model_ref.kind='user_provided_model_by_user' "
+                "AND STARTS_WITH(model_ref.id, @prefix) "
+                "AND model_ref.id=CONCAT(@owner_user_id, '#', "
+                "JSON_VALUE(model_ref.body, '$.model_id')) "
+                "AND JSON_VALUE(model_record.body, '$.owner_user_id')=@owner_user_id "
+                "ORDER BY JSON_VALUE(model_record.body, '$.created_at'), model_ref.id",
+                params={
+                    "prefix": f"{owner_user_id}#",
+                    "owner_user_id": owner_user_id,
+                },
+                param_types={
+                    "prefix": pt.STRING,
+                    "owner_user_id": pt.STRING,
+                },
+            )
+            return [_decode_user_model(row[0]) for row in rows]
 
     def get(self, model_id: str) -> UserProvidedModel | None:
         return self._io.read_entity(
@@ -151,6 +165,23 @@ class SpannerUserProvidedModels:
             normalize_custom_model_id(model_id),
             UserProvidedModel,
         )
+
+    def get_many(self, model_ids: list[str]) -> dict[str, UserProvidedModel]:
+        canonical_ids = list(
+            dict.fromkeys(normalize_custom_model_id(model_id) for model_id in model_ids)
+        )
+        if not canonical_ids:
+            return {}
+        pt = self._io.param_types
+        with self._io.database.snapshot() as snapshot:
+            rows = snapshot.execute_sql(
+                "/* user_models_by_id */ "
+                "SELECT id, body FROM tr_entities "
+                "WHERE kind='user_provided_model' AND id IN UNNEST(@model_ids)",
+                params={"model_ids": canonical_ids},
+                param_types={"model_ids": pt.Array(pt.STRING)},
+            )
+            return {str(row[0]): _decode_user_model(row[1]) for row in rows}
 
     def update(
         self,
@@ -478,6 +509,12 @@ class SpannerUserProvidedModels:
 
 def _user_model_id(owner_user_id: str, model_id: str) -> str:
     return f"{owner_user_id}#{model_id}"
+
+
+def _decode_user_model(body: str) -> UserProvidedModel:
+    data = json.loads(body)
+    known = {field.name for field in fields(UserProvidedModel)}
+    return UserProvidedModel(**{key: value for key, value in data.items() if key in known})
 
 
 def _user_model_slot_id(model_id: str, authorization_id: str) -> str:

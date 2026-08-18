@@ -1549,6 +1549,12 @@ class SpannerBigtableStore:
     def get_user_model(self, model_id: str) -> UserProvidedModel | None:
         return self.user_model_store.get(model_id)
 
+    def get_user_models_by_ids(
+        self,
+        model_ids: list[str],
+    ) -> dict[str, UserProvidedModel]:
+        return self.user_model_store.get_many(model_ids)
+
     def update_user_model(
         self,
         model_id: str,

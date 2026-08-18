@@ -54,6 +54,7 @@ from trusted_router.security import (
 from trusted_router.spend_windows import KeyWindowLimitExceeded, window_floors
 from trusted_router.storage_auth_context import build_session_auth_context
 from trusted_router.storage_codec import json_body
+from trusted_router.storage_custom_models import normalize_custom_model_id
 from trusted_router.storage_errors import (
     DeferredSettlementCapReached,
     StoreConflict,
@@ -2414,6 +2415,35 @@ class PostgresStore:
 
     def get_user_model(self, model_id: str) -> UserProvidedModel | None:
         return self._read_entity("user_provided_model", model_id, UserProvidedModel)
+
+    def get_user_models_by_ids(
+        self,
+        model_ids: list[str],
+    ) -> dict[str, UserProvidedModel]:
+        unique_ids = list(
+            dict.fromkeys(normalize_custom_model_id(model_id) for model_id in model_ids)
+        )
+        if not unique_ids:
+            return {}
+
+        def operation(conn: Any) -> dict[str, UserProvidedModel]:
+            rows = conn.execute(
+                "SELECT id, body FROM tr_entities "
+                "WHERE kind = %s AND id = ANY(%s)",
+                ("user_provided_model", unique_ids),
+            ).fetchall()
+            result: dict[str, UserProvidedModel] = {}
+            known = {field.name for field in dataclasses.fields(UserProvidedModel)}
+            for row in rows:
+                raw = row[1]
+                data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                model = UserProvidedModel(
+                    **{key: value for key, value in data.items() if key in known}
+                )
+                result[str(row[0])] = model
+            return result
+
+        return self._run_transaction(operation)
 
     def update_user_model(
         self,

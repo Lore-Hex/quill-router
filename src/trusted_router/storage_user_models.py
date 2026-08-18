@@ -142,6 +142,15 @@ class InMemoryUserProvidedModels:
         with self._lock:
             return self.models.get(normalize_custom_model_id(model_id))
 
+    def get_many(self, model_ids: list[str]) -> dict[str, UserProvidedModel]:
+        canonical_ids = [normalize_custom_model_id(model_id) for model_id in model_ids]
+        with self._lock:
+            return {
+                model_id: self.models[model_id]
+                for model_id in dict.fromkeys(canonical_ids)
+                if model_id in self.models
+            }
+
     def update(
         self,
         model_id: str,
