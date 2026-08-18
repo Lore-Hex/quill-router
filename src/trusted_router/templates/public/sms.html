@@ -33,6 +33,20 @@
   </ol>
   <p>The checkbox is unticked by default, and the number is not reachable until the code is confirmed.</p>
 
+  {# The form itself, not a description of it. A campaign vetter cannot sign in,
+     so a CTA they cannot see is a CTA that does not count — which is precisely
+     why 30909 was raised. These are the SAME fields the console renders, from
+     _sms_enrolment_fields.html, so this cannot drift into showing a form that
+     does not exist. Inputs are disabled: it is evidence, not a second place to
+     collect numbers. #}
+  <h2>The form, exactly as it appears in your account</h2>
+  <p class="muted">A non-interactive copy of the live form at <strong>Settings &rarr; Notifications</strong>,
+    rendered from the same template. The checkbox below is unticked, which is its default state;
+    the server rejects any submission that does not include it.</p>
+  <form class="form" aria-label="Preview of the notification enrolment form. Disabled." onsubmit="return false">
+    {% with preview = true %}{% include "_sms_enrolment_fields.html" %}{% endwith %}
+  </form>
+
   <h2>How you opt out</h2>
   <p>Reply <strong>STOP</strong> to any message to stop all messages from that program, or remove the number in Settings &rarr; Notifications. Reply <strong>START</strong> to resubscribe. Reply <strong>HELP</strong>, or email <a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a>, for help.</p>
 
