@@ -17,7 +17,7 @@ from trusted_router.storage import STORE
 
 def register(app: FastAPI) -> None:
     @app.get("/console/earnings")
-    async def console_earnings(
+    def console_earnings(
         request: Request,
         ctx: ConsoleDep,
         settings: SettingsDep,
@@ -25,7 +25,7 @@ def register(app: FastAPI) -> None:
         return HTMLResponse(_render_page(request, ctx, settings))
 
     @app.post("/console/earnings/transfer")
-    async def console_transfer_earnings(
+    def console_transfer_earnings(
         ctx: ConsoleDep,
         workspace_id: str = Form(...),
         amount: str = Form(...),

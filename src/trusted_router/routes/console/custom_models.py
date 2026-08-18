@@ -22,7 +22,7 @@ from trusted_router.storage_custom_models import (
 
 def register(app: FastAPI) -> None:
     @app.get("/console/custom-models")
-    async def console_custom_models(
+    def console_custom_models(
         request: Request,
         ctx: ConsoleDep,
         settings: SettingsDep,
@@ -30,7 +30,7 @@ def register(app: FastAPI) -> None:
         return HTMLResponse(_render_page(ctx, settings, request=request))
 
     @app.post("/console/custom-models")
-    async def console_create_custom_model(
+    def console_create_custom_model(
         ctx: ConsoleDep,
         settings: SettingsDep,
         name: str = Form(..., min_length=1, max_length=120),
@@ -64,7 +64,7 @@ def register(app: FastAPI) -> None:
         return RedirectResponse(url="/console/custom-models?saved=created", status_code=303)
 
     @app.post("/console/custom-models/{model_id:path}")
-    async def console_update_custom_model(
+    def console_update_custom_model(
         ctx: ConsoleDep,
         settings: SettingsDep,
         model_id: str,
@@ -100,7 +100,7 @@ def register(app: FastAPI) -> None:
         return RedirectResponse(url="/console/custom-models?saved=updated", status_code=303)
 
     @app.post("/console/custom-models/{model_id:path}/delete")
-    async def console_delete_custom_model(ctx: ConsoleDep, model_id: str) -> Response:
+    def console_delete_custom_model(ctx: ConsoleDep, model_id: str) -> Response:
         model = _require_owner_model(model_id, ctx.user.id)
         STORE.delete_custom_model(model.id, owner_user_id=ctx.user.id)
         return RedirectResponse(url="/console/custom-models?saved=deleted", status_code=303)

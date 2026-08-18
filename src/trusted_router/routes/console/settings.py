@@ -32,7 +32,7 @@ def _back(query: str) -> RedirectResponse:
 
 def register(app: FastAPI) -> None:
     @app.get("/console/settings")
-    async def console_settings(
+    def console_settings(
         ctx: ConsoleDep,
         settings: SettingsDep,
         saved: str = "",
@@ -75,7 +75,7 @@ def register(app: FastAPI) -> None:
         )
 
     @app.post("/console/settings/phone/start")
-    async def console_phone_start(
+    def console_phone_start(
         ctx: ConsoleDep,
         settings: SettingsDep,
         phone: str = Form(""),
@@ -132,24 +132,24 @@ def register(app: FastAPI) -> None:
         return _back(f"sent={wanted}")
 
     @app.post("/console/settings/phone/confirm")
-    async def console_phone_confirm(ctx: ConsoleDep, code: str = Form("")) -> Response:
+    def console_phone_confirm(ctx: ConsoleDep, code: str = Form("")) -> Response:
         status, _user = STORE.confirm_phone_verification(ctx.user.id, code)
         if status == "ok":
             return _back("phone_saved=1")
         return _back(f"error={status}")
 
     @app.post("/console/settings/phone/cancel")
-    async def console_phone_cancel(ctx: ConsoleDep) -> Response:
+    def console_phone_cancel(ctx: ConsoleDep) -> Response:
         STORE.cancel_phone_verification(ctx.user.id)
         return _back("")
 
     @app.post("/console/settings/phone/remove")
-    async def console_phone_remove(ctx: ConsoleDep) -> Response:
+    def console_phone_remove(ctx: ConsoleDep) -> Response:
         STORE.clear_user_phone(ctx.user.id)
         return _back("")
 
     @app.post("/console/settings")
-    async def console_update_settings(
+    def console_update_settings(
         ctx: ConsoleDep,
         name: str = Form(""),
     ) -> Response:
