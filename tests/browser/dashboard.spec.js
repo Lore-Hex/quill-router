@@ -13,10 +13,11 @@ test("homepage opens sign-in modal and handles missing MetaMask", async ({ page 
   await expect(page.locator(".charter-home-hero .lead-claim")).toHaveText(
     "Better privacy, better prices, better uptime, no subscriptions.",
   );
-  await expect(page.locator(".charter-stat-band")).toContainText("550+AI models");
-  await expect(page.locator(".charter-stat-band")).toContainText("7Live regions");
-  await expect(page.locator(".charter-stat-band")).toContainText("3Clouds");
-  await expect(page.locator(".charter-stat-band")).toContainText("4Continents");
+  const homepageStats = page.locator(".charter-stat-band .charter-stat");
+  await expect(homepageStats).toHaveCount(2);
+  await expect(homepageStats.first()).toContainText("550+AI models");
+  await expect(homepageStats.last()).toContainText("3 cloudsGCP · AWS · Azure");
+  await expect(page.locator(".region-map-card")).toHaveCount(0);
   await expect(page.locator("body")).toHaveCSS("font-size", "15.5px");
   await expect(page.locator(".charter-pillar p a").first()).toHaveCSS("text-decoration-line", "underline");
 
