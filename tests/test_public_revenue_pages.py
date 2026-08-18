@@ -74,6 +74,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/gpt-oss-120b-api": "gpt-oss-120b, served fast on Cerebras and attested down to the image digest.",
         "/eu-ai-act-llm-compliance": "Your EU AI Act compliance file depends on facts from your LLM API vendor, and attestation makes those facts checkable.",
         "/x402-llm-api": "Your agent gets a 402, signs a payment, retries the call, and reads the completion.",
+        "/confidential-cowork": "Confidentiality cannot be clicked away",
     }
 
     for path, marker in markers.items():
@@ -218,6 +219,22 @@ def test_confidential_ai_badge_is_embeddable_and_scoped(client: TestClient) -> N
         badge = client.get(asset)
         assert badge.status_code == 200, asset
         assert "public" in badge.headers["cache-control"]
+
+
+def test_confidential_cowork_is_self_serve_and_fail_closed(client: TestClient) -> None:
+    response = client.get("/confidential-cowork")
+
+    assert response.status_code == 200
+    assert "Confidential Cowork by TrustedRouter" in response.text
+    assert "Confidential-Cowork-macOS-universal.dmg" in response.text
+    assert "trustedrouter/confidential" in response.text
+    assert "Data collection</span><strong>deny" in response.text
+    assert "United States or European Union" in response.text
+    assert "No eligible confidential provider means no model request" in response.text
+    assert "Plan an enterprise deployment" in response.text
+    screenshot = client.get("/static/confidential-cowork-desktop.png")
+    assert screenshot.status_code == 200
+    assert screenshot.headers["content-type"] == "image/png"
 
     canonical_mark = 'd="M1.4 7.5H6.5L11 12M1.4 16.5H4L8.5 12M1.4 12H15.5"'
     for asset in (

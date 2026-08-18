@@ -144,6 +144,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/latest-model-apis",
     "/eu-ai-act-llm-compliance",
     "/x402-llm-api",
+    "/confidential-cowork",
     # Jurisdiction directories, one path each. MODEL_REGION_SLUGS is the single
     # source, so adding a region adds its sitemap entry with it.
     *(f"/{slug}" for slug in MODEL_REGION_SLUGS),
@@ -1172,6 +1173,35 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
                 "capacity and models online.",
             ),
         ),
+    ),
+    "confidential-cowork": PublicPage(
+        template="public/confidential_cowork.html",
+        title="Confidential Cowork",
+        description=(
+            "A native coding and knowledge-work agent that requires confidential "
+            "LLM routing, fails closed, and lets each team select US or EU processing."
+        ),
+        faq_items=(
+            (
+                "Can Confidential Cowork fall back to a normal model provider?",
+                "No. The confidential edition attaches a deny-data-collection, "
+                "minimum-confidentiality provider policy to every model request. "
+                "If no eligible provider is available, the request fails closed.",
+            ),
+            (
+                "Can we choose where requests are processed?",
+                "Yes. Each installation can require United States or European Union "
+                "processing. The same restriction covers the primary model, safety "
+                "review, summaries, and model-assisted search.",
+            ),
+            (
+                "Can an enterprise use its own models and token capacity?",
+                "Yes. The self-serve app starts on TrustedRouter. Enterprise deployments "
+                "can be designed around approved private capacity, internal model access, "
+                "identity controls, and organization policy.",
+            ),
+        ),
+        og_alt="Confidential Cowork desktop app with enforced confidential routing controls",
     ),
     "security": PublicPage(
         template="public/security.html",
