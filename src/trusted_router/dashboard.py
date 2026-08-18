@@ -1752,6 +1752,9 @@ def dashboard_html(
         "githubEnabled": settings.github_oauth_enabled,
     }
     map_regions = region_map_payload(settings)
+    live_map_regions = [region for region in map_regions if region["serving"]]
+    live_region_count = len(live_map_regions)
+    live_cloud_count = len({region["cloud"] for region in live_map_regions})
     api_region_count = len(configured_regions(settings))
     return (
         _env()
@@ -1773,6 +1776,8 @@ def dashboard_html(
             paypal_enabled=settings.paypal_enabled,
             map_regions=map_regions,
             api_region_count=api_region_count,
+            live_region_count=live_region_count,
+            live_cloud_count=live_cloud_count,
             primary_region=settings.primary_region,
             static_version=_static_version(settings),
         )

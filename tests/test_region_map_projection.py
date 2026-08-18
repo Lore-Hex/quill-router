@@ -155,7 +155,7 @@ def test_map_shows_multicloud_deployments_with_honest_serving_flags() -> None:
 
     The serving flag is a factual claim — external_live_regions must only list
     deployments whose own smoke passes — so this pins the shipped default:
-    Dublin and Sydney live, Stockholm (database peer, no compute) staged.
+    Dublin, Paris, and Sydney live; Stockholm (database peer, no compute) staged.
     """
     settings = Settings(environment="local")
     rows = {row["id"]: row for row in region_map_payload(settings)}
@@ -164,13 +164,26 @@ def test_map_shows_multicloud_deployments_with_honest_serving_flags() -> None:
     assert rows["aws-eu-west-1"]["cloud"] == "aws"
     assert rows["aws-eu-west-1"]["serving"] is True
 
+    assert rows["aws-eu-west-3"]["city"] == "Paris"
+    assert rows["aws-eu-west-3"]["cloud"] == "aws"
+    assert rows["aws-eu-west-3"]["serving"] is True
+    assert rows["aws-eu-west-3"]["label_dy"] > 0
+
     assert rows["azure-australiaeast"]["cloud"] == "azure"
     assert rows["azure-australiaeast"]["serving"] is True
+    assert rows["azure-australiaeast"]["label_anchor"] == "end"
 
     # Stockholm replicates the AWS-EU database but has no compute yet. If this
     # assertion starts failing because someone flipped it live, that flip must
     # come with compute actually serving there.
     assert rows["aws-eu-north-1"]["serving"] is False
+
+    assert sum(row["serving"] for row in rows.values()) == 7
+    assert {row["cloud"] for row in rows.values() if row["serving"]} == {
+        "gcp",
+        "aws",
+        "azure",
+    }
 
     # No duplicate cities on the map (Joseph's rule): the Azure Sydney entry
     # must not coexist with GCP's australia-southeast1 Sydney dot.

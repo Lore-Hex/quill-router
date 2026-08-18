@@ -976,6 +976,16 @@ pre {
   line-height: 1.7;
 }
 
+.charter-home-hero .lead-claim {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-display);
+  font-family: var(--font-body);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
 .charter-home-hero .hero-actions {
   margin: 30px 0 0;
 }
