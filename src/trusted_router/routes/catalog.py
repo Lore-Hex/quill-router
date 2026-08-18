@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import gzip
+import hashlib
+import json
+from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 from fastapi import APIRouter, Request
+from fastapi.responses import Response
 
 from trusted_router.auth import ManagementPrincipal, SettingsDep
 from trusted_router.catalog import (
@@ -32,6 +38,168 @@ from trusted_router.openai_service_tiers import (
 from trusted_router.provider_lifecycle import provider_pricing_schedule
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.routing import catalog_endpoint_candidates, provider_route_preferences
+
+_PUBLIC_CATALOG_CACHE_CONTROL = (
+    "public, max-age=300, s-maxage=300, stale-while-revalidate=60"
+)
+
+
+@dataclass(frozen=True)
+class _PublicCatalogPayload:
+    shapes: tuple[dict[str, Any], ...]
+    body: bytes
+    etag: str
+    gzip_body: bytes
+    gzip_etag: str
+    picker_body: bytes
+    picker_etag: str
+    picker_gzip_body: bytes
+    picker_gzip_etag: str
+
+
+def _json_bytes(data: object) -> bytes:
+    return json.dumps(
+        data,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode()
+
+
+def _content_etag(body: bytes) -> str:
+    return f'"{hashlib.sha256(body).hexdigest()}"'
+
+
+def _weak_etag_value(value: str) -> str:
+    value = value.strip()
+    return value[2:].lstrip() if value.startswith("W/") else value
+
+
+def _picker_model_shape(shape: dict[str, Any]) -> dict[str, Any]:
+    pricing = shape.get("pricing")
+    trustedrouter = shape.get("trustedrouter")
+    pricing = pricing if isinstance(pricing, dict) else {}
+    trustedrouter = trustedrouter if isinstance(trustedrouter, dict) else {}
+    return {
+        "id": shape.get("id"),
+        "name": shape.get("name"),
+        "description": shape.get("description"),
+        "context_length": shape.get("context_length"),
+        "pricing": {
+            "prompt": pricing.get("prompt"),
+            "completion": pricing.get("completion"),
+        },
+        "trustedrouter": {
+            "capabilities": trustedrouter.get("capabilities", []),
+            "uptime_pct": trustedrouter.get("uptime_pct"),
+            "open_weights": trustedrouter.get("open_weights", False),
+            "us_provider_available": trustedrouter.get("us_provider_available", False),
+            "eu_focused_provider_available": trustedrouter.get(
+                "eu_focused_provider_available", False
+            ),
+            "internal_only": trustedrouter.get("internal_only", False),
+            "route_kind": trustedrouter.get("route_kind", "model"),
+            "supports_chat": trustedrouter.get("supports_chat", True),
+        },
+    }
+
+
+@lru_cache(maxsize=1)
+def _public_catalog_payload() -> _PublicCatalogPayload:
+    shapes: list[dict[str, Any]] = []
+    for model in MODELS.values():
+        shape = model_to_openrouter_shape(model)
+        trustedrouter = shape.get("trustedrouter")
+        if isinstance(trustedrouter, dict) and trustedrouter.get("internal_only"):
+            continue
+        shapes.append(shape)
+    frozen_shapes = tuple(shapes)
+    body = _json_bytes({"data": frozen_shapes})
+    picker_body = _json_bytes(
+        {"data": [_picker_model_shape(shape) for shape in frozen_shapes]}
+    )
+    gzip_body = gzip.compress(body, compresslevel=6, mtime=0)
+    picker_gzip_body = gzip.compress(picker_body, compresslevel=6, mtime=0)
+    return _PublicCatalogPayload(
+        shapes=frozen_shapes,
+        body=body,
+        etag=_content_etag(body),
+        gzip_body=gzip_body,
+        gzip_etag=_content_etag(gzip_body),
+        picker_body=picker_body,
+        picker_etag=_content_etag(picker_body),
+        picker_gzip_body=picker_gzip_body,
+        picker_gzip_etag=_content_etag(picker_gzip_body),
+    )
+
+
+def _cached_json_response(
+    request: Request,
+    body: bytes,
+    etag: str,
+    *,
+    gzip_body: bytes | None = None,
+    gzip_etag: str | None = None,
+) -> Response:
+    accept_encoding = request.headers.get("accept-encoding", "")
+    accepted_encodings: dict[str, float] = {}
+    for entry in accept_encoding.split(","):
+        token, *parameters = entry.split(";")
+        quality = 1.0
+        for parameter in parameters:
+            name, separator, value = parameter.strip().partition("=")
+            if separator and name.strip().lower() == "q":
+                try:
+                    quality = float(value)
+                except ValueError:
+                    quality = 0.0
+                if not 0.0 <= quality <= 1.0:
+                    quality = 0.0
+        accepted_encodings[token.strip().lower()] = quality
+    explicit_gzip_qualities = [
+        accepted_encodings[coding]
+        for coding in ("gzip", "x-gzip")
+        if coding in accepted_encodings
+    ]
+    gzip_quality = (
+        max(explicit_gzip_qualities)
+        if explicit_gzip_qualities
+        else accepted_encodings.get("*", 0.0)
+    )
+    serve_gzip = gzip_body is not None and gzip_quality > 0
+    if serve_gzip:
+        assert gzip_body is not None
+        body = gzip_body
+        etag = gzip_etag or _content_etag(body)
+    headers = {
+        "Cache-Control": _PUBLIC_CATALOG_CACHE_CONTROL,
+        "ETag": etag,
+    }
+    if serve_gzip:
+        headers["Content-Encoding"] = "gzip"
+    elif "gzip" in accept_encoding:
+        # Starlette's outer GZipMiddleware only checks whether the token
+        # "gzip" occurs in Accept-Encoding, so values such as x-gzip or an
+        # explicit q=0 rejection can otherwise make it compress our identity
+        # bytes after we have assigned their strong ETag.
+        headers["Content-Encoding"] = "identity"
+    validators = {
+        _weak_etag_value(token)
+        for token in request.headers.get("if-none-match", "").split(",")
+    }
+    not_modified = "*" in validators or _weak_etag_value(etag) in validators
+    if serve_gzip or "Content-Encoding" in headers or not_modified:
+        # The outer compression middleware adds this for a normal identity
+        # response. Set it ourselves when the body already carries an encoding,
+        # and on 304 where the middleware has no body from which to infer it.
+        headers["Vary"] = "Accept-Encoding"
+    if not_modified:
+        return Response(status_code=304, headers=headers)
+    return Response(
+        content=body,
+        media_type="application/json",
+        headers=headers,
+    )
 
 
 def _set_provider_query(raw: dict[str, Any], key: str, value: str) -> None:
@@ -146,7 +314,26 @@ def _public_model_matches_filters(shape: dict[str, Any], request: Request) -> bo
     return True
 
 
+def _has_public_model_filters(request: Request) -> bool:
+    return any(
+        key in request.query_params
+        for key in (
+            "open_weights",
+            "provider[jurisdiction]",
+            "provider.jurisdiction",
+            "provider[region]",
+            "provider.region",
+            "region",
+        )
+    )
+
+
 def register_catalog_routes(router: APIRouter) -> None:
+    # Catalog inputs are immutable for the life of a release. Pay the expensive
+    # endpoint/policy projection once while the app is starting, rather than on
+    # the first request handled by a shared event loop.
+    catalog_payload = _public_catalog_payload()
+
     @router.get("/embeddings/models")
     async def embeddings_models() -> dict[str, list[dict[str, Any]]]:
         return {
@@ -159,20 +346,33 @@ def register_catalog_routes(router: APIRouter) -> None:
         # routing pools, not user-selectable. The shape itself carries
         # the flag; filter it BEFORE handing to callers so SDKs +
         # chat playground don't accidentally surface them.
-        shapes = []
-        for model in MODELS.values():
-            shape = model_to_openrouter_shape(model)
-            trustedrouter = shape.get("trustedrouter")
-            if isinstance(trustedrouter, dict) and trustedrouter.get("internal_only"):
-                continue
-            if request is not None and not _public_model_matches_filters(shape, request):
-                continue
-            shapes.append(shape)
-        return shapes
+        if request is None:
+            return list(catalog_payload.shapes)
+        return [
+            shape
+            for shape in catalog_payload.shapes
+            if _public_model_matches_filters(shape, request)
+        ]
 
-    @router.get("/models")
-    async def models(request: Request) -> dict[str, list[dict[str, Any]]]:
-        return {"data": _public_model_shapes(request)}
+    @router.get("/models", response_model=dict[str, list[dict[str, Any]]])
+    async def models(request: Request) -> Response:
+        if not _has_public_model_filters(request):
+            return _cached_json_response(
+                request,
+                catalog_payload.body,
+                catalog_payload.etag,
+                gzip_body=catalog_payload.gzip_body,
+                gzip_etag=catalog_payload.gzip_etag,
+            )
+        body = _json_bytes({"data": _public_model_shapes(request)})
+        compressed = gzip.compress(body, compresslevel=6, mtime=0)
+        return _cached_json_response(
+            request,
+            body,
+            _content_etag(body),
+            gzip_body=compressed,
+            gzip_etag=_content_etag(compressed),
+        )
 
     @router.get("/models/count")
     async def models_count(request: Request) -> dict[str, dict[str, int]]:
@@ -181,6 +381,16 @@ def register_catalog_routes(router: APIRouter) -> None:
     @router.get("/models/user")
     async def models_user(_principal: ManagementPrincipal) -> dict[str, list[dict[str, Any]]]:
         return {"data": _public_model_shapes()}
+
+    @router.get("/models/picker")
+    async def models_picker(request: Request) -> Response:
+        return _cached_json_response(
+            request,
+            catalog_payload.picker_body,
+            catalog_payload.picker_etag,
+            gzip_body=catalog_payload.picker_gzip_body,
+            gzip_etag=catalog_payload.picker_gzip_etag,
+        )
 
     @router.get("/models/{author}/{slug}/endpoints")
     async def model_endpoints(
