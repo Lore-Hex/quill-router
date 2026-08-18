@@ -31,7 +31,10 @@ GOOGLE_ADS_ACTION_BY_EVENT = {
     "credit_purchase_completed": GOOGLE_ADS_PURCHASE_ACTION,
 }
 
-_ENTITY_KIND_PREFIX = "google_ads_conversion_"
+# Version the durable boundary. A retired uploader used the unversioned prefix
+# with plaintext click-ID fields, so reusing it would make the new worker decode
+# an incompatible row shape and could revive data from the retired pipeline.
+_ENTITY_KIND_PREFIX = "google_ads_conversion_v2_"
 _CLICK_ID_KINDS = frozenset({"gclid", "gbraid", "wbraid"})
 
 

@@ -17,6 +17,8 @@ from trusted_router.google_ads_conversions import (
     GOOGLE_ADS_PURCHASE_ACTION,
     GOOGLE_ADS_SIGNUP_ACTION,
     encrypt_google_ads_click_id,
+    google_ads_conversion_kind,
+    google_ads_conversion_kinds_since,
     google_ads_key_wrapper_config,
 )
 from trusted_router.services.google_data_manager import (
@@ -570,6 +572,18 @@ def test_spanner_worker_rehydrates_encrypted_click_envelope() -> None:
 
     assert isinstance(decoded.encrypted_click_id, EncryptedGoogleClickEnvelope)
     assert decoded.encrypted_click_id == conversion.encrypted_click_id
+
+
+def test_conversion_storage_is_versioned_away_from_retired_plaintext_rows() -> None:
+    occurred_at = "2026-08-18T12:34:56Z"
+    assert google_ads_conversion_kind(occurred_at) == "google_ads_conversion_v2_202608"
+    assert google_ads_conversion_kinds_since(
+        dt.datetime(2026, 7, 1, tzinfo=dt.UTC),
+        now=dt.datetime(2026, 8, 18, tzinfo=dt.UTC),
+    ) == [
+        "google_ads_conversion_v2_202607",
+        "google_ads_conversion_v2_202608",
+    ]
 
 
 def test_deploy_worker_has_only_dedicated_kms_and_metadata_config() -> None:

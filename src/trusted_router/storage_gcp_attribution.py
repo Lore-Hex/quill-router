@@ -22,8 +22,8 @@ from trusted_router.storage_models import (
 
 _KIND = "acquisition_attribution"
 _REMINDER_KIND = "activation_reminder"
-_GOOGLE_DELIVERY_DUE_KIND = "google_ads_conversion_due"
-_GOOGLE_CLICK_EXPIRY_KIND = "google_ads_click_expiry"
+_GOOGLE_DELIVERY_DUE_KIND = "google_ads_conversion_due_v2"
+_GOOGLE_CLICK_EXPIRY_KIND = "google_ads_click_expiry_v2"
 
 
 class SpannerAcquisitionAttribution:
