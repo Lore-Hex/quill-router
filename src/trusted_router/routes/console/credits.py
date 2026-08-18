@@ -7,17 +7,20 @@ actual API calls so this module stays focused on form parsing + redirects."""
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, cast
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import SettingsDep
 from trusted_router.billing_policy import (
     is_stablecoin_checkout_method,
     is_wallet_only_user,
 )
+from trusted_router.config import Settings
 from trusted_router.domains import request_control_origin
 from trusted_router.money import (
     MIN_PAYPAL_CHECKOUT_DOLLARS,
@@ -46,6 +49,13 @@ from trusted_router.services.stripe_billing import (
 )
 from trusted_router.storage import STORE
 from trusted_router.typed_balance import live_credit_summary
+from trusted_router.views import render_template
+
+_PRIVATE_CREDITS_HEADERS = {
+    "Cache-Control": "private, no-store",
+    "Vary": "Cookie",
+    "X-Robots-Tag": "noindex, nofollow",
+}
 
 
 def register(app: FastAPI) -> None:
@@ -58,22 +68,12 @@ def register(app: FastAPI) -> None:
         credit = STORE.get_credit_account(ctx.workspace.id)
         summary = live_credit_summary(ctx.workspace.id)
         wallet_only_billing = is_wallet_only_user(ctx.user)
-        # Pull the last 20 Stripe checkout sessions tagged with this
-        # workspace_id from Stripe's Search API. Returns [] if Stripe is
-        # unreachable / not configured / there are no payments yet — all
-        # three collapse to the same "no payment history yet" copy on
-        # the template, so the rest of the page renders fine without
-        # being blocked on Stripe's API. See list_workspace_payments
-        # docstring for why we pull live instead of reading from a TR
-        # ledger (tr_entities doesn't store per-payment metadata today).
-        payments = list_workspace_payments(
-            workspace_id=ctx.workspace.id,
-            settings=settings,
-            limit=20,
-        )
-        saved_payment_method = describe_saved_payment_method(
-            payment_method_id=credit.stripe_payment_method_id if credit else None,
-            settings=settings,
+        # This local fallback uses only persisted billing metadata. Live
+        # PaymentMethod.retrieve + PaymentIntent.search calls are deferred to
+        # /stripe-details so Stripe latency cannot delay the authoritative
+        # balance above or any of the billing controls below.
+        saved_payment_method = _saved_payment_method_fallback(
+            credit.stripe_payment_method_id if credit else None
         )
         verification_remaining = max(
             0,
@@ -89,41 +89,94 @@ def register(app: FastAPI) -> None:
             if purpose == "identity_verification"
             else {}
         )
-        return HTMLResponse(render(
-            "console/credits.html",
-            settings=settings,
-            ctx=ctx,
-            active="credits",
-            page_title="Credits",
-            page_subtitle="Top up to keep prepaid routes flowing.",
-            credits_available=money(summary["available"] if summary else 0),
-            credits_usage=money(summary["total_usage"] if summary else 0),
-            auto_refill_enabled=credit.auto_refill_enabled if credit else False,
-            auto_refill_threshold_dollars=(
-                credit.auto_refill_threshold_microdollars // 1_000_000 if credit and credit.auto_refill_threshold_microdollars else 10
+        return HTMLResponse(
+            render(
+                "console/credits.html",
+                settings=settings,
+                ctx=ctx,
+                active="credits",
+                page_title="Credits",
+                page_subtitle="Top up to keep prepaid routes flowing.",
+                credits_available=money(summary["available"] if summary else 0),
+                credits_usage=money(summary["total_usage"] if summary else 0),
+                auto_refill_enabled=credit.auto_refill_enabled if credit else False,
+                auto_refill_threshold_dollars=(
+                    credit.auto_refill_threshold_microdollars // 1_000_000
+                    if credit and credit.auto_refill_threshold_microdollars
+                    else 10
+                ),
+                auto_refill_amount_dollars=(
+                    credit.auto_refill_amount_microdollars // 1_000_000
+                    if credit and credit.auto_refill_amount_microdollars
+                    else 25
+                ),
+                has_payment_method=bool(
+                    credit
+                    and credit.stripe_customer_id
+                    and credit.stripe_payment_method_id
+                ),
+                has_stripe_customer=bool(credit and credit.stripe_customer_id),
+                payment_method_pending=bool(
+                    credit
+                    and credit.stripe_customer_id
+                    and not credit.stripe_payment_method_id
+                ),
+                last_auto_refill_at=credit.last_auto_refill_at if credit else None,
+                last_auto_refill_status=(
+                    credit.last_auto_refill_status if credit else None
+                ),
+                paypal_enabled=settings.paypal_enabled
+                or settings.environment.lower() in {"local", "test"},
+                paypal_minimum_dollars=MIN_PAYPAL_CHECKOUT_DOLLARS,
+                adyen_enabled=settings.adyen_checkout_ready,
+                wallet_only_billing=wallet_only_billing,
+                saved_payment_method=saved_payment_method,
+                api_base_url=ctx.api_base_url,
+                identity_verification_checkout=purpose == "identity_verification",
+                **verification_nudge,
             ),
-            auto_refill_amount_dollars=(
-                credit.auto_refill_amount_microdollars // 1_000_000 if credit and credit.auto_refill_amount_microdollars else 25
+            headers=_PRIVATE_CREDITS_HEADERS,
+        )
+
+    @app.get("/console/credits/stripe-details")
+    async def console_credit_stripe_details(
+        ctx: ConsoleDep,
+        settings: SettingsDep,
+    ) -> Response:
+        """Hydrate Stripe-backed display data outside the page's TTFB.
+
+        Both synchronous Stripe calls run concurrently in worker threads, so
+        neither can block Uvicorn's event loop and hydration takes the slower
+        call's latency rather than their sum. The selected workspace comes
+        only from the authenticated console context; the client cannot request
+        another tenant's Stripe metadata by supplying an id.
+        """
+        credit = await run_in_threadpool(STORE.get_credit_account, ctx.workspace.id)
+        payment_method_id = credit.stripe_payment_method_id if credit else None
+        saved_payment_method, payment_result = await asyncio.gather(
+            run_in_threadpool(
+                _load_saved_payment_method,
+                payment_method_id,
+                settings,
             ),
-            has_payment_method=bool(
-                credit and credit.stripe_customer_id and credit.stripe_payment_method_id
+            run_in_threadpool(
+                _load_workspace_payments,
+                ctx.workspace.id,
+                settings,
             ),
-            has_stripe_customer=bool(credit and credit.stripe_customer_id),
-            payment_method_pending=bool(
-                credit and credit.stripe_customer_id and not credit.stripe_payment_method_id
+        )
+        payments, payments_available = payment_result
+
+        return HTMLResponse(
+            render_template(
+                "console/_credits_stripe_details.html",
+                saved_payment_method=saved_payment_method,
+                payments=payments,
+                payments_available=payments_available,
+                wallet_only_billing=is_wallet_only_user(ctx.user),
             ),
-            last_auto_refill_at=credit.last_auto_refill_at if credit else None,
-            last_auto_refill_status=credit.last_auto_refill_status if credit else None,
-            paypal_enabled=settings.paypal_enabled or settings.environment.lower() in {"local", "test"},
-            paypal_minimum_dollars=MIN_PAYPAL_CHECKOUT_DOLLARS,
-            adyen_enabled=settings.adyen_checkout_ready,
-            wallet_only_billing=wallet_only_billing,
-            payments=payments,
-            saved_payment_method=saved_payment_method,
-            api_base_url=ctx.api_base_url,
-            identity_verification_checkout=purpose == "identity_verification",
-            **verification_nudge,
-        ))
+            headers=_PRIVATE_CREDITS_HEADERS,
+        )
 
     @app.get("/console/credits/checkout")
     async def console_credit_checkout_get(_ctx: ConsoleDep) -> Response:
@@ -348,6 +401,53 @@ def register(app: FastAPI) -> None:
             amount_microdollars=amount * 1_000_000,
         )
         return RedirectResponse(url="/console/credits?saved=1", status_code=303)
+
+
+def _saved_payment_method_fallback(
+    payment_method_id: str | None,
+) -> dict[str, Any] | None:
+    if not payment_method_id:
+        return None
+    return {
+        "id_tail": payment_method_id[-6:],
+        "brand": None,
+        "last4": None,
+        "exp_month": None,
+        "exp_year": None,
+        "details_available": False,
+    }
+
+
+def _load_saved_payment_method(
+    payment_method_id: str | None,
+    settings: Settings,
+) -> dict[str, Any] | None:
+    try:
+        return describe_saved_payment_method(
+            payment_method_id=payment_method_id,
+            settings=settings,
+            raise_on_error=True,
+        )
+    except Exception:
+        return _saved_payment_method_fallback(payment_method_id)
+
+
+def _load_workspace_payments(
+    workspace_id: str,
+    settings: Settings,
+) -> tuple[list[dict[str, Any]], bool]:
+    try:
+        return (
+            list_workspace_payments(
+                workspace_id=workspace_id,
+                settings=settings,
+                limit=20,
+                raise_on_error=True,
+            ),
+            True,
+        )
+    except Exception:
+        return [], False
 
 
 def _wallet_only_redirect() -> RedirectResponse:

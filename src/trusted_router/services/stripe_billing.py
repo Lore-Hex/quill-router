@@ -235,7 +235,14 @@ def describe_saved_payment_method(
     *,
     payment_method_id: str | None,
     settings: Settings,
+    raise_on_error: bool = False,
 ) -> dict[str, Any] | None:
+    """Return masked card display fields for a saved payment method.
+
+    Callers rendering a best-effort inline view keep the default fallback on
+    Stripe errors. Deferred loaders can request ``raise_on_error`` so they can
+    distinguish an empty value from a temporarily unavailable Stripe read.
+    """
     if not payment_method_id:
         return None
     fallback = {
@@ -258,6 +265,8 @@ def describe_saved_payment_method(
     try:
         payment_method = stripe.PaymentMethod.retrieve(payment_method_id)
     except Exception:
+        if raise_on_error:
+            raise
         return fallback
 
     data = (
@@ -310,6 +319,7 @@ def list_workspace_payments(
     workspace_id: str,
     settings: Settings,
     limit: int = 20,
+    raise_on_error: bool = False,
 ) -> list[dict[str, Any]]:
     """Return the recent Stripe payments for this workspace.
 
@@ -342,11 +352,12 @@ def list_workspace_payments(
           "bank_last4": "6789" | None,
         }
 
-    Failures (Stripe API down, missing key) return an empty list rather
-    than raising — the credits page falls back to "no payment history
+    Failures (Stripe API down, missing key) return an empty list by default
+    rather than raising — the credits page falls back to "no payment history
     yet" copy, which is the right UX in both legitimate-empty and
     transient-failure cases. The page still renders the balance section
-    so the page isn't blocked on Stripe API uptime.
+    so the page isn't blocked on Stripe API uptime. Deferred loaders can set
+    ``raise_on_error`` to distinguish an outage from a legitimate empty list.
     """
     if not settings.stripe_secret_key:
         return []
@@ -363,6 +374,8 @@ def list_workspace_payments(
             expand=["data.latest_charge"],
         )
     except Exception:
+        if raise_on_error:
+            raise
         # Stripe down, search quota exceeded, or the workspace has
         # never paid yet — all collapse to "no payments to show right
         # now." Page still renders the rest of credits view.
