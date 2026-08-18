@@ -1134,8 +1134,11 @@ failure mode this exists to stop.
 starts answering when a control plane built from the publisher is deployed to
 it, and exits 5 until then. The last reading taken while editing this section
 was `gcp` VERIFIED with `aws` and `azure` both at 5, and it is a note about a
-moment rather than a claim about now. Azure additionally fails stage (e): it has
-no operational-analytics outbox at all. See
+moment rather than a claim about now. Azure used to fail stage (e) as well —
+its control-plane script set no outbox variable at all — and now passes it
+statically, which means only that the script CAN enable the outbox, not that any
+deployed revision has. Walking it from nodes to flag is
+`docs/storage-portability/azure-analytics-runbook.md`; see
 `docs/storage-portability/multi-cloud-separation.md` §7 for the full definition
 of done and the checklist for a new cloud.
 

@@ -47,7 +47,13 @@ set -euo pipefail
 STACK="${STACK:-tr-azure}"
 RG="${RG:-$STACK}"
 LOCATION="${LOCATION:-uaenorth}"
-APP="${APP:-$STACK}"
+# tr-azure-VNET, not tr-azure. Production runs the container app `tr-azure-vnet`
+# and this file called itself the source of truth while defaulting to a
+# different app — so a deploy from a clean checkout would have created or
+# updated the wrong one, and every claim in this header would have been about a
+# service nobody was using. The drift was found by reading ARM, not by reading
+# this file; that is the direction it usually goes.
+APP="${APP:-$STACK-vnet}"
 APP_ENV="${APP_ENV:-$STACK-env}"
 PG_NAME="${PG_NAME:-$STACK-pg}"
 PG_ADMIN="${PG_ADMIN:-tradmin}"
@@ -97,6 +103,30 @@ DEFERRED_SETTLEMENT_ENABLED="${DEFERRED_SETTLEMENT_ENABLED:-false}"
 SYNTHETIC_INTERVAL_SECONDS="${SYNTHETIC_INTERVAL_SECONDS:-120}"
 SYNTHETIC_ROTATION_COUNT="${SYNTHETIC_ROTATION_COUNT:-8}"
 
+# Operational analytics. The outbox flag is now STATED by this file rather than
+# defaulted by config.py, which is the whole point of the change: it was off
+# because nobody had written it down, not because anybody decided it. Mirrors
+# aws_eu_control_plane.sh, where the presence of a ClickHouse secret in the
+# region is what decides.
+#
+# The rule, and the order it enforces: with no ClickHouse target the outbox
+# stays OFF rather than enqueuing rows nothing will ever drain. That is not
+# caution, it is the Paris outage stated as a conditional — 470,897 rows
+# accumulated in fifteen days behind a green status page because the producer
+# was on and the consumer did not exist.
+#
+# The target is the uaenorth node built by scripts/deploy/azure_clickhouse.sh.
+# The container app lives in snet-aca inside vnet-prod and the node lives in
+# snet-clickhouse inside the same VNet, so this is a private address over
+# internal routing — there is no public path to it, by design.
+CLICKHOUSE_NODE="${CLICKHOUSE_NODE:-tr-azure-clickhouse-$LOCATION}"
+CLICKHOUSE_VAULT="${CLICKHOUSE_VAULT:-tr-azure-analytics-kv}"
+CLICKHOUSE_SECRET_NAME="${CLICKHOUSE_SECRET_NAME:-clickhouse-default-password}"
+# "default"/"default": the node's schema is applied unqualified, unlike the GCP
+# cluster's "tr"/"tr".
+CLICKHOUSE_USER="${CLICKHOUSE_USER:-default}"
+CLICKHOUSE_DATABASE="${CLICKHOUSE_DATABASE:-default}"
+
 log() { printf '\n=== %s\n' "$*" >&2; }
 exists() { "$@" >/dev/null 2>&1; }
 die() { echo "[FAIL] $*" >&2; exit 1; }
@@ -139,6 +169,26 @@ SETTLEMENT_TOKEN="$(read_secret trustedrouter-federation-settlement-token-azure-
 # The monitor key is what makes the leaderboard green: rotation calls the
 # gateway as a CUSTOMER of itself. Without it there is a status page with no
 # model rows, which reads as "no data" rather than "not measured".
+
+# Resolve the analytics target. BOTH halves must be there: an address with no
+# password, or a password with no address, is a config that starts and then
+# fails on first use — so a half-answer is treated as no answer.
+CLICKHOUSE_HOST="${CLICKHOUSE_HOST:-$(az vm list-ip-addresses -g "$RG" -n "$CLICKHOUSE_NODE" \
+  --query "[0].virtualMachine.network.privateIpAddresses[0]" -o tsv 2>/dev/null || true)}"
+CLICKHOUSE_PASSWORD="${CLICKHOUSE_PASSWORD:-$(az keyvault secret show --vault-name "$CLICKHOUSE_VAULT" \
+  -n "$CLICKHOUSE_SECRET_NAME" --query value -o tsv 2>/dev/null || true)}"
+if [ -n "$CLICKHOUSE_HOST" ] && [ "$CLICKHOUSE_HOST" != "None" ] && [ -n "$CLICKHOUSE_PASSWORD" ]; then
+  OUTBOX_ENABLED="true"
+  CLICKHOUSE_URL_EFFECTIVE="${CLICKHOUSE_URL:-http://${CLICKHOUSE_HOST}:8123}"
+  log "analytics ON: outbox enabled, ClickHouse at ${CLICKHOUSE_URL_EFFECTIVE}"
+  log "  a drain must ALREADY be installed against it. If it is not, this deploy
+  starts filling an outbox nothing empties. Check first:
+    bash scripts/deploy/azure_clickhouse_drain_install.sh"
+else
+  log "no ClickHouse target in ${LOCATION} (node ${CLICKHOUSE_NODE}, vault ${CLICKHOUSE_VAULT}): analytics disabled for this service"
+  OUTBOX_ENABLED="false"
+  CLICKHOUSE_URL_EFFECTIVE=""
+fi
 
 if [ -z "$SETTLEMENT_TOKEN" ] || [ "$DEFERRED_SETTLEMENT_ENABLED" != "true" ]; then
   log "deferred settlement OFF (token present: $([ -n "$SETTLEMENT_TOKEN" ] && echo yes || echo no))"
@@ -212,6 +262,13 @@ ENV_VARS=(
   "TR_SYNTHETIC_SCHEDULER_INTERVAL_SECONDS=${SYNTHETIC_INTERVAL_SECONDS}"
   "TR_SYNTHETIC_SCHEDULER_ROTATION_COUNT=${SYNTHETIC_ROTATION_COUNT}"
 
+  # Operational analytics. STATED, both ways: "false" here is a decision this
+  # file makes and a reader can see, not a default nobody wrote down.
+  "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=${OUTBOX_ENABLED}"
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=${CLICKHOUSE_URL_EFFECTIVE}"
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER=${CLICKHOUSE_USER}"
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE=${CLICKHOUSE_DATABASE}"
+
   "TR_INTERNAL_GATEWAY_TOKEN=secretref:internal-token"
   "TR_SYNTHETIC_MONITOR_API_KEY=secretref:monitor-key"
   "TR_FEDERATION_HOME_TOKEN=secretref:federation-token"
@@ -226,6 +283,10 @@ SECRET_ARGS=(
 if [ "$DEFERRED_SETTLEMENT_ENABLED" = "true" ]; then
   ENV_VARS+=("TR_FEDERATION_SETTLEMENT_HOME_TOKEN=secretref:settlement-token")
   SECRET_ARGS+=("settlement-token=${SETTLEMENT_TOKEN}")
+fi
+if [ "$OUTBOX_ENABLED" = "true" ]; then
+  ENV_VARS+=("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD=secretref:clickhouse-password")
+  SECRET_ARGS+=("clickhouse-password=${CLICKHOUSE_PASSWORD}")
 fi
 
 if exists az containerapp show -g "$RG" -n "$APP"; then
@@ -331,15 +392,16 @@ NOTE
 # ...and then the part that is NOT a note.
 #
 # Everything above provisions a control plane that serves, measures itself, and
-# publishes a status page. None of it gives this cloud an operational-analytics
-# pipeline: the ENV_VARS block sets no TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED,
-# so settle enqueues nothing, there is no outbox to drain, and no drain. On AWS
-# that same gap ran for fifteen days behind an entirely green status page
-# because the only alarm is emitted by the missing process.
+# publishes a status page. Whether it also gives this cloud an
+# operational-analytics pipeline now depends on one thing this script MEASURES
+# rather than assumes: whether a ClickHouse node and its password exist. With
+# them, the outbox is on and the plane publishes an `analytics` section. Without
+# them the outbox is explicitly off, because a producer with no consumer is the
+# outage rather than a smaller version of working.
 #
-# So this deploy now ends by asking whether the CLOUD works rather than whether
-# the script finished, and today, on Azure, it says no. That is the correct
-# answer, and no variable this script inherits changes it: the verifier's bound
+# So this deploy ends by asking whether the CLOUD works rather than whether the
+# script finished, and no variable this script inherits changes the answer: the
+# verifier's bound
 # is a constant in src/ and its URL comes from the fleet registry, and the two
 # variables it reads at all -- TR_MAX_DRAIN_LAG_SECONDS and TR_STATUS_URL -- it
 # reads only in order to print that they are being IGNORED. (An earlier version
@@ -354,18 +416,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/cloud_complete_gate.sh
 . "${SCRIPT_DIR}/cloud_complete_gate.sh"
 
-require_cloud_complete azure "$(cat <<'NEXT'
-The Azure app is deployed and serving. The Azure CLOUD is not complete: it has
-no operational-analytics pipeline at all. To finish it:
+read -r -d '' NEXT_STEPS <<NEXT || true
+The Azure app is deployed and serving. Whether the Azure CLOUD is complete
+depends on the stage this run reported above.
 
-  1. give it somewhere to drain TO (a ClickHouse this cloud owns, mirroring
-     scripts/deploy/aws_eu_clickhouse.sh) — this is a COST decision, so it is
-     not made by a deploy script;
-  2. add to the ENV_VARS block in this file:
-       TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true
-       TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=...  (+ user/database/password)
-  3. install a drain against it, mirroring
-     scripts/deploy/aws_eu_clickhouse_drain_install.sh;
-  4. bash scripts/deploy/verify_cloud_complete.sh azure
+Analytics for this deploy: outbox=${OUTBOX_ENABLED}, clickhouse=${CLICKHOUSE_URL_EFFECTIVE:-none}
+
+If the outbox is FALSE, this cloud enqueues nothing and stage (e) fails. Build
+the pipeline, in this order and no other:
+
+  1. bash scripts/deploy/azure_clickhouse.sh uaenorth
+     bash scripts/deploy/azure_clickhouse.sh southeastasia
+  2. create the scoped Postgres role (runbook stage 3)
+  3. bash scripts/deploy/azure_clickhouse_drain_install.sh
+  4. re-run THIS script: it finds the node and the vault secret, and the outbox
+     turns itself on. There is nothing to edit here.
+  5. bash scripts/deploy/verify_cloud_complete.sh azure
+
+If the outbox is TRUE and a stage still failed, read which one: a published
+section that is stale, unavailable, or lagging is a drain problem, not a deploy
+problem, and docs/storage-portability/azure-analytics-runbook.md says which.
 NEXT
-)"
+
+require_cloud_complete azure "$NEXT_STEPS"

@@ -35,6 +35,12 @@ Environment=HOME=/var/lib/tr-clickhouse-ingest
 # connection, and on plain Postgres libpq reads PGPASSWORD from this file
 # rather than from argv, where every local user could read it.
 #
+# AZURE uses that second path. Flexible Server has no IAM token, so the Azure
+# node's file omits TR_POSTGRES_IAM_AUTH entirely and supplies PGPASSWORD for a
+# role granted SELECT, DELETE on the outbox table and nothing else. The HOME
+# line above matters MORE there, not less: libpq looks for the client
+# certificate on every connect regardless of how the password arrives.
+#
 # SECOND DURABLE COPY (optional, additive). Setting
 # TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_REPLICA_HOST turns the drain into a
 # dual-write: it writes each batch to the local node AND to that host, and

@@ -276,7 +276,8 @@ for it.
 Bring-up is not a menu. Every cloud's bring-up and control-plane deploy scripts
 end by running the check and exit non-zero when it fails —
 `aws_eu_clickhouse.sh`, `aws_eu_north_clickhouse.sh`, `aws_eu_control_plane.sh`,
-`aws_eu_clickhouse_drain_install.sh`, `azure_control_plane.sh`, and for GCP the
+`aws_eu_clickhouse_drain_install.sh`, `azure_clickhouse.sh`,
+`azure_clickhouse_drain_install.sh`, `azure_control_plane.sh`, and for GCP the
 out-of-band `verify_gcp_complete.sh`. Where a remaining step genuinely needs a
 human (a cost decision, a password that only exists on a node), the script
 prints the exact command **and exits non-zero**. It never prints and returns 0;
@@ -336,6 +337,8 @@ and the second move is a diff a reviewer reads.
 - `scripts/deploy/aws_eu_clickhouse.sh`
 - `scripts/deploy/aws_eu_control_plane.sh`
 - `scripts/deploy/aws_eu_north_clickhouse.sh`
+- `scripts/deploy/azure_clickhouse.sh`
+- `scripts/deploy/azure_clickhouse_drain_install.sh`
 - `scripts/deploy/azure_control_plane.sh`
 - `scripts/deploy/verify_gcp_complete.sh`
 <!-- PROVEN_BY_EXECUTION:end -->
@@ -349,7 +352,20 @@ and the second move is a diff a reviewer reads.
 Its middle ships a tarball to the node in base64 chunks over SSM and then reads
 the drain's own journal back to establish that rows moved; a stub SSM that
 answers `Status=Success` to everything would make that verification an assertion
-about the stub. It is recorded as `NOT_PROVEN` in `ROLLOUT_REGISTRY` with that
+about the stub.
+
+**The Azure drain installer is in the proven list, and that difference is worth
+stating rather than glossing.** `azure_clickhouse_drain_install.sh` ships its
+payload the same way, over `az vm run-command` instead of SSM, and the harness
+answers that channel from a fixture too. What running it establishes is
+therefore exactly the two behavioural properties and no more: it CALLS the gate
+for `azure`, and every code the gate can return comes out of it unaltered — plus
+that it parses under this machine's bash, which is not nothing (a heredoc inside
+`$( )` once took a whole deploy script out on macOS while CI stayed green). What
+it does not establish is anything about the middle: the chunked transfer, the
+scoped-role check and the row counts all assert against the stub under the
+harness. The evidence that rows moved is in-cloud and unchanged — `SELECT
+count() FROM activity_generations`, twice, ten minutes apart. It is recorded as `NOT_PROVEN` in `ROLLOUT_REGISTRY` with that
 reason, and a `NOT_PROVEN` entry with a blank reason fails CI. What *is* proven
 about it is that the shared fragment it calls —
 `scripts/deploy/cloud_complete_gate.sh` — returns the gate's exit status
@@ -498,11 +514,24 @@ under it, and this paragraph has already been wrong once. Ask:
 The last reading taken while editing this section: `gcp` VERIFIED, `aws` and
 `azure` both 5. That is a note about a moment, not a claim about now.
 
-**Azure has no operational-analytics outbox.** `azure_control_plane.sh` sets no
-`TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED` at all, so the cloud enqueues nothing,
-has nothing to drain, and stage (e) fails. It is a canary
-(`aws-eu-and-azure-canary.md` §3) and it still counts: a canary whose operational
-history is unrecorded cannot answer the question canaries exist to answer.
+**Azure's analytics pipeline exists in this repository and not yet on the
+wire.** `azure_control_plane.sh` now STATES
+`TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED` instead of letting it default, and
+computes it from whether a ClickHouse node and its Key Vault secret exist — so
+the flag is off until the sink is real and on the moment it is.
+`azure_clickhouse.sh` builds two nodes (uaenorth and southeastasia, joined by
+global VNet peering) and `azure_clickhouse_drain_install.sh` installs the single
+drain that writes BOTH copies before deleting anything. Two regions here is
+DURABILITY, not residency: both nodes hold the same rows, and no row leaves
+Azure.
+
+None of that is deployed by writing it down. Until an operator has walked
+`azure-analytics-runbook.md`, Azure's stage (e) passes on the checkout and the
+cloud still publishes no `analytics` section, so the gate exits 5 — and
+`operational_analytics_fleet.py` now carries `expects_outbox=True` for Azure,
+which means the fleet check FAILS for it rather than recording an expected
+absence. That failure is the correct reading of this moment: the pipeline is
+written, and a written pipeline moves no rows.
 
 ### Checklist for the next cloud
 

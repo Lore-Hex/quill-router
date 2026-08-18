@@ -426,17 +426,32 @@ ROLLOUT_REGISTRY: dict[str, CloudRollout] = {
     "azure": CloudRollout(
         cloud="azure",
         control_plane_script="scripts/deploy/azure_control_plane.sh",
-        # No such script exists yet: Azure has no operational-analytics outbox
-        # at all, which is the point. The stage that fails says so and names
-        # what has to be built, rather than pointing at a file that is not there.
-        drain_install_command=(
-            "write it — Azure has no operational-analytics drain yet; the outbox "
-            "must be enabled in scripts/deploy/azure_control_plane.sh and a drain "
-            "installed against its ClickHouse, mirroring "
-            "scripts/deploy/aws_eu_clickhouse_drain_install.sh"
-        ),
+        # This field used to be a paragraph explaining that no such script
+        # existed. It exists now, and it runs on the uaenorth node only: ONE
+        # drain writes both regions' copies, because two drains against one
+        # outbox would each delete rows the other had not yet written.
+        drain_install_command="bash scripts/deploy/azure_clickhouse_drain_install.sh",
         deploy_scripts=(
+            DeployScript("scripts/deploy/azure_clickhouse.sh", PROVEN_BY_EXECUTION),
             DeployScript("scripts/deploy/azure_control_plane.sh", PROVEN_BY_EXECUTION),
+            # Runnable under stubs, unlike its AWS sibling, and it is worth
+            # being exact about what that buys and what it does not. What the
+            # harness proves is CONTROL FLOW: the gate is called for azure, and
+            # every code the gate can return comes out of this script
+            # unaltered. What it cannot prove is the middle — the chunked
+            # payload, the scoped-role check and the row counts all travel
+            # through `az vm run-command`, which the harness answers from a
+            # fixture, so under stubs those steps assert against the stub. That
+            # is exactly the objection recorded against
+            # aws_eu_clickhouse_drain_install.sh; the difference here is only
+            # that the script can REACH its own end without the fixture having
+            # to fake a success signal the script then reads as evidence, so
+            # the two behavioural properties are measurable. The evidence that
+            # rows moved is still in-cloud, and still two numbers ten minutes
+            # apart.
+            DeployScript(
+                "scripts/deploy/azure_clickhouse_drain_install.sh", PROVEN_BY_EXECUTION
+            ),
         ),
     ),
 }
