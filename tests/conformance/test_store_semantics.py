@@ -647,6 +647,31 @@ def test_api_key_lookups_agree_and_delete_revokes(store: Store, workspace_id: st
     assert store.get_key_by_lookup_hash(created.lookup_hash) is None
 
 
+def test_api_key_usage_projection_is_immediate_and_scoped(
+    store: Store,
+    workspace_id: str,
+    user_id: str,
+    unique: str,
+) -> None:
+    """The console projection is a portable read-your-write Store contract."""
+    _raw_key, created = store.create_api_key(
+        workspace_id=workspace_id,
+        name=f"projection-{unique}",
+        creator_user_id=user_id,
+        limit_daily_microdollars=1_000,
+    )
+
+    projected = store.list_api_keys_with_usage(workspace_id)
+
+    assert len(projected) == 1
+    assert projected[0].api_key.hash == created.hash
+    assert projected[0].usage_microdollars == 0
+    assert projected[0].windows == {"daily": 0, "weekly": 0, "monthly": 0}
+    assert store.list_api_keys_with_usage(f"other-{unique}") == []
+    assert store.delete_key(created.hash) is True
+    assert store.list_api_keys_with_usage(workspace_id) == []
+
+
 def test_auth_session_lifecycle(store: Store, user_id: str) -> None:
     """Create -> read -> delete -> gone. Logout must actually invalidate."""
     raw_token, _session = store.create_auth_session(

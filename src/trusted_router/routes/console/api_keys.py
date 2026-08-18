@@ -17,7 +17,7 @@ from trusted_router.errors import assert_workspace_billing_active
 from trusted_router.money import dollars_to_microdollars, microdollars_to_decimal
 from trusted_router.routes.console._shared import ConsoleDep, money, render
 from trusted_router.spend_windows import WINDOWS, suggested_window_limits
-from trusted_router.storage import STORE, ApiKey
+from trusted_router.storage import STORE, ApiKey, ApiKeyUsageSnapshot
 
 _FLASH = {
     "saved:limit": ("success", "Budgets saved."),
@@ -38,7 +38,7 @@ def register(app: FastAPI) -> None:
         saved: str | None = None,
         error: str | None = None,
     ) -> Response:
-        keys = [_key_view(k) for k in STORE.list_keys(ctx.workspace.id)]
+        keys = [_key_view(snapshot) for snapshot in STORE.list_api_keys_with_usage(ctx.workspace.id)]
         flash = None
         if saved:
             flash = _FLASH.get(f"saved:{saved}")
@@ -195,15 +195,9 @@ def _checkbox(value: str) -> bool:
     return value == "on"
 
 
-def _key_view(key: ApiKey) -> dict[str, Any]:
+def _key_view(snapshot: ApiKeyUsageSnapshot) -> dict[str, Any]:
+    key = snapshot.api_key
     limit_display = "none" if key.limit_microdollars is None else money(key.limit_microdollars)
-    # One typed point-read for live usage + current window spend (falls back to
-    # the JSON values when typed is off / row missing). This only renders the
-    # key card; authorize uses a separate strong read for hard limits.
-    typed = getattr(STORE, "typed_key_usage", None)
-    usage = typed(key.hash, allow_stale=True) if typed is not None else None
-    windows_used = (usage or {}).get("windows", {})
-    lifetime_used = usage["usage"] if usage is not None else key.usage_microdollars
     window_views = []
     for window in WINDOWS:
         limit_value = getattr(key, f"limit_{window}_microdollars", None)
@@ -211,7 +205,9 @@ def _key_view(key: ApiKey) -> dict[str, Any]:
             "name": window,
             "input": "" if limit_value is None else microdollars_to_decimal(limit_value),
             "limit_display": None if limit_value is None else money(limit_value),
-            "used_display": money(windows_used.get(window, 0)) if limit_value is not None else None,
+            "used_display": (
+                money(snapshot.windows.get(window, 0)) if limit_value is not None else None
+            ),
         })
     return {
         "hash": key.hash,
@@ -221,7 +217,7 @@ def _key_view(key: ApiKey) -> dict[str, Any]:
         "limit_input": (
             "" if key.limit_microdollars is None else microdollars_to_decimal(key.limit_microdollars)
         ),
-        "usage_display": money(lifetime_used),
+        "usage_display": money(snapshot.usage_microdollars),
         "windows": window_views,
         "budget_alert_only": key.budget_alert_only,
         "disabled": key.disabled,
