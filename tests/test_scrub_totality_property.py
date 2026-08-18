@@ -1,7 +1,8 @@
 """Property tests for scrub totality.
 
-`_scrub` is the last barrier on the Axiom path: `_AxiomScrubFilter` runs every
-log-record attribute through it and hands the record straight to the shipper.
+`_scrub` is the shared safe-value barrier on the Axiom path: queue preparation
+copies the caller's record, runs every outgoing key and value through the
+Axiom scrubber, and only then hands that private copy to the shipper.
 The law:
 
     for every value v built from any Python container shape,
@@ -185,8 +186,7 @@ def test_bytes_are_redacted_wholesale() -> None:
 @given(value=values)
 @settings(max_examples=400)
 def test_the_axiom_filter_ships_no_canary_in_an_extra(value: Any) -> None:
-    """End to end at the boundary that actually ships: the filter mutates the
-    record in place and axiom-py serialises it immediately afterwards."""
+    """Every record attribute, including underscore extras, is covered."""
     record = logging.LogRecord(
         name="trusted_router.test",
         level=logging.INFO,
@@ -199,9 +199,7 @@ def test_the_axiom_filter_ships_no_canary_in_an_extra(value: Any) -> None:
     record.context = value  # type: ignore[attr-defined]
 
     assert _AxiomScrubFilter().filter(record) is True
-    assert not _leaked(
-        {k: v for k, v in record.__dict__.items() if not k.startswith("_")}
-    )
+    assert not _leaked(record.__dict__)
 
 
 @pytest.mark.parametrize("secret", SECRETS)
