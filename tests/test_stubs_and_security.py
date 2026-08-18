@@ -197,7 +197,7 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert "End-to-End Encrypted AI gateway" in dashboard.text
     assert "ATTESTED GATEWAY" in dashboard.text  # routing-diagram hero
     assert "Live regions" in dashboard.text  # reliability stats
-    assert "Live routing on four continents" in dashboard.text
+    assert "7 live regions across 3 clouds and 4 continents" in dashboard.text
     assert "North America, South America, Europe, and Australia" in dashboard.text
     assert "trustedrouter/auto" in dashboard.text  # routing model
     assert "$25 USDC" not in dashboard.text
