@@ -966,7 +966,9 @@
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 400000,
       "cached_input_token_price_per_m": 25000,
-      "missing_since": "2026-08-19"
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Gemini 2.0 Flash Lite",
@@ -989,7 +991,9 @@
       "input_token_price_per_m": 75000,
       "output_token_price_per_m": 300000,
       "cached_input_token_price_per_m": 75000,
-      "missing_since": "2026-08-19"
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Gemini 2.5 Flash",
@@ -3793,6 +3797,6 @@
       "cached_input_token_price_per_m": 304200
     }
   ],
-  "generated_at": "2026-08-19T19:32:16Z",
+  "generated_at": "2026-08-19T21:51:06Z",
   "model_count": 139
 }

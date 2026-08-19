@@ -2,7 +2,7 @@
   "_about": "Provider-native DigitalOcean Gradient AI serverless catalog. Availability comes from /v1/models and rates from DigitalOcean's official pricing documentation.",
   "provider": "digitalocean",
   "source": "https://inference.do-ai.run/v1/models",
-  "generated_at": "2026-08-19T19:32:16Z",
+  "generated_at": "2026-08-19T21:51:06Z",
   "price_scale": "microdollars_per_million",
   "model_count": 23,
   "models": [
@@ -26,7 +26,9 @@
       "max_output_tokens": 8192,
       "input_token_price_per_m": 990000,
       "output_token_price_per_m": 990000,
-      "missing_since": "2026-08-19"
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "DeepSeek V3.2",
@@ -136,7 +138,9 @@
       "max_output_tokens": 4096,
       "input_token_price_per_m": 650000,
       "output_token_price_per_m": 650000,
-      "missing_since": "2026-08-19"
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Llama 4 Maverick 17B 128E Instruct",
@@ -350,7 +354,9 @@
       "max_output_tokens": 32768,
       "input_token_price_per_m": 250000,
       "output_token_price_per_m": 550000,
-      "missing_since": "2026-08-19"
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen3 Coder Flash",
@@ -373,7 +379,9 @@
       "input_token_price_per_m": 450000,
       "output_token_price_per_m": 1700000,
       "cached_input_token_price_per_m": 90000,
-      "missing_since": "2026-08-19"
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen 3.5 397B A17B",

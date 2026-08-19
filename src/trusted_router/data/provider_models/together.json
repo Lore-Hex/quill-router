@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Together AI routes that are live ahead of the shared OpenRouter snapshot. Verified against https://api.together.xyz/v1/models on 2026-06-22.",
   "provider": "together",
   "source": "https://api.together.xyz/v1/endpoints?type=serverless",
-  "generated_at": "2026-08-19T19:32:16Z",
+  "generated_at": "2026-08-19T21:51:06Z",
   "model_count": 22,
   "models": [
     {
@@ -196,7 +196,8 @@
       "context_length": 262144,
       "input_token_price_per_m": 1200000,
       "output_token_price_per_m": 4500000,
-      "cached_input_token_price_per_m": 200000
+      "cached_input_token_price_per_m": 200000,
+      "missing_since": "2026-08-19"
     },
     {
       "display_name": "Kimi K2.7 Code",

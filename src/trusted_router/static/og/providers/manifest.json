@@ -19,10 +19,10 @@
   },
   "atlas-cloud": {
     "card_version": 2,
-    "model_count": 77,
+    "model_count": 75,
     "name": "Atlas Cloud",
     "privacy": "Policy documented",
-    "route_count": 77,
+    "route_count": 75,
     "route_mode": "Prepaid",
     "slug": "atlas-cloud"
   },
@@ -91,10 +91,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 96,
+    "model_count": 95,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 186,
+    "route_count": 184,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -109,10 +109,10 @@
   },
   "digitalocean": {
     "card_version": 2,
-    "model_count": 22,
+    "model_count": 18,
     "name": "DigitalOcean Gradient AI",
     "privacy": "Policy documented",
-    "route_count": 44,
+    "route_count": 36,
     "route_mode": "Prepaid + BYOK",
     "slug": "digitalocean"
   },

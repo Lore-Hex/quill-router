@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Wafer serverless API. Refreshed hourly from Wafer's OpenAI-compatible /v1/models feed.",
   "provider": "wafer",
   "source": "https://pass.wafer.ai/v1/models",
-  "generated_at": "2026-08-19T19:32:16Z",
+  "generated_at": "2026-08-19T21:51:06Z",
   "price_scale": "microdollars_per_million",
   "zdr_header": "Wafer-ZDR: required",
   "model_count": 9,
@@ -65,7 +65,9 @@
       "deprecation_at": "2026-08-10T00:00:00Z",
       "retirement_at": "2026-08-17T00:00:00Z",
       "replacement_model_id": "z-ai/glm-5.2",
-      "missing_since": "2026-08-19"
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "z-ai/glm-5.2",
@@ -95,7 +97,9 @@
       "deprecation_at": "2026-08-12T00:00:00Z",
       "retirement_at": "2026-08-17T00:00:00Z",
       "replacement_model_id": "z-ai/glm-5.2",
-      "missing_since": "2026-08-19"
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "qwen/qwen3.5-397b-a17b",
@@ -171,7 +175,9 @@
       "deprecation_at": "2026-08-10T00:00:00Z",
       "retirement_at": "2026-08-17T00:00:00Z",
       "replacement_model_id": "moonshotai/kimi-k3",
-      "missing_since": "2026-08-19"
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     }
   ]
 }

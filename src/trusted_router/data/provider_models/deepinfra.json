@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for DeepInfra models whose live /v1/openai/models feed is ahead of the shared snapshot. Verified against https://api.deepinfra.com/v1/openai/models on 2026-06-20. DeepInfra uses mixed-case upstream author/model IDs, so the enclave preserves upstream_id verbatim for this provider.",
   "provider": "deepinfra",
   "source": "https://api.deepinfra.com/v1/openai/models",
-  "generated_at": "2026-08-19T19:32:16Z",
+  "generated_at": "2026-08-19T21:51:06Z",
   "model_count": 103,
   "models": [
     {
@@ -1462,7 +1462,9 @@
       "output_token_price_per_m": 2300000,
       "retirement_at": "2026-08-24T00:00:00Z",
       "replacement_model_id": "qwen/qwen3.6-35b-a3b",
-      "missing_since": "2026-08-19"
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen/Qwen3-30B-A3B",
