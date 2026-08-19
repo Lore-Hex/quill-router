@@ -5,10 +5,11 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from trusted_router.auth import ManagementPrincipal, Principal
+from trusted_router.auth import ManagementPrincipal, Principal, SettingsDep
 from trusted_router.errors import api_error
 from trusted_router.routes.helpers import json_body
 from trusted_router.serialization import member_shape, workspace_shape
+from trusted_router.signup_gate import require_new_account_creation
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
@@ -72,13 +73,26 @@ def register_workspace_routes(router: APIRouter) -> None:
         id: str,  # noqa: A002
         request: Request,
         principal: ManagementPrincipal,
+        settings: SettingsDep,
     ) -> dict[str, Any]:
         _require_managed_workspace(id, principal)
         body = await json_body(request)
         emails = body.get("emails") or body.get("members") or []
         if not isinstance(emails, list):
             raise api_error(400, "emails must be a list", ErrorType.BAD_REQUEST)
-        members = STORE.add_members(id, [str(e) for e in emails], role=str(body.get("role") or "member"))
+        normalized_emails = [str(email).strip().lower() for email in emails]
+        # add_members intentionally creates a user record for an unknown email.
+        # Preflight the whole batch so a closed gate cannot partially add the
+        # existing members before discovering a new-account invite later.
+        if not settings.new_signups_enabled and any(
+            STORE.find_user_by_email(email) is None for email in normalized_emails
+        ):
+            require_new_account_creation(settings)
+        members = STORE.add_members(
+            id,
+            normalized_emails,
+            role=str(body.get("role") or "member"),
+        )
         return {"data": [member_shape(m) for m in members]}
 
     @router.post("/workspaces/{id}/members/remove")

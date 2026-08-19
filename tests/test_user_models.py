@@ -1213,6 +1213,7 @@ def test_earnings_console_renders_and_transfers_with_idempotent_flash(
 def test_https_is_required_outside_local_and_test() -> None:
     settings = Settings(
         environment="staging",
+        service_surface="control",
         custom_models_require_verification=False,
     )
     client = TestClient(create_app(settings, init_observability=False))

@@ -152,6 +152,7 @@ def _capture_lead_and_root_logs() -> Iterator[tuple[_CapturingHandler, _Capturin
 def _trustedos_client(settings: Settings) -> TestClient:
     with public_routes._INQUIRY_RATE_LOCK:
         public_routes._INQUIRY_HITS.clear()
+        public_routes._INQUIRY_GLOBAL_HITS.clear()
     return TestClient(create_app(settings, init_observability=False))
 
 
@@ -164,9 +165,17 @@ def _trustedos_payload(*, company: str, message: str) -> dict[str, str]:
     }
 
 
-def test_trustedos_inquiry_rate_state_has_a_hard_client_bound() -> None:
+def test_trustedos_inquiry_rate_state_has_a_hard_client_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        public_routes,
+        "_INQUIRY_GLOBAL_MAX_PER_WINDOW",
+        public_routes._INQUIRY_MAX_CLIENTS + 1,
+    )
     with public_routes._INQUIRY_RATE_LOCK:
         public_routes._INQUIRY_HITS.clear()
+        public_routes._INQUIRY_GLOBAL_HITS.clear()
     try:
         for index in range(public_routes._INQUIRY_MAX_CLIENTS + 1):
             client_ip = f"198.51.{index // 256}.{index % 256}"
@@ -178,6 +187,7 @@ def test_trustedos_inquiry_rate_state_has_a_hard_client_bound() -> None:
     finally:
         with public_routes._INQUIRY_RATE_LOCK:
             public_routes._INQUIRY_HITS.clear()
+            public_routes._INQUIRY_GLOBAL_HITS.clear()
 
 
 def _scrubbed_trustedos_messages(

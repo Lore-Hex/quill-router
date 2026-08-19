@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any, cast
 
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
+from trusted_router.auth import is_api_key_expired
 from trusted_router.catalog import (
     MODELS,
     endpoints_for_model,
@@ -17,11 +19,25 @@ from trusted_router.catalog import (
 )
 from trusted_router.config import Settings
 from trusted_router.dashboard import docs_llms_full_txt
-from trusted_router.storage import STORE
+from trusted_router.storage import STORE, ApiKey
 from trusted_router.typed_balance import live_credit_summary
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
 MAX_MCP_CHAT_TOKENS = 512
+MAX_MCP_BATCH_ITEMS = 32
+MAX_MCP_CHAT_BATCH_ITEMS = 1
+MAX_MCP_EXPENSIVE_BATCH_ITEMS = 4
+_AUTHENTICATED_TOOLS = frozenset({"credits-get", "generation-get", "chat-send"})
+_EXPENSIVE_TOOLS = frozenset(
+    {"models-list", "model-endpoints", "providers-list", "docs-search"}
+)
+_MCP_AUTH_STATE_KEY = "trusted_router_mcp_auth"
+
+
+@dataclass(frozen=True)
+class _MCPAuth:
+    bearer: str
+    api_key: ApiKey
 
 
 def register_mcp_routes(app: FastAPI, settings: Settings) -> None:
@@ -42,6 +58,14 @@ def register_mcp_routes(app: FastAPI, settings: Settings) -> None:
 class TrustedRouterMCP:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        # Catalog and documentation inputs are immutable for the lifetime of a
+        # deployed image. Build their JSON projections lazily so ordinary
+        # control requests pay nothing, then reuse them across every MCP
+        # request instead of letting a batch repeat full-catalog rendering.
+        self._model_shapes: tuple[dict[str, object], ...] | None = None
+        self._model_shapes_by_id: dict[str, dict[str, object]] | None = None
+        self._provider_shapes: tuple[dict[str, object], ...] | None = None
+        self._docs_chunks: tuple[str, ...] | None = None
         self._handlers: dict[str, Callable[[dict[str, Any], Request], Awaitable[Any]]] = {
             "ping": self._tool_ping,
             "models-list": self._tool_models_list,
@@ -54,11 +78,55 @@ class TrustedRouterMCP:
             "chat-send": self._tool_chat_send,
         }
 
-    async def handle(self, payload: Any, request: Request) -> Any:
+    async def handle(self, payload: Any, request: Request, *, batch_depth: int = 0) -> Any:
+        if batch_depth == 0:
+            if isinstance(payload, list) and not payload:
+                return _mcp_error(None, -32600, "JSON-RPC batch must not be empty")
+            if isinstance(payload, list) and len(payload) > MAX_MCP_BATCH_ITEMS:
+                return _mcp_error(
+                    None,
+                    -32600,
+                    f"JSON-RPC batch exceeds the {MAX_MCP_BATCH_ITEMS}-item limit",
+                )
+            tool_names = _top_level_tool_names(payload)
+            chat_calls = sum(name == "chat-send" for name in tool_names)
+            if chat_calls > MAX_MCP_CHAT_BATCH_ITEMS:
+                return _mcp_error(
+                    None,
+                    -32600,
+                    "An MCP request may contain at most one billable chat-send call",
+                )
+            expensive_calls = sum(name in _EXPENSIVE_TOOLS for name in tool_names)
+            if expensive_calls > MAX_MCP_EXPENSIVE_BATCH_ITEMS:
+                return _mcp_error(
+                    None,
+                    -32600,
+                    "An MCP request may contain at most "
+                    f"{MAX_MCP_EXPENSIVE_BATCH_ITEMS} catalog or documentation calls",
+                )
+            if _AUTHENTICATED_TOOLS.intersection(tool_names):
+                # Resolve once before any tool (and therefore before any
+                # outbound work). Both a valid context and an auth error are
+                # cached on this Request, so a 32-item batch cannot multiply
+                # key verification reads.
+                try:
+                    self._require_api_key(request)
+                except MCPToolError:
+                    pass
         if isinstance(payload, list):
+            if batch_depth > 0:
+                return _mcp_error(None, -32600, "Nested JSON-RPC batches are not supported")
+            if not payload:
+                return _mcp_error(None, -32600, "JSON-RPC batch must not be empty")
+            if len(payload) > MAX_MCP_BATCH_ITEMS:
+                return _mcp_error(
+                    None,
+                    -32600,
+                    f"JSON-RPC batch exceeds the {MAX_MCP_BATCH_ITEMS}-item limit",
+                )
             responses = []
             for item in payload:
-                response = await self.handle(item, request)
+                response = await self.handle(item, request, batch_depth=batch_depth + 1)
                 if response is not None:
                     responses.append(response)
             return responses or None
@@ -115,12 +183,7 @@ class TrustedRouterMCP:
     async def _tool_models_list(self, args: dict[str, Any], _request: Request) -> dict[str, Any]:
         query = str(args.get("query") or "").strip().lower()
         limit = _bounded_int(args.get("limit"), default=25, minimum=1, maximum=100)
-        models = []
-        for model in MODELS.values():
-            shape = model_to_openrouter_shape(model)
-            if _is_internal_model_shape(shape):
-                continue
-            models.append(shape)
+        models = list(self._models_projection())
         if query:
             models = [
                 item
@@ -129,16 +192,14 @@ class TrustedRouterMCP:
                 or query in str(item.get("name", "")).lower()
                 or query in str(item.get("description", "")).lower()
             ]
-        models.sort(key=lambda item: str(item.get("id", "")))
         return _tool_json({"data": models[:limit], "total_matches": len(models)})
 
     async def _tool_model_get(self, args: dict[str, Any], _request: Request) -> dict[str, Any]:
         model_id = _required_string(args, "model")
-        model = MODELS.get(model_id)
-        if model is None:
-            raise MCPToolError(f"Unknown model: {model_id}")
-        shape = model_to_openrouter_shape(model)
-        if _is_internal_model_shape(shape):
+        self._models_projection()
+        assert self._model_shapes_by_id is not None
+        shape = self._model_shapes_by_id.get(model_id)
+        if shape is None:
             raise MCPToolError(f"Unknown model: {model_id}")
         return _tool_json({"data": shape})
 
@@ -149,7 +210,9 @@ class TrustedRouterMCP:
         model = MODELS.get(model_id)
         # Same visibility rule as list/get: an internal-only model must not be
         # confirmable through its endpoints either.
-        if model is None or _is_internal_model_shape(model_to_openrouter_shape(model)):
+        self._models_projection()
+        assert self._model_shapes_by_id is not None
+        if model is None or model_id not in self._model_shapes_by_id:
             raise MCPToolError(f"Unknown model: {model_id}")
         return _tool_json(
             {
@@ -170,17 +233,10 @@ class TrustedRouterMCP:
     async def _tool_providers_list(
         self, _args: dict[str, Any], _request: Request
     ) -> dict[str, Any]:
-        return _tool_json(
-            {"data": [provider_to_openrouter_shape(provider) for provider in providers_for_display()]}
-        )
+        return _tool_json({"data": self._providers_projection()})
 
     async def _tool_credits_get(self, _args: dict[str, Any], request: Request) -> dict[str, Any]:
-        bearer = _bearer_token(request)
-        if not bearer:
-            raise MCPToolError("credits-get requires Authorization: Bearer sk-tr-...")
-        api_key = STORE.get_key_by_raw(bearer)
-        if api_key is None or api_key.disabled:
-            raise MCPToolError("Invalid TrustedRouter API key")
+        api_key = self._require_api_key(request).api_key
         summary = live_credit_summary(api_key.workspace_id)
         if summary is None:
             raise MCPToolError("No credit account found for this workspace")
@@ -199,12 +255,7 @@ class TrustedRouterMCP:
     async def _tool_generation_get(
         self, args: dict[str, Any], request: Request
     ) -> dict[str, Any]:
-        bearer = _bearer_token(request)
-        if not bearer:
-            raise MCPToolError("generation-get requires Authorization: Bearer sk-tr-...")
-        api_key = STORE.get_key_by_raw(bearer)
-        if api_key is None or api_key.disabled:
-            raise MCPToolError("Invalid TrustedRouter API key")
+        api_key = self._require_api_key(request).api_key
         generation_id = _required_string(args, "id")
         generation = STORE.get_generation(generation_id)
         if generation is None or generation.workspace_id != api_key.workspace_id:
@@ -214,14 +265,42 @@ class TrustedRouterMCP:
     async def _tool_docs_search(self, args: dict[str, Any], _request: Request) -> dict[str, Any]:
         query = _required_string(args, "query").lower()
         limit = _bounded_int(args.get("limit"), default=5, minimum=1, maximum=10)
-        docs = docs_llms_full_txt(self.settings)
-        chunks = [chunk.strip() for chunk in docs.split("\n\n") if query in chunk.lower()]
+        chunks = [chunk for chunk in self._documentation_chunks() if query in chunk.lower()]
         return _tool_json({"data": chunks[:limit], "total_matches": len(chunks)})
 
+    def _models_projection(self) -> tuple[dict[str, object], ...]:
+        if self._model_shapes is None:
+            visible: list[dict[str, object]] = []
+            by_id: dict[str, dict[str, object]] = {}
+            for model in MODELS.values():
+                shape = model_to_openrouter_shape(model)
+                if _is_internal_model_shape(shape):
+                    continue
+                visible.append(shape)
+                by_id[str(shape.get("id") or model.id)] = shape
+            visible.sort(key=lambda item: str(item.get("id", "")))
+            self._model_shapes = tuple(visible)
+            self._model_shapes_by_id = by_id
+        return self._model_shapes
+
+    def _providers_projection(self) -> tuple[dict[str, object], ...]:
+        if self._provider_shapes is None:
+            self._provider_shapes = tuple(
+                provider_to_openrouter_shape(provider) for provider in providers_for_display()
+            )
+        return self._provider_shapes
+
+    def _documentation_chunks(self) -> tuple[str, ...]:
+        if self._docs_chunks is None:
+            self._docs_chunks = tuple(
+                chunk.strip()
+                for chunk in docs_llms_full_txt(self.settings).split("\n\n")
+                if chunk.strip()
+            )
+        return self._docs_chunks
+
     async def _tool_chat_send(self, args: dict[str, Any], request: Request) -> dict[str, Any]:
-        bearer = _bearer_token(request)
-        if not bearer:
-            raise MCPToolError("chat-send requires Authorization: Bearer sk-tr-...")
+        bearer = self._require_api_key(request).bearer
         model = _required_string(args, "model")
         message = _required_string(args, "message")
         max_tokens = _bounded_int(
@@ -254,6 +333,43 @@ class TrustedRouterMCP:
         if response.status_code >= 400:
             raise MCPToolError(json.dumps(payload, sort_keys=True))
         return _tool_json({"data": payload})
+
+    def _require_api_key(self, request: Request) -> _MCPAuth:
+        cached = getattr(request.state, _MCP_AUTH_STATE_KEY, None)
+        if isinstance(cached, _MCPAuth):
+            return cached
+        if isinstance(cached, MCPToolError):
+            raise MCPToolError(cached.message)
+
+        bearer = _bearer_token(request)
+        if not bearer:
+            error = MCPToolError(
+                "Authenticated MCP tool requires Authorization: Bearer sk-tr-..."
+            )
+            setattr(request.state, _MCP_AUTH_STATE_KEY, error)
+            raise error
+        try:
+            context = STORE.api_key_auth_context(bearer)
+        except Exception:  # noqa: BLE001 - cache fail-closed auth for the whole batch.
+            error = MCPToolError("TrustedRouter API key authentication is unavailable")
+            setattr(request.state, _MCP_AUTH_STATE_KEY, error)
+            raise error from None
+        if context is None:
+            error = MCPToolError("Invalid TrustedRouter API key")
+            setattr(request.state, _MCP_AUTH_STATE_KEY, error)
+            raise error
+        api_key = context.api_key
+        if (
+            api_key.disabled
+            or is_api_key_expired(api_key.expires_at)
+            or context.workspace is None
+        ):
+            error = MCPToolError("Invalid TrustedRouter API key")
+            setattr(request.state, _MCP_AUTH_STATE_KEY, error)
+            raise error
+        auth = _MCPAuth(bearer=bearer, api_key=api_key)
+        setattr(request.state, _MCP_AUTH_STATE_KEY, auth)
+        return auth
 
 
 class MCPToolError(Exception):
@@ -367,6 +483,19 @@ def _bearer_token(request: Request) -> str:
     if value.lower().startswith("bearer "):
         return value[7:].strip()
     return ""
+
+
+def _top_level_tool_names(payload: Any) -> list[str]:
+    """Inspect one JSON-RPC envelope without recursively walking attacker data."""
+    items = payload if isinstance(payload, list) else [payload]
+    names: list[str] = []
+    for item in items:
+        if not isinstance(item, dict) or item.get("method") != "tools/call":
+            continue
+        params = item.get("params")
+        if isinstance(params, dict):
+            names.append(str(params.get("name") or ""))
+    return names
 
 
 def _required_string(args: dict[str, Any], name: str) -> str:

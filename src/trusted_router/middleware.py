@@ -34,6 +34,7 @@ from urllib.parse import parse_qs, urlsplit
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.concurrency import run_in_threadpool
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.gzip import GZipMiddleware
 
 from trusted_router.acquisition import (
@@ -106,6 +107,16 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
 
     app.add_middleware(GZipMiddleware, minimum_size=1_000, compresslevel=6)
     public_read_rate_limits = InMemoryRateLimits(lock=threading.RLock())
+
+    @app.middleware("http")
+    async def internal_auth_before_body_middleware(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        denied = _internal_auth_before_body(request, settings)
+        if denied is not None:
+            return denied
+        return await call_next(request)
 
     @app.middleware("http")
     async def request_id_middleware(
@@ -306,6 +317,52 @@ def _status_host_path(path: str) -> bool:
     return path in STATUS_HOST_EXACT_PATHS or path.startswith(STATUS_HOST_PATH_PREFIXES)
 
 
+def _internal_auth_before_body(
+    request: Request,
+    settings: Settings,
+) -> JSONResponse | None:
+    """Authenticate split internal surfaces before FastAPI parses a body."""
+    if settings.service_surface not in {"internal", "observer"}:
+        return None
+    path = request.url.path
+    if path.startswith("/v1/internal/"):
+        path = path.removeprefix("/v1")
+    if not path.startswith("/internal/"):
+        return None
+
+    # Imports remain local so ordinary public/control processes never import
+    # billing/federation route modules just to install generic middleware.
+    from trusted_router.routes.internal._shared import require_internal_gateway
+    from trusted_router.routes.internal.federation import (
+        require_federation_credit_peer,
+        require_federation_peer,
+        require_federation_settlement_peer,
+    )
+
+    try:
+        if path == "/internal/federation/resolve-key":
+            require_federation_peer(request, settings)
+        elif path == "/internal/federation/apply-usage":
+            require_federation_settlement_peer(request, settings)
+        elif path == "/internal/federation/credit-transfer":
+            require_federation_credit_peer(request, settings)
+        else:
+            require_internal_gateway(request, settings)
+    except StarletteHTTPException as exc:
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(
+                exc.detail,
+                status_code=exc.status_code,
+                headers=exc.headers,
+            )
+        return error_response(
+            exc.status_code,
+            str(exc.detail),
+            ErrorType.HTTP_ERROR,
+        )
+    return None
+
+
 def _cookie_free_public_analytics_path(path: str) -> bool:
     return path in COOKIE_FREE_PUBLIC_ANALYTICS_PATHS
 
@@ -346,8 +403,19 @@ async def _rate_limit_request(
         and not internal_token
         and not user
     )
+    local_only_surface = settings.service_surface in {"public", "actions", "observer"}
     hit_rate_limit: Callable[..., RateLimitHit]
-    if public_read:
+    if local_only_surface:
+        # Anonymous and observer processes must never let attacker-controlled
+        # methods or credential-shaped headers turn an edge request into a
+        # durable Store write. Fleet-wide enforcement belongs at the trusted
+        # load balancer; this bounded process-local bucket is defense in depth.
+        namespace = "surface_ip"
+        subject = _fingerprint(ip)
+        limit = settings.rate_limit_ip_per_window
+        hit_rate_limit = public_read_rate_limits.hit
+        durable = False
+    elif public_read:
         namespace = "public_ip"
         subject = _fingerprint(ip)
         limit = settings.rate_limit_ip_per_window

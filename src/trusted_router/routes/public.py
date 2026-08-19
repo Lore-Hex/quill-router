@@ -253,8 +253,10 @@ if not _leads_log.handlers:
 _INQUIRY_RATE_LOCK = threading.Lock()
 _INQUIRY_MAX_CLIENTS = 4096
 _INQUIRY_HITS: OrderedDict[str, list[float]] = OrderedDict()
+_INQUIRY_GLOBAL_HITS: list[float] = []
 _INQUIRY_WINDOW_SECONDS = 3600.0
 _INQUIRY_MAX_PER_WINDOW = 5
+_INQUIRY_GLOBAL_MAX_PER_WINDOW = 60
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _SUPPORT_CATEGORIES = {
     "api": "API and routing",
@@ -269,6 +271,9 @@ def _inquiry_rate_ok(client_ip: str, *, now: float | None = None) -> bool:
     now = time.time() if now is None else now
     cutoff = now - _INQUIRY_WINDOW_SECONDS
     with _INQUIRY_RATE_LOCK:
+        _INQUIRY_GLOBAL_HITS[:] = [hit for hit in _INQUIRY_GLOBAL_HITS if hit > cutoff]
+        if len(_INQUIRY_GLOBAL_HITS) >= _INQUIRY_GLOBAL_MAX_PER_WINDOW:
+            return False
         hits = [t for t in _INQUIRY_HITS.get(client_ip, ()) if t > cutoff]
         if len(hits) >= _INQUIRY_MAX_PER_WINDOW:
             _INQUIRY_HITS[client_ip] = hits
@@ -276,6 +281,7 @@ def _inquiry_rate_ok(client_ip: str, *, now: float | None = None) -> bool:
             _bound_inquiry_clients(cutoff)
             return False
         hits.append(now)
+        _INQUIRY_GLOBAL_HITS.append(now)
         _INQUIRY_HITS[client_ip] = hits
         _INQUIRY_HITS.move_to_end(client_ip)
         _bound_inquiry_clients(cutoff)
@@ -524,6 +530,18 @@ async def _handle_support_inquiry(settings: Settings, request: Request) -> JSONR
         len(message),
     )
     return JSONResponse({"ok": True})
+
+
+def register_public_action_routes(app: FastAPI, settings: Settings) -> None:
+    """Register the two anonymous actions on their credential-minimal bulkhead."""
+
+    @app.post("/trustedos/inquiry", include_in_schema=False)
+    async def trustedos_inquiry(request: Request) -> JSONResponse:
+        return await _handle_trustedos_inquiry(settings, request)
+
+    @app.post("/support/inquiry", include_in_schema=False)
+    async def support_inquiry(request: Request) -> JSONResponse:
+        return await _handle_support_inquiry(settings, request)
 
 
 def register_public_routes(app: FastAPI, settings: Settings) -> None:
@@ -840,10 +858,6 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/confidential-cowork")
     async def confidential_cowork() -> str:
         return public_page_html(settings, "confidential-cowork")
-
-    @app.post("/trustedos/inquiry", include_in_schema=False)
-    async def trustedos_inquiry(request: Request) -> JSONResponse:
-        return await _handle_trustedos_inquiry(settings, request)
 
     # ── SEO landing pages ────────────────────────────────────────────
     # Top-level slugs targeting high-intent buyer queries. Each is a
@@ -1181,10 +1195,6 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/support")
     async def support() -> str:
         return public_support_html(settings)
-
-    @app.post("/support/inquiry", include_in_schema=False)
-    async def support_inquiry(request: Request) -> JSONResponse:
-        return await _handle_support_inquiry(settings, request)
 
     @public_html_route("/legal/dpa")
     async def legal_dpa() -> str:

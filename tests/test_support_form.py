@@ -13,6 +13,7 @@ from trusted_router.services.ops_chat import OpsChatFanoutResult, OpsChatSupport
 @pytest.fixture(autouse=True)
 def reset_support_rate_limit() -> None:
     public_routes._INQUIRY_HITS.clear()
+    public_routes._INQUIRY_GLOBAL_HITS.clear()
 
 
 def _payload(**overrides: str) -> dict[str, str]:
@@ -27,6 +28,20 @@ def _payload(**overrides: str) -> dict[str, str]:
     }
     payload.update(overrides)
     return payload
+
+
+def test_inquiry_delivery_has_a_process_wide_cost_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(public_routes, "_INQUIRY_GLOBAL_MAX_PER_WINDOW", 2)
+
+    assert public_routes._inquiry_rate_ok("198.51.100.1", now=100.0)
+    assert public_routes._inquiry_rate_ok("198.51.100.2", now=100.0)
+    assert not public_routes._inquiry_rate_ok("198.51.100.3", now=100.0)
+    assert public_routes._inquiry_rate_ok(
+        "198.51.100.3",
+        now=100.0 + public_routes._INQUIRY_WINDOW_SECONDS + 1,
+    )
 
 
 def test_support_submission_sends_to_help_with_reply_to(

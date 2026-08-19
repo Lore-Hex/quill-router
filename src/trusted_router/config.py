@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import hmac
 import json
 import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 from pydantic import model_validator
 from pydantic_settings import (
@@ -219,6 +220,19 @@ class Settings(BaseSettings):
     environment: str = "local"
     release: str = "local"
     service_name: str = "trusted-router"
+    # One image serves several deliberately disjoint process roles. ``combined``
+    # preserves the local/test developer experience, but create_app refuses it
+    # in deployed environments so a missing env var cannot silently put the
+    # anonymous site, account control plane, and gateway billing authority back
+    # into one autoscaling/concurrency failure domain.
+    service_surface: Literal[
+        "combined",
+        "public",
+        "actions",
+        "control",
+        "internal",
+        "observer",
+    ] = "combined"
     api_base_url: str = "https://api.trustedrouter.com/v1"
     trusted_domain: str = "trustedrouter.com"
     # Additional first-party control-plane domains. They serve the same
@@ -322,11 +336,17 @@ class Settings(BaseSettings):
     # $0.30 = 300,000 microdollars.
     signup_trial_credit_microdollars: int = 300_000
 
+    # Global, creation-only operational brake. Returning Google/GitHub/wallet
+    # users continue to sign in; only the branches that would create a new
+    # account are refused. Rollout preserves the live value and the dedicated
+    # operator script can flip it without rebuilding an image.
+    new_signups_enabled: bool = True
+
     # Plain-email `POST /v1/signup` (no OAuth) is a credit-farming vector: an
     # open endpoint that mints a management key + trial credit for ANY email,
-    # including disposable addresses. Closed by default. Google/GitHub/wallet
-    # signup is unaffected — those create users via STORE.signup in the OAuth
-    # callback, not this route. Set TR_EMAIL_SIGNUP_ENABLED=true to reopen.
+    # including disposable addresses. Closed by default. This switch controls
+    # the email channel; ``new_signups_enabled`` is the global creation brake
+    # across email, Google/GitHub, wallet, and delegated signup.
     email_signup_enabled: bool = False
 
     sentry_dsn: str | None = None
@@ -435,6 +455,11 @@ class Settings(BaseSettings):
     rate_limit_key_per_window: int = 1200
     rate_limit_internal_per_window: int = 6000
 
+    # Shared only by the anonymous public surface and the account/control
+    # surface so an attribution cookie survives the LB hand-off between them.
+    # This must never reuse the internal gateway credential: compromise of the
+    # public renderer must not disclose a token accepted by billing routes.
+    attribution_cookie_secret: str | None = None
     internal_gateway_token: str | None = None
     stripe_webhook_secret: str | None = None
     stripe_secret_key: str | None = None
@@ -1170,33 +1195,171 @@ class Settings(BaseSettings):
         if environment != "production":
             return self
         missing = []
-        if not self.internal_gateway_token:
+        surface = self.service_surface
+        if surface in {"control", "public"}:
+            if not self.attribution_cookie_secret:
+                missing.append("TR_ATTRIBUTION_COOKIE_SECRET")
+            elif len(self.attribution_cookie_secret.encode("utf-8")) < 32:
+                missing.append("TR_ATTRIBUTION_COOKIE_SECRET (at least 32 bytes)")
+        if (
+            self.attribution_cookie_secret
+            and self.internal_gateway_token
+            and hmac.compare_digest(
+                self.attribution_cookie_secret.encode("utf-8"),
+                self.internal_gateway_token.encode("utf-8"),
+            )
+        ):
+            missing.append(
+                "TR_ATTRIBUTION_COOKIE_SECRET must differ from TR_INTERNAL_GATEWAY_TOKEN"
+            )
+
+        gateway_surfaces = {"combined", "control", "internal", "observer"}
+        sentry_surfaces = {"combined", "control", "internal", "observer"}
+        account_surfaces = {"combined", "control"}
+        email_surfaces = {"combined", "control", "actions"}
+        if surface in gateway_surfaces and not self.internal_gateway_token:
             missing.append("TR_INTERNAL_GATEWAY_TOKEN")
-        if not self.stripe_webhook_secret:
+        if surface in account_surfaces and not self.stripe_webhook_secret:
             missing.append("TR_STRIPE_WEBHOOK_SECRET")
-        if not self.stripe_secret_key:
+        if surface in account_surfaces and not self.stripe_secret_key:
             missing.append("TR_STRIPE_SECRET_KEY")
-        if not self.sentry_dsn:
+        if surface in sentry_surfaces and not self.sentry_dsn:
             missing.append("TR_SENTRY_DSN")
-        if not self.aws_access_key_id:
+        if surface in email_surfaces and not self.aws_access_key_id:
             missing.append("TR_AWS_ACCESS_KEY_ID")
-        if not self.aws_secret_access_key:
+        if surface in email_surfaces and not self.aws_secret_access_key:
             missing.append("TR_AWS_SECRET_ACCESS_KEY")
-        if not self.ses_from_email:
+        if surface in email_surfaces and not self.ses_from_email:
             missing.append("TR_SES_FROM_EMAIL")
+
+        forbidden_by_surface = {
+            "public": (
+                ("TR_INTERNAL_GATEWAY_TOKEN", self.internal_gateway_token),
+                ("TR_STRIPE_WEBHOOK_SECRET", self.stripe_webhook_secret),
+                ("TR_STRIPE_SECRET_KEY", self.stripe_secret_key),
+                ("TR_SENTRY_DSN", self.sentry_dsn),
+                ("TR_AWS_ACCESS_KEY_ID", self.aws_access_key_id),
+                ("TR_AWS_SECRET_ACCESS_KEY", self.aws_secret_access_key),
+                ("TR_BYOK_KMS_KEY_NAME", self.byok_kms_key_name),
+            ),
+            "internal": (
+                ("TR_ATTRIBUTION_COOKIE_SECRET", self.attribution_cookie_secret),
+                ("TR_STRIPE_WEBHOOK_SECRET", self.stripe_webhook_secret),
+                ("TR_STRIPE_SECRET_KEY", self.stripe_secret_key),
+                ("TR_AWS_ACCESS_KEY_ID", self.aws_access_key_id),
+                ("TR_AWS_SECRET_ACCESS_KEY", self.aws_secret_access_key),
+                ("TR_BYOK_KMS_KEY_NAME", self.byok_kms_key_name),
+            ),
+            "observer": (
+                ("TR_ATTRIBUTION_COOKIE_SECRET", self.attribution_cookie_secret),
+                ("TR_STRIPE_WEBHOOK_SECRET", self.stripe_webhook_secret),
+                ("TR_STRIPE_SECRET_KEY", self.stripe_secret_key),
+                ("TR_AWS_ACCESS_KEY_ID", self.aws_access_key_id),
+                ("TR_AWS_SECRET_ACCESS_KEY", self.aws_secret_access_key),
+                ("TR_BYOK_KMS_KEY_NAME", self.byok_kms_key_name),
+            ),
+            "actions": (
+                ("TR_ATTRIBUTION_COOKIE_SECRET", self.attribution_cookie_secret),
+                ("TR_INTERNAL_GATEWAY_TOKEN", self.internal_gateway_token),
+                ("TR_STRIPE_WEBHOOK_SECRET", self.stripe_webhook_secret),
+                ("TR_STRIPE_SECRET_KEY", self.stripe_secret_key),
+                ("TR_SENTRY_DSN", self.sentry_dsn),
+                ("TR_BYOK_KMS_KEY_NAME", self.byok_kms_key_name),
+                ("TR_BYOK_ENVELOPE_KEY_B64", self.byok_envelope_key_b64),
+                ("TR_POSTGRES_DSN", self.postgres_dsn),
+                ("TR_POSTGRES_IAM_AUTH", self.postgres_iam_auth),
+                ("TR_CLICKHOUSE_URL", self.clickhouse_url),
+                ("TR_CLICKHOUSE_PASSWORD", self.clickhouse_password),
+                (
+                    "TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL",
+                    self.provider_analytics_clickhouse_url,
+                ),
+                (
+                    "TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD",
+                    self.provider_analytics_clickhouse_password,
+                ),
+                (
+                    "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL",
+                    self.operational_analytics_clickhouse_url,
+                ),
+                (
+                    "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD",
+                    self.operational_analytics_clickhouse_password,
+                ),
+                ("TR_GOOGLE_DATA_MANAGER_ENABLED", self.google_data_manager_enabled),
+                (
+                    "TR_GOOGLE_DATA_MANAGER_KMS_KEY_NAME",
+                    self.google_data_manager_kms_key_name,
+                ),
+                ("TR_PAYPAL_CLIENT_ID", self.paypal_client_id),
+                ("TR_PAYPAL_CLIENT_SECRET", self.paypal_client_secret),
+                ("TR_PAYPAL_WEBHOOK_ID", self.paypal_webhook_id),
+                ("TR_ADYEN_ENABLED", self.adyen_enabled),
+                ("TR_ADYEN_API_KEY", self.adyen_api_key),
+                ("TR_ADYEN_CLIENT_KEY", self.adyen_client_key),
+                ("TR_ADYEN_HMAC_KEY", self.adyen_hmac_key),
+                ("TR_ADYEN_REFERENCE_KEY", self.adyen_reference_key),
+                ("TR_GOOGLE_CLIENT_ID", self.google_client_id),
+                ("TR_GOOGLE_CLIENT_SECRET", self.google_client_secret),
+                (
+                    "TR_GOOGLE_ALIAS_CREDENTIALS_JSON",
+                    self.google_alias_credentials_json != "{}",
+                ),
+                ("TR_GITHUB_CLIENT_ID", self.github_client_id),
+                ("TR_GITHUB_CLIENT_SECRET", self.github_client_secret),
+                (
+                    "TR_GITHUB_ALIAS_CREDENTIALS_JSON",
+                    self.github_alias_credentials_json != "{}",
+                ),
+                ("TR_X402_ENABLED", self.x402_enabled),
+                ("TR_NOTIFY_ENABLED", self.notify_enabled),
+                ("TR_VERIFF_ENABLED", self.veriff_enabled),
+                ("TR_VERIFF_API_KEY", self.veriff_api_key),
+                ("TR_VERIFF_SHARED_SECRET_KEY", self.veriff_shared_secret_key),
+                ("TR_TELNYX_API_KEY", self.telnyx_api_key),
+                ("TR_TWILIO_ACCOUNT_SID", self.twilio_account_sid),
+                ("TR_TWILIO_AUTH_TOKEN", self.twilio_auth_token),
+                ("TR_TWILIO_API_KEY_SECRET", self.twilio_api_key_secret),
+                ("TR_SYNTHETIC_MONITOR_API_KEY", self.synthetic_monitor_api_key),
+                ("TR_FEDERATION_PEER_TOKEN", self.federation_peer_token),
+                ("TR_FEDERATION_HOME_TOKEN", self.federation_home_token),
+                (
+                    "TR_FEDERATION_CREDIT_INBOUND_TOKEN",
+                    self.federation_credit_inbound_token,
+                ),
+                (
+                    "TR_FEDERATION_CREDIT_PEER_TOKEN",
+                    self.federation_credit_peer_token,
+                ),
+                (
+                    "TR_FEDERATION_SETTLEMENT_INBOUND_TOKENS",
+                    self.federation_settlement_inbound_tokens,
+                ),
+                (
+                    "TR_FEDERATION_SETTLEMENT_HOME_TOKEN",
+                    self.federation_settlement_home_token,
+                ),
+            ),
+        }
+        for name, secret_value in forbidden_by_surface.get(surface, ()):
+            if secret_value:
+                missing.append(f"unset {name} for TR_SERVICE_SURFACE={surface}")
         if self.bootstrap_management_key:
             missing.append("unset TR_BOOTSTRAP_MANAGEMENT_KEY")
-        if self.storage_backend == "memory":
+        storage_required = surface != "actions"
+        if surface == "actions" and self.storage_backend != "memory":
+            missing.append("TR_STORAGE_BACKEND=memory for TR_SERVICE_SURFACE=actions")
+        if storage_required and self.storage_backend == "memory":
             missing.append("TR_STORAGE_BACKEND=spanner-bigtable or spanner-clickhouse")
-        if self.storage_backend in {"spanner-bigtable", "spanner-clickhouse"}:
+        if storage_required and self.storage_backend in {"spanner-bigtable", "spanner-clickhouse"}:
             if not self.spanner_instance_id:
                 missing.append("TR_SPANNER_INSTANCE_ID")
             if not self.spanner_database_id:
                 missing.append("TR_SPANNER_DATABASE_ID")
-        if self.storage_backend == "spanner-bigtable":
+        if storage_required and self.storage_backend == "spanner-bigtable":
             if not self.bigtable_instance_id:
                 missing.append("TR_BIGTABLE_INSTANCE_ID")
-        if self.storage_backend == "spanner-clickhouse":
+        if storage_required and self.storage_backend == "spanner-clickhouse":
             if self.analytics_read_mode != "clickhouse-only":
                 missing.append(
                     "TR_ANALYTICS_READ_MODE=clickhouse-only with "
@@ -1212,14 +1375,18 @@ class Settings(BaseSettings):
                 missing.append("TR_BIGTABLE_MIRROR_WRITES_ENABLED=false")
             if self.request_record_write_mode != "typed":
                 missing.append("TR_REQUEST_RECORD_WRITE_MODE=typed")
-        if self.analytics_read_mode != "bigtable":
+        if storage_required and self.analytics_read_mode != "bigtable":
             if not self.operational_analytics_clickhouse_url:
                 missing.append("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL")
             if not self.operational_analytics_clickhouse_password:
                 missing.append("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD")
-        if self.request_record_write_mode == "typed" and not self.settle_outbox_enabled:
+        if (
+            storage_required
+            and self.request_record_write_mode == "typed"
+            and not self.settle_outbox_enabled
+        ):
             missing.append("TR_SETTLE_OUTBOX_ENABLED=true when TR_REQUEST_RECORD_WRITE_MODE=typed")
-        if not self.byok_kms_key_name:
+        if surface in account_surfaces and not self.byok_kms_key_name:
             missing.append("TR_BYOK_KMS_KEY_NAME")
         if not self.trust_gcp_release_url:
             self.trust_gcp_release_url = "https://trust.trustedrouter.com/trust/gcp-release.json"
@@ -1438,6 +1605,7 @@ _LOCAL_KEY_FALLBACKS: tuple[str, ...] = (
     "ses_alert_from_email",
     "ses_alert_from_name",
     "ses_alert_configuration_set",
+    "attribution_cookie_secret",
     "internal_gateway_token",
     "stripe_webhook_secret",
     "stripe_secret_key",

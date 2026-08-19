@@ -378,6 +378,8 @@ def test_production_dashboard_does_not_default_to_dev_user_header() -> None:
         Settings(
             **TEST_SES_SETTINGS,
             environment="production",
+            service_surface="control",
+            attribution_cookie_secret="attribution-cookie-" + "a" * 32,
             internal_gateway_token="internal-prod-token",  # noqa: S106
             stripe_webhook_secret="whsec_test",  # noqa: S106
             stripe_secret_key="sk_test",  # noqa: S106
@@ -916,6 +918,8 @@ def test_production_control_plane_does_not_register_inference_routes() -> None:
         Settings(
             **TEST_SES_SETTINGS,
             environment="production",
+            service_surface="control",
+            attribution_cookie_secret="attribution-cookie-" + "a" * 32,
             internal_gateway_token=internal_token,
             stripe_webhook_secret=webhook_secret,
             stripe_secret_key=stripe_key,
@@ -938,7 +942,8 @@ def test_production_control_plane_does_not_register_inference_routes() -> None:
     assert ("/v1/messages", "POST") not in registered
     assert ("/v1/responses", "POST") not in registered
     assert ("/v1/embeddings", "POST") not in registered
-    assert ("/v1/internal/gateway/authorize", "POST") in registered
+    assert ("/v1/keys", "POST") in registered
+    assert ("/v1/internal/gateway/authorize", "POST") not in registered
 
 
 def test_prompt_output_never_enter_metadata_store(client: TestClient, inference_headers: dict[str, str]) -> None:

@@ -51,6 +51,18 @@ def register_compat_stub_routes(router: APIRouter) -> None:
     _add_current_openrouter_stubs(router)
 
 
+def register_versioned_compat_stub_routes(router: APIRouter) -> None:
+    """Stubs whose unprefixed spelling is already a public HTML page."""
+
+    async def stub() -> JSONResponse:
+        return not_supported()
+
+    # GET /benchmarks is the public benchmark report hub. OpenRouter's API
+    # compatibility stub therefore exists only as GET /v1/benchmarks; mounting
+    # it unprefixed on the control service creates ambiguous LB ownership.
+    router.add_api_route("/benchmarks", stub, methods=["GET"])
+
+
 def _add_guardrail_stubs(router: APIRouter) -> None:
     async def stub() -> JSONResponse:
         return not_supported()
@@ -77,7 +89,6 @@ def _add_current_openrouter_stubs(router: APIRouter) -> None:
     routes = (
         ("/analytics/meta", "GET"),
         ("/analytics/query", "POST"),
-        ("/benchmarks", "GET"),
         ("/byok", "GET"),
         ("/byok", "POST"),
         ("/byok/{id}", "DELETE"),

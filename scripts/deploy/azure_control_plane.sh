@@ -171,6 +171,8 @@ log "deploying by digest: ${IMAGE_DIGEST}"
 
 ENV_VARS=(
   "TR_ENVIRONMENT=canary"
+  "TR_SERVICE_SURFACE=observer"
+  "TR_NEW_SIGNUPS_ENABLED=false"
   "TR_RELEASE=${IMAGE_TAG}"
   "TR_STORAGE_BACKEND=postgres"
   "TR_POSTGRES_DSN=secretref:pg-dsn"
@@ -232,7 +234,8 @@ if exists az containerapp show -g "$RG" -n "$APP"; then
   log "updating $APP"
   az containerapp secret set -g "$RG" -n "$APP" --secrets "${SECRET_ARGS[@]}" -o none
   az containerapp update -g "$RG" -n "$APP" \
-    --image "$IMAGE_REF" --set-env-vars "${ENV_VARS[@]}" -o none
+    --image "$IMAGE_REF" --set-env-vars "${ENV_VARS[@]}" \
+    --min-replicas 1 --max-replicas "${OBSERVER_MAX_REPLICAS:-4}" -o none
 else
   log "creating $APP"
   ACR_USER="$(az acr credential show -n "$ACR" --query username -o tsv)"
@@ -246,7 +249,7 @@ else
     --secrets "${SECRET_ARGS[@]}" \
     --env-vars "${ENV_VARS[@]}" \
     --target-port 8080 --ingress external \
-    --min-replicas 1 --max-replicas 3 \
+    --min-replicas 1 --max-replicas "${OBSERVER_MAX_REPLICAS:-4}" \
     --cpu 1.0 --memory 2.0Gi -o none
 fi
 
