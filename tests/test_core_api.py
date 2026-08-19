@@ -5,7 +5,7 @@ from dataclasses import asdict
 import pytest
 from fastapi.testclient import TestClient
 
-from trusted_router.catalog import PROVIDER_JURISDICTION_US, PROVIDERS
+from trusted_router.catalog import FAST_MODEL_ORDER, MODELS, PROVIDER_JURISDICTION_US, PROVIDERS
 from trusted_router.spend_windows import KeyWindowLimitExceeded
 from trusted_router.storage import STORE
 
@@ -861,10 +861,9 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     models_by_id = {model["id"]: model for model in models}
     fast_meta = models_by_id["trustedrouter/fast"]["trustedrouter"]
     assert fast_meta["route_kind"] == "fast_pool"
+    assert fast_meta["auto_candidates"]
     assert fast_meta["auto_candidates"] == [
-        "cerebras/gpt-oss-120b",
-        "xiaomi/mimo-v2.5-pro-ultraspeed",
-        "cerebras/zai-glm-4.7",
+        model_id for model_id in FAST_MODEL_ORDER if model_id in MODELS
     ]
     plato_meta = models_by_id["trustedrouter/plato"]["trustedrouter"]
     plato_3_meta = models_by_id["trustedrouter/plato-3.0"]["trustedrouter"]
