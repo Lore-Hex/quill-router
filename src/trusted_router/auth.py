@@ -8,6 +8,7 @@ from fastapi import Depends, Request, Response
 
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
+from trusted_router.request_limits import enforce_authenticated_rate_limit
 from trusted_router.storage import (
     STORE,
     ApiKey,
@@ -118,7 +119,14 @@ def principal_from_request(request: Request, settings: Settings) -> Principal:
         )
         if session_context is None:
             raise api_error(401, "Invalid session", "unauthorized")
-        return _principal_for_session(request, session_context)
+        principal = _principal_for_session(request, session_context)
+        enforce_authenticated_rate_limit(
+            request,
+            settings,
+            credential_kind="session",
+            stable_subject=session_context.session.lookup_hash,
+        )
+        return principal
     if not raw_bearer:
         raise api_error(401, "Missing Authentication header", "unauthorized")
 
@@ -128,7 +136,14 @@ def principal_from_request(request: Request, settings: Settings) -> Principal:
         api_key_context = STORE.api_key_auth_context(raw_bearer)
         if api_key_context is None:
             raise api_error(401, "Invalid API key", "unauthorized")
-        return _principal_for_api_key(api_key_context)
+        principal = _principal_for_api_key(api_key_context)
+        enforce_authenticated_rate_limit(
+            request,
+            settings,
+            credential_kind="api_key",
+            stable_subject=api_key_context.api_key.lookup_hash,
+        )
+        return principal
 
     if raw_bearer.startswith(_SESSION_BEARER_PREFIX):
         # Bearer-shaped session token. Used by management programs that
@@ -139,7 +154,14 @@ def principal_from_request(request: Request, settings: Settings) -> Principal:
         )
         if session_context is None:
             raise api_error(401, "Invalid session token", "unauthorized")
-        return _principal_for_session(request, session_context)
+        principal = _principal_for_session(request, session_context)
+        enforce_authenticated_rate_limit(
+            request,
+            settings,
+            credential_kind="session",
+            stable_subject=session_context.session.lookup_hash,
+        )
+        return principal
 
     # Neither shape matched. Don't claim "Invalid API key" — the token
     # was never API-key-shaped to begin with. Surface the actual issue
@@ -165,12 +187,19 @@ def _principal_from_dev_header(
         user.id,
         suggested_workspace_id=None,
     )
-    return Principal(
+    principal = Principal(
         user=user,
         workspace=workspace,
         api_key=None,
         is_management=STORE.user_can_manage(user.id, workspace.id),
     )
+    enforce_authenticated_rate_limit(
+        request,
+        settings,
+        credential_kind="dev_user",
+        stable_subject=user.id,
+    )
+    return principal
 
 
 def _principal_for_session(

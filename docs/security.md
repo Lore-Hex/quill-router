@@ -82,15 +82,43 @@ configured Spanner/Bigtable storage backend.
 
 ## Rate Limiting
 
-Requests are rate limited before route handlers run. Per-IP buckets for
-unauthenticated requests and per-key buckets for bearer-authenticated requests
-use the configured store in production, so those counters are shared across
-Cloud Run instances. Anonymous safe reads and internal gateway calls use a
-process-local counter instead (per instance): a shared Spanner counter on those
-paths serialized every request on one row's write lock (#399). An internal-path
-credential only earns the shared fleet bucket when it matches the configured
-internal token; unverified credentials count against the caller's IP, keeping
-bucket cardinality bounded against token guessing.
+Every deployed front door must overwrite `X-TrustedRouter-Client-IP` with one
+normalized source address and prevent direct access to the service origin. This
+same contract applies to every trustedrouter.com, allyrouter.com, and
+uptimerouter.com alias and to GCP, AWS, and Azure front doors. The application
+ignores `X-Forwarded-For`, `CF-Connecting-IP`, `X-TrustedRouter-User`, and Host
+when deriving limiter identity. A missing or malformed trusted header collapses
+into one conservative `untrusted_lb` bucket; it never falls back to
+caller-controlled headers or the deployed socket peer. Only explicit `local`
+and `test` environments use the direct ASGI peer, so canary and staging have the
+same trust boundary as production.
+
+All HTTP limiter counters are bounded and process-local so request admission
+cannot create a Spanner read-modify-write hotspot. The ingress bucket is keyed
+only by trusted source and uses the IP allowance even when a caller supplies a
+Bearer value or cookie. Only a correctly matched internal gateway secret earns
+the higher internal allowance before route authentication. The dedicated
+federation directory, settlement, and credit secrets earn that allowance only
+on their exact inbound routes; they are never treated as generic internal
+credentials. After ordinary API key or session authentication succeeds, a
+second credential bucket is applied exactly once for that request. Invalid or
+arbitrary Bearer values therefore neither mint credential buckets nor make
+public routes perform authentication.
+
+These counters are defense-in-depth, not a fleet-wide quota: each application
+instance has its own allowance. Fleet-wide coarse source limiting and
+volumetric protection are supplied by the front door (Cloud Armor or the cloud
+equivalent). This split keeps the limiter off storage and billing hot paths
+while preserving a bounded local backstop on every instance.
+
+The ASGI boundary also enforces `TR_MAX_REQUEST_BODY_BYTES` (4 MiB by
+default). Oversized declared bodies are rejected before route execution;
+undeclared/chunked bodies are counted incrementally and the overflowing chunk
+is never handed to `Request.body()` or `Request.json()`. Duplicate, malformed,
+negative, or Content-Length-plus-Transfer-Encoding framing is rejected as a
+bad request. The limiter does not prebuffer or drain bodies and does not buffer
+streaming responses. Rejections close reusable HTTP/1 connections because the
+rejected body bytes are intentionally left unread.
 
 This is an application backstop, not the whole abuse plan. Public signup should
 also use Cloud Armor, Stripe/payment risk controls, per-provider quota

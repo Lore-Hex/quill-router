@@ -124,6 +124,7 @@ from trusted_router.provider_contract import (
     PROVIDER_CATALOG_V2_SCHEMA,
 )
 from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
+from trusted_router.request_limits import normalized_client_identity
 from trusted_router.serialization import user_model_public_shape
 from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.services.ops_chat import OpsChatSupportMessage, fanout_support_message
@@ -324,7 +325,7 @@ async def _handle_trustedos_inquiry(settings: Settings, request: Request) -> JSO
     if not name or not message or not _EMAIL_RE.match(email):
         return JSONResponse({"ok": False, "error": "missing_fields"}, status_code=422)
 
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = normalized_client_identity(request, settings)
     if not _inquiry_rate_ok(client_ip):
         return JSONResponse({"ok": False, "error": "rate_limited"}, status_code=429)
 
@@ -444,7 +445,7 @@ async def _handle_support_inquiry(settings: Settings, request: Request) -> JSONR
     ):
         return JSONResponse({"ok": False, "error": "missing_fields"}, status_code=422)
 
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = normalized_client_identity(request, settings)
     if not _inquiry_rate_ok(f"support:{client_ip}"):
         return JSONResponse({"ok": False, "error": "rate_limited"}, status_code=429)
 
