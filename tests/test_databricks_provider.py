@@ -61,6 +61,17 @@ def test_databricks_parser_converts_official_dbu_rates_exactly(
     assert discovered["z-ai/glm-5.2"]["upstream_id"] == "databricks-glm-5-2"
     assert discovered["moonshotai/kimi-k3"]["context_length"] == 1_048_576
     assert discovered["moonshotai/kimi-k3"]["input_modalities"] == ["text", "image"]
+    expected_request = {
+        "tier": 2,
+        "status": "submitted",
+        "submitted_on": "2026-08-19",
+        "input_tokens_per_minute": 1_000_000,
+        "output_tokens_per_minute": 100_000,
+    }
+    assert discovered["moonshotai/kimi-k3"]["account_rate_limit_request"] == expected_request
+    assert discovered["z-ai/glm-5.2"]["account_rate_limit_request"] == expected_request
+    assert discovered["thinkingmachines/inkling"]["account_rate_limit_request"] == expected_request
+    assert "account_rate_limit_request" not in discovered["openai/gpt-oss-120b"]
 
 
 def test_databricks_parser_prunes_route_when_documented_endpoint_disappears() -> None:
@@ -281,6 +292,18 @@ def test_databricks_manifest_activates_only_models_with_passing_canaries(
     for model_id in checked - healthy:
         assert by_id[model_id]["routable"] is False
         assert by_id[model_id]["routable_reason"] == "provider-canary-failed"
+    for model_id in (
+        "moonshotai/kimi-k3",
+        "thinkingmachines/inkling",
+        "z-ai/glm-5.2",
+    ):
+        assert by_id[model_id]["account_rate_limit_request"] == {
+            "tier": 2,
+            "status": "submitted",
+            "submitted_on": "2026-08-19",
+            "input_tokens_per_minute": 1_000_000,
+            "output_tokens_per_minute": 100_000,
+        }
 
 
 def test_databricks_is_prepaid_standard_privacy_and_not_byok() -> None:
