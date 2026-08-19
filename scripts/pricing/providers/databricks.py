@@ -135,6 +135,25 @@ EXPECTED_MODELS = [str(row["id"]) for row in MODEL_CONFIG.values()]
 UPSTREAM_ID_MAP = {
     str(row["id"]): str(row["upstream_id"]) for row in MODEL_CONFIG.values()
 }
+
+# Submitted to Databricks as Tier 2 account quota requests on 2026-08-19.
+# These values are deliberately metadata-only until Databricks confirms the
+# increase. Treating a submitted request as granted capacity would make the
+# router over-admit traffic and turn predictable fallback into avoidable 429s.
+_TIER_2_RATE_LIMIT_MODEL_IDS = frozenset(
+    {
+        "moonshotai/kimi-k3",
+        "thinkingmachines/inkling",
+        "z-ai/glm-5.2",
+    }
+)
+_TIER_2_RATE_LIMIT_REQUEST = {
+    "tier": 2,
+    "status": "submitted",
+    "submitted_on": "2026-08-19",
+    "input_tokens_per_minute": 1_000_000,
+    "output_tokens_per_minute": 100_000,
+}
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 _LIVE_CANARY_CHECKED_MODEL_IDS: set[str] = set()
 _LIVE_CANARY_HEALTHY_MODEL_IDS: set[str] = set()
@@ -249,6 +268,8 @@ def _parse_catalog(
         }
         if config.get("max_output_tokens") is not None:
             row["max_output_tokens"] = int(config["max_output_tokens"])
+        if model_id in _TIER_2_RATE_LIMIT_MODEL_IDS:
+            row["account_rate_limit_request"] = dict(_TIER_2_RATE_LIMIT_REQUEST)
         discovered[model_id] = row
     return prices, discovered
 

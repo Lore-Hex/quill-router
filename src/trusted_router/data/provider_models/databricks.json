@@ -131,6 +131,13 @@
         "prompt_caching"
       ],
       "routable": true,
+      "account_rate_limit_request": {
+        "tier": 2,
+        "status": "submitted",
+        "submitted_on": "2026-08-19",
+        "input_tokens_per_minute": 1000000,
+        "output_tokens_per_minute": 100000
+      },
       "input_token_price_per_m": 3000000,
       "output_token_price_per_m": 15000000,
       "cached_input_token_price_per_m": 300000
@@ -264,6 +271,13 @@
         "prompt_caching"
       ],
       "routable": true,
+      "account_rate_limit_request": {
+        "tier": 2,
+        "status": "submitted",
+        "submitted_on": "2026-08-19",
+        "input_tokens_per_minute": 1000000,
+        "output_tokens_per_minute": 100000
+      },
       "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 4050000,
       "cached_input_token_price_per_m": 170000
@@ -292,6 +306,13 @@
         "prompt_caching"
       ],
       "routable": true,
+      "account_rate_limit_request": {
+        "tier": 2,
+        "status": "submitted",
+        "submitted_on": "2026-08-19",
+        "input_tokens_per_minute": 1000000,
+        "output_tokens_per_minute": 100000
+      },
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
       "cached_input_token_price_per_m": 260000
