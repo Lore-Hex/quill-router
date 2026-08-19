@@ -63,6 +63,8 @@ def _looks_like_date(piece: str) -> bool:
 def production_settings() -> Settings:
     return Settings(
         environment="production",
+        service_surface="control",
+        attribution_cookie_secret="attribution-cookie-secret-for-control-test",  # noqa: S106
         internal_gateway_token="prod-token",  # noqa: S106 - test fixture.
         stripe_webhook_secret="whsec_test",  # noqa: S106 - test fixture.
         stripe_secret_key="sk_test",  # noqa: S106 - test fixture.

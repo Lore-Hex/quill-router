@@ -100,18 +100,13 @@ def test_sentry_test_route_requires_internal_token_not_management_auth() -> None
 def test_sentry_test_route_is_disabled_in_production_unless_explicitly_enabled() -> None:
     base_settings = dict(
         environment="production",
+        service_surface="internal",
         internal_gateway_token="internal-prod-sentry-test",  # noqa: S106 - test config.
-        stripe_webhook_secret="whsec_test",  # noqa: S106 - test config.
-        stripe_secret_key="sk_test_secret",  # noqa: S106 - test config.
         sentry_dsn="https://example@example.ingest.sentry.io/1",
-        aws_access_key_id="test-access-key",
-        aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
-        ses_from_email="noreply@example.com",
         storage_backend="spanner-bigtable",
         spanner_instance_id="trusted-router",
         spanner_database_id="trusted-router",
         bigtable_instance_id="trusted-router-logs",
-        byok_kms_key_name=TEST_BYOK_KMS_KEY_NAME,
     )
     disabled = TestClient(
         create_app(
@@ -151,6 +146,8 @@ def test_production_rejects_spoofable_user_header_auth() -> None:
         create_app(
             Settings(
                 environment="production",
+                service_surface="control",
+                attribution_cookie_secret="attribution-cookie-" + "a" * 32,
                 internal_gateway_token=internal_token,
                 stripe_webhook_secret=webhook_secret,
                 stripe_secret_key=stripe_key,

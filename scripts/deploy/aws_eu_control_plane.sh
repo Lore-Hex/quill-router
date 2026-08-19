@@ -177,6 +177,12 @@ else
   CLICKHOUSE_SECRET_JSON=""
 fi
 
+# App Runner currently supplies no edge header trusted by the application, so
+# ordinary clients deliberately collapse into one `untrusted_lb` identity.
+# Give that aggregate per-instance defense-in-depth bucket room for legitimate
+# status traffic; AWS WAF remains the fleet-wide/per-source authority. Azure
+# keeps the normal 240/60 application limit because it has a usable client IP
+# and must not inherit this AWS-only aggregate allowance.
 CONFIG=$(cat <<JSON
 {
   "ImageRepository": {
@@ -186,11 +192,16 @@ CONFIG=$(cat <<JSON
       "Port": "8080",
       "RuntimeEnvironmentVariables": {
         "TR_ENVIRONMENT": "canary",
+        "TR_SERVICE_SURFACE": "observer",
+        "TR_NEW_SIGNUPS_ENABLED": "false",
         "TR_RELEASE": "${TAG}",
         "TR_STORAGE_BACKEND": "postgres",
         "TR_POSTGRES_DSN": "host=${DSQL_HOST} port=5432 user=admin dbname=postgres sslmode=require",
         "TR_POSTGRES_IAM_AUTH": "aws-dsql",
         "TR_ENABLE_LIVE_PROVIDERS": "false",
+        "TR_RATE_LIMIT_ENABLED": "true",
+        "TR_RATE_LIMIT_WINDOW_SECONDS": "60",
+        "TR_RATE_LIMIT_IP_PER_WINDOW": "6000",
 
         "TR_API_BASE_URL": "${API_BASE_URL}",
         "TR_PRIMARY_REGION": "${REGION}",

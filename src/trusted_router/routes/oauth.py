@@ -37,6 +37,7 @@ from trusted_router.oauth_provider import (
     exchange_code,
     fetch_user,
 )
+from trusted_router.signup_gate import require_new_account_creation
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
@@ -184,6 +185,9 @@ async def _handle_callback(
     # displayed" on every first login. See PENDING_REVEAL_COOKIE above.
     pending_reveal_raw_key: str | None = None
     if existing_user is None:
+        # Creation-only global brake: provider login/state/profile validation
+        # still runs, and returning users never enter this branch.
+        require_new_account_creation(settings)
         if delegated_signup:
             # An app-originated signup receives no promotional credit and no
             # management API key. The app gets an inference-only key after

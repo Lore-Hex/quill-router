@@ -55,6 +55,8 @@ log "deploying $APP from ${ACR_SERVER}/trusted-router:${IMAGE_TAG}"
 # Sentry, or analytics.
 COMMON_ENV=(
   "TR_ENVIRONMENT=canary"
+  "TR_SERVICE_SURFACE=observer"
+  "TR_NEW_SIGNUPS_ENABLED=false"
   "TR_RELEASE=${IMAGE_TAG}"
   "TR_STORAGE_BACKEND=postgres"
   "TR_ENABLE_LIVE_PROVIDERS=false"
