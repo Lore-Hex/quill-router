@@ -236,6 +236,75 @@ def test_confirmed_tinfoil_kimi_k3_price_transition_is_allowed(
     assert "moonshotai/kimi-k3" in capsys.readouterr().out
 
 
+def test_confirmed_deepseek_and_gmi_price_transitions_are_allowed(
+    tmp_path: Path, capsys
+) -> None:
+    from scripts.check_price_spike import main
+
+    before_payload = _make_endpoint_snapshot(
+        ("0.000000347999", "0.000000695999"),
+        [
+            ("deepseek", "deepseek-v4-pro", "0.000000435", "0.00000087"),
+            (
+                "gmi",
+                "deepseek-ai/DeepSeek-V4-Pro",
+                "0.000000347999",
+                "0.000000695999",
+            ),
+        ],
+        model_id="deepseek/deepseek-v4-pro",
+    )
+    before_payload["models"][0]["endpoints"][1]["tag"] = "gmicloud/fp8"
+    before = _write(tmp_path, "before.json", before_payload)
+
+    after_payload = _make_endpoint_snapshot(
+        ("0.00000066", "0.000001392"),
+        [
+            ("deepseek", "deepseek-v4-pro", "0.00000066", "0.00000198"),
+            (
+                "gmi",
+                "deepseek-ai/DeepSeek-V4-Pro",
+                "0.000000696",
+                "0.000001392",
+            ),
+        ],
+        model_id="deepseek/deepseek-v4-pro",
+    )
+    after_payload["models"][0]["endpoints"][1]["tag"] = "gmicloud/fp8"
+    after = _write(tmp_path, "after.json", after_payload)
+
+    assert main([str(before), str(after), "--summary"]) == 0
+    assert "deepseek/deepseek-v4-pro" in capsys.readouterr().out
+
+
+def test_unapproved_deepseek_price_transition_still_blocks(
+    tmp_path: Path, capsys
+) -> None:
+    from scripts.check_price_spike import main
+
+    before = _write(
+        tmp_path,
+        "before.json",
+        _make_endpoint_snapshot(
+            ("0.00000014", "0.00000028"),
+            [("deepseek", "deepseek-v4-flash", "0.00000014", "0.00000028")],
+            model_id="deepseek/deepseek-v4-flash",
+        ),
+    )
+    after = _write(
+        tmp_path,
+        "after.json",
+        _make_endpoint_snapshot(
+            ("0.00000022", "0.00000067"),
+            [("deepseek", "deepseek-v4-flash", "0.00000022", "0.00000067")],
+            model_id="deepseek/deepseek-v4-flash",
+        ),
+    )
+
+    assert main([str(before), str(after), "--summary"]) == 1
+    assert "PRICE SPIKE FAILURES" in capsys.readouterr().out
+
+
 def test_unapproved_tinfoil_kimi_k3_price_transition_still_blocks(
     tmp_path: Path, capsys
 ) -> None:

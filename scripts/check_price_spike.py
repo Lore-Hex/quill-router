@@ -37,6 +37,38 @@ DEFAULT_SPIKE_RATIO = 2.0  # 100% increase = ≥2× the previous value
 # route, dimension, old value, or new value still fails closed.
 APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
     {
+        # DeepSeek's first-party schedule effective 2026-08-16. The public
+        # pricing table is the source of truth for both off-peak baselines:
+        # https://api-docs.deepseek.com/quick_start/pricing/
+        (
+            "deepseek/deepseek-v4-flash [deepseek:deepseek:deepseek-v4-flash]",
+            "completion",
+            Decimal("0.00000028"),
+            Decimal("0.00000066"),
+        ),
+        (
+            "deepseek/deepseek-v4-pro [deepseek:deepseek:deepseek-v4-pro]",
+            "completion",
+            Decimal("0.00000087"),
+            Decimal("0.00000198"),
+        ),
+        # GMI's public billing API changed the V4 Pro discount from roughly
+        # 80% to 60%. Keep this approval pinned to the exact payable values:
+        # https://console.gmicloud.ai/api/v1/billing/model_prices
+        (
+            "deepseek/deepseek-v4-pro "
+            "[gmi:gmicloud/fp8:deepseek-ai/DeepSeek-V4-Pro]",
+            "prompt",
+            Decimal("0.000000347999"),
+            Decimal("0.000000696"),
+        ),
+        (
+            "deepseek/deepseek-v4-pro "
+            "[gmi:gmicloud/fp8:deepseek-ai/DeepSeek-V4-Pro]",
+            "completion",
+            Decimal("0.000000695999"),
+            Decimal("0.000001392"),
+        ),
         (
             "moonshotai/kimi-k3 [tinfoil:tinfoil:kimi-k3]",
             "prompt",
