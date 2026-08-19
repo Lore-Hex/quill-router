@@ -555,21 +555,8 @@ def test_read_only_default_off_lets_writes_through() -> None:
     assert resp.status_code != 503
 
 
-def test_read_only_bypasses_rate_limit_writes() -> None:
-    """Read-only mode must short-circuit rate-limiting too.
-
-    `STORE.hit_rate_limit` does a windowed-counter Spanner write on
-    every allowed request. During a Stage-1 cutover (Phase B-D
-    window) we need ALL writes silent so the source snapshot we
-    exported and imported into nam6 doesn't drift before Phase D
-    flips the env var. The 2026-05-10 cutover surfaced this: ~9
-    rate_limit rows landed on source after Phase B set TR_READ_ONLY
-    because the rate-limit middleware writes regardless of method.
-
-    With read_only=True, even an aggressive rate limit (1 per window)
-    must NOT 429 — every request is just allowed through. Limits
-    resume the moment Phase E drops the flag.
-    """
+def test_read_only_keeps_storage_free_local_rate_limit() -> None:
+    """Read-only cutovers retain admission now that it performs no writes."""
     locked_app = create_app(
         Settings(
             environment="test",
@@ -579,16 +566,11 @@ def test_read_only_bypasses_rate_limit_writes() -> None:
         )
     )
     locked_client = TestClient(locked_app)
-    # Two GETs in the same window. Without the bypass, the second would
-    # be 429 (since limit=1). With the bypass, both pass — the
-    # underlying Spanner write was skipped on each.
+    # Reads keep working, but the second request is still bounded locally.
     first = locked_client.get("/v1/models")
     second = locked_client.get("/v1/models")
     assert first.status_code == 200
-    assert second.status_code == 200, (
-        f"second GET should not be 429 in read-only mode (got "
-        f"{second.status_code}); rate-limit middleware leaked a write"
-    )
+    assert second.status_code == 429
 
 
 def test_rate_limit_returns_stable_openrouter_style_error(
@@ -765,7 +747,7 @@ def test_internal_rate_limit_is_enforced_in_memory(
     assert limited.headers["x-ratelimit-reset"]
 
 
-def test_authenticated_key_rate_limit_still_uses_store(
+def test_public_bearer_does_not_authenticate_or_use_durable_limiter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[dict[str, object]] = []
@@ -785,15 +767,11 @@ def test_authenticated_key_rate_limit_still_uses_store(
     )
 
     assert response.status_code == 200
-    assert [call["namespace"] for call in calls] == ["key"]
+    assert calls == []
 
 
-def test_rate_limit_fails_open_on_store_error(monkeypatch) -> None:
-    """A Spanner abort/deadlock in the rate-limit counter must NEVER 500 a
-    request. Rate limiting is a best-effort guard, so a contended/unavailable
-    store fails OPEN (allow). Regression for the 2026-06-08 production
-    "Aborted: Deadlock with higher priority transaction" that surfaced as an
-    unhandled 500 on bot scanner traffic hammering one IP's counter row."""
+def test_rate_limit_does_not_touch_store_and_remains_local_on_store_error(monkeypatch) -> None:
+    """Request admission must not depend on or amplify a storage outage."""
     def boom(self, *_args, **_kwargs):
         del self
         raise RuntimeError("Aborted: Deadlock with higher priority transaction.")
@@ -807,12 +785,12 @@ def test_rate_limit_fails_open_on_store_error(monkeypatch) -> None:
     )
     client = TestClient(app)
     monkeypatch.setattr(InMemoryStore, "hit_rate_limit", boom)
-    # Even an aggressive limit + a raising store: both requests pass through
-    # (fail-open) — not 429, and crucially not 500.
+    # The storage method is never called. The bounded local source bucket still
+    # rejects the second request rather than failing open during an outage.
     first = client.post("/v1/signup", json={})
     second = client.post("/v1/signup", json={})
     assert first.status_code == 400
-    assert second.status_code == 400
+    assert second.status_code == 429
 
 
 def test_production_config_fails_closed() -> None:
@@ -1021,6 +999,7 @@ def test_internal_rate_limit_guessed_tokens_share_the_ip_bucket(
         environment="test",
         internal_gateway_token=internal_token,
         rate_limit_enabled=True,
+        rate_limit_ip_per_window=3,
         rate_limit_internal_per_window=3,
         rate_limit_window_seconds=60,
     )
@@ -1033,7 +1012,7 @@ def test_internal_rate_limit_guessed_tokens_share_the_ip_bucket(
             headers={"x-trustedrouter-internal-token": f"guess-{n}"},
             json={"api_key_lookup_hash": "irrelevant"},
         )
-        for n in range(settings.rate_limit_internal_per_window + 1)
+        for n in range(settings.rate_limit_ip_per_window + 1)
     ]
 
     # Unique wrong tokens still consume ONE shared (per-IP) bucket: the
@@ -1081,6 +1060,7 @@ def test_internal_rate_limit_precedence_matches_route_auth(
         environment="test",
         internal_gateway_token=internal_token,
         rate_limit_enabled=True,
+        rate_limit_ip_per_window=2,
         rate_limit_internal_per_window=2,
         rate_limit_window_seconds=60,
     )
@@ -1102,7 +1082,7 @@ def test_internal_rate_limit_precedence_matches_route_auth(
             headers={"x-trustedrouter-internal-token": f"stale-{n}"},
             json={"api_key_lookup_hash": key.lookup_hash},
         )
-        for n in range(settings.rate_limit_internal_per_window + 1)
+        for n in range(settings.rate_limit_ip_per_window + 1)
     ]
     assert [r.status_code for r in guesses] == [401, 401, 429]
 

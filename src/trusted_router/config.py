@@ -961,6 +961,8 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def production_is_fail_closed(self) -> Settings:
         environment = self.environment.lower()
+        if self.max_request_body_bytes <= 0:
+            raise ValueError("TR_MAX_REQUEST_BODY_BYTES must be positive")
         if self.signup_trial_credit_microdollars < 0:
             raise ValueError("TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS cannot be negative")
         for name, value in (
