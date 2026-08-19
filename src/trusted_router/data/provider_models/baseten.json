@@ -2,7 +2,7 @@
   "_about": "Provider-native Baseten Model API routes, capabilities, context windows, and account-billable prices refreshed hourly from Baseten's authenticated /v1/models feed.",
   "provider": "baseten",
   "source": "https://inference.baseten.co/v1/models",
-  "generated_at": "2026-08-16T15:24:13Z",
+  "generated_at": "2026-08-19T19:32:16Z",
   "price_scale": "microdollars_per_million",
   "model_count": 19,
   "models": [
@@ -228,8 +228,8 @@
     {
       "id": "deepseek/deepseek-v4-pro",
       "upstream_id": "deepseek-ai/DeepSeek-V4-Pro",
-      "display_name": "Deepseek V4 Pro",
-      "context_length": 262144,
+      "display_name": "DeepSeek V4 Pro",
+      "context_length": 1048576,
       "endpoints": [
         "chat/completions"
       ],
@@ -297,7 +297,8 @@
       "output_token_price_per_m": 4400000,
       "cached_input_token_price_per_m": 140000,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -380,7 +381,8 @@
       "title": "zai-org/GLM-5.2-Fast",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -537,7 +539,7 @@
       "max_output_tokens": 32768
     },
     {
-      "display_name": "Deepseek V4 Flash 0731",
+      "display_name": "DeepSeek V4 Flash 0731",
       "title": "deepseek-ai/DeepSeek-V4-Flash-0731",
       "model_type": "chat",
       "input_modalities": [
@@ -570,7 +572,7 @@
       "max_output_tokens": 1048576
     },
     {
-      "display_name": "Deepseek V4 Pro 0813",
+      "display_name": "DeepSeek V4 Pro 0813",
       "title": "deepseek-ai/DeepSeek-V4-Pro-0813",
       "model_type": "chat",
       "input_modalities": [

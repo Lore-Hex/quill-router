@@ -3,8 +3,8 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-08-16T15:24:13Z",
-  "model_count": 142,
+  "generated_at": "2026-08-19T19:32:16Z",
+  "model_count": 144,
   "models": [
     {
       "id": "Sao10K/L3-8B-Stheno-v3.2",
@@ -245,7 +245,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1,
+      "status": 4,
       "upstream_id": "deepseek/deepseek-ocr"
     },
     {
@@ -4020,7 +4020,66 @@
       "max_output_tokens": 393216,
       "input_token_price_per_m": 13200,
       "output_token_price_per_m": 39600,
-      "cached_input_token_price_per_m": 3500
+      "cached_input_token_price_per_m": 1320
+    },
+    {
+      "id": "inclusionai/ling-3.0-flash-fast",
+      "upstream_id": "inclusionai/ling-3.0-flash-fast",
+      "display_name": "Ling 3.0 Flash Fast",
+      "title": "inclusionai/ling-3.0-flash-fast",
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling",
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "created": 1787022607,
+      "context_length": 262144,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 600,
+      "output_token_price_per_m": 1800,
+      "cached_input_token_price_per_m": 120
+    },
+    {
+      "id": "z-ai/glm-5.3",
+      "upstream_id": "zai-org/glm-5.3",
+      "display_name": "GLM 5.3",
+      "title": "zai-org/glm-5.3",
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "anthropic",
+        "responses"
+      ],
+      "status": 1,
+      "created": 1787105676,
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 14000,
+      "output_token_price_per_m": 44000,
+      "cached_input_token_price_per_m": 2600
     }
   ]
 }

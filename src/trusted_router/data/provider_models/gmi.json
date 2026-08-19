@@ -2,13 +2,13 @@
   "_about": "Provider-native GMI Cloud catalog. Account-visible models are intersected with GMI's official billing feed; explicitly approved routes omitted from /v1/models remain current only after an exact visible-content PONG canary succeeds.",
   "provider": "gmi",
   "source": "https://console.gmicloud.ai/api/v1/billing/model_prices",
-  "generated_at": "2026-08-16T15:24:13Z",
-  "model_count": 83,
+  "generated_at": "2026-08-19T19:32:16Z",
+  "model_count": 85,
   "models": [
     {
       "id": "z-ai/glm-5.2",
       "upstream_id": "zai-org/GLM-5.2-FP8",
-      "display_name": "GMI Cloud GLM 5.2",
+      "display_name": "zai-org/GLM-5.2-FP8",
       "title": "z-ai/glm-5.2",
       "context_length": 1048576,
       "max_output_tokens": 131072,
@@ -420,9 +420,9 @@
       "id": "deepseek/deepseek-v3.2",
       "upstream_id": "deepseek-ai/DeepSeek-V3.2",
       "context_length": 163840,
-      "input_token_price_per_m": 214600,
-      "output_token_price_per_m": 318200,
-      "cached_input_token_price_per_m": 22200
+      "input_token_price_per_m": 208800,
+      "output_token_price_per_m": 309600,
+      "cached_input_token_price_per_m": 21600
     },
     {
       "display_name": "DeepSeek-V4-Flash",
@@ -441,9 +441,9 @@
       "id": "deepseek/deepseek-v4-flash",
       "upstream_id": "deepseek-ai/DeepSeek-V4-Flash",
       "context_length": 1048575,
-      "input_token_price_per_m": 70000,
-      "output_token_price_per_m": 140000,
-      "cached_input_token_price_per_m": 14000
+      "input_token_price_per_m": 84000,
+      "output_token_price_per_m": 168000,
+      "cached_input_token_price_per_m": 16800
     },
     {
       "display_name": "DeepSeek-V4-Flash-0731",
@@ -462,9 +462,9 @@
       "id": "deepseek/deepseek-v4-flash-0731",
       "upstream_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
       "context_length": 1048575,
-      "input_token_price_per_m": 70000,
-      "output_token_price_per_m": 140000,
-      "cached_input_token_price_per_m": 14000
+      "input_token_price_per_m": 112000,
+      "output_token_price_per_m": 224000,
+      "cached_input_token_price_per_m": 22400
     },
     {
       "display_name": "DeepSeek-V4-Pro",
@@ -483,9 +483,9 @@
       "id": "deepseek/deepseek-v4-pro",
       "upstream_id": "deepseek-ai/DeepSeek-V4-Pro",
       "context_length": 1048576,
-      "input_token_price_per_m": 347999,
-      "output_token_price_per_m": 695999,
-      "cached_input_token_price_per_m": 28999
+      "input_token_price_per_m": 696000,
+      "output_token_price_per_m": 1392000,
+      "cached_input_token_price_per_m": 58000
     },
     {
       "display_name": "DeepSeek-V4-Pro-0813",
@@ -504,9 +504,9 @@
       "id": "deepseek/deepseek-v4-pro-0813",
       "upstream_id": "deepseek-ai/DeepSeek-V4-Pro-0813",
       "context_length": 1048575,
-      "input_token_price_per_m": 1218000,
-      "output_token_price_per_m": 2436000,
-      "cached_input_token_price_per_m": 101500
+      "input_token_price_per_m": 1188000,
+      "output_token_price_per_m": 3564000,
+      "cached_input_token_price_per_m": 39600
     },
     {
       "display_name": "Gemini 3 Flash",
@@ -1920,6 +1920,62 @@
       "input_token_price_per_m": 750000,
       "output_token_price_per_m": 3750000,
       "cached_input_token_price_per_m": 75000
+    },
+    {
+      "display_name": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+      "title": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "nvidia/nemotron-3.5-lightning-30b-a3b-bf16",
+      "upstream_id": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+      "context_length": 65536,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 1000000,
+      "cached_input_token_price_per_m": 50000
+    },
+    {
+      "display_name": "Grok 4.6",
+      "title": "xai/grok4.6",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "x-ai/grok4.6",
+      "upstream_id": "xai/grok4.6",
+      "context_length": 2000000,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 6000000,
+      "cached_input_token_price_per_m": 500000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 199999,
+          "input_token_price_per_m": 2000000,
+          "output_token_price_per_m": 6000000,
+          "cached_input_token_price_per_m": 500000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 4000000,
+          "output_token_price_per_m": 12000000,
+          "cached_input_token_price_per_m": 1000000
+        }
+      ]
     }
   ],
   "price_scale": "microdollars_per_million"
