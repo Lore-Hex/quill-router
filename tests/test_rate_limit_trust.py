@@ -47,6 +47,7 @@ def _production_settings(**updates: object) -> Settings:
         "bigtable_instance_id": "trusted-router-logs",
         "byok_kms_key_name": _TEST_BYOK_KMS_KEY_NAME,
         "rate_limit_enabled": True,
+        "rate_limit_client_ip_mode": "edge_header",
     }
     values.update(updates)
     return Settings(**values)
@@ -550,7 +551,7 @@ def test_former_expensive_exemptions_use_ingress_bucket(path: str) -> None:
     assert limited.json()["error"]["type"] == "rate_limited"
 
 
-def test_tiny_health_route_remains_exempt() -> None:
+def test_health_route_uses_the_same_source_admission_bucket() -> None:
     app = create_app(
         Settings(environment="test", rate_limit_ip_per_window=1),
         init_observability=False,
@@ -558,7 +559,42 @@ def test_tiny_health_route_remains_exempt() -> None:
     client = TestClient(app)
 
     assert client.get("/health").status_code == 200
-    assert client.get("/health").status_code == 200
+    limited = client.get("/health")
+    assert limited.status_code == 429
+    assert limited.json()["error"]["type"] == "rate_limited"
+
+
+@pytest.mark.parametrize("environment", ["production", "canary", "staging"])
+def test_deployed_untrusted_mode_ignores_even_a_well_formed_client_ip_header(
+    environment: str,
+) -> None:
+    app = create_app(
+        _production_settings(
+            environment=environment,
+            rate_limit_client_ip_mode="untrusted",
+            rate_limit_ip_per_window=2,
+        ),
+        configure_store_arg=False,
+        init_observability=False,
+    )
+    client = TestClient(app)
+
+    responses = [
+        client.post(
+            "/v1/signup",
+            headers={"x-trustedrouter-client-ip": f"198.51.100.{index}"},
+            json={},
+        )
+        for index in range(1, 4)
+    ]
+
+    assert [response.status_code for response in responses[:2]] == [400, 400]
+    assert responses[2].status_code == 429
+
+
+def test_client_ip_identity_mode_is_fail_closed() -> None:
+    with pytest.raises(ValueError, match="TR_RATE_LIMIT_CLIENT_IP_MODE"):
+        Settings(environment="test", rate_limit_client_ip_mode="forwarded")
 
 
 def test_public_inquiry_limiters_and_display_use_canonical_production_source(

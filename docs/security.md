@@ -82,16 +82,22 @@ configured Spanner/Bigtable storage backend.
 
 ## Rate Limiting
 
-Every deployed front door must overwrite `X-TrustedRouter-Client-IP` with one
-normalized source address and prevent direct access to the service origin. This
-same contract applies to every trustedrouter.com, allyrouter.com, and
-uptimerouter.com alias and to GCP, AWS, and Azure front doors. The application
-ignores `X-Forwarded-For`, `CF-Connecting-IP`, `X-TrustedRouter-User`, and Host
-when deriving limiter identity. A missing or malformed trusted header collapses
-into one conservative `untrusted_lb` bucket; it never falls back to
-caller-controlled headers or the deployed socket peer. Only explicit `local`
-and `test` environments use the direct ASGI peer, so canary and staging have the
-same trust boundary as production.
+Deployed services default to `TR_RATE_LIMIT_CLIENT_IP_MODE=untrusted`: every
+request shares one conservative `untrusted_lb` bucket, and even a syntactically
+valid caller-supplied `X-TrustedRouter-Client-IP` is ignored. A service may set
+the mode to `edge_header` only after its front door has been verified to
+overwrite that header with one normalized source address and direct origin
+access has been closed. This is the GCP external Application Load Balancer
+contract. AWS App Runner and direct Azure Container Apps cannot provide the
+same overwrite and must remain in `untrusted` mode unless their topology is
+changed.
+
+The application always ignores `X-Forwarded-For`, `CF-Connecting-IP`,
+`X-TrustedRouter-User`, and Host when deriving limiter identity. In
+`edge_header` mode, a missing, duplicated, or malformed trusted header also
+collapses into `untrusted_lb`; it never falls back to caller-controlled headers
+or the deployed socket peer. Only explicit `local` and `test` environments use
+the direct ASGI peer, so canary and staging retain deployed trust semantics.
 
 All HTTP limiter counters are bounded and process-local so request admission
 cannot create a Spanner read-modify-write hotspot. The ingress bucket is keyed
@@ -111,14 +117,26 @@ volumetric protection are supplied by the front door (Cloud Armor or the cloud
 equivalent). This split keeps the limiter off storage and billing hot paths
 while preserving a bounded local backstop on every instance.
 
-The ASGI boundary also enforces `TR_MAX_REQUEST_BODY_BYTES` (4 MiB by
-default). Oversized declared bodies are rejected before route execution;
-undeclared/chunked bodies are counted incrementally and the overflowing chunk
-is never handed to `Request.body()` or `Request.json()`. Duplicate, malformed,
-negative, or Content-Length-plus-Transfer-Encoding framing is rejected as a
-bad request. The limiter does not prebuffer or drain bodies and does not buffer
-streaming responses. Rejections close reusable HTTP/1 connections because the
-rejected body bytes are intentionally left unread.
+The ASGI boundary also enforces four independent request-body controls:
+`TR_MAX_REQUEST_BODY_BYTES` (4 MiB by default),
+`TR_MAX_IN_FLIGHT_REQUEST_BODY_BYTES` (64 MiB),
+`TR_MAX_CONCURRENT_REQUEST_BODIES` (16), and
+`TR_REQUEST_BODY_READ_TIMEOUT_SECONDS` (30 seconds). Deployments set smaller
+limits for public/forms services and a deliberate 32 MiB per-request limit for
+the authenticated browser chat and internal multimodal surfaces.
+
+Oversized declared bodies are rejected before route execution; streamed bodies
+are counted incrementally and an overflowing chunk is never handed to
+`Request.body()` or `Request.json()`. Declared bytes reserve the shared process
+budget before route work, and undeclared bytes reserve it as they arrive.
+Duplicate, malformed, negative, or Content-Length-plus-Transfer-Encoding
+framing is rejected as a bad request. The middleware neither prebuffers request
+bodies nor buffers streaming responses. Slow reads have one total deadline.
+Admission failures are retryable and body/framing rejections close the HTTP/1
+connection; an outer close-only guard does the same when an early auth,
+rate-limit, safe-method, or 404 response leaves a possible body unread. This
+preserves authentication/error ordering for legacy clients that attach a body
+to a GET while preventing their unread bytes from retaining a backend socket.
 
 This is an application backstop, not the whole abuse plan. Public signup should
 also use Cloud Armor, Stripe/payment risk controls, per-provider quota

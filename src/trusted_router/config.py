@@ -454,6 +454,10 @@ class Settings(BaseSettings):
     rate_limit_ip_per_window: int = 240
     rate_limit_key_per_window: int = 1200
     rate_limit_internal_per_window: int = 6000
+    # Only front doors that overwrite X-TrustedRouter-Client-IP may opt into
+    # edge_header. Public origins that cannot perform that overwrite must stay
+    # on the safe default and aggregate into the untrusted_lb bucket.
+    rate_limit_client_ip_mode: str = "untrusted"
 
     # Shared only by the anonymous public surface and the account/control
     # surface so an attribution cookie survives the LB hand-off between them.
@@ -937,6 +941,9 @@ class Settings(BaseSettings):
     auto_model_order: str = ""
 
     max_request_body_bytes: int = 4 * 1024 * 1024
+    max_in_flight_request_body_bytes: int = 64 * 1024 * 1024
+    max_concurrent_request_bodies: int = 16
+    request_body_read_timeout_seconds: float = 30.0
 
     @classmethod
     def settings_customise_sources(
@@ -963,6 +970,21 @@ class Settings(BaseSettings):
         environment = self.environment.lower()
         if self.max_request_body_bytes <= 0:
             raise ValueError("TR_MAX_REQUEST_BODY_BYTES must be positive")
+        if self.max_in_flight_request_body_bytes < self.max_request_body_bytes:
+            raise ValueError(
+                "TR_MAX_IN_FLIGHT_REQUEST_BODY_BYTES must be at least "
+                "TR_MAX_REQUEST_BODY_BYTES"
+            )
+        if self.max_concurrent_request_bodies <= 0:
+            raise ValueError("TR_MAX_CONCURRENT_REQUEST_BODIES must be positive")
+        if not 0 < self.request_body_read_timeout_seconds <= 300:
+            raise ValueError(
+                "TR_REQUEST_BODY_READ_TIMEOUT_SECONDS must be between 0 and 300"
+            )
+        if self.rate_limit_client_ip_mode not in {"untrusted", "edge_header"}:
+            raise ValueError(
+                "TR_RATE_LIMIT_CLIENT_IP_MODE must be 'untrusted' or 'edge_header'"
+            )
         if self.signup_trial_credit_microdollars < 0:
             raise ValueError("TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS cannot be negative")
         for name, value in (
