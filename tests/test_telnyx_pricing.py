@@ -235,14 +235,19 @@ def test_telnyx_manifest_keeps_context_vision_and_exact_native_ids(
 def test_telnyx_manifest_is_loaded_as_prepaid_and_byok_catalog_routes() -> None:
     from trusted_router.catalog import MODEL_ENDPOINTS
 
+    manifest = json.loads(telnyx.MANIFEST_PATH.read_text(encoding="utf-8"))
+    manifest_model_ids = {str(row["id"]) for row in manifest["models"]}
     endpoints = [
         endpoint
         for endpoint in MODEL_ENDPOINTS.values()
         if endpoint.provider == "telnyx"
     ]
-    assert len(endpoints) == len(telnyx.EXPECTED_MODELS) * 2
-    assert {endpoint.model_id for endpoint in endpoints} == set(telnyx.EXPECTED_MODELS)
-    assert {endpoint.usage_type for endpoint in endpoints} == {"Credits", "BYOK"}
+    assert set(telnyx.EXPECTED_MODELS) <= manifest_model_ids
+    assert {(endpoint.model_id, endpoint.usage_type) for endpoint in endpoints} == {
+        (model_id, usage_type)
+        for model_id in manifest_model_ids
+        for usage_type in ("Credits", "BYOK")
+    }
     assert (
         MODEL_ENDPOINTS["moonshotai/kimi-k3@telnyx/prepaid"].upstream_id
         == "moonshotai/Kimi-K3"
