@@ -44,7 +44,10 @@ from trusted_router.domains import (
     request_hostname,
 )
 from trusted_router.errors import error_response
-from trusted_router.request_body_limit import RequestBodyLimitMiddleware
+from trusted_router.request_body_limit import (
+    RequestBodyLimitMiddleware,
+    UnreadRequestBodyCloseMiddleware,
+)
 from trusted_router.request_limits import (
     AUTHENTICATED_LIMITER_STATE,
     fingerprint_subject,
@@ -104,6 +107,9 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
     app.add_middleware(
         RequestBodyLimitMiddleware,
         max_bytes=settings.max_request_body_bytes,
+        max_in_flight_bytes=settings.max_in_flight_request_body_bytes,
+        max_concurrent_bodies=settings.max_concurrent_request_bodies,
+        read_timeout_seconds=settings.request_body_read_timeout_seconds,
     )
     ingress_rate_limits = InMemoryRateLimits(lock=threading.RLock())
     federation_settlement_tokens = tuple(
@@ -312,6 +318,12 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         )
         return response
 
+    # Registered last, therefore outermost in Starlette. It never rejects or
+    # admits a request itself: the source limiter still counts framing errors.
+    # It only prevents early auth/rate/read-only/404 responses from leaving an
+    # unread request body on a reusable HTTP/1 backend connection.
+    app.add_middleware(UnreadRequestBodyCloseMiddleware)
+
 
 def _status_host_path(path: str) -> bool:
     return path in STATUS_HOST_EXACT_PATHS or path.startswith(STATUS_HOST_PATH_PREFIXES)
@@ -384,8 +396,6 @@ async def _rate_limit_request(
     if not settings.rate_limit_enabled:
         return None
     path = request.url.path
-    if path in {"/health", "/healthz", "/v1/health", "/v1/healthz"}:
-        return None
 
     bearer = get_authorization_bearer(request)
     internal_token = request.headers.get("x-trustedrouter-internal-token")

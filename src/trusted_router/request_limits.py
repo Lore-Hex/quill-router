@@ -1,12 +1,11 @@
 """Request-rate-limit identity and authenticated defense-in-depth controls.
 
-Deployed source identity has one contract: every trusted front door overwrites
-``X-TrustedRouter-Client-IP`` with one normalized client address and the origin
-is unreachable except through those front doors. The application deliberately
-does not consult forwarding headers or the socket peer in deployed
-environments. A missing or malformed trusted header collapses into one
-conservative bucket so a front-door configuration mistake cannot turn caller
-input into identities.
+Deployed source identity is an explicit per-service contract. A service may
+trust ``X-TrustedRouter-Client-IP`` only when its front door overwrites the
+header and its origin is unreachable around that front door. Every other
+deployed service ignores the header and collapses into one conservative bucket.
+The application never consults forwarding headers or the socket peer in a
+deployed environment.
 
 Fleet-wide coarse limiting belongs at the front door (Cloud Armor or the cloud
 equivalent).  These application counters are bounded and process-local
@@ -37,13 +36,15 @@ _AUTHENTICATED_LIMIT_APPLIED_STATE = "authenticated_rate_limit_applied"
 def normalized_client_identity(request: Request, settings: Settings) -> str:
     """Return the only identity that an ingress limiter may use.
 
-    Every deployed environment trusts the dedicated LB-overwritten header only.
     Local/test use the ASGI peer so TestClient and direct developer servers work
-    without load balancer setup, while still ignoring caller-supplied forwarding
-    headers.
+    without load balancer setup. Deployed services default to one untrusted
+    aggregate; only ``edge_header`` mode consults the dedicated overwritten
+    header. Forwarding headers are always ignored.
     """
 
     if settings.environment.casefold() not in {"local", "test"}:
+        if settings.rate_limit_client_ip_mode != "edge_header":
+            return UNTRUSTED_LOAD_BALANCER_SUBJECT
         # The edge contract is exactly one overwritten header. Treat duplicates
         # as a broken trust boundary instead of accepting whichever value the
         # framework happens to return first.
