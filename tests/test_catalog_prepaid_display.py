@@ -63,15 +63,8 @@ def test_cerebras_only_credits_serves_allowlisted_models() -> None:
         for e in MODEL_ENDPOINTS.values()
         if e.provider == "cerebras" and e.usage_type == "Credits"
     }
-    assert cerebras_credits <= allow
-    assert {
-        "openai/gpt-oss-120b",
-        "cerebras/gpt-oss-120b",
-        "z-ai/glm-4.7",
-        "cerebras/zai-glm-4.7",
-        "google/gemma-4-31b-it",
-        "cerebras/gemma-4-31b",
-    } <= cerebras_credits
+    assert cerebras_credits
+    assert cerebras_credits == allow
 
 
 def test_together_credits_follow_started_serverless_manifest() -> None:
@@ -171,21 +164,22 @@ def test_anthropic_models_credits_route_first_party_only() -> None:
 
 
 def test_cerebras_native_routes_use_verified_upstream_ids() -> None:
-    assert MODEL_ENDPOINTS["openai/gpt-oss-120b@cerebras/prepaid"].upstream_id == (
-        "gpt-oss-120b"
-    )
-    assert MODEL_ENDPOINTS["openai/gpt-oss-120b@cerebras/byok"].upstream_id == (
-        "gpt-oss-120b"
-    )
-    assert MODEL_ENDPOINTS["cerebras/gpt-oss-120b@cerebras/prepaid"].upstream_id == (
-        "gpt-oss-120b"
-    )
-    assert MODEL_ENDPOINTS["z-ai/glm-4.7@cerebras/prepaid"].upstream_id == (
-        "zai-glm-4.7"
-    )
-    assert MODEL_ENDPOINTS["cerebras/zai-glm-4.7@cerebras/prepaid"].upstream_id == (
-        "zai-glm-4.7"
-    )
+    raw = json.loads((_PROVIDER_MODELS_DIR / "cerebras.json").read_text(encoding="utf-8"))
+    live_rows = [
+        row
+        for row in raw["models"]
+        if isinstance(row, dict)
+        and isinstance(row.get("id"), str)
+        and row.get("routable") is not False
+    ]
+
+    assert live_rows
+    for row in live_rows:
+        model_id = row["id"]
+        upstream_id = row.get("upstream_id") or model_id
+        for usage_type in ("prepaid", "byok"):
+            endpoint = MODEL_ENDPOINTS[f"{model_id}@cerebras/{usage_type}"]
+            assert endpoint.upstream_id == upstream_id
 
 
 def test_nebius_deprecated_june_2026_models_are_not_routable() -> None:

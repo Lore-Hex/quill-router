@@ -199,6 +199,7 @@ from trusted_router.provider_lifecycle import (
     provider_price_microdollars,
 )
 from trusted_router.routing_candidates import (  # noqa: F401 - re-exported for back-compat
+    FAST_MODEL_ORDER,
     InvalidAutoModelOrder,
     _is_regular_chat_model,
     _meta_route_kind,

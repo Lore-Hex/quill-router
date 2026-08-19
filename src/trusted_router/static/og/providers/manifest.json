@@ -37,10 +37,10 @@
   },
   "cerebras": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 4,
     "name": "Cerebras",
     "privacy": "Zero retention",
-    "route_count": 12,
+    "route_count": 8,
     "route_mode": "Prepaid + BYOK",
     "slug": "cerebras"
   },

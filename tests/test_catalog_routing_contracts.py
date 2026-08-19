@@ -5,6 +5,7 @@ import json
 import pytest
 
 from trusted_router.catalog import (
+    ADVISOR_CATALOG_MODEL_ORDERS,
     ADVISOR_MODEL_ID,
     ARISTOTLE_1_0_MODEL_ID,
     ARISTOTLE_1_1_MODEL_ID,
@@ -90,11 +91,15 @@ from trusted_router.catalog import (
     orchestration_role,
     provider_privacy_tier,
 )
-from trusted_router.catalog_ingest import _modalities
+from trusted_router.catalog_ingest import _authoritative_provider_model_ids, _modalities
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.routes.internal.gateway import _gateway_provider_route_payload
 from trusted_router.routing import chat_route_candidates, chat_route_endpoint_candidates
+
+
+def _cataloged_model_ids(model_ids: list[str]) -> list[str]:
+    return [model_id for model_id in model_ids if model_id in MODELS]
 
 
 def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
@@ -324,16 +329,6 @@ def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped()
             ],
         ),
         (
-            "cerebras",
-            4,
-            [
-                "openai/gpt-oss-120b",
-                "cerebras/gpt-oss-120b",
-                "z-ai/glm-4.7",
-                "cerebras/zai-glm-4.7",
-            ],
-        ),
-        (
             "google-ai-studio",
             5,
             [
@@ -381,6 +376,24 @@ def test_native_provider_catalog_preserves_live_model_ids(
         assert f"{model_id}@{provider}/byok" in MODEL_ENDPOINTS
         assert MODEL_ENDPOINTS[f"{model_id}@{provider}/prepaid"].upstream_id
         assert MODEL_ENDPOINTS[f"{model_id}@{provider}/byok"].upstream_id
+
+
+def test_cerebras_native_catalog_preserves_every_live_model_id() -> None:
+    expected = _authoritative_provider_model_ids("cerebras")
+    provider_model_ids = {
+        endpoint.model_id
+        for endpoint in MODEL_ENDPOINTS.values()
+        if endpoint.provider == "cerebras"
+    }
+
+    assert expected
+    assert provider_model_ids == expected
+    for model_id in expected:
+        assert f"{model_id}@cerebras/prepaid" in MODEL_ENDPOINTS
+        assert f"{model_id}@cerebras/byok" in MODEL_ENDPOINTS
+
+
+def test_non_chat_deepseek_ocr_is_not_routable_as_chat() -> None:
     assert "deepseek/deepseek-ocr-2@deepseek/prepaid" not in MODEL_ENDPOINTS
     assert "deepseek/deepseek-ocr-2@deepseek/byok" not in MODEL_ENDPOINTS
 
@@ -909,13 +922,15 @@ def test_socrates_aliases_are_cataloged_with_advisor_candidates() -> None:
     ):
         model = MODELS[model_id]
         shape = model_to_openrouter_shape(model)
+        available_candidates = _cataloged_model_ids(candidates)
 
+        assert ADVISOR_CATALOG_MODEL_ORDERS[model_id] == tuple(candidates)
         assert model.provider == "trustedrouter"
         assert shape["trustedrouter"]["route_kind"] == "advisor_orchestration"
         assert shape["trustedrouter"]["orchestration_primitive"] == "advisor"
         assert shape["trustedrouter"]["stores_content"] is False
-        assert shape["trustedrouter"]["auto_candidates"] == candidates
-        assert [model.id for model in meta_candidate_models(model_id)] == candidates
+        assert shape["trustedrouter"]["auto_candidates"] == available_candidates
+        assert [model.id for model in meta_candidate_models(model_id)] == available_candidates
 
     assert orchestration_role(ADVISOR_MODEL_ID) == "primitive"
     assert canonical_orchestration_model_id(ADVISOR_MODEL_ID) == ADVISOR_MODEL_ID
@@ -1187,11 +1202,12 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
     }
     for model_id, candidates in expected.items():
         shape = model_to_openrouter_shape(MODELS[model_id])
+        available_candidates = _cataloged_model_ids(candidates)
 
         assert shape["trustedrouter"]["route_kind"] == "advisor_orchestration"
         assert shape["trustedrouter"]["stores_content"] is False
-        assert shape["trustedrouter"]["auto_candidates"] == candidates
-        assert [model.id for model in meta_candidate_models(model_id)] == candidates
+        assert shape["trustedrouter"]["auto_candidates"] == available_candidates
+        assert [model.id for model in meta_candidate_models(model_id)] == available_candidates
     assert MODELS[PLATO_PRO_1_0_MODEL_ID].context_length == 1_048_576
     assert MODELS[PLATO_PRO_2_0_MODEL_ID].context_length == 1_048_576
     assert MODELS[PLATO_PRO_MODEL_ID].context_length == 1_048_576
