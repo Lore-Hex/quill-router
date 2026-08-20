@@ -1291,3 +1291,42 @@ def test_the_drain_and_the_status_page_run_the_identical_lag_statement() -> None
     )
 
     assert SELECT_OLDEST_SQL is SELECT_OLDEST_ENQUEUED_AT_SQL
+
+
+def test_dsql_is_not_sent_a_statement_timeout_it_rejects() -> None:
+    """Aurora DSQL answers `SET LOCAL statement_timeout` with an ERROR.
+
+    Not "ignores it" -- it raises, which aborts the transaction and takes the
+    read with it. The AWS-EU control plane published
+    `analytics: {available: false, reason: "unreachable"}` for an outbox it
+    could read perfectly well, because the bound added to make that read safe
+    was the only thing failing. Verified against the live cluster 2026-08-18:
+
+        ERROR:  setting configuration parameter "statement_timeout" not supported
+
+    So the statement bound is issued only where the backend accepts it, and the
+    caller keeps its own (pool-acquire timeout; a caller-side wait on the
+    status path). This test pins the decision, not the plumbing.
+    """
+    from trusted_router.storage_postgres import PostgresStore
+
+    executed: list[str] = []
+
+    class _Conn:
+        def execute(self, sql: str, *_a: object, **_k: object) -> object:
+            executed.append(sql)
+            return _Rows()
+
+    class _Rows:
+        def fetchone(self) -> tuple[int, ...]:
+            return (1,)
+
+    store = PostgresStore.__new__(PostgresStore)
+
+    store._supports_statement_timeout = False  # DSQL
+    store._bound_statement(_Conn(), 3.0)
+    assert executed == [], f"DSQL was sent {executed!r}, which it rejects"
+
+    store._supports_statement_timeout = True  # stock Postgres
+    store._bound_statement(_Conn(), 3.0)
+    assert executed == ["SET LOCAL statement_timeout = '3s'"], executed

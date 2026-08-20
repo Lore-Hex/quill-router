@@ -427,6 +427,17 @@ class PostgresStore:
         if transaction_attempts < 1:
             raise ValueError("transaction_attempts must be positive")
         self._transaction_attempts = transaction_attempts
+        # Aurora DSQL refuses the GUC outright -- `SET LOCAL statement_timeout`
+        # answers `ERROR: setting configuration parameter "statement_timeout"
+        # not supported` -- so issuing it does not merely fail to bound the
+        # query, it raises and takes the whole read with it. That is how the
+        # AWS-EU control plane published
+        # `analytics: {available: false, reason: "unreachable"}` for an outbox
+        # it could in fact read: the timeout added to make the read safe was
+        # the only reason it failed. What still bounds these reads on DSQL is
+        # the pool-acquire timeout below and, for the status page, the
+        # caller-side wait in routes/public.py.
+        self._supports_statement_timeout = postgres_iam_auth != _AWS_DSQL_IAM_AUTH
         if not postgres_iam_auth:
             self._pool = ConnectionPool(
                 conninfo=dsn,
@@ -477,12 +488,23 @@ class PostgresStore:
         """Close the connection pool."""
         self._pool.close()
 
+    def _bound_statement(self, conn: Any, seconds: float) -> None:
+        """Cap one statement server-side where the backend allows it.
+
+        Silent on DSQL by design, not by accident: see
+        `_supports_statement_timeout`. Callers must still hold their own bound
+        (a pool-acquire timeout, and a caller-side wait for anything on a
+        request path), because on DSQL this call does nothing.
+        """
+        if self._supports_statement_timeout:
+            conn.execute(f"SET LOCAL statement_timeout = '{seconds:g}s'")
+
     def readiness_check(self) -> None:
         """Verify the billing database without permitting an unbounded wait."""
 
         with self._pool.connection(timeout=3.0) as conn:
             with conn.transaction():
-                conn.execute("SET LOCAL statement_timeout = '3s'")
+                self._bound_statement(conn, 3.0)
                 conn.execute("SELECT 1 FROM tr_credit_balance LIMIT 1").fetchone()
 
     def apply_schema(self) -> None:
@@ -4500,9 +4522,7 @@ class PostgresStore:
         try:
             with self._pool.connection(timeout=OUTBOX_FRESHNESS_TIMEOUT_SECONDS) as conn:
                 with conn.transaction():
-                    conn.execute(
-                        f"SET LOCAL statement_timeout = '{OUTBOX_FRESHNESS_TIMEOUT_SECONDS:g}s'"
-                    )
+                    self._bound_statement(conn, OUTBOX_FRESHNESS_TIMEOUT_SECONDS)
                     oldest = outbox.oldest_enqueued_at_tx(conn)
         except Exception as exc:
             log.exception(
