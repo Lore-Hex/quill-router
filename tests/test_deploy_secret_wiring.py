@@ -25,7 +25,7 @@ def test_guarded_deploy_applies_clickhouse_delivery_schemas_before_rollout() -> 
     generation = "scripts/deploy/migrate_generation_records.sh --apply"
     provider_outbox = "scripts/deploy/migrate_analytics_outbox.sh"
     operational_outbox = "scripts/deploy/migrate_operational_analytics_outbox.sh"
-    rollout = "run: bash scripts/deploy/rollout.sh"
+    rollout = "bash scripts/deploy/rollout.sh"
     assert generation in workflow
     assert provider_outbox in workflow
     assert operational_outbox in workflow
