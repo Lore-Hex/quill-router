@@ -354,8 +354,9 @@ jobs:
       # Staged regional deploy. Deploy us-central1 first, gate on a
       # 3-min single-region synthetic watch; only proceed to the
       # secondary warm regions if us-central1 stays up. Once the image has
-      # passed that primary-region gate, europe-west4 and us-east4 roll in
-      # parallel with independent staged traffic, canaries, and rollback.
+      # passed that primary-region gate, every secondary rolls sequentially.
+      # All regions share Spanner, so overlapping revision warmups and traffic
+      # ramps can amplify billing transaction contention.
       #
       # Hotfix mode (workflow_dispatch input `hotfix: true`): the
       # watchdogs skip baseline + use --skip-baseline so a sick prod
@@ -426,6 +427,7 @@ jobs:
           echo "deploy_google_data_manager=${deploy_google_data_manager}"
 
       - name: Deploy us-central1 (no-traffic)
+        id: deploy_us
         env:
           IMAGE_TAG: ${{ needs.build-image.outputs.sha }}
           TR_DEPLOY_TARGET_REGIONS: us-central1
@@ -433,7 +435,9 @@ jobs:
           # Global LB topology is shared by every region. Reconcile it exactly
           # once here; concurrent secondary rollouts must not race on it.
           TR_DEPLOY_RECONCILE_LB: "1"
-        run: bash scripts/deploy/rollout.sh
+        run: |
+          echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          bash scripts/deploy/rollout.sh
 
       - name: Resolve us-central1 new revision
         id: new_us
@@ -450,7 +454,7 @@ jobs:
         # is reverted to 100% on the old revision and the workflow
         # fails before ever shipping anything to europe-west4.
         env:
-          TR_WATCHDOG_SLO_CLASS: control_plane
+          TR_WATCHDOG_SLO_CLASS: router_core
         run: bash scripts/deploy/staged_traffic.sh us-central1 "${{ steps.new_us.outputs.revision }}" "${{ steps.prev.outputs.us_central1_revision }}"
 
       - name: Canary gate — watch us-central1 only (3 min)
@@ -459,7 +463,7 @@ jobs:
         # received the new image yet, so the bad change is contained.
         id: canary_us
         continue-on-error: true
-        run: python3 scripts/deploy/watchdog.py --regions us-central1 --duration-min 3 --rollback-after 2 --slo-class control_plane ${{ steps.wd_args.outputs.extra }}
+        run: python3 scripts/deploy/watchdog.py --regions us-central1 --duration-min 3 --rollback-after 2 --slo-class router_core ${{ steps.wd_args.outputs.extra }}
 
       - name: Rollback us-central1 + abort (canary tripped)
         if: ${{ steps.canary_us.outcome == 'failure' && steps.canary_us.outputs.rollback_regions != '' }}
@@ -478,15 +482,31 @@ jobs:
           echo "europe-west4 NEVER received the bad image; safe."
           exit 1
 
-      - name: Roll secondary warm regions in parallel
+      - name: Billing-path gate + rollback (us-central1)
+        env:
+          PREV_US: ${{ steps.prev.outputs.us_central1_revision }}
+          TR_BILLING_5XX_GATE_SKIP: ${{ inputs.hotfix == true && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          if ! bash scripts/deploy/assert_no_billing_5xx.sh \
+              us-central1 "${{ steps.deploy_us.outputs.started_at }}"; then
+            echo "us-central1 emitted billing-path 5xx; rolling back to ${PREV_US}"
+            gcloud run services update-traffic "${SERVICE}" \
+              --region=us-central1 --project="${PROJECT_ID}" \
+              --to-revisions="${PREV_US}=100" --quiet
+            exit 1
+          fi
+
+      - name: Roll secondary warm regions sequentially
         env:
           IMAGE_TAG: ${{ needs.build-image.outputs.sha }}
           PREV_EU: ${{ steps.prev.outputs.europe_west4_revision }}
           PREV_US_EAST4: ${{ steps.prev.outputs.us_east4_revision }}
           PREV_SOUTHAMERICA_EAST1: ${{ steps.prev.outputs.southamerica_east1_revision }}
           WD_EXTRA: ${{ steps.wd_args.outputs.extra }}
-          TR_WATCHDOG_SLO_CLASS: control_plane
+          TR_WATCHDOG_SLO_CLASS: router_core
           TR_DEPLOY_RECONCILE_LB: "0"
+          TR_BILLING_5XX_GATE_SKIP: ${{ inputs.hotfix == true && 'true' || 'false' }}
         run: |
           set -euo pipefail
 
@@ -516,7 +536,9 @@ jobs:
           deploy_secondary() {
             local region="$1"
             local previous
+            local rollout_started_at
             previous="$(previous_revision "${region}")"
+            rollout_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "deploying ${region} no-traffic"
             if ! TR_DEPLOY_TARGET_REGIONS="${region}" \
                 TR_DEPLOY_NO_TRAFFIC="1" \
@@ -562,43 +584,31 @@ jobs:
               --regions "${region}" \
               --duration-min 3 \
               --rollback-after 2 \
-              --slo-class control_plane \
+              --slo-class router_core \
               ${WD_EXTRA}; then
+              rollback_region "${region}"
+              return 1
+            fi
+
+            if ! bash scripts/deploy/assert_no_billing_5xx.sh \
+                "${region}" "${rollout_started_at}"; then
               rollback_region "${region}"
               return 1
             fi
           }
 
           # The image has already passed the full us-central1 ramp and canary.
-          # These regions share no mutable Cloud Run resources; each child
-          # retains its own traffic ramp, watchdog, and region-local rollback.
+          # Roll one region at a time because every control-plane region shares
+          # Spanner and its billing indexes. Each region retains its own traffic
+          # ramp, router-core watchdog, billing-path gate, and local rollback.
           regions=(europe-west4 us-east4 southamerica-east1)
-          log_dir="$(mktemp -d)"
-          pids=()
           for region in "${regions[@]}"; do
-            echo "starting independent rollout for ${region}"
-            (deploy_secondary "${region}") >"${log_dir}/${region}.log" 2>&1 &
-            pids+=("$!")
-          done
-
-          failed=0
-          for idx in "${!regions[@]}"; do
-            region="${regions[$idx]}"
-            if wait "${pids[$idx]}"; then
-              echo "::group::${region} rollout"
-              cat "${log_dir}/${region}.log"
-              echo "::endgroup::"
-            else
-              failed=1
-              echo "::group::${region} failed rollout"
-              cat "${log_dir}/${region}.log"
-              echo "::endgroup::"
-              echo "::error::${region} rollout failed and was rolled back independently."
+            echo "starting sequential rollout for ${region}"
+            if ! deploy_secondary "${region}"; then
+              echo "::error::${region} rollout failed and was rolled back. Later regions were not touched."
+              exit 1
             fi
           done
-          if [ "${failed}" -ne 0 ]; then
-            exit 1
-          fi
 
       - name: Deploy synthetic monitor Cloud Run Job
         if: ${{ steps.optional.outputs.deploy_synthetic_monitor == 'true' }}
@@ -627,7 +637,7 @@ jobs:
 
       # No cross-region "final watchdog" step. Each region's health is
       # gated by its own per-region canary above (us-central1 first,
-      # then europe-west4 and us-east4 in parallel, each with its own 3-min
+      # then each secondary sequentially, each with its own 3-min
       # watchdog AFTER the staged_traffic 10/50/100 ramp). The prior cross-
       # region watchdog at this point caused recurring spurious
       # rollbacks: by the time it ran, earlier regions had finished
