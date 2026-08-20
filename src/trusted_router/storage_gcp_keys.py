@@ -29,6 +29,7 @@ from trusted_router.storage_gcp_counters import (
     KEY_LIMIT_COLUMNS,
     KEY_LIMIT_TABLE,
     key_limit_mirror_rows,
+    key_usage_shard_count,
 )
 from trusted_router.storage_gcp_io import SpannerIO, run_in_transaction_with_retry
 from trusted_router.storage_key_usage import api_key_from_json, api_key_usage_snapshot
@@ -75,6 +76,46 @@ _CONSOLE_API_KEYS_SQL = """
              key_record.id,
              key_limit.shard
 """
+
+_TYPED_LIMIT_PATCH_FIELDS = frozenset(
+    {
+        "limit",
+        "limit_microdollars",
+        "limit_daily_microdollars",
+        "limit_weekly_microdollars",
+        "limit_monthly_microdollars",
+        "include_byok_in_limit",
+    }
+)
+
+
+def _apply_key_patch(key: ApiKey, patch: dict[str, Any]) -> None:
+    if "name" in patch and patch["name"]:
+        key.name = str(patch["name"])
+    if "disabled" in patch:
+        key.disabled = bool(patch["disabled"])
+    if "limit" in patch:
+        value = patch["limit"]
+        key.limit_microdollars = (
+            None if value is None else dollars_to_microdollars(value)
+        )
+    if "limit_microdollars" in patch:
+        key.limit_microdollars = patch["limit_microdollars"]
+    if "limit_reset" in patch:
+        key.limit_reset = patch["limit_reset"]
+    for window in ("daily", "weekly", "monthly"):
+        field = f"limit_{window}_microdollars"
+        if field in patch:
+            setattr(key, field, patch[field])
+    if "include_byok_in_limit" in patch:
+        key.include_byok_in_limit = bool(patch["include_byok_in_limit"])
+    if patch.get("budget_alert_only") is not None:
+        key.budget_alert_only = bool(patch["budget_alert_only"])
+    if "budget_alerted" in patch:
+        key.budget_alerted = dict(patch["budget_alerted"] or {})
+    if "tags" in patch:
+        key.tags = dict(patch["tags"] or {})
+    key.updated_at = iso_now()
 
 
 class SpannerApiKeys:
@@ -231,57 +272,54 @@ class SpannerApiKeys:
         key = self.get_by_hash(key_hash)
         if key is None:
             return None
-        if key.usage_shard_count > 1:
-            if patch.get("limit") is not None or patch.get(
-                "limit_microdollars"
-            ) is not None:
-                raise ValueError(
-                    "consolidate API-key usage to one shard before adding "
-                    "an exact lifetime spend limit"
+        if not (_TYPED_LIMIT_PATCH_FIELDS & patch.keys()):
+            # Metadata edits do not touch typed counter configuration. Besides
+            # avoiding unnecessary hot-row writes, this preserves an existing
+            # escrow partition exactly.
+            _apply_key_patch(key, patch)
+            self._io.write_entity("api_key", key.hash, key)
+            return key
+
+        # A cap edit must repartition against strongly-read usage and holds in
+        # the same transaction. A snapshot followed by a batch could race an
+        # authorize and accidentally mint headroom on another shard.
+        pt = self._io.param_types
+
+        def txn(transaction: Any) -> ApiKey | None:
+            current = self._io.read_entity_tx(
+                transaction,
+                "api_key",
+                key_hash,
+                ApiKey,
+            )
+            if current is None:
+                return None
+            _apply_key_patch(current, patch)
+            shard_count = key_usage_shard_count(current)
+            usage_rows = list(
+                transaction.execute_sql(
+                    "SELECT shard, usage, byok_usage, reserved "
+                    "FROM tr_key_limit WHERE key_hash=@kh AND shard>=0 "
+                    "AND shard<@shard_count ORDER BY shard",
+                    params={"kh": key_hash, "shard_count": shard_count},
+                    param_types={"kh": pt.STRING, "shard_count": pt.INT64},
                 )
-        if "name" in patch and patch["name"]:
-            key.name = str(patch["name"])
-        if "disabled" in patch:
-            key.disabled = bool(patch["disabled"])
-        if "limit" in patch:
-            value = patch["limit"]
-            key.limit_microdollars = None if value is None else dollars_to_microdollars(value)
-        if "limit_microdollars" in patch:
-            key.limit_microdollars = patch["limit_microdollars"]
-        if "limit_reset" in patch:
-            key.limit_reset = patch["limit_reset"]
-        for window in ("daily", "weekly", "monthly"):
-            field = f"limit_{window}_microdollars"
-            if field in patch:
-                setattr(key, field, patch[field])
-        if "include_byok_in_limit" in patch:
-            key.include_byok_in_limit = bool(patch["include_byok_in_limit"])
-        if patch.get("budget_alert_only") is not None:
-            key.budget_alert_only = bool(patch["budget_alert_only"])
-        if "budget_alerted" in patch:
-            key.budget_alerted = dict(patch["budget_alerted"] or {})
-        if "tags" in patch:
-            key.tags = dict(patch["tags"] or {})
-        key.updated_at = iso_now()
-        # Re-sync the CONFIG columns to tr_key_limit in the same atomic batch.
-        # The generic mirror (deleted in C2a) used to do this on every api_key
-        # write; the typed authorize path reads the overall per-key cap
-        # (limit_micro) from tr_key_limit, so a limit edit that only wrote
-        # tr_entities would never reach enforcement (stale cap = spend bypass).
-        # KEY_LIMIT_COLUMNS is config-only (no usage/reserved/byok_usage), so
-        # this upsert on the existing row cannot clobber typed-owned counters.
-        with self._io.database.batch() as batch:
-            self._io.write_entity_batch(batch, "api_key", key.hash, key)
-            batch.insert_or_update(
+            )
+            config_rows = key_limit_mirror_rows(
+                current.hash,
+                current,
+                self._io.spanner_module.COMMIT_TIMESTAMP,
+                usage_rows=usage_rows,
+            )
+            self._io.write_entity_tx(transaction, "api_key", current.hash, current)
+            transaction.insert_or_update(
                 table=KEY_LIMIT_TABLE,
                 columns=KEY_LIMIT_COLUMNS,
-                values=key_limit_mirror_rows(
-                    key.hash,
-                    key,
-                    self._io.spanner_module.COMMIT_TIMESTAMP,
-                ),
+                values=config_rows,
             )
-        return key
+            return current
+
+        return run_in_transaction_with_retry(self._io.database, txn)
 
     # ── Per-key spend-cap lifecycle ─────────────────────────────────────
     def reserve_limit(

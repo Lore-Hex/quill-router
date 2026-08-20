@@ -216,9 +216,9 @@ class ApiKey:
     created_at: str = field(default_factory=iso_now)
     updated_at: str | None = None
     reserved_microdollars: int = 0
-    # Independent usage-counter rows for a high-throughput key. Keys with an
-    # exact lifetime spend limit remain at one shard. Fixed-window limits are
-    # approximate snapshot checks and may sum usage across shards.
+    # Independent usage-counter rows for a high-throughput key. Exact lifetime
+    # caps use escrowed per-shard sub-budgets; fixed-window limits are
+    # approximate snapshot checks and sum usage across shards.
     usage_shard_count: int = 1
     tags: dict[str, str] = field(default_factory=dict)
     # Non-empty marks a key learned from a home plane via federation. Such a

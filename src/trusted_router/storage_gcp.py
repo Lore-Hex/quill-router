@@ -1234,14 +1234,10 @@ class SpannerBigtableStore:
         budget_alert_only: bool = False,
         tags: dict[str, str] | None = None,
     ) -> tuple[str, ApiKey]:
-        # Keep new uncapped keys at the workspace's established write scale.
-        # Falling back to one usage row after a workspace has been resharded
-        # recreates a hot key-limit row under otherwise shard-safe traffic.
-        # Exact lifetime limits deliberately remain single-row so authorize
-        # can reserve against the cap atomically.
-        usage_shard_count = (
-            1 if limit_microdollars is not None else self._credit_shard_count(workspace_id)
-        )
+        # Keep every new key at the workspace's established write scale.
+        # Lifetime limits use escrowed per-shard sub-budgets, so retaining an
+        # exact cap no longer requires recreating a single hot key-limit row.
+        usage_shard_count = self._credit_shard_count(workspace_id)
         return self.api_keys.create(
             workspace_id=workspace_id,
             name=name,
@@ -2811,6 +2807,23 @@ class SpannerBigtableStore:
             )
 
         result = run_authorize(credit_shard_candidates)
+        if (
+            result["outcome"] == AuthorizeOutcome.KEY_LIMIT_EXCEEDED
+            and key_counter_shards > 1
+        ):
+            from trusted_router.storage_gcp_key_escrow import (
+                rebalance_key_limit_headroom,
+            )
+
+            if rebalance_key_limit_headroom(
+                self._database,
+                self._param_types,
+                key_hash=key_hash,
+                shard_count=key_counter_shards,
+                estimate=estimate,
+                preferred_shard=key_shard_candidates[0],
+            ):
+                result = run_authorize(credit_shard_candidates)
         if result["outcome"] == AuthorizeOutcome.INSUFFICIENT_CREDITS and has_credit_candidate:
             from trusted_router import storage_gcp_credit_rebalance as rebalance_mod
 
