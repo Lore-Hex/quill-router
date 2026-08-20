@@ -45,9 +45,9 @@ def test_tinfoil_fetch_discovers_deepseek_v4_flash(monkeypatch) -> None:  # noqa
             {
                 "id": "deepseek-v4-flash",
                 "pricing": {
-                    "inputTokenPricePer1M": 0.7,
-                    "cachedInputTokenPricePer1M": 0.125,
-                    "outputTokenPricePer1M": 1.9,
+                    "inputTokenPricePer1M": 0.2,
+                    "cachedInputTokenPricePer1M": 0.02,
+                    "outputTokenPricePer1M": 0.4,
                 },
             },
             {
@@ -71,12 +71,10 @@ def test_tinfoil_fetch_discovers_deepseek_v4_flash(monkeypatch) -> None:  # noqa
     result = tinfoil.fetch()
     deepseek = result.prices["deepseek/deepseek-v4-flash"]
 
-    assert tinfoil.UPSTREAM_ID_MAP["deepseek/deepseek-v4-flash"] == (
-        "deepseek-v4-flash"
-    )
-    assert deepseek.prompt_micro_per_m == 700_000
-    assert deepseek.completion_micro_per_m == 1_900_000
-    assert deepseek.tiers[0].prompt_cached_micro_per_m == 125_000
+    assert tinfoil.UPSTREAM_ID_MAP["deepseek/deepseek-v4-flash"] == ("deepseek-v4-flash")
+    assert deepseek.prompt_micro_per_m == 200_000
+    assert deepseek.completion_micro_per_m == 400_000
+    assert deepseek.tiers[0].prompt_cached_micro_per_m == 20_000
     assert not any("deepseek/deepseek-v4-flash" in note for note in result.notes)
 
 
@@ -101,9 +99,9 @@ def test_tinfoil_manifest_writer_publishes_discovered_chat_metadata(
                 "tool_calling": True,
                 "multimodal": False,
                 "pricing": {
-                    "inputTokenPricePer1M": "0.70",
-                    "cachedInputTokenPricePer1M": "0.125",
-                    "outputTokenPricePer1M": "1.90",
+                    "inputTokenPricePer1M": "0.20",
+                    "cachedInputTokenPricePer1M": "0.02",
+                    "outputTokenPricePer1M": "0.40",
                 },
             }
         ]
@@ -115,10 +113,7 @@ def test_tinfoil_manifest_writer_publishes_discovered_chat_metadata(
     notes = tinfoil.write_provider_manifest(result)
     written = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-    assert notes == [
-        "tinfoil: refreshed provider_models/tinfoil.json "
-        "(1 priced rows, appended 1)"
-    ]
+    assert notes == ["tinfoil: refreshed provider_models/tinfoil.json (1 priced rows, appended 1)"]
     assert written["model_count"] == 1
     assert written["price_scale"] == "microdollars_per_million"
     assert written["models"] == [
@@ -134,9 +129,9 @@ def test_tinfoil_manifest_writer_publishes_discovered_chat_metadata(
             "upstream_id": "deepseek-v4-flash",
             "features": ["reasoning", "function-calling"],
             "context_length": 1_048_576,
-            "input_token_price_per_m": 700_000,
-            "output_token_price_per_m": 1_900_000,
-            "cached_input_token_price_per_m": 125_000,
+            "input_token_price_per_m": 200_000,
+            "output_token_price_per_m": 400_000,
+            "cached_input_token_price_per_m": 20_000,
         }
     ]
 
@@ -146,9 +141,22 @@ def test_tinfoil_deepseek_route_is_confidential_and_uses_live_prices() -> None:
     provider = PROVIDERS["tinfoil"]
 
     assert endpoint.upstream_id == "deepseek-v4-flash"
-    assert endpoint.prompt_price_microdollars_per_million_tokens == 738_500
-    assert endpoint.completion_price_microdollars_per_million_tokens == 2_004_500
-    assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 131_875
+    assert endpoint.prompt_price_microdollars_per_million_tokens == 211_000
+    assert endpoint.completion_price_microdollars_per_million_tokens == 422_000
+    assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 21_100
+    assert provider.provider_zero_data_retention is True
+    assert provider.provider_confidential_compute is True
+    assert provider.provider_e2ee is True
+
+
+def test_tinfoil_kimi_k3_route_is_confidential_and_uses_live_capabilities() -> None:
+    endpoint = MODEL_ENDPOINTS["moonshotai/kimi-k3@tinfoil/prepaid"]
+    provider = PROVIDERS["tinfoil"]
+
+    assert endpoint.upstream_id == "kimi-k3"
+    assert endpoint.prompt_price_microdollars_per_million_tokens == 4_220_000
+    assert endpoint.completion_price_microdollars_per_million_tokens == 21_100_000
+    assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 844_000
     assert provider.provider_zero_data_retention is True
     assert provider.provider_confidential_compute is True
     assert provider.provider_e2ee is True
