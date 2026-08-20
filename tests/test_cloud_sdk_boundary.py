@@ -57,6 +57,9 @@ ALLOWED = {
     # boto3 talks to Amazon SES to send transactional mail. SES is reachable
     # from any cloud; this is a vendor choice, not a deployment coupling.
     "services/email.py",
+    # SES account suppression is the matching vendor-side feedback adapter.
+    # It keeps hard bounces and complaints blocked across every sender.
+    "services/ses_suppression.py",
 }
 
 CLOUD_SDK_ROOTS = {"google", "boto3", "botocore", "azure"}

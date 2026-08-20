@@ -440,7 +440,7 @@ def _make_api_router(settings: Settings) -> APIRouter:
     register_identity_verify_routes(router)
     register_notify_routes(router)
     register_wallet_oauth_routes(router)
-    register_ses_notification_routes(router)
+    register_ses_notification_routes(router, settings)
     register_internal_routes(router)
     return router
 
