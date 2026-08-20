@@ -29,7 +29,12 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from trusted_router.config import Settings
 from trusted_router.errors import api_error
+from trusted_router.services.ses_suppression import (
+    SesSuppressionService,
+    SesSuppressionSyncError,
+)
 from trusted_router.sns_verify import SnsVerificationError, verify_sns_message
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
@@ -37,7 +42,9 @@ from trusted_router.types import ErrorType
 log = logging.getLogger(__name__)
 
 
-def register_ses_notification_routes(router: APIRouter) -> None:
+def register_ses_notification_routes(router: APIRouter, settings: Settings) -> None:
+    account_suppression = SesSuppressionService(settings)
+
     @router.post("/internal/ses/notifications")
     async def ses_notification(request: Request) -> JSONResponse:
         raw = await request.body()
@@ -103,7 +110,20 @@ def register_ses_notification_routes(router: APIRouter) -> None:
         # SNS message retryable. The message-id claim only controls reporting:
         # suppression writes are idempotent, while duplicate SNS deliveries
         # must not inflate bounce/complaint counts.
-        blocked_count = _apply_feedback(kind, feedback, emit_log=False)
+        try:
+            blocked_count = _apply_feedback(
+                kind,
+                feedback,
+                account_suppression,
+                emit_log=False,
+            )
+        except SesSuppressionSyncError as exc:
+            log.error("ses_notification.account_suppression_sync_failed")
+            raise api_error(
+                503,
+                "SES suppression synchronization failed",
+                ErrorType.INTERNAL_ERROR,
+            ) from exc
         replayed = bool(message_id and not STORE.record_sns_message_once(message_id))
         if replayed:
             blocked_count = 0
@@ -123,6 +143,7 @@ def register_ses_notification_routes(router: APIRouter) -> None:
 def _apply_feedback(
     kind: str,
     feedback: dict[str, Any],
+    account_suppression: SesSuppressionService,
     *,
     emit_log: bool = True,
 ) -> int:
@@ -158,6 +179,7 @@ def _apply_feedback(
                         feedback_id=str(feedback_id) if feedback_id else None,
                         **tags,
                     )
+                    account_suppression.suppress(email, "BOUNCE")
                     blocked_count += 1
     elif kind in {"Complaint", "complaint"}:
         raw_complaint = feedback.get("complaint")
@@ -174,6 +196,7 @@ def _apply_feedback(
                     feedback_id=str(feedback_id) if feedback_id else None,
                     **tags,
                 )
+                account_suppression.suppress(email, "COMPLAINT")
                 blocked_count += 1
     if emit_log:
         _log_feedback(kind, feedback, blocked_count)

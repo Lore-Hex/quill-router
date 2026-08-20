@@ -24,6 +24,10 @@ from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.services.email import EmailMessage, EmailService, build_verification_email
+from trusted_router.services.ses_suppression import (
+    SesSuppressionService,
+    SesSuppressionSyncError,
+)
 from trusted_router.sns_verify import SnsVerificationError, verify_sns_message
 from trusted_router.storage import STORE
 
@@ -82,7 +86,10 @@ def verified_client() -> TestClient:
 
 def test_permanent_bounce_blocks_email(verified_client: TestClient) -> None:
     envelope = _envelope(MessageId="msg-bounce-1", Message=_bounce_message(["bounce@example.com"]))
-    with patch("trusted_router.routes.ses_notifications.verify_sns_message"):
+    with (
+        patch("trusted_router.routes.ses_notifications.verify_sns_message"),
+        patch("trusted_router.routes.ses_notifications.SesSuppressionService.suppress") as suppress,
+    ):
         resp = verified_client.post(
             "/internal/ses/notifications",
             json=envelope,
@@ -95,6 +102,7 @@ def test_permanent_bounce_blocks_email(verified_client: TestClient) -> None:
     assert block is not None
     assert block.reason == "bounce"
     assert block.bounce_type == "Permanent"
+    suppress.assert_called_once_with("bounce@example.com", "BOUNCE")
 
 
 def test_transient_bounce_does_not_block(verified_client: TestClient) -> None:
@@ -102,19 +110,101 @@ def test_transient_bounce_does_not_block(verified_client: TestClient) -> None:
         MessageId="msg-bounce-2",
         Message=_bounce_message(["soft@example.com"], bounce_type="Transient"),
     )
-    with patch("trusted_router.routes.ses_notifications.verify_sns_message"):
+    with (
+        patch("trusted_router.routes.ses_notifications.verify_sns_message"),
+        patch("trusted_router.routes.ses_notifications.SesSuppressionService.suppress") as suppress,
+    ):
         verified_client.post("/internal/ses/notifications", json=envelope)
     assert not STORE.is_email_blocked("soft@example.com")
+    suppress.assert_not_called()
 
 
 def test_complaint_blocks_email(verified_client: TestClient) -> None:
     envelope = _envelope(MessageId="msg-complaint-1", Message=_complaint_message(["mad@example.com"]))
-    with patch("trusted_router.routes.ses_notifications.verify_sns_message"):
+    with (
+        patch("trusted_router.routes.ses_notifications.verify_sns_message"),
+        patch("trusted_router.routes.ses_notifications.SesSuppressionService.suppress") as suppress,
+    ):
         resp = verified_client.post("/internal/ses/notifications", json=envelope)
     assert resp.status_code == 200
     assert resp.json()["data"]["blocked_count"] == 1
     block = STORE.get_email_block("mad@example.com")
     assert block is not None and block.reason == "complaint"
+    suppress.assert_called_once_with("mad@example.com", "COMPLAINT")
+
+
+def test_suppression_sync_failure_keeps_sns_notification_retryable(
+    verified_client: TestClient,
+) -> None:
+    envelope = _envelope(
+        MessageId="msg-sync-failure",
+        Message=_bounce_message(["retry@example.com"]),
+    )
+    with (
+        patch("trusted_router.routes.ses_notifications.verify_sns_message"),
+        patch(
+            "trusted_router.routes.ses_notifications.SesSuppressionService.suppress",
+            side_effect=SesSuppressionSyncError("sanitized"),
+        ),
+    ):
+        response = verified_client.post("/internal/ses/notifications", json=envelope)
+
+    assert response.status_code == 503
+    assert STORE.is_email_blocked("retry@example.com")
+    assert STORE.record_sns_message_once("msg-sync-failure") is True
+    assert "retry@example.com" not in response.text
+
+
+def test_account_suppression_service_writes_with_configured_region(monkeypatch) -> None:
+    calls: list[dict[str, str]] = []
+
+    class FakeSesV2Client:
+        def put_suppressed_destination(self, **kwargs: str) -> None:
+            calls.append(kwargs)
+
+    def fake_client(service: str, **kwargs: str) -> FakeSesV2Client:
+        assert service == "sesv2"
+        assert kwargs == {
+            "region_name": "us-west-2",
+            "aws_access_key_id": "AKIA_TEST",
+            "aws_secret_access_key": "secret",
+        }
+        return FakeSesV2Client()
+
+    monkeypatch.setattr("boto3.client", fake_client)
+    service = SesSuppressionService(
+        Settings(
+            environment="test",
+            aws_access_key_id="AKIA_TEST",
+            aws_secret_access_key="secret",  # noqa: S106 - test fixture secret.
+            aws_region="us-west-2",
+        )
+    )
+
+    service.suppress("blocked@example.com", "BOUNCE")
+
+    assert calls == [{"EmailAddress": "blocked@example.com", "Reason": "BOUNCE"}]
+
+
+def test_account_suppression_service_sanitizes_provider_errors(monkeypatch) -> None:
+    class FakeSesV2Client:
+        def put_suppressed_destination(self, **_kwargs: str) -> None:
+            raise RuntimeError("provider leaked private@example.com")
+
+    monkeypatch.setattr("boto3.client", lambda *_args, **_kwargs: FakeSesV2Client())
+    service = SesSuppressionService(
+        Settings(
+            environment="test",
+            aws_access_key_id="AKIA_TEST",
+            aws_secret_access_key="secret",  # noqa: S106 - test fixture secret.
+        )
+    )
+
+    with pytest.raises(SesSuppressionSyncError) as exc_info:
+        service.suppress("private@example.com", "COMPLAINT")
+
+    assert str(exc_info.value) == "SES account suppression write failed"
+    assert exc_info.value.__cause__ is None
 
 
 def test_replayed_message_id_is_idempotent(
