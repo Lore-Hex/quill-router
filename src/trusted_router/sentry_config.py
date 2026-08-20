@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -13,7 +14,6 @@ from datetime import time as _dt_time
 from decimal import Decimal
 from threading import Lock
 from typing import Any, cast
-from urllib.parse import urlsplit
 from uuid import UUID
 
 from trusted_router.config import Settings
@@ -91,20 +91,6 @@ SENTRY_FAILED_REQUEST_STATUS_CODES = {
     *range(502, 600),
 }
 
-# Same-origin Referer is normally evidence that a 405 came from our UI, but
-# crawlers synthesize it while walking forms and script-discovered URLs. Keep
-# this list deliberately limited to unambiguous crawler identifiers so browser
-# and SDK contract regressions still reach Sentry.
-CRAWLER_USER_AGENT_MARKERS: tuple[str, ...] = (
-    "bot",
-    "crawler",
-    "externalagent",
-    "facebookexternalhit",
-    "heritrix",
-    "slurp",
-    "spider",
-)
-
 
 @dataclass(frozen=True)
 class SentryFloodgateConfig:
@@ -113,6 +99,7 @@ class SentryFloodgateConfig:
     max_events_per_fingerprint: int = 3
     max_events_per_window: int = 50
     max_fingerprints: int = 2048
+    trusted_internal_token_digests: frozenset[bytes] = frozenset()
 
 
 @dataclass
@@ -143,36 +130,48 @@ class _SentryFloodgate:
 
         now = self._clock()
         window_seconds = max(config.window_seconds, 1)
-        fingerprint = _event_fingerprint(event)
-
         with self._lock:
             if now - self._global.window_started >= window_seconds:
                 self._global = _FloodBucket(window_started=now)
                 self._fingerprints.clear()
 
+            # This is a hard process-wide shipping cap, not merely a cap for
+            # already-seen issues. Checking it before fingerprint calculation
+            # and bucket creation means a stream of unique attacker-controlled
+            # errors cannot keep winning a "first event" exception, churn the
+            # bounded map, or spend hashing work after the budget is exhausted.
+            if self._global.count >= config.max_events_per_window:
+                return False
+
+            fingerprint = _event_fingerprint(event)
             bucket = self._fingerprints.get(fingerprint)
             is_first_for_fingerprint = (
                 bucket is None or now - bucket.window_started >= window_seconds
             )
             if is_first_for_fingerprint:
+                self._make_room_for_fingerprint(now, window_seconds)
                 bucket = _FloodBucket(window_started=now)
                 self._fingerprints[fingerprint] = bucket
             else:
                 assert bucket is not None
                 if bucket.count >= config.max_events_per_fingerprint:
                     return False
-                if self._global.count >= config.max_events_per_window:
-                    return False
 
             bucket.count += 1
             self._global.count += 1
-            self._prune_if_needed(now, window_seconds)
             return True
 
-    def _prune_if_needed(self, now: float, window_seconds: int) -> None:
+    def trusts_internal_token(self, value: str | None) -> bool:
+        if not value:
+            return False
+        candidate = hashlib.sha256(value.encode("utf-8")).digest()
+        return any(
+            hmac.compare_digest(candidate, expected)
+            for expected in self._config.trusted_internal_token_digests
+        )
+
+    def _make_room_for_fingerprint(self, now: float, window_seconds: int) -> None:
         max_fingerprints = max(self._config.max_fingerprints, 1)
-        if len(self._fingerprints) <= max_fingerprints:
-            return
         stale = [
             fingerprint
             for fingerprint, bucket in self._fingerprints.items()
@@ -180,14 +179,13 @@ class _SentryFloodgate:
         ]
         for fingerprint in stale:
             self._fingerprints.pop(fingerprint, None)
-        if len(self._fingerprints) <= max_fingerprints:
+        if len(self._fingerprints) < max_fingerprints:
             return
-        oldest = sorted(
-            self._fingerprints.items(),
-            key=lambda item: item[1].window_started,
+        oldest = min(
+            self._fingerprints,
+            key=lambda fingerprint: self._fingerprints[fingerprint].window_started,
         )
-        for fingerprint, _bucket in oldest[: len(self._fingerprints) - max_fingerprints]:
-            self._fingerprints.pop(fingerprint, None)
+        self._fingerprints.pop(oldest, None)
 
 
 _floodgate = _SentryFloodgate(SentryFloodgateConfig())
@@ -215,16 +213,15 @@ def init_sentry(settings: Settings) -> None:
             # INFO is Axiom-only by design; Sentry logs stay WARNING+ so chatty
             # INFO can never crowd out error events in the floodgate.
             LoggingIntegration(level=None, event_level=None, sentry_logs_level=logging.WARNING),
-            # 405 is reported alongside 5xx. The SDK default is 5xx only, which
-            # is why a console form that POSTed to a GET-only route returned
-            # "Method Not Allowed" to users indefinitely and never raised an
-            # alert: Starlette answers 405 from the router without an exception
-            # for Sentry to catch.
+            # 405 is reported alongside 5xx. The SDK default is 5xx only, while
+            # Starlette answers a wrong-method internal probe at the router
+            # without raising an exception for Sentry to catch.
             #
-            # 405 is retained for same-origin UI requests and authenticated
-            # internal workers because those indicate a route contract we can
-            # fix. before_send drops bare public wrong-method traffic before it
-            # can consume the Sentry budget. Other 4xx stay unreported:
+            # 405 is retained only for an internal worker presenting the exact
+            # configured token because that indicates a route contract we can
+            # fix. before_send drops public wrong-method traffic, including
+            # spoofable same-origin headers, before it can consume the Sentry
+            # budget. Other 4xx stay unreported:
             # 401/402/404 are routine and would drown the signal.
             StarletteIntegration(
                 transaction_style="endpoint",
@@ -313,12 +310,14 @@ def _is_dropped_noise(event: dict[str, Any]) -> bool:
 
 
 def _is_untrusted_405(event: dict[str, Any]) -> bool:
-    """Keep actionable first-party 405s without reporting public probes.
+    """Keep authenticated internal 405s without reporting public probes.
 
     Public endpoints receive wrong-method requests continuously. A 405 is a
-    product signal only when it came from one of our rendered pages or an
-    authenticated internal worker. SDK/API callers can choose arbitrary HTTP
-    methods, so a bare 405 from the public internet is not a server regression.
+    product signal only when it came from an authenticated internal worker.
+    Origin and Referer are caller-controlled request headers, so even an exact
+    same-origin value is not evidence that a browser rendered one of our pages.
+    SDK/API callers can choose arbitrary HTTP methods, so every other 405 from
+    the public internet is not a server regression.
     """
     if not _is_method_not_allowed_event(event):
         return False
@@ -327,18 +326,12 @@ def _is_untrusted_405(event: dict[str, Any]) -> bool:
     if not isinstance(request, Mapping):
         return True
     headers = _request_headers(request)
-    if "x-trustedrouter-internal-token" in headers:
-        return False
-    if _is_crawler_user_agent(headers.get("user-agent")):
-        return True
-
-    request_host = _url_hostname(request.get("url"))
-    if request_host is None:
-        return True
-    for name in ("origin", "referer"):
-        if _url_hostname(headers.get(name)) == request_host:
-            return False
-    return True
+    authorization = headers.get("authorization", "")
+    bearer = ""
+    if authorization.casefold().startswith("bearer "):
+        bearer = authorization.split(" ", 1)[1].strip()
+    supplied = bearer or headers.get("x-trustedrouter-internal-token")
+    return not _floodgate.trusts_internal_token(supplied)
 
 
 def _is_method_not_allowed_event(event: Mapping[str, Any]) -> bool:
@@ -375,22 +368,6 @@ def _request_headers(request: Mapping[str, Any]) -> dict[str, str]:
     return {}
 
 
-def _is_crawler_user_agent(value: str | None) -> bool:
-    if not value:
-        return False
-    normalized = value.casefold()
-    return any(marker in normalized for marker in CRAWLER_USER_AGENT_MARKERS)
-
-
-def _url_hostname(value: Any) -> str | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        return urlsplit(value).hostname
-    except ValueError:
-        return None
-
-
 def _fingerprint_method_not_allowed(event: dict[str, Any]) -> None:
     if not _is_method_not_allowed_event(event) or event.get("fingerprint"):
         return
@@ -398,27 +375,51 @@ def _fingerprint_method_not_allowed(event: dict[str, Any]) -> None:
     if not isinstance(request, Mapping):
         return
     method = str(request.get("method") or "UNKNOWN").upper()
-    url = request.get("url")
-    path = "/"
-    if isinstance(url, str):
-        try:
-            path = urlsplit(url).path or "/"
-        except ValueError:
-            pass
-    event["fingerprint"] = ["http-405", method, path]
+    if method not in {
+        "CONNECT",
+        "DELETE",
+        "GET",
+        "HEAD",
+        "OPTIONS",
+        "PATCH",
+        "POST",
+        "PUT",
+        "TRACE",
+    }:
+        method = "OTHER"
+    event["fingerprint"] = ["http-405", method, _safe_route_identity(event)]
+
+
+def _safe_route_identity(event: Mapping[str, Any]) -> str:
+    """Return only an SDK endpoint/route identity, never the raw target.
+
+    The Sentry Starlette/FastAPI integrations set ``component`` for our
+    configured endpoint-style transaction names and ``route`` for route-table
+    templates/fallbacks. If that server-derived provenance is absent, a
+    constant fallback deliberately coalesces all unmatched paths. Request
+    URLs, Origin, and Referer are attacker controlled and therefore cannot
+    contribute to Sentry issue cardinality.
+    """
+    transaction_info = event.get("transaction_info")
+    if not isinstance(transaction_info, Mapping):
+        return "unresolved-route"
+    if str(transaction_info.get("source") or "").casefold() not in {
+        "component",
+        "route",
+    }:
+        return "unresolved-route"
+    transaction = event.get("transaction")
+    if not isinstance(transaction, str):
+        return "unresolved-route"
+    normalized = " ".join(transaction.split())
+    if not normalized:
+        return "unresolved-route"
+    return normalized[:256]
 
 
 def configure_sentry_floodgate(settings: Settings) -> None:
     global _floodgate
-    _floodgate = _SentryFloodgate(
-        SentryFloodgateConfig(
-            enabled=settings.sentry_floodgate_enabled,
-            window_seconds=settings.sentry_floodgate_window_seconds,
-            max_events_per_fingerprint=settings.sentry_floodgate_max_events_per_fingerprint,
-            max_events_per_window=settings.sentry_floodgate_max_events_per_window,
-            max_fingerprints=settings.sentry_floodgate_max_fingerprints,
-        )
-    )
+    _floodgate = _SentryFloodgate(_floodgate_config(settings))
 
 
 def reset_sentry_floodgate_for_tests(
@@ -430,15 +431,27 @@ def reset_sentry_floodgate_for_tests(
     if settings is None:
         _floodgate = _SentryFloodgate(SentryFloodgateConfig(), clock=clock)
         return
-    _floodgate = _SentryFloodgate(
-        SentryFloodgateConfig(
-            enabled=settings.sentry_floodgate_enabled,
-            window_seconds=settings.sentry_floodgate_window_seconds,
-            max_events_per_fingerprint=settings.sentry_floodgate_max_events_per_fingerprint,
-            max_events_per_window=settings.sentry_floodgate_max_events_per_window,
-            max_fingerprints=settings.sentry_floodgate_max_fingerprints,
+    _floodgate = _SentryFloodgate(_floodgate_config(settings), clock=clock)
+
+
+def _floodgate_config(settings: Settings) -> SentryFloodgateConfig:
+    internal_tokens = {
+        value
+        for value in (
+            settings.internal_gateway_token,
+            settings.observer_internal_token,
+        )
+        if value
+    }
+    return SentryFloodgateConfig(
+        enabled=settings.sentry_floodgate_enabled,
+        window_seconds=settings.sentry_floodgate_window_seconds,
+        max_events_per_fingerprint=settings.sentry_floodgate_max_events_per_fingerprint,
+        max_events_per_window=settings.sentry_floodgate_max_events_per_window,
+        max_fingerprints=settings.sentry_floodgate_max_fingerprints,
+        trusted_internal_token_digests=frozenset(
+            hashlib.sha256(value.encode("utf-8")).digest() for value in internal_tokens
         ),
-        clock=clock,
     )
 
 

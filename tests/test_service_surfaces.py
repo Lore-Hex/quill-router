@@ -8,6 +8,12 @@ from fastapi.routing import APIRoute
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.routes.internal import synthetic as synthetic_routes
+
+
+@pytest.fixture(autouse=True)
+def _reset_synthetic_operation_limits() -> None:
+    synthetic_routes._OPERATION_RATE_LIMITS.reset()  # noqa: SLF001
 
 
 def _app(surface: str, **overrides: object) -> FastAPI:
@@ -79,6 +85,10 @@ def test_public_surface_has_no_authenticated_or_internal_routes() -> None:
 
     assert "/" in paths
     assert {"/models", "/v1/models", "/ready", "/v1/ready"} <= paths
+    assert {"/bedrock-group-buy", "/bedrock-group-buy/", "/v1/bedrock-group-buy"} <= paths
+    assert "/bedrock-group-buy/manage" not in paths
+    assert "/bedrock-group-buy/pledge" not in paths
+    assert "/v1/bedrock-group-buy/me" not in paths
     assert "/console" not in paths
     assert "/auth/google/login" not in paths
     assert "/v1/auth/google/login" not in paths
@@ -90,6 +100,77 @@ def test_public_surface_has_no_authenticated_or_internal_routes() -> None:
     assert "/support/inquiry" not in paths
     assert "/trustedos/inquiry" not in paths
     assert not any(path.startswith(("/internal/", "/v1/internal/")) for path in paths)
+
+
+@pytest.mark.parametrize("host", ["trustedrouter.com", "allyrouter.com", "uptimerouter.com"])
+def test_public_surface_renders_non_secret_oauth_availability_flags(host: str) -> None:
+    from fastapi.testclient import TestClient
+
+    settings = Settings(
+        environment="canary",
+        service_surface="public",
+        attribution_cookie_secret="public-attribution-" + "a" * 32,
+        google_oauth_login_available=True,
+        github_oauth_login_available=False,
+    )
+    response = TestClient(
+        create_app(
+            settings,
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    ).get("/", headers={"Host": host})
+
+    assert response.status_code == 200
+    assert 'href="/auth/google/login"' in response.text
+    assert 'href="/auth/github/login"' not in response.text
+    assert settings.google_client_id is None
+    assert settings.google_client_secret is None
+
+
+def test_deployed_public_surface_requires_explicit_oauth_availability() -> None:
+    with pytest.raises(ValueError, match="TR_GOOGLE_OAUTH_LOGIN_AVAILABLE"):
+        Settings(
+            environment="canary",
+            service_surface="public",
+            attribution_cookie_secret="public-attribution-" + "a" * 32,
+        )
+
+
+def test_public_openapi_keeps_customer_routes_from_split_services() -> None:
+    from fastapi.testclient import TestClient
+
+    response = TestClient(_app("public")).get(
+        "/openapi.json",
+        headers={"Accept-Encoding": "identity"},
+    )
+    paths = response.json()["paths"]
+
+    assert response.status_code == 200
+    assert "/v1/models" in paths
+    assert "/v1/keys" in paths
+    assert "/mcp" in paths
+    assert "/v1/chat/completions" in paths
+    assert "/v1/internal/gateway/authorize" not in paths
+
+
+@pytest.mark.parametrize("surface", ["actions", "control", "internal", "observer"])
+def test_non_public_split_surfaces_do_not_serve_openapi(surface: str) -> None:
+    from fastapi.testclient import TestClient
+
+    assert TestClient(_app(surface)).get("/openapi.json").status_code == 404
+
+
+def test_observer_api_reference_redirects_to_public_docs() -> None:
+    from fastapi.testclient import TestClient
+
+    response = TestClient(_app("observer")).get(
+        "/api/reference",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "https://trustedrouter.com/api/reference"
 
 
 def test_actions_surface_owns_only_anonymous_form_submissions() -> None:
@@ -121,7 +202,13 @@ def test_control_surface_owns_login_console_and_signed_webhooks_only() -> None:
         "/v1/internal/ses/notifications",
         "/internal/chat/issue-browser-key",
         "/v1/internal/chat/issue-browser-key",
+        "/bedrock-group-buy/manage",
+        "/bedrock-group-buy/pledge",
+        "/v1/bedrock-group-buy/me",
     } <= paths
+    assert "/bedrock-group-buy" not in paths
+    assert "/bedrock-group-buy/" not in paths
+    assert "/v1/bedrock-group-buy" not in paths
     assert "/" not in paths
     assert "/internal/gateway/authorize" not in paths
     assert "/v1/internal/gateway/authorize" not in paths
@@ -166,6 +253,8 @@ def test_regional_observer_has_status_and_synthetic_but_no_account_or_money_rout
     assert "/internal/federation/apply-usage" not in paths
     assert "/support/inquiry" not in paths
     assert "/trustedos/inquiry" not in paths
+    assert "/models/user-provided" not in paths
+    assert "/v1/models/user-provided" not in paths
 
 
 def test_versioned_api_pairs_never_split_across_surface_owners() -> None:
@@ -220,7 +309,7 @@ def test_background_worker_ownership(surface: str, expected: set[str]) -> None:
     assert workers == expected
 
 
-@pytest.mark.parametrize("surface", ["public", "actions", "observer"])
+@pytest.mark.parametrize("surface", ["public", "actions"])
 def test_anonymous_surface_ready_does_not_touch_the_billing_store(
     monkeypatch: pytest.MonkeyPatch,
     surface: str,
@@ -240,6 +329,28 @@ def test_anonymous_surface_ready_does_not_touch_the_billing_store(
     assert response.json() == {
         "status": "ready",
         "checks": {"http_surface": "ready"},
+    }
+
+
+def test_observer_ready_fails_when_its_status_store_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi.testclient import TestClient
+
+    def unavailable(_self: object) -> None:
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(
+        "trusted_router.storage.InMemoryStore.readiness_check",
+        unavailable,
+    )
+    response = TestClient(_app("observer")).get("/ready")
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "5"
+    assert response.json() == {
+        "status": "not_ready",
+        "checks": {"billing_store": "unavailable"},
     }
 
 
@@ -295,6 +406,98 @@ def test_internal_token_is_rejected_before_body_or_store_work(
     assert response.status_code == 401
     assert response.json()["error"]["type"] == "unauthorized"
     assert store_calls == 0
+
+
+@pytest.mark.parametrize("prefix", ["", "/v1"])
+def test_observer_and_billing_tokens_are_scoped_by_internal_route(
+    prefix: str,
+) -> None:
+    from fastapi.testclient import TestClient
+
+    billing_token = "billing-route-only-token"  # noqa: S105 - test token.
+    observer_token = "observer-route-only-token"  # noqa: S105 - test token.
+    client = TestClient(
+        _app(
+            "internal",
+            internal_gateway_token=billing_token,
+            observer_internal_token=observer_token,
+        )
+    )
+    malformed = b'{"not": "finished"'
+
+    observer_denied_on_billing = client.post(
+        f"{prefix}/internal/gateway/authorize",
+        headers={
+            "x-trustedrouter-internal-token": observer_token,
+            "content-type": "application/json",
+        },
+        content=malformed,
+    )
+    billing_admitted_to_billing = client.post(
+        f"{prefix}/internal/gateway/authorize",
+        headers={
+            "x-trustedrouter-internal-token": billing_token,
+            "content-type": "application/json",
+        },
+        content=malformed,
+    )
+    billing_denied_on_observer = client.post(
+        f"{prefix}/internal/synthetic/run",
+        headers={
+            "x-trustedrouter-internal-token": billing_token,
+            "content-type": "application/json",
+        },
+        content=malformed,
+    )
+    observer_admitted_to_observer = client.post(
+        f"{prefix}/internal/synthetic/run",
+        headers={
+            "x-trustedrouter-internal-token": observer_token,
+            "content-type": "application/json",
+        },
+        content=malformed,
+    )
+
+    assert observer_denied_on_billing.status_code == 401
+    assert billing_admitted_to_billing.status_code == 400
+    assert billing_denied_on_observer.status_code == 401
+    assert observer_admitted_to_observer.status_code == 400
+
+
+def test_observer_surface_accepts_only_its_own_internal_token() -> None:
+    from fastapi.testclient import TestClient
+
+    observer_token = "observer-surface-token"  # noqa: S105 - test token.
+    client = TestClient(
+        _app(
+            "observer",
+            observer_internal_token=observer_token,
+            # A legacy value present in process memory must never authenticate
+            # the observer route.
+            internal_gateway_token="legacy-billing-token",  # noqa: S106
+        )
+    )
+    malformed = b'{"not": "finished"'
+
+    denied = client.post(
+        "/internal/synthetic/run",
+        headers={
+            "x-trustedrouter-internal-token": "legacy-billing-token",
+            "content-type": "application/json",
+        },
+        content=malformed,
+    )
+    admitted = client.post(
+        "/internal/synthetic/run",
+        headers={
+            "x-trustedrouter-internal-token": observer_token,
+            "content-type": "application/json",
+        },
+        content=malformed,
+    )
+
+    assert denied.status_code == 401
+    assert admitted.status_code == 400
 
 
 @pytest.mark.parametrize("prefix", ["", "/v1"])

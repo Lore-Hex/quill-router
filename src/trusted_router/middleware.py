@@ -518,13 +518,15 @@ def _trusted_internal_credential(
         return None
 
     # Credential precedence mirrors require_internal_gateway exactly: bearer
-    # first, then the dedicated header. The generic token intentionally does
-    # not grant a higher allowance on the three federation routes above.
+    # first, then the dedicated header. Observer and billing tokens are
+    # intentionally route-scoped and disjoint, and neither generic token
+    # grants a higher allowance on the three federation routes above.
     supplied = bearer or internal_token or ""
-    if settings.internal_gateway_token and constant_time_equal(
-        supplied, settings.internal_gateway_token
-    ):
-        return "gateway", supplied
+    from trusted_router.routes.internal._shared import internal_service_credential
+
+    kind, internal_expected = internal_service_credential(settings, route_path)
+    if internal_expected and constant_time_equal(supplied, internal_expected):
+        return kind, supplied
     return None
 
 

@@ -1215,6 +1215,9 @@ def test_https_is_required_outside_local_and_test() -> None:
         environment="staging",
         service_surface="control",
         custom_models_require_verification=False,
+        attribution_cookie_secret="staging-attribution-" + "a" * 32,
+        stripe_webhook_secret="whsec_staging",  # noqa: S106 - test fixture.
+        stripe_secret_key="sk_staging",  # noqa: S106 - test fixture.
     )
     client = TestClient(create_app(settings, init_observability=False))
     user = STORE.ensure_user("staging-owner@example.com")

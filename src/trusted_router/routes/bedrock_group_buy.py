@@ -38,7 +38,7 @@ _snapshot_value: BedrockGroupBuyPublicSnapshot | None = None
 _snapshot_expires_at = 0.0
 
 
-def register_bedrock_group_buy_routes(app: FastAPI, settings: Settings) -> None:
+def register_bedrock_group_buy_public_routes(app: FastAPI, settings: Settings) -> None:
     _invalidate_public_snapshot()
 
     @app.api_route(
@@ -52,8 +52,38 @@ def register_bedrock_group_buy_routes(app: FastAPI, settings: Settings) -> None:
         response_class=HTMLResponse,
         include_in_schema=False,
     )
-    async def group_buy_page(request: Request) -> HTMLResponse:
+    async def group_buy_page() -> HTMLResponse:
+        # This response is served by the anonymous/CDN-backed surface.  Never
+        # inspect a session here: a signed-in visitor must receive the same
+        # cacheable document as everyone else.
+        return await _page_response(settings, principal=None, pledge=None)
+
+    @app.get("/v1/bedrock-group-buy")
+    async def public_group_buy() -> JSONResponse:
+        snapshot = await _public_snapshot(settings)
+        return JSONResponse(
+            snapshot.public_dict(),
+            headers={
+                "cache-control": "public, max-age=15, stale-while-revalidate=60",
+            },
+        )
+
+
+def register_bedrock_group_buy_control_routes(app: FastAPI, settings: Settings) -> None:
+    _invalidate_public_snapshot()
+
+    @app.api_route(
+        "/bedrock-group-buy/manage",
+        methods=["GET", "HEAD"],
+        response_class=HTMLResponse,
+    )
+    async def manage_group_buy_page(request: Request) -> Response:
         principal = _optional_user_principal(request, settings)
+        if principal is None:
+            return RedirectResponse(
+                "/bedrock-group-buy?reason=signin&next=%2Fbedrock-group-buy%2Fmanage",
+                status_code=303,
+            )
         pledge = await _own_pledge(principal)
         notice = ""
         if request.query_params.get("saved") == "1":
@@ -74,7 +104,7 @@ def register_bedrock_group_buy_routes(app: FastAPI, settings: Settings) -> None:
         principal = _optional_user_principal(request, settings)
         if principal is None:
             return RedirectResponse(
-                "/bedrock-group-buy?reason=signin&next=%2Fbedrock-group-buy",
+                "/bedrock-group-buy?reason=signin&next=%2Fbedrock-group-buy%2Fmanage",
                 status_code=303,
             )
         payload: dict[str, object] = {}
@@ -93,12 +123,15 @@ def register_bedrock_group_buy_routes(app: FastAPI, settings: Settings) -> None:
         _invalidate_public_snapshot()
         if saved is None:
             log.info("bedrock_group_buy.pledge_withdrawn")
-            return RedirectResponse("/bedrock-group-buy?withdrawn=1", status_code=303)
+            return RedirectResponse(
+                "/bedrock-group-buy/manage?withdrawn=1",
+                status_code=303,
+            )
         log.info(
             "bedrock_group_buy.pledge_saved public_message=%s",
             saved.publish_message,
         )
-        return RedirectResponse("/bedrock-group-buy?saved=1#share", status_code=303)
+        return RedirectResponse("/bedrock-group-buy/manage?saved=1#share", status_code=303)
 
     @app.post("/bedrock-group-buy/withdraw")
     async def withdraw_group_buy_pledge(request: Request) -> RedirectResponse:
@@ -106,24 +139,14 @@ def register_bedrock_group_buy_routes(app: FastAPI, settings: Settings) -> None:
         principal = _optional_user_principal(request, settings)
         if principal is None:
             return RedirectResponse(
-                "/bedrock-group-buy?reason=signin&next=%2Fbedrock-group-buy",
+                "/bedrock-group-buy?reason=signin&next=%2Fbedrock-group-buy%2Fmanage",
                 status_code=303,
             )
         assert principal.user is not None
         await run_in_threadpool(STORE.withdraw_bedrock_group_buy_pledge, principal.user.id)
         _invalidate_public_snapshot()
         log.info("bedrock_group_buy.pledge_withdrawn")
-        return RedirectResponse("/bedrock-group-buy?withdrawn=1", status_code=303)
-
-    @app.get("/v1/bedrock-group-buy")
-    async def public_group_buy() -> JSONResponse:
-        snapshot = await _public_snapshot(settings)
-        return JSONResponse(
-            snapshot.public_dict(),
-            headers={
-                "cache-control": "public, max-age=15, stale-while-revalidate=60",
-            },
-        )
+        return RedirectResponse("/bedrock-group-buy/manage?withdrawn=1", status_code=303)
 
     @app.get("/v1/bedrock-group-buy/me")
     async def own_group_buy_pledge(request: Request) -> JSONResponse:
@@ -311,7 +334,7 @@ def _private_pledge_dict(pledge: BedrockGroupBuyPledge) -> dict[str, object]:
 def _assert_same_origin(request: Request, settings: Settings) -> None:
     source = request.headers.get("origin") or request.headers.get("referer")
     if not source:
-        if settings.environment.lower() == "production":
+        if settings.environment.lower() not in {"local", "test"}:
             raise api_error(403, "Same-origin request required", "forbidden")
         return
     parsed = urlparse(source)

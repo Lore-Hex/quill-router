@@ -150,7 +150,7 @@ def set_attribution_cookie(
         value=encode_attribution_cookie(context, settings),
         max_age=ATTRIBUTION_COOKIE_MAX_AGE,
         httponly=True,
-        secure=settings.environment.lower() == "production",
+        secure=settings.environment.lower() not in {"local", "test"},
         samesite="lax",
         path="/",
     )

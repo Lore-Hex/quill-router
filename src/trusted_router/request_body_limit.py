@@ -20,6 +20,9 @@ from trusted_router.errors import error_response
 from trusted_router.types import ErrorType
 
 _MAX_CONTENT_LENGTH_DIGITS = 20
+_DEFER_BODY_RESERVATION_METHODS = frozenset(
+    {"GET", "HEAD", "DELETE", "OPTIONS"}
+)
 
 
 @dataclass(frozen=True)
@@ -30,7 +33,15 @@ class _BodyFraming:
 
     @property
     def possible_body(self) -> bool:
-        return self.transfer_encoded or bool(self.declared_length)
+        # HTTP/2 and direct ASGI requests may carry DATA without either
+        # Content-Length or Transfer-Encoding. Treat that shape as unknown,
+        # not empty; only an explicit Content-Length: 0 proves there is no
+        # upload to admit before route work begins.
+        return self.declared_length is None or bool(self.declared_length)
+
+    @property
+    def unknown_length(self) -> bool:
+        return self.declared_length is None and not self.transfer_encoded
 
 
 class _InFlightBodyBudget:
@@ -97,6 +108,7 @@ class RequestBodyLimitMiddleware:
         body_slot_acquired = False
         failure: str | None = None
         response_started = False
+        body_complete = False
         deadline = asyncio.get_running_loop().time() + self.read_timeout_seconds
 
         def release_body_slot() -> None:
@@ -122,11 +134,16 @@ class RequestBodyLimitMiddleware:
             reserved += additional
             return True
 
-        # A declared or transfer-encoded upload consumes an upload slot before
-        # route/auth work can wait for its first byte. Reserve declared memory
-        # up front as well; a lying client cannot overcommit every worker by
-        # advertising several simultaneous maximum-size bodies.
-        if framing.possible_body:
+        # A declared, transfer-encoded, or unsafe unknown-length upload
+        # consumes a slot before route/auth work can wait for its first byte.
+        # Reserve declared memory up front as well; a lying client cannot
+        # overcommit every worker by advertising several simultaneous
+        # maximum-size bodies.
+        method = str(scope.get("method") or "").upper()
+        defer_unknown_safe_body = (
+            method in _DEFER_BODY_RESERVATION_METHODS and framing.unknown_length
+        )
+        if framing.possible_body and method not in _DEFER_BODY_RESERVATION_METHODS:
             if not acquire_body_slot() or not reserve_to(framing.declared_length or 0):
                 release_body_slot()
                 if reserved:
@@ -135,9 +152,26 @@ class RequestBodyLimitMiddleware:
                 return
 
         async def limited_receive() -> Message:
-            nonlocal seen, failure
+            nonlocal seen, failure, body_complete
             if failure is not None:
                 return {"type": "http.disconnect"}
+            if body_complete:
+                # StreamingResponse on ASGI 2.3 keeps a second receive task
+                # open solely to notice client disconnect after the request
+                # body has completed. That is not another upload: do not
+                # reacquire a body slot or apply the original body deadline,
+                # which would truncate long-but-healthy streaming responses.
+                return await receive()
+            # Known CL/TE safe-method bodies reserve before waiting for their
+            # first byte. With unknown framing, first inspect the ASGI message:
+            # ordinary HTTP/2 GET/HEAD/DELETE/OPTIONS requests deliver an empty
+            # terminal body and must not compete with uploads for a slot.
+            if framing.possible_body and not defer_unknown_safe_body:
+                if not acquire_body_slot() or not reserve_to(
+                    framing.declared_length or 0
+                ):
+                    failure = "capacity"
+                    return {"type": "http.request", "body": b"", "more_body": False}
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 failure = "timeout"
@@ -165,6 +199,7 @@ class RequestBodyLimitMiddleware:
                 failure = "capacity"
                 return {"type": "http.request", "body": b"", "more_body": False}
             if not more_body:
+                body_complete = True
                 release_body_slot()
             return message
 
@@ -291,6 +326,16 @@ def _body_framing(scope: Scope, max_bytes: int) -> _BodyFraming:
             bool(transfer_encodings),
             (400, "Invalid Content-Length framing", ErrorType.BAD_REQUEST),
         )
+    if transfer_encodings:
+        if (
+            len(transfer_encodings) != 1
+            or transfer_encodings[0].strip().lower() != b"chunked"
+        ):
+            return _BodyFraming(
+                None,
+                True,
+                (400, "Unsupported Transfer-Encoding", ErrorType.BAD_REQUEST),
+            )
     if not lengths:
         return _BodyFraming(None, bool(transfer_encodings))
     try:
@@ -335,13 +380,19 @@ def _body_framing(scope: Scope, max_bytes: int) -> _BodyFraming:
 
 def _scope_has_possible_body(scope: Scope) -> bool:
     headers = scope.get("headers", ())
+    has_content_length = False
     for name, value in headers:
         lowered = name.lower()
         if lowered == b"transfer-encoding":
             return True
-        if lowered == b"content-length" and value.strip(b" \t0"):
-            return True
-    return False
+        if lowered == b"content-length":
+            has_content_length = True
+            if value.strip(b" \t0"):
+                return True
+    if has_content_length:
+        return False
+    method = str(scope.get("method") or "").upper()
+    return method not in _DEFER_BODY_RESERVATION_METHODS
 
 
 def _declared_length_error(

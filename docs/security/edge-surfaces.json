@@ -6,13 +6,15 @@
     {
       "id": "gcp-control-domains",
       "cloud": "gcp",
-      "plane": "public-control-billing-combined",
+      "plane": "public-actions-control-internal",
       "hosts": [
         "trustedrouter.com",
         "www.trustedrouter.com",
         "status.trustedrouter.com",
         "trust.trustedrouter.com",
         "eu.trustedrouter.com",
+        "status-us.trustedrouter.com",
+        "status-eu.trustedrouter.com",
         "allyrouter.com",
         "www.allyrouter.com",
         "status.allyrouter.com",
@@ -24,12 +26,12 @@
       ],
       "front_door": "Google global external Application Load Balancer with serverless NEGs",
       "tls_termination": "Google load balancer",
-      "required_protection": "Cloud Armor backend policies per split backend; LB-only Cloud Run ingress; private run.app path only for regional synthetic jobs; independent Cloud Run max caps",
+      "required_protection": "Cloud Armor policies on public, actions, control, and internal backends; LB-only Cloud Run ingress; private run.app access to the internal service only for regional synthetic jobs; independent Cloud Run max caps",
       "trusted_client_identity": "X-TrustedRouter-Client-IP overwritten by the load balancer from {client_ip_address}",
-      "code_status": "implementation_ready_in_this_repo",
+      "code_status": "helpers_ready_rollout_integration_pending_explicit_approval",
       "protection_state": "p0_integration",
       "owner": "Lore-Hex/quill-router",
-      "verification": "scripts/deploy/rollout.sh reconciliation plus .github/workflows/deploy.yml LB smoke, Admin API drift checks, and rejected external run.app probes"
+      "verification": "scripts/deploy/rollout.sh reconciliation plus exact-host URL-map totality, .github/workflows/deploy.yml LB smoke, Admin API drift checks, and rejected external run.app probes"
     },
     {
       "id": "gcp-attested-api-aliases",

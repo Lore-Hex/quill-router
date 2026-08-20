@@ -9,10 +9,14 @@ Production must never use the local/test-only `combined` role.
 | `actions` | Exact anonymous `POST /support/inquiry` and `POST /trustedos/inquiry` handlers | None | concurrency 4, max 2, min 0, 30s timeout, no shared Store |
 | `control` | Login, existing-user console, account management, checkout, signed external webhooks, MCP and the authenticated browser proxy | Activation reminders | concurrency 4, max 20, warm min 1, Spanner pool 2 |
 | `internal` | Gateway authorize/settle/refund, federation, drains and synthetic callbacks | Deferred settlement, synthetic monitor and remediator | concurrency 8, max 50, warm min 2, Spanner pool 8 |
-| `observer` | AWS/Azure status and public catalog | Synthetic monitor and remediator | concurrency 4, max 4 |
+| `observer` | AWS/Azure status, public catalog, and authenticated synthetic ingest | AWS: existing EventBridge rule; Azure: in-process synthetic monitor and remediator, with exactly one replica | AWS max 4; Azure max 1 while either loop is enabled |
 
-The GCP global load balancer applies the same path contract to the apex and
-wildcard forms of `trustedrouter.com`, `allyrouter.com`, and `uptimerouter.com`.
+The GCP global load balancer applies the same path contract only to the exact
+managed apex, `www`, `status`, and `trust` hosts for `trustedrouter.com`,
+`allyrouter.com`, and `uptimerouter.com`, plus the enumerated TrustedRouter
+regional/status hosts. The transformer refuses a first-party wildcard rule:
+`api*`, AWS, Azure, attested, alerting, and other operational subdomains must
+remain on their existing front doors.
 The public service is the first-party default. The two exact inquiry POST paths
 select the low-capacity actions service, explicit account paths select the
 control service, and `/internal/*` selects billing except for the enumerated
@@ -35,6 +39,28 @@ the internal gateway token for that purpose is rejected at startup. The actions
 process receives only the SES sender credentials and operations-chat credential
 needed by its two handlers; it receives no attribution, Store, gateway,
 payment, Sentry, or BYOK credential.
+
+The rollout also sets the non-secret
+`TR_GOOGLE_OAUTH_LOGIN_AVAILABLE` and
+`TR_GITHUB_OAUTH_LOGIN_AVAILABLE` flags with identical values on `public` and
+`control`. They let marketing pages
+render the control-owned login links without copying either OAuth client secret
+into the public process; a deployed public process rejects an omitted flag and
+control rejects any supplied value that disagrees with its credentials.
+The public `/openapi.json` is a deterministic, pre-serialized build asset made
+from a credential-free combined route inventory, with all `/internal/*` RPCs
+and unreachable components removed. Its drift test runs the generator in an
+isolated memory/test environment. The API reference therefore keeps documenting
+customer control and inference routes without mounting them on the public
+service or rebuilding a large schema during attack-driven cold starts.
+
+Each deployed surface also needs a distinct runtime identity and database role.
+In particular, the public/actions identities cannot retain the default service
+account's project-wide Secret Manager or storage grants, and the AWS/Azure
+observer cannot use an administrator database principal. Provider keys and
+other secrets read directly from process environment (rather than `Settings`)
+must be stripped and post-verified too. The route split is not a compromise
+boundary until these IAM/data-plane checks pass.
 
 The public service still has bounded, read-oriented access to shared data:
 
@@ -109,4 +135,6 @@ intentionally a separate integration patch: it must deploy the `-public`,
 capacity and secret allowlists above, preserve the serving control revision's
 signup flag, and invoke `service_surface_url_map.py` before moving the legacy
 service to `control`. Until that reviewed rollout patch lands, the helper must
-not be imported manually against the production URL map.
+not be imported manually against the production URL map. The same patch must
+create and verify the four least-privilege runtime identities; an
+environment-only secret allowlist is insufficient.

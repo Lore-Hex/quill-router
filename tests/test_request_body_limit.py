@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.responses import StreamingResponse
 from starlette.types import Message, Receive, Scope, Send
 
 from trusted_router.config import Settings
@@ -17,6 +18,7 @@ from trusted_router.request_body_limit import (
     UnreadRequestBodyCloseMiddleware,
     _InFlightBodyBudget,
 )
+from trusted_router.storage import STORE
 
 
 def _scope(
@@ -145,6 +147,9 @@ def test_declared_oversize_is_rejected_without_reading_or_calling_route() -> Non
         [(b"content-length", b"1 ")],
         [(b"content-length", b"1"), (b"content-length", b"1")],
         [(b"content-length", b"1"), (b"transfer-encoding", b"chunked")],
+        [(b"transfer-encoding", b"")],
+        [(b"transfer-encoding", b"gzip")],
+        [(b"transfer-encoding", b"chunked"), (b"transfer-encoding", b"chunked")],
     ],
 )
 def test_invalid_or_ambiguous_content_length_is_rejected(
@@ -222,6 +227,21 @@ def test_outer_wrapper_closes_a_response_when_possible_body_was_not_consumed() -
     assert receive_calls == 0
 
 
+def test_outer_wrapper_closes_unread_unknown_length_post_response() -> None:
+    messages, delivered, receive_calls = asyncio.run(
+        _run(
+            chunks=[b"ignored"],
+            read_body=False,
+            wrap_unread_close=True,
+        )
+    )
+
+    assert _status(messages) == 200
+    assert _response_header(messages, b"connection") == b"close"
+    assert delivered == []
+    assert receive_calls == 0
+
+
 def test_total_body_read_deadline_rejects_a_drip_before_route_response() -> None:
     async def scenario() -> list[Message]:
         sent: list[Message] = []
@@ -258,6 +278,182 @@ def test_total_body_read_deadline_rejects_a_drip_before_route_response() -> None
     assert _status(messages) == 408
     assert _response_header(messages, b"connection") == b"close"
     assert _json_body(messages)["error"]["message"] == "Request body timed out"
+
+
+def test_completed_request_body_does_not_truncate_asgi_23_streaming_response() -> None:
+    async def scenario() -> list[Message]:
+        sent: list[Message] = []
+        receive_calls = 0
+        disconnect = asyncio.Event()
+
+        async def receive() -> Message:
+            nonlocal receive_calls
+            receive_calls += 1
+            if receive_calls == 1:
+                return {"type": "http.request", "body": b"x", "more_body": False}
+            await disconnect.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message: Message) -> None:
+            sent.append(message)
+
+        async def app(scope: Scope, app_receive: Receive, app_send: Send) -> None:
+            request = await app_receive()
+            assert request.get("body") == b"x"
+
+            async def chunks() -> Any:
+                for index in range(10):
+                    await asyncio.sleep(0.01)
+                    yield str(index).encode("ascii")
+
+            await StreamingResponse(chunks())(scope, app_receive, app_send)
+
+        middleware = RequestBodyLimitMiddleware(
+            app,
+            max_bytes=8,
+            max_in_flight_bytes=8,
+            max_concurrent_bodies=1,
+            read_timeout_seconds=0.035,
+        )
+        scope = _scope([(b"content-length", b"1")])
+        scope["asgi"] = {"version": "3.0", "spec_version": "2.3"}
+        await middleware(scope, receive, send)
+        return sent
+
+    messages = asyncio.run(scenario())
+    assert _status(messages) == 200
+    body = b"".join(
+        message.get("body", b"")
+        for message in messages
+        if message["type"] == "http.response.body"
+    )
+    assert body == b"0123456789"
+
+
+def test_no_body_http2_streaming_get_does_not_compete_with_slow_post() -> None:
+    async def scenario() -> tuple[list[Message], list[Message], int]:
+        release_post = asyncio.Event()
+        post_receive_started = asyncio.Event()
+        disconnect = asyncio.Event()
+        post_messages: list[Message] = []
+        get_messages: list[Message] = []
+        get_receive_calls = 0
+
+        async def app(scope: Scope, app_receive: Receive, app_send: Send) -> None:
+            if scope["method"] == "POST":
+                await app_receive()
+                await app_send(
+                    {"type": "http.response.start", "status": 200, "headers": []}
+                )
+                await app_send({"type": "http.response.body", "body": b"post"})
+                return
+
+            async def chunks() -> Any:
+                yield b"streaming-get"
+
+            await StreamingResponse(chunks())(scope, app_receive, app_send)
+
+        middleware = RequestBodyLimitMiddleware(
+            app,
+            max_bytes=8,
+            max_in_flight_bytes=8,
+            max_concurrent_bodies=1,
+            read_timeout_seconds=1,
+        )
+
+        async def post_receive() -> Message:
+            post_receive_started.set()
+            await release_post.wait()
+            return {"type": "http.request", "body": b"x", "more_body": False}
+
+        async def send_post(message: Message) -> None:
+            post_messages.append(message)
+
+        async def get_receive() -> Message:
+            nonlocal get_receive_calls
+            get_receive_calls += 1
+            if get_receive_calls == 1:
+                return {"type": "http.request", "body": b"", "more_body": False}
+            await disconnect.wait()
+            return {"type": "http.disconnect"}
+
+        async def send_get(message: Message) -> None:
+            get_messages.append(message)
+
+        post = asyncio.create_task(
+            middleware(
+                _scope([(b"content-length", b"1")]),
+                post_receive,
+                send_post,
+            )
+        )
+        await post_receive_started.wait()
+        get_scope = _scope([], method="GET")
+        get_scope["http_version"] = "2"
+        get_scope["asgi"] = {"version": "3.0", "spec_version": "2.3"}
+        await middleware(get_scope, get_receive, send_get)
+        release_post.set()
+        await post
+        return post_messages, get_messages, get_receive_calls
+
+    post_messages, get_messages, get_receive_calls = asyncio.run(scenario())
+    assert _status(post_messages) == 200
+    assert _status(get_messages) == 200
+    assert get_receive_calls >= 1
+    body = b"".join(
+        message.get("body", b"")
+        for message in get_messages
+        if message["type"] == "http.response.body"
+    )
+    assert body == b"streaming-get"
+
+
+def test_unknown_length_streaming_get_outlives_request_body_deadline() -> None:
+    async def scenario() -> list[Message]:
+        sent: list[Message] = []
+        receive_calls = 0
+        disconnect = asyncio.Event()
+
+        async def receive() -> Message:
+            nonlocal receive_calls
+            receive_calls += 1
+            if receive_calls == 1:
+                return {"type": "http.request", "body": b"", "more_body": False}
+            await disconnect.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message: Message) -> None:
+            sent.append(message)
+
+        async def app(scope: Scope, app_receive: Receive, app_send: Send) -> None:
+            async def chunks() -> Any:
+                for index in range(6):
+                    await asyncio.sleep(0.01)
+                    yield str(index).encode("ascii")
+
+            await StreamingResponse(chunks())(scope, app_receive, app_send)
+
+        middleware = RequestBodyLimitMiddleware(
+            app,
+            max_bytes=8,
+            max_in_flight_bytes=8,
+            max_concurrent_bodies=1,
+            read_timeout_seconds=0.02,
+        )
+        scope = _scope([], method="GET")
+        scope["http_version"] = "2"
+        scope["asgi"] = {"version": "3.0", "spec_version": "2.3"}
+        await middleware(scope, receive, send)
+        return sent
+
+    messages = asyncio.run(scenario())
+    assert _status(messages) == 200
+    body = b"".join(
+        message.get("body", b"")
+        for message in messages
+        if message["type"] == "http.response.body"
+    )
+    assert body == b"012345"
 
 
 def test_body_upload_concurrency_refuses_without_reading_then_recovers() -> None:
@@ -312,6 +508,325 @@ def test_body_upload_concurrency_refuses_without_reading_then_recovers() -> None
     statuses, route_calls = asyncio.run(scenario())
     assert statuses == [503, 200, 200]
     assert route_calls == 2
+
+
+def test_unknown_length_http2_posts_are_admitted_before_route_work() -> None:
+    async def scenario() -> tuple[list[int], int, int, int]:
+        release_uploads = asyncio.Event()
+        first_route_entered = asyncio.Event()
+        statuses: list[int] = []
+        route_calls = 0
+        receive_calls = 0
+
+        async def app(_scope: Scope, app_receive: Receive, app_send: Send) -> None:
+            nonlocal route_calls
+            route_calls += 1
+            first_route_entered.set()
+            await app_receive()
+            await app_send({"type": "http.response.start", "status": 200, "headers": []})
+            await app_send({"type": "http.response.body", "body": b"ok"})
+
+        middleware = RequestBodyLimitMiddleware(
+            app,
+            max_bytes=8,
+            max_in_flight_bytes=8,
+            max_concurrent_bodies=1,
+            read_timeout_seconds=1,
+        )
+
+        async def call() -> None:
+            nonlocal receive_calls
+            messages: list[Message] = []
+
+            async def receive() -> Message:
+                nonlocal receive_calls
+                receive_calls += 1
+                await release_uploads.wait()
+                return {"type": "http.request", "body": b"x", "more_body": False}
+
+            async def send(message: Message) -> None:
+                messages.append(message)
+
+            scope = _scope([])
+            scope["http_version"] = "2"
+            await middleware(scope, receive, send)
+            statuses.append(_status(messages))
+
+        first = asyncio.create_task(call())
+        await first_route_entered.wait()
+        contenders = [asyncio.create_task(call()) for _ in range(19)]
+        # Every contender either receives an admission response or exposes the
+        # regression by entering the route before the first body byte arrives.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        route_calls_before_release = route_calls
+        receive_calls_before_release = receive_calls
+        completed_contenders = sum(task.done() for task in contenders)
+
+        release_uploads.set()
+        await asyncio.gather(first, *contenders)
+        return (
+            statuses,
+            route_calls_before_release,
+            receive_calls_before_release,
+            completed_contenders,
+        )
+
+    statuses, route_calls, receive_calls, completed_contenders = asyncio.run(scenario())
+    assert route_calls == 1
+    assert receive_calls == 1
+    assert completed_contenders == 19
+    assert statuses.count(200) == 1
+    assert statuses.count(503) == 19
+
+
+def test_explicit_zero_length_post_does_not_consume_upload_slot() -> None:
+    async def scenario() -> tuple[int, int]:
+        release_unknown = asyncio.Event()
+        unknown_entered = asyncio.Event()
+        zero_messages: list[Message] = []
+        unknown_messages: list[Message] = []
+        route_calls = 0
+
+        async def app(scope: Scope, app_receive: Receive, app_send: Send) -> None:
+            nonlocal route_calls
+            route_calls += 1
+            if not scope["headers"]:
+                unknown_entered.set()
+                await app_receive()
+            await app_send({"type": "http.response.start", "status": 200, "headers": []})
+            await app_send({"type": "http.response.body", "body": b"ok"})
+
+        middleware = RequestBodyLimitMiddleware(
+            app,
+            max_bytes=8,
+            max_in_flight_bytes=8,
+            max_concurrent_bodies=1,
+            read_timeout_seconds=1,
+        )
+
+        async def unknown_receive() -> Message:
+            await release_unknown.wait()
+            return {"type": "http.request", "body": b"x", "more_body": False}
+
+        async def send_unknown(message: Message) -> None:
+            unknown_messages.append(message)
+
+        async def unused_receive() -> Message:
+            raise AssertionError("Content-Length: 0 route read a body")
+
+        async def send_zero(message: Message) -> None:
+            zero_messages.append(message)
+
+        unknown_scope = _scope([])
+        unknown_scope["http_version"] = "2"
+        unknown = asyncio.create_task(
+            middleware(unknown_scope, unknown_receive, send_unknown)
+        )
+        await unknown_entered.wait()
+        await middleware(
+            _scope([(b"content-length", b"0")]),
+            unused_receive,
+            send_zero,
+        )
+        release_unknown.set()
+        await unknown
+        assert _status(unknown_messages) == 200
+        return _status(zero_messages), route_calls
+
+    zero_status, route_calls = asyncio.run(scenario())
+    assert zero_status == 200
+    assert route_calls == 2
+
+
+def test_empty_options_does_not_compete_with_slow_post_upload() -> None:
+    async def scenario() -> tuple[int, int]:
+        release_post = asyncio.Event()
+        post_receive_started = asyncio.Event()
+        post_messages: list[Message] = []
+        options_messages: list[Message] = []
+
+        async def app(scope: Scope, app_receive: Receive, app_send: Send) -> None:
+            if scope["method"] == "POST":
+                await app_receive()
+                status = 200
+            else:
+                status = 204
+            await app_send(
+                {"type": "http.response.start", "status": status, "headers": []}
+            )
+            await app_send({"type": "http.response.body", "body": b""})
+
+        middleware = RequestBodyLimitMiddleware(
+            app,
+            max_bytes=8,
+            max_in_flight_bytes=8,
+            max_concurrent_bodies=1,
+            read_timeout_seconds=1,
+        )
+
+        async def post_receive() -> Message:
+            post_receive_started.set()
+            await release_post.wait()
+            return {"type": "http.request", "body": b"x", "more_body": False}
+
+        async def send_post(message: Message) -> None:
+            post_messages.append(message)
+
+        async def unused_options_receive() -> Message:
+            raise AssertionError("empty OPTIONS route read a request body")
+
+        async def send_options(message: Message) -> None:
+            options_messages.append(message)
+
+        post = asyncio.create_task(
+            middleware(
+                _scope([(b"content-length", b"1")]),
+                post_receive,
+                send_post,
+            )
+        )
+        await post_receive_started.wait()
+        options_scope = _scope([], method="OPTIONS")
+        options_scope["http_version"] = "2"
+        await middleware(options_scope, unused_options_receive, send_options)
+        release_post.set()
+        await post
+        return _status(post_messages), _status(options_messages)
+
+    post_status, options_status = asyncio.run(scenario())
+    assert post_status == 200
+    assert options_status == 204
+
+
+@pytest.mark.parametrize(
+    "get_headers",
+    [
+        [(b"content-length", b"1")],
+        [(b"transfer-encoding", b"chunked")],
+    ],
+)
+def test_known_framed_get_body_still_reserves_before_receive(
+    get_headers: list[tuple[bytes, bytes]],
+) -> None:
+    async def scenario() -> tuple[int, int, int]:
+        release_post = asyncio.Event()
+        post_receive_started = asyncio.Event()
+        post_messages: list[Message] = []
+        get_messages: list[Message] = []
+        get_source_reads = 0
+
+        async def app(_scope: Scope, app_receive: Receive, app_send: Send) -> None:
+            await app_receive()
+            await app_send({"type": "http.response.start", "status": 200, "headers": []})
+            await app_send({"type": "http.response.body", "body": b"ok"})
+
+        middleware = RequestBodyLimitMiddleware(
+            app,
+            max_bytes=8,
+            max_in_flight_bytes=8,
+            max_concurrent_bodies=1,
+            read_timeout_seconds=1,
+        )
+
+        async def post_receive() -> Message:
+            post_receive_started.set()
+            await release_post.wait()
+            return {"type": "http.request", "body": b"x", "more_body": False}
+
+        async def send_post(message: Message) -> None:
+            post_messages.append(message)
+
+        async def get_receive() -> Message:
+            nonlocal get_source_reads
+            get_source_reads += 1
+            return {"type": "http.request", "body": b"x", "more_body": False}
+
+        async def send_get(message: Message) -> None:
+            get_messages.append(message)
+
+        post = asyncio.create_task(
+            middleware(
+                _scope([(b"content-length", b"1")]),
+                post_receive,
+                send_post,
+            )
+        )
+        await post_receive_started.wait()
+        await middleware(
+            _scope(get_headers, method="GET"),
+            get_receive,
+            send_get,
+        )
+        release_post.set()
+        await post
+        return _status(post_messages), _status(get_messages), get_source_reads
+
+    post_status, get_status, get_source_reads = asyncio.run(scenario())
+    assert post_status == 200
+    assert get_status == 503
+    assert get_source_reads == 0
+
+
+def test_unread_safe_method_body_does_not_reserve_upload_capacity() -> None:
+    async def scenario() -> tuple[int, int]:
+        get_started = asyncio.Event()
+        release_get = asyncio.Event()
+        get_messages: list[Message] = []
+        post_messages: list[Message] = []
+
+        async def app(scope: Scope, app_receive: Receive, app_send: Send) -> None:
+            if scope["method"] == "GET":
+                get_started.set()
+                await release_get.wait()
+            else:
+                await app_receive()
+            await app_send({"type": "http.response.start", "status": 200, "headers": []})
+            await app_send({"type": "http.response.body", "body": b"ok"})
+
+        middleware = UnreadRequestBodyCloseMiddleware(
+            RequestBodyLimitMiddleware(
+                app,
+                max_bytes=8,
+                max_in_flight_bytes=8,
+                max_concurrent_bodies=1,
+                read_timeout_seconds=1,
+            )
+        )
+
+        async def unread_get_receive() -> Message:
+            await asyncio.Future()
+            raise AssertionError("unreachable")
+
+        async def post_receive() -> Message:
+            return {"type": "http.request", "body": b"1234", "more_body": False}
+
+        async def send_get(message: Message) -> None:
+            get_messages.append(message)
+
+        async def send_post(message: Message) -> None:
+            post_messages.append(message)
+
+        get_task = asyncio.create_task(
+            middleware(
+                _scope([(b"content-length", b"4")], method="GET"),
+                unread_get_receive,
+                send_get,
+            )
+        )
+        await get_started.wait()
+        await middleware(
+            _scope([(b"content-length", b"4")]),
+            post_receive,
+            send_post,
+        )
+        release_get.set()
+        await get_task
+        assert _response_header(get_messages, b"connection") == b"close"
+        return _status(get_messages), _status(post_messages)
+
+    get_status, post_status = asyncio.run(scenario())
+    assert (get_status, post_status) == (200, 200)
 
 
 def test_weighted_body_budget_refuses_overcommit_and_releases_exactly() -> None:
@@ -381,15 +896,48 @@ def test_registered_middleware_rejects_declared_body_before_mcp_parsing() -> Non
     assert response.headers["connection"] == "close"
 
 
-def test_registered_middleware_rejects_chunked_body_before_mcp_buffers_it() -> None:
+def test_anonymous_mcp_rejects_before_consuming_chunked_body() -> None:
     client = TestClient(
         create_app(
             Settings(environment="test", max_request_body_bytes=8),
             init_observability=False,
         )
     )
+    consumed: list[bytes] = []
 
-    response = client.post("/mcp", content=iter([b"1234", b"5678", b"9"]))
+    def chunks() -> Iterable[bytes]:
+        for chunk in (b"1234", b"5678", b"9"):
+            consumed.append(chunk)
+            yield chunk
+
+    response = client.post("/mcp", content=chunks())
+
+    assert response.status_code == 401
+    assert response.json()["error"]["type"] == "unauthorized"
+    assert response.headers["connection"] == "close"
+    assert consumed == []
+
+
+def test_authenticated_mcp_streamed_body_still_enforces_body_limit() -> None:
+    client = TestClient(
+        create_app(
+            Settings(environment="test", max_request_body_bytes=8),
+            init_observability=False,
+        )
+    )
+    user = STORE.ensure_user("mcp-body-limit@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    raw_key, _api_key = STORE.create_api_key(
+        workspace_id=workspace.id,
+        name="MCP body limit",
+        creator_user_id=user.id,
+    )
+
+    response = client.post(
+        "/mcp",
+        headers={"authorization": f"Bearer {raw_key}"},
+        content=iter([b"1234", b"5678", b"9"]),
+    )
 
     assert response.status_code == 413
     assert response.json()["error"]["type"] == "payload_too_large"

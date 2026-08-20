@@ -207,7 +207,6 @@ def _production_app(surface: str):
     values = {
         "environment": "production",
         "service_surface": surface,
-        "internal_gateway_token": internal_token,
         "sentry_dsn": "https://example@example.ingest.sentry.io/1",
         "storage_backend": "spanner-bigtable",
         "spanner_instance_id": "trusted-router",
@@ -224,6 +223,13 @@ def _production_app(surface: str):
                 "aws_secret_access_key": "test-secret-key",
                 "ses_from_email": "noreply@example.com",
                 "byok_kms_key_name": TEST_BYOK_KMS_KEY_NAME,
+            }
+        )
+    elif surface == "internal":
+        values.update(
+            {
+                "internal_gateway_token": internal_token,
+                "observer_internal_token": "prod-observer-token",
             }
         )
     return create_app(

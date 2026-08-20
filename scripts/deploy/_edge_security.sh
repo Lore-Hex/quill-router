@@ -41,11 +41,9 @@ _edge_upsert_rule() {
   local priority="$2"
   shift 2
   local preview="${TR_CLOUD_ARMOR_PREVIEW:-1}"
-  local preview_args=()
 
   case "$preview" in
-    1) preview_args=(--preview) ;;
-    0) ;;
+    1|0) ;;
     *)
       echo "ERROR: TR_CLOUD_ARMOR_PREVIEW must be 0 or 1" >&2
       return 2
@@ -57,19 +55,31 @@ _edge_upsert_rule() {
     # Create treats absence of --preview as enforcement. Update needs the
     # explicit inverse or a previously-previewed rule would remain previewed.
     if [ "$preview" = "0" ]; then
-      preview_args=(--no-preview)
+      gc compute security-policies rules update "$priority" \
+        --security-policy="$policy" \
+        "$@" \
+        --no-preview \
+        --quiet >/dev/null
+    else
+      gc compute security-policies rules update "$priority" \
+        --security-policy="$policy" \
+        "$@" \
+        --preview \
+        --quiet >/dev/null
     fi
-    gc compute security-policies rules update "$priority" \
-      --security-policy="$policy" \
-      "$@" \
-      "${preview_args[@]}" \
-      --quiet >/dev/null
   else
-    gc compute security-policies rules create "$priority" \
-      --security-policy="$policy" \
-      "$@" \
-      "${preview_args[@]}" \
-      --quiet >/dev/null
+    if [ "$preview" = "0" ]; then
+      gc compute security-policies rules create "$priority" \
+        --security-policy="$policy" \
+        "$@" \
+        --quiet >/dev/null
+    else
+      gc compute security-policies rules create "$priority" \
+        --security-policy="$policy" \
+        "$@" \
+        --preview \
+        --quiet >/dev/null
+    fi
   fi
 }
 
@@ -79,7 +89,7 @@ _reconcile_cloud_armor_policy() {
   local browser_count="${TR_CLOUD_ARMOR_BROWSER_RATE_COUNT:-120}"
   local write_count="${TR_CLOUD_ARMOR_WRITE_RATE_COUNT:-300}"
   local global_count="${TR_CLOUD_ARMOR_GLOBAL_RATE_COUNT:-2400}"
-  local allowed_host_regex="${TR_EDGE_ALLOWED_HOST_REGEX:-^(trustedrouter[.]com|www[.]trustedrouter[.]com|status[.]trustedrouter[.]com|trust[.]trustedrouter[.]com|eu[.]trustedrouter[.]com|allyrouter[.]com|www[.]allyrouter[.]com|status[.]allyrouter[.]com|trust[.]allyrouter[.]com|uptimerouter[.]com|www[.]uptimerouter[.]com|status[.]uptimerouter[.]com|trust[.]uptimerouter[.]com)(:[0-9]+)?$}"
+  local allowed_host_regex="${TR_EDGE_ALLOWED_HOST_REGEX:-^(trustedrouter[.]com|www[.]trustedrouter[.]com|status[.]trustedrouter[.]com|trust[.]trustedrouter[.]com|eu[.]trustedrouter[.]com|status-us[.]trustedrouter[.]com|status-eu[.]trustedrouter[.]com|allyrouter[.]com|www[.]allyrouter[.]com|status[.]allyrouter[.]com|trust[.]allyrouter[.]com|uptimerouter[.]com|www[.]uptimerouter[.]com|status[.]uptimerouter[.]com|trust[.]uptimerouter[.]com)(:[0-9]+)?$}"
 
   _edge_require_positive_integer TR_CLOUD_ARMOR_RATE_INTERVAL_SECONDS "$interval"
   _edge_require_positive_integer TR_CLOUD_ARMOR_BROWSER_RATE_COUNT "$browser_count"
@@ -91,7 +101,7 @@ _reconcile_cloud_armor_policy() {
     gc compute security-policies create "$policy" \
       --global \
       --type=CLOUD_ARMOR \
-      --description="TrustedRouter public edge controls; preview before enforcement" \
+      --description="TrustedRouter edge controls; per-source ceiling enforced, tighter rules previewed" \
       --quiet >/dev/null
   fi
 
@@ -106,7 +116,11 @@ _reconcile_cloud_armor_policy() {
     --description="Default allow; bounded route classes are evaluated first" \
     --quiet >/dev/null
 
-  _edge_upsert_rule "$policy" 900 \
+  # Host ownership is a routing boundary, not a tuning signal.  Keep it
+  # enforced even while the narrower traffic-shape rules are in preview: an
+  # allowed TLS SNI with an attacker-chosen Host must never fall through to an
+  # unrelated/legacy URL-map default.
+  TR_CLOUD_ARMOR_PREVIEW=0 _edge_upsert_rule "$policy" 900 \
     --action=deny-403 \
     --expression="!has(request.headers['host']) || !request.headers['host'].lower().matches('${allowed_host_regex}')" \
     --description="Reject hosts outside canonical and marketing aliases"
@@ -131,10 +145,16 @@ _reconcile_cloud_armor_policy() {
     --exceed-action=deny-429 \
     --enforce-on-key=IP
 
-  _edge_upsert_rule "$policy" 1200 \
+  # Keep one generous all-path per-source ceiling enforced from the first
+  # attach. The independent Cloud Run max-instance caps, not this IP-keyed
+  # rule, bound a distributed botnet and the fleet-wide serverless bill. The
+  # tighter browser/write rules can spend a canary period in preview, but
+  # preview-only policy would leave health and every other cheap path entirely
+  # unbounded at the edge during the exact launch window this policy protects.
+  TR_CLOUD_ARMOR_PREVIEW=0 _edge_upsert_rule "$policy" 1200 \
     --action=throttle \
     --src-ip-ranges='*' \
-    --description="High global per-client safety ceiling" \
+    --description="All-path per-source safety ceiling" \
     --rate-limit-threshold-count="$global_count" \
     --rate-limit-threshold-interval-sec="$interval" \
     --conform-action=allow \
@@ -145,7 +165,10 @@ _reconcile_cloud_armor_policy() {
 reconcile_edge_backend() {
   local backend="$1"
   local policy="$2"
-  local log_sample_rate="${TR_CLOUD_ARMOR_LOG_SAMPLE_RATE:-1.0}"
+  # Full request logging can turn the attack itself into a Cloud Logging bill.
+  # Ten percent is enough for preview sizing; operators can temporarily raise
+  # it during a bounded investigation.
+  local log_sample_rate="${TR_CLOUD_ARMOR_LOG_SAMPLE_RATE:-0.1}"
   local backend_json=""
   local preserved_headers=""
   local final_json=""

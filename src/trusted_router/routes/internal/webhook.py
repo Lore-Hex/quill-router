@@ -71,8 +71,14 @@ def register(router: APIRouter) -> None:
                 event: dict[str, Any] = constructed
             else:
                 event = constructed._to_dict_recursive()  # noqa: SLF001
-        else:
+        elif settings.environment.lower() in {"local", "test"}:
             event = await json_body(request)
+        else:
+            raise api_error(
+                503,
+                "Stripe webhook verification is not configured",
+                ErrorType.SERVICE_UNAVAILABLE,
+            )
         event_id = str(event.get("id") or uuid.uuid4())
         event_type = event.get("type")
 

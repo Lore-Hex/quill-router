@@ -629,13 +629,19 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         response_class=HTMLResponse,
         include_in_schema=False,
     )
-    async def api_reference() -> HTMLResponse:
+    async def api_reference() -> Response:
+        canonical_url = f"https://{settings.trusted_domain}/api/reference"
+        if settings.service_surface == "observer":
+            # Regional status/catalog observers intentionally expose no local
+            # schema. Send readers to the CDN-backed public documentation
+            # service instead of presenting a Swagger shell that fetches 404.
+            return RedirectResponse(url=canonical_url, status_code=307)
         response = get_swagger_ui_html(
             openapi_url=app.openapi_url or "/openapi.json",
             title=f"{app.title} API reference",
         )
         canonical = html.escape(
-            f"https://{settings.trusted_domain}/api/reference",
+            canonical_url,
             quote=True,
         )
         title = "TrustedRouter API Reference: Endpoints and Schemas"

@@ -34,7 +34,8 @@ def fixed_rate_limit_clock(monkeypatch: pytest.MonkeyPatch) -> None:
 def _production_settings(**updates: object) -> Settings:
     values: dict[str, object] = {
         "environment": "production",
-        "internal_gateway_token": "internal-production-token",
+        "service_surface": "control",
+        "attribution_cookie_secret": "test-attribution-cookie-secret-32-bytes",
         "stripe_webhook_secret": "whsec_test",
         "stripe_secret_key": "sk_test_secret",
         "sentry_dsn": "https://example@example.ingest.sentry.io/1",
@@ -466,6 +467,27 @@ def test_generic_gateway_token_does_not_raise_federation_route_allowance() -> No
     assert second.status_code == 429
 
 
+def test_observer_token_does_not_raise_billing_route_allowance() -> None:
+    billing_token = "billing-internal-token"  # noqa: S105 - test token.
+    observer_token = "observer-internal-token"  # noqa: S105 - test token.
+    settings = Settings(
+        environment="test",
+        service_surface="internal",
+        internal_gateway_token=billing_token,
+        observer_internal_token=observer_token,
+        rate_limit_ip_per_window=1,
+        rate_limit_internal_per_window=100,
+    )
+    client = TestClient(create_app(settings, init_observability=False))
+    headers = {"x-trustedrouter-internal-token": observer_token}
+
+    first = client.post("/v1/internal/gateway/authorize", headers=headers, json={})
+    second = client.post("/v1/internal/gateway/authorize", headers=headers, json={})
+
+    assert first.status_code == 401
+    assert second.status_code == 429
+
+
 def test_valid_route_scoped_federation_token_fails_open_if_local_limiter_breaks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -597,6 +619,22 @@ def test_client_ip_identity_mode_is_fail_closed() -> None:
         Settings(environment="test", rate_limit_client_ip_mode="forwarded")
 
 
+@pytest.mark.parametrize(
+    ("setting", "error_name"),
+    [
+        ({"rate_limit_window_seconds": 0}, "TR_RATE_LIMIT_WINDOW_SECONDS"),
+        ({"rate_limit_ip_per_window": 0}, "TR_RATE_LIMIT_IP_PER_WINDOW"),
+        ({"rate_limit_key_per_window": -1}, "TR_RATE_LIMIT_KEY_PER_WINDOW"),
+        ({"rate_limit_internal_per_window": 0}, "TR_RATE_LIMIT_INTERNAL_PER_WINDOW"),
+    ],
+)
+def test_rate_limit_settings_must_be_positive(
+    setting: dict[str, int], error_name: str
+) -> None:
+    with pytest.raises(ValueError, match=error_name):
+        Settings(environment="test", **setting)
+
+
 def test_public_inquiry_limiters_and_display_use_canonical_production_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -623,7 +661,15 @@ def test_public_inquiry_limiters_and_display_use_canonical_production_source(
     )
     monkeypatch.setattr(public_routes, "fanout_support_message", fake_fanout)
     app = create_app(
-        _production_settings(
+        Settings(
+            environment="production",
+            service_surface="actions",
+            storage_backend="memory",
+            aws_access_key_id="test-access-key",
+            aws_secret_access_key="test-secret-key",  # noqa: S106
+            ses_from_email="noreply@example.com",
+            rate_limit_enabled=True,
+            rate_limit_client_ip_mode="edge_header",
             rate_limit_ip_per_window=100,
             partner_inquiry_email="leads@example.com",
         ),

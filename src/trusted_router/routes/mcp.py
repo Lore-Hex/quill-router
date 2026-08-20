@@ -8,6 +8,7 @@ from typing import Any, cast
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import is_api_key_expired
 from trusted_router.catalog import (
@@ -19,19 +20,32 @@ from trusted_router.catalog import (
 )
 from trusted_router.config import Settings
 from trusted_router.dashboard import docs_llms_full_txt
+from trusted_router.errors import error_response
+from trusted_router.request_limits import enforce_authenticated_rate_limit
 from trusted_router.storage import STORE, ApiKey
 from trusted_router.typed_balance import live_credit_summary
+from trusted_router.types import ErrorType
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
 MAX_MCP_CHAT_TOKENS = 512
+MAX_MCP_CHAT_MESSAGE_CHARS = 4_096
+MAX_MCP_CHAT_MESSAGE_BYTES = 8_192
+MAX_MCP_MODEL_CHARS = 256
+MAX_MCP_MODEL_BYTES = 1_024
+MAX_MCP_GENERATION_ID_CHARS = 128
+MAX_MCP_GENERATION_ID_BYTES = 512
+MAX_MCP_SEARCH_QUERY_CHARS = 256
+MAX_MCP_SEARCH_QUERY_BYTES = 1_024
 MAX_MCP_BATCH_ITEMS = 32
 MAX_MCP_CHAT_BATCH_ITEMS = 1
 MAX_MCP_EXPENSIVE_BATCH_ITEMS = 4
-_AUTHENTICATED_TOOLS = frozenset({"credits-get", "generation-get", "chat-send"})
+MAX_MCP_STORAGE_BATCH_ITEMS = 4
 _EXPENSIVE_TOOLS = frozenset(
     {"models-list", "model-endpoints", "providers-list", "docs-search"}
 )
+_STORAGE_TOOLS = frozenset({"credits-get", "generation-get"})
 _MCP_AUTH_STATE_KEY = "trusted_router_mcp_auth"
+_API_KEY_BEARER_PREFIX = "sk-tr-"
 
 
 @dataclass(frozen=True)
@@ -45,6 +59,10 @@ def register_mcp_routes(app: FastAPI, settings: Settings) -> None:
 
     @app.post("/mcp")
     async def mcp(request: Request) -> Response:
+        try:
+            await run_in_threadpool(server.require_api_key, request)
+        except MCPToolError as exc:
+            return error_response(exc.status_code, exc.message, exc.error_type)
         try:
             payload = await request.json()
         except ValueError:
@@ -104,15 +122,14 @@ class TrustedRouterMCP:
                     "An MCP request may contain at most "
                     f"{MAX_MCP_EXPENSIVE_BATCH_ITEMS} catalog or documentation calls",
                 )
-            if _AUTHENTICATED_TOOLS.intersection(tool_names):
-                # Resolve once before any tool (and therefore before any
-                # outbound work). Both a valid context and an auth error are
-                # cached on this Request, so a 32-item batch cannot multiply
-                # key verification reads.
-                try:
-                    self._require_api_key(request)
-                except MCPToolError:
-                    pass
+            storage_calls = sum(name in _STORAGE_TOOLS for name in tool_names)
+            if storage_calls > MAX_MCP_STORAGE_BATCH_ITEMS:
+                return _mcp_error(
+                    None,
+                    -32600,
+                    "An MCP request may contain at most "
+                    f"{MAX_MCP_STORAGE_BATCH_ITEMS} storage-backed calls",
+                )
         if isinstance(payload, list):
             if batch_depth > 0:
                 return _mcp_error(None, -32600, "Nested JSON-RPC batches are not supported")
@@ -171,6 +188,10 @@ class TrustedRouterMCP:
             raise MCPToolError(f"Unknown tool: {name}")
         return await handler(args, request)
 
+    def require_api_key(self, request: Request) -> _MCPAuth:
+        """Authenticate and rate-limit one HTTP request before decoding JSON-RPC."""
+        return self._require_api_key(request)
+
     async def _tool_ping(self, _args: dict[str, Any], _request: Request) -> dict[str, Any]:
         return _tool_json(
             {
@@ -181,7 +202,13 @@ class TrustedRouterMCP:
         )
 
     async def _tool_models_list(self, args: dict[str, Any], _request: Request) -> dict[str, Any]:
-        query = str(args.get("query") or "").strip().lower()
+        query = _bounded_string(
+            args,
+            "query",
+            maximum_chars=MAX_MCP_SEARCH_QUERY_CHARS,
+            maximum_bytes=MAX_MCP_SEARCH_QUERY_BYTES,
+            required=False,
+        ).lower()
         limit = _bounded_int(args.get("limit"), default=25, minimum=1, maximum=100)
         models = list(self._models_projection())
         if query:
@@ -195,7 +222,12 @@ class TrustedRouterMCP:
         return _tool_json({"data": models[:limit], "total_matches": len(models)})
 
     async def _tool_model_get(self, args: dict[str, Any], _request: Request) -> dict[str, Any]:
-        model_id = _required_string(args, "model")
+        model_id = _bounded_string(
+            args,
+            "model",
+            maximum_chars=MAX_MCP_MODEL_CHARS,
+            maximum_bytes=MAX_MCP_MODEL_BYTES,
+        )
         self._models_projection()
         assert self._model_shapes_by_id is not None
         shape = self._model_shapes_by_id.get(model_id)
@@ -206,7 +238,12 @@ class TrustedRouterMCP:
     async def _tool_model_endpoints(
         self, args: dict[str, Any], _request: Request
     ) -> dict[str, Any]:
-        model_id = _required_string(args, "model")
+        model_id = _bounded_string(
+            args,
+            "model",
+            maximum_chars=MAX_MCP_MODEL_CHARS,
+            maximum_bytes=MAX_MCP_MODEL_BYTES,
+        )
         model = MODELS.get(model_id)
         # Same visibility rule as list/get: an internal-only model must not be
         # confirmable through its endpoints either.
@@ -237,7 +274,7 @@ class TrustedRouterMCP:
 
     async def _tool_credits_get(self, _args: dict[str, Any], request: Request) -> dict[str, Any]:
         api_key = self._require_api_key(request).api_key
-        summary = live_credit_summary(api_key.workspace_id)
+        summary = await run_in_threadpool(live_credit_summary, api_key.workspace_id)
         if summary is None:
             raise MCPToolError("No credit account found for this workspace")
         return _tool_json(
@@ -256,14 +293,24 @@ class TrustedRouterMCP:
         self, args: dict[str, Any], request: Request
     ) -> dict[str, Any]:
         api_key = self._require_api_key(request).api_key
-        generation_id = _required_string(args, "id")
-        generation = STORE.get_generation(generation_id)
+        generation_id = _bounded_string(
+            args,
+            "id",
+            maximum_chars=MAX_MCP_GENERATION_ID_CHARS,
+            maximum_bytes=MAX_MCP_GENERATION_ID_BYTES,
+        )
+        generation = await run_in_threadpool(STORE.get_generation, generation_id)
         if generation is None or generation.workspace_id != api_key.workspace_id:
             raise MCPToolError(f"Unknown generation: {generation_id}")
         return _tool_json({"data": generation.to_openrouter_generation()})
 
     async def _tool_docs_search(self, args: dict[str, Any], _request: Request) -> dict[str, Any]:
-        query = _required_string(args, "query").lower()
+        query = _bounded_string(
+            args,
+            "query",
+            maximum_chars=MAX_MCP_SEARCH_QUERY_CHARS,
+            maximum_bytes=MAX_MCP_SEARCH_QUERY_BYTES,
+        ).lower()
         limit = _bounded_int(args.get("limit"), default=5, minimum=1, maximum=10)
         chunks = [chunk for chunk in self._documentation_chunks() if query in chunk.lower()]
         return _tool_json({"data": chunks[:limit], "total_matches": len(chunks)})
@@ -301,8 +348,13 @@ class TrustedRouterMCP:
 
     async def _tool_chat_send(self, args: dict[str, Any], request: Request) -> dict[str, Any]:
         bearer = self._require_api_key(request).bearer
-        model = _required_string(args, "model")
-        message = _required_string(args, "message")
+        model = _bounded_string(
+            args,
+            "model",
+            maximum_chars=MAX_MCP_MODEL_CHARS,
+            maximum_bytes=MAX_MCP_MODEL_BYTES,
+        )
+        message = _bounded_chat_message(args)
         max_tokens = _bounded_int(
             args.get("max_tokens"),
             default=min(MAX_MCP_CHAT_TOKENS, 128),
@@ -339,23 +391,43 @@ class TrustedRouterMCP:
         if isinstance(cached, _MCPAuth):
             return cached
         if isinstance(cached, MCPToolError):
-            raise MCPToolError(cached.message)
+            raise cached
 
         bearer = _bearer_token(request)
         if not bearer:
             error = MCPToolError(
-                "Authenticated MCP tool requires Authorization: Bearer sk-tr-..."
+                "MCP requires Authorization: Bearer sk-tr-...",
+                status_code=401,
+                error_type=ErrorType.UNAUTHORIZED,
+            )
+            setattr(request.state, _MCP_AUTH_STATE_KEY, error)
+            raise error
+        if not _is_api_key_bearer(bearer):
+            # Reject session tokens, provider keys, and other attacker-chosen
+            # bearer shapes before hashing them or consulting remote storage.
+            error = MCPToolError(
+                "Invalid TrustedRouter API key",
+                status_code=401,
+                error_type=ErrorType.UNAUTHORIZED,
             )
             setattr(request.state, _MCP_AUTH_STATE_KEY, error)
             raise error
         try:
             context = STORE.api_key_auth_context(bearer)
         except Exception:  # noqa: BLE001 - cache fail-closed auth for the whole batch.
-            error = MCPToolError("TrustedRouter API key authentication is unavailable")
+            error = MCPToolError(
+                "TrustedRouter API key authentication is unavailable",
+                status_code=503,
+                error_type=ErrorType.SERVICE_UNAVAILABLE,
+            )
             setattr(request.state, _MCP_AUTH_STATE_KEY, error)
             raise error from None
         if context is None:
-            error = MCPToolError("Invalid TrustedRouter API key")
+            error = MCPToolError(
+                "Invalid TrustedRouter API key",
+                status_code=401,
+                error_type=ErrorType.UNAUTHORIZED,
+            )
             setattr(request.state, _MCP_AUTH_STATE_KEY, error)
             raise error
         api_key = context.api_key
@@ -364,18 +436,36 @@ class TrustedRouterMCP:
             or is_api_key_expired(api_key.expires_at)
             or context.workspace is None
         ):
-            error = MCPToolError("Invalid TrustedRouter API key")
+            error = MCPToolError(
+                "Invalid TrustedRouter API key",
+                status_code=401,
+                error_type=ErrorType.UNAUTHORIZED,
+            )
             setattr(request.state, _MCP_AUTH_STATE_KEY, error)
             raise error
+        enforce_authenticated_rate_limit(
+            request,
+            self.settings,
+            credential_kind="api_key",
+            stable_subject=api_key.lookup_hash,
+        )
         auth = _MCPAuth(bearer=bearer, api_key=api_key)
         setattr(request.state, _MCP_AUTH_STATE_KEY, auth)
         return auth
 
 
 class MCPToolError(Exception):
-    def __init__(self, message: str) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int = 400,
+        error_type: str = ErrorType.BAD_REQUEST,
+    ) -> None:
         super().__init__(message)
         self.message = message
+        self.status_code = status_code
+        self.error_type = error_type
 
 
 def _mcp_tools() -> list[dict[str, Any]]:
@@ -385,34 +475,51 @@ def _mcp_tools() -> list[dict[str, Any]]:
             "models-list",
             "Search TrustedRouter's live model catalog.",
             {
-                "query": {"type": "string", "optional": True},
+                "query": {
+                    "type": "string",
+                    "maxLength": MAX_MCP_SEARCH_QUERY_CHARS,
+                    "optional": True,
+                },
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100, "optional": True},
             },
         ),
-        _tool_schema("model-get", "Get details for one model ID.", {"model": {"type": "string"}}),
+        _tool_schema(
+            "model-get",
+            "Get details for one model ID.",
+            {"model": {"type": "string", "maxLength": MAX_MCP_MODEL_CHARS}},
+        ),
         _tool_schema(
             "model-endpoints",
             "List providers/endpoints serving one model.",
-            {"model": {"type": "string"}},
+            {"model": {"type": "string", "maxLength": MAX_MCP_MODEL_CHARS}},
         ),
         _tool_schema("providers-list", "List TrustedRouter providers and privacy posture.", {}),
         _tool_schema("credits-get", "Get credit balance for the supplied API key.", {}),
         _tool_schema(
             "generation-get",
             "Get metadata for a generation ID.",
-            {"id": {"type": "string"}},
+            {"id": {"type": "string", "maxLength": MAX_MCP_GENERATION_ID_CHARS}},
         ),
         _tool_schema(
             "docs-search",
             "Search TrustedRouter documentation context.",
-            {"query": {"type": "string"}, "limit": {"type": "integer", "optional": True}},
+            {
+                "query": {
+                    "type": "string",
+                    "maxLength": MAX_MCP_SEARCH_QUERY_CHARS,
+                },
+                "limit": {"type": "integer", "optional": True},
+            },
         ),
         _tool_schema(
             "chat-send",
             "Send one short test message through the attested API. This is billable.",
             {
-                "model": {"type": "string"},
-                "message": {"type": "string"},
+                "model": {"type": "string", "maxLength": MAX_MCP_MODEL_CHARS},
+                "message": {
+                    "type": "string",
+                    "maxLength": MAX_MCP_CHAT_MESSAGE_CHARS,
+                },
                 "max_tokens": {
                     "type": "integer",
                     "minimum": 1,
@@ -485,6 +592,13 @@ def _bearer_token(request: Request) -> str:
     return ""
 
 
+def _is_api_key_bearer(bearer: str) -> bool:
+    """Recognize the same versioned API-key family used by normal auth."""
+    return bearer.startswith(_API_KEY_BEARER_PREFIX) and len(bearer) > len(
+        _API_KEY_BEARER_PREFIX
+    )
+
+
 def _top_level_tool_names(payload: Any) -> list[str]:
     """Inspect one JSON-RPC envelope without recursively walking attacker data."""
     items = payload if isinstance(payload, list) else [payload]
@@ -498,11 +612,50 @@ def _top_level_tool_names(payload: Any) -> list[str]:
     return names
 
 
-def _required_string(args: dict[str, Any], name: str) -> str:
-    value = str(args.get(name) or "").strip()
-    if not value:
+def _bounded_string(
+    args: dict[str, Any],
+    name: str,
+    *,
+    maximum_chars: int,
+    maximum_bytes: int,
+    required: bool = True,
+) -> str:
+    if name not in args:
+        if required:
+            raise MCPToolError(f"{name} is required")
+        return ""
+    raw = args[name]
+    if not isinstance(raw, str):
+        raise MCPToolError(f"{name} must be a string")
+    try:
+        encoded_length = len(raw.encode("utf-8"))
+    except UnicodeEncodeError:
+        raise MCPToolError(f"{name} must contain valid UTF-8") from None
+    if len(raw) > maximum_chars or encoded_length > maximum_bytes:
+        raise MCPToolError(
+            f"{name} exceeds the MCP input limit "
+            f"({maximum_chars} characters / {maximum_bytes} UTF-8 bytes)"
+        )
+    value = raw.strip()
+    if required and not value:
         raise MCPToolError(f"{name} is required")
     return value
+
+
+def _bounded_chat_message(args: dict[str, Any]) -> str:
+    raw = args.get("message")
+    if not isinstance(raw, str) or not raw.strip():
+        raise MCPToolError("message is required")
+    if (
+        len(raw) > MAX_MCP_CHAT_MESSAGE_CHARS
+        or len(raw.encode("utf-8")) > MAX_MCP_CHAT_MESSAGE_BYTES
+    ):
+        raise MCPToolError(
+            "message exceeds the MCP chat input limit "
+            f"({MAX_MCP_CHAT_MESSAGE_CHARS} characters / "
+            f"{MAX_MCP_CHAT_MESSAGE_BYTES} UTF-8 bytes)"
+        )
+    return raw.strip()
 
 
 def _bounded_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:

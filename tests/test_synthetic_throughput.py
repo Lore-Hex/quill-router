@@ -399,13 +399,18 @@ async def test_throughput_only_cli_skips_every_health_path(
 
         async def post(self, url: str, **kwargs: Any) -> _Response:
             assert url.endswith("/v1/internal/synthetic/benchmark")
+            assert (
+                kwargs["headers"]["x-trustedrouter-internal-token"]
+                == "observer-only"
+            )
             benchmark_posts.append(kwargs["json"])
             return _Response()
 
     settings = Settings(
         environment="test",
         sentry_dsn=None,
-        internal_gateway_token="internal",  # noqa: S106 - test placeholder.
+        internal_gateway_token="billing-only",  # noqa: S106 - test placeholder.
+        observer_internal_token="observer-only",  # noqa: S106 - test placeholder.
         synthetic_monitor_api_key="sk-test",  # noqa: S106 - test placeholder.
     )
     monkeypatch.setattr(cli_module, "get_settings", lambda: settings)

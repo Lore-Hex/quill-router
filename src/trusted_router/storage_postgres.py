@@ -127,6 +127,14 @@ from trusted_router.storage_video_jobs import (
     _is_due,
     _iso_after_seconds,
 )
+from trusted_router.storage_wallet_challenges import (
+    WALLET_CHALLENGE_SCOPE_KIND,
+    normalize_wallet_address,
+    parse_siwe_challenge_scope,
+    reusable_wallet_challenge_nonce,
+    wallet_challenge_nonce_is_valid,
+    wallet_challenge_scope_id,
+)
 from trusted_router.synthetic.rollups import (
     RAW_SYNTHETIC_RETENTION_DAYS,
     ROLLUP_RETENTION_MONTHS,
@@ -1346,19 +1354,73 @@ class PostgresStore:
         ttl_seconds: int,
         raw_nonce: str | None = None,
     ) -> tuple[str, WalletChallenge]:
-        raw = raw_nonce or secrets.token_urlsafe(32)
+        normalized_address = normalize_wallet_address(address)
+        parsed = parse_siwe_challenge_scope(message)
+        if raw_nonce is None:
+            raw = parsed[1] if parsed is not None else secrets.token_urlsafe(32)
+        else:
+            raw = raw_nonce
+        if parsed is not None and parsed[1] != raw:
+            raise ValueError("SIWE message nonce does not match raw_nonce")
+        scope_id = wallet_challenge_scope_id(normalized_address, message)
         challenge = WalletChallenge(
             hash=new_key_id(prefix="siwe"),
             salt=new_hash_salt(),
             secret_hash="",
             lookup_hash=lookup_hash_api_key(raw),
-            address=address.strip().lower(),
+            address=normalized_address,
             message=message,
             expires_at=self._expires_at(ttl_seconds),
         )
         challenge.secret_hash = hash_api_key(raw, challenge.salt)
 
-        def create(conn: Any) -> None:
+        def create(conn: Any) -> tuple[str, WalletChallenge]:
+            # The permanent scope row is also the first-issuance lock. An
+            # INSERT .. ON CONFLICT followed by SELECT FOR UPDATE serializes
+            # two issuers even when neither saw a previous challenge.
+            self._insert_entity_once_tx(
+                conn,
+                WALLET_CHALLENGE_SCOPE_KIND,
+                scope_id,
+                {},
+            )
+            active = self._read_entity_tx(
+                conn,
+                WALLET_CHALLENGE_SCOPE_KIND,
+                scope_id,
+                dict,
+                for_update=True,
+            )
+            if active:
+                previous_id = active.get("challenge_id")
+                previous = (
+                    self._read_entity_tx(
+                        conn,
+                        "wallet_challenge",
+                        previous_id,
+                        WalletChallenge,
+                    )
+                    if isinstance(previous_id, str)
+                    else None
+                )
+                if previous is not None and isinstance(previous_id, str):
+                    reusable_nonce = reusable_wallet_challenge_nonce(
+                        previous,
+                        scope_id=scope_id,
+                    )
+                    if reusable_nonce is not None:
+                        return reusable_nonce, previous
+                    self._delete_entity_tx(conn, "wallet_challenge", previous_id)
+                previous_lookup_hash = active.get("lookup_hash")
+                if (
+                    isinstance(previous_lookup_hash, str)
+                    and previous_lookup_hash != challenge.lookup_hash
+                ):
+                    self._delete_entity_tx(
+                        conn,
+                        "wallet_challenge_lookup",
+                        previous_lookup_hash,
+                    )
             self._write_entity_tx(
                 conn,
                 "wallet_challenge",
@@ -1369,21 +1431,80 @@ class PostgresStore:
                 conn,
                 "wallet_challenge_lookup",
                 challenge.lookup_hash,
-                {"challenge_id": challenge.hash},
+                {"challenge_id": challenge.hash, "scope_id": scope_id},
             )
+            self._write_entity_tx(
+                conn,
+                WALLET_CHALLENGE_SCOPE_KIND,
+                scope_id,
+                {
+                    "challenge_id": challenge.hash,
+                    "lookup_hash": challenge.lookup_hash,
+                },
+            )
+            return raw, challenge
 
-        self._run_transaction(create)
-        return raw, challenge
+        return self._run_transaction(create)
 
     def consume_wallet_challenge(self, raw_nonce: str) -> WalletChallenge | None:
-        return self._consume_secret(
-            raw_secret=raw_nonce,
-            lookup_kind="wallet_challenge_lookup",
-            lookup_field="challenge_id",
-            entity_kind="wallet_challenge",
-            cls=WalletChallenge,
-            expiry_field="expires_at",
-        )
+        lookup_hash = lookup_hash_api_key(raw_nonce)
+
+        def consume(conn: Any) -> WalletChallenge | None:
+            lookup = self._read_entity_tx(
+                conn,
+                "wallet_challenge_lookup",
+                lookup_hash,
+                dict,
+            )
+            if not lookup:
+                return None
+            scope_id = lookup.get("scope_id")
+            challenge_id = lookup.get("challenge_id")
+            if not isinstance(scope_id, str) or not isinstance(challenge_id, str):
+                return None
+            # Issuance takes this same lock before replacing either secondary
+            # row, so consume and replace cannot both accept different
+            # generations for one address.
+            active = self._read_entity_tx(
+                conn,
+                WALLET_CHALLENGE_SCOPE_KIND,
+                scope_id,
+                dict,
+                for_update=True,
+            )
+            if not active:
+                return None
+            if active.get("challenge_id") != challenge_id:
+                return None
+            if active.get("lookup_hash") != lookup_hash:
+                return None
+            record = self._read_entity_tx(
+                conn,
+                "wallet_challenge",
+                challenge_id,
+                WalletChallenge,
+                for_update=True,
+            )
+            if record is None or record.consumed_at is not None:
+                return None
+            if record.lookup_hash != lookup_hash:
+                return None
+            if not wallet_challenge_nonce_is_valid(
+                record,
+                raw_nonce=raw_nonce,
+                scope_id=scope_id,
+            ):
+                return None
+            record.consumed_at = iso_now()
+            self._write_entity_tx(
+                conn,
+                "wallet_challenge",
+                record.hash,
+                record,
+            )
+            return record
+
+        return self._run_transaction(consume)
 
     def create_verification_token(
         self,

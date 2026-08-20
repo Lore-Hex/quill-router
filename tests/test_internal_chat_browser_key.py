@@ -172,7 +172,6 @@ def test_issue_chat_browser_key_secure_flag_in_production() -> None:
         environment="production",
         service_surface="control",
         attribution_cookie_secret="attribution-cookie-secret-for-control-test",  # noqa: S106
-        internal_gateway_token="t",  # noqa: S106 - test fixture.
         stripe_webhook_secret="w",  # noqa: S106 - test fixture.
         stripe_secret_key="s",  # noqa: S106 - test fixture.
         sentry_dsn="https://example@example.ingest.sentry.io/1",
