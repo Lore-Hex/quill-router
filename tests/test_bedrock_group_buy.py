@@ -254,6 +254,8 @@ def test_public_page_and_json_show_aggregate_but_never_private_fields(
     public_page = client.get("/bedrock-group-buy")
     public_json = client.get("/v1/bedrock-group-buy")
     assert public_page.status_code == public_json.status_code == 200
+    assert public_page.headers["cache-control"].startswith("public,")
+    assert public_json.headers["cache-control"].startswith("public,")
     assert "$425,000" in public_page.text
     assert "11 buyers" in public_page.text
     assert "Founders should be able to negotiate cloud pricing together." in public_page.text
@@ -349,10 +351,10 @@ def test_post_commit_confirmation_prompts_sharing_and_deeper_group_discount(
         data=_payload(),
         follow_redirects=False,
     )
-    assert response.headers["location"] == "/bedrock-group-buy?saved=1#share"
+    assert response.headers["location"] == "/bedrock-group-buy/manage?saved=1#share"
 
     confirmation = client.get(
-        "/bedrock-group-buy?saved=1",
+        "/bedrock-group-buy/manage?saved=1",
         headers=user_headers,
     )
     assert confirmation.status_code == 200
@@ -362,6 +364,60 @@ def test_post_commit_confirmation_prompts_sharing_and_deeper_group_discount(
     assert "Share on LinkedIn" in confirmation.text
     assert "Email a founder" in confirmation.text
     assert confirmation.headers["cache-control"] == "private, no-store"
+
+
+def test_public_group_buy_page_never_reads_or_varies_on_session(
+    client: TestClient,
+    user_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client.post("/bedrock-group-buy/pledge", headers=user_headers, data=_payload())
+
+    def forbidden_principal(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("public group-buy page inspected a user session")
+
+    def forbidden_pledge(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("public group-buy page read a private pledge")
+
+    monkeypatch.setattr(
+        "trusted_router.routes.bedrock_group_buy.principal_from_request",
+        forbidden_principal,
+    )
+    monkeypatch.setattr(
+        InMemoryStore,
+        "get_bedrock_group_buy_pledge",
+        forbidden_pledge,
+    )
+
+    anonymous = client.get("/bedrock-group-buy?saved=1")
+    with_session = client.get("/bedrock-group-buy?saved=1", headers=user_headers)
+
+    assert anonymous.status_code == with_session.status_code == 200
+    assert anonymous.text == with_session.text
+    assert anonymous.headers["cache-control"].startswith("public,")
+    assert with_session.headers["cache-control"].startswith("public,")
+    assert "You are in. Bring one more buyer." not in anonymous.text
+    assert (
+        'href="/bedrock-group-buy?reason=signin&amp;next=%2Fbedrock-group-buy%2Fmanage"'
+        in anonymous.text
+    )
+
+
+def test_group_buy_manage_page_is_private_and_requires_a_session(
+    client: TestClient,
+    user_headers: dict[str, str],
+) -> None:
+    anonymous = client.get("/bedrock-group-buy/manage", follow_redirects=False)
+    assert anonymous.status_code == 303
+    assert anonymous.headers["location"] == (
+        "/bedrock-group-buy?reason=signin&next=%2Fbedrock-group-buy%2Fmanage"
+    )
+
+    client.post("/bedrock-group-buy/pledge", headers=user_headers, data=_payload())
+    personalized = client.get("/bedrock-group-buy/manage", headers=user_headers)
+    assert personalized.status_code == 200
+    assert personalized.headers["cache-control"] == "private, no-store"
+    assert "Avery Private" in personalized.text
 
 
 def test_private_pledge_api_is_session_scoped_and_api_keys_are_rejected(

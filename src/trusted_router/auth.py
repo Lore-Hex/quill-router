@@ -359,7 +359,7 @@ def set_session_cookie(response: Response, raw_token: str, settings: Settings) -
         value=raw_token,
         max_age=SESSION_COOKIE_MAX_AGE,
         httponly=True,
-        secure=settings.environment.lower() == "production",
+        secure=settings.environment.lower() not in {"local", "test"},
         samesite="lax",
         path="/",
     )
@@ -368,7 +368,7 @@ def set_session_cookie(response: Response, raw_token: str, settings: Settings) -
         value="1",
         max_age=SESSION_COOKIE_MAX_AGE,
         httponly=False,  # JS reads this on marketing pages — that's the point
-        secure=settings.environment.lower() == "production",
+        secure=settings.environment.lower() not in {"local", "test"},
         samesite="lax",
         path="/",
     )
@@ -378,13 +378,13 @@ def clear_session_cookie(response: Response, settings: Settings) -> None:
     response.delete_cookie(
         key=SESSION_COOKIE_NAME,
         path="/",
-        secure=settings.environment.lower() == "production",
+        secure=settings.environment.lower() not in {"local", "test"},
         samesite="lax",
     )
     # Clear the hint too so the next marketing-page load reverts to "Sign in"
     response.delete_cookie(
         key=SIGNED_IN_HINT_COOKIE_NAME,
         path="/",
-        secure=settings.environment.lower() == "production",
+        secure=settings.environment.lower() not in {"local", "test"},
         samesite="lax",
     )

@@ -10,7 +10,7 @@ from trusted_router.acquisition import (
     decode_attribution_cookie,
     encode_attribution_cookie,
 )
-from trusted_router.config import Settings
+from trusted_router.config import SERVICE_SURFACE_SECRET_OWNERS, Settings
 
 _ATTRIBUTION_SECRET = "attribution-only-" + "a" * 32
 _GATEWAY_SECRET = "gateway-only-" + "g" * 32
@@ -23,7 +23,6 @@ _PRODUCTION_STORAGE = {
 }
 _CONTROL_SECRETS = {
     "attribution_cookie_secret": _ATTRIBUTION_SECRET,
-    "internal_gateway_token": _GATEWAY_SECRET,
     "stripe_webhook_secret": "whsec-test",
     "stripe_secret_key": "sk-test",
     "sentry_dsn": "https://example@example.ingest.sentry.io/1",
@@ -131,6 +130,157 @@ _ACTION_FORBIDDEN_CONFIG: tuple[tuple[str, object, str], ...] = (
     ("byok_envelope_key_b64", "ZW52ZWxvcGUta2V5", "TR_BYOK_ENVELOPE_KEY_B64"),
 )
 
+_SENSITIVE_TEST_VALUES: dict[str, object] = {
+    "ops_chat_webhook_secret": "o" * 40,
+    "postgres_dsn": "postgresql://surface:secret@db.example/surface",
+    "postgres_iam_auth": "aws-dsql",
+    "clickhouse_url": "https://clickhouse.example",
+    "clickhouse_password": "clickhouse-secret",
+    "provider_analytics_clickhouse_url": "https://provider-clickhouse.example",
+    "provider_analytics_clickhouse_password": "provider-clickhouse-secret",
+    "operational_analytics_clickhouse_url": "https://ops-clickhouse.example",
+    "operational_analytics_clickhouse_password": "ops-clickhouse-secret",
+    "sentry_dsn": "https://example@example.ingest.sentry.io/1",
+    "google_data_manager_enabled": True,
+    "google_data_manager_kms_key_name": "projects/test/locations/global/keyRings/gdm/keys/k",
+    "attribution_cookie_secret": _ATTRIBUTION_SECRET,
+    "internal_gateway_token": _GATEWAY_SECRET,
+    "observer_internal_token": "observer-only-" + "o" * 32,
+    "stripe_webhook_secret": "whsec-test",
+    "stripe_secret_key": "sk-test",
+    "paypal_client_id": "paypal-client",
+    "paypal_client_secret": "paypal-secret",
+    "paypal_webhook_id": "paypal-webhook",
+    "adyen_enabled": True,
+    "adyen_api_key": "adyen-api",
+    "adyen_client_key": "adyen-client",
+    "adyen_hmac_key": "ab" * 32,
+    "adyen_reference_key": "r" * 32,
+    "byok_kms_key_name": "projects/test/locations/global/keyRings/byok/keys/k",
+    "byok_envelope_key_b64": "ZW52ZWxvcGUta2V5",
+    "google_client_id": "google-client",
+    "google_client_secret": "google-secret",
+    "google_alias_credentials_json": '{"allyrouter.com":{"client_id":"id","client_secret":"secret"}}',
+    "github_client_id": "github-client",
+    "github_client_secret": "github-secret",
+    "github_alias_credentials_json": '{"allyrouter.com":{"client_id":"id","client_secret":"secret"}}',
+    "x402_enabled": True,
+    "notify_enabled": True,
+    "veriff_enabled": True,
+    "veriff_api_key": "veriff-api",
+    "veriff_shared_secret_key": "veriff-secret",
+    "telnyx_api_key": "telnyx-secret",
+    "twilio_account_sid": "twilio-account",
+    "twilio_auth_token": "twilio-secret",
+    "twilio_api_key_secret": "twilio-api-secret",
+    "aws_access_key_id": "ses-access",
+    "aws_secret_access_key": "ses-secret",
+    "synthetic_monitor_api_key": "synthetic-secret",
+    "federation_peer_token": "f" * 40,
+    "federation_home_token": "h" * 40,
+    "federation_credit_inbound_token": "i" * 40,
+    "federation_credit_peer_token": "p" * 40,
+    "federation_settlement_inbound_tokens": "aws=" + "s" * 40,
+    "federation_settlement_home_token": "t" * 40,
+}
+
+_EXPECTED_OWNER_GROUPS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
+    (frozenset({"actions"}), ("ops_chat_webhook_secret",)),
+    (
+        frozenset({"public", "control", "internal", "observer"}),
+        (
+            "postgres_dsn",
+            "postgres_iam_auth",
+            "operational_analytics_clickhouse_url",
+            "operational_analytics_clickhouse_password",
+        ),
+    ),
+    (
+        frozenset({"control", "internal"}),
+        (
+            "clickhouse_url",
+            "clickhouse_password",
+            "byok_kms_key_name",
+            "byok_envelope_key_b64",
+        ),
+    ),
+    (
+        frozenset({"control"}),
+        (
+            "provider_analytics_clickhouse_url",
+            "provider_analytics_clickhouse_password",
+            "google_data_manager_enabled",
+            "google_data_manager_kms_key_name",
+            "stripe_webhook_secret",
+            "stripe_secret_key",
+            "paypal_client_id",
+            "paypal_client_secret",
+            "paypal_webhook_id",
+            "adyen_enabled",
+            "adyen_api_key",
+            "adyen_client_key",
+            "adyen_hmac_key",
+            "adyen_reference_key",
+            "google_client_id",
+            "google_client_secret",
+            "google_alias_credentials_json",
+            "github_client_id",
+            "github_client_secret",
+            "github_alias_credentials_json",
+            "x402_enabled",
+            "notify_enabled",
+            "veriff_enabled",
+            "veriff_api_key",
+            "veriff_shared_secret_key",
+            "telnyx_api_key",
+            "twilio_account_sid",
+            "twilio_auth_token",
+            "twilio_api_key_secret",
+        ),
+    ),
+    (frozenset({"control", "internal", "observer"}), ("sentry_dsn",)),
+    (frozenset({"public", "control"}), ("attribution_cookie_secret",)),
+    (
+        frozenset({"internal"}),
+        ("internal_gateway_token",),
+    ),
+    (
+        frozenset({"internal", "observer"}),
+        ("observer_internal_token",),
+    ),
+    (
+        frozenset({"internal", "observer"}),
+        ("synthetic_monitor_api_key",),
+    ),
+    (
+        frozenset({"control", "actions"}),
+        ("aws_access_key_id", "aws_secret_access_key"),
+    ),
+    (
+        frozenset({"internal"}),
+        (
+            "federation_peer_token",
+            "federation_home_token",
+            "federation_credit_inbound_token",
+            "federation_credit_peer_token",
+            "federation_settlement_inbound_tokens",
+            "federation_settlement_home_token",
+        ),
+    ),
+)
+_EXPECTED_SENSITIVE_SETTING_OWNERS = {
+    field_name: owners
+    for owners, field_names in _EXPECTED_OWNER_GROUPS
+    for field_name in field_names
+}
+_DEPLOYED_WEB_SURFACES = ("public", "actions", "control", "internal", "observer")
+_UNAUTHORIZED_SENSITIVE_CASES = tuple(
+    (field_name, surface)
+    for field_name, owners in sorted(_EXPECTED_SENSITIVE_SETTING_OWNERS.items())
+    for surface in _DEPLOYED_WEB_SURFACES
+    if surface not in owners
+)
+
 
 def _production(surface: str, **overrides: object) -> Settings:
     values: dict[str, object] = {**_PRODUCTION_STORAGE, "service_surface": surface}
@@ -138,10 +288,75 @@ def _production(surface: str, **overrides: object) -> Settings:
     return Settings(**values)
 
 
-def test_public_production_needs_only_its_narrow_attribution_secret() -> None:
+@pytest.mark.parametrize(("field_name", "surface"), _UNAUTHORIZED_SENSITIVE_CASES)
+def test_every_sensitive_setting_rejects_an_unauthorized_deployed_surface(
+    field_name: str,
+    surface: str,
+) -> None:
+    assert set(_SENSITIVE_TEST_VALUES) == set(_EXPECTED_SENSITIVE_SETTING_OWNERS)
+    assert SERVICE_SURFACE_SECRET_OWNERS == _EXPECTED_SENSITIVE_SETTING_OWNERS
+    overrides: dict[str, object] = {field_name: _SENSITIVE_TEST_VALUES[field_name]}
+    if surface in {"public", "control"}:
+        overrides.setdefault("attribution_cookie_secret", _ATTRIBUTION_SECRET)
+    if surface in {"internal", "observer"}:
+        overrides.setdefault(
+            "observer_internal_token",
+            _SENSITIVE_TEST_VALUES["observer_internal_token"],
+        )
+        if surface == "internal":
+            overrides.setdefault("internal_gateway_token", _GATEWAY_SECRET)
+    if field_name == "ops_chat_webhook_secret":
+        overrides["ops_chat_webhook_urls"] = "https://ops.example/hook"
+    if field_name == "postgres_iam_auth":
+        overrides["postgres_dsn"] = "postgresql://surface:secret@db.example/surface"
+    if field_name == "google_data_manager_enabled":
+        overrides.update(
+            google_data_manager_account_id="account",
+            google_data_manager_signup_action_id="signup",
+            google_data_manager_activated_action_id="activation",
+            google_data_manager_purchase_action_id="purchase",
+            google_data_manager_kms_key_name=(
+                "projects/test/locations/global/keyRings/gdm/keys/k"
+            ),
+        )
+    if field_name == "adyen_enabled":
+        overrides.update(
+            adyen_api_key="adyen-api",
+            adyen_client_key="adyen-client",
+            adyen_hmac_key="ab" * 32,
+            adyen_reference_key="r" * 32,
+            adyen_merchant_account="merchant",
+        )
+    if field_name == "x402_enabled":
+        overrides.update(
+            stripe_secret_key="sk-test",  # noqa: S106 - test credential.
+            stripe_webhook_secret="whsec-test",  # noqa: S106 - test credential.
+        )
+    if field_name == "veriff_enabled":
+        overrides.update(
+            veriff_api_key="veriff-api",
+            veriff_shared_secret_key="veriff-secret",  # noqa: S106 - test credential.
+        )
+    if field_name == "federation_settlement_home_token":
+        overrides["federation_home_base_url"] = "https://home.example"
+
+    with pytest.raises(
+        ValidationError,
+        match=f"unset TR_{field_name.upper()} for TR_SERVICE_SURFACE={surface}",
+    ):
+        Settings(
+            environment="canary",
+            service_surface=surface,
+            **overrides,
+        )
+
+
+def test_public_production_needs_only_attribution_and_non_secret_login_flags() -> None:
     settings = _production(
         "public",
         attribution_cookie_secret=_ATTRIBUTION_SECRET,
+        google_oauth_login_available=True,
+        github_oauth_login_available=False,
     )
 
     assert settings.attribution_cookie_secret == _ATTRIBUTION_SECRET
@@ -150,6 +365,32 @@ def test_public_production_needs_only_its_narrow_attribution_secret() -> None:
     assert settings.sentry_dsn is None
     assert settings.aws_access_key_id is None
     assert settings.byok_kms_key_name is None
+    assert settings.google_oauth_enabled is True
+    assert settings.github_oauth_enabled is False
+
+
+def test_control_rejects_oauth_presentation_capability_drift() -> None:
+    with pytest.raises(ValidationError, match="must match the control service"):
+        Settings(
+            environment="canary",
+            service_surface="control",
+            attribution_cookie_secret=_ATTRIBUTION_SECRET,
+            stripe_webhook_secret="whsec-test",  # noqa: S106 - test credential.
+            stripe_secret_key="sk-test",  # noqa: S106 - test credential.
+            google_oauth_login_available=True,
+            github_oauth_login_available=False,
+        )
+
+    settings = Settings(
+        environment="canary",
+        service_surface="control",
+        attribution_cookie_secret=_ATTRIBUTION_SECRET,
+        stripe_webhook_secret="whsec-test",  # noqa: S106 - test credential.
+        stripe_secret_key="sk-test",  # noqa: S106 - test credential.
+        google_oauth_login_available=False,
+        github_oauth_login_available=False,
+    )
+    assert settings.google_oauth_enabled is False
 
 
 def test_actions_production_has_no_store_or_private_plane_credentials() -> None:
@@ -286,10 +527,15 @@ def test_public_production_rejects_private_surface_secrets(name: str, value: str
 
 def test_internal_and_observer_require_gateway_observability_but_not_account_secrets() -> None:
     for surface in ("internal", "observer"):
+        auth = {
+            "observer_internal_token": _SENSITIVE_TEST_VALUES["observer_internal_token"]
+        }
+        if surface == "internal":
+            auth["internal_gateway_token"] = _GATEWAY_SECRET
         settings = _production(
             surface,
-            internal_gateway_token=_GATEWAY_SECRET,
             sentry_dsn="https://example@example.ingest.sentry.io/1",
+            **auth,
         )
         assert settings.stripe_secret_key is None
         assert settings.aws_access_key_id is None
@@ -305,7 +551,6 @@ def test_internal_and_observer_require_gateway_observability_but_not_account_sec
         ("stripe_secret_key", "sk-test"),
         ("aws_access_key_id", "ses-access"),
         ("aws_secret_access_key", "ses-secret"),
-        ("byok_kms_key_name", "projects/test/cryptoKeys/byok"),
     ),
 )
 def test_non_account_surfaces_reject_account_secrets(
@@ -313,11 +558,16 @@ def test_non_account_surfaces_reject_account_secrets(
     name: str,
     value: str,
 ) -> None:
+    auth = {
+        "observer_internal_token": _SENSITIVE_TEST_VALUES["observer_internal_token"]
+    }
+    if surface == "internal":
+        auth["internal_gateway_token"] = _GATEWAY_SECRET
     with pytest.raises(ValidationError, match=f"unset TR_{name.upper()}"):
         _production(
             surface,
-            internal_gateway_token=_GATEWAY_SECRET,
             sentry_dsn="https://example@example.ingest.sentry.io/1",
+            **auth,
             **{name: value},
         )
 
@@ -328,17 +578,104 @@ def test_control_requires_dedicated_attribution_secret() -> None:
 
     settings = _production("control", **_CONTROL_SECRETS)
     assert settings.attribution_cookie_secret == _ATTRIBUTION_SECRET
+    assert settings.internal_gateway_token is None
+
+
+def test_control_rejects_the_internal_gateway_credential() -> None:
+    with pytest.raises(ValidationError, match="unset TR_INTERNAL_GATEWAY_TOKEN"):
+        _production(
+            "control",
+            **_CONTROL_SECRETS,
+            internal_gateway_token=_GATEWAY_SECRET,
+        )
+
+
+def test_deployed_canary_surfaces_enforce_secret_ownership_too() -> None:
+    with pytest.raises(ValidationError, match="TR_STRIPE_WEBHOOK_SECRET"):
+        Settings(
+            environment="canary",
+            service_surface="control",
+            attribution_cookie_secret=_ATTRIBUTION_SECRET,
+        )
+
+    with pytest.raises(ValidationError, match="unset TR_INTERNAL_GATEWAY_TOKEN"):
+        Settings(
+            environment="canary",
+            service_surface="control",
+            attribution_cookie_secret=_ATTRIBUTION_SECRET,
+            stripe_webhook_secret="whsec-test",  # noqa: S106 - test credential.
+            stripe_secret_key="sk-test",  # noqa: S106 - test credential.
+            internal_gateway_token=_GATEWAY_SECRET,
+        )
+
+    with pytest.raises(ValidationError, match="TR_OBSERVER_INTERNAL_TOKEN"):
+        Settings(
+            environment="canary",
+            service_surface="observer",
+            storage_backend="postgres",
+            postgres_dsn="postgresql://observer:secret@db/observer",
+        )
+
+    with pytest.raises(ValidationError, match="TR_STORAGE_BACKEND=memory"):
+        Settings(
+            environment="canary",
+            service_surface="actions",
+            storage_backend="postgres",
+            postgres_dsn="postgresql://actions:secret@db/actions",
+        )
 
 
 def test_attribution_and_gateway_credentials_cannot_be_reused() -> None:
     with pytest.raises(ValidationError, match="must differ"):
         _production(
-            "control",
+            "combined",
             **{
                 **_CONTROL_SECRETS,
+                "internal_gateway_token": _GATEWAY_SECRET,
                 "attribution_cookie_secret": _GATEWAY_SECRET,
             },
         )
+
+
+@pytest.mark.parametrize(
+    "other_field",
+    ("internal_gateway_token", "synthetic_monitor_api_key"),
+)
+def test_observer_credential_cannot_reuse_another_security_domain(
+    other_field: str,
+) -> None:
+    reused = "reused-secret-" + "r" * 32
+    values: dict[str, object] = {
+        "environment": "canary",
+        "service_surface": "observer",
+        "observer_internal_token": reused,
+        other_field: reused,
+    }
+    if other_field == "internal_gateway_token":
+        # The ownership violation is also intentional; the equality reason
+        # must remain present and must not expose the value in its traceback.
+        expected = "must differ from TR_INTERNAL_GATEWAY_TOKEN"
+    else:
+        expected = "must differ from TR_SYNTHETIC_MONITOR_API_KEY"
+
+    with pytest.raises(ValidationError, match=expected):
+        Settings(**values)
+
+
+def test_deployed_validation_errors_hide_misrouted_secret_values() -> None:
+    canary = "SUPERSECRET_CANARY_123"
+
+    with pytest.raises(ValidationError) as captured:
+        Settings(
+            environment="canary",
+            service_surface="public",
+            attribution_cookie_secret=_ATTRIBUTION_SECRET,
+            internal_gateway_token=canary,
+        )
+
+    message = str(captured.value)
+    assert "TR_INTERNAL_GATEWAY_TOKEN" in message
+    assert canary not in message
 
 
 def test_public_cookie_survives_control_handoff_without_sharing_gateway_secret() -> None:
@@ -349,7 +686,6 @@ def test_public_cookie_survives_control_handoff_without_sharing_gateway_secret()
     control = Settings(
         service_surface="control",
         attribution_cookie_secret=_ATTRIBUTION_SECRET,
-        internal_gateway_token=_GATEWAY_SECRET,
     )
     now = dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     touch = {"landing_path": "/", "captured_at": now}
@@ -364,7 +700,6 @@ def test_public_cookie_survives_control_handoff_without_sharing_gateway_secret()
             Settings(
                 service_surface="control",
                 attribution_cookie_secret="rotated-" + "r" * 32,
-                internal_gateway_token=_GATEWAY_SECRET,
             ),
         )
         is None

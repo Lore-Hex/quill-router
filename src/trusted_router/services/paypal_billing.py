@@ -251,9 +251,13 @@ def verify_paypal_webhook_signature(
     if not settings.paypal_enabled:
         raise api_error(400, "PayPal webhook is not configured", ErrorType.BAD_REQUEST)
     if not settings.paypal_webhook_id:
-        if settings.environment.lower() == "production" and settings.paypal_enabled:
-            raise api_error(400, "PayPal webhook verification is not configured", ErrorType.BAD_REQUEST)
-        return
+        if settings.environment.lower() in {"local", "test"}:
+            return
+        raise api_error(
+            400,
+            "PayPal webhook verification is not configured",
+            ErrorType.BAD_REQUEST,
+        )
     verification_fields = _validated_paypal_webhook_headers(headers)
     hit = _PAYPAL_WEBHOOK_VERIFY_LIMITER.hit(
         namespace="paypal_webhook_verify",

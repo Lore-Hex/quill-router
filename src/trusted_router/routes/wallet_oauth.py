@@ -64,6 +64,12 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
     ) -> JSONResponse:
         if not ADDRESS_RE.match(body.address):
             raise api_error(400, "Invalid Ethereum address", ErrorType.BAD_REQUEST)
+        if not settings.new_signups_enabled and STORE.find_user_by_wallet(body.address) is None:
+            # The emergency signup brake must stop durable challenge growth as
+            # well as account creation. Returning wallets still receive a
+            # challenge; unknown addresses fail after one bounded read and
+            # before nonce generation or either challenge write.
+            require_new_account_creation(settings)
         request_domain = request_control_domain(request, settings)
         domain = (
             settings.siwe_domain
@@ -78,7 +84,7 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
             issued_at=dt.datetime.now(dt.UTC),
             expiration_seconds=CHALLENGE_TTL_SECONDS,
         )
-        _, record = STORE.create_wallet_challenge(
+        nonce, record = STORE.create_wallet_challenge(
             address=body.address,
             message=message,
             ttl_seconds=CHALLENGE_TTL_SECONDS,
@@ -87,7 +93,7 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
         return JSONResponse(
             {
                 "data": {
-                    "message": message,
+                    "message": record.message,
                     "nonce": nonce,
                     "expires_at": record.expires_at,
                 }

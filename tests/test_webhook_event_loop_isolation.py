@@ -23,6 +23,20 @@ def _loop_thread_client(settings: Settings) -> tuple[TestClient, str]:
     return client, loop_thread
 
 
+def test_deployed_paypal_webhook_fails_closed_without_webhook_id() -> None:
+    settings = Settings(
+        environment="test",
+        paypal_client_id="paypal-client",
+        paypal_client_secret="paypal-secret",  # noqa: S106
+    )
+    settings.environment = "canary"
+
+    with pytest.raises(HTTPException) as captured:
+        verify_paypal_webhook_signature(headers={}, event={}, settings=settings)
+
+    assert captured.value.status_code == 400
+
+
 def test_paypal_webhook_verification_runs_off_the_event_loop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

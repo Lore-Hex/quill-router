@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.oauth_provider import OAuthUserInfo
-from trusted_router.storage import STORE
+from trusted_router.storage import STORE, InMemoryStore
 
 
 def _settings(**overrides: object) -> Settings:
@@ -157,15 +157,27 @@ def test_global_gate_keeps_returning_oauth_login_working(provider: str) -> None:
     assert "tr_session=" in response.headers.get("set-cookie", "")
 
 
-def test_global_gate_blocks_first_time_wallet_but_not_challenge() -> None:
+def test_global_gate_blocks_first_time_wallet_before_challenge_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client = _client()
     account = Account.create()
+    challenge_writes = 0
 
-    payload = _signed_wallet_payload(client, account)
-    response = client.post("/v1/auth/wallet/verify", json=payload)
+    def unexpected_create(*_args: object, **_kwargs: object) -> None:
+        nonlocal challenge_writes
+        challenge_writes += 1
+        raise AssertionError("closed signup gate wrote a wallet challenge")
+
+    monkeypatch.setattr(InMemoryStore, "create_wallet_challenge", unexpected_create)
+    response = client.post(
+        "/v1/auth/wallet/challenge",
+        json={"address": account.address},
+    )
 
     assert response.status_code == 403
     assert "temporarily disabled" in response.json()["error"]["message"]
+    assert challenge_writes == 0
     assert STORE.find_user_by_wallet(account.address) is None
 
 
@@ -182,6 +194,45 @@ def test_global_gate_keeps_returning_wallet_login_working() -> None:
     assert response.status_code == 200, response.text
     assert STORE.find_user_by_wallet(account.address).id == existing.id
     assert "tr_session=" in response.headers.get("set-cookie", "")
+
+
+def test_closed_gate_reissued_wallet_challenge_preserves_displayed_prompt() -> None:
+    account = Account.create()
+    existing = STORE.create_wallet_user(account.address)
+    client = _client()
+
+    first = client.post(
+        "/v1/auth/wallet/challenge",
+        json={"address": account.address},
+    ).json()["data"]
+    first_signature = Account.sign_message(
+        encode_defunct(text=first["message"]),
+        account.key,
+    ).signature.hex()
+    first_id = next(iter(STORE.wallet_challenges._challenges))
+
+    # An unauthenticated caller races the user's displayed prompt for the same
+    # known wallet. Issuance must be idempotent, not invalidate the signature.
+    second = client.post(
+        "/v1/auth/wallet/challenge",
+        json={"address": "0x" + account.address[2:].upper()},
+    ).json()["data"]
+    second_id = next(iter(STORE.wallet_challenges._challenges))
+
+    accepted = client.post(
+        "/v1/auth/wallet/verify",
+        json={
+            "address": account.address,
+            "signature": first_signature,
+            "nonce": first["nonce"],
+        },
+    )
+
+    assert second["nonce"] == first["nonce"]
+    assert second["message"] == first["message"]
+    assert second_id == first_id
+    assert accepted.status_code == 200, accepted.text
+    assert STORE.find_user_by_wallet(account.address).id == existing.id
 
 
 def test_global_gate_blocks_inviting_an_unknown_email_without_partial_writes() -> None:

@@ -52,14 +52,11 @@ def test_broadcast_inline_drain_defaults_to_non_production_only() -> None:
     assert should_drain_inline(
         Settings(
             environment="production",
+            service_surface="internal",
             storage_backend="spanner-bigtable",
             internal_gateway_token="token",  # noqa: S106 - placeholder test secret.
-            stripe_webhook_secret="whsec",  # noqa: S106 - placeholder test secret.
-            stripe_secret_key="sk_live",  # noqa: S106 - placeholder test secret.
+            observer_internal_token="observer-token",  # noqa: S106 - test secret.
             sentry_dsn="https://example@sentry.invalid/1",
-            aws_access_key_id="test-access-key",
-            aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
-            ses_from_email="noreply@example.com",
             spanner_instance_id="inst",
             spanner_database_id="db",
             bigtable_instance_id="bt",

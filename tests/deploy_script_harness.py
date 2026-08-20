@@ -70,6 +70,7 @@ NOT_PROVEN instead; ``aws_eu_clickhouse_drain_install.sh`` is that script.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -131,7 +132,13 @@ _IGNORED = shutil.ignore_patterns(
 _STUB = r"""#!/usr/bin/env bash
 # Recording stub. Writes one tab-separated line per invocation to the shared
 # ordered log, answers from the fixture table if anything matches, and exits 0.
-{ printf '%s' "${0##*/}"; for a in "$@"; do printf '\t%s' "$a"; done; printf '\n'; } \
+{ printf '%s' "${0##*/}"; for a in "$@"; do
+    recorded="${a//$'\n'/\\n}"
+    recorded="${recorded//$'\t'/\\t}"
+    printf '\t%s' "$recorded"
+  done
+  printf '\n'
+} \
   >> "$HARNESS_ARGV_LOG"
 # Drain stdin before answering. A stub that exits without reading closes the
 # pipe under its upstream, and `aws ecr get-login-password | docker login
@@ -143,13 +150,23 @@ _STUB = r"""#!/usr/bin/env bash
 cat >/dev/null 2>&1 || true
 if [ -n "${HARNESS_FIXTURES:-}" ] && [ -f "$HARNESS_FIXTURES" ]; then
   joined="${0##*/} $*"
-  while IFS=$'\t' read -r pattern reply; do
+  while IFS=$'\t' read -r pattern encoded_reply; do
     [ -n "$pattern" ] || continue
     if printf '%s' "$joined" | grep -Eq -- "$pattern"; then
-      printf '%s\n' "$reply"
+      printf '%s' "$encoded_reply" | base64 --decode
+      printf '\n'
       exit 0
     fi
   done < "$HARNESS_FIXTURES"
+fi
+if [ -n "${HARNESS_FAILURES:-}" ] && [ -f "$HARNESS_FAILURES" ]; then
+  joined="${0##*/} $*"
+  while IFS= read -r pattern; do
+    [ -n "$pattern" ] || continue
+    if printf '%s' "$joined" | grep -Eq -- "$pattern"; then
+      exit 1
+    fi
+  done < "$HARNESS_FAILURES"
 fi
 printf '%s\n' "stub-output"
 exit 0
@@ -166,6 +183,52 @@ exit "${HARNESS_VERIFIER_RC:-0}"
 
 _ECR = "330422590279.dkr.ecr.eu-west-3.amazonaws.com/trusted-router"
 _DIGEST = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+_AWS_SERVICE_ARN = (
+    "arn:aws:apprunner:eu-west-3:330422590279:service/tr-eu/harness-service-id"
+)
+_SYNTHETIC_INGEST_SERVICE_JSON = json.dumps(
+    {
+        "metadata": {
+            "name": "trusted-router-billing",
+            "annotations": {
+                "run.googleapis.com/ingress": "internal-and-cloud-load-balancing"
+            },
+        },
+        "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": [
+                        {
+                            "env": [
+                                {"name": "TR_SERVICE_SURFACE", "value": "internal"},
+                                {
+                                    "name": "TR_OBSERVER_INTERNAL_TOKEN",
+                                    "valueFrom": {
+                                        "secretKeyRef": {
+                                            "name": "trustedrouter-observer-internal-token",
+                                            "key": "latest",
+                                        }
+                                    },
+                                },
+                                {
+                                    "name": "TR_INTERNAL_GATEWAY_TOKEN",
+                                    "valueFrom": {
+                                        "secretKeyRef": {
+                                            "name": "trustedrouter-internal-gateway-token",
+                                            "key": "latest",
+                                        }
+                                    },
+                                },
+                            ]
+                        }
+                    ]
+                }
+            }
+        },
+    },
+    separators=(",", ":"),
+)
 
 
 @dataclass(frozen=True)
@@ -177,6 +240,8 @@ class ScriptFixture:
     env: dict[str, str] = field(default_factory=dict)
     #: ``(extended-regex over "<command> <argv...>", stdout)`` in priority order.
     responses: tuple[tuple[str, str], ...] = ()
+    #: Extended regexes whose matching command must exit 1 instead of succeeding.
+    failures: tuple[str, ...] = ()
     #: Files to create under ``$HOME`` before the run, path -> contents.
     home_files: dict[str, str] = field(default_factory=dict)
     #: Commands legitimately issued AFTER the gate has answered, as regexes over
@@ -203,9 +268,51 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             # It deploys by DIGEST and then refuses to believe App Runner until
             # the service reports it is serving that exact digest.
             (r"ecr describe-images", _DIGEST),
+            (
+                r"secretsmanager get-secret-value.*trustedrouter-observer-internal-token",
+                "harness-observer-token",
+            ),
+            (
+                r"secretsmanager get-secret-value.*trustedrouter-internal-gateway-token",
+                "harness-legacy-gateway-token",
+            ),
+            (
+                r"apprunner describe-auto-scaling-configuration",
+                "10\t1\t4\tarn:aws:apprunner:eu-west-3:330422590279:"
+                "autoscalingconfiguration/tr-eu-observer-bounded/1/config-id",
+            ),
+            (
+                r"apprunner describe-service.*AutoScalingConfigurationSummary",
+                "arn:aws:apprunner:eu-west-3:330422590279:"
+                "autoscalingconfiguration/tr-eu-observer-bounded/1/config-id",
+            ),
+            (r"apprunner describe-service.*HealthCheckConfiguration", "TCP"),
+            (
+                r"apprunner describe-service.*Service\.ServiceUrl",
+                "observer.eu-west-3.awsapprunner.com",
+            ),
             (r"apprunner describe-service.*ImageIdentifier", f"{_ECR}@{_DIGEST}"),
             (r"apprunner describe-service.*Service\.Status", "RUNNING"),
             (r"apprunner list-services", "arn:aws:apprunner:eu-west-3:330422590279:service/tr-eu"),
+            (r"apprunner create-service", _AWS_SERVICE_ARN),
+            (
+                r"wafv2 list-web-acls",
+                "acl-id\tarn:aws:wafv2:eu-west-3:330422590279:regional/webacl/"
+                "trusted-router-app-runner-edge/acl-id",
+            ),
+            (
+                r"wafv2 get-web-acl-for-resource",
+                "arn:aws:wafv2:eu-west-3:330422590279:regional/webacl/"
+                "trusted-router-app-runner-edge/acl-id",
+            ),
+            (
+                r"wafv2 get-web-acl",
+                '{"LockToken":"lock","WebACL":{"Rules":['
+                '{"Name":"HighRatePerIpBlock","Action":{"Block":{}},'
+                '"Statement":{"RateBasedStatement":{"AggregateKeyType":"IP"}}},'
+                '{"Name":"AwsManagedCommon","Statement":'
+                '{"ManagedRuleGroupStatement":{"VendorName":"AWS"}}}]}}',
+            ),
             # It waits for the EventBridge API-key connection to authorize.
             (r"events describe-connection", "AUTHORIZED"),
         ),
@@ -229,14 +336,18 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
         home_files={
             # Credential-shaped inputs the script requires. Fake values in a
             # temp $HOME; nothing here is or resembles a real token.
-            ".quill-secrets/trustedrouter-internal-gateway-token": "harness-fake-internal\n",
+            ".quill-secrets/trustedrouter-observer-internal-token": "harness-fake-observer\n",
             ".quill-secrets/trustedrouter-synthetic-monitor-api-key": "harness-fake-monitor\n",
-            ".quill-secrets/trustedrouter-federation-peer-token": "harness-fake-peer\n",
         },
         responses=(
             (r"acr build|acr import", "harness"),
             (r"--query .?loginServer", "trazureuaenorthacr.azurecr.io"),
             (r"--query .?fullyQualifiedDomainName", "tr-azure-pg.postgres.database.azure.com"),
+            (r"activeRevisionsMode", "Single"),
+            # Azure owns paid synthetic/remediation loops in-process until an
+            # external job is explicitly approved, so it must be a singleton.
+            (r"template\.scale\.maxReplicas", "1"),
+            (r"concurrentRequests", "10"),
             (r"--query .?properties\.configuration\.ingress\.fqdn", "tr-azure.example.net"),
             # It asserts the COUNT of tr_* tables, not psql's exit code.
             (r"information_schema\.tables", "9"),
@@ -245,6 +356,36 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
         # armed to remove the temporary Postgres firewall rule it opened to
         # apply the schema. Cleanup, not provisioning.
         cleanup_after_gate=(r"firewall-rule delete",),
+    ),
+    "scripts/deploy/azure_canary_app.sh": ScriptFixture(
+        responses=(
+            (r"openssl rand -hex 32", "a" * 64),
+            (r"secret-name attribution-cookie-secret", "a" * 64),
+            (r"TR_GOOGLE_OAUTH_LOGIN_AVAILABLE.*value", "false"),
+            (r"TR_GITHUB_OAUTH_LOGIN_AVAILABLE.*value", "false"),
+            (r"activeRevisionsMode", "Single"),
+            (r"template\.scale\.maxReplicas", "2"),
+            (r"concurrentRequests", "10"),
+            (
+                r"--query .?properties\.configuration\.ingress\.fqdn",
+                "tr-canary.example.net",
+            ),
+        ),
+    ),
+    "scripts/deploy/synthetic.sh": ScriptFixture(
+        env={"TR_BILLING_SERVICE": "trusted-router-billing"},
+        responses=(
+            (
+                r"run services describe trusted-router-billing.*--format=json",
+                _SYNTHETIC_INGEST_SERVICE_JSON,
+            ),
+            (
+                r"dns managed-zones describe trusted-router-private-run-app --format=json",
+                '{"dnsName":"run.app.","visibility":"private",'
+                '"privateVisibilityConfig":{"networks":['
+                '{"networkUrl":"projects/quill-cloud-proxy/global/networks/default"}]}}',
+            ),
+        ),
     ),
 }
 
@@ -380,8 +521,13 @@ class DeployScriptHarness:
         argv_log.write_text("")
         fixtures_file = run_dir / "fixtures.tsv"
         fixtures_file.write_text(
-            "".join(f"{pattern}\t{reply}\n" for pattern, reply in fixture.responses)
+            "".join(
+                f"{pattern}\t{base64.b64encode(reply.encode()).decode('ascii')}\n"
+                for pattern, reply in fixture.responses
+            )
         )
+        failures_file = run_dir / "failures.txt"
+        failures_file.write_text("".join(f"{pattern}\n" for pattern in fixture.failures))
 
         env = {
             "PATH": str(self.bin),
@@ -390,6 +536,7 @@ class DeployScriptHarness:
             "LANG": "C",
             "HARNESS_ARGV_LOG": str(argv_log),
             "HARNESS_FIXTURES": str(fixtures_file),
+            "HARNESS_FAILURES": str(failures_file),
             "HARNESS_VERIFIER_RC": str(verifier_rc),
             **{k: v for k, v in fixture.env.items() if k not in omit_env},
         }

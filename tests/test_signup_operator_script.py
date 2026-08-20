@@ -9,7 +9,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _write_harness(tmp_path: Path, *, bad_region: str = "") -> tuple[Path, Path]:
+def _write_harness(
+    tmp_path: Path,
+    *,
+    bad_region: str = "",
+    bad_candidate_region: str = "",
+    traffic_failure_region: str = "",
+) -> tuple[Path, Path]:
     deploy = tmp_path / "deploy"
     deploy.mkdir()
     script = deploy / "set_new_signups.sh"
@@ -38,16 +44,15 @@ done
 state="$FAKE_GCLOUD_STATE/$region"
 mkdir -p "$state"
 if [ "$1 $2 $3" = "run services describe" ]; then
-  if [[ "$*" == *"latestCreatedRevisionName"* ]]; then
-    cat "$state/latest"
-  else
-    revision="$(cat "$state/serving" 2>/dev/null || printf 'trusted-router-old')"
-    printf '{"status":{"traffic":[{"percent":100,"revisionName":"%s"}]}}\n' "$revision"
-  fi
+  revision="$(cat "$state/serving" 2>/dev/null || printf 'trusted-router-old')"
+  printf '{"status":{"traffic":[{"percent":100,"revisionName":"%s"}]}}\n' "$revision"
 elif [ "$1 $2 $3" = "run revisions describe" ]; then
   revision="$4"
   surface=control
   if [ "$region" = "${FAKE_BAD_REGION:-}" ] && [ "$revision" = trusted-router-old ]; then
+    surface=public
+  fi
+  if [ "$region" = "${FAKE_BAD_CANDIDATE_REGION:-}" ] && [ "$revision" != trusted-router-old ]; then
     surface=public
   fi
   gate="$(cat "$state/gate" 2>/dev/null || printf true)"
@@ -60,12 +65,18 @@ elif [ "$1 $2 $3" = "run services update" ]; then
       --update-env-vars=TR_NEW_SIGNUPS_ENABLED=*) desired="${arg##*=}" ;;
     esac
   done
-  printf 'trusted-router-%s\n' "$suffix" >"$state/latest"
+  revision="trusted-router-${suffix}"
   printf '%s\n' "$desired" >"$state/gate"
+  printf '%s\n' "$revision"
 elif [ "$1 $2 $3" = "run services update-traffic" ]; then
   for arg in "$@"; do
     case "$arg" in --to-revisions=*) revision="${arg#--to-revisions=}"; revision="${revision%=100}" ;; esac
   done
+  if [ "$region" = "${FAKE_TRAFFIC_FAILURE_REGION:-}" ] \
+      && [ "$revision" != trusted-router-old ]; then
+    printf '%s\n' "$revision" >"$state/serving"
+    exit 73
+  fi
   printf '%s\n' "$revision" >"$state/serving"
 else
   printf 'unexpected fake gcloud call: %s\n' "$*" >&2
@@ -111,6 +122,8 @@ else:
                 "FAKE_GCLOUD_LOG": str(log),
                 "FAKE_GCLOUD_STATE": str(state),
                 "FAKE_BAD_REGION": bad_region,
+                "FAKE_BAD_CANDIDATE_REGION": bad_candidate_region,
+                "FAKE_TRAFFIC_FAILURE_REGION": traffic_failure_region,
             }
         ),
         encoding="utf-8",
@@ -143,9 +156,22 @@ def test_signup_operator_moves_every_control_region_and_verifies_serving_revisio
     assert len(updates) == 2
     assert len(traffic) == 2
     assert all("--no-traffic" in call for call in updates)
+    assert all("latestCreatedRevisionName" in call for call in updates)
     assert all("TR_NEW_SIGNUPS_ENABLED=false" in call for call in updates)
     assert all("=100" in call for call in traffic)
     assert "new account creation is off" in result.stderr
+    first_traffic = min(index for index, call in enumerate(calls) if call.startswith("run services update-traffic "))
+    assert all(
+        any(
+            call.startswith("run revisions describe") and f"--region={region}" in call
+            for call in calls[:first_traffic]
+        )
+        for region in ("region-a", "region-b")
+    )
+    assert not any(
+        call.startswith("run services describe") and "latestCreatedRevisionName" in call
+        for call in calls
+    )
 
 
 def test_signup_operator_preflights_the_whole_fleet_before_any_mutation(
@@ -170,3 +196,32 @@ def test_signup_operator_rejects_unknown_action_without_cloud_calls(tmp_path: Pa
     assert result.returncode == 2
     assert "usage:" in result.stderr
     assert not (tmp_path / "gcloud.log").exists()
+
+
+def test_signup_operator_validates_every_staged_candidate_before_traffic(
+    tmp_path: Path,
+) -> None:
+    script, env_file = _write_harness(tmp_path, bad_candidate_region="region-b")
+
+    result = _run(script, env_file, "disable")
+
+    assert result.returncode != 0
+    assert "staged" in result.stderr
+    calls = (tmp_path / "gcloud.log").read_text(encoding="utf-8").splitlines()
+    assert len([call for call in calls if call.startswith("run services update ")]) == 2
+    assert not any(call.startswith("run services update-traffic ") for call in calls)
+
+
+def test_signup_operator_rolls_back_prior_regions_when_promotion_fails(
+    tmp_path: Path,
+) -> None:
+    script, env_file = _write_harness(tmp_path, traffic_failure_region="region-b")
+
+    result = _run(script, env_file, "disable")
+
+    assert result.returncode != 0
+    assert "rolling back" in result.stderr
+    state = tmp_path / "state"
+    assert (state / "region-a" / "serving").read_text(encoding="utf-8").strip() == (
+        "trusted-router-old"
+    )

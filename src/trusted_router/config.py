@@ -7,6 +7,7 @@ import re
 import sys
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
+from urllib.parse import urlsplit
 
 from pydantic import model_validator
 from pydantic_settings import (
@@ -214,8 +215,83 @@ def _comma_set(raw: str, *, primary: str | None = None) -> tuple[str, ...]:
     return tuple(dict.fromkeys(values))
 
 
+# Credential-bearing settings are owned by explicit process surfaces.  This
+# table is intentionally importable by the mutation-sensitive contract test:
+# adding a credential requires naming every process allowed to receive it.
+SERVICE_SURFACE_SECRET_OWNERS: dict[str, frozenset[str]] = {
+    "ops_chat_webhook_secret": frozenset({"actions"}),
+    "postgres_dsn": frozenset({"public", "control", "internal", "observer"}),
+    "postgres_iam_auth": frozenset({"public", "control", "internal", "observer"}),
+    "clickhouse_url": frozenset({"control", "internal"}),
+    "clickhouse_password": frozenset({"control", "internal"}),
+    "provider_analytics_clickhouse_url": frozenset({"control"}),
+    "provider_analytics_clickhouse_password": frozenset({"control"}),
+    "operational_analytics_clickhouse_url": frozenset(
+        {"public", "control", "internal", "observer"}
+    ),
+    "operational_analytics_clickhouse_password": frozenset(
+        {"public", "control", "internal", "observer"}
+    ),
+    "sentry_dsn": frozenset({"control", "internal", "observer"}),
+    "google_data_manager_enabled": frozenset({"control"}),
+    "google_data_manager_kms_key_name": frozenset({"control"}),
+    "attribution_cookie_secret": frozenset({"public", "control"}),
+    "internal_gateway_token": frozenset({"internal"}),
+    # Internal owns this only for synthetic/Sentry routes; its billing routes
+    # still select internal_gateway_token by path.
+    "observer_internal_token": frozenset({"internal", "observer"}),
+    "stripe_webhook_secret": frozenset({"control"}),
+    "stripe_secret_key": frozenset({"control"}),
+    "paypal_client_id": frozenset({"control"}),
+    "paypal_client_secret": frozenset({"control"}),
+    "paypal_webhook_id": frozenset({"control"}),
+    "adyen_enabled": frozenset({"control"}),
+    "adyen_api_key": frozenset({"control"}),
+    "adyen_client_key": frozenset({"control"}),
+    "adyen_hmac_key": frozenset({"control"}),
+    "adyen_reference_key": frozenset({"control"}),
+    "byok_kms_key_name": frozenset({"control", "internal"}),
+    "byok_envelope_key_b64": frozenset({"control", "internal"}),
+    "google_client_id": frozenset({"control"}),
+    "google_client_secret": frozenset({"control"}),
+    "google_alias_credentials_json": frozenset({"control"}),
+    "github_client_id": frozenset({"control"}),
+    "github_client_secret": frozenset({"control"}),
+    "github_alias_credentials_json": frozenset({"control"}),
+    "x402_enabled": frozenset({"control"}),
+    "notify_enabled": frozenset({"control"}),
+    "veriff_enabled": frozenset({"control"}),
+    "veriff_api_key": frozenset({"control"}),
+    "veriff_shared_secret_key": frozenset({"control"}),
+    "telnyx_api_key": frozenset({"control"}),
+    "twilio_account_sid": frozenset({"control"}),
+    "twilio_auth_token": frozenset({"control"}),
+    "twilio_api_key_secret": frozenset({"control"}),
+    "aws_access_key_id": frozenset({"control", "actions"}),
+    "aws_secret_access_key": frozenset({"control", "actions"}),
+    "synthetic_monitor_api_key": frozenset({"internal", "observer"}),
+    "federation_peer_token": frozenset({"internal"}),
+    "federation_home_token": frozenset({"internal"}),
+    "federation_credit_inbound_token": frozenset({"internal"}),
+    "federation_credit_peer_token": frozenset({"internal"}),
+    "federation_settlement_inbound_tokens": frozenset({"internal"}),
+    "federation_settlement_home_token": frozenset({"internal"}),
+}
+
+
+def _sensitive_setting_is_configured(field_name: str, value: object) -> bool:
+    if field_name in {"google_alias_credentials_json", "github_alias_credentials_json"}:
+        return value != "{}"
+    return bool(value)
+
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="TR_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="TR_",
+        env_file=".env",
+        extra="ignore",
+        hide_input_in_errors=True,
+    )
 
     environment: str = "local"
     release: str = "local"
@@ -465,6 +541,10 @@ class Settings(BaseSettings):
     # public renderer must not disclose a token accepted by billing routes.
     attribution_cookie_secret: str | None = None
     internal_gateway_token: str | None = None
+    # Dedicated to the externally reachable observer/status processes.  It
+    # authenticates only their synthetic/Sentry internal endpoints and must
+    # never be accepted by billing authorize/settle/refund routes.
+    observer_internal_token: str | None = None
     stripe_webhook_secret: str | None = None
     stripe_secret_key: str | None = None
     # Standard US Stripe processing schedules. These are grossed up against
@@ -519,6 +599,12 @@ class Settings(BaseSettings):
     google_client_id: str | None = None
     google_client_secret: str | None = None
     google_oauth_redirect_url: str | None = None
+    # The public service must render login links without receiving the OAuth
+    # client secrets owned by the control service. These are deliberately
+    # non-secret presentation flags, set from the same rollout manifest that
+    # configures the control service. ``None`` is rejected on a deployed public
+    # surface so a split rollout cannot silently remove a login method.
+    google_oauth_login_available: bool | None = None
     # Backup domains use independent provider credentials so login remains
     # available even if the canonical domain or its OAuth app is unavailable.
     # Each provider has its own Secret Manager value so credentials can rotate
@@ -527,6 +613,7 @@ class Settings(BaseSettings):
     github_client_id: str | None = None
     github_client_secret: str | None = None
     github_oauth_redirect_url: str | None = None
+    github_oauth_login_available: bool | None = None
     # GitHub OAuth Apps permit exactly one callback URL. Each independent
     # first-party domain therefore has its own app credentials, supplied as a
     # single Secret Manager JSON value:
@@ -732,12 +819,10 @@ class Settings(BaseSettings):
     synthetic_monitor_region: str | None = None
     synthetic_monitor_api_key: str | None = None
     synthetic_monitor_model: str = "trustedrouter/monitor"
-    # Which control plane the /internal/synthetic/run billing probes
-    # (authorize+settle) exercise. None falls back to the canonical GCP
-    # plane, which is correct for GCP monitors but a WRONG-CLOUD trap for
-    # standalone deployments: the EU service must set this to its own
-    # plane or its probes measure another cloud's health. A per-request
-    # body override still wins over this setting.
+    # Exact HTTPS control-plane origin synthetic canaries exercise. None falls
+    # back to the canonical GCP plane. Observer-authenticated requests cannot
+    # override it; otherwise an internal service could be induced to send its
+    # monitor or gateway credentials to an attacker-selected destination.
     synthetic_control_plane_base_url: str | None = None
     # --- Lazy API-key federation -------------------------------------------
     # HOME side: the token peers present to /internal/federation/resolve-key.
@@ -828,10 +913,10 @@ class Settings(BaseSettings):
     # DEAUTHORIZED and the status page just went quiet, with the app healthy
     # and the rule ENABLED.
     #
-    # Running the pass in the serving process makes the monitor arrive with the
-    # deployment, on every cloud, with nothing extra to provision. AWS already
-    # accepts this shape (its rule just calls the app), so this is the same
-    # model with the trigger moved inside.
+    # Azure temporarily runs the pass in its serving process so the monitor
+    # arrives with the deployment and no new scheduled resource. Its deploy
+    # must therefore pin exactly one replica. AWS keeps this disabled and its
+    # one existing EventBridge rule calls the authenticated app route.
     #
     # 0 = disabled (the default, so GCP/AWS keep their existing schedulers and
     # nothing double-runs).
@@ -916,8 +1001,9 @@ class Settings(BaseSettings):
     remediator_mode: str = "observe"
     remediator_interval_seconds: int = 120
     # Cloud Run request-based CPU may pause background coroutines between
-    # requests. GCP therefore drives remediation from the scheduled synthetic
-    # worker and disables this loop; long-lived AWS/Azure processes retain it.
+    # requests. GCP drives remediation from its scheduled synthetic worker;
+    # AWS reuses its existing EventBridge synthetic rule. Both disable this
+    # loop. Azure retains it only while its observer is pinned to one replica.
     remediator_in_process_enabled: bool = True
     synthetic_fleet_peers: str = (
         "gcp=https://trustedrouter.com"
@@ -968,6 +1054,20 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def production_is_fail_closed(self) -> Settings:
         environment = self.environment.lower()
+        if self.synthetic_control_plane_base_url:
+            parsed_control_plane = urlsplit(self.synthetic_control_plane_base_url)
+            if (
+                parsed_control_plane.scheme != "https"
+                or not parsed_control_plane.hostname
+                or parsed_control_plane.username is not None
+                or parsed_control_plane.password is not None
+                or parsed_control_plane.path not in {"", "/"}
+                or parsed_control_plane.query
+                or parsed_control_plane.fragment
+            ):
+                raise ValueError(
+                    "TR_SYNTHETIC_CONTROL_PLANE_BASE_URL must be an exact HTTPS origin"
+                )
         if self.max_request_body_bytes <= 0:
             raise ValueError("TR_MAX_REQUEST_BODY_BYTES must be positive")
         if self.max_in_flight_request_body_bytes < self.max_request_body_bytes:
@@ -981,6 +1081,15 @@ class Settings(BaseSettings):
             raise ValueError(
                 "TR_REQUEST_BODY_READ_TIMEOUT_SECONDS must be between 0 and 300"
             )
+        if self.rate_limit_window_seconds <= 0:
+            raise ValueError("TR_RATE_LIMIT_WINDOW_SECONDS must be positive")
+        for name, value in (
+            ("TR_RATE_LIMIT_IP_PER_WINDOW", self.rate_limit_ip_per_window),
+            ("TR_RATE_LIMIT_KEY_PER_WINDOW", self.rate_limit_key_per_window),
+            ("TR_RATE_LIMIT_INTERNAL_PER_WINDOW", self.rate_limit_internal_per_window),
+        ):
+            if value <= 0:
+                raise ValueError(f"{name} must be positive")
         if self.rate_limit_client_ip_mode not in {"untrusted", "edge_header"}:
             raise ValueError(
                 "TR_RATE_LIMIT_CLIENT_IP_MODE must be 'untrusted' or 'edge_header'"
@@ -1101,10 +1210,12 @@ class Settings(BaseSettings):
                 "TR_OPS_CHAT_WEBHOOK_URLS and TR_OPS_CHAT_WEBHOOK_SECRET "
                 "must both be set or both unset"
             )
-        if environment == "production" and any(
+        if environment not in {"local", "test"} and any(
             not url.startswith("https://") for url in ops_chat_urls
         ):
-            raise ValueError("TR_OPS_CHAT_WEBHOOK_URLS must contain only HTTPS URLs in production")
+            raise ValueError(
+                "TR_OPS_CHAT_WEBHOOK_URLS must contain only HTTPS URLs when deployed"
+            )
         if not 1 <= self.google_data_manager_batch_size <= 2_000:
             raise ValueError("TR_GOOGLE_DATA_MANAGER_BATCH_SIZE must be between 1 and 2000")
         if self.google_data_manager_lease_seconds < 30:
@@ -1216,15 +1327,39 @@ class Settings(BaseSettings):
                 "TR_X402_ENABLED requires TR_STRIPE_SECRET_KEY and "
                 "TR_STRIPE_WEBHOOK_SECRET outside local/test"
             )
-        if environment != "production":
+        if environment in {"local", "test"}:
             return self
+        production = environment == "production"
         missing = []
         surface = self.service_surface
-        if surface in {"control", "public"}:
+        if environment != "worker" and surface in {"control", "public"}:
             if not self.attribution_cookie_secret:
                 missing.append("TR_ATTRIBUTION_COOKIE_SECRET")
             elif len(self.attribution_cookie_secret.encode("utf-8")) < 32:
                 missing.append("TR_ATTRIBUTION_COOKIE_SECRET (at least 32 bytes)")
+        if environment != "worker" and surface == "public":
+            if self.google_oauth_login_available is None:
+                missing.append("TR_GOOGLE_OAUTH_LOGIN_AVAILABLE")
+            if self.github_oauth_login_available is None:
+                missing.append("TR_GITHUB_OAUTH_LOGIN_AVAILABLE")
+        if environment != "worker" and surface == "control":
+            for provider, advertised, configured in (
+                (
+                    "GOOGLE",
+                    self.google_oauth_login_available,
+                    self.google_oauth_credentials_configured,
+                ),
+                (
+                    "GITHUB",
+                    self.github_oauth_login_available,
+                    self.github_oauth_credentials_configured,
+                ),
+            ):
+                if advertised is not None and advertised != configured:
+                    missing.append(
+                        f"TR_{provider}_OAUTH_LOGIN_AVAILABLE must match the control "
+                        f"service's {provider} OAuth credential capability"
+                    )
         if (
             self.attribution_cookie_secret
             and self.internal_gateway_token
@@ -1236,143 +1371,85 @@ class Settings(BaseSettings):
             missing.append(
                 "TR_ATTRIBUTION_COOKIE_SECRET must differ from TR_INTERNAL_GATEWAY_TOKEN"
             )
+        if (
+            self.observer_internal_token
+            and self.internal_gateway_token
+            and hmac.compare_digest(
+                self.observer_internal_token.encode("utf-8"),
+                self.internal_gateway_token.encode("utf-8"),
+            )
+        ):
+            missing.append(
+                "TR_OBSERVER_INTERNAL_TOKEN must differ from TR_INTERNAL_GATEWAY_TOKEN"
+            )
+        if (
+            self.observer_internal_token
+            and self.synthetic_monitor_api_key
+            and hmac.compare_digest(
+                self.observer_internal_token.encode("utf-8"),
+                self.synthetic_monitor_api_key.encode("utf-8"),
+            )
+        ):
+            missing.append(
+                "TR_OBSERVER_INTERNAL_TOKEN must differ from "
+                "TR_SYNTHETIC_MONITOR_API_KEY"
+            )
 
-        gateway_surfaces = {"combined", "control", "internal", "observer"}
+        # ``combined`` is a local/test compatibility surface.  create_app()
+        # rejects it before any deployed server starts, so do not let missing
+        # credentials mask that clearer ownership error here.
+        gateway_surfaces = {"internal"}
         sentry_surfaces = {"combined", "control", "internal", "observer"}
         account_surfaces = {"combined", "control"}
         email_surfaces = {"combined", "control", "actions"}
         if surface in gateway_surfaces and not self.internal_gateway_token:
             missing.append("TR_INTERNAL_GATEWAY_TOKEN")
-        if surface in account_surfaces and not self.stripe_webhook_secret:
-            missing.append("TR_STRIPE_WEBHOOK_SECRET")
-        if surface in account_surfaces and not self.stripe_secret_key:
-            missing.append("TR_STRIPE_SECRET_KEY")
-        if surface in sentry_surfaces and not self.sentry_dsn:
-            missing.append("TR_SENTRY_DSN")
-        if surface in email_surfaces and not self.aws_access_key_id:
-            missing.append("TR_AWS_ACCESS_KEY_ID")
-        if surface in email_surfaces and not self.aws_secret_access_key:
-            missing.append("TR_AWS_SECRET_ACCESS_KEY")
-        if surface in email_surfaces and not self.ses_from_email:
-            missing.append("TR_SES_FROM_EMAIL")
+        if surface in {"internal", "observer"} and not self.observer_internal_token:
+            missing.append("TR_OBSERVER_INTERNAL_TOKEN")
+        if surface == "control" and environment != "worker":
+            if not self.stripe_webhook_secret:
+                missing.append("TR_STRIPE_WEBHOOK_SECRET")
+            if not self.stripe_secret_key:
+                missing.append("TR_STRIPE_SECRET_KEY")
+        paypal_fields = [
+            self.paypal_client_id,
+            self.paypal_client_secret,
+            self.paypal_webhook_id,
+        ]
+        if any(paypal_fields) and not all(paypal_fields):
+            missing.append(
+                "TR_PAYPAL_CLIENT_ID, TR_PAYPAL_CLIENT_SECRET, and "
+                "TR_PAYPAL_WEBHOOK_ID must all be set or all unset"
+            )
+        if production:
+            if surface in sentry_surfaces and not self.sentry_dsn:
+                missing.append("TR_SENTRY_DSN")
+            if surface in email_surfaces and not self.aws_access_key_id:
+                missing.append("TR_AWS_ACCESS_KEY_ID")
+            if surface in email_surfaces and not self.aws_secret_access_key:
+                missing.append("TR_AWS_SECRET_ACCESS_KEY")
+            if surface in email_surfaces and not self.ses_from_email:
+                missing.append("TR_SES_FROM_EMAIL")
 
-        forbidden_by_surface = {
-            "public": (
-                ("TR_INTERNAL_GATEWAY_TOKEN", self.internal_gateway_token),
-                ("TR_STRIPE_WEBHOOK_SECRET", self.stripe_webhook_secret),
-                ("TR_STRIPE_SECRET_KEY", self.stripe_secret_key),
-                ("TR_SENTRY_DSN", self.sentry_dsn),
-                ("TR_AWS_ACCESS_KEY_ID", self.aws_access_key_id),
-                ("TR_AWS_SECRET_ACCESS_KEY", self.aws_secret_access_key),
-                ("TR_BYOK_KMS_KEY_NAME", self.byok_kms_key_name),
-            ),
-            "internal": (
-                ("TR_ATTRIBUTION_COOKIE_SECRET", self.attribution_cookie_secret),
-                ("TR_STRIPE_WEBHOOK_SECRET", self.stripe_webhook_secret),
-                ("TR_STRIPE_SECRET_KEY", self.stripe_secret_key),
-                ("TR_AWS_ACCESS_KEY_ID", self.aws_access_key_id),
-                ("TR_AWS_SECRET_ACCESS_KEY", self.aws_secret_access_key),
-                ("TR_BYOK_KMS_KEY_NAME", self.byok_kms_key_name),
-            ),
-            "observer": (
-                ("TR_ATTRIBUTION_COOKIE_SECRET", self.attribution_cookie_secret),
-                ("TR_STRIPE_WEBHOOK_SECRET", self.stripe_webhook_secret),
-                ("TR_STRIPE_SECRET_KEY", self.stripe_secret_key),
-                ("TR_AWS_ACCESS_KEY_ID", self.aws_access_key_id),
-                ("TR_AWS_SECRET_ACCESS_KEY", self.aws_secret_access_key),
-                ("TR_BYOK_KMS_KEY_NAME", self.byok_kms_key_name),
-            ),
-            "actions": (
-                ("TR_ATTRIBUTION_COOKIE_SECRET", self.attribution_cookie_secret),
-                ("TR_INTERNAL_GATEWAY_TOKEN", self.internal_gateway_token),
-                ("TR_STRIPE_WEBHOOK_SECRET", self.stripe_webhook_secret),
-                ("TR_STRIPE_SECRET_KEY", self.stripe_secret_key),
-                ("TR_SENTRY_DSN", self.sentry_dsn),
-                ("TR_BYOK_KMS_KEY_NAME", self.byok_kms_key_name),
-                ("TR_BYOK_ENVELOPE_KEY_B64", self.byok_envelope_key_b64),
-                ("TR_POSTGRES_DSN", self.postgres_dsn),
-                ("TR_POSTGRES_IAM_AUTH", self.postgres_iam_auth),
-                ("TR_CLICKHOUSE_URL", self.clickhouse_url),
-                ("TR_CLICKHOUSE_PASSWORD", self.clickhouse_password),
-                (
-                    "TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL",
-                    self.provider_analytics_clickhouse_url,
-                ),
-                (
-                    "TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD",
-                    self.provider_analytics_clickhouse_password,
-                ),
-                (
-                    "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL",
-                    self.operational_analytics_clickhouse_url,
-                ),
-                (
-                    "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD",
-                    self.operational_analytics_clickhouse_password,
-                ),
-                ("TR_GOOGLE_DATA_MANAGER_ENABLED", self.google_data_manager_enabled),
-                (
-                    "TR_GOOGLE_DATA_MANAGER_KMS_KEY_NAME",
-                    self.google_data_manager_kms_key_name,
-                ),
-                ("TR_PAYPAL_CLIENT_ID", self.paypal_client_id),
-                ("TR_PAYPAL_CLIENT_SECRET", self.paypal_client_secret),
-                ("TR_PAYPAL_WEBHOOK_ID", self.paypal_webhook_id),
-                ("TR_ADYEN_ENABLED", self.adyen_enabled),
-                ("TR_ADYEN_API_KEY", self.adyen_api_key),
-                ("TR_ADYEN_CLIENT_KEY", self.adyen_client_key),
-                ("TR_ADYEN_HMAC_KEY", self.adyen_hmac_key),
-                ("TR_ADYEN_REFERENCE_KEY", self.adyen_reference_key),
-                ("TR_GOOGLE_CLIENT_ID", self.google_client_id),
-                ("TR_GOOGLE_CLIENT_SECRET", self.google_client_secret),
-                (
-                    "TR_GOOGLE_ALIAS_CREDENTIALS_JSON",
-                    self.google_alias_credentials_json != "{}",
-                ),
-                ("TR_GITHUB_CLIENT_ID", self.github_client_id),
-                ("TR_GITHUB_CLIENT_SECRET", self.github_client_secret),
-                (
-                    "TR_GITHUB_ALIAS_CREDENTIALS_JSON",
-                    self.github_alias_credentials_json != "{}",
-                ),
-                ("TR_X402_ENABLED", self.x402_enabled),
-                ("TR_NOTIFY_ENABLED", self.notify_enabled),
-                ("TR_VERIFF_ENABLED", self.veriff_enabled),
-                ("TR_VERIFF_API_KEY", self.veriff_api_key),
-                ("TR_VERIFF_SHARED_SECRET_KEY", self.veriff_shared_secret_key),
-                ("TR_TELNYX_API_KEY", self.telnyx_api_key),
-                ("TR_TWILIO_ACCOUNT_SID", self.twilio_account_sid),
-                ("TR_TWILIO_AUTH_TOKEN", self.twilio_auth_token),
-                ("TR_TWILIO_API_KEY_SECRET", self.twilio_api_key_secret),
-                ("TR_SYNTHETIC_MONITOR_API_KEY", self.synthetic_monitor_api_key),
-                ("TR_FEDERATION_PEER_TOKEN", self.federation_peer_token),
-                ("TR_FEDERATION_HOME_TOKEN", self.federation_home_token),
-                (
-                    "TR_FEDERATION_CREDIT_INBOUND_TOKEN",
-                    self.federation_credit_inbound_token,
-                ),
-                (
-                    "TR_FEDERATION_CREDIT_PEER_TOKEN",
-                    self.federation_credit_peer_token,
-                ),
-                (
-                    "TR_FEDERATION_SETTLEMENT_INBOUND_TOKENS",
-                    self.federation_settlement_inbound_tokens,
-                ),
-                (
-                    "TR_FEDERATION_SETTLEMENT_HOME_TOKEN",
-                    self.federation_settlement_home_token,
-                ),
-            ),
-        }
-        for name, secret_value in forbidden_by_surface.get(surface, ()):
-            if secret_value:
-                missing.append(f"unset {name} for TR_SERVICE_SURFACE={surface}")
+        for field_name, owners in SERVICE_SURFACE_SECRET_OWNERS.items():
+            configured_value = getattr(self, field_name)
+            if surface not in owners and _sensitive_setting_is_configured(
+                field_name, configured_value
+            ):
+                environment_name = f"TR_{field_name.upper()}"
+                missing.append(
+                    f"unset {environment_name} for TR_SERVICE_SURFACE={surface}"
+                )
         if self.bootstrap_management_key:
             missing.append("unset TR_BOOTSTRAP_MANAGEMENT_KEY")
         storage_required = surface != "actions"
         if surface == "actions" and self.storage_backend != "memory":
             missing.append("TR_STORAGE_BACKEND=memory for TR_SERVICE_SURFACE=actions")
+        if not production:
+            if missing:
+                joined = ", ".join(missing)
+                raise ValueError(f"deployed configuration is not fail-closed: {joined}")
+            return self
         if storage_required and self.storage_backend == "memory":
             missing.append("TR_STORAGE_BACKEND=spanner-bigtable or spanner-clickhouse")
         if storage_required and self.storage_backend in {"spanner-bigtable", "spanner-clickhouse"}:
@@ -1446,8 +1523,16 @@ class Settings(BaseSettings):
             if value.strip()
         }
         for provider, canonical_enabled, raw_credentials in (
-            ("GOOGLE", self.google_oauth_enabled, self.google_alias_credentials_json),
-            ("GITHUB", self.github_oauth_enabled, self.github_alias_credentials_json),
+            (
+                "GOOGLE",
+                self.google_oauth_credentials_configured,
+                self.google_alias_credentials_json,
+            ),
+            (
+                "GITHUB",
+                self.github_oauth_credentials_configured,
+                self.github_alias_credentials_json,
+            ),
         ):
             setting_name = f"TR_{provider}_ALIAS_CREDENTIALS_JSON"
             try:
@@ -1464,6 +1549,11 @@ class Settings(BaseSettings):
                     f"{setting_name} contains unconfigured domain(s): "
                     + ", ".join(unknown_oauth_aliases)
                 )
+            if alias_credentials and not canonical_enabled:
+                missing.append(
+                    f"{setting_name} requires canonical TR_{provider}_CLIENT_ID and "
+                    f"TR_{provider}_CLIENT_SECRET"
+                )
             if canonical_enabled:
                 missing_oauth_aliases = sorted(configured_aliases - set(alias_credentials))
                 if missing_oauth_aliases:
@@ -1471,16 +1561,6 @@ class Settings(BaseSettings):
                         f"{setting_name} is missing configured domain(s): "
                         + ", ".join(missing_oauth_aliases)
                     )
-        paypal_fields = [
-            self.paypal_client_id,
-            self.paypal_client_secret,
-            self.paypal_webhook_id,
-        ]
-        if any(paypal_fields) and not all(paypal_fields):
-            missing.append(
-                "TR_PAYPAL_CLIENT_ID, TR_PAYPAL_CLIENT_SECRET, and TR_PAYPAL_WEBHOOK_ID "
-                "must all be set or all unset"
-            )
         if missing:
             joined = ", ".join(missing)
             raise ValueError(f"production configuration is not fail-closed: {joined}")
@@ -1488,10 +1568,30 @@ class Settings(BaseSettings):
 
     @property
     def google_oauth_enabled(self) -> bool:
-        return bool(self.google_client_id and self.google_client_secret)
+        if self.service_surface == "public":
+            if self.google_oauth_login_available is not None:
+                return self.google_oauth_login_available
+            return self.google_oauth_credentials_configured
+        if self.service_surface == "observer":
+            return False
+        return self.google_oauth_credentials_configured
 
     @property
     def github_oauth_enabled(self) -> bool:
+        if self.service_surface == "public":
+            if self.github_oauth_login_available is not None:
+                return self.github_oauth_login_available
+            return self.github_oauth_credentials_configured
+        if self.service_surface == "observer":
+            return False
+        return self.github_oauth_credentials_configured
+
+    @property
+    def google_oauth_credentials_configured(self) -> bool:
+        return bool(self.google_client_id and self.google_client_secret)
+
+    @property
+    def github_oauth_credentials_configured(self) -> bool:
         return bool(self.github_client_id and self.github_client_secret)
 
     @property

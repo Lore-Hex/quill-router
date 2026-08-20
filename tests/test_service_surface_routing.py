@@ -68,8 +68,8 @@ def test_catalog_public_and_authenticated_paths_have_distinct_owners(prefix: str
     assert URL_MAP.route_surface(f"{prefix}/models/picker") == "public"
     assert URL_MAP.route_surface(f"{prefix}/models/author/slug/endpoints") == "public"
     assert URL_MAP.route_surface(f"{prefix}/models/user") == "control"
-    assert URL_MAP.route_surface(f"{prefix}/models/user-provided") == "control"
-    assert URL_MAP.route_surface(f"{prefix}/models/user-provided/sample") == "control"
+    assert URL_MAP.route_surface(f"{prefix}/models/user-provided") == "public"
+    assert URL_MAP.route_surface(f"{prefix}/models/user-provided/sample") == "public"
 
 
 @pytest.mark.parametrize("path", ["/support/inquiry", "/trustedos/inquiry"])
@@ -78,7 +78,25 @@ def test_anonymous_actions_leave_the_public_renderer(path: str) -> None:
     assert URL_MAP.route_surface(path.removesuffix("/inquiry")) == "public"
 
 
-def test_rewrite_preserves_unrelated_hosts_and_installs_all_three_backends() -> None:
+def test_group_buy_public_reads_and_private_state_have_distinct_owners() -> None:
+    assert URL_MAP.route_surface("/bedrock-group-buy") == "public"
+    assert URL_MAP.route_surface("/bedrock-group-buy/") == "public"
+    assert URL_MAP.route_surface("/v1/bedrock-group-buy") == "public"
+    assert URL_MAP.route_surface("/bedrock-group-buy/manage") == "control"
+    assert URL_MAP.route_surface("/bedrock-group-buy/pledge") == "control"
+    assert URL_MAP.route_surface("/bedrock-group-buy/withdraw") == "control"
+    assert URL_MAP.route_surface("/v1/bedrock-group-buy/me") == "control"
+    assert URL_MAP.route_surface("/v1/bedrock-group-buy/pledge") == "control"
+
+
+@pytest.mark.parametrize("prefix", ["", "/v1"])
+def test_carrier_texml_is_public_but_notification_mutations_are_control(prefix: str) -> None:
+    assert URL_MAP.route_surface(f"{prefix}/notify/texml") == "public"
+    assert URL_MAP.route_surface(f"{prefix}/notify") == "control"
+    assert URL_MAP.route_surface(f"{prefix}/notify/phone/start") == "control"
+
+
+def test_rewrite_preserves_explicit_unrelated_hosts_but_defaults_unknown_to_public() -> None:
     existing = {
         "name": "trusted-router-control",
         "id": "123",
@@ -86,10 +104,26 @@ def test_rewrite_preserves_unrelated_hosts_and_installs_all_three_backends() -> 
         "defaultService": "old-default",
         "hostRules": [
             {"hosts": ["trustedrouter.com", "www.trustedrouter.com"], "pathMatcher": "old"},
+            {
+                "hosts": [
+                    "api.trustedrouter.com",
+                    "aws.trustedrouter.com",
+                    "azure.trustedrouter.com",
+                    "b.trustedrouter.com",
+                    "a.uptimerouter.com",
+                    "c.allyrouter.com",
+                    "alerts.trustedrouter.com",
+                ],
+                "pathMatcher": "regional-and-attested",
+            },
             {"hosts": ["unrelated.example"], "pathMatcher": "unrelated"},
         ],
         "pathMatchers": [
             {"name": "old", "defaultService": "old-default"},
+            {
+                "name": "regional-and-attested",
+                "defaultService": "regional-backend",
+            },
             {"name": "unrelated", "defaultService": "other-backend"},
         ],
         "tests": [
@@ -114,14 +148,36 @@ def test_rewrite_preserves_unrelated_hosts_and_installs_all_three_backends() -> 
     )
     assert set(first_party["hosts"]) == {
         "trustedrouter.com",
-        "*.trustedrouter.com",
+        "www.trustedrouter.com",
+        "status.trustedrouter.com",
+        "trust.trustedrouter.com",
+        "eu.trustedrouter.com",
+        "status-us.trustedrouter.com",
+        "status-eu.trustedrouter.com",
         "allyrouter.com",
-        "*.allyrouter.com",
+        "www.allyrouter.com",
+        "status.allyrouter.com",
+        "trust.allyrouter.com",
         "uptimerouter.com",
-        "*.uptimerouter.com",
+        "www.uptimerouter.com",
+        "status.uptimerouter.com",
+        "trust.uptimerouter.com",
     }
-    assert {rule["hosts"][0] for rule in result["hostRules"] if rule is not first_party} == {
-        "unrelated.example"
+    preserved_hosts = {
+        host
+        for rule in result["hostRules"]
+        if rule is not first_party
+        for host in rule["hosts"]
+    }
+    assert preserved_hosts == {
+        "api.trustedrouter.com",
+        "aws.trustedrouter.com",
+        "azure.trustedrouter.com",
+        "b.trustedrouter.com",
+        "a.uptimerouter.com",
+        "c.allyrouter.com",
+        "alerts.trustedrouter.com",
+        "unrelated.example",
     }
     matcher = next(
         item for item in result["pathMatchers"] if item["name"] == "trusted-router-service-surfaces"
@@ -140,10 +196,70 @@ def test_rewrite_preserves_unrelated_hosts_and_installs_all_three_backends() -> 
 def test_rewrite_refuses_an_existing_catch_all_host_rule() -> None:
     with pytest.raises(ValueError, match="catch-all"):
         URL_MAP.rewrite_url_map(
-            {"hostRules": [{"hosts": ["*"], "pathMatcher": "old"}]},
+            {
+                "defaultService": "legacy",
+                "hostRules": [{"hosts": ["*"], "pathMatcher": "old"}],
+            },
             "public",
             "actions",
             "control",
             "internal",
             ["trustedrouter.com"],
+        )
+
+
+def test_rewrite_refuses_missing_unrelated_default_service() -> None:
+    with pytest.raises(ValueError, match="without an existing default service"):
+        URL_MAP.rewrite_url_map(
+            {"hostRules": []},
+            "public",
+            "actions",
+            "control",
+            "internal",
+            ["trustedrouter.com"],
+        )
+
+
+def test_rewrite_refuses_first_party_wildcard_instead_of_stealing_subdomains() -> None:
+    with pytest.raises(ValueError, match="wildcard first-party"):
+        URL_MAP.rewrite_url_map(
+            {
+                "defaultService": "legacy",
+                "hostRules": [
+                    {"hosts": ["*.trustedrouter.com"], "pathMatcher": "old"}
+                ],
+            },
+            "public",
+            "actions",
+            "control",
+            "internal",
+            ["trustedrouter.com"],
+        )
+
+
+def test_rewrite_refuses_reserved_matcher_owned_by_unrelated_host() -> None:
+    existing = {
+        "defaultService": "legacy",
+        "hostRules": [
+            {
+                "hosts": ["unrelated.example"],
+                "pathMatcher": "trusted-router-service-surfaces",
+            }
+        ],
+        "pathMatchers": [
+            {
+                "name": "trusted-router-service-surfaces",
+                "defaultService": "unrelated-backend",
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="unrelated host still references"):
+        URL_MAP.rewrite_url_map(
+            existing,
+            "public-backend",
+            "actions-backend",
+            "control-backend",
+            "internal-backend",
+            ["trustedrouter.com", "allyrouter.com", "uptimerouter.com"],
         )

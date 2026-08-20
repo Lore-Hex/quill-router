@@ -338,6 +338,25 @@ PY
 )"
   log "generated secret trustedrouter-internal-gateway-token"
 fi
+if ! gc secrets describe trustedrouter-observer-internal-token >/dev/null 2>&1; then
+  ensure_secret_value trustedrouter-observer-internal-token "$(python3 - <<'PY'
+import secrets
+print(secrets.token_urlsafe(48))
+PY
+)"
+  log "generated secret trustedrouter-observer-internal-token"
+fi
+# A copied billing token would silently undo the surface split. Compare values
+# without logging either secret and fail before the rollout can consume them.
+_observer_token_check="$(gc secrets versions access latest \
+  --secret=trustedrouter-observer-internal-token)"
+_gateway_token_check="$(gc secrets versions access latest \
+  --secret=trustedrouter-internal-gateway-token)"
+if [ "$_observer_token_check" = "$_gateway_token_check" ]; then
+  echo "ERROR: observer internal token must differ from billing gateway token" >&2
+  exit 1
+fi
+unset _observer_token_check _gateway_token_check
 
 # Runtime-SA project-level IAM bindings live in infra.sh (Phase 1
 # bootstrap, run as a project Owner). Calling projects.setIamPolicy

@@ -9,7 +9,7 @@ test("Bedrock group buy keeps pledge details private and shares the canonical ca
       value: async (payload) => { window.__bedrockShare = payload; },
     });
   });
-  await page.goto("/bedrock-group-buy");
+  await page.goto("/bedrock-group-buy/manage");
 
   await expect(page.getByRole("heading", { name: "Buy Bedrock together. Keep 10%." })).toBeVisible();
   await page.getByLabel("Full name", { exact: true }).fill("Private Browser Buyer");
@@ -32,7 +32,7 @@ test("Bedrock group buy keeps pledge details private and shares the canonical ca
   }).check();
   await page.getByRole("button", { name: "Join the group buy", exact: true }).click();
 
-  await expect(page).toHaveURL(/\/bedrock-group-buy\?saved=1#share$/);
+  await expect(page).toHaveURL(/\/bedrock-group-buy\/manage\?saved=1#share$/);
   await expect(page.getByRole("heading", { name: "You are in. Bring one more buyer." })).toBeVisible();
   const shareButtons = page.locator("[data-bgb-share]");
   await expect(shareButtons).toHaveCount(2);

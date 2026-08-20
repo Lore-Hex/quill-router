@@ -209,3 +209,31 @@ class TestTexml:
 
         assert response.text.count("<Say") == 1
         assert response.text.count("</Say>") == 1
+
+    def test_text_is_bounded_before_rendering(self, notify_client: TestClient) -> None:
+        response = notify_client.get(
+            "/notify/texml",
+            params={"text": "x" * (1000 + 1)},
+        )
+
+        assert response.status_code == 400
+
+
+def test_texml_lives_only_on_the_public_surface() -> None:
+    public = TestClient(
+        create_app(
+            Settings(environment="test", service_surface="public"),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+    control = TestClient(
+        create_app(
+            Settings(environment="test", service_surface="control"),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+
+    assert public.get("/notify/texml", params={"text": "hello"}).status_code == 200
+    assert control.get("/notify/texml", params={"text": "hello"}).status_code == 404

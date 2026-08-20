@@ -7,9 +7,12 @@ false until every provider-side verification has been captured after rollout.
 
 ## Non-negotiable boundaries
 
-- `trustedrouter.com`, `allyrouter.com`, and `uptimerouter.com`, including
-  `www`, `status`, and `trust`, share the GCP public load balancer today. Every
-  backend selected by its URL map needs its own attached Cloud Armor policy.
+- The exact managed apex, `www`, `status`, and `trust` hosts for
+  `trustedrouter.com`, `allyrouter.com`, and `uptimerouter.com` share the GCP
+  public load balancer, along with the enumerated TrustedRouter regional/status
+  hosts. First-party wildcard rules are forbidden so attested `api*`, AWS,
+  Azure, alerting, and operational subdomains cannot be stolen during import.
+  Every selected backend needs its own attached Cloud Armor policy.
 - The load balancer overwrites `X-TrustedRouter-Client-IP` from
   `{client_ip_address}`. The application never trusts client-supplied
   forwarding headers.
@@ -26,15 +29,44 @@ false until every provider-side verification has been captured after rollout.
   Front Door Premium/Private Link requires an explicit Azure migration and DNS
   cutover approval.
 
+## Observer credential cutover prerequisite
+
+Synthetic ingestion and remediation use a dedicated observer credential; it
+must never reuse the billing gateway token. `scripts/deploy/secrets.sh`
+provisions `trustedrouter-observer-internal-token` in GCP Secret Manager and
+fails without printing either value if it equals
+`trustedrouter-internal-gateway-token`. Provision distinct values under
+`quill/trustedrouter-observer-internal-token` in AWS Secrets Manager and
+`trustedrouter-observer-internal-token` in the Azure operator secret source
+before running either observer deploy.
+
+The observer-authenticated `/internal/synthetic/run` route cannot accept a
+destination URL and never performs gateway-token billing probes. Its canary
+origin is an exact HTTPS origin validated from deployment configuration. Only
+the separate private in-process scheduler path may use the billing gateway
+credential, preventing an observer token from turning a probe into SSRF or
+credential forwarding.
+
+Do not deploy observer-token Cloud Run jobs against the combined service.
+`scripts/deploy/synthetic.sh` requires an explicit `TR_BILLING_SERVICE` that is
+different from `SERVICE`; immediately before every job mutation it verifies the
+regional service is Ready, uses `internal-and-cloud-load-balancing` ingress,
+runs the `internal` surface, and binds both observer and billing credentials to
+their distinct Secret Manager names. Any missing or drifting condition stops
+before that job is deployed.
+
 ## GCP rollout order
 
 1. Confirm every expected hostname resolves to the protected global HTTPS load
    balancer and both brand certificates are ACTIVE.
 2. Reconcile each `backend=policy` pair with
-   `TR_CLOUD_ARMOR_BACKEND_POLICIES`. The default rules are preview-only:
-   unexpected Host, browser inference proxy, state-changing methods, and a high
-   global per-IP ceiling. Backend logging is enabled so preview matches can be
-   sized from evidence.
+   `TR_CLOUD_ARMOR_BACKEND_POLICIES`. The generous all-path per-source ceiling
+   and unexpected-Host deny are enforced from the first attach; browser
+   inference proxy and state-changing-method rules start in preview. Backend logging is enabled
+   at a 10% sample by default so the tighter preview matches can be sized from
+   evidence without turning a flood into full-volume log-ingestion cost. Set
+   `TR_CLOUD_ARMOR_LOG_SAMPLE_RATE` explicitly for a short investigation and
+   lower it again before sustained high traffic.
 3. Verify each backend reports the expected `securityPolicy` and exactly one
    `X-TrustedRouter-Client-IP:{client_ip_address}` custom request header.
    Unrelated custom headers must survive reconciliation.
@@ -51,17 +83,47 @@ false until every provider-side verification has been captured after rollout.
    Admin API for each region's Ready/traffic/release/ingress/scaling state. It
    never reopens or treats a successful origin request as healthy.
 
-After at least one representative peak window of preview logs has been
-reviewed, promote the GCP rules explicitly:
+The current `rollout.sh` does **not** yet source this reconciler or create the
+four service backends. Do not run the command below on the current branch and
+do not source `_edge_security.sh` manually against production. It is the target
+operator command only after the separately reviewed four-service rollout patch
+has landed and its first-cutover ordering tests are green.
+
+After that integration, and after at least one representative peak window of
+preview logs has been reviewed, promote the GCP rules explicitly:
 
 ```bash
 TR_CLOUD_ARMOR_PREVIEW=0 \
-TR_CLOUD_ARMOR_BACKEND_POLICIES='public-backend=public-edge,control-backend=control-edge,billing-backend=billing-edge' \
+TR_CLOUD_ARMOR_BACKEND_POLICIES='public-backend=public-edge,actions-backend=actions-edge,control-backend=control-edge,billing-backend=billing-edge' \
 bash scripts/deploy/rollout.sh
 ```
 
-Promotion is reversible by reconciling with `TR_CLOUD_ARMOR_PREVIEW=1`; it does
-not detach the policy or reopen the origin.
+Promotion of the three tighter rules is reversible by reconciling with
+`TR_CLOUD_ARMOR_PREVIEW=1`; the generous per-source ceiling remains enforced. This
+does not detach the policy or reopen the origin.
+
+## Runtime identity and data-plane isolation
+
+Environment allowlists are not a security boundary if every service retains a
+shared cloud identity or database administrator credential. Before the surface
+URL map is imported:
+
+- assign distinct Cloud Run runtime service accounts to public, actions,
+  control, and internal; grant Secret Manager access per named secret and
+  storage permissions per role, and post-verify the serving revision's service
+  account;
+- give the AWS observer a dedicated instance role and least-privilege database
+  principal; it must not retain `dsql:DbConnectAdmin` or wildcard read access to
+  `quill/*` secrets;
+- replace the Azure observer's server-admin PostgreSQL login with a role limited
+  to the status/catalog reads and synthetic/remediation writes it actually
+  performs; and
+- remove provider API keys, `AXIOM_API_TOKEN`/`AXIOM_TOKEN`, and
+  `GCP_SERVICE_ACCOUNT_KEY_JSON` from every surface that does not own them.
+
+These are release prerequisites for claiming compromise isolation. Omitting an
+environment reference while the runtime identity can fetch the same secret or
+mutate the same database does not satisfy the public/private bulkhead.
 
 ## Cloud Run cost bulkheads
 
@@ -73,6 +135,7 @@ bill. Each split service must set an independent concurrency and service-level
 | --- | ---: | ---: |
 | Legacy combined (migration only) | 2 | 20 |
 | Public/static | 4 | 10 |
+| Anonymous actions | 4 | 2 |
 | Control | 4 | 20 |
 | Billing/internal gateway | 8 | 50 |
 | Observer/status worker | 4 | 4 |
@@ -101,7 +164,31 @@ TR_AWS_WAF_PREVIEW=0 bash scripts/deploy/aws_eu_control_plane.sh
 The high-rate rule remains BLOCK regardless of the preview switch. AWS WAF is
 the source-IP control on this surface. App Runner cannot overwrite the exact
 unprefixed TrustedRouter header, so the application intentionally falls into
-its conservative untrusted-load-balancer bucket.
+one aggregate untrusted-load-balancer bucket. The deploy also pins TCP platform
+health, concurrency 10, maximum four instances, a 4 MiB request ceiling, and a
+two-upload/8 MiB process budget; HTTP health remains externally rate-limited
+without being able to mark every instance unhealthy.
+
+Azure Container Apps likewise forces application identity to `untrusted`
+while it remains directly exposed, caps HTTP concurrency at ten requests and,
+while it owns in-process monitor/remediator loops, exactly one replica. It
+applies the same observer body budget. These are cost/availability backstops, not a substitute for the
+`p0_external` Front Door Premium/Private Link migration below.
+
+AWS disables both in-process observer loops. Its one existing EventBridge rule
+submits a detached synthetic plus remediation pass to the authenticated
+observer route, so App Runner scaling cannot multiply provider spend or
+remediation actions.
+
+Azure retains both loops until a separately approved scheduled Container Apps
+Job migration exists. Its deploy therefore pins and post-verifies exactly one
+web replica whenever either loop is enabled. This preserves monitoring without
+creating a new scheduled resource, at the explicit cost of lower status-plane
+availability and capacity: an observer restart briefly interrupts both status
+serving and monitoring. Raising Azure above one replica while either loop is
+enabled is forbidden because it multiplies paid probes and remediation. A
+future external-job migration is a cost/topology change and requires explicit
+approval before the max-replica cap can be raised again.
 
 ## External P0 work
 
