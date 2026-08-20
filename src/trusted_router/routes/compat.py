@@ -93,8 +93,6 @@ def _add_current_openrouter_stubs(router: APIRouter) -> None:
         ("/files/{file_id}/content", "GET"),
         ("/generation/feedback", "POST"),
         ("/images", "POST"),
-        ("/images/models", "GET"),
-        ("/images/models/{author}/{slug}/endpoints", "GET"),
         ("/model/{author}/{slug}", "GET"),
         ("/observability/destinations", "GET"),
         ("/observability/destinations", "POST"),

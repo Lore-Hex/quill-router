@@ -157,6 +157,38 @@ def test_embeddings_catalog_lists_embedding_models(client: httpx.Client) -> None
         assert row["architecture"]["modality"] == "text->embedding", row["id"]
 
 
+def test_image_catalog_is_live_on_control_and_attested_origins(
+    client: httpx.Client,
+    api_client: httpx.Client,
+) -> None:
+    """Discovery must ship on both documented origins before generation is live."""
+
+    for label, image_client in {
+        "control": client,
+        "attested": api_client,
+    }.items():
+        response = image_client.get("/images/models", timeout=20.0)
+        assert response.status_code == 200, f"{label}: {response.status_code} {response.text}"
+        rows = response.json()["data"]
+        ids = {row["id"] for row in rows}
+        assert "google/gemini-3.1-flash-image" in ids, (label, ids)
+        model = next(row for row in rows if row["id"] == "google/gemini-3.1-flash-image")
+        assert model["architecture"]["output_modalities"] == ["image"]
+        assert model["supported_parameters"]["resolution"]["values"] == [
+            "512",
+            "1K",
+            "2K",
+            "4K",
+        ]
+
+    endpoint = api_client.get(
+        "/images/models/google/gemini-3.1-flash-image/endpoints",
+        timeout=20.0,
+    )
+    assert endpoint.status_code == 200, endpoint.text
+    assert endpoint.json()["endpoints"], endpoint.text
+
+
 def test_attested_gateway_rejects_unauthenticated_embeddings(api_client: httpx.Client) -> None:
     """The attested gateway must never serve embeddings without a bearer —
     same billing/key-limit gate as chat. Tolerates 404 only in the window
@@ -168,6 +200,15 @@ def test_attested_gateway_rejects_unauthenticated_embeddings(api_client: httpx.C
         content=b'{"model":"openai/text-embedding-3-large","input":"x"}',
     )
     assert response.status_code in {401, 404}, response.text
+
+
+def test_attested_gateway_rejects_unauthenticated_images(api_client: httpx.Client) -> None:
+    response = api_client.post(
+        "/images",
+        headers={"content-type": "application/json"},
+        content=b'{"model":"google/gemini-3.1-flash-image","prompt":"x"}',
+    )
+    assert response.status_code == 401, response.text
 
 
 def test_status_pages_are_publicly_reachable(

@@ -154,10 +154,10 @@
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 12,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 20,
+    "route_count": 22,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },

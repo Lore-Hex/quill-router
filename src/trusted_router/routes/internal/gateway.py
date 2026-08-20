@@ -80,6 +80,7 @@ from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.routing import (
     chat_route_endpoint_candidates,
     embeddings_route_endpoint_candidates,
+    image_route_endpoint_candidates,
     provider_route_preferences,
     resolved_route_preferences,
     video_route_endpoint_candidates,
@@ -357,15 +358,30 @@ def _authorize_gateway_sync(
         )
     requested_model = MODELS.get(route_model_id) if route_model_id else None
     is_video_request = body.route_type == "videos"
+    is_image_request = body.route_type == "images"
     is_embeddings_request = (
         requested_model is not None
         and requested_model.supports_embeddings
         and not requested_model.supports_chat
     )
     if user_model is not None:
+        if is_image_request:
+            raise api_error(
+                400,
+                "User-provided models do not support image generation",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
         endpoint_candidates = [_user_model_gateway_candidate(user_model)]
     elif is_video_request:
         endpoint_candidates = video_route_endpoint_candidates(body_dict, settings)
+    elif is_image_request:
+        if custom_model is not None:
+            raise api_error(
+                400,
+                "Custom models do not support image generation",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
+        endpoint_candidates = image_route_endpoint_candidates(body_dict, settings)
     elif is_embeddings_request:
         endpoint_candidates = embeddings_route_endpoint_candidates(body_dict, settings)
         if not endpoint_candidates:

@@ -76,7 +76,8 @@
         "image"
       ],
       "endpoints": [
-        "chat/completions"
+        "chat/completions",
+        "images"
       ],
       "status": 1
     },
@@ -441,23 +442,28 @@
       "display_name": "Nano Banana 2",
       "title": "google/gemini-3.1-flash-image",
       "model_type": "chat",
-      "features": [],
+      "features": [
+        "reasoning",
+        "image-generation"
+      ],
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
+        "image",
         "text"
       ],
       "endpoints": [
-        "chat/completions"
+        "images"
       ],
       "status": 1,
       "id": "google/gemini-3.1-flash-image",
       "upstream_id": "gemini-3.1-flash-image",
-      "context_length": 65536,
-      "max_output_tokens": 65536,
-      "routable": false,
-      "routable_reason": "awaiting-price"
+      "context_length": 131072,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 60000000
     },
     {
       "display_name": "Gemini 3.1 Flash Lite",

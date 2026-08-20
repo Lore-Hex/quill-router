@@ -72,6 +72,7 @@ client = OpenAI(base_url="https://api.trustedrouter.com/v1", api_key="sk-tr-v1-.
 - **Get a key / take my money:** https://trustedrouter.com
 - **Try it first (no signup):** https://trustedrouter.com/chat
 - **The technical details (for the nerds):** https://trustedrouter.com/security
+- **Generate images:** [docs/image-generation.md](docs/image-generation.md)
 - **Generate video:** [docs/video-generation.md](docs/video-generation.md)
 - **Why we built it:** https://jperla.com/blog/attestation-is-all-you-need
 
