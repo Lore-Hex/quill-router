@@ -42,7 +42,6 @@ MANIFEST_PATH = (
     / "provider_models"
     / "azure.json"
 )
-ANTHROPIC_MANIFEST_PATH = MANIFEST_PATH.with_name("anthropic.json")
 
 
 @dataclass(frozen=True)
@@ -204,35 +203,13 @@ def _retail_rate(
     return next(iter(candidates), None)
 
 
-def _anthropic_prices() -> dict[str, ModelPrice]:
-    raw = json.loads(ANTHROPIC_MANIFEST_PATH.read_text(encoding="utf-8"))
-    prices: dict[str, ModelPrice] = {}
-    for row in raw.get("models", []):
-        if not isinstance(row, dict) or not isinstance(row.get("id"), str):
-            continue
-        prompt = row.get("input_token_price_per_m")
-        completion = row.get("output_token_price_per_m")
-        if not isinstance(prompt, int) or not isinstance(completion, int):
-            continue
-        cached = row.get("cached_input_token_price_per_m")
-        prices[row["id"]] = ModelPrice(
-            prompt,
-            completion,
-            prompt_cached_micro_per_m=cached if isinstance(cached, int) else None,
-        )
-    # Azure and Anthropic both publish these legacy Opus 4.1 rates. Keep this
-    # explicit because that retired-from-direct manifest row is still live in
-    # the account-scoped Azure catalog.
-    prices["anthropic/claude-opus-4.1"] = ModelPrice(
-        15_000_000,
-        75_000_000,
-        prompt_cached_micro_per_m=1_500_000,
-    )
-    return prices
-
-
 def parse_retail_prices(rows: list[dict[str, Any]]) -> dict[str, ModelPrice]:
-    prices = _anthropic_prices()
+    # Do not copy prices from a provider's direct API. A model is eligible for
+    # Azure only when Microsoft's Retail Prices API exposes an unambiguous
+    # meter for the exact Azure SKU. In particular, Azure currently publishes
+    # no Claude/Anthropic meters, so those deployments remain dark even if
+    # Marketplace terms become accepted later.
+    prices: dict[str, ModelPrice] = {}
     for model_id, rule in _RETAIL_RULES.items():
         prompt = _retail_rate(rows, rule, kind="input")
         completion = _retail_rate(rows, rule, kind="output")
@@ -277,7 +254,9 @@ def fetch() -> ProviderPricingResult:
         source="api",
         fetched_url=URL,
     )
-    validate(result, required_models=frozenset())
+    errors = validate(result.prices, [])
+    if errors:
+        raise RuntimeError("; ".join(errors))
     return result
 
 

@@ -2596,6 +2596,16 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
             "stating a location."
         ),
     ),
+    "microsoft": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="Microsoft Research",
+        source_url="https://www.microsoft.com/en-us/privacy/privacystatement",
+        note=(
+            "The Phi family is built by Microsoft Research. Microsoft's privacy "
+            "statement identifies Microsoft Corporation at One Microsoft Way, "
+            "Redmond, Washington 98052, United States."
+        ),
+    ),
     # --- Canada ---
     "cohere": ModelOrigin(
         country=PROVIDER_JURISDICTION_CA,

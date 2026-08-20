@@ -47,7 +47,11 @@ MANAGEMENT_API_VERSION = "2025-10-01-preview"
 OPENAI_BASE_URL = "https://trustedrouter-foundry-eastus2.openai.azure.com/openai/v1"
 ANTHROPIC_BASE_URL = "https://trustedrouter-foundry-eastus2.services.ai.azure.com/anthropic/v1"
 CANARY_TIMEOUT = httpx.Timeout(connect=10, read=30, write=10, pool=10)
-_SKU_PREFERENCE = ("GlobalStandard", "DataZoneStandard", "Standard")
+# The pricing adapter intentionally admits only global meters. Azure's Data
+# Zone and regional SKUs have different rates; selecting one while attaching a
+# global price underbills requests (for example GPT-5.4 Mini is 10% higher in
+# Data Zone as of 2026-08-20). Add SKU-keyed pricing before broadening this.
+_SKU_PREFERENCE = ("GlobalStandard",)
 _ACTIVE_LIFECYCLES = frozenset({"GenerallyAvailable", "Preview"})
 
 
@@ -491,7 +495,7 @@ def write_manifest(rows: list[dict[str, Any]]) -> bool:
     stable_payload = {
         "_about": (
             "Azure AI Foundry deployments verified for this TrustedRouter subscription. "
-            "The automatic sync publishes only synchronous chat deployments with "
+            "The account sync publishes only synchronous chat deployments with "
             "remaining quota, exact pricing, and a successful direct PONG canary."
         ),
         "provider": "azure",

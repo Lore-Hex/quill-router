@@ -17,6 +17,7 @@ from scripts.providers.sync_azure_foundry import (
     select_deployment_candidates,
     write_manifest,
 )
+from scripts.smoke_all_providers import PROBES
 from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
 
 
@@ -117,6 +118,7 @@ def test_azure_retail_prices_use_decimal_units_and_ignore_data_zone() -> None:
     command = prices["cohere/command-a-plus-05-2026"]
     assert command.prompt_micro_per_m == 800_000
     assert command.completion_micro_per_m == 3_200_000
+    assert "anthropic/claude-opus-5" not in prices
 
 
 def test_azure_retail_price_ambiguity_fails_closed() -> None:
@@ -144,6 +146,38 @@ def test_azure_retail_price_ambiguity_fails_closed() -> None:
         assert "ambiguous Azure input price" in str(exc)
     else:
         raise AssertionError("ambiguous Azure prices must not be published")
+
+
+def test_azure_fetch_uses_current_pricing_validation_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = [
+        _price_row(
+            product="Azure Deepseek Models",
+            name="V4 Flash Inp glbl",
+            price="0.00019",
+        ),
+        _price_row(
+            product="Azure Deepseek Models",
+            name="V4 Flash Outp glbl",
+            price="0.00051",
+        ),
+    ]
+    monkeypatch.setattr(azure, "fetch_retail_rows", lambda: rows)
+
+    result = azure.fetch()
+
+    assert result.slug == "azure"
+    assert result.prices["deepseek/deepseek-v4-flash"].prompt_micro_per_m == 190_000
+
+
+def test_azure_fetch_rejects_an_empty_retail_feed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(azure, "fetch_retail_rows", lambda: [])
+
+    with pytest.raises(RuntimeError, match="empty pricing dict"):
+        azure.fetch()
 
 
 def test_azure_candidate_selection_requires_chat_price_and_remaining_sync_quota() -> None:
@@ -205,6 +239,22 @@ def test_azure_candidate_selection_requires_enough_quota_for_minimum_capacity() 
         [_model("Kimi-K2.7-Code", usage_name=usage_name, minimum_capacity=10)],
         [_usage(usage_name, limit=10, current=1)],
         frozenset({"moonshotai/kimi-k2.7-code"}),
+    )
+
+    assert selected == []
+
+
+def test_azure_candidate_selection_rejects_skus_without_matching_prices() -> None:
+    usage_name = "AIServices.DataZoneStandard.gpt-5.4-mini"
+    model = _model("gpt-5.4-mini", usage_name=usage_name)
+    sku = model["skus"][0]
+    assert isinstance(sku, dict)
+    sku["name"] = "DataZoneStandard"
+
+    selected = select_deployment_candidates(
+        [model],
+        [_usage(usage_name)],
+        frozenset({"openai/gpt-5.4-mini"}),
     )
 
     assert selected == []
@@ -351,6 +401,9 @@ def test_azure_manifest_registers_prepaid_only_gateway_routes() -> None:
     assert PROVIDERS["azure"].supports_prepaid is True
     assert PROVIDERS["azure"].supports_byok is False
     assert len(rows) >= 20
+    assert all(row["azure_deployment_sku"] == "GlobalStandard" for row in rows)
+    assert all(not row["id"].startswith("anthropic/") for row in rows)
+    assert all(row["id"] != "openai/gpt-5.4-mini" for row in rows)
     for row in rows:
         model_id = row["id"]
         endpoint = MODEL_ENDPOINTS[f"{model_id}@azure/prepaid"]
@@ -360,6 +413,10 @@ def test_azure_manifest_registers_prepaid_only_gateway_routes() -> None:
         assert endpoint.prompt_price_microdollars_per_million_tokens > 0
         assert endpoint.completion_price_microdollars_per_million_tokens > 0
         assert f"{model_id}@azure/byok" not in MODEL_ENDPOINTS
+
+
+def test_all_provider_smoke_includes_azure() -> None:
+    assert ("azure", "deepseek/deepseek-v4-flash") in PROBES
 
 
 def test_azure_sync_leaves_unchanged_manifest_byte_identical(
@@ -378,7 +435,7 @@ def test_azure_sync_leaves_unchanged_manifest_byte_identical(
     existing = {
         "_about": (
             "Azure AI Foundry deployments verified for this TrustedRouter subscription. "
-            "The automatic sync publishes only synchronous chat deployments with "
+            "The account sync publishes only synchronous chat deployments with "
             "remaining quota, exact pricing, and a successful direct PONG canary."
         ),
         "provider": "azure",
