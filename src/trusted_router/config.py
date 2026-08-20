@@ -104,8 +104,8 @@ class GatewayRegionTarget(NamedTuple):
     ``api_base_url``.
 
     It exists because Azure is NOT built that way yet. Each Azure region serves
-    its own hostname (``api-azure`` / ``api-azure-sea``) because the shared
-    ACME cache is disabled there, so probing southeastasia with the canonical
+    its own hostname (``api-azure`` / ``api-azure-syd``) because the shared
+    ACME cache is disabled there, so probing australiaeast with the canonical
     SNI asks it for a certificate it does not hold: the handshake fails and a
     perfectly healthy region reports DOWN. A status page that cries wolf is not
     a safer failure than one that stays quiet — it is a page nobody reads.

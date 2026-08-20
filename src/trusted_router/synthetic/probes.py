@@ -204,8 +204,8 @@ def _region_api_base_url(canonical_url: str, public_host: str) -> str:
     exactly as before.
 
     Azure needs the override because its two regions serve DIFFERENT public
-    names (``api-azure`` / ``api-azure-sea``); the shared ACME cache that would
-    let both hold one certificate is disabled there. Probing southeastasia with
+    names (``api-azure`` / ``api-azure-syd``); the shared ACME cache that would
+    let both hold one certificate is disabled there. Probing australiaeast with
     the canonical SNI asks it for a certificate it does not have, the handshake
     fails, and a healthy region is published as DOWN. That false alarm is not a
     safe failure — it is how a status page stops being believed.

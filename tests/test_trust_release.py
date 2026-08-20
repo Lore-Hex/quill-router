@@ -641,16 +641,16 @@ def test_a_poisoned_upstream_record_is_rejected_not_republished(
 def test_azure_mirror_requires_an_issuer_and_carries_every_region(
     httpx_mock: HTTPXMock,
 ) -> None:
-    uaen, sea = "44" * 32, "26" * 32
+    uaen, syd = "44" * 32, "26" * 32
     httpx_mock.add_response(
         url=re.compile(r"https://trust\.example/azure\.json\?tr_cache_bucket=\d+"),
         json={
             "platform": "azure-confidential-containers-sev-snp",
             "hostdata": uaen,
-            "accepted_hostdata": [uaen, sea],
+            "accepted_hostdata": [uaen, syd],
             "attestation_issuers": [
                 "https://trquilluaen.uaen.attest.azure.net",
-                "https://trquillsea.sasia.attest.azure.net",
+                "https://trquillsyd.eau.attest.azure.net",
             ],
             "regions": [
                 {
@@ -659,9 +659,9 @@ def test_azure_mirror_requires_an_issuer_and_carries_every_region(
                     "attestation_issuer": "https://trquilluaen.uaen.attest.azure.net",
                 },
                 {
-                    "attestation_url": "https://api-azure-sea.trustedrouter.com/attestation",
-                    "hostdata": sea,
-                    "attestation_issuer": "https://trquillsea.sasia.attest.azure.net",
+                    "attestation_url": "https://api-azure-syd.trustedrouter.com/attestation",
+                    "hostdata": syd,
+                    "attestation_issuer": "https://trquillsyd.eau.attest.azure.net",
                 },
             ],
         },
@@ -675,7 +675,7 @@ def test_azure_mirror_requires_an_issuer_and_carries_every_region(
     # Both regions run different CCE policies, so both hostdata values are
     # permanently correct. Dropping either makes a verifier routed to that
     # region conclude tampering.
-    assert record["accepted_hostdata"] == [uaen, sea]
+    assert record["accepted_hostdata"] == [uaen, syd]
     assert len(record["attestation_issuers"]) == 2
     # ...and WHERE each of them answers has to survive the trip too. This
     # assertion used to be absent while the test's name promised it: the
@@ -683,9 +683,9 @@ def test_azure_mirror_requires_an_issuer_and_carries_every_region(
     # trust.azure_release and the drift check had one endpoint to enumerate.
     assert [region["attestation_url"] for region in record["regions"]] == [
         "https://api-azure.trustedrouter.com/attestation",
-        "https://api-azure-sea.trustedrouter.com/attestation",
+        "https://api-azure-syd.trustedrouter.com/attestation",
     ]
-    assert record["regions"][1]["hostdata"] == sea
+    assert record["regions"][1]["hostdata"] == syd
 
 
 def test_azure_record_without_an_issuer_is_rejected(httpx_mock: HTTPXMock) -> None:

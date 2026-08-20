@@ -46,7 +46,7 @@ THE REAL DEFECT
          comments naming it as the thing that would catch drift, in
          config.py:365 and trust.py:142.
       2. AZURE_ATTESTATION_URL was hardcoded to UAE North. Southeast Asia
-         serves api-azure-sea.trustedrouter.com under its own CCE policy and
+         serves api-azure-syd.trustedrouter.com under its own CCE policy and
          therefore its own hostdata, f3a0b4ed…d712d81c, which was published in
          accepted_hostdata and compared against nothing. Head to head on a
          fixture where Southeast Asia served a hostdata published nowhere, the
@@ -146,11 +146,11 @@ AWS_MODULE_B = "i-02e34e58761097671-enc01a004d7a9c3c307"
 AWS_CERT_DER = b"-----der-of-the-cert-this-connection-served-----"
 
 UAEN_HOSTDATA = "c55d492aaf98db95e60ac87c0d4a787e07d565b460380a6c16bfcc418d60b89e"
-SEA_HOSTDATA = "f3a0b4ed5b27c81ceded35a54ddeedf2795fb733b4ecc026f8597311d712d81c"
+SYD_HOSTDATA = "f3a0b4ed5b27c81ceded35a54ddeedf2795fb733b4ecc026f8597311d712d81c"
 UAEN_ISSUER = "https://trquilluaen.uaen.attest.azure.net"
-SEA_ISSUER = "https://trquillsea.sasia.attest.azure.net"
+SYD_ISSUER = "https://trquillsyd.eau.attest.azure.net"
 UAEN_URL = "https://api-azure.trustedrouter.com/attestation"
-SEA_URL = "https://api-azure-sea.trustedrouter.com/attestation"
+SYD_URL = "https://api-azure-syd.trustedrouter.com/attestation"
 
 
 # ---------------------------------------------------------------------------
@@ -240,8 +240,8 @@ def azure_record(**overrides: Any) -> dict[str, Any]:
     record = {
         "platform": "azure-confidential-containers-sev-snp",
         "hostdata": UAEN_HOSTDATA,
-        "accepted_hostdata": [UAEN_HOSTDATA, SEA_HOSTDATA],
-        "attestation_issuers": [UAEN_ISSUER, SEA_ISSUER],
+        "accepted_hostdata": [UAEN_HOSTDATA, SYD_HOSTDATA],
+        "attestation_issuers": [UAEN_ISSUER, SYD_ISSUER],
         "api_base_url": "https://api-azure.trustedrouter.com/v1",
         "regions": [
             {
@@ -250,9 +250,9 @@ def azure_record(**overrides: Any) -> dict[str, Any]:
                 "attestation_issuer": UAEN_ISSUER,
             },
             {
-                "attestation_url": SEA_URL,
-                "hostdata": SEA_HOSTDATA,
-                "attestation_issuer": SEA_ISSUER,
+                "attestation_url": SYD_URL,
+                "hostdata": SYD_HOSTDATA,
+                "attestation_issuer": SYD_ISSUER,
             },
         ],
     }
@@ -302,7 +302,7 @@ def whole_fleet(
     azure: dict[str, Any] | None = None,
     gcp_live: bytes | None = None,
     uaen_live: bytes | None = None,
-    sea_live: bytes | None = None,
+    syd_live: bytes | None = None,
     aws_live: Any = None,
 ) -> FakeTransport:
     """Every plane healthy and matching, unless a caller drifts one."""
@@ -318,7 +318,7 @@ def whole_fleet(
                 aws_live if aws_live is not None else aws_document()
             ),
             UAEN_URL: uaen_live or azure_token(UAEN_HOSTDATA, UAEN_ISSUER),
-            SEA_URL: sea_live or azure_token(SEA_HOSTDATA, SEA_ISSUER),
+            SYD_URL: syd_live or azure_token(SYD_HOSTDATA, SYD_ISSUER),
         }
     )
 
@@ -456,9 +456,9 @@ def test_every_enumerated_region_is_contacted() -> None:
     result = results_by_plane(transport)["azure"]
 
     assert UAEN_URL in transport.fetched
-    assert SEA_URL in transport.fetched, "the second region was never contacted"
+    assert SYD_URL in transport.fetched, "the second region was never contacted"
     assert result.ok
-    assert result.endpoints == (UAEN_URL, SEA_URL)
+    assert result.endpoints == (UAEN_URL, SYD_URL)
     # The success sentence is counted from the fetch list and the live tokens,
     # so it cannot describe more of the plane than answered.
     assert "2 endpoint(s) contacted, 2 distinct MAA issuer(s) presented" in result.detail
@@ -474,11 +474,11 @@ def test_second_region_drift_fails_even_though_the_first_is_clean() -> None:
     tampering.
     """
     drifted = "9c" * 32
-    transport = whole_fleet(sea_live=azure_token(drifted, SEA_ISSUER))
+    transport = whole_fleet(syd_live=azure_token(drifted, SYD_ISSUER))
     result = results_by_plane(transport)["azure"]
 
     assert not result.ok
-    assert SEA_URL in result.detail
+    assert SYD_URL in result.detail
     # ...and the region that is fine is not blamed for it.
     assert UAEN_URL not in result.detail
 
@@ -491,7 +491,7 @@ def test_a_region_serving_its_neighbours_policy_is_drift() -> None:
     CCE policy. The record attributes a hostdata to each region, so the check
     is per region.
     """
-    transport = whole_fleet(sea_live=azure_token(UAEN_HOSTDATA, SEA_ISSUER))
+    transport = whole_fleet(syd_live=azure_token(UAEN_HOSTDATA, SYD_ISSUER))
     result = results_by_plane(transport)["azure"]
 
     assert not result.ok
@@ -529,8 +529,8 @@ def test_a_serving_region_the_record_cannot_reach_is_a_gap_not_a_pass(
 
     assert code == 1
     assert "[GAP] azure" in out
-    assert SEA_ISSUER in out
-    assert SEA_URL not in transport.fetched, "the fixture must not accidentally cover the gap"
+    assert SYD_ISSUER in out
+    assert SYD_URL not in transport.fetched, "the fixture must not accidentally cover the gap"
 
 
 def test_a_mirror_that_drops_the_region_array_is_a_gap() -> None:
@@ -548,7 +548,7 @@ def test_a_mirror_that_drops_the_region_array_is_a_gap() -> None:
 
     assert result.gap
     assert result.endpoints == (UAEN_URL,)
-    assert result.unreached == (SEA_ISSUER,)
+    assert result.unreached == (SYD_ISSUER,)
 
 
 def test_a_single_region_record_without_a_region_array_is_not_a_gap() -> None:
@@ -578,7 +578,7 @@ def test_an_unlisted_live_issuer_is_still_reported() -> None:
     own bookkeeping.
     """
     transport = whole_fleet(
-        sea_live=azure_token(SEA_HOSTDATA, "https://trquillnew.westus.attest.azure.net")
+        syd_live=azure_token(SYD_HOSTDATA, "https://trquillnew.westus.attest.azure.net")
     )
     result = results_by_plane(transport)["azure"]
 
@@ -749,7 +749,7 @@ def test_one_unpublished_plane_does_not_stop_the_others_being_checked() -> None:
 
     assert results["aws"].skipped
     assert results["gcp"].ok and results["azure"].ok
-    assert UAEN_URL in transport.fetched and SEA_URL in transport.fetched
+    assert UAEN_URL in transport.fetched and SYD_URL in transport.fetched
 
 
 # ---------------------------------------------------------------------------
@@ -798,14 +798,14 @@ def test_an_unreached_issuer_is_named_by_evidence_not_by_list_position() -> None
     same class of output this file exists to remove. Coverage is now attributed
     from the issuers the contacted endpoints presented live.
     """
-    record = azure_record(attestation_issuers=[SEA_ISSUER, UAEN_ISSUER])
+    record = azure_record(attestation_issuers=[SYD_ISSUER, UAEN_ISSUER])
     record.pop("regions")
     transport = whole_fleet(azure=record)
     result = drift.check_azure(CONTROL_PLANE, transport)
 
     assert result.gap
     assert result.endpoints == (UAEN_URL,), "UAE North is the endpoint that answered"
-    assert result.unreached == (SEA_ISSUER,), "the issuer that answered must not be blamed"
+    assert result.unreached == (SYD_ISSUER,), "the issuer that answered must not be blamed"
     assert UAEN_ISSUER not in "".join(result.unreached)
     # And the sentence carrying that verdict counts what ANSWERED, not what the
     # record listed: two issuers are published here and one was presented. A
@@ -837,7 +837,7 @@ def test_coverage_does_not_hang_on_the_optional_issuer_list(
     assert code == 1
     assert "[GAP] azure" in out
     assert "no attestation_issuers" in out
-    assert SEA_URL not in transport.fetched, "the fixture must not accidentally cover the gap"
+    assert SYD_URL not in transport.fetched, "the fixture must not accidentally cover the gap"
     assert "Every published measurement" not in out
 
 
@@ -875,7 +875,7 @@ def test_two_region_entries_at_one_endpoint_are_not_two_regions_covered(
     assert "[GAP] azure" in out
     assert "more than once" in out
     assert "azure (1)" in out, "one endpoint answered, so the summary must count one"
-    assert SEA_URL not in transport.fetched
+    assert SYD_URL not in transport.fetched
 
 
 def test_a_record_with_one_issuer_and_two_policies_and_no_endpoints_is_a_gap() -> None:
@@ -917,7 +917,7 @@ def test_two_endpoints_differing_only_by_fragment_are_one_endpoint() -> None:
                 "attestation_issuer": UAEN_ISSUER,
             },
             {
-                "attestation_url": UAEN_URL + "?region=sea",
+                "attestation_url": UAEN_URL + "?region=syd",
                 "hostdata": UAEN_HOSTDATA,
                 "attestation_issuer": UAEN_ISSUER,
             },
@@ -964,8 +964,8 @@ def test_a_gap_alongside_drift_is_still_reported_under_the_drift_mark(
 
     assert code == 1
     assert "[DRIFT] azure" in out
-    assert SEA_ISSUER in out, "the coverage gap must survive the more serious verdict"
-    assert "Not reached: azure " + SEA_ISSUER in out
+    assert SYD_ISSUER in out, "the coverage gap must survive the more serious verdict"
+    assert "Not reached: azure " + SYD_ISSUER in out
 
 
 def test_an_explicit_null_regions_key_is_not_read_as_an_absent_one(httpx_mock: Any) -> None:
@@ -993,9 +993,9 @@ def test_a_region_entry_naming_no_hostdata_cannot_be_attributed_and_is_a_gap() -
         regions=[
             {"attestation_url": UAEN_URL, "attestation_issuer": UAEN_ISSUER},
             {
-                "attestation_url": SEA_URL,
-                "hostdata": SEA_HOSTDATA,
-                "attestation_issuer": SEA_ISSUER,
+                "attestation_url": SYD_URL,
+                "hostdata": SYD_HOSTDATA,
+                "attestation_issuer": SYD_ISSUER,
             },
         ]
     )
@@ -1003,7 +1003,7 @@ def test_a_region_entry_naming_no_hostdata_cannot_be_attributed_and_is_a_gap() -
 
     assert result.gap
     assert "names no hostdata" in result.detail
-    assert result.endpoints == (UAEN_URL, SEA_URL), "both were still contacted"
+    assert result.endpoints == (UAEN_URL, SYD_URL), "both were still contacted"
 
 
 def test_a_regions_entry_with_no_attestation_url_is_a_gap_on_its_own() -> None:
@@ -1046,7 +1046,7 @@ def test_a_regions_entry_that_names_no_reachable_place_is_a_gap_and_is_not_fetch
     FETCHING one would let whoever writes the record aim the hourly job. It is
     reported and skipped. Isolated like the rule above so nothing props it up.
     """
-    hostile = "https://someone@api-azure-sea.trustedrouter.com/attestation"
+    hostile = "https://someone@api-azure-syd.trustedrouter.com/attestation"
     record = azure_record(
         accepted_hostdata=[UAEN_HOSTDATA],
         attestation_issuers=[UAEN_ISSUER],
@@ -1087,13 +1087,13 @@ def test_the_endpoint_the_record_advertises_is_contacted_even_when_regions_omits
     endpoint is contacted and the drift is caught.
     """
     record = azure_record(
-        accepted_hostdata=[SEA_HOSTDATA],
-        attestation_issuers=[SEA_ISSUER],
+        accepted_hostdata=[SYD_HOSTDATA],
+        attestation_issuers=[SYD_ISSUER],
         regions=[
             {
-                "attestation_url": SEA_URL,
-                "hostdata": SEA_HOSTDATA,
-                "attestation_issuer": SEA_ISSUER,
+                "attestation_url": SYD_URL,
+                "hostdata": SYD_HOSTDATA,
+                "attestation_issuer": SYD_ISSUER,
             }
         ],
     )
@@ -1120,9 +1120,9 @@ def test_an_advertised_endpoint_missing_from_the_region_census_is_a_gap_even_whe
     record = azure_record(
         regions=[
             {
-                "attestation_url": SEA_URL,
-                "hostdata": SEA_HOSTDATA,
-                "attestation_issuer": SEA_ISSUER,
+                "attestation_url": SYD_URL,
+                "hostdata": SYD_HOSTDATA,
+                "attestation_issuer": SYD_ISSUER,
             }
         ],
     )
@@ -1131,7 +1131,7 @@ def test_an_advertised_endpoint_missing_from_the_region_census_is_a_gap_even_whe
     assert result.gap
     assert "1 coverage gap(s)" in result.detail
     assert "api_base_url advertises" in result.detail
-    assert set(result.endpoints) == {SEA_URL, UAEN_URL}
+    assert set(result.endpoints) == {SYD_URL, UAEN_URL}
     assert result.unreached == (), "both published issuers answered; this is the other rule"
 
 
@@ -1203,15 +1203,15 @@ def test_the_serving_route_carries_the_region_array_and_the_check_covers_both_re
     served = _served_azure_record(azure_record(), httpx_mock)
 
     assert served["status_code"] == 200
-    assert [region["attestation_url"] for region in served["regions"]] == [UAEN_URL, SEA_URL]
-    assert served["regions"][1]["hostdata"] == SEA_HOSTDATA
+    assert [region["attestation_url"] for region in served["regions"]] == [UAEN_URL, SYD_URL]
+    assert served["regions"][1]["hostdata"] == SYD_HOSTDATA
 
     transport = whole_fleet(azure=served)
     code = drift.main(["--control-plane", CONTROL_PLANE, "--strict"], transport=transport)
     out = capsys.readouterr().out
 
     assert code == 0
-    assert SEA_URL in transport.fetched, "the served record did not reach the second region"
+    assert SYD_URL in transport.fetched, "the served record did not reach the second region"
     assert "Checked 3 plane(s) at 4 endpoint(s): gcp (1), aws (1), azure (2)" in out
 
 
@@ -1470,7 +1470,7 @@ ENDPOINT_TWINS = [
 #: `port = None`, so that every port folds away, left this file green.
 ENDPOINT_DISTINCTS = [
     (UAEN_URL, "https://api-azure.trustedrouter.com:8443/attestation"),
-    (UAEN_URL, "https://api-azure-sea.trustedrouter.com/attestation"),
+    (UAEN_URL, "https://api-azure-syd.trustedrouter.com/attestation"),
     (UAEN_URL, "https://api-azure.trustedrouter.com/attestation/uaen"),
     (UAEN_URL, "https://api-azure.trustedrouter.com/Attestation"),
     (UAEN_URL, "http://api-azure.trustedrouter.com/attestation"),

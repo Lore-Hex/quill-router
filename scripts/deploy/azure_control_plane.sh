@@ -68,17 +68,17 @@ STATUS_HOST="${STATUS_HOST:-https://azure.trustedrouter.com}"
 # renaming one without the other silently unpublishes it.
 # Both Azure enclave regions. A region missing here is not probed at all, and
 # its component silently reports nothing rather than reporting down.
-# southeastasia carries an explicit @public_host. The two Azure regions serve
+# australiaeast carries an explicit @public_host. The two Azure regions serve
 # DIFFERENT public names, because the shared ACME cache is disabled on Azure
 # (no "tr-cross-cloud-sa-key" in the bundle), so each region completes ACME for
-# its own hostname only. Probing southeastasia with the canonical SNI
+# its own hostname only. Probing australiaeast with the canonical SNI
 # api-azure.trustedrouter.com asks it for a certificate it does not hold: the
 # handshake fails and a healthy region publishes as DOWN.
 #
 # uaenorth needs no override — it IS the canonical name. When the shared cache
 # lands and both regions serve one name, drop the @suffix and this returns to
 # the plain shared-name form that GCP and AWS use.
-GATEWAY_REGION_TARGETS="${GATEWAY_REGION_TARGETS:-uaenorth=quill-enclave-uaenorth.uaenorth.azurecontainer.io,southeastasia=quill-enclave-southeastasia.southeastasia.azurecontainer.io@api-azure-sea.trustedrouter.com}"
+GATEWAY_REGION_TARGETS="${GATEWAY_REGION_TARGETS:-uaenorth=quill-enclave-uaenorth.uaenorth.azurecontainer.io,australiaeast=quill-enclave-australiaeast.australiaeast.azurecontainer.io@api-azure-syd.trustedrouter.com}"
 
 # Secrets resolved from the operator's own files, exactly like every other
 # cloud (quill-cloud-proxy tools/quill_secret_sources.py). No cloud reads
