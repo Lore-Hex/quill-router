@@ -4,7 +4,8 @@
 The Azure catalog is broader than an account's usable inference surface.  This
 job therefore requires all of the following before a route reaches the public
 manifest: active lifecycle, synchronous chat capability, remaining quota for a
-pay-per-token SKU, an exact price, a successful deployment, and a direct PONG.
+pay-per-token SKU, an exact price, a successful deployment, and direct text,
+tool-call, and (where advertised) image capability canaries.
 """
 
 from __future__ import annotations
@@ -13,11 +14,12 @@ import argparse
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -37,6 +39,8 @@ from scripts.pricing.providers.azure import (  # noqa: E402, I001
     deployment_name,
     fetch_retail_rows,
     parse_retail_prices,
+    retail_model_ids,
+    retail_model_versions,
 )
 
 DEFAULT_SUBSCRIPTION = "2fc83893-ca6c-48e4-b090-8860fba33d33"
@@ -47,6 +51,41 @@ MANAGEMENT_API_VERSION = "2025-10-01-preview"
 OPENAI_BASE_URL = "https://trustedrouter-foundry-eastus2.openai.azure.com/openai/v1"
 ANTHROPIC_BASE_URL = "https://trustedrouter-foundry-eastus2.services.ai.azure.com/anthropic/v1"
 CANARY_TIMEOUT = httpx.Timeout(connect=10, read=30, write=10, pool=10)
+DEPLOYMENT_VERSION_UPGRADE_OPTION = "NoAutoUpgrade"
+_IMAGE_CANARY_MODEL_IDS = frozenset(
+    {
+        "moonshotai/kimi-k2.5",
+        "moonshotai/kimi-k2.6",
+        "moonshotai/kimi-k2.7-code",
+        "openai/gpt-5-mini",
+        "x-ai/grok-4.20-reasoning",
+    }
+)
+# Prevalidated deterministic 8x8 solid RGB PNGs avoid third-party URLs. Two
+# distinct assets are cryptographically selected for each admission attempt,
+# so a model cannot pass by returning one canned color without reading images.
+_IMAGE_CANARY_ASSETS = (
+    (
+        "RED",
+        "data:image/png;base64,"
+        "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR42mP4z8CAFTEMLQkAKP8/wc53yE8AAAAASUVORK5CYII=",
+    ),
+    (
+        "GREEN",
+        "data:image/png;base64,"
+        "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEElEQVR42mNg+M+AHQ0tCQDpMD/BHYHcAQAAAABJRU5ErkJggg==",
+    ),
+    (
+        "BLUE",
+        "data:image/png;base64,"
+        "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEElEQVR42mNgYPiPAw0pCQCpcD/B/MtF/AAAAABJRU5ErkJggg==",
+    ),
+    (
+        "YELLOW",
+        "data:image/png;base64,"
+        "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR42mP4/58BK2IYWhIAEXZ/gVEmf+cAAAAASUVORK5CYII=",
+    ),
+)
 # The pricing adapter intentionally admits only global meters. Azure's Data
 # Zone and regional SKUs have different rates; selecting one while attaching a
 # global price underbills requests (for example GPT-5.4 Mini is 10% higher in
@@ -74,8 +113,9 @@ def deployment_needs_reconcile(
     """Return whether an existing deployment is unsafe to reuse.
 
     The selected capacity is a minimum, so a deployment with more capacity can
-    remain in place. Missing or malformed SKU metadata fails closed because the
-    manifest price is valid only for the candidate's exact SKU.
+    remain in place. Missing or malformed SKU/upgrade metadata fails closed
+    because the manifest price is valid only for the candidate's exact model
+    version and SKU.
     """
     if not isinstance(current, dict):
         return True
@@ -85,6 +125,7 @@ def deployment_needs_reconcile(
         not isinstance(current_model, dict)
         or current_model.get("name") != candidate.native_name
         or str(current_model.get("version")) != candidate.version
+        or properties.get("versionUpgradeOption") != DEPLOYMENT_VERSION_UPGRADE_OPTION
     ):
         return True
 
@@ -220,6 +261,8 @@ def select_deployment_candidates(
     model_rows: list[dict[str, Any]],
     usage_rows: list[dict[str, Any]],
     priced_model_ids: frozenset[str],
+    *,
+    allowed_versions: Mapping[str, frozenset[str]] | None = None,
 ) -> list[DeploymentCandidate]:
     remaining = _remaining_quota(usage_rows)
     grouped: dict[str, list[tuple[dict[str, Any], tuple[str, int]]]] = {}
@@ -241,6 +284,10 @@ def select_deployment_candidates(
             continue
         canonical_id = canonical_model_id(native_name)
         if canonical_id is None or canonical_id not in priced_model_ids:
+            continue
+        if allowed_versions is not None and version not in allowed_versions.get(
+            canonical_id, frozenset()
+        ):
             continue
         sku = _choose_sku(model, remaining)
         if sku is None:
@@ -342,7 +389,10 @@ class AzureManagementClient:
                 "name": candidate.native_name,
                 "version": candidate.version,
             },
-            "versionUpgradeOption": "OnceNewDefaultVersionAvailable",
+            # Prices are selected for this exact model version. Letting Azure
+            # silently move the deployment to a future default would serve a
+            # different checkpoint under stale billing metadata.
+            "versionUpgradeOption": DEPLOYMENT_VERSION_UPGRADE_OPTION,
             "raiPolicyName": "Microsoft.DefaultV2",
         }
         if candidate.model_format == "Anthropic":
@@ -380,7 +430,7 @@ class AzureManagementClient:
                 if deployment_needs_reconcile(current_payload, candidate):
                     raise RuntimeError(
                         f"Azure deployment {candidate.deployment_name} succeeded with an "
-                        "unexpected model, version, SKU, or capacity"
+                        "unexpected model, version, upgrade policy, SKU, or capacity"
                     )
                 return
             if state in {"Failed", "Canceled"}:
@@ -400,14 +450,23 @@ def _extract_openai_text(payload: dict[str, Any]) -> str:
     return content.strip() if isinstance(content, str) else ""
 
 
-def _stream_text(lines: Iterable[str], *, protocol: str) -> str:
+def _stream_canary(
+    lines: Iterable[str],
+    *,
+    protocol: str,
+) -> tuple[str, Any, bool]:
     parts: list[str] = []
+    terminal_usage: Any = None
+    saw_done = False
     for line in lines:
         if not line.startswith("data:"):
             continue
         data = line[5:].strip()
-        if not data or data == "[DONE]":
+        if not data:
             continue
+        if data == "[DONE]":
+            saw_done = True
+            break
         try:
             payload = json.loads(data)
         except json.JSONDecodeError:
@@ -418,6 +477,8 @@ def _stream_text(lines: Iterable[str], *, protocol: str) -> str:
             delta = payload.get("delta")
             text = delta.get("text") if isinstance(delta, dict) else None
         elif protocol == "openai":
+            if "usage" in payload:
+                terminal_usage = payload["usage"]
             choices = payload.get("choices")
             choice = choices[0] if isinstance(choices, list) and choices else None
             delta = choice.get("delta") if isinstance(choice, dict) else None
@@ -426,15 +487,255 @@ def _stream_text(lines: Iterable[str], *, protocol: str) -> str:
             raise ValueError(f"unknown Azure canary protocol: {protocol}")
         if isinstance(text, str):
             parts.append(text)
-            # The canary contract is exact PONG presence, not graceful stream
-            # shutdown. Stop reading as soon as it is proven so a provider
-            # cannot hold the catalog refresh open after sending valid output.
-            if "PONG" in "".join(parts).upper():
-                break
-    return "".join(parts).strip()
+    return "".join(parts).strip(), terminal_usage, saw_done
 
 
-def canary(candidate: DeploymentCandidate, *, account_key: str) -> None:
+def _stream_text(lines: Iterable[str], *, protocol: str) -> str:
+    text, _usage, _saw_done = _stream_canary(lines, protocol=protocol)
+    return text
+
+
+def _validate_openai_stream_usage(
+    usage: Any,
+    *,
+    saw_done: bool,
+    deployment_name: str,
+) -> None:
+    if not saw_done or not isinstance(usage, dict):
+        raise RuntimeError(
+            f"Azure text canary returned no terminal usage for {deployment_name}"
+        )
+    prompt_tokens = usage.get("prompt_tokens")
+    if (
+        not isinstance(prompt_tokens, int)
+        or isinstance(prompt_tokens, bool)
+        or prompt_tokens <= 0
+    ):
+        raise RuntimeError(
+            f"Azure text canary returned invalid prompt usage for {deployment_name}"
+        )
+
+    completion_tokens = usage.get("completion_tokens")
+    if completion_tokens is not None and (
+        not isinstance(completion_tokens, int)
+        or isinstance(completion_tokens, bool)
+        or completion_tokens < 0
+    ):
+        raise RuntimeError(
+            f"Azure text canary returned invalid completion usage for {deployment_name}"
+        )
+    total_tokens = usage.get("total_tokens")
+    minimum_total = prompt_tokens + (
+        completion_tokens if isinstance(completion_tokens, int) else 0
+    )
+    if total_tokens is not None and (
+        not isinstance(total_tokens, int)
+        or isinstance(total_tokens, bool)
+        or total_tokens < minimum_total
+    ):
+        raise RuntimeError(
+            f"Azure text canary returned incoherent total usage for {deployment_name}"
+        )
+
+    output_tokens = completion_tokens if isinstance(completion_tokens, int) else 0
+    if output_tokens <= 0 and isinstance(total_tokens, int):
+        output_tokens = total_tokens - prompt_tokens
+    if output_tokens <= 0:
+        raise RuntimeError(
+            f"Azure text canary returned no positive output usage for {deployment_name}"
+        )
+
+
+def _openai_token_field(candidate: DeploymentCandidate) -> str:
+    model_name = candidate.deployment_name.lower()
+    if model_name.startswith(("gpt-5", "o1", "o3", "o4")):
+        return "max_completion_tokens"
+    return "max_tokens"
+
+
+def _post_json(
+    url: str,
+    *,
+    headers: dict[str, str],
+    request: dict[str, Any],
+) -> dict[str, Any]:
+    response = httpx.post(
+        url,
+        headers=headers,
+        json=request,
+        timeout=CANARY_TIMEOUT,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise RuntimeError("Azure capability canary returned a non-object response")
+    return payload
+
+
+def _validate_openai_tool_call(payload: dict[str, Any], *, deployment_name: str) -> None:
+    choices = payload.get("choices")
+    choice = choices[0] if isinstance(choices, list) and choices else None
+    message = choice.get("message") if isinstance(choice, dict) else None
+    tool_calls = message.get("tool_calls") if isinstance(message, dict) else None
+    if (
+        not isinstance(choice, dict)
+        or choice.get("finish_reason") != "tool_calls"
+        or not isinstance(tool_calls, list)
+        or len(tool_calls) != 1
+    ):
+        raise RuntimeError(
+            f"Azure tool canary returned no single structured tool call for {deployment_name}"
+        )
+    tool_call = tool_calls[0]
+    function = tool_call.get("function") if isinstance(tool_call, dict) else None
+    arguments = function.get("arguments") if isinstance(function, dict) else None
+    if (
+        not isinstance(tool_call, dict)
+        or not isinstance(tool_call.get("id"), str)
+        or not tool_call["id"].strip()
+        or tool_call.get("type") != "function"
+        or not isinstance(function, dict)
+        or function.get("name") != "pong"
+        or not isinstance(arguments, str)
+    ):
+        raise RuntimeError(f"Azure tool canary returned an invalid call for {deployment_name}")
+    try:
+        decoded_arguments = json.loads(arguments)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"Azure tool canary returned invalid JSON arguments for {deployment_name}"
+        ) from exc
+    if decoded_arguments != {}:
+        raise RuntimeError(
+            f"Azure tool canary returned non-empty arguments for {deployment_name}"
+        )
+
+
+def _validate_anthropic_tool_use(payload: dict[str, Any], *, deployment_name: str) -> None:
+    content = payload.get("content")
+    if (
+        payload.get("stop_reason") != "tool_use"
+        or not isinstance(content, list)
+        or len(content) != 1
+    ):
+        raise RuntimeError(
+            f"Azure tool canary returned no single structured tool use for {deployment_name}"
+        )
+    tool_use = content[0]
+    if (
+        not isinstance(tool_use, dict)
+        or tool_use.get("type") != "tool_use"
+        or not isinstance(tool_use.get("id"), str)
+        or not tool_use["id"].strip()
+        or tool_use.get("name") != "pong"
+        or tool_use.get("input") != {}
+    ):
+        raise RuntimeError(f"Azure tool canary returned an invalid use for {deployment_name}")
+
+
+def _tool_canary(candidate: DeploymentCandidate, *, account_key: str) -> None:
+    prompt = "Call the pong tool now. Do not answer in text."
+    if candidate.model_format == "Anthropic":
+        payload = _post_json(
+            f"{ANTHROPIC_BASE_URL}/messages",
+            headers={"x-api-key": account_key, "anthropic-version": "2023-06-01"},
+            request={
+                "model": candidate.deployment_name,
+                "max_tokens": 64,
+                "stream": False,
+                "messages": [{"role": "user", "content": prompt}],
+                "tools": [
+                    {
+                        "name": "pong",
+                        "description": "Confirm tool-call support.",
+                        "input_schema": {
+                            "type": "object",
+                            "properties": {},
+                            "required": [],
+                            "additionalProperties": False,
+                        },
+                    }
+                ],
+                "tool_choice": {
+                    "type": "tool",
+                    "name": "pong",
+                    "disable_parallel_tool_use": True,
+                },
+            },
+        )
+        _validate_anthropic_tool_use(payload, deployment_name=candidate.deployment_name)
+        return
+
+    payload = _post_json(
+        f"{OPENAI_BASE_URL}/chat/completions",
+        headers={"api-key": account_key},
+        request={
+            "model": candidate.deployment_name,
+            _openai_token_field(candidate): 64,
+            "stream": False,
+            "messages": [{"role": "user", "content": prompt}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "pong",
+                        "description": "Confirm tool-call support.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {},
+                            "required": [],
+                            "additionalProperties": False,
+                        },
+                    },
+                }
+            ],
+            "tool_choice": {"type": "function", "function": {"name": "pong"}},
+        },
+    )
+    _validate_openai_tool_call(payload, deployment_name=candidate.deployment_name)
+
+
+def _image_canary_challenges() -> list[tuple[str, str]]:
+    return secrets.SystemRandom().sample(list(_IMAGE_CANARY_ASSETS), k=2)
+
+
+def _image_canary(candidate: DeploymentCandidate, *, account_key: str) -> None:
+    labels = ", ".join(sorted(label for label, _data_url in _IMAGE_CANARY_ASSETS))
+    challenges = _image_canary_challenges()
+    expected_answer = ", ".join(label for label, _data_url in challenges)
+    content: list[dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": (
+                "Two images follow in order. Identify each image's single solid color. "
+                "Reply with exactly two comma-separated labels in image order. "
+                f"Allowed labels: {labels}."
+            ),
+        }
+    ]
+    content.extend(
+        {"type": "image_url", "image_url": {"url": data_url}}
+        for _label, data_url in challenges
+    )
+    payload = _post_json(
+        f"{OPENAI_BASE_URL}/chat/completions",
+        headers={"api-key": account_key},
+        request={
+            "model": candidate.deployment_name,
+            _openai_token_field(candidate): 64,
+            "stream": False,
+            "messages": [{"role": "user", "content": content}],
+        },
+    )
+    text = _extract_openai_text(payload)
+    if text.upper() != expected_answer:
+        raise RuntimeError(
+            f"Azure image canary did not identify the embedded images for "
+            f"{candidate.deployment_name}"
+        )
+
+
+def _text_canary(candidate: DeploymentCandidate, *, account_key: str) -> None:
     if candidate.model_format == "Anthropic":
         with httpx.stream(
             "POST",
@@ -449,22 +750,17 @@ def canary(candidate: DeploymentCandidate, *, account_key: str) -> None:
             timeout=CANARY_TIMEOUT,
         ) as response:
             response.raise_for_status()
-            text = _stream_text(response.iter_lines(), protocol="anthropic")
+            text, _usage, _saw_done = _stream_canary(
+                response.iter_lines(), protocol="anthropic"
+            )
     else:
-        model_name = candidate.deployment_name.lower()
-        token_field = (
-            "max_completion_tokens"
-            if model_name.startswith(("gpt-5", "o1", "o3", "o4"))
-            else "max_tokens"
-        )
         request: dict[str, Any] = {
             "model": candidate.deployment_name,
-            token_field: 256,
+            _openai_token_field(candidate): 256,
             "stream": True,
             "messages": [{"role": "user", "content": "Reply with exactly PONG"}],
         }
-        if candidate.canonical_id != "mistralai/codestral-2501":
-            request["stream_options"] = {"include_usage": True}
+        request["stream_options"] = {"include_usage": True}
         with httpx.stream(
             "POST",
             f"{OPENAI_BASE_URL}/chat/completions",
@@ -473,9 +769,25 @@ def canary(candidate: DeploymentCandidate, *, account_key: str) -> None:
             timeout=CANARY_TIMEOUT,
         ) as response:
             response.raise_for_status()
-            text = _stream_text(response.iter_lines(), protocol="openai")
+            text, usage, saw_done = _stream_canary(response.iter_lines(), protocol="openai")
+        _validate_openai_stream_usage(
+            usage,
+            saw_done=saw_done,
+            deployment_name=candidate.deployment_name,
+        )
     if "PONG" not in text.upper():
         raise RuntimeError(f"Azure canary returned no PONG for {candidate.deployment_name}")
+
+
+def canary(candidate: DeploymentCandidate, *, account_key: str) -> None:
+    _text_canary(candidate, account_key=account_key)
+    _tool_canary(candidate, account_key=account_key)
+    if candidate.canonical_id in _IMAGE_CANARY_MODEL_IDS:
+        if candidate.model_format == "Anthropic":
+            raise RuntimeError(
+                f"Azure image canary has no Anthropic request path for {candidate.deployment_name}"
+            )
+        _image_canary(candidate, account_key=account_key)
 
 
 def _retryable_canary_error(exc: Exception) -> bool:
@@ -529,7 +841,27 @@ def manifest_row(candidate: DeploymentCandidate, price: Any) -> dict[str, Any]:
     }
     if tier.prompt_cached_micro_per_m is not None:
         row["cached_input_token_price_per_m"] = tier.prompt_cached_micro_per_m
-    if candidate.canonical_id == "microsoft/phi-4-multimodal-instruct":
+    if len(price.tiers) > 1:
+        row["price_tiers"] = [
+            {
+                "max_prompt_tokens": price_tier.max_prompt_tokens,
+                "input_token_price_per_m": price_tier.prompt_micro_per_m,
+                "output_token_price_per_m": price_tier.completion_micro_per_m,
+                **(
+                    {
+                        "cached_input_token_price_per_m": (
+                            price_tier.prompt_cached_micro_per_m
+                        )
+                    }
+                    if price_tier.prompt_cached_micro_per_m is not None
+                    else {}
+                ),
+            }
+            for price_tier in price.tiers
+        ]
+    if candidate.canonical_id in _IMAGE_CANARY_MODEL_IDS:
+        row["input_modalities"] = ["text", "image"]
+    elif candidate.canonical_id == "microsoft/phi-4-multimodal-instruct":
         row["input_modalities"] = ["text", "image", "audio"]
     return row
 
@@ -539,7 +871,8 @@ def write_manifest(rows: list[dict[str, Any]]) -> bool:
         "_about": (
             "Azure AI Foundry deployments verified for this TrustedRouter subscription. "
             "The account sync publishes only synchronous chat deployments with "
-            "remaining quota, exact pricing, and a successful direct PONG canary."
+            "remaining quota, exact pricing, and successful direct text, tool-call, "
+            "and required image capability canaries."
         ),
         "provider": "azure",
         "source": (
@@ -578,6 +911,77 @@ def _load_json(path: str | None, fetcher: Any) -> list[dict[str, Any]]:
     return [row for row in payload if isinstance(row, dict)]
 
 
+def _admit_candidates(
+    candidates: Iterable[DeploymentCandidate],
+    prices: Mapping[str, Any],
+    *,
+    management: AzureManagementClient,
+    existing: Mapping[str, dict[str, Any]],
+    account_key: str,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Deploy and canary candidates without letting one failure hide another."""
+    healthy_rows: list[dict[str, Any]] = []
+    failures: list[str] = []
+    for candidate in candidates:
+        try:
+            if not management.marketplace_terms_accepted(candidate):
+                raise RuntimeError(
+                    "Azure Marketplace terms are not accepted for this Anthropic model"
+                )
+            current = existing.get(candidate.deployment_name)
+            if deployment_needs_reconcile(current, candidate):
+                print(f"Azure: deploying {candidate.canonical_id}", flush=True)
+                management.deploy(candidate)
+            canary_with_retries(candidate, account_key=account_key)
+            healthy_rows.append(manifest_row(candidate, prices[candidate.canonical_id]))
+            print(f"Azure: capabilities verified {candidate.canonical_id}", flush=True)
+        except Exception as exc:  # noqa: BLE001 - isolate one upstream model
+            failures.append(f"{candidate.canonical_id}: {type(exc).__name__}: {exc}")
+            print(f"Azure: dark {failures[-1]}", file=sys.stderr, flush=True)
+    return healthy_rows, failures
+
+
+def _publish_admission(
+    candidates: Iterable[DeploymentCandidate],
+    healthy_rows: list[dict[str, Any]],
+    failures: list[str],
+) -> bool:
+    """Write only a complete, exact launch set; failed admission is immutable."""
+    expected_ids = retail_model_ids()
+    candidate_list = list(candidates)
+    candidate_ids = {candidate.canonical_id for candidate in candidate_list}
+    healthy_ids = {
+        str(row["id"])
+        for row in healthy_rows
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
+    missing_candidates = sorted(expected_ids - candidate_ids)
+    missing_healthy = sorted(expected_ids - healthy_ids)
+    unexpected_candidates = sorted(candidate_ids - expected_ids)
+    unexpected_healthy = sorted(healthy_ids - expected_ids)
+    malformed_candidates = len(candidate_list) != len(candidate_ids)
+    malformed_healthy = len(healthy_rows) != len(healthy_ids)
+    if (
+        missing_candidates
+        or missing_healthy
+        or unexpected_candidates
+        or unexpected_healthy
+        or malformed_candidates
+        or malformed_healthy
+        or failures
+    ):
+        raise RuntimeError(
+            "Azure admission failed the exact "
+            f"{len(expected_ids)}-route launch contract before manifest write: "
+            f"missing_candidates={missing_candidates}, missing_healthy={missing_healthy}, "
+            f"unexpected_candidates={unexpected_candidates}, "
+            f"unexpected_healthy={unexpected_healthy}, "
+            f"malformed_candidates={malformed_candidates}, "
+            f"malformed_healthy={malformed_healthy}, failures={failures}"
+        )
+    return write_manifest(healthy_rows)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true")
@@ -598,8 +1002,20 @@ def main() -> int:
     )
     usage = _load_json(args.usage_json, lambda: fetch_account_usage(location=args.location))
     retail_rows = _load_json(args.prices_json, fetch_retail_rows)
-    prices = parse_retail_prices(retail_rows)
-    candidates = select_deployment_candidates(models, usage, frozenset(prices))
+    version_contract = retail_model_versions()
+    candidate_pool = select_deployment_candidates(
+        models,
+        usage,
+        frozenset(version_contract),
+        allowed_versions=version_contract,
+    )
+    prices = parse_retail_prices(
+        retail_rows,
+        model_versions={candidate.canonical_id: candidate.version for candidate in candidate_pool},
+    )
+    candidates = [
+        candidate for candidate in candidate_pool if candidate.canonical_id in prices
+    ]
     print(f"Azure: {len(candidates)} deployable synchronous priced model(s)")
     if not args.apply:
         for candidate in candidates:
@@ -612,37 +1028,22 @@ def main() -> int:
         resource_group=args.resource_group,
         account=args.account,
     )
-    healthy_rows: list[dict[str, Any]] = []
-    failures: list[str] = []
     try:
         existing = management.list_deployments()
         account_key = management.account_key()
-        for candidate in candidates:
-            try:
-                if not management.marketplace_terms_accepted(candidate):
-                    raise RuntimeError(
-                        "Azure Marketplace terms are not accepted for this Anthropic model"
-                    )
-                current = existing.get(candidate.deployment_name)
-                if deployment_needs_reconcile(current, candidate):
-                    print(f"Azure: deploying {candidate.canonical_id}", flush=True)
-                    management.deploy(candidate)
-                canary_with_retries(candidate, account_key=account_key)
-                healthy_rows.append(manifest_row(candidate, prices[candidate.canonical_id]))
-                print(f"Azure: PONG {candidate.canonical_id}", flush=True)
-            except Exception as exc:  # noqa: BLE001 - isolate one upstream model
-                failures.append(f"{candidate.canonical_id}: {type(exc).__name__}: {exc}")
-                print(f"Azure: dark {failures[-1]}", file=sys.stderr, flush=True)
+        healthy_rows, failures = _admit_candidates(
+            candidates,
+            prices,
+            management=management,
+            existing=existing,
+            account_key=account_key,
+        )
     finally:
         management.close()
 
-    if not healthy_rows:
-        raise RuntimeError("Azure sync produced no healthy model routes; manifest unchanged")
-    changed = write_manifest(healthy_rows)
+    changed = _publish_admission(candidates, healthy_rows, failures)
     state = "updated" if changed else "unchanged"
     print(f"Azure: published {len(healthy_rows)} healthy route(s); manifest {state}")
-    if failures:
-        print(f"Azure: {len(failures)} model(s) remain dark", file=sys.stderr)
     return 0
 
 

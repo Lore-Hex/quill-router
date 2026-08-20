@@ -1,10 +1,10 @@
 {
-  "_about": "Azure AI Foundry deployments verified for this TrustedRouter subscription. The account sync publishes only synchronous chat deployments with remaining quota, exact pricing, and a successful direct PONG canary.",
+  "_about": "Azure AI Foundry deployments verified for this TrustedRouter subscription. The account sync publishes only synchronous chat deployments with remaining quota, exact pricing, and successful direct text, tool-call, and required image capability canaries.",
   "provider": "azure",
   "source": "https://management.azure.com/providers/Microsoft.CognitiveServices/locations/eastus2/models",
   "pricing_source": "https://prices.azure.com/api/retail/prices?$filter=serviceName%20eq%20%27Foundry%20Models%27%20and%20armRegionName%20eq%20%27eastus2%27",
   "price_scale": "microdollars_per_million",
-  "model_count": 24,
+  "model_count": 12,
   "models": [
     {
       "id": "cohere/command-a",
@@ -55,272 +55,6 @@
       "azure_deployment_sku": "GlobalStandard"
     },
     {
-      "id": "deepseek/deepseek-v3.2",
-      "upstream_id": "deepseek-v3-2",
-      "display_name": "DeepSeek-V3.2",
-      "title": "DeepSeek-V3.2",
-      "model_type": "chat",
-      "endpoints": [
-        "chat/completions"
-      ],
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "input_token_price_per_m": 580000,
-      "output_token_price_per_m": 1680000,
-      "status": 1,
-      "routable": true,
-      "azure_model_name": "DeepSeek-V3.2",
-      "azure_model_version": "1",
-      "azure_model_format": "DeepSeek",
-      "azure_deployment_sku": "GlobalStandard"
-    },
-    {
-      "id": "deepseek/deepseek-v3.2-speciale",
-      "upstream_id": "deepseek-v3-2-speciale",
-      "display_name": "DeepSeek-V3.2-Speciale",
-      "title": "DeepSeek-V3.2-Speciale",
-      "model_type": "chat",
-      "endpoints": [
-        "chat/completions"
-      ],
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "input_token_price_per_m": 580000,
-      "output_token_price_per_m": 1680000,
-      "status": 1,
-      "routable": true,
-      "azure_model_name": "DeepSeek-V3.2-Speciale",
-      "azure_model_version": "1",
-      "azure_model_format": "DeepSeek",
-      "azure_deployment_sku": "GlobalStandard"
-    },
-    {
-      "id": "deepseek/deepseek-v4-flash",
-      "upstream_id": "deepseek-v4-flash",
-      "display_name": "DeepSeek-V4-Flash",
-      "title": "DeepSeek-V4-Flash",
-      "model_type": "chat",
-      "endpoints": [
-        "chat/completions"
-      ],
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "input_token_price_per_m": 190000,
-      "output_token_price_per_m": 510000,
-      "status": 1,
-      "routable": true,
-      "azure_model_name": "DeepSeek-V4-Flash",
-      "azure_model_version": "2026-04-23",
-      "azure_model_format": "DeepSeek",
-      "azure_deployment_sku": "GlobalStandard",
-      "cached_input_token_price_per_m": 28000
-    },
-    {
-      "id": "deepseek/deepseek-v4-pro",
-      "upstream_id": "deepseek-v4-pro",
-      "display_name": "DeepSeek-V4-Pro",
-      "title": "DeepSeek-V4-Pro",
-      "model_type": "chat",
-      "endpoints": [
-        "chat/completions"
-      ],
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "input_token_price_per_m": 1740000,
-      "output_token_price_per_m": 3480000,
-      "status": 1,
-      "routable": true,
-      "azure_model_name": "DeepSeek-V4-Pro",
-      "azure_model_version": "2026-04-23",
-      "azure_model_format": "DeepSeek",
-      "azure_deployment_sku": "GlobalStandard",
-      "cached_input_token_price_per_m": 145000
-    },
-    {
-      "id": "meta-llama/llama-3.3-70b-instruct",
-      "upstream_id": "llama-3-3-70b-instruct",
-      "display_name": "Llama-3.3-70B-Instruct",
-      "title": "Llama-3.3-70B-Instruct",
-      "model_type": "chat",
-      "endpoints": [
-        "chat/completions"
-      ],
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "input_token_price_per_m": 710000,
-      "output_token_price_per_m": 710000,
-      "status": 1,
-      "routable": true,
-      "azure_model_name": "Llama-3.3-70B-Instruct",
-      "azure_model_version": "9",
-      "azure_model_format": "Meta",
-      "azure_deployment_sku": "GlobalStandard"
-    },
-    {
-      "id": "meta-llama/llama-4-maverick",
-      "upstream_id": "llama-4-maverick-17b-128e-instruct-fp8",
-      "display_name": "Llama-4-Maverick-17B-128E-Instruct-FP8",
-      "title": "Llama-4-Maverick-17B-128E-Instruct-FP8",
-      "model_type": "chat",
-      "endpoints": [
-        "chat/completions"
-      ],
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "input_token_price_per_m": 250000,
-      "output_token_price_per_m": 1000000,
-      "status": 1,
-      "routable": true,
-      "azure_model_name": "Llama-4-Maverick-17B-128E-Instruct-FP8",
-      "azure_model_version": "1",
-      "azure_model_format": "Meta",
-      "azure_deployment_sku": "GlobalStandard"
-    },
-    {
-      "id": "microsoft/phi-4",
-      "upstream_id": "phi-4",
-      "display_name": "Phi-4",
-      "title": "Phi-4",
-      "model_type": "chat",
-      "endpoints": [
-        "chat/completions"
-      ],
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "input_token_price_per_m": 125000,
-      "output_token_price_per_m": 500000,
-      "status": 1,
-      "routable": true,
-      "azure_model_name": "Phi-4",
-      "azure_model_version": "7",
-      "azure_model_format": "Microsoft",
-      "azure_deployment_sku": "GlobalStandard"
-    },
-    {
-      "id": "microsoft/phi-4-mini-instruct",
-      "upstream_id": "phi-4-mini-instruct",
-      "display_name": "Phi-4-mini-instruct",
-      "title": "Phi-4-mini-instruct",
-      "model_type": "chat",
-      "endpoints": [
-        "chat/completions"
-      ],
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "input_token_price_per_m": 75000,
-      "output_token_price_per_m": 300000,
-      "status": 1,
-      "routable": true,
-      "azure_model_name": "Phi-4-mini-instruct",
-      "azure_model_version": "1",
-      "azure_model_format": "Microsoft",
-      "azure_deployment_sku": "GlobalStandard"
-    },
-    {
-      "id": "microsoft/phi-4-mini-reasoning",
-      "upstream_id": "phi-4-mini-reasoning",
-      "display_name": "Phi-4-mini-reasoning",
-      "title": "Phi-4-mini-reasoning",
-      "model_type": "chat",
-      "endpoints": [
-        "chat/completions"
-      ],
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "input_token_price_per_m": 75000,
-      "output_token_price_per_m": 300000,
-      "status": 1,
-      "routable": true,
-      "azure_model_name": "Phi-4-mini-reasoning",
-      "azure_model_version": "1",
-      "azure_model_format": "Microsoft",
-      "azure_deployment_sku": "GlobalStandard"
-    },
-    {
-      "id": "microsoft/phi-4-reasoning",
-      "upstream_id": "phi-4-reasoning",
-      "display_name": "Phi-4-reasoning",
-      "title": "Phi-4-reasoning",
-      "model_type": "chat",
-      "endpoints": [
-        "chat/completions"
-      ],
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "input_token_price_per_m": 125000,
-      "output_token_price_per_m": 500000,
-      "status": 1,
-      "routable": true,
-      "azure_model_name": "Phi-4-reasoning",
-      "azure_model_version": "1",
-      "azure_model_format": "Microsoft",
-      "azure_deployment_sku": "GlobalStandard"
-    },
-    {
-      "id": "mistralai/codestral-2501",
-      "upstream_id": "codestral-2501",
-      "display_name": "Codestral-2501",
-      "title": "Codestral-2501",
-      "model_type": "chat",
-      "endpoints": [
-        "chat/completions"
-      ],
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "input_token_price_per_m": 300000,
-      "output_token_price_per_m": 900000,
-      "status": 1,
-      "routable": true,
-      "azure_model_name": "Codestral-2501",
-      "azure_model_version": "2",
-      "azure_model_format": "Mistral AI",
-      "azure_deployment_sku": "GlobalStandard"
-    },
-    {
       "id": "mistralai/mistral-large-3",
       "upstream_id": "mistral-large-3",
       "display_name": "Mistral-Large-3",
@@ -354,7 +88,8 @@
         "chat/completions"
       ],
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -379,7 +114,8 @@
         "chat/completions"
       ],
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -404,7 +140,8 @@
         "chat/completions"
       ],
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -429,7 +166,8 @@
         "chat/completions"
       ],
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -550,7 +288,8 @@
         "chat/completions"
       ],
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -563,31 +302,6 @@
       "azure_model_version": "1",
       "azure_model_format": "xAI",
       "azure_deployment_sku": "GlobalStandard"
-    },
-    {
-      "id": "x-ai/grok-4.3",
-      "upstream_id": "grok-4-3",
-      "display_name": "grok-4.3",
-      "title": "grok-4.3",
-      "model_type": "chat",
-      "endpoints": [
-        "chat/completions"
-      ],
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "input_token_price_per_m": 1250000,
-      "output_token_price_per_m": 2500000,
-      "status": 1,
-      "routable": true,
-      "azure_model_name": "grok-4.3",
-      "azure_model_version": "1",
-      "azure_model_format": "xAI",
-      "azure_deployment_sku": "GlobalStandard",
-      "cached_input_token_price_per_m": 200000
     }
   ],
   "generated_at": "2026-08-05T15:58:05Z"
