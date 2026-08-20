@@ -10,7 +10,7 @@
      doesn't flash light. Dark is the default; only a stored "light"
      preference adds the attribute. See public/_base.html for the matching
      marketing-chrome script + the toggle that writes localStorage. #}
-  <script>
+  <script nonce="{{ csp_nonce() }}">
     (function () {
       try {
         if (localStorage.getItem("tr-theme") === "light") {

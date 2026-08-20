@@ -24,10 +24,12 @@ it could be reused by other ASGI services in the same project.
 from __future__ import annotations
 
 import logging
+import secrets
 import threading
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from hashlib import sha256
 from urllib.parse import parse_qs, urlsplit
 
@@ -294,7 +296,12 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         `docs`...) inherit the guarantee. Set conservatively — no
         `preload` directive yet because submitting to the Chrome
         preload list is a one-way commitment."""
-        response = await call_next(request)
+        nonce = secrets.token_urlsafe(16)
+        token = _CSP_NONCE.set(nonce)
+        try:
+            response = await call_next(request)
+        finally:
+            _CSP_NONCE.reset(token)
         response.headers.setdefault(
             "strict-transport-security",
             "max-age=63072000; includeSubDomains",
@@ -319,10 +326,27 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
             # they appear in the browser console and nowhere else. That is a
             # deliberate first step, not a monitoring claim -- see the PR.
             response.headers.setdefault(
-                "content-security-policy-report-only",
-                CONTENT_SECURITY_POLICY_REPORT_ONLY,
+                "content-security-policy",
+                content_security_policy(nonce),
             )
         return response
+
+
+#: Per-request CSP nonce. A ContextVar rather than a template global because
+#: both Jinja environments are ``lru_cache``d and therefore shared across
+#: requests -- a nonce stored on the env would be reused, which is exactly as
+#: good as no nonce at all.
+_CSP_NONCE: ContextVar[str] = ContextVar("csp_nonce", default="")
+
+
+def current_csp_nonce() -> str:
+    """The nonce for the request being rendered, or "" outside a request.
+
+    Registered as the ``csp_nonce`` template global. Empty outside a request
+    so template rendering in tests and scripts does not explode; an empty
+    nonce attribute simply fails the policy rather than silently passing it.
+    """
+    return _CSP_NONCE.get()
 
 
 #: The policy the site would have to satisfy before CSP can be enforced.
@@ -330,22 +354,45 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
 #: couple of scripts, the trust and status subdomains, GitHub links), not from
 #: a generic template -- a policy nobody measured is one that gets switched to
 #: report-only forever.
-CONTENT_SECURITY_POLICY_REPORT_ONLY = "; ".join(
-    (
-        "default-src 'self'",
-        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
-        "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data: https:",
-        "font-src 'self' data: https://cdn.jsdelivr.net",
-        "connect-src 'self' https://api.trustedrouter.com https://trust.trustedrouter.com "
-        "https://status.trustedrouter.com",
-        "frame-src 'self'",
-        "frame-ancestors 'self'",
-        "base-uri 'self'",
-        "form-action 'self'",
-        "object-src 'none'",
-    )
+#: Script origins the templates actually load today: our own static files,
+#: four jsdelivr libraries, and Adyen's checkout SDK on the credits page.
+CSP_SCRIPT_ORIGINS = (
+    "https://cdn.jsdelivr.net",
+    "https://checkoutshopper-live.cdn.adyen.com",
+    "https://checkoutshopper-test.cdn.adyen.com",
 )
+
+
+def content_security_policy(nonce: str) -> str:
+    """Build the policy for one request.
+
+    ``script-src`` carries a nonce, which makes browsers IGNORE any
+    ``'unsafe-inline'`` there -- that is the whole point, and why every inline
+    <script> in the templates now carries ``nonce="{{ csp_nonce() }}"``.
+
+    ``style-src`` keeps ``'unsafe-inline'`` and is not a mistake: a nonce
+    cannot authorise an inline ``style="..."`` ATTRIBUTE, only a <style>
+    block, and 27 templates use style attributes. Removing them is a real
+    change with no security payoff next to script-src, so it is not bundled
+    here. Said plainly rather than left looking like an oversight.
+    """
+    return "; ".join(
+        (
+            "default-src 'self'",
+            f"script-src 'self' 'nonce-{nonce}' " + " ".join(CSP_SCRIPT_ORIGINS),
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+            "img-src 'self' data: https:",
+            "font-src 'self' data: https://cdn.jsdelivr.net",
+            "connect-src 'self' https://api.trustedrouter.com "
+            "https://trust.trustedrouter.com https://status.trustedrouter.com",
+            "frame-src 'self' https://checkoutshopper-live.cdn.adyen.com "
+            "https://checkoutshopper-test.cdn.adyen.com",
+            "frame-ancestors 'self'",
+            "base-uri 'self'",
+            "form-action 'self'",
+            "object-src 'none'",
+        )
+    )
 
 
 def _status_host_path(path: str) -> bool:

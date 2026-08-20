@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.main import create_app
-from trusted_router.middleware import CONTENT_SECURITY_POLICY_REPORT_ONLY
+from trusted_router.middleware import CSP_SCRIPT_ORIGINS, content_security_policy
 
 
 @pytest.fixture(scope="module")
@@ -58,42 +58,94 @@ def test_x_frame_options_is_sameorigin_not_deny() -> None:
     assert '"x-frame-options", "DENY"' not in source
 
 
-def test_csp_is_report_only_and_only_on_html(client: TestClient) -> None:
-    """Report-only, and NOT enforcing: the templates carry inline script and
-    style, so enforcing today would either need 'unsafe-inline' (pointless) or
-    nonces in every template (the real fix, and a separate change)."""
+def test_csp_is_enforcing_and_only_on_html(client: TestClient) -> None:
+    """Enforcing, not report-only. Verified in a real browser before flipping:
+    /, /choose, /docs and /chat all render with zero console violations, which
+    includes the four jsdelivr libraries /chat loads."""
     html = client.get("/")
-    assert html.headers.get("content-security-policy-report-only")
-    assert "content-security-policy" not in {k.lower() for k in html.headers} - {
-        "content-security-policy-report-only"
-    }
+    assert html.headers.get("content-security-policy")
+    assert html.headers.get("content-security-policy-report-only") is None
 
     api = client.get("/status.json")
     assert api.headers.get("content-type", "").startswith("application/json")
-    assert api.headers.get("content-security-policy-report-only") is None
+    assert api.headers.get("content-security-policy") is None
 
 
-def test_the_policy_allows_what_the_templates_actually_load() -> None:
-    """A policy copied from a blog post reports violations nobody acts on.
+def test_script_src_uses_a_nonce_and_not_unsafe_inline(client: TestClient) -> None:
+    """A nonce in script-src makes browsers ignore 'unsafe-inline'. Shipping
+    both would be the policy that looks strict and blocks nothing."""
+    policy = client.get("/").headers["content-security-policy"]
+    script_src = next(d for d in policy.split("; ") if d.startswith("script-src"))
+    assert "'nonce-" in script_src
+    assert "'unsafe-inline'" not in script_src
 
-    These origins are the ones the templates reference today; if a template
-    starts loading from somewhere else, the violation should be a real signal
-    rather than noise this policy was always going to produce.
+
+def test_the_nonce_is_per_request_and_matches_the_page(client: TestClient) -> None:
+    """The header nonce must authorise THIS page's inline scripts, and must
+    not repeat: a reused nonce is worth exactly as much as none."""
+    import re
+
+    seen = set()
+    for _ in range(3):
+        response = client.get("/")
+        header = re.search(r"'nonce-([A-Za-z0-9_-]+)'", response.headers["content-security-policy"])
+        assert header, response.headers["content-security-policy"]
+        body = set(re.findall(r'nonce="([A-Za-z0-9_-]+)"', response.text))
+        assert body, "page has no nonced inline blocks"
+        assert body == {header.group(1)}, "page nonce does not match the header"
+        seen.add(header.group(1))
+    assert len(seen) == 3, "nonce was reused across requests"
+
+
+def test_every_inline_script_in_every_template_carries_the_nonce() -> None:
+    """The guard that keeps enforcement survivable.
+
+    Under an enforcing policy an inline <script> without a nonce does not warn
+    -- it silently does not run, and the page looks fine until somebody clicks
+    the thing it powered. A new template must not be able to do that quietly.
     """
-    for directive in (
-        "default-src 'self'",
-        "frame-ancestors 'self'",
-        "object-src 'none'",
-        "base-uri 'self'",
-        "form-action 'self'",
-    ):
-        assert directive in CONTENT_SECURITY_POLICY_REPORT_ONLY
-    assert "https://cdn.jsdelivr.net" in CONTENT_SECURITY_POLICY_REPORT_ONLY
+    import re
+    from pathlib import Path
+
+    import trusted_router
+
+    root = Path(trusted_router.__file__).parent / "templates"
+    missing = []
+    for path in sorted(root.rglob("*.html")):
+        for match in re.finditer(r"<(script|style)\b[^>]*>", path.read_text()):
+            tag = match.group(0)
+            if re.search(r"\bsrc\s*=", tag) or "nonce=" in tag:
+                continue
+            missing.append(f"{path.relative_to(root)}: {tag[:60]}")
+    assert not missing, (
+        "inline blocks without nonce=\"{{ csp_nonce() }}\" -- these will not "
+        "execute under the enforcing policy:\n  " + "\n  ".join(missing)
+    )
 
 
-def test_report_only_collects_nothing_automatically() -> None:
-    """No report-uri/report-to, stated so the header is not mistaken for
-    monitoring. Violations land in the browser console and nowhere else until
-    somebody looks -- which is the point of shipping it before enforcing."""
-    assert "report-uri" not in CONTENT_SECURITY_POLICY_REPORT_ONLY
-    assert "report-to" not in CONTENT_SECURITY_POLICY_REPORT_ONLY
+def test_external_script_origins_are_allowlisted() -> None:
+    """Every https:// script the templates load must be in CSP_SCRIPT_ORIGINS."""
+    import re
+    from pathlib import Path
+
+    import trusted_router
+
+    root = Path(trusted_router.__file__).parent / "templates"
+    origins = set()
+    for path in root.rglob("*.html"):
+        for match in re.finditer(r'<script[^>]*src="(https://[^"/]+)', path.read_text()):
+            origins.add(match.group(1))
+    assert origins <= set(CSP_SCRIPT_ORIGINS), (
+        f"templates load scripts from {origins - set(CSP_SCRIPT_ORIGINS)}, "
+        "which the policy blocks"
+    )
+
+
+def test_the_policy_still_collects_nothing_automatically() -> None:
+    """No report-uri: violations surface as broken pages and console errors,
+    not as telemetry. Stated so the header is not mistaken for monitoring."""
+    policy = content_security_policy("abc")
+    assert "report-uri" not in policy
+    assert "report-to" not in policy
+    for directive in ("frame-ancestors 'self'", "object-src 'none'", "base-uri 'self'"):
+        assert directive in policy

@@ -10,7 +10,7 @@ from trusted_router.competitor_comparisons import COMPETITOR_COMPARISONS
 
 def _json_ld(response_text: str) -> dict[str, object]:
     match = re.search(
-        r'<script type="application/ld\+json">(.*?)</script>',
+        r'<script type="application/ld\+json"[^>]*>(.*?)</script>',
         response_text,
         flags=re.DOTALL,
     )

@@ -118,7 +118,7 @@ def test_provider_detail_structured_data_describes_visible_provider(
 ) -> None:
     response = client.get("/providers/minimax")
     match = re.search(
-        r'<script type="application/ld\+json">(.*?)</script>',
+        r'<script type="application/ld\+json"[^>]*>(.*?)</script>',
         response.text,
         re.DOTALL,
     )

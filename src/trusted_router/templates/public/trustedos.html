@@ -183,7 +183,7 @@ curl -s "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE" \
   </div>
 </section>
 
-<style>
+<style nonce="{{ csp_nonce() }}">
   .inquiry-form { margin-top: 4px; }
   .inquiry-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
   .inquiry-grid label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 650; color: var(--muted); }
@@ -200,7 +200,7 @@ curl -s "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE" \
   .inquiry-status[data-tone="err"] { color: var(--bad, #ff6b6b); }
   @media (max-width: 640px) { .inquiry-grid { grid-template-columns: 1fr; } }
 </style>
-<script>
+<script nonce="{{ csp_nonce() }}">
   (function () {
     var form = document.getElementById("trustedos-inquiry");
     if (!form) return;

@@ -44,13 +44,13 @@ Estimate cost and speed before making billable calls.</code></pre>
           loading="eager"
           referrerpolicy="same-origin"></iframe>
 </section>
-<style>
+<style nonce="{{ csp_nonce() }}">
   .choose-embed{margin:6px 0 30px;border-radius:var(--r-panel);overflow:hidden;
     border:1px solid var(--border-default);background:var(--surface-card)}
   #tr-choose-frame{width:100%;border:0;display:block;min-height:1480px;background:var(--surface-card)}
   @media(max-width:980px){ #tr-choose-frame{min-height:2200px} }
 </style>
-<script>
+<script nonce="{{ csp_nonce() }}">
   /* Same-origin iframe: size it to its content. Prefer the height the app
      postMessages; fall back to reading the document directly. */
   (function(){
