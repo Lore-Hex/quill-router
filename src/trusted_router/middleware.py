@@ -325,8 +325,15 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
             # It has NO report-uri, so nothing collects these automatically:
             # they appear in the browser console and nowhere else. That is a
             # deliberate first step, not a monitoring claim -- see the PR.
+            # REPORT-ONLY first, deliberately. The nonces are already correct
+            # (verified in a browser under enforcement on /, /choose, /docs and
+            # /chat), but /console/* needs a session and the Adyen checkout page
+            # loads a third-party SDK that injects its own iframes -- neither
+            # was exercised. Report-only lets real traffic prove those paths
+            # before a blocked script can break a money path. Flip this to
+            # "content-security-policy" once the violation reports are clean.
             response.headers.setdefault(
-                "content-security-policy",
+                "content-security-policy-report-only",
                 content_security_policy(nonce),
             )
         return response

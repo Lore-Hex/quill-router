@@ -58,23 +58,31 @@ def test_x_frame_options_is_sameorigin_not_deny() -> None:
     assert '"x-frame-options", "DENY"' not in source
 
 
-def test_csp_is_enforcing_and_only_on_html(client: TestClient) -> None:
-    """Enforcing, not report-only. Verified in a real browser before flipping:
-    /, /choose, /docs and /chat all render with zero console violations, which
-    includes the four jsdelivr libraries /chat loads."""
+def test_csp_ships_report_only_until_the_unseen_paths_are_proven(
+    client: TestClient,
+) -> None:
+    """Report-only FIRST, then enforce.
+
+    The nonces are already correct -- verified in a browser under an enforcing
+    policy on /, /choose, /docs and /chat. What was NOT exercised is /console/*
+    (needs a session) and the Adyen checkout page, whose third-party SDK
+    injects its own iframes. Under enforcement a blocked script does not warn,
+    it silently does not run, and checkout is a money path. So real traffic
+    proves those two before the header is switched.
+    """
     html = client.get("/")
-    assert html.headers.get("content-security-policy")
-    assert html.headers.get("content-security-policy-report-only") is None
+    assert html.headers.get("content-security-policy-report-only")
+    assert html.headers.get("content-security-policy") is None
 
     api = client.get("/status.json")
     assert api.headers.get("content-type", "").startswith("application/json")
-    assert api.headers.get("content-security-policy") is None
+    assert api.headers.get("content-security-policy-report-only") is None
 
 
 def test_script_src_uses_a_nonce_and_not_unsafe_inline(client: TestClient) -> None:
     """A nonce in script-src makes browsers ignore 'unsafe-inline'. Shipping
     both would be the policy that looks strict and blocks nothing."""
-    policy = client.get("/").headers["content-security-policy"]
+    policy = client.get("/").headers["content-security-policy-report-only"]
     script_src = next(d for d in policy.split("; ") if d.startswith("script-src"))
     assert "'nonce-" in script_src
     assert "'unsafe-inline'" not in script_src
@@ -88,8 +96,11 @@ def test_the_nonce_is_per_request_and_matches_the_page(client: TestClient) -> No
     seen = set()
     for _ in range(3):
         response = client.get("/")
-        header = re.search(r"'nonce-([A-Za-z0-9_-]+)'", response.headers["content-security-policy"])
-        assert header, response.headers["content-security-policy"]
+        header = re.search(
+            r"'nonce-([A-Za-z0-9_-]+)'",
+            response.headers["content-security-policy-report-only"],
+        )
+        assert header, response.headers["content-security-policy-report-only"]
         body = set(re.findall(r'nonce="([A-Za-z0-9_-]+)"', response.text))
         assert body, "page has no nonced inline blocks"
         assert body == {header.group(1)}, "page nonce does not match the header"
