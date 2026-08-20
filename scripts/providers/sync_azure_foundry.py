@@ -67,6 +67,36 @@ class DeploymentCandidate:
     is_default_version: bool
 
 
+def deployment_needs_reconcile(
+    current: dict[str, Any] | None,
+    candidate: DeploymentCandidate,
+) -> bool:
+    """Return whether an existing deployment is unsafe to reuse.
+
+    The selected capacity is a minimum, so a deployment with more capacity can
+    remain in place. Missing or malformed SKU metadata fails closed because the
+    manifest price is valid only for the candidate's exact SKU.
+    """
+    if not isinstance(current, dict):
+        return True
+    properties = current.get("properties")
+    current_model = properties.get("model") if isinstance(properties, dict) else None
+    if (
+        not isinstance(current_model, dict)
+        or current_model.get("name") != candidate.native_name
+        or str(current_model.get("version")) != candidate.version
+    ):
+        return True
+
+    sku = current.get("sku")
+    if not isinstance(sku, dict) or sku.get("name") != candidate.sku:
+        return True
+    capacity = sku.get("capacity")
+    if not isinstance(capacity, int) or isinstance(capacity, bool):
+        return True
+    return capacity < candidate.capacity
+
+
 def _run_json(command: list[str]) -> Any:
     completed = subprocess.run(  # noqa: S603 - argv only, never a shell
         command,
@@ -337,8 +367,21 @@ class AzureManagementClient:
                 f"?api-version={MANAGEMENT_API_VERSION}"
             )
             current.raise_for_status()
-            state = current.json().get("properties", {}).get("provisioningState")
+            current_payload = current.json()
+            current_properties = (
+                current_payload.get("properties") if isinstance(current_payload, dict) else None
+            )
+            state = (
+                current_properties.get("provisioningState")
+                if isinstance(current_properties, dict)
+                else None
+            )
             if state == "Succeeded":
+                if deployment_needs_reconcile(current_payload, candidate):
+                    raise RuntimeError(
+                        f"Azure deployment {candidate.deployment_name} succeeded with an "
+                        "unexpected model, version, SKU, or capacity"
+                    )
                 return
             if state in {"Failed", "Canceled"}:
                 raise RuntimeError(f"Azure deployment {candidate.deployment_name} ended in {state}")
@@ -581,14 +624,7 @@ def main() -> int:
                         "Azure Marketplace terms are not accepted for this Anthropic model"
                     )
                 current = existing.get(candidate.deployment_name)
-                properties = current.get("properties", {}) if isinstance(current, dict) else {}
-                current_model = properties.get("model", {}) if isinstance(properties, dict) else {}
-                needs_deploy = (
-                    not isinstance(current_model, dict)
-                    or current_model.get("name") != candidate.native_name
-                    or str(current_model.get("version")) != candidate.version
-                )
-                if needs_deploy:
+                if deployment_needs_reconcile(current, candidate):
                     print(f"Azure: deploying {candidate.canonical_id}", flush=True)
                     management.deploy(candidate)
                 canary_with_retries(candidate, account_key=account_key)

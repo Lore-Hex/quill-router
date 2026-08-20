@@ -14,6 +14,7 @@ from scripts.providers.sync_azure_foundry import (
     _stream_text,
     canary,
     canary_with_retries,
+    deployment_needs_reconcile,
     select_deployment_candidates,
     write_manifest,
 )
@@ -296,6 +297,95 @@ def test_non_anthropic_azure_models_do_not_require_marketplace_preflight() -> No
     client = object.__new__(AzureManagementClient)
 
     assert client.marketplace_terms_accepted(candidate) is True
+
+
+def test_azure_existing_deployment_reconciles_wrong_sku_when_model_matches() -> None:
+    candidate = DeploymentCandidate(
+        canonical_id="deepseek/deepseek-v4-flash",
+        native_name="DeepSeek-V4-Flash",
+        version="2026-08-01",
+        model_format="DeepSeek",
+        deployment_name="deepseek-v4-flash",
+        sku="GlobalStandard",
+        capacity=1,
+        is_default_version=True,
+    )
+    matching_model = {"name": candidate.native_name, "version": candidate.version}
+    wrong_sku = {
+        "properties": {"model": matching_model},
+        "sku": {"name": "DataZoneStandard", "capacity": candidate.capacity},
+    }
+    matching_deployment = {
+        "properties": {"model": matching_model},
+        "sku": {"name": candidate.sku, "capacity": candidate.capacity},
+    }
+
+    assert deployment_needs_reconcile(wrong_sku, candidate) is True
+    assert deployment_needs_reconcile(matching_deployment, candidate) is False
+
+
+@pytest.mark.parametrize(
+    ("capacity", "expected"),
+    [(0, True), (1, False), (2, False), (None, True), ("1", True), (True, True)],
+)
+def test_azure_existing_deployment_requires_minimum_integer_capacity(
+    capacity: object,
+    expected: bool,
+) -> None:
+    candidate = DeploymentCandidate(
+        canonical_id="deepseek/deepseek-v4-flash",
+        native_name="DeepSeek-V4-Flash",
+        version="2026-08-01",
+        model_format="DeepSeek",
+        deployment_name="deepseek-v4-flash",
+        sku="GlobalStandard",
+        capacity=1,
+        is_default_version=True,
+    )
+    current = {
+        "properties": {
+            "model": {"name": candidate.native_name, "version": candidate.version}
+        },
+        "sku": {"name": candidate.sku, "capacity": capacity},
+    }
+
+    assert deployment_needs_reconcile(current, candidate) is expected
+
+
+def test_azure_deploy_fails_closed_when_succeeded_resource_has_wrong_sku() -> None:
+    candidate = DeploymentCandidate(
+        canonical_id="deepseek/deepseek-v4-flash",
+        native_name="DeepSeek-V4-Flash",
+        version="2026-08-01",
+        model_format="DeepSeek",
+        deployment_name="deepseek-v4-flash",
+        sku="GlobalStandard",
+        capacity=1,
+        is_default_version=True,
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "PUT":
+            return httpx.Response(200)
+        return httpx.Response(
+            200,
+            json={
+                "properties": {
+                    "model": {"name": candidate.native_name, "version": candidate.version},
+                    "provisioningState": "Succeeded",
+                },
+                "sku": {"name": "DataZoneStandard", "capacity": candidate.capacity},
+            },
+        )
+
+    client = object.__new__(AzureManagementClient)
+    client._base = "https://management.azure.test/account"
+    client._client = httpx.Client(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(RuntimeError, match="unexpected model, version, SKU, or capacity"):
+            client.deploy(candidate)
+    finally:
+        client.close()
 
 
 def test_azure_canary_retries_only_transient_failures(
