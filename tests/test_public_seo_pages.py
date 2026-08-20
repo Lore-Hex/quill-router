@@ -171,6 +171,44 @@ def test_api_reference_declares_one_query_independent_canonical(
         assert f'href="{path}"' in response.text
 
 
+@pytest.mark.parametrize(
+    ("path", "canonical", "expected_copy"),
+    (
+        (
+            "/openrouter-alternative/quickstart",
+            "/openrouter-alternative",
+            "Keep your SDK. Switch the base URL.",
+        ),
+        (
+            "/private-llm-api/quickstart",
+            "/private-llm-api",
+            "Make one private API call in 60 seconds.",
+        ),
+    ),
+)
+def test_paid_landing_experiments_are_noindex_and_canonical(
+    client: TestClient,
+    path: str,
+    canonical: str,
+    expected_copy: str,
+) -> None:
+    response = client.get(f"{path}?utm_source=google&utm_content=landing_test")
+
+    assert response.status_code == 200
+    assert expected_copy in response.text
+    assert '<meta name="robots" content="noindex,follow">' in response.text
+    assert response.text.count('rel="canonical"') == 1
+    assert (
+        f'<link rel="canonical" href="https://trustedrouter.com{canonical}">'
+        in response.text
+    )
+    assert 'data-action="open-signin"' in response.text
+
+    sitemap = client.get("/sitemap.xml")
+    assert sitemap.status_code == 200
+    assert f"https://trustedrouter.com{path}" not in sitemap.text
+
+
 def test_public_footer_links_to_canonical_trust_page(client: TestClient) -> None:
     response = client.get("/")
 

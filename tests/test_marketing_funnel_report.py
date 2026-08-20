@@ -23,6 +23,7 @@ def _record(
     source: str = "google",
     campaign: str = "high_intent",
     creative: str = "privacy_a",
+    landing_path: str = "/openrouter-alternative",
 ) -> dict[str, object]:
     return {
         "event": event,
@@ -33,6 +34,7 @@ def _record(
         "utm_medium": "paid_search",
         "utm_campaign": campaign,
         "utm_content": creative,
+        "landing_path": landing_path,
     }
 
 
@@ -53,6 +55,7 @@ def test_funnel_query_is_metadata_only_and_covers_every_stage() -> None:
         assert event in query
     assert "dcount(anonymous_fingerprint)" in query
     assert "sum(amount_microdollars)" in query
+    assert "landing_path" in query
     for forbidden in (
         "prompt",
         "output",
@@ -106,11 +109,14 @@ def test_aggregate_funnel_rows_pivots_creative_and_preserves_integer_money() -> 
     assert row.purchase_events == 3
     assert row.retained_users_7d == 3
     assert row.revenue_microdollars == 12_345_678
+    assert row.landing_path == "/openrouter-alternative"
     assert row.as_dict()["revenue_usd"] == "12.345678"
     assert row.as_dict()["signup_rate"] == "17.5%"
     assert row.as_dict()["activation_rate"] == "57.1%"
+    assert row.as_dict()["activation_per_engaged_rate"] == "10.0%"
     assert row.as_dict()["checkout_rate"] == "42.9%"
     assert row.as_dict()["payment_method_rate"] == "28.6%"
+    assert row.as_dict()["purchase_per_engaged_rate"] == "5.0%"
 
 
 def test_aggregate_filters_without_placing_user_input_in_apl() -> None:
@@ -122,13 +128,19 @@ def test_aggregate_filters_without_placing_user_input_in_apl() -> None:
             source="x",
             campaign="openrouter_conquest",
             creative="reliability_b",
+            landing_path="/private-llm-api",
         ),
     ]
 
-    rows = aggregate_funnel_rows(records, source="x", creative="reliability_b")
+    rows = aggregate_funnel_rows(
+        records,
+        source="x",
+        creative="reliability_b",
+        landing_path="/private-llm-api",
+    )
 
-    assert [(row.source, row.creative) for row in rows] == [
-        ("x", "reliability_b")
+    assert [(row.source, row.creative, row.landing_path) for row in rows] == [
+        ("x", "reliability_b", "/private-llm-api")
     ]
 
 
@@ -194,6 +206,7 @@ def test_null_dimensions_are_explicit_and_unknown_events_are_ignored() -> None:
     assert rows[0].medium == "(none)"
     assert rows[0].campaign == "(none)"
     assert rows[0].creative == "(none)"
+    assert rows[0].landing_path == "(unknown)"
 
 
 def test_parse_axiom_json_lines_is_strict() -> None:
@@ -225,6 +238,7 @@ def test_report_rendering_escapes_markdown_and_handles_empty_denominators() -> N
     rendered = render_markdown([row])
 
     assert "campaign\\|unsafe" in rendered
+    assert "/openrouter-alternative" in rendered
     assert "n/a" in rendered
     assert percentage(1, 3) == "33.3%"
     assert microdollars_to_usd(1) == "0.000001"

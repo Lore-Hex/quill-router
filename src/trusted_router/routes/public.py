@@ -965,6 +965,24 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def seo_private_llm_api() -> str:
         return public_page_html(settings, "private-llm-api")
 
+    @public_html_route("/openrouter-alternative/quickstart")
+    async def experiment_openrouter_quickstart() -> str:
+        return public_page_html(
+            settings,
+            "openrouter-alternative/quickstart",
+            canonical_path="/openrouter-alternative",
+            robots_meta="noindex,follow",
+        )
+
+    @public_html_route("/private-llm-api/quickstart")
+    async def experiment_private_llm_quickstart() -> str:
+        return public_page_html(
+            settings,
+            "private-llm-api/quickstart",
+            canonical_path="/private-llm-api",
+            robots_meta="noindex,follow",
+        )
+
     @public_html_route("/hipaa-llm-api")
     async def seo_hipaa_llm_api() -> str:
         return public_page_html(settings, "hipaa-llm-api")

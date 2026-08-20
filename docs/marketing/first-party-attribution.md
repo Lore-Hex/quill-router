@@ -125,12 +125,19 @@ uv run python scripts/marketing_funnel_report.py \
 ```
 
 Use `--format json` for analysis or dashboards. Add `--creative <utm_content>`
-to inspect one creative cell. Revenue remains integer microdollars until the
-final display conversion.
+to inspect one creative cell, or `--landing <path>` to inspect one exact
+destination. Reports retain the landing path as its own dimension and show
+signup, activation, and purchase rates against engaged visitors. Revenue
+remains integer microdollars until the final display conversion.
 
 One `utm_content` value is one measurable creative cell. Multiple headlines
 inside one responsive search ad share that cell, so create separately tagged
 ads when headline-level downstream measurement is required.
+
+For landing-page tests, keep campaign, keywords, bids, ad copy, geography, and
+device settings identical. Change only the destination and use one stable
+`utm_content` value per arm. This prevents a strong headline or a different
+search term from being mistaken for a landing-page improvement.
 
 ## Initial Optimization Policy
 

@@ -33,6 +33,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source")
     parser.add_argument("--campaign")
     parser.add_argument("--creative")
+    parser.add_argument(
+        "--landing",
+        dest="landing_path",
+        help="Limit the report to one exact landing path, such as /openrouter-alternative.",
+    )
     parser.add_argument("--format", choices=("markdown", "json"), default="markdown")
     return parser.parse_args()
 
@@ -68,6 +73,7 @@ def main() -> int:
         source=args.source,
         campaign=args.campaign,
         creative=args.creative,
+        landing_path=args.landing_path,
     )
     if args.format == "json":
         print(json.dumps([row.as_dict() for row in rows], indent=2, sort_keys=True))

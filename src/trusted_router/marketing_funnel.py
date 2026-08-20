@@ -47,6 +47,7 @@ class FunnelKey:
     medium: str
     campaign: str
     creative: str
+    landing_path: str
 
 
 @dataclass
@@ -55,6 +56,7 @@ class FunnelRow:
     medium: str
     campaign: str
     creative: str
+    landing_path: str
     engaged_visitors: int = 0
     sign_in_visitors: int = 0
     signups: int = 0
@@ -73,6 +75,7 @@ class FunnelRow:
             "medium": self.medium,
             "campaign": self.campaign,
             "creative": self.creative,
+            "landing_path": self.landing_path,
             "engaged_visitors": self.engaged_visitors,
             "sign_in_visitors": self.sign_in_visitors,
             "signups": self.signups,
@@ -88,12 +91,20 @@ class FunnelRow:
             "sign_in_rate": percentage(self.sign_in_visitors, self.engaged_visitors),
             "signup_rate": percentage(self.signups, self.engaged_visitors),
             "activation_rate": percentage(self.activated_users, self.signups),
+            "activation_per_engaged_rate": percentage(
+                self.activated_users,
+                self.engaged_visitors,
+            ),
             "checkout_rate": percentage(self.checkout_started_users, self.signups),
             "payment_method_rate": percentage(
                 self.payment_method_saved_users,
                 self.signups,
             ),
             "purchase_rate": percentage(self.purchasers, self.signups),
+            "purchase_per_engaged_rate": percentage(
+                self.purchasers,
+                self.engaged_visitors,
+            ),
             "retention_7d_rate": percentage(self.retained_users_7d, self.signups),
         }
 
@@ -108,8 +119,9 @@ def build_axiom_funnel_query(dataset: str) -> str:
         f"| where event in ({event_values}) "
         "| summarize people=dcount(anonymous_fingerprint), "
         "events=count(), revenue_microdollars=sum(amount_microdollars) "
-        "by event, utm_source, utm_medium, utm_campaign, utm_content "
-        "| sort by utm_source asc, utm_campaign asc, utm_content asc, event asc"
+        "by event, utm_source, utm_medium, utm_campaign, utm_content, landing_path "
+        "| sort by utm_source asc, utm_campaign asc, utm_content asc, "
+        "landing_path asc, event asc"
     )
 
 
@@ -134,6 +146,7 @@ def aggregate_funnel_rows(
     source: str | None = None,
     campaign: str | None = None,
     creative: str | None = None,
+    landing_path: str | None = None,
 ) -> list[FunnelRow]:
     rows: dict[FunnelKey, FunnelRow] = {}
     seen_event_rows: set[tuple[FunnelKey, str]] = set()
@@ -147,12 +160,15 @@ def aggregate_funnel_rows(
             medium=_dimension(record.get("utm_medium"), "(none)"),
             campaign=_dimension(record.get("utm_campaign"), "(none)"),
             creative=_dimension(record.get("utm_content"), "(none)"),
+            landing_path=_dimension(record.get("landing_path"), "(unknown)"),
         )
         if source is not None and key.source != source:
             continue
         if campaign is not None and key.campaign != campaign:
             continue
         if creative is not None and key.creative != creative:
+            continue
+        if landing_path is not None and key.landing_path != landing_path:
             continue
         event_key = (key, event)
         if event_key in seen_event_rows:
@@ -165,6 +181,7 @@ def aggregate_funnel_rows(
                 medium=key.medium,
                 campaign=key.campaign,
                 creative=key.creative,
+                landing_path=key.landing_path,
             ),
         )
         people = _nonnegative_int(record.get("people"))
@@ -184,16 +201,17 @@ def aggregate_funnel_rows(
             row.source,
             row.campaign,
             row.creative,
+            row.landing_path,
         ),
     )
 
 
 def render_markdown(rows: Iterable[FunnelRow]) -> str:
     header = (
-        "| Source | Campaign | Creative | Engaged | Sign in | Signups | "
+        "| Source | Campaign | Creative | Landing | Engaged | Sign in | Signups | "
         "Activated | Free used | Checkout | Card saved | Buyers | Revenue | "
-        "Signup / engaged | Activated / signup |\n"
-        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+        "Signup / engaged | Activated / engaged | Buyers / engaged |\n"
+        "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
     )
     body = [
         "| "
@@ -202,6 +220,7 @@ def render_markdown(rows: Iterable[FunnelRow]) -> str:
                 _markdown_cell(row.source),
                 _markdown_cell(row.campaign),
                 _markdown_cell(row.creative),
+                _markdown_cell(row.landing_path),
                 str(row.engaged_visitors),
                 str(row.sign_in_visitors),
                 str(row.signups),
@@ -212,7 +231,8 @@ def render_markdown(rows: Iterable[FunnelRow]) -> str:
                 str(row.purchasers),
                 f"${microdollars_to_usd(row.revenue_microdollars)}",
                 percentage(row.signups, row.engaged_visitors),
-                percentage(row.activated_users, row.signups),
+                percentage(row.activated_users, row.engaged_visitors),
+                percentage(row.purchasers, row.engaged_visitors),
             )
         )
         + " |"

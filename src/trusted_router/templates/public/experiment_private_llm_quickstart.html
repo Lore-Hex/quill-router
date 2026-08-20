@@ -1,0 +1,72 @@
+{% extends "public/_base.html" %}
+
+{% block hero %}
+<section class="public-hero marketing-hero" aria-label="Private LLM API quickstart">
+  <div>
+    <div class="kicker">Private LLM API</div>
+    <h1>Make one private API call in 60 seconds.</h1>
+    <p class="lead">Use the OpenAI client you already know. The <code>trustedrouter/zdr</code> route selects an eligible zero-data-retention provider through the attested gateway.</p>
+    <div class="hero-actions">
+      <button class="btn primary" type="button" data-action="open-signin">Create my API key</button>
+      <a class="btn" href="https://trust.trustedrouter.com">Verify the gateway <span aria-hidden="true">→</span></a>
+    </div>
+    <p class="microcopy">No card required. TrustedRouter never logs or stores prompt or output content.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Private first call</span><button class="code-copy" type="button" data-action="copy-code" data-copy-target="private-first-call">Copy</button></div>
+    <pre><code id="private-first-call">import os
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+    base_url="{{ api_base_url }}",
+)
+
+response = client.chat.completions.create(
+    model="trustedrouter/zdr",
+    messages=[{
+        "role": "user",
+        "content": "Reply PONG",
+    }],
+)
+
+print(response.choices[0].message.content)</code></pre>
+  </div>
+</section>
+{% endblock %}
+
+{% block body %}
+<section class="public-proof-strip" aria-label="Private API facts">
+  <div><strong>Always</strong><span>No prompt or output logs.</span></div>
+  <div><strong>ZDR</strong><span>Policy-filtered provider routes.</span></div>
+  <div><strong>Fresh</strong><span>Nonce-bound gateway evidence.</span></div>
+  <div><strong>OpenAI</strong><span>Compatible client interface.</span></div>
+</section>
+
+<section class="marketing-grid three" aria-label="Three private API steps">
+  <div class="marketing-card"><span class="card-label">Step 1</span><h3>Create one key.</h3><p>Sign in and export the new key as <code>TRUSTEDROUTER_API_KEY</code>.</p></div>
+  <div class="marketing-card"><span class="card-label">Step 2</span><h3>Choose the ZDR route.</h3><p>Use <code>trustedrouter/zdr</code> to restrict eligible downstream provider routes.</p></div>
+  <div class="marketing-card"><span class="card-label">Step 3</span><h3>Verify live evidence.</h3><p>Challenge the gateway with a fresh nonce and match the running image to the published source.</p></div>
+</section>
+
+<section class="marketing-split" aria-label="Privacy boundaries">
+  <div class="marketing-copy">
+    <span class="eyebrow">Gateway proof</span>
+    <h2>Verify what TrustedRouter runs.</h2>
+    <p>Hardware attestation binds the live gateway to a published workload image. The open-source prompt path contains no durable prompt or output logging.</p>
+    <p><a class="btn" href="/security">Read the security boundary</a></p>
+  </div>
+  <div class="marketing-copy">
+    <span class="eyebrow">Provider policy</span>
+    <h2>Route by downstream posture.</h2>
+    <p>The ZDR alias restricts routing to providers with a documented zero-data-retention posture. Provider policy and gateway attestation remain separate claims.</p>
+    <p><a class="btn" href="/providers">Compare provider policies</a></p>
+  </div>
+</section>
+
+<section class="cta-band" aria-label="Create a private LLM API key">
+  <div><strong>Run the private quickstart.</strong><span>Create a key and make the first ZDR request.</span></div>
+  <div class="cta-band-actions"><button class="btn primary" type="button" data-action="open-signin">Create my API key</button></div>
+  <span class="microcopy">No card required.</span>
+</section>
+{% endblock %}

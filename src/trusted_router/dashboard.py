@@ -1256,6 +1256,22 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "Route to Claude, GPT, Gemini, DeepSeek through an attested gateway."
         ),
     ),
+    "openrouter-alternative/quickstart": PublicPage(
+        template="public/experiment_openrouter_quickstart.html",
+        title="Switch from OpenRouter in One Line",
+        description=(
+            "Keep your OpenAI SDK, create a TrustedRouter key, and make the first "
+            "request through a private, hardware-attested gateway."
+        ),
+    ),
+    "private-llm-api/quickstart": PublicPage(
+        template="public/experiment_private_llm_quickstart.html",
+        title="Private LLM API Quickstart",
+        description=(
+            "Make one OpenAI-compatible request through TrustedRouter's "
+            "zero-data-retention route and verify the live gateway."
+        ),
+    ),
     "latest-model-apis": PublicPage(
         template="public/seo_latest_model_apis.html",
         title="Latest AI Model APIs: Kimi K3, GLM 5.2, DeepSeek V4",
@@ -2060,6 +2076,7 @@ def public_page_html(
     page_key: str,
     *,
     site_url: str | None = None,
+    canonical_path: str | None = None,
     robots_meta: str | None = None,
 ) -> str:
     page = PUBLIC_PAGES[page_key]
@@ -2070,6 +2087,11 @@ def public_page_html(
         path=path,
         page_key=page_key,
         site_url=site_url,
+        canonical_url_override=(
+            canonical_public_url(settings, canonical_path)
+            if canonical_path is not None
+            else None
+        ),
         robots_meta=robots_meta,
     )
 
@@ -2247,11 +2269,12 @@ def _render_public_page(
     path: str,
     page_key: str | None = None,
     site_url: str | None = None,
+    canonical_url_override: str | None = None,
     robots_meta: str | None = None,
     extra_context: Mapping[str, object] | None = None,
     extra_json_ld: Sequence[dict[str, object]] = (),
 ) -> str:
-    canonical_url = canonical_public_url(settings, path)
+    canonical_url = canonical_url_override or canonical_public_url(settings, path)
     resolved_site_url = site_url or canonical_url
     catalog_evidence = (
         seo_catalog_evidence(page_key, test_mode=settings.environment == "test")
