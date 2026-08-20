@@ -44,7 +44,7 @@ REGION_TEMPLATES = (
 
 def _json_ld(html: str) -> dict[str, object]:
     match = re.search(
-        r'<script type="application/ld\+json">(?P<payload>.*?)</script>',
+        r'<script type="application/ld\+json"[^>]*>(?P<payload>.*?)</script>',
         html,
     )
     assert match is not None

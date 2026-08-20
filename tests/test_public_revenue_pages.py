@@ -639,7 +639,7 @@ def test_public_model_detail_uses_service_structured_data(client: TestClient) ->
 
     assert response.status_code == 200
     match = re.search(
-        r'<script type="application/ld\+json">(?P<payload>.*?)</script>',
+        r'<script type="application/ld\+json"[^>]*>(?P<payload>.*?)</script>',
         response.text,
     )
     assert match is not None

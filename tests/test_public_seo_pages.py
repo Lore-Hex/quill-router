@@ -642,7 +642,7 @@ def test_blog_page_views_emit_axiom_safe_metadata(client: TestClient, caplog) ->
 
 def _json_ld(html: str) -> dict[str, object]:
     match = re.search(
-        r'<script type="application/ld\+json">(?P<payload>.*?)</script>',
+        r'<script type="application/ld\+json"[^>]*>(?P<payload>.*?)</script>',
         html,
     )
     assert match is not None

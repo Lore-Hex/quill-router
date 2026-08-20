@@ -125,7 +125,7 @@
     {% else %}<p class="empty">No user-provided models yet.</p>{% endif %}
   </div>
 </section>
-<script>
+<script nonce="{{ csp_nonce() }}">
   (function () {
     const CAPS = {
       machine: {{ price_cap_for_kind["machine"] }},

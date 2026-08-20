@@ -55,7 +55,7 @@ def test_visible_featured_models_match_item_list_structured_data(
 ) -> None:
     response = client.get("/kimi-k2-api")
     match = re.search(
-        r'<script type="application/ld\+json">(.*?)</script>',
+        r'<script type="application/ld\+json"[^>]*>(.*?)</script>',
         response.text,
         re.DOTALL,
     )

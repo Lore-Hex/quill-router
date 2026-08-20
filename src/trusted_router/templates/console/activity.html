@@ -1,6 +1,6 @@
 {% extends "console/_layout.html" %}
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce() }}">
 (function () {
   "use strict";
 
@@ -441,7 +441,7 @@
   }
 })();
 </script>
-<script>
+<script nonce="{{ csp_nonce() }}">
 (function () {
   "use strict";
 

@@ -5,7 +5,7 @@
 {% block hero %}{% endblock %}
 
 {% block body %}
-<style>
+<style nonce="{{ csp_nonce() }}">
   /* Medium-style reading column: narrow measure, serif body, generous
      line-height. Scoped to .blog-article so no other page is affected.
      Colors use the theme vars so dark (default) and light both work. */

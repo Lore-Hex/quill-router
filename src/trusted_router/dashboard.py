@@ -74,6 +74,7 @@ from trusted_router.content.legal import (
 from trusted_router.content_handling import CONTENT_HANDLING_CLAIM
 from trusted_router.domains import canonical_public_url
 from trusted_router.measured import measured_for_model, measured_for_provider
+from trusted_router.middleware import current_csp_nonce
 from trusted_router.model_regions import MODEL_REGION_SLUGS, model_region_evidence
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR, format_money_precise
 from trusted_router.og import OG_DESCRIPTION, OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, OG_TITLE
@@ -1756,6 +1757,9 @@ def _env() -> Environment:
     env.filters["seo_meta_description"] = seo_meta_description
     env.globals["provider_logo_url"] = provider_logo_url
     env.globals["content_handling_claim"] = CONTENT_HANDLING_CLAIM
+    # Callable, not a value: this env is lru_cached and shared across
+    # requests, so it must read the per-request ContextVar at render time.
+    env.globals["csp_nonce"] = current_csp_nonce
     return env
 
 
