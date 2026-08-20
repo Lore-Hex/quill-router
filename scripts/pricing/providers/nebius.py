@@ -22,6 +22,7 @@ from scripts.pricing.model_ids import (
     mapped_or_canonical_model_id,
     remember_upstream_id,
 )
+from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "nebius"
 URL = "https://api.tokenfactory.nebius.com/v1/models?verbose=true"
@@ -166,6 +167,8 @@ def fetch() -> ProviderPricingResult:
             continue
         model_id = mapped_or_canonical_model_id(upstream_id, canonical_by_native)
         if model_id is None:
+            continue
+        if provider_model_retired(SLUG, model_id, upstream_id):
             continue
         remember_upstream_id(UPSTREAM_ID_MAP, model_id, upstream_id)
         architecture = row.get("architecture")

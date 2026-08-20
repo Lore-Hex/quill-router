@@ -36,6 +36,7 @@ DEEPINFRA_TERMINUS_RETIREMENT_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
 DEEPINFRA_QWEN3_235B_THINKING_RETIREMENT_AT = datetime(
     2026, 8, 24, 0, 0, tzinfo=UTC
 )
+NEBIUS_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 31, 0, 0, tzinfo=UTC)
 NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
 ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
@@ -87,6 +88,47 @@ class _Retirement:
 
 
 _RETIREMENTS = (
+    # Nebius announced that these Token Factory Serverless routes retire on
+    # 2026-08-31. The notice did not specify a time zone, so use 00:00 UTC as
+    # the conservative cutover. Keep this provider-scoped: equivalent model
+    # checkpoints remain routable through other providers that still serve
+    # them. The announcement did not name replacements.
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset(
+            {
+                "nvidia/nemotron-3-ultra-550b-a55b",
+                "Qwen/Qwen3-32B",
+                "NousResearch/Hermes-4-70B",
+                "meta-llama/Llama-3.3-70B-Instruct",
+                "Qwen/Qwen2.5-VL-72B-Instruct",
+                "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+                "MiniMaxAI/MiniMax-M2.5",
+                "nvidia/Nemotron-3-Nano-Omni",
+                "deepseek/deepseek-v4-flash",
+                "nvidia/Cosmos3-Super-Reasoner",
+                "Qwen/Qwen3-Next-80B-A3B-Thinking",
+                "nvidia/Llama-3_1-Nemotron-Ultra-253B-v1",
+            }
+        ),
+        upstream_ids=frozenset(
+            {
+                "nvidia/Nemotron-3-Ultra-550b-a55b",
+                "Qwen/Qwen3-32B",
+                "NousResearch/Hermes-4-70B",
+                "meta-llama/Llama-3.3-70B-Instruct",
+                "Qwen/Qwen2.5-VL-72B-Instruct",
+                "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+                "MiniMaxAI/MiniMax-M2.5",
+                "nvidia/Nemotron-3-Nano-Omni",
+                "deepseek-ai/DeepSeek-V4-Flash",
+                "nvidia/Cosmos3-Super-Reasoner",
+                "Qwen/Qwen3-Next-80B-A3B-Thinking",
+                "nvidia/Llama-3_1-Nemotron-Ultra-253B-v1",
+            }
+        ),
+        effective_at=NEBIUS_AUGUST_2026_RETIREMENT_AT,
+    ),
     # Alibaba Cloud Model Studio is consolidating its previously announced
     # retirements at 2026-10-10 00:00 UTC+08. Keep this provider-scoped: the
     # same open-weight models remain routable through other healthy providers.

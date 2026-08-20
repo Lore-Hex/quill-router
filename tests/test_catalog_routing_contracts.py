@@ -94,6 +94,7 @@ from trusted_router.catalog import (
 from trusted_router.catalog_ingest import _authoritative_provider_model_ids, _modalities
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.provider_lifecycle import provider_model_retired
 from trusted_router.routes.internal.gateway import _gateway_provider_route_payload
 from trusted_router.routing import chat_route_candidates, chat_route_endpoint_candidates
 
@@ -306,16 +307,17 @@ def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped()
         ),
         (
             "nebius",
-            20,
+            18,
             [
                 # Nebius retired Meta-Llama-3.1-8B + gemma-2-2b-it earlier, then
                 # announced 11 more Token Factory model retirements for
-                # 2026-06-22. These are intentionally absent; this contract keeps
-                # representative non-deprecated Nebius routes alive.
-                "meta-llama/Llama-3.3-70B-Instruct",
+                # 2026-06-22 and 12 more for 2026-08-31. Those are intentionally
+                # absent after their cutovers; this contract keeps representative
+                # non-deprecated Nebius routes alive.
                 "Qwen/Qwen3.5-397B-A17B",
                 "deepseek-ai/DeepSeek-V4-Pro",
-                "MiniMaxAI/MiniMax-M2.5",
+                "MiniMaxAI/MiniMax-M3",
+                "moonshotai/kimi-k3",
             ],
         ),
         (
@@ -1338,7 +1340,14 @@ def test_liberty_nemotron_resolves_only_to_working_canonical_prepaid_routes() ->
         if endpoint.usage_type == "Credits"
     }
     assert prepaid["baseten"] == "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B"
-    assert prepaid["nebius"] == "nvidia/Nemotron-3-Ultra-550b-a55b"
+    if provider_model_retired(
+        "nebius",
+        model_id,
+        "nvidia/Nemotron-3-Ultra-550b-a55b",
+    ):
+        assert "nebius" not in prepaid
+    else:
+        assert prepaid["nebius"] == "nvidia/Nemotron-3-Ultra-550b-a55b"
     assert prepaid["together"] == "nvidia/nemotron-3-ultra-550b-a55b"
     assert "gmi" not in prepaid
 
