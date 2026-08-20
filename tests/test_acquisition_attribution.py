@@ -221,6 +221,23 @@ def test_first_touch_is_preserved_and_last_touch_updates(client: TestClient) -> 
     assert context.last_touch["landing_path"] == "/private-llm-api"
 
 
+def test_paid_experiment_preserves_exact_landing_path(client: TestClient) -> None:
+    response = client.get(
+        "/openrouter-alternative/quickstart"
+        "?utm_source=google&utm_medium=paid_search"
+        "&utm_campaign=openrouter_landing_test&utm_content=or_quickstart_v1"
+        "&gclid=experiment-click-123"
+    )
+
+    assert response.status_code == 200
+    context = decode_attribution_cookie(
+        client.cookies.get(ATTRIBUTION_COOKIE_NAME), client.app.state.settings
+    )
+    assert context is not None
+    assert context.last_touch["landing_path"] == "/openrouter-alternative/quickstart"
+    assert context.last_touch["utm_content"] == "or_quickstart_v1"
+
+
 @pytest.mark.parametrize("header", ["sec-gpc", "dnt"])
 def test_privacy_signals_suppress_attribution_cookie(client: TestClient, header: str) -> None:
     response = client.get(

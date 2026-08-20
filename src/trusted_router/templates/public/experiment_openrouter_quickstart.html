@@ -1,0 +1,78 @@
+{% extends "public/_base.html" %}
+
+{% block hero %}
+<section class="public-hero marketing-hero" aria-label="OpenRouter migration quickstart">
+  <div>
+    <div class="kicker">OpenRouter migration</div>
+    <h1>Keep your SDK. Switch the base URL.</h1>
+    <p class="lead">Create a key and run your existing OpenAI client through TrustedRouter. The first request takes one changed URL.</p>
+    <div class="hero-actions">
+      <button class="btn primary" type="button" data-action="open-signin">Create my API key</button>
+      <a class="btn" href="/compare/openrouter">Compare the routers <span aria-hidden="true">→</span></a>
+    </div>
+    <p class="microcopy">No card required. Keep your current SDK and request format.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>One-line migration</span><button class="code-copy" type="button" data-action="copy-code" data-copy-target="openrouter-migration-call">Copy</button></div>
+    <pre><code id="openrouter-migration-call">import os
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+    base_url="{{ api_base_url }}",
+)
+
+response = client.chat.completions.create(
+    model="trustedrouter/cheap",
+    messages=[{
+        "role": "user",
+        "content": "Reply PONG",
+    }],
+)
+
+print(response.choices[0].message.content)</code></pre>
+  </div>
+</section>
+{% endblock %}
+
+{% block body %}
+<section class="public-proof-strip" aria-label="Migration facts">
+  <div><strong>One URL</strong><span>Keep the OpenAI client.</span></div>
+  <div><strong>Hundreds</strong><span>Models behind one API.</span></div>
+  <div><strong>5%</strong><span>Prepaid platform fee.</span></div>
+  <div><strong>Always</strong><span>No prompt or output logs.</span></div>
+</section>
+
+<section class="marketing-grid three" aria-label="Three migration steps">
+  <div class="marketing-card"><span class="card-label">Step 1</span><h3>Create one key.</h3><p>Sign in, create an API key, and export it as <code>TRUSTEDROUTER_API_KEY</code>.</p></div>
+  <div class="marketing-card"><span class="card-label">Step 2</span><h3>Change the URL.</h3><p>Point your existing OpenAI client to <code>{{ api_base_url }}</code>.</p></div>
+  <div class="marketing-card"><span class="card-label">Step 3</span><h3>Run the same request.</h3><p>Keep the SDK and message shape. Start with <code>trustedrouter/cheap</code> or your current model ID.</p></div>
+</section>
+
+<section class="marketing-split" aria-label="OpenRouter migration details">
+  <div class="marketing-copy">
+    <span class="eyebrow">What stays familiar</span>
+    <h2>Your application contract.</h2>
+    <ul class="check-list">
+      <li>The OpenAI Python or JavaScript SDK</li>
+      <li>Chat Completions and Responses API request shapes</li>
+      <li>Streaming, fallbacks, provider filters, and model lists</li>
+    </ul>
+  </div>
+  <div class="marketing-copy">
+    <span class="eyebrow">What changes</span>
+    <h2>The prompt path becomes verifiable.</h2>
+    <ul class="check-list">
+      <li>Open-source gateway code linked to the running image</li>
+      <li>Fresh hardware attestation for the live API endpoint</li>
+      <li>No prompt or output content in TrustedRouter logs</li>
+    </ul>
+  </div>
+</section>
+
+<section class="cta-band" aria-label="Create a TrustedRouter key">
+  <div><strong>Make the first request now.</strong><span>Create a key, copy the code, and keep building.</span></div>
+  <div class="cta-band-actions"><button class="btn primary" type="button" data-action="open-signin">Create my API key</button></div>
+  <span class="microcopy">No card required.</span>
+</section>
+{% endblock %}
