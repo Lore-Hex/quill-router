@@ -13,6 +13,7 @@ from trusted_router.partner_billing import (
     PARASAIL_LIBERTY_2_0_TOP_LEVEL_ROUTE,
     PARTNER_OPERATOR_COST_SETTLE_FIELD,
 )
+from trusted_router.provider_lifecycle import provider_model_retired
 from trusted_router.routes.helpers import cost_microdollars
 from trusted_router.routes.internal import gateway as gateway_routes
 from trusted_router.storage import STORE, CreditAccount, Workspace, configure_store
@@ -169,7 +170,14 @@ def test_gateway_authorizes_every_liberty_alias_to_working_nemotron_hosts() -> N
             if route["model"] == "nvidia/nemotron-3-ultra-550b-a55b"
             and route["usage_type"] == "Credits"
         }
-        assert {"baseten", "nebius", "together"} <= nemotron_hosts, (model_id, routes)
+        expected_hosts = {"baseten", "together"}
+        if not provider_model_retired(
+            "nebius",
+            "nvidia/nemotron-3-ultra-550b-a55b",
+            "nvidia/Nemotron-3-Ultra-550b-a55b",
+        ):
+            expected_hosts.add("nebius")
+        assert expected_hosts <= nemotron_hosts, (model_id, routes)
         assert "gmi" not in nemotron_hosts, (model_id, routes)
 
 
