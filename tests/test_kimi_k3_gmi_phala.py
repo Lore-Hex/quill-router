@@ -63,6 +63,67 @@ def test_gmi_hourly_parser_discovers_kimi_k3_exact_prices(
     assert gmi.UPSTREAM_ID_MAP[KIMI_K3] == KIMI_K3
 
 
+def test_gmi_parser_uses_origin_list_price_over_temporary_discount() -> None:
+    price = gmi._price_from_billing_row(
+        {
+            "tiers": [
+                {
+                    "threshold": 0,
+                    "inputPrice": 742_000,
+                    "outputPrice": 2_332_000,
+                    "cacheReadPrice": 137_800,
+                    "originInputPrice": 1_400_000,
+                    "originOutputPrice": 4_400_000,
+                    "originCacheReadPrice": 260_000,
+                }
+            ]
+        }
+    )
+
+    assert price is not None
+    assert price.prompt_micro_per_m == 1_400_000
+    assert price.completion_micro_per_m == 4_400_000
+    assert price.tiers[0].prompt_cached_micro_per_m == 260_000
+
+
+def test_gmi_parser_never_uses_origin_price_below_current_price() -> None:
+    price = gmi._price_from_billing_row(
+        {
+            "tiers": [
+                {
+                    "threshold": 0,
+                    "inputPrice": 2_000_000,
+                    "outputPrice": 6_000_000,
+                    "cacheReadPrice": 500_000,
+                    "originInputPrice": 1_000_000,
+                    "originOutputPrice": 3_000_000,
+                    "originCacheReadPrice": 250_000,
+                }
+            ]
+        }
+    )
+
+    assert price is not None
+    assert price.prompt_micro_per_m == 2_000_000
+    assert price.completion_micro_per_m == 6_000_000
+    assert price.tiers[0].prompt_cached_micro_per_m == 500_000
+
+
+def test_gmi_parser_protects_legacy_rows_without_tiers() -> None:
+    price = gmi._price_from_billing_row(
+        {
+            "pricePer1mPromptToken": 400_000,
+            "pricePer1mCompletionToken": 800_000,
+            "originPricePer1mPromptToken": 1_000_000,
+            "originPricePer1mCompletionToken": 2_000_000,
+        }
+    )
+
+    assert price is not None
+    assert price.prompt_micro_per_m == 1_000_000
+    assert price.completion_micro_per_m == 2_000_000
+
+
 def test_gmi_recovers_live_model_omitted_from_authenticated_catalog(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -181,6 +242,31 @@ def test_gmi_kimi_k3_is_a_verified_prepaid_route() -> None:
     assert endpoint.upstream_id == "moonshotai/kimi-k3"
     assert endpoint.prompt_price_microdollars_per_million_tokens == 3_165_000
     assert endpoint.completion_price_microdollars_per_million_tokens == 15_825_000
+
+
+def test_every_gmi_prepaid_route_is_billed_from_provider_list_price() -> None:
+    list_prices = {
+        "deepseek/deepseek-v4-pro": (1_320_000, 3_960_000),
+        "moonshotai/kimi-k3": (3_000_000, 15_000_000),
+        "z-ai/glm-5": (1_000_000, 3_200_000),
+        "z-ai/glm-5.1": (1_400_000, 4_400_000),
+        "z-ai/glm-5.2": (1_400_000, 4_400_000),
+    }
+    gmi_prepaid = {
+        endpoint.model_id: endpoint
+        for endpoint in MODEL_ENDPOINTS.values()
+        if endpoint.provider == "gmi" and endpoint.usage_type == "Credits"
+    }
+
+    assert set(gmi_prepaid) == set(list_prices)
+    for model_id, (prompt_cost, completion_cost) in list_prices.items():
+        endpoint = gmi_prepaid[model_id]
+        assert endpoint.prompt_price_microdollars_per_million_tokens == (
+            prompt_cost * 1_055 // 1_000
+        )
+        assert endpoint.completion_price_microdollars_per_million_tokens == (
+            completion_cost * 1_055 // 1_000
+        )
 
 
 def test_phala_kimi_k3_pass_through_is_standard_not_confidential() -> None:
