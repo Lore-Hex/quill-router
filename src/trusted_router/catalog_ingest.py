@@ -166,7 +166,8 @@ def _authoritative_provider_model_ids(provider_slug: str) -> frozenset[str]:
             continue
         if row.get("model_type") not in (None, "chat"):
             continue
-        if "chat/completions" not in {str(item) for item in (row.get("endpoints") or [])}:
+        endpoint_types = {str(item) for item in (row.get("endpoints") or [])}
+        if not endpoint_types.intersection({"chat/completions", "images"}):
             continue
         model_id = row.get("id")
         if not isinstance(model_id, str) or not model_id:
@@ -787,7 +788,10 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                 continue
             if raw_model.get("model_type") not in (None, "chat"):
                 continue
-            if "chat/completions" not in {str(item) for item in (raw_model.get("endpoints") or [])}:
+            endpoint_types = {
+                str(item) for item in (raw_model.get("endpoints") or [])
+            }
+            if not endpoint_types.intersection({"chat/completions", "images"}):
                 continue
 
             prompt_cost = _provider_manifest_price_cost(
@@ -827,7 +831,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                 provider=publisher,
                 context_length=context_length,
                 upstream_id=upstream_id,
-                supports_chat=True,
+                supports_chat="chat/completions" in endpoint_types,
                 supports_messages=publisher == "anthropic",
                 input_modalities=_modalities(
                     raw_model.get("input_modalities"),

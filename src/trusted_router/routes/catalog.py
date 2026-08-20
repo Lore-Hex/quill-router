@@ -24,11 +24,17 @@ from trusted_router.catalog import (
     endpoint_stores_content,
     endpoint_zero_data_retention,
     endpoint_zero_data_retention_scope,
+    endpoints_for_model,
     model_provider_policy,
     model_provider_policy_url,
     model_to_openrouter_shape,
     provider_to_openrouter_shape,
     providers_for_display,
+)
+from trusted_router.image_generation import (
+    IMAGE_MODEL_ID_SET,
+    image_pricing_by_resolution,
+    image_supported_parameters,
 )
 from trusted_router.money import microdollars_per_million_tokens_to_token_decimal
 from trusted_router.openai_service_tiers import (
@@ -311,6 +317,23 @@ def _public_model_matches_filters(shape: dict[str, Any], request: Request) -> bo
     )
     if region in {"eu", "europe"} and not trustedrouter.get("eu_focused_provider_available"):
         return False
+    requested_output_modalities = {
+        modality.strip().lower()
+        for raw in request.query_params.getlist("output_modalities")
+        for modality in raw.split(",")
+        if modality.strip()
+    }
+    if requested_output_modalities:
+        architecture = shape.get("architecture")
+        output_modalities = (
+            architecture.get("output_modalities", [])
+            if isinstance(architecture, dict)
+            else []
+        )
+        if not requested_output_modalities.issubset(
+            {str(modality).lower() for modality in output_modalities}
+        ):
+            return False
     return True
 
 
@@ -324,8 +347,60 @@ def _has_public_model_filters(request: Request) -> bool:
             "provider[region]",
             "provider.region",
             "region",
+            "output_modalities",
         )
     )
+
+
+def _image_model_shape(model: Any) -> dict[str, Any]:
+    shape = model_to_openrouter_shape(model)
+    raw_architecture = shape.get("architecture")
+    architecture = dict(raw_architecture) if isinstance(raw_architecture, dict) else {}
+    architecture["input_modalities"] = ["text", "image"]
+    architecture["output_modalities"] = ["image"]
+    architecture["modality"] = "text+image->image"
+    return {
+        "id": shape["id"],
+        "name": shape["name"],
+        "description": shape["description"],
+        "created": shape["created"],
+        "architecture": architecture,
+        "supported_parameters": image_supported_parameters(),
+        "supports_streaming": False,
+        "endpoints": f"/v1/images/models/{model.id}/endpoints",
+        "trustedrouter": shape["trustedrouter"],
+    }
+
+
+def _image_endpoint_shape(model: Any, endpoint: ModelEndpoint) -> dict[str, Any]:
+    provider = PROVIDERS[endpoint.provider]
+    return {
+        "provider_name": provider.name,
+        "provider_slug": endpoint.provider,
+        "provider_tag": endpoint.provider,
+        "supported_parameters": image_supported_parameters(),
+        "allowed_passthrough_parameters": [],
+        "supports_streaming": False,
+        "pricing": image_pricing_by_resolution(
+            endpoint.prompt_price_microdollars_per_million_tokens,
+            endpoint.completion_price_microdollars_per_million_tokens
+        ),
+        "trustedrouter": {
+            "attested_gateway": provider.attested_gateway,
+            "stores_content": endpoint_stores_content(endpoint),
+            "provider_zero_data_retention": endpoint_zero_data_retention(endpoint),
+            "zero_data_retention_scope": endpoint_zero_data_retention_scope(endpoint),
+            "privacy_tier": endpoint_privacy_tier(endpoint),
+            "privacy_tier_label": PRIVACY_TIER_LABELS[endpoint_privacy_tier(endpoint)],
+            "provider_confidential_compute": endpoint_confidential_compute(endpoint),
+            "provider_e2ee": endpoint_e2ee(endpoint),
+            "provider_policy": model_provider_policy(model.id, endpoint.provider),
+            "provider_policy_url": model_provider_policy_url(model.id, endpoint.provider),
+            "usage_type": endpoint.usage_type,
+            "prepaid_available": endpoint.usage_type == "Credits",
+            "byok_available": endpoint.usage_type == "BYOK",
+        },
+    }
 
 
 def register_catalog_routes(router: APIRouter) -> None:
@@ -338,6 +413,35 @@ def register_catalog_routes(router: APIRouter) -> None:
     async def embeddings_models() -> dict[str, list[dict[str, Any]]]:
         return {
             "data": [model_to_openrouter_shape(m) for m in MODELS.values() if m.supports_embeddings]
+        }
+
+    @router.get("/images/models")
+    async def image_models() -> dict[str, list[dict[str, Any]]]:
+        return {
+            "data": [
+                _image_model_shape(model)
+                for model in MODELS.values()
+                if model.id in IMAGE_MODEL_ID_SET and endpoints_for_model(model.id)
+            ]
+        }
+
+    @router.get("/images/models/{author}/{slug}/endpoints")
+    async def image_model_endpoints(
+        author: str,
+        slug: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        model_id = f"{author}/{slug}"
+        model = MODELS.get(model_id)
+        if model is None or model.id not in IMAGE_MODEL_ID_SET:
+            return {"id": model_id, "endpoints": []}
+        prefs = provider_route_preferences(_provider_query_body(request))
+        return {
+            "id": model.id,
+            "endpoints": [
+                _image_endpoint_shape(model, endpoint)
+                for _candidate_model, endpoint in catalog_endpoint_candidates(model, prefs)
+            ],
         }
 
     def _public_model_shapes(request: Request | None = None) -> list[dict[str, Any]]:
