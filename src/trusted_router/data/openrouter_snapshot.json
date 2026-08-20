@@ -1843,9 +1843,9 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.0000002088",
-        "completion": "0.0000003096",
-        "input_cache_read": "0.0000000216"
+        "prompt": "0.00000025",
+        "completion": "0.0000008",
+        "input_cache_read": "0.000000075"
       },
       "top_provider": {
         "context_length": 163840,
@@ -1949,10 +1949,9 @@
           "tag": "gmicloud/fp8",
           "context_length": 163840,
           "pricing": {
-            "prompt": "0.0000002088",
-            "completion": "0.0000003096",
-            "input_cache_read": "0.0000000216",
-            "discount": 0.28
+            "prompt": "0.00000029",
+            "completion": "0.00000043",
+            "input_cache_read": "0.00000003"
           },
           "quantization": "fp8",
           "max_completion_tokens": null,
@@ -2420,10 +2419,9 @@
           "tag": "gmicloud/fp8",
           "context_length": 1048575,
           "pricing": {
-            "prompt": "0.000000084",
-            "completion": "0.000000168",
-            "input_cache_read": "0.0000000168",
-            "discount": 0.4
+            "prompt": "0.00000014",
+            "completion": "0.00000028",
+            "input_cache_read": "0.000000028"
           },
           "quantization": "fp8",
           "max_completion_tokens": null,
@@ -2926,10 +2924,9 @@
           "tag": "gmicloud/fp8",
           "context_length": 1048575,
           "pricing": {
-            "prompt": "0.000000098",
-            "completion": "0.000000196",
-            "input_cache_read": "0.0000000196",
-            "discount": 0.3
+            "prompt": "0.00000014",
+            "completion": "0.00000028",
+            "input_cache_read": "0.000000028"
           },
           "quantization": "fp8",
           "max_completion_tokens": null,
@@ -3226,9 +3223,9 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.000000522",
-        "completion": "0.000001044",
-        "input_cache_read": "0.0000000435"
+        "prompt": "0.00000066",
+        "completion": "0.00000198",
+        "input_cache_read": "0.000000022"
       },
       "top_provider": {
         "context_length": 1048576,
@@ -3403,10 +3400,9 @@
           "tag": "gmicloud/fp8",
           "context_length": 1048576,
           "pricing": {
-            "prompt": "0.000000522",
-            "completion": "0.000001044",
-            "input_cache_read": "0.0000000435",
-            "discount": 0.7
+            "prompt": "0.00000132",
+            "completion": "0.00000396",
+            "input_cache_read": "0.000000044"
           },
           "quantization": "fp8",
           "max_completion_tokens": null,
@@ -3745,9 +3741,6 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.000001056",
-        "completion": "0.000003168",
-        "input_cache_read": "0.0000000352",
         "overrides": [
           {
             "utc_start": 1000,
@@ -3777,7 +3770,10 @@
             "completion": "0.00000396",
             "input_cache_read": "0.000000044"
           }
-        ]
+        ],
+        "prompt": "0.0000013",
+        "completion": "0.0000026",
+        "input_cache_read": "0"
       },
       "top_provider": {
         "context_length": 1048576,
@@ -3794,10 +3790,9 @@
           "tag": "gmicloud/fp8",
           "context_length": 1048575,
           "pricing": {
-            "prompt": "0.000001056",
-            "completion": "0.000003168",
-            "input_cache_read": "0.0000000352",
-            "discount": 0.2
+            "prompt": "0.00000132",
+            "completion": "0.00000396",
+            "input_cache_read": "0.000000044"
           },
           "quantization": "fp8",
           "max_completion_tokens": null,
@@ -8728,10 +8723,9 @@
           "tag": "gmicloud/fp8",
           "context_length": 196608,
           "pricing": {
-            "prompt": "0.00000024",
-            "completion": "0.00000096",
-            "input_cache_read": "0.000000048",
-            "discount": 0.2
+            "prompt": "0.0000003",
+            "completion": "0.0000012",
+            "input_cache_read": "0.00000006"
           },
           "quantization": "fp8",
           "max_completion_tokens": null,
@@ -8936,31 +8930,9 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.00000024",
-        "completion": "0.00000096",
-        "input_cache_read": "0.000000048",
-        "prompt_tiers": [
-          {
-            "max_prompt_tokens": 511999,
-            "prompt": "0.00000024",
-            "input_cache_read": "0.000000048"
-          },
-          {
-            "max_prompt_tokens": null,
-            "prompt": "0.00000048",
-            "input_cache_read": "0.000000096"
-          }
-        ],
-        "completion_tiers": [
-          {
-            "max_prompt_tokens": 511999,
-            "completion": "0.00000096"
-          },
-          {
-            "max_prompt_tokens": null,
-            "completion": "0.00000192"
-          }
-        ]
+        "prompt": "0.00000027",
+        "completion": "0.0000011",
+        "input_cache_read": "0.00000008"
       },
       "top_provider": {
         "context_length": 524288,
@@ -9019,30 +8991,29 @@
           "tag": "gmicloud/fp8",
           "context_length": 1048576,
           "pricing": {
-            "prompt": "0.00000024",
-            "completion": "0.00000096",
-            "input_cache_read": "0.000000048",
-            "discount": 0.6,
+            "prompt": "0.0000006",
+            "completion": "0.0000024",
+            "input_cache_read": "0.00000012",
             "prompt_tiers": [
               {
                 "max_prompt_tokens": 511999,
-                "prompt": "0.00000024",
-                "input_cache_read": "0.000000048"
+                "prompt": "0.0000006",
+                "input_cache_read": "0.00000012"
               },
               {
                 "max_prompt_tokens": null,
-                "prompt": "0.00000048",
-                "input_cache_read": "0.000000096"
+                "prompt": "0.0000012",
+                "input_cache_read": "0.00000024"
               }
             ],
             "completion_tiers": [
               {
                 "max_prompt_tokens": 511999,
-                "completion": "0.00000096"
+                "completion": "0.0000024"
               },
               {
                 "max_prompt_tokens": null,
-                "completion": "0.00000192"
+                "completion": "0.0000048"
               }
             ]
           },
@@ -10565,9 +10536,9 @@
           "tr_provider_slug": "gmi",
           "context_length": 262144,
           "pricing": {
-            "prompt": "0.000000855",
-            "completion": "0.0000036",
-            "input_cache_read": "0.000000144"
+            "prompt": "0.00000095",
+            "completion": "0.000004",
+            "input_cache_read": "0.00000016"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -21444,9 +21415,9 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.000000126",
-        "completion": "0.000000522",
-        "input_cache_read": "0.0000000315"
+        "prompt": "0.000000132",
+        "completion": "0.000000528",
+        "input_cache_read": "0.000000033"
       },
       "top_provider": {
         "context_length": 262144,
@@ -21506,10 +21477,9 @@
           "tag": "gmicloud/bf16",
           "context_length": 262144,
           "pricing": {
-            "prompt": "0.000000126",
-            "completion": "0.000000522",
-            "input_cache_read": "0.0000000315",
-            "discount": 0.1
+            "prompt": "0.00000014",
+            "completion": "0.00000058",
+            "input_cache_read": "0.000000035"
           },
           "quantization": "bf16",
           "max_completion_tokens": null,
@@ -25170,7 +25140,7 @@
       },
       "pricing": {
         "prompt": "0.0000006",
-        "completion": "0.00000192",
+        "completion": "0.00000208",
         "input_cache_read": "0.00000012"
       },
       "top_provider": {
@@ -25231,10 +25201,9 @@
           "tag": "gmicloud/fp8",
           "context_length": 202752,
           "pricing": {
-            "prompt": "0.0000006",
-            "completion": "0.00000192",
-            "input_cache_read": "0.00000012",
-            "discount": 0.4
+            "prompt": "0.000001",
+            "completion": "0.0000032",
+            "input_cache_read": "0.0000002"
           },
           "quantization": "fp8",
           "max_completion_tokens": null,
@@ -25523,9 +25492,9 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.00000091",
-        "completion": "0.00000286",
-        "input_cache_read": "0.000000169"
+        "prompt": "0.000000975",
+        "completion": "0.0000043",
+        "input_cache_read": "0.00000026"
       },
       "top_provider": {
         "context_length": 200000,
@@ -25627,10 +25596,9 @@
           "tag": "gmicloud/fp8",
           "context_length": 202752,
           "pricing": {
-            "prompt": "0.00000091",
-            "completion": "0.00000286",
-            "input_cache_read": "0.000000169",
-            "discount": 0.35
+            "prompt": "0.0000014",
+            "completion": "0.0000044",
+            "input_cache_read": "0.00000026"
           },
           "quantization": "fp8",
           "max_completion_tokens": null,
@@ -26106,10 +26074,9 @@
           "tag": "gmicloud/fp8",
           "context_length": 1048576,
           "pricing": {
-            "prompt": "0.000000742",
-            "completion": "0.000002332",
-            "input_cache_read": "0.0000001378",
-            "discount": 0.47
+            "prompt": "0.0000014",
+            "completion": "0.0000044",
+            "input_cache_read": "0.00000026"
           },
           "quantization": "fp8",
           "max_completion_tokens": null,

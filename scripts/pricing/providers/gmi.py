@@ -3,9 +3,12 @@
 GMI's authenticated ``/v1/models`` response is useful account metadata, but
 it is not a complete availability authority: in August 2026 it temporarily
 omitted GLM 5.2 while the route remained callable and listed in GMI's public
-model hub. Current integer prices come from the public billing API used by
-GMI's own console. A verified prepaid route omitted by ``/v1/models`` is kept
-only after an exact paid-path PONG canary succeeds.
+model hub. Integer list prices come from the public billing API used by GMI's
+own console. That feed also carries temporary promotional prices. TrustedRouter
+uses the greater of the promotional and origin list prices so an expiring
+discount can never make a prepaid route sell below cost. A verified prepaid
+route omitted by ``/v1/models`` is kept only after an exact paid-path PONG
+canary succeeds.
 
 API-direct, no HTML scraping, no LLM self-heal. Auth: Bearer token in
 ``GMI_API_KEY``. Without it, discovery fails closed.
@@ -92,8 +95,17 @@ def _nonnegative_int(value: object) -> int | None:
     return parsed if parsed >= 0 else None
 
 
+def _list_price(raw_tier: dict[str, Any], current_key: str, origin_key: str) -> int | None:
+    """Return the conservative provider list price for one billing dimension."""
+
+    current = _nonnegative_int(raw_tier.get(current_key))
+    origin = _nonnegative_int(raw_tier.get(origin_key))
+    candidates = [value for value in (current, origin) if value is not None]
+    return max(candidates) if candidates else None
+
+
 def _price_from_billing_row(row: dict[str, Any]) -> ModelPrice | None:
-    """Parse GMI's integer microdollars-per-million billing contract."""
+    """Parse GMI's integer microdollars-per-million list-price contract."""
 
     raw_tiers = row.get("tiers")
     if isinstance(raw_tiers, list) and raw_tiers:
@@ -102,9 +114,9 @@ def _price_from_billing_row(row: dict[str, Any]) -> ModelPrice | None:
             if not isinstance(raw_tier, dict):
                 return None
             threshold = _nonnegative_int(raw_tier.get("threshold"))
-            prompt = _nonnegative_int(raw_tier.get("inputPrice"))
-            completion = _nonnegative_int(raw_tier.get("outputPrice"))
-            cached = _nonnegative_int(raw_tier.get("cacheReadPrice"))
+            prompt = _list_price(raw_tier, "inputPrice", "originInputPrice")
+            completion = _list_price(raw_tier, "outputPrice", "originOutputPrice")
+            cached = _list_price(raw_tier, "cacheReadPrice", "originCacheReadPrice")
             if threshold is None or prompt is None or completion is None:
                 return None
             if prompt <= 0 or completion <= 0:
@@ -124,8 +136,16 @@ def _price_from_billing_row(row: dict[str, Any]) -> ModelPrice | None:
         ]
         return ModelPrice(tiers=tiers)
 
-    prompt = _nonnegative_int(row.get("pricePer1mPromptToken"))
-    completion = _nonnegative_int(row.get("pricePer1mCompletionToken"))
+    prompt = _list_price(
+        row,
+        "pricePer1mPromptToken",
+        "originPricePer1mPromptToken",
+    )
+    completion = _list_price(
+        row,
+        "pricePer1mCompletionToken",
+        "originPricePer1mCompletionToken",
+    )
     if prompt is None or completion is None or prompt <= 0 or completion <= 0:
         return None
     return ModelPrice(prompt_micro_per_m=prompt, completion_micro_per_m=completion)
