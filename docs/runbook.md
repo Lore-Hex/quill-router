@@ -791,10 +791,14 @@ regressed, not just contention.
    Also inspect the `tr_key_limit` / `tr_credit_balance` shard rows for
    reserved/usage on the named `<key_hash>` and `<workspace_id>`.
 
-4. Bursts self-resolve when the tenant's spike ends. Receipt: the 2026-07-04
-   22:26-22:33 UTC burst was a single tenant and ended with zero intervention.
-   Client impact is a handful of 500s the enclave retries. Do NOT restart
-   services or roll back deploys for this signature.
+4. Stop any in-progress rollout and measure the full customer-facing burst.
+   Do not assume the enclave absorbed it. Receipt: on 2026-08-20 one capped
+   key generated a shard-zero retry storm with 1,667 billing-path 503s across
+   four regions in 18 minutes even though Cloud Run readiness stayed green.
+   Restarting Cloud Run does not repair a hot Spanner row. Rollback only when
+   the regional billing gate ties failures to a new revision; otherwise move
+   directly to the guarded online split and verify the affected customer's
+   subsequent authorize/settle results.
 
 Structural fix if a tenant does this chronically: **shard spreading is now
 operable** (as of the 2026-07 credit/key row-sharding work). A hot workspace's
@@ -804,10 +808,12 @@ operator (`.github/workflows/reshard-billing-workspace.yml` →
 unpause; requires an explicit `--apply`). The authorize reject path also does a
 lock-free precheck + bounded repair so no-move verdicts no longer take
 whole-shard-set write locks. Do NOT hand-set shard columns; always go through
-the operator. Before activating spreading on any workspace, confirm the
-credit-shard rebalance fix is deployed (a negative per-shard headroom from an
-overage settle must return a clean 402, never a `_RebalanceInvariantError`
-500 — fixed 2026-07).
+the operator. Exact lifetime key caps are escrowed across those rows while
+retaining the precise global limit; a large fragmented hold uses one atomic
+cold-path rebalance. Before activating spreading on any workspace, confirm the
+credit-shard rebalance and exact-cap escrow fixes are deployed. A negative
+per-shard headroom from an overage settle must return a clean 402, never a
+`_RebalanceInvariantError` 500.
 
 ---
 
@@ -915,14 +921,13 @@ Dispatch `operation: status` for a read-only look via the workflow.
 verification that is the entire point of the two-phase design, and a workspace
 serving on an unverified shard set can under-count spend across sub-ledgers.
 
-Two things that look like this but are not: the workflow serializes on
+One thing that looks like this but is not: the workflow serializes on
 `concurrency: production-billing-workspace-reshard`, so a second dispatch waits
 rather than racing a half-finished workspace — a queued run is expected, not a
-symptom. And a key with an exact lifetime cap (`limit_microdollars` set) is
-pinned to `usage_shards=1` by design, so it correctly reports
-`current_shards=1 target_shards=1 at_target=True` even when the workspace target
-is 16 — that is not a failure. (`prepare` prints
-`exact lifetime cap; keeping usage_shards=1` for such a key; `status` does not.)
+symptom. Exact lifetime caps no longer pin a key to shard zero: the operator
+partitions the cap into escrow sub-budgets whose sum remains the configured
+limit. A capped key that still reports one shard after a 16-shard operation is
+therefore incomplete and must not be unpaused by hand.
 
 ---
 
