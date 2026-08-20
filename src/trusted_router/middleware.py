@@ -299,7 +299,53 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
             "strict-transport-security",
             "max-age=63072000; includeSubDomains",
         )
+        # Cheap, universal, and safe on every response including JSON.
+        response.headers.setdefault("x-content-type-options", "nosniff")
+        response.headers.setdefault("referrer-policy", "strict-origin-when-cross-origin")
+        # SAMEORIGIN, not DENY: /choose embeds /static/choose-app.html in a
+        # same-origin iframe, and DENY would blank it. SAMEORIGIN still blocks
+        # the clickjacking case, which is a THIRD party framing a page where
+        # somebody is creating an API key.
+        response.headers.setdefault("x-frame-options", "SAMEORIGIN")
+        if response.headers.get("content-type", "").startswith("text/html"):
+            # REPORT-ONLY on purpose. 14 templates carry inline <script> and 27
+            # carry inline style=, so an enforcing policy would have to ship
+            # with 'unsafe-inline' (which buys almost nothing) or with nonces
+            # threaded through every template (which is the real fix and a
+            # separate change). Report-only breaks nothing while the violation
+            # list is gathered.
+            #
+            # It has NO report-uri, so nothing collects these automatically:
+            # they appear in the browser console and nowhere else. That is a
+            # deliberate first step, not a monitoring claim -- see the PR.
+            response.headers.setdefault(
+                "content-security-policy-report-only",
+                CONTENT_SECURITY_POLICY_REPORT_ONLY,
+            )
         return response
+
+
+#: The policy the site would have to satisfy before CSP can be enforced.
+#: Derived from what the templates actually reference today (jsdelivr for a
+#: couple of scripts, the trust and status subdomains, GitHub links), not from
+#: a generic template -- a policy nobody measured is one that gets switched to
+#: report-only forever.
+CONTENT_SECURITY_POLICY_REPORT_ONLY = "; ".join(
+    (
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: https:",
+        "font-src 'self' data: https://cdn.jsdelivr.net",
+        "connect-src 'self' https://api.trustedrouter.com https://trust.trustedrouter.com "
+        "https://status.trustedrouter.com",
+        "frame-src 'self'",
+        "frame-ancestors 'self'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "object-src 'none'",
+    )
+)
 
 
 def _status_host_path(path: str) -> bool:
