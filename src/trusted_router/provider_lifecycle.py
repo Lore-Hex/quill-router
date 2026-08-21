@@ -37,6 +37,7 @@ DEEPINFRA_QWEN3_235B_THINKING_RETIREMENT_AT = datetime(
     2026, 8, 24, 0, 0, tzinfo=UTC
 )
 NEBIUS_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 31, 0, 0, tzinfo=UTC)
+CEREBRAS_GEMMA4_SHARED_RETIREMENT_AT = datetime(2026, 9, 3, 0, 0, tzinfo=UTC)
 NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
 ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
@@ -88,6 +89,22 @@ class _Retirement:
 
 
 _RETIREMENTS = (
+    # Cerebras announced that Qwen 3.8 27B replaces Gemma 4 31B on its
+    # Shared Tier on 2026-09-03. The notice did not specify a time zone, so
+    # retire the shared route conservatively at 00:00 UTC. Gemma remains
+    # available through separately provisioned Cerebras dedicated endpoints;
+    # TrustedRouter's prepaid Cerebras route uses the Shared Tier.
+    _Retirement(
+        provider="cerebras",
+        model_ids=frozenset(
+            {
+                "google/gemma-4-31b-it",
+                "cerebras/gemma-4-31b",
+            }
+        ),
+        upstream_ids=frozenset({"gemma-4-31b"}),
+        effective_at=CEREBRAS_GEMMA4_SHARED_RETIREMENT_AT,
+    ),
     # Nebius announced that these Token Factory Serverless routes retire on
     # 2026-08-31. The notice did not specify a time zone, so use 00:00 UTC as
     # the conservative cutover. Keep this provider-scoped: equivalent model

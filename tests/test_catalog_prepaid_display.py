@@ -17,6 +17,7 @@ from trusted_router.catalog_ingest import (
     _provider_manifest_dark_model_ids,
 )
 from trusted_router.dashboard import _model_detail_view
+from trusted_router.provider_lifecycle import provider_model_retired
 
 
 def _a_supplemental_priced_model() -> str:
@@ -171,6 +172,11 @@ def test_cerebras_native_routes_use_verified_upstream_ids() -> None:
         if isinstance(row, dict)
         and isinstance(row.get("id"), str)
         and row.get("routable") is not False
+        and not provider_model_retired(
+            "cerebras",
+            row["id"],
+            row.get("upstream_id"),
+        )
     ]
 
     assert live_rows

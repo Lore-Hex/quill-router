@@ -135,6 +135,8 @@ def test_cerebras_discovery_uses_canonical_ids_and_ignores_unknown_models() -> N
     assert check_price_coverage._cerebras_model_id("gpt-oss-120b") == ("openai/gpt-oss-120b")
     assert check_price_coverage._cerebras_model_id("zai-glm-4.7") == "z-ai/glm-4.7"
     assert check_price_coverage._cerebras_model_id("gemma-4-31b") == ("google/gemma-4-31b-it")
+    assert check_price_coverage._cerebras_model_id("qwen-3.8-27b") == "qwen/qwen3.8-27b"
+    assert check_price_coverage._cerebras_model_id("qwen3.8-27b") == "qwen/qwen3.8-27b"
     assert check_price_coverage._cerebras_model_id("unknown") is None
 
 

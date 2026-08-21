@@ -69,6 +69,8 @@ def _cerebras_model_id(native_id: str) -> str | None:
         "gpt-oss-120b": "openai/gpt-oss-120b",
         "zai-glm-4.7": "z-ai/glm-4.7",
         "gemma-4-31b": "google/gemma-4-31b-it",
+        "qwen-3.8-27b": "qwen/qwen3.8-27b",
+        "qwen3.8-27b": "qwen/qwen3.8-27b",
     }.get(value) or canonicalize_unqualified_model_id(value)
 
 

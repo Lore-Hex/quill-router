@@ -28,6 +28,7 @@ from scripts.pricing.model_ids import (
     remember_upstream_id,
 )
 from scripts.pricing.openai_catalog import openai_model_price, positive_int
+from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "cerebras"
 URL = "https://api.cerebras.ai/public/v1/models"
@@ -44,13 +45,24 @@ _CANONICAL_BY_NATIVE = {
     "gpt-oss-120b": "openai/gpt-oss-120b",
     "zai-glm-4.7": "z-ai/glm-4.7",
     "gemma-4-31b": "google/gemma-4-31b-it",
+    # Cerebras has announced Qwen 3.8 27B for Shared Tier on 2026-09-03 but
+    # has not yet published the callable native ID. Accept both spellings the
+    # provider commonly uses, while still requiring the live feed to expose
+    # the route and exact price before it is written to the runtime manifest.
+    "qwen-3.8-27b": "qwen/qwen3.8-27b",
+    "qwen3.8-27b": "qwen/qwen3.8-27b",
 }
 _ALIASES_BY_NATIVE = {
     "gpt-oss-120b": ("cerebras/gpt-oss-120b",),
     "zai-glm-4.7": ("cerebras/zai-glm-4.7",),
     "gemma-4-31b": ("cerebras/gemma-4-31b",),
+    "qwen-3.8-27b": ("cerebras/qwen-3.8-27b",),
+    "qwen3.8-27b": ("cerebras/qwen-3.8-27b",),
 }
-EXPECTED_MODELS = list(_CANONICAL_BY_NATIVE.values())
+# Keep one stable Shared Tier anchor as the hard feed-health gate. GLM 4.7 is
+# already absent from the public catalog, and Gemma 4 is scheduled to leave;
+# requiring either would deadlock hourly refreshes on a legitimate delisting.
+EXPECTED_MODELS = ["openai/gpt-oss-120b"]
 UPSTREAM_ID_MAP: dict[str, str] = {}
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 
@@ -133,6 +145,8 @@ def fetch() -> ProviderPricingResult:
             native_id
         )
         if canonical_id is None:
+            continue
+        if provider_model_retired(SLUG, canonical_id, native_id):
             continue
         price = openai_model_price(source)
         if price is None:
