@@ -28,6 +28,13 @@ PUBLIC_PATH_PATTERNS = (
     "/v1/analytics/events",
     "/v1/bedrock-group-buy",
     "/v1/embeddings/models",
+    # Anonymous image-catalog reads (#693). Exact-and-under patterns beat the
+    # authenticated /images/* control wildcard by specificity, exactly as
+    # /v1/models/* beats /v1/*; image GENERATION stays on control.
+    "/images/models",
+    "/images/models/*",
+    "/v1/images/models",
+    "/v1/images/models/*",
     "/v1/models",
     "/v1/models/count",
     "/v1/models/picker",

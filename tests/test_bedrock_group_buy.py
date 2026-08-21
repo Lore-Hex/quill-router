@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -393,7 +394,10 @@ def test_public_group_buy_page_never_reads_or_varies_on_session(
     with_session = client.get("/bedrock-group-buy?saved=1", headers=user_headers)
 
     assert anonymous.status_code == with_session.status_code == 200
-    assert anonymous.text == with_session.text
+    # The CSP nonce is per-request, not per-session; strip it before comparing
+    # so this keeps proving the page never varies on the caller's session.
+    nonce = re.compile(r'nonce="[^"]+"')
+    assert nonce.sub('nonce=""', anonymous.text) == nonce.sub('nonce=""', with_session.text)
     assert anonymous.headers["cache-control"].startswith("public,")
     assert with_session.headers["cache-control"].startswith("public,")
     assert "You are in. Bring one more buyer." not in anonymous.text
