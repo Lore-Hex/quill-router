@@ -24,18 +24,15 @@ from scripts.providers.sync_azure_foundry import (
     write_manifest,
 )
 from scripts.smoke_all_providers import PROBES
-from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, PROVIDERS, model_to_openrouter_shape
+from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
 
 _EXPECTED_AZURE_LAUNCH_IDS = frozenset(
     {
         "cohere/command-a",
-        "cohere/command-a-plus-05-2026",
-        "mistralai/mistral-large-3",
         "moonshotai/kimi-k2.5",
         "moonshotai/kimi-k2.6",
         "moonshotai/kimi-k2.7-code",
         "openai/gpt-5-mini",
-        "openai/gpt-oss-120b",
         "x-ai/grok-4.1-fast-non-reasoning",
         "x-ai/grok-4.1-fast-reasoning",
         "x-ai/grok-4.20-non-reasoning",
@@ -44,6 +41,7 @@ _EXPECTED_AZURE_LAUNCH_IDS = frozenset(
 )
 _EXPECTED_AZURE_HOLD_IDS = frozenset(
     {
+        "cohere/command-a-plus-05-2026",
         "deepseek/deepseek-v3.2",
         "deepseek/deepseek-v3.2-speciale",
         "deepseek/deepseek-v4-flash",
@@ -56,7 +54,9 @@ _EXPECTED_AZURE_HOLD_IDS = frozenset(
         "microsoft/phi-4-multimodal-instruct",
         "microsoft/phi-4-reasoning",
         "mistralai/codestral-2501",
+        "mistralai/mistral-large-3",
         "openai/gpt-5.4-mini",
+        "openai/gpt-oss-120b",
         "x-ai/grok-4.3",
     }
 )
@@ -75,7 +75,7 @@ def _canary_candidate(
         model_format=model_format,
         deployment_name=native_name.replace(".", "-"),
         sku="GlobalStandard",
-        capacity=1,
+        capacity=sync.MINIMUM_LAUNCH_CAPACITY,
         is_default_version=True,
     )
 
@@ -104,6 +104,21 @@ def _openai_tool_response(
             }
         ]
     }
+
+
+def _http_status_error(
+    status_code: int,
+    *,
+    retry_after: str | None = None,
+) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://azure.example.test/chat/completions")
+    headers = {"Retry-After": retry_after} if retry_after is not None else None
+    response = httpx.Response(status_code, headers=headers, request=request)
+    return httpx.HTTPStatusError(
+        f"HTTP {status_code}",
+        request=request,
+        response=response,
+    )
 
 
 def _price_row(
@@ -342,7 +357,7 @@ def test_azure_grok_43_incomplete_long_context_meters_fail_closed(
 
 
 def test_azure_production_holds_do_not_block_healthy_routes() -> None:
-    healthy_model_id = "cohere/command-a-plus-05-2026"
+    healthy_model_id = "cohere/command-a"
     rows = _minimum_retail_rows(healthy_model_id)
     model_versions = {
         healthy_model_id: azure._ALLOWED_MODEL_VERSIONS[healthy_model_id][0],  # noqa: SLF001
@@ -364,6 +379,19 @@ def test_azure_production_holds_do_not_block_healthy_routes() -> None:
     assert set(prices) == {healthy_model_id}
     assert configured_holds == _EXPECTED_AZURE_HOLD_IDS
     assert configured_holds.isdisjoint(azure.retail_model_ids())
+
+
+def test_azure_live_tool_failures_have_evidence_specific_production_holds() -> None:
+    expected_reasons = {
+        "cohere/command-a-plus-05-2026": "openai-tool-call-response-nonconformant",
+        "mistralai/mistral-large-3": "openai-named-tool-choice-unsupported",
+        "openai/gpt-oss-120b": "openai-tool-use-unsupported",
+    }
+
+    assert {
+        model_id: azure._RETAIL_RULES[model_id].production_hold_reason  # noqa: SLF001
+        for model_id in expected_reasons
+    } == expected_reasons
 
 
 def test_azure_phi_reasoning_does_not_attach_plus_sibling_meters() -> None:
@@ -493,25 +521,25 @@ def test_azure_retail_price_same_version_meter_ambiguity_fails_closed() -> None:
     rows = [
         _price_row(
             product="Cohere Models",
-            name="Command A Plus Inp Glbl",
-            price="0.0008",
+            name="Command A Inp Glbl",
+            price="0.0025",
         ),
         _price_row(
             product="Cohere Models",
-            name="Command A Plus Input Glbl",
-            price="0.0009",
+            name="Command A Input Glbl",
+            price="0.0026",
         ),
         _price_row(
             product="Cohere Models",
-            name="Command A Plus Outp Glbl",
-            price="0.0032",
+            name="Command A Outp Glbl",
+            price="0.01",
         ),
     ]
 
     with pytest.raises(ValueError, match="ambiguous Azure input price"):
         azure.parse_retail_prices(
             rows,
-            model_versions={"cohere/command-a-plus-05-2026": "1"},
+            model_versions={"cohere/command-a": "1"},
         )
 
 
@@ -519,25 +547,25 @@ def test_azure_distinct_equal_rate_meters_are_ambiguous() -> None:
     rows = [
         _price_row(
             product="Cohere Models",
-            name="Command A Plus Inp Glbl",
-            price="0.0008",
+            name="Command A Inp Glbl",
+            price="0.0025",
         ),
         _price_row(
             product="Cohere Models",
-            name="Command A Plus Input Glbl",
-            price="0.0008",
+            name="Command A Input Glbl",
+            price="0.0025",
         ),
         _price_row(
             product="Cohere Models",
-            name="Command A Plus Outp Glbl",
-            price="0.0032",
+            name="Command A Outp Glbl",
+            price="0.01",
         ),
     ]
 
     with pytest.raises(ValueError, match="ambiguous Azure input price"):
         azure.parse_retail_prices(
             rows,
-            model_versions={"cohere/command-a-plus-05-2026": "1"},
+            model_versions={"cohere/command-a": "1"},
         )
 
 
@@ -555,25 +583,25 @@ def test_azure_absent_model_ambiguity_does_not_block_other_prices() -> None:
         ),
         _price_row(
             product="Cohere Models",
-            name="Command A Plus Inp Glbl",
-            price="0.8",
+            name="Command A Inp Glbl",
+            price="2.5",
             unit="1M",
         ),
         _price_row(
             product="Cohere Models",
-            name="Command A Plus Outp Glbl",
-            price="3.2",
+            name="Command A Outp Glbl",
+            price="10",
             unit="1M",
         ),
     ]
 
     prices = azure.parse_retail_prices(
         rows,
-        model_versions={"cohere/command-a-plus-05-2026": "1"},
+        model_versions={"cohere/command-a": "1"},
     )
 
     assert "mistralai/mistral-large-3" not in prices
-    assert prices["cohere/command-a-plus-05-2026"].prompt_micro_per_m == 800_000
+    assert prices["cohere/command-a"].prompt_micro_per_m == 2_500_000
 
 
 @pytest.mark.parametrize(
@@ -642,7 +670,7 @@ def test_azure_manifest_versions_match_retail_contract() -> None:
 def test_azure_fetch_uses_current_pricing_validation_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    model_id = "cohere/command-a-plus-05-2026"
+    model_id = "cohere/command-a"
     monkeypatch.setattr(
         azure,
         "fetch_retail_rows",
@@ -698,7 +726,7 @@ def test_azure_candidate_selection_requires_chat_price_and_remaining_sync_quota(
     assert selected[0].canonical_id == "deepseek/deepseek-v4-flash"
     assert selected[0].version == "2"
     assert selected[0].deployment_name == "deepseek-v4-flash"
-    assert selected[0].capacity == 1
+    assert selected[0].capacity == sync.MINIMUM_LAUNCH_CAPACITY
 
 
 def test_azure_candidate_selection_uses_newest_version_without_default() -> None:
@@ -750,15 +778,60 @@ def test_azure_candidate_selection_prefers_allowed_checkpoint_over_new_default()
     assert unknown_only == []
 
 
-def test_azure_candidate_selection_requires_enough_quota_for_minimum_capacity() -> None:
+def test_azure_candidate_selection_requires_uniform_launch_capacity_quota() -> None:
     usage_name = "AIServices.GlobalStandard.Kimi-K2.7-Code"
     selected = select_deployment_candidates(
-        [_model("Kimi-K2.7-Code", usage_name=usage_name, minimum_capacity=10)],
+        [_model("Kimi-K2.7-Code", usage_name=usage_name)],
         [_usage(usage_name, limit=10, current=1)],
         frozenset({"moonshotai/kimi-k2.7-code"}),
     )
 
     assert selected == []
+
+
+def test_azure_candidate_selection_honors_higher_catalog_minimum_capacity() -> None:
+    usage_name = "AIServices.GlobalStandard.Kimi-K2.7-Code"
+    selected = select_deployment_candidates(
+        [_model("Kimi-K2.7-Code", usage_name=usage_name, minimum_capacity=25)],
+        [_usage(usage_name, limit=30)],
+        frozenset({"moonshotai/kimi-k2.7-code"}),
+    )
+
+    assert len(selected) == 1
+    assert selected[0].capacity == 25
+
+
+@pytest.mark.parametrize("minimum", [-1, True, 1.5, "10"])
+def test_azure_candidate_selection_fails_closed_on_malformed_catalog_minimum(
+    minimum: object,
+) -> None:
+    usage_name = "AIServices.GlobalStandard.Kimi-K2.7-Code"
+    model = _model("Kimi-K2.7-Code", usage_name=usage_name)
+    sku = model["skus"][0]
+    assert isinstance(sku, dict)
+    capacity = sku["capacity"]
+    assert isinstance(capacity, dict)
+    capacity["minimum"] = minimum
+
+    selected = select_deployment_candidates(
+        [model],
+        [_usage(usage_name, limit=100)],
+        frozenset({"moonshotai/kimi-k2.7-code"}),
+    )
+
+    assert selected == []
+
+
+@pytest.mark.parametrize("remaining", [float("nan"), float("inf")])
+def test_azure_candidate_selection_fails_closed_on_nonfinite_quota(
+    remaining: float,
+) -> None:
+    usage_name = "AIServices.GlobalStandard.Kimi-K2.7-Code"
+
+    assert sync._choose_sku(  # noqa: SLF001
+        _model("Kimi-K2.7-Code", usage_name=usage_name),
+        {usage_name: remaining},
+    ) is None
 
 
 def test_azure_candidate_selection_rejects_skus_without_matching_prices() -> None:
@@ -943,7 +1016,7 @@ def test_azure_openai_tool_canary_forces_structured_zero_argument_pong_for_all_r
     for model_id in sorted(_EXPECTED_AZURE_LAUNCH_IDS):
         sync._tool_canary(_canary_candidate(model_id), account_key="test")  # noqa: SLF001
 
-    assert len(requests) == 12
+    assert len(requests) == len(_EXPECTED_AZURE_LAUNCH_IDS) == 9
     for model_id, (url, request, timeout) in zip(
         sorted(_EXPECTED_AZURE_LAUNCH_IDS), requests, strict=True
     ):
@@ -968,7 +1041,7 @@ def test_azure_openai_tool_canary_forces_structured_zero_argument_pong_for_all_r
             "additionalProperties": False,
         }
         expected_token_field = "max_completion_tokens" if model_id == "openai/gpt-5-mini" else "max_tokens"
-        assert request[expected_token_field] == 64
+        assert request[expected_token_field] == 1024
         assert ({"max_tokens", "max_completion_tokens"} & request.keys()) == {
             expected_token_field
         }
@@ -1296,9 +1369,9 @@ def test_azure_existing_deployment_reconciles_auto_upgrade_policy() -> None:
 
 @pytest.mark.parametrize(
     ("capacity", "expected"),
-    [(0, True), (1, False), (2, False), (None, True), ("1", True), (True, True)],
+    [(9, True), (10, False), (25, False), (None, True), ("10", True), (True, True)],
 )
-def test_azure_existing_deployment_requires_minimum_integer_capacity(
+def test_azure_existing_deployment_preserves_greater_integer_capacity(
     capacity: object,
     expected: bool,
 ) -> None:
@@ -1309,7 +1382,7 @@ def test_azure_existing_deployment_requires_minimum_integer_capacity(
         model_format="DeepSeek",
         deployment_name="deepseek-v4-flash",
         sku="GlobalStandard",
-        capacity=1,
+        capacity=sync.MINIMUM_LAUNCH_CAPACITY,
         is_default_version=True,
     )
     current = {
@@ -1502,7 +1575,7 @@ def test_azure_admission_isolates_failed_capability_canary(
     assert "Azure image canary failed" in failures[0]
 
 
-def test_azure_publish_admission_writes_only_exact_12_success(
+def test_azure_publish_admission_writes_only_exact_nine_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     candidates = [_canary_candidate(model_id) for model_id in sorted(_EXPECTED_AZURE_LAUNCH_IDS)]
@@ -1554,59 +1627,108 @@ def test_azure_publish_admission_fails_before_write_on_incomplete_launch(
     assert writes == []
 
 
-def test_azure_canary_retries_only_transient_failures(
+def test_azure_canary_retries_only_failed_phase_without_replaying_passed_phases(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    candidate = DeploymentCandidate(
-        canonical_id="deepseek/deepseek-v4-flash",
-        native_name="DeepSeek-V4-Flash",
-        version="1",
-        model_format="DeepSeek",
-        deployment_name="deepseek-v4-flash",
-        sku="GlobalStandard",
-        capacity=1,
-        is_default_version=True,
-    )
-    attempts = 0
+    candidate = _canary_candidate("x-ai/grok-4.20-reasoning")
+    phases: list[str] = []
+    sleeps: list[float] = []
+    text_attempts = 0
+    tool_attempts = 0
+    image_attempts = 0
 
-    def fake_canary(candidate: DeploymentCandidate, *, account_key: str) -> None:
-        nonlocal attempts
-        attempts += 1
-        if attempts < 3:
+    def fake_text(candidate: DeploymentCandidate, *, account_key: str) -> None:
+        nonlocal text_attempts
+        phases.append("text")
+        text_attempts += 1
+        if text_attempts == 1:
             raise httpx.ConnectError("temporary")
 
-    monkeypatch.setattr(sync, "canary", fake_canary)
-    monkeypatch.setattr(sync.time, "sleep", lambda _seconds: None)
+    def fake_tool(candidate: DeploymentCandidate, *, account_key: str) -> None:
+        nonlocal tool_attempts
+        phases.append("tool")
+        tool_attempts += 1
+        if tool_attempts == 1:
+            raise _http_status_error(503)
+
+    def fake_image(candidate: DeploymentCandidate, *, account_key: str) -> None:
+        nonlocal image_attempts
+        phases.append("image")
+        image_attempts += 1
+        if image_attempts == 1:
+            raise httpx.ConnectError("temporary")
+
+    monkeypatch.setattr(sync, "_text_canary", fake_text)
+    monkeypatch.setattr(sync, "_tool_canary", fake_tool)
+    monkeypatch.setattr(sync, "_image_canary", fake_image)
+    monkeypatch.setattr(sync.time, "sleep", sleeps.append)
 
     canary_with_retries(candidate, account_key="test")
-    assert attempts == 3
+
+    assert phases == ["text", "text", "tool", "tool", "image", "image"]
+    assert sleeps == [1.0, 1.0, 1.0]
+
+
+@pytest.mark.parametrize(
+    ("retry_after", "expected_delay"),
+    [("17", 17.0), (None, 60.0), ("not-a-number", 60.0), ("-1", 60.0)],
+)
+def test_azure_canary_429_honors_numeric_retry_after_with_safe_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    retry_after: str | None,
+    expected_delay: float,
+) -> None:
+    candidate = _canary_candidate("cohere/command-a")
+    text_attempts = 0
+    phases: list[str] = []
+    sleeps: list[float] = []
+
+    def fake_text(candidate: DeploymentCandidate, *, account_key: str) -> None:
+        nonlocal text_attempts
+        phases.append("text")
+        text_attempts += 1
+        if text_attempts == 1:
+            raise _http_status_error(429, retry_after=retry_after)
+
+    def fake_tool(candidate: DeploymentCandidate, *, account_key: str) -> None:
+        phases.append("tool")
+
+    monkeypatch.setattr(sync, "_text_canary", fake_text)
+    monkeypatch.setattr(sync, "_tool_canary", fake_tool)
+    monkeypatch.setattr(sync.time, "sleep", sleeps.append)
+
+    canary_with_retries(candidate, account_key="test")
+
+    assert phases == ["text", "text", "tool"]
+    assert sleeps == [expected_delay]
 
 
 def test_azure_canary_does_not_retry_no_first_byte_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    candidate = DeploymentCandidate(
-        canonical_id="microsoft/phi-4-multimodal-instruct",
-        native_name="Phi-4-multimodal-instruct",
-        version="1",
-        model_format="Microsoft",
-        deployment_name="phi-4-multimodal-instruct",
-        sku="GlobalStandard",
-        capacity=1,
-        is_default_version=True,
-    )
+    candidate = _canary_candidate("cohere/command-a")
     attempts = 0
+    tool_calls = 0
+    sleeps: list[float] = []
 
-    def fake_canary(candidate: DeploymentCandidate, *, account_key: str) -> None:
+    def fake_text(candidate: DeploymentCandidate, *, account_key: str) -> None:
         nonlocal attempts
         attempts += 1
         raise httpx.ReadTimeout("no first byte")
 
-    monkeypatch.setattr(sync, "canary", fake_canary)
+    def fake_tool(candidate: DeploymentCandidate, *, account_key: str) -> None:
+        nonlocal tool_calls
+        tool_calls += 1
+
+    monkeypatch.setattr(sync, "_text_canary", fake_text)
+    monkeypatch.setattr(sync, "_tool_canary", fake_tool)
+    monkeypatch.setattr(sync.time, "sleep", sleeps.append)
 
     with pytest.raises(httpx.ReadTimeout):
         canary_with_retries(candidate, account_key="test")
     assert attempts == 1
+    assert tool_calls == 0
+    assert sleeps == []
 
 
 def test_azure_openai_text_canary_requires_terminal_usage_for_all_launch_routes(
@@ -1649,7 +1771,7 @@ def test_azure_openai_text_canary_requires_terminal_usage_for_all_launch_routes(
     for model_id in sorted(_EXPECTED_AZURE_LAUNCH_IDS):
         sync._text_canary(_canary_candidate(model_id), account_key="test")  # noqa: SLF001
 
-    assert len(requests) == len(seen_timeouts) == 12
+    assert len(requests) == len(seen_timeouts) == len(_EXPECTED_AZURE_LAUNCH_IDS) == 9
     assert all(timeout is sync.CANARY_TIMEOUT for timeout in seen_timeouts)
     assert all(request["stream_options"] == {"include_usage": True} for request in requests)
 
@@ -1660,7 +1782,7 @@ def test_azure_manifest_registers_prepaid_only_gateway_routes() -> None:
 
     assert PROVIDERS["azure"].supports_prepaid is True
     assert PROVIDERS["azure"].supports_byok is False
-    assert raw["model_count"] == len(rows) == len(_EXPECTED_AZURE_LAUNCH_IDS) == 12
+    assert raw["model_count"] == len(rows) == len(_EXPECTED_AZURE_LAUNCH_IDS) == 9
     assert {row["id"] for row in rows} == _EXPECTED_AZURE_LAUNCH_IDS
     assert azure.retail_model_ids() == _EXPECTED_AZURE_LAUNCH_IDS
     assert {
@@ -1688,18 +1810,22 @@ def test_azure_manifest_registers_prepaid_only_gateway_routes() -> None:
         assert f"{model_id}@azure/byok" not in MODEL_ENDPOINTS
 
 
-def test_azure_gpt_oss_120b_is_text_only_in_runtime_and_public_catalog() -> None:
-    model = MODELS["openai/gpt-oss-120b"]
-    shape = model_to_openrouter_shape(model)
-
-    assert model.input_modalities == ("text",)
-    assert shape["architecture"]["modality"] == "text->text"
-    assert shape["architecture"]["input_modalities"] == ["text"]
-    assert "openai/gpt-oss-120b@azure/prepaid" in MODEL_ENDPOINTS
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "cohere/command-a-plus-05-2026",
+        "mistralai/mistral-large-3",
+        "openai/gpt-oss-120b",
+    ],
+)
+def test_azure_tool_incompatible_routes_are_absent_from_runtime_catalog(
+    model_id: str,
+) -> None:
+    assert f"{model_id}@azure/prepaid" not in MODEL_ENDPOINTS
 
 
 def test_all_provider_smoke_includes_azure() -> None:
-    assert ("azure", "openai/gpt-oss-120b") in PROBES
+    assert ("azure", "cohere/command-a") in PROBES
 
 
 def test_azure_sync_leaves_unchanged_manifest_byte_identical(

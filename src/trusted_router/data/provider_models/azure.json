@@ -1,10 +1,10 @@
 {
-  "_about": "Azure AI Foundry deployments verified for this TrustedRouter subscription. The account sync publishes only synchronous chat deployments with remaining quota, exact pricing, and successful direct text, tool-call, and required image capability canaries.",
+  "_about": "Azure AI Foundry production candidates for this TrustedRouter subscription. This release artifact has exact approved pricing; deployment, quota, and direct capability canaries must pass the account sync before publication.",
   "provider": "azure",
   "source": "https://management.azure.com/providers/Microsoft.CognitiveServices/locations/eastus2/models",
   "pricing_source": "https://prices.azure.com/api/retail/prices?$filter=serviceName%20eq%20%27Foundry%20Models%27%20and%20armRegionName%20eq%20%27eastus2%27",
   "price_scale": "microdollars_per_million",
-  "model_count": 12,
+  "model_count": 9,
   "models": [
     {
       "id": "cohere/command-a",
@@ -28,54 +28,6 @@
       "azure_model_name": "cohere-command-a",
       "azure_model_version": "1",
       "azure_model_format": "Cohere",
-      "azure_deployment_sku": "GlobalStandard"
-    },
-    {
-      "id": "cohere/command-a-plus-05-2026",
-      "upstream_id": "cohere-command-a-plus-05-2026",
-      "display_name": "Cohere-command-a-plus-05-2026",
-      "title": "Cohere-command-a-plus-05-2026",
-      "model_type": "chat",
-      "endpoints": [
-        "chat/completions"
-      ],
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "input_token_price_per_m": 800000,
-      "output_token_price_per_m": 3200000,
-      "status": 1,
-      "routable": true,
-      "azure_model_name": "Cohere-command-a-plus-05-2026",
-      "azure_model_version": "1",
-      "azure_model_format": "Cohere",
-      "azure_deployment_sku": "GlobalStandard"
-    },
-    {
-      "id": "mistralai/mistral-large-3",
-      "upstream_id": "mistral-large-3",
-      "display_name": "Mistral-Large-3",
-      "title": "Mistral-Large-3",
-      "model_type": "chat",
-      "endpoints": [
-        "chat/completions"
-      ],
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "input_token_price_per_m": 500000,
-      "output_token_price_per_m": 1500000,
-      "status": 1,
-      "routable": true,
-      "azure_model_name": "Mistral-Large-3",
-      "azure_model_version": "1",
-      "azure_model_format": "Mistral AI",
       "azure_deployment_sku": "GlobalStandard"
     },
     {
@@ -181,30 +133,6 @@
       "azure_model_format": "OpenAI",
       "azure_deployment_sku": "GlobalStandard",
       "cached_input_token_price_per_m": 25000
-    },
-    {
-      "id": "openai/gpt-oss-120b",
-      "upstream_id": "gpt-oss-120b",
-      "display_name": "gpt-oss-120b",
-      "title": "gpt-oss-120b",
-      "model_type": "chat",
-      "endpoints": [
-        "chat/completions"
-      ],
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 600000,
-      "status": 1,
-      "routable": true,
-      "azure_model_name": "gpt-oss-120b",
-      "azure_model_version": "1",
-      "azure_model_format": "OpenAI-OSS",
-      "azure_deployment_sku": "GlobalStandard"
     },
     {
       "id": "x-ai/grok-4.1-fast-non-reasoning",

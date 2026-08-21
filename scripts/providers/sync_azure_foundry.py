@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import secrets
@@ -19,7 +20,7 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -52,6 +53,7 @@ OPENAI_BASE_URL = "https://trustedrouter-foundry-eastus2.openai.azure.com/openai
 ANTHROPIC_BASE_URL = "https://trustedrouter-foundry-eastus2.services.ai.azure.com/anthropic/v1"
 CANARY_TIMEOUT = httpx.Timeout(connect=10, read=30, write=10, pool=10)
 DEPLOYMENT_VERSION_UPGRADE_OPTION = "NoAutoUpgrade"
+MINIMUM_LAUNCH_CAPACITY = 10
 _IMAGE_CANARY_MODEL_IDS = frozenset(
     {
         "moonshotai/kimi-k2.5",
@@ -242,16 +244,35 @@ def _choose_sku(model: dict[str, Any], remaining: dict[str, float]) -> tuple[str
             if not isinstance(sku, dict) or sku.get("name") != wanted:
                 continue
             usage_name = sku.get("usageName")
-            if not isinstance(usage_name, str) or remaining.get(usage_name, 0) <= 0:
+            if not isinstance(usage_name, str):
+                continue
+            available_capacity = remaining.get(usage_name)
+            if (
+                available_capacity is None
+                or not math.isfinite(available_capacity)
+                or available_capacity <= 0
+            ):
                 continue
             # Fine-tuning quota sometimes appears under a GlobalStandard SKU.
             # It is not synchronous inference capacity.
             if "finetune" in usage_name.lower() or "fine-tune" in usage_name.lower():
                 continue
             capacity = sku.get("capacity")
+            if capacity is not None and not isinstance(capacity, dict):
+                continue
             minimum = capacity.get("minimum") if isinstance(capacity, dict) else None
-            required_capacity = max(1, int(minimum or 1))
-            if remaining.get(usage_name, 0) < required_capacity:
+            if minimum is None:
+                catalog_minimum = 0
+            elif (
+                not isinstance(minimum, int)
+                or isinstance(minimum, bool)
+                or minimum < 0
+            ):
+                continue
+            else:
+                catalog_minimum = minimum
+            required_capacity = max(MINIMUM_LAUNCH_CAPACITY, catalog_minimum)
+            if available_capacity < required_capacity:
                 continue
             return wanted, required_capacity
     return None
@@ -671,7 +692,7 @@ def _tool_canary(candidate: DeploymentCandidate, *, account_key: str) -> None:
         headers={"api-key": account_key},
         request={
             "model": candidate.deployment_name,
-            _openai_token_field(candidate): 64,
+            _openai_token_field(candidate): 1024,
             "stream": False,
             "messages": [{"role": "user", "content": prompt}],
             "tools": [
@@ -803,20 +824,68 @@ def _retryable_canary_error(exc: Exception) -> bool:
     return False
 
 
+def _canary_retry_delay(exc: Exception, *, attempt: int) -> float:
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
+        raw_retry_after = exc.response.headers.get("Retry-After")
+        try:
+            retry_after = float(raw_retry_after) if raw_retry_after is not None else math.nan
+        except ValueError:
+            retry_after = math.nan
+        if math.isfinite(retry_after) and retry_after >= 0:
+            return retry_after
+        return 60.0
+    return float(2**attempt)
+
+
+def _canary_phase_with_retries(
+    phase: Callable[..., None],
+    candidate: DeploymentCandidate,
+    *,
+    account_key: str,
+    max_attempts: int,
+) -> None:
+    for attempt in range(max_attempts):
+        try:
+            phase(candidate, account_key=account_key)
+            return
+        except Exception as exc:
+            if attempt + 1 >= max_attempts or not _retryable_canary_error(exc):
+                raise
+            time.sleep(_canary_retry_delay(exc, attempt=attempt))
+
+
 def canary_with_retries(
     candidate: DeploymentCandidate,
     *,
     account_key: str,
     max_attempts: int = 3,
 ) -> None:
-    for attempt in range(max_attempts):
-        try:
-            canary(candidate, account_key=account_key)
-            return
-        except Exception as exc:
-            if attempt + 1 >= max_attempts or not _retryable_canary_error(exc):
-                raise
-            time.sleep(2**attempt)
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least 1")
+    _canary_phase_with_retries(
+        _text_canary,
+        candidate,
+        account_key=account_key,
+        max_attempts=max_attempts,
+    )
+    _canary_phase_with_retries(
+        _tool_canary,
+        candidate,
+        account_key=account_key,
+        max_attempts=max_attempts,
+    )
+    if candidate.canonical_id in _IMAGE_CANARY_MODEL_IDS:
+        if candidate.model_format == "Anthropic":
+            raise RuntimeError(
+                f"Azure image canary has no Anthropic request path for "
+                f"{candidate.deployment_name}"
+            )
+        _canary_phase_with_retries(
+            _image_canary,
+            candidate,
+            account_key=account_key,
+            max_attempts=max_attempts,
+        )
 
 
 def manifest_row(candidate: DeploymentCandidate, price: Any) -> dict[str, Any]:

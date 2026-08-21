@@ -105,7 +105,14 @@ _CANONICAL_IDS: dict[str, str] = {
 
 _RETAIL_RULES: dict[str, RetailRule] = {
     "cohere/command-a": RetailRule("Cohere Models", ("command a",), ("command a plus",)),
-    "cohere/command-a-plus-05-2026": RetailRule("Cohere Models", ("command a plus",)),
+    "cohere/command-a-plus-05-2026": RetailRule(
+        "Cohere Models",
+        ("command a plus",),
+        # The authenticated Azure OpenAI-compatible endpoint returned a
+        # stop response with control-token-wrapped, invalid JSON arguments for
+        # a named function, and returned no tool call with tool_choice=required.
+        production_hold_reason="openai-tool-call-response-nonconformant",
+    ),
     "deepseek/deepseek-v3.2": RetailRule(
         "Azure Deepseek Models",
         ("v3.2",),
@@ -183,7 +190,13 @@ _RETAIL_RULES: dict[str, RetailRule] = {
         ("codestral",),
         production_hold_reason="tool-calling-unsupported",
     ),
-    "mistralai/mistral-large-3": RetailRule("Azure Mistral Models", ("large 3",)),
+    "mistralai/mistral-large-3": RetailRule(
+        "Azure Mistral Models",
+        ("large 3",),
+        # Azure accepts tool_choice=required but rejects the OpenAI-compatible
+        # named function selector with HTTP 422.
+        production_hold_reason="openai-named-tool-choice-unsupported",
+    ),
     "moonshotai/kimi-k2.5": RetailRule(
         "Azure Kimi",
         ("k2.5",),
@@ -210,7 +223,13 @@ _RETAIL_RULES: dict[str, RetailRule] = {
         require_cached=True,
         production_hold_reason="global-sku-unavailable",
     ),
-    "openai/gpt-oss-120b": RetailRule("Azure OpenAI OSS Models", ("gpt-oss-120b",)),
+    "openai/gpt-oss-120b": RetailRule(
+        "Azure OpenAI OSS Models",
+        ("gpt-oss-120b",),
+        # Named tool choice returned an empty choices list; required tool use
+        # returned HTTP 400 UnsupportedToolUse on the authenticated endpoint.
+        production_hold_reason="openai-tool-use-unsupported",
+    ),
     "x-ai/grok-4.1-fast-non-reasoning": RetailRule(
         "Azure Grok Models",
         ("grok 4.1",),

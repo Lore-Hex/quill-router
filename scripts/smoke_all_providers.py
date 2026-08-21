@@ -54,7 +54,7 @@ PROBES: list[tuple[str, str]] = [
     ("telnyx", "moonshotai/kimi-k3"),
     ("wafer", "z-ai/glm-5.2"),
     ("crusoe", "deepseek/deepseek-v4-flash"),
-    ("azure", "openai/gpt-oss-120b"),
+    ("azure", "cohere/command-a"),
 ]
 
 # Per-region enclave URLs the smoke targets. We deliberately use the
