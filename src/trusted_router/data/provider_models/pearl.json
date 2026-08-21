@@ -134,7 +134,8 @@
       "routable": true,
       "input_token_price_per_m": 1300000,
       "output_token_price_per_m": 2600000,
-      "cached_input_token_price_per_m": 100000
+      "cached_input_token_price_per_m": 100000,
+      "missing_since": "2026-08-21"
     },
     {
       "display_name": "Google: Gemma 4 31B Instruct",
@@ -167,7 +168,6 @@
         "temperature",
         "top_p",
         "top_k",
-        "min_p",
         "frequency_penalty",
         "presence_penalty",
         "stop",
@@ -222,6 +222,6 @@
       "cached_input_token_price_per_m": 200000
     }
   ],
-  "generated_at": "2026-08-21T09:38:54Z",
+  "generated_at": "2026-08-21T10:32:54Z",
   "model_count": 5
 }
