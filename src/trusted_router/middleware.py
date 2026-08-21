@@ -24,7 +24,6 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
-from hashlib import sha256
 from urllib.parse import parse_qs, urlsplit
 
 from fastapi import FastAPI, Request
