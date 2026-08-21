@@ -82,8 +82,11 @@ request bodies. The normal typed Spanner authorization and reservation rows
 still provide global idempotent replay, but carry a zero global counter hold;
 the bounded regional escrow owns that hold until reconciliation.
 
-Current fixed profiles exist for `us-central1` and `europe-west4`. A request
-served from a region without a fixed profile uses the exact Spanner path.
+The initial fixed profile exists only for `us-central1`. Bigtable warns against
+transactional profiles that target separate clusters in one replicated
+instance because they could write the same row concurrently. TrustedRouter
+does not override that guard. A request served from Europe or another region
+uses the exact Spanner path until that region has an isolated local ledger.
 
 ## Rollout gates
 

@@ -163,7 +163,8 @@ def test_production_deploy_provisions_and_schedules_regional_quota_reconciliatio
     )
     assert "--transactional-writes" in provisioner
     assert "trusted-router-logs-c1" in library
-    assert "trusted-router-logs-eu" in library
+    assert "us-central1=tr-quota-us-central1" in library
+    assert "europe-west4=tr-quota-europe-west4" not in library
     assert 'SCHEDULE="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULE:-* * * * *}"' in reconciler
     assert "/v1/internal/gateway/regional-quota/reconcile?limit=250" in reconciler
     assert "x-trustedrouter-internal-token=${internal_token}" in reconciler

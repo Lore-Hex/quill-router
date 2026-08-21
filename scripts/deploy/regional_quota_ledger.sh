@@ -4,7 +4,7 @@
 # Usage:
 #   GCP_PROJECT_ID=quill-cloud-proxy \
 #   TR_BIGTABLE_INSTANCE_ID=trusted-router-logs \
-#   TR_REGIONAL_QUOTA_CLUSTER_MAP='us-central1=tr-us-central1,europe-west4=tr-eu' \
+#   TR_REGIONAL_QUOTA_CLUSTER_MAP='us-central1=tr-us-central1' \
 #     scripts/deploy/regional_quota_ledger.sh
 set -euo pipefail
 
