@@ -1690,9 +1690,23 @@ def test_bootstrap_reads_legacy_monolith_without_new_console_dependency(
         for line in events
         if "run services describe trusted-router --region=" in line
     ]
-    assert len(legacy_describes) == len(REGIONS)
+    # Bootstrap reads the legacy monolith in every region — hardening-artifact
+    # verification plus the data-mode preflight, all read-only describes. The
+    # count per region is symmetric but not pinned: it moves whenever a
+    # verification pass is added, and the property being proved is coverage
+    # plus read-only-ness, not the number of reads.
+    described_regions = {
+        line.split("--region=", 1)[1].split()[0] for line in legacy_describes
+    }
+    assert described_regions == set(REGIONS)
+    per_region = [
+        sum(f"--region={region}" in line for line in legacy_describes)
+        for region in REGIONS
+    ]
+    assert len(set(per_region)) == 1, per_region
     assert not any("trusted-router-console" in line for line in events)
     assert not any("run deploy trusted-router " in line for line in events)
+    assert not any("update-traffic trusted-router " in line for line in events)
 
 
 def test_bootstrap_rejects_path_bearing_private_health_origin(

@@ -229,5 +229,8 @@ def test_pearl_hourly_refresh_and_secret_wiring_are_complete() -> None:
         'ensure_secret_from_env_file "PEARL_RESEARCH_API_KEY" '
         '"trustedrouter-pearl-api-key"'
     ) in secrets
-    assert 'grant_tr_deploy_secret_access "trustedrouter-pearl-api-key"' in secrets
+    assert (
+        "trustedrouter-pearl-api-key"
+        in secrets.split("DETACHED_PROVIDER_SECRET_NAMES=(", 1)[1].split(")", 1)[0]
+    )
     assert "PEARL_RESEARCH_API_KEY:trustedrouter-pearl-api-key" in workflow

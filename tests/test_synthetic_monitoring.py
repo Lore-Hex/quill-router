@@ -2943,7 +2943,7 @@ def test_synthetic_deploy_targets_public_api_and_private_internal_ingest() -> No
     assert '"TR_SERVICE_SURFACE=observer"' in body
     assert '"TR_SERVICE_SURFACE=internal"' not in body
     assert (
-        '"TR_OBSERVER_INTERNAL_TOKEN=trustedrouter-observer-internal-token:latest"'
+        '"TR_OBSERVER_INTERNAL_TOKEN=trustedrouter-observer-internal-token:${OBSERVER_SECRET_VERSION}"'
         in body
     )
     assert '"TR_INTERNAL_GATEWAY_TOKEN=' not in body

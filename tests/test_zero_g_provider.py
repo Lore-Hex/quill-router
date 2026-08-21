@@ -449,13 +449,13 @@ def test_zero_g_hourly_refresh_and_optional_secret_wiring_are_complete() -> None
         '"trustedrouter-zero-g-api-key"'
     ) in secrets
     assert (
-        'grant_tr_deploy_secret_access "trustedrouter-zero-g-api-key"'
-        in secrets
+        "trustedrouter-zero-g-api-key"
+        in secrets.split("DETACHED_PROVIDER_SECRET_NAMES=(", 1)[1].split(")", 1)[0]
     )
     assert (
-        'add_secret_env_if_exists "ZERO_G_API_KEY" '
-        '"trustedrouter-zero-g-api-key"'
-    ) in rollout
+        "trustedrouter-zero-g-api-key"
+        in rollout.split("KNOWN_OPTIONAL_RUNTIME_SECRETS=(", 1)[1].split(")", 1)[0]
+    )
     assert "Pull optional 0G Private Computer key" in workflow
     assert "ZERO_G_API_KEY=${KEY}" in workflow
 

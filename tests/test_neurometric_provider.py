@@ -320,8 +320,8 @@ def test_neurometric_hourly_refresh_and_secret_wiring_are_complete() -> None:
         '"trustedrouter-neurometric-api-key"'
     ) in secrets
     assert (
-        'grant_tr_deploy_secret_access "trustedrouter-neurometric-api-key"'
-        in secrets
+        "trustedrouter-neurometric-api-key"
+        in secrets.split("DETACHED_PROVIDER_SECRET_NAMES=(", 1)[1].split(")", 1)[0]
     )
     assert (
         "NEUROMETRIC_API_KEY:trustedrouter-neurometric-api-key"

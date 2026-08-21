@@ -324,5 +324,8 @@ def test_wave2_hourly_refresh_and_secret_wiring_are_complete() -> None:
         "STREAMLAKE_API_KEY": "trustedrouter-streamlake-api-key",
     }.items():
         assert f'ensure_secret_from_env_file "{env_name}" "{secret_name}"' in secrets
-        assert f'grant_tr_deploy_secret_access "{secret_name}"' in secrets
+        assert (
+            secret_name
+            in secrets.split("DETACHED_PROVIDER_SECRET_NAMES=(", 1)[1].split(")", 1)[0]
+        )
         assert f"{env_name}:{secret_name}" in workflow
