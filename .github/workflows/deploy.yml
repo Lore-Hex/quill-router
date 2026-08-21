@@ -396,12 +396,18 @@ jobs:
       SERVICE: trusted-router
       TR_PUBLIC_SERVICE: trusted-router-public
       TR_ACTIONS_SERVICE: trusted-router-actions
-      TR_CONSOLE_SERVICE: trusted-router
+      TR_CONSOLE_SERVICE: trusted-router-console
       TR_CHAT_SERVICE: trusted-router-chat
       TR_WEBHOOKS_SERVICE: trusted-router-webhooks
       TR_INTERNAL_SERVICE: trusted-router-billing
       TR_BILLING_SERVICE: trusted-router-billing
       TR_ROLLOUT_MANIFEST: ${{ runner.temp }}/tr-rollout/manifest.json
+      # The frontend identities are a reviewed contract (like the service
+      # inventory above): capture verifies the live LB against them and
+      # rollout.sh refuses to run without the resulting artifact.
+      TR_FORWARDING_RULE: trusted-router-control-https
+      TR_HTTPS_PROXY: trusted-router-control-https-proxy
+      TR_ROLLOUT_FRONTEND_ATTESTATION: ${{ runner.temp }}/tr-rollout/frontend-attestation.json
       SHA: ${{ needs.build-image.outputs.sha }}
       IMAGE: ${{ needs.build-image.outputs.image }}
       # Keep the workflow value raw. rollout.sh normalizes preserve/false/true
@@ -420,6 +426,31 @@ jobs:
 
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture frontend attestation
+        # rollout.sh requires TR_ROLLOUT_FRONTEND_ATTESTATION unconditionally:
+        # the artifact binds the forwarding rule and VIP, HTTPS proxy, URL map,
+        # ACTIVE certificate SAN coverage, exact DNS answers, and the smoke
+        # hash, and every region's rollout re-verifies it before mutating
+        # anything. CI captures against the reviewed host inventory in
+        # docs/security/edge-surfaces.json, so a hijacked or drifted frontend
+        # fails the deploy here rather than serving traffic behind it.
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$TR_ROLLOUT_FRONTEND_ATTESTATION")"
+          url_map=$(gcloud compute target-https-proxies describe \
+            "$TR_HTTPS_PROXY" --project="$PROJECT_ID" --format='value(urlMap)')
+          url_map=${url_map##*/}
+          hosts=$(python3 -c 'import json; rows = [s for s in json.load(open("docs/security/edge-surfaces.json"))["surfaces"] if s["id"] == "gcp-control-domains"]; print(",".join(rows[0]["hosts"]))')
+          python3 scripts/deploy/rollout_frontend_attest.py capture \
+            --project "$PROJECT_ID" \
+            --forwarding-rule "$TR_FORWARDING_RULE" \
+            --https-proxy "$TR_HTTPS_PROXY" \
+            --url-map "$url_map" \
+            --hosts "$hosts" \
+            --artifact "$TR_ROLLOUT_FRONTEND_ATTESTATION"
+          python3 scripts/deploy/rollout_frontend_attest.py \
+            verify-artifact "$TR_ROLLOUT_FRONTEND_ATTESTATION"
 
       # Staged regional deploy. Deploy us-central1 first, gate on a
       # 3-min single-region synthetic watch; only proceed to the

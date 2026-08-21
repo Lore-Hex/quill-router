@@ -186,6 +186,52 @@ recorded suffix and cohort, then use `--verify-artifact` before bootstrap.
    ```text
    resource.name == "projects/_/buckets/BUCKET/objects/trusted-router-rollouts/PROJECT/authority.json" || resource.name.startsWith("projects/_/buckets/BUCKET/objects/trusted-router-rollouts/PROJECT/releases/MANIFEST_EPOCH/")
    ```
+   Provisioning commands for that approval window. These create exactly what
+   the read-only IAM verifier accepts — a versioned bucket with seven-day
+   retention, one three-permission custom role shared by the journal and
+   recovery bindings, and object-scoped conditional bindings for the deploy
+   identity — so a value drifting from these commands fails
+   `rollout_iam_verify.sh` rather than passing loosely:
+
+   ```bash
+   PROJECT=quill-cloud-proxy
+   BUCKET="${PROJECT}-tr-rollout-state"
+   DEPLOY_SA="tr-deploy@${PROJECT}.iam.gserviceaccount.com"
+   PREFIX="trusted-router-rollouts/${PROJECT}"
+
+   gcloud storage buckets create "gs://${BUCKET}" --project="$PROJECT" \
+     --location=us-central1 --uniform-bucket-level-access \
+     --public-access-prevention
+   gcloud storage buckets update "gs://${BUCKET}" --versioning \
+     --retention-period=7d
+   gcloud iam roles create trRolloutJournal --project="$PROJECT" \
+     --title="TrustedRouter rollout journal" --stage=GA \
+     --permissions=storage.objects.get,storage.objects.create,storage.objects.delete
+   # Journal binding: exactly one object.
+   gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
+     --member="serviceAccount:${DEPLOY_SA}" \
+     --role="projects/${PROJECT}/roles/trRolloutJournal" \
+     --condition="title=trusted-router-rollout-journal,expression=resource.name == \"projects/_/buckets/${BUCKET}/objects/${PREFIX}/state.json\""
+   # Recovery binding: the authority object plus this manifest epoch's bundle.
+   # MANIFEST_EPOCH comes from the reviewed manifest; re-run per release.
+   gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
+     --member="serviceAccount:${DEPLOY_SA}" \
+     --role="projects/${PROJECT}/roles/trRolloutJournal" \
+     --condition="title=trusted-router-rollout-recovery,expression=resource.name == \"projects/_/buckets/${BUCKET}/objects/${PREFIX}/authority.json\" || resource.name.startsWith(\"projects/_/buckets/${BUCKET}/objects/${PREFIX}/releases/${MANIFEST_EPOCH}/\")"
+   ```
+
+   Then export, for both the operator stage/promote commands and
+   `rollout_iam_verify.sh`:
+
+   ```bash
+   export TR_ROLLOUT_STATE_GCS_URI="gs://${BUCKET}/${PREFIX}/state.json"
+   export TR_ROLLOUT_RECOVERY_GCS_PREFIX="gs://${BUCKET}/${PREFIX}"
+   export TR_ROLLOUT_RECOVERY_GCS_ROLE="projects/${PROJECT}/roles/trRolloutJournal"
+   export TR_ROLLOUT_BUNDLE_GCS_URI="gs://${BUCKET}/${PREFIX}/releases/${MANIFEST_EPOCH}"
+   export TR_ROLLOUT_AUTHORITY_GCS_URI="gs://${BUCKET}/${PREFIX}/authority.json"
+   export TR_ROLLOUT_REQUIRE_RECOVERY_BUNDLE=true
+   ```
+
 9. Promote only with the mandatory repository-owned authenticated LB/browser
    smoke callback. Its authorization header and Playwright storage-state files
    must be regular mode-0600 files, and the callback runs Playwright Firefox:
