@@ -494,7 +494,9 @@ jobs:
         run: |
           set -euo pipefail
           if ! bash scripts/deploy/assert_no_billing_5xx.sh \
-              us-central1 "${{ steps.deploy_us.outputs.started_at }}"; then
+              us-central1 \
+              "${{ steps.deploy_us.outputs.started_at }}" \
+              "${{ steps.new_us.outputs.revision }}"; then
             echo "us-central1 emitted billing-path 5xx; rolling back to ${PREV_US}"
             gcloud run services update-traffic "${SERVICE}" \
               --region=us-central1 --project="${PROJECT_ID}" \
@@ -596,7 +598,7 @@ jobs:
             fi
 
             if ! bash scripts/deploy/assert_no_billing_5xx.sh \
-                "${region}" "${rollout_started_at}"; then
+                "${region}" "${rollout_started_at}" "${revision}"; then
               rollback_region "${region}"
               return 1
             fi

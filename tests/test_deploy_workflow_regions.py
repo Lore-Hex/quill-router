@@ -95,7 +95,19 @@ def test_primary_rollout_gates_on_router_core_and_billing_path_errors() -> None:
     assert "--slo-class router_core" in rollout
     assert "- name: Billing-path gate + rollback (us-central1)" in rollout
     assert "scripts/deploy/assert_no_billing_5xx.sh" in rollout
+    assert '"${{ steps.new_us.outputs.revision }}"' in rollout
     assert '--to-revisions="${PREV_US}=100"' in rollout
+
+
+def test_billing_path_gate_only_attributes_errors_to_candidate_revision() -> None:
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    script = (ROOT / "scripts/deploy/assert_no_billing_5xx.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'REVISION="${3:?usage:' in script
+    assert 'resource.labels.revision_name=\\"${REVISION}\\"' in script
+    assert '"${region}" "${rollout_started_at}" "${revision}"' in workflow
 
 
 def test_superseded_push_stops_before_production_mutation() -> None:
