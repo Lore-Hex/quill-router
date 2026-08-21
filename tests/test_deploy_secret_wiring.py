@@ -168,9 +168,15 @@ def test_production_deploy_provisions_and_schedules_regional_quota_reconciliatio
     assert 'SCHEDULE="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULE:-* * * * *}"' in reconciler
     assert "trusted_router.regional_quota_reconcile_cli" in reconciler
     assert "--oauth-service-account-email=\"$RUN_SERVICE_ACCOUNT\"" in reconciler
-    assert "gcloud.secrets" not in reconciler
-    assert "internal_gateway_token" not in reconciler
+    assert "gc secrets" not in reconciler
+    assert "trustedrouter-internal-gateway-token" not in reconciler
     assert "gc run jobs execute" in reconciler
+    assert reconciler.index("gc run jobs execute") < reconciler.index("gc scheduler jobs update")
+    assert reconciler.index("gc run jobs execute") < reconciler.index("gc scheduler jobs create")
+    assert "--max-retries 0" in reconciler
+    assert "--task-timeout 50s" in reconciler
+    assert "--max-retry-attempts=0" in reconciler
+    assert "gc run jobs delete" in reconciler
 
 
 def test_deploy_preserves_request_record_mode_without_silent_legacy_fallback() -> None:

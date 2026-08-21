@@ -7,6 +7,12 @@ import pytest
 from trusted_router import regional_quota_reconcile_cli as worker
 
 
+@pytest.fixture(autouse=True)
+def _isolate_observability(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(worker, "init_sentry", lambda _settings: None)
+    monkeypatch.setattr(worker, "record_heartbeat", lambda *_args, **_kwargs: None)
+
+
 class _Store:
     def __init__(self, result: dict[str, int]) -> None:
         self.result = result
@@ -16,12 +22,15 @@ class _Store:
         self.limits.append(limit)
         return self.result
 
+    def verify_regional_quota_ledger(self) -> tuple[str, ...]:
+        return ("us-central1",)
+
 
 def test_disabled_worker_does_not_open_storage(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         worker,
         "get_settings",
-        lambda: SimpleNamespace(regional_quota_leases_enabled=False),
+        lambda: SimpleNamespace(regional_quota_reconciler_worker=False),
     )
     monkeypatch.setattr(
         worker,
@@ -37,13 +46,22 @@ def test_worker_reconciles_with_bounded_limit(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(
         worker,
         "get_settings",
-        lambda: SimpleNamespace(regional_quota_leases_enabled=True),
+        lambda: SimpleNamespace(
+            regional_quota_reconciler_worker=True,
+            regional_quota_leases_enabled=True,
+            regional_quota_reconcile_limit=1_000,
+        ),
     )
+    heartbeats: list[str] = []
     monkeypatch.setattr(worker, "create_store", lambda _settings: store)
-    monkeypatch.setenv("TR_REGIONAL_QUOTA_RECONCILE_LIMIT", "5000")
-
+    monkeypatch.setattr(
+        worker,
+        "record_heartbeat",
+        lambda name, **_kwargs: heartbeats.append(name),
+    )
     assert worker.main() == 0
     assert store.limits == [1000]
+    assert heartbeats == ["job:regional-quota-reconcile"]
 
 
 def test_worker_fails_execution_when_any_lease_fails(
@@ -53,25 +71,15 @@ def test_worker_fails_execution_when_any_lease_fails(
     monkeypatch.setattr(
         worker,
         "get_settings",
-        lambda: SimpleNamespace(regional_quota_leases_enabled=True),
+        lambda: SimpleNamespace(
+            regional_quota_reconciler_worker=True,
+            regional_quota_leases_enabled=True,
+            regional_quota_reconcile_limit=25,
+        ),
     )
     monkeypatch.setattr(worker, "create_store", lambda _settings: store)
 
     assert worker.main() == 1
-
-
-def test_worker_rejects_non_integer_limit(monkeypatch: pytest.MonkeyPatch) -> None:
-    store = _Store({"inspected": 0, "reconciled": 0, "closed": 0, "errors": 0})
-    monkeypatch.setattr(
-        worker,
-        "get_settings",
-        lambda: SimpleNamespace(regional_quota_leases_enabled=True),
-    )
-    monkeypatch.setattr(worker, "create_store", lambda _settings: store)
-    monkeypatch.setenv("TR_REGIONAL_QUOTA_RECONCILE_LIMIT", "many")
-
-    with pytest.raises(ValueError, match="must be an integer"):
-        worker.main()
 
 
 def test_worker_fails_closed_without_reconcile_capability(
@@ -80,9 +88,43 @@ def test_worker_fails_closed_without_reconcile_capability(
     monkeypatch.setattr(
         worker,
         "get_settings",
-        lambda: SimpleNamespace(regional_quota_leases_enabled=True),
+        lambda: SimpleNamespace(
+            regional_quota_reconciler_worker=True,
+            regional_quota_leases_enabled=True,
+            regional_quota_reconcile_limit=25,
+        ),
     )
-    monkeypatch.setattr(worker, "create_store", lambda _settings: SimpleNamespace())
+    monkeypatch.setattr(
+        worker,
+        "create_store",
+        lambda _settings: SimpleNamespace(
+            verify_regional_quota_ledger=lambda: ("us-central1",),
+        ),
+    )
+
+    assert worker.main() == 1
+
+
+def test_worker_fails_closed_when_no_ledger_region_is_verified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        worker,
+        "get_settings",
+        lambda: SimpleNamespace(
+            regional_quota_reconciler_worker=True,
+            regional_quota_leases_enabled=True,
+            regional_quota_reconcile_limit=25,
+        ),
+    )
+    monkeypatch.setattr(
+        worker,
+        "create_store",
+        lambda _settings: SimpleNamespace(
+            verify_regional_quota_ledger=lambda: (),
+            reconcile_regional_quota_leases=lambda **_kwargs: {},
+        ),
+    )
 
     assert worker.main() == 1
 
@@ -100,7 +142,28 @@ def test_worker_environment_does_not_require_serving_pilot_allowlist() -> None:
         request_record_write_mode="typed",
         settle_outbox_enabled=True,
         regional_quota_leases_enabled=True,
+        regional_quota_reconciler_worker=True,
         regional_quota_bigtable_app_profiles="us-central1=quota-us",
     )
 
     assert settings.regional_quota_lease_pilot_workspaces == frozenset()
+
+
+def test_generic_worker_still_requires_serving_pilot_allowlist() -> None:
+    from pydantic import ValidationError
+
+    from trusted_router.config import Settings
+
+    with pytest.raises(ValidationError, match="PILOT_WORKSPACE_IDS"):
+        Settings(
+            environment="worker",
+            storage_backend="spanner-bigtable",
+            gcp_project_id="project",
+            spanner_instance_id="instance",
+            spanner_database_id="database",
+            bigtable_instance_id="bigtable",
+            request_record_write_mode="typed",
+            settle_outbox_enabled=True,
+            regional_quota_leases_enabled=True,
+            regional_quota_bigtable_app_profiles="us-central1=quota-us",
+        )

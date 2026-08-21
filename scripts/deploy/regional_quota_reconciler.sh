@@ -9,10 +9,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_lib.sh"
 
 SCHEDULER_NAME="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULER:-trusted-router-regional-quota-reconcile}"
-SCHEDULER_REGION="${TR_REGIONAL_QUOTA_RECONCILER_REGION:-${TR_PRIMARY_REGION}}"
+JOB_REGION="${TR_REGIONAL_QUOTA_RECONCILER_JOB_REGION:-${TR_PRIMARY_REGION}}"
+SCHEDULER_REGION="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULER_REGION:-${JOB_REGION}}"
 SCHEDULE="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULE:-* * * * *}"
-JOB_NAME="${TR_REGIONAL_QUOTA_RECONCILER_JOB:-trusted-router-regional-quota-reconciler}"
-RECONCILE_LIMIT="${TR_REGIONAL_QUOTA_RECONCILE_LIMIT:-250}"
+RELEASE="$(git rev-parse --short HEAD 2>/dev/null || echo local)"
+JOB_PREFIX="${TR_REGIONAL_QUOTA_RECONCILER_JOB_PREFIX:-trusted-router-regional-quota-reconciler}"
+JOB_NAME="${TR_REGIONAL_QUOTA_RECONCILER_JOB:-${JOB_PREFIX}-${RELEASE}}"
+RECONCILE_LIMIT="${TR_REGIONAL_QUOTA_RECONCILE_LIMIT:-25}"
 
 if ! gc artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
   log "refusing regional quota reconciler deploy: image ${IMAGE} does not exist"
@@ -21,7 +24,7 @@ fi
 
 env_vars=(
   "TR_ENVIRONMENT=worker"
-  "TR_RELEASE=$(git rev-parse --short HEAD 2>/dev/null || echo local)"
+  "TR_RELEASE=${RELEASE}"
   "TR_STORAGE_BACKEND=spanner-bigtable"
   "TR_GCP_PROJECT_ID=${PROJECT_ID}"
   "TR_SPANNER_INSTANCE_ID=${SPANNER_INSTANCE_ID}"
@@ -31,34 +34,45 @@ env_vars=(
   "TR_REQUEST_RECORD_WRITE_MODE=typed"
   "TR_SETTLE_OUTBOX_ENABLED=true"
   "TR_REGIONAL_QUOTA_LEASES_ENABLED=true"
+  "TR_REGIONAL_QUOTA_RECONCILER_WORKER=true"
   "TR_REGIONAL_QUOTA_BIGTABLE_TABLE=${TR_REGIONAL_QUOTA_BIGTABLE_TABLE:-trustedrouter-regional-quota}"
   "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES=${TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES}"
   "TR_REGIONAL_QUOTA_RECONCILE_LIMIT=${RECONCILE_LIMIT}"
   "TR_PRIMARY_REGION=${TR_PRIMARY_REGION}"
+  "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true"
 )
 set_env_vars="$(IFS='|'; echo "^|^${env_vars[*]}")"
 
 log "deploying regional quota reconciliation job ${JOB_NAME}"
 gc run jobs deploy "$JOB_NAME" \
-  --region "$SCHEDULER_REGION" \
+  --region "$JOB_REGION" \
   --image "$IMAGE" \
   --command="/app/.venv/bin/python" \
   --args="-m,trusted_router.regional_quota_reconcile_cli" \
   --service-account "$RUN_SERVICE_ACCOUNT" \
   --set-env-vars "$set_env_vars" \
-  --max-retries 1 \
-  --task-timeout 240s \
+  --update-secrets "TR_SENTRY_DSN=trustedrouter-sentry-dsn:latest" \
+  --max-retries 0 \
+  --task-timeout 50s \
   --cpu 1 \
   --memory 512Mi \
   --quiet >/dev/null
 
 gc run jobs add-iam-policy-binding "$JOB_NAME" \
-  --region "$SCHEDULER_REGION" \
+  --region "$JOB_REGION" \
   --member="serviceAccount:${RUN_SERVICE_ACCOUNT}" \
   --role="roles/run.invoker" \
   --quiet >/dev/null
 
-uri="https://${SCHEDULER_REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${JOB_NAME}:run"
+# Verify the versioned job before changing the stable scheduler. A failed
+# deployment therefore leaves the previous known-good job scheduled.
+log "verifying regional quota reconciliation job"
+gc run jobs execute "$JOB_NAME" \
+  --region "$JOB_REGION" \
+  --wait \
+  --quiet >/dev/null
+
+uri="https://${JOB_REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${JOB_NAME}:run"
 common_args=(
   --location="$SCHEDULER_REGION"
   --schedule="$SCHEDULE"
@@ -67,7 +81,7 @@ common_args=(
   --http-method=POST
   --oauth-service-account-email="$RUN_SERVICE_ACCOUNT"
   --attempt-deadline=30s
-  --max-retry-attempts=3
+  --max-retry-attempts=0
   --min-backoff=5s
   --max-backoff=30s
   --quiet
@@ -82,17 +96,30 @@ else
   gc scheduler jobs create http "$SCHEDULER_NAME" "${common_args[@]}" >/dev/null
 fi
 
-# Do not let a previously paused scheduler make an enabled pilot silently
-# accumulate expired escrow. Resume is idempotent.
+# The new version has passed a real Spanner and Bigtable execution, so it is
+# now safe to make it the stable schedule target. Resume is idempotent.
 gc scheduler jobs resume "$SCHEDULER_NAME" \
   --location="$SCHEDULER_REGION" --quiet >/dev/null 2>&1 || true
 
-# A successful no-op execution proves image startup, settings validation,
-# Spanner access, and Bigtable app-profile routing before the deploy turns
-# green. Reconciliation is idempotent if an active pilot lease already exists.
-log "verifying regional quota reconciliation job"
-gc run jobs execute "$JOB_NAME" \
-  --region "$SCHEDULER_REGION" \
-  --wait \
-  --quiet >/dev/null
+# Retain the current and one previous verified version for immediate rollback;
+# stale definitions cost no runtime money but eventually consume the regional
+# Cloud Run Job quota.
+previous_kept=0
+while IFS= read -r old_job; do
+  [[ "$old_job" == "${JOB_PREFIX}-"* ]] || continue
+  [ "$old_job" = "$JOB_NAME" ] && continue
+  if [ "$previous_kept" -eq 0 ]; then
+    previous_kept=1
+    continue
+  fi
+  if ! gc run jobs delete "$old_job" \
+      --region "$JOB_REGION" --quiet >/dev/null; then
+    log "WARN: unable to remove stale regional quota job ${old_job}"
+  fi
+done < <(
+  gc run jobs list \
+    --region "$JOB_REGION" \
+    --sort-by='~metadata.creationTimestamp' \
+    --format='value(metadata.name)'
+)
 log "regional quota reconciler is verified and scheduled once per minute"
