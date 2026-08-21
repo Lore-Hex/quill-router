@@ -90,7 +90,11 @@ common_args=(
 if gc scheduler jobs describe "$SCHEDULER_NAME" \
   --location="$SCHEDULER_REGION" >/dev/null 2>&1; then
   log "updating regional quota reconciler schedule"
-  gc scheduler jobs update http "$SCHEDULER_NAME" "${common_args[@]}" >/dev/null
+  # The legacy HTTP scheduler stored the internal gateway token in a custom
+  # header. Clear every legacy header while moving to Google OAuth so that
+  # secret does not remain in the Scheduler resource after migration.
+  gc scheduler jobs update http "$SCHEDULER_NAME" \
+    "${common_args[@]}" --clear-headers >/dev/null
 else
   log "creating regional quota reconciler schedule"
   gc scheduler jobs create http "$SCHEDULER_NAME" "${common_args[@]}" >/dev/null

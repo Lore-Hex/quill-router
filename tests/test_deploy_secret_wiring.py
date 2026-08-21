@@ -168,6 +168,7 @@ def test_production_deploy_provisions_and_schedules_regional_quota_reconciliatio
     assert 'SCHEDULE="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULE:-* * * * *}"' in reconciler
     assert "trusted_router.regional_quota_reconcile_cli" in reconciler
     assert "--oauth-service-account-email=\"$RUN_SERVICE_ACCOUNT\"" in reconciler
+    assert "--clear-headers" in reconciler
     assert "gc secrets" not in reconciler
     assert "trustedrouter-internal-gateway-token" not in reconciler
     assert "gc run jobs execute" in reconciler
