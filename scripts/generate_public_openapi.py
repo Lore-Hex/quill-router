@@ -184,7 +184,16 @@ def main() -> int:
     args = parser.parse_args()
     body, gzip_body = generated_bytes()
     if args.check:
-        if JSON_PATH.read_bytes() != body or GZIP_PATH.read_bytes() != gzip_body:
+        # JSON is byte-exact. The deflate stream is compared by content, because
+        # zlib builds differ across the runtimes that commit and check the asset;
+        # the header fields the generator pins are checked directly instead.
+        committed_gzip = GZIP_PATH.read_bytes()
+        if (
+            JSON_PATH.read_bytes() != body
+            or gzip.decompress(committed_gzip) != body
+            or committed_gzip[4:8] != b"\x00\x00\x00\x00"
+            or committed_gzip[9] != 0xFF
+        ):
             raise SystemExit("public OpenAPI assets are stale; run this generator")
         return 0
     JSON_PATH.write_bytes(body)

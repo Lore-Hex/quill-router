@@ -57,8 +57,18 @@ def test_generated_public_openapi_assets_are_deterministic_and_current(monkeypat
     body, gzip_body = _generator().generated_bytes()
 
     assert body == JSON_PATH.read_bytes()
-    assert gzip_body == GZIP_PATH.read_bytes()
+    # The JSON is byte-exact across runtimes; the deflate stream is not. zlib
+    # builds differ between the Mac that commits the asset and the Linux CI
+    # that checks it, so the compressed bytes are compared by what they
+    # decompress to, plus the two header fields the generator pins (mtime=0,
+    # OS=255) that make the stream reproducible apart from the codec itself.
+    committed_gzip = GZIP_PATH.read_bytes()
+    assert gzip.decompress(committed_gzip) == body
     assert gzip.decompress(gzip_body) == body
+    for stream in (committed_gzip, gzip_body):
+        assert stream[:2] == b"\x1f\x8b"
+        assert stream[4:8] == b"\x00\x00\x00\x00", "gzip mtime must be pinned to 0"
+        assert stream[9] == 0xFF, "gzip OS byte must be pinned to 255"
 
 
 def test_public_openapi_asset_is_sanitized_and_reference_closed() -> None:
