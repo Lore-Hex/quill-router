@@ -977,6 +977,24 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://pearlresearch.ai/legal/privacy",
         provider_headquarters_country=PROVIDER_JURISDICTION_IL,
     ),
+    "poolside": Provider(
+        slug="poolside",
+        name="Poolside",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=True,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Poolside's hosted API terms permit Poolside to use customer content "
+            "to improve and train its products unless the account opts out, with "
+            "separate safety-review exceptions. TrustedRouter therefore classifies "
+            "the route as Standard, not ZDR, confidential compute, or E2EE."
+        ),
+        provider_policy_url="https://poolside.ai/legal/eula",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
     "databricks": Provider(
         slug="databricks",
         name="Databricks",
@@ -1332,6 +1350,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "neurometric",
         "engy",
         "pearl",
+        "poolside",
         "databricks",
         "zero-g",
         "nebius",

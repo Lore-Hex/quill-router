@@ -332,6 +332,15 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "phala"
   },
+  "poolside": {
+    "card_version": 2,
+    "model_count": 2,
+    "name": "Poolside",
+    "privacy": "Policy documented",
+    "route_count": 2,
+    "route_mode": "Prepaid",
+    "slug": "poolside"
+  },
   "runway": {
     "card_version": 2,
     "model_count": 1,

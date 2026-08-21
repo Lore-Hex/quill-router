@@ -423,6 +423,7 @@ _OPEN_WEIGHT_PREFIXES = (
     "minimax/minimax-m3",
     "moonshotai/kimi",
     "nvidia/nemotron",
+    "poolside/",
     "qwen/",
     "thinkingmachines/",
     "xiaomi/mimo",

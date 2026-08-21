@@ -97,6 +97,10 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
         ("PEARL_RESEARCH_API_KEY",),
         "https://inference.pearlresearch.ai/v1",
     ),
+    "poolside": (
+        ("POOLSIDE_API_KEY",),
+        "https://inference.poolside.ai/v1",
+    ),
     "databricks": (
         ("DATABRICKS_TOKEN",),
         "https://invalid-unconfigured.cloud.databricks.com/serving-endpoints",
