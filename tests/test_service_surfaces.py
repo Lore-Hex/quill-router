@@ -66,15 +66,35 @@ def test_combined_surface_is_rejected_outside_local_and_test() -> None:
         )
 
 
+def test_deprecated_control_surface_normalizes_exactly_to_console() -> None:
+    with pytest.warns(DeprecationWarning, match="use console"):
+        settings = Settings(environment="test", service_surface="control")
+
+    assert settings.service_surface == "console"
+    paths = _paths(
+        create_app(
+            settings,
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+    assert "/console" in paths
+    assert "/chat-proxy/v1/chat/completions" not in paths
+    assert "/internal/stripe/webhook" not in paths
+    assert "/internal/gateway/authorize" not in paths
+
+
 def test_split_surface_route_inventory_is_total_and_has_one_owner() -> None:
     combined = _signatures(_app("combined"))
     public = _signatures(_app("public"))
     actions = _signatures(_app("actions"))
-    control = _signatures(_app("control"))
+    console = _signatures(_app("console"))
+    chat = _signatures(_app("chat"))
+    webhooks = _signatures(_app("webhooks"))
     internal = _signatures(_app("internal"))
 
-    assert combined == public | actions | control | internal
-    owned = [public, actions, control, internal]
+    assert combined == public | actions | console | chat | webhooks | internal
+    owned = [public, actions, console, chat, webhooks, internal]
     for index, left in enumerate(owned):
         for right in owned[index + 1 :]:
             assert _without_shared_health(left).isdisjoint(_without_shared_health(right))
@@ -154,7 +174,9 @@ def test_public_openapi_keeps_customer_routes_from_split_services() -> None:
     assert "/v1/internal/gateway/authorize" not in paths
 
 
-@pytest.mark.parametrize("surface", ["actions", "control", "internal", "observer"])
+@pytest.mark.parametrize(
+    "surface", ["actions", "console", "chat", "webhooks", "internal", "observer"]
+)
 def test_non_public_split_surfaces_do_not_serve_openapi(surface: str) -> None:
     from fastapi.testclient import TestClient
 
@@ -186,8 +208,8 @@ def test_actions_surface_owns_only_anonymous_form_submissions() -> None:
     }
 
 
-def test_control_surface_owns_login_console_and_signed_webhooks_only() -> None:
-    paths = _paths(_app("control"))
+def test_console_surface_owns_account_and_console_routes_only() -> None:
+    paths = _paths(_app("console"))
 
     assert {
         "/auth/google/login",
@@ -196,12 +218,6 @@ def test_control_surface_owns_login_console_and_signed_webhooks_only() -> None:
         "/console",
         "/signup",
         "/v1/signup",
-        "/internal/stripe/webhook",
-        "/v1/internal/stripe/webhook",
-        "/internal/ses/notifications",
-        "/v1/internal/ses/notifications",
-        "/internal/chat/issue-browser-key",
-        "/v1/internal/chat/issue-browser-key",
         "/bedrock-group-buy/manage",
         "/bedrock-group-buy/pledge",
         "/v1/bedrock-group-buy/me",
@@ -213,6 +229,47 @@ def test_control_surface_owns_login_console_and_signed_webhooks_only() -> None:
     assert "/internal/gateway/authorize" not in paths
     assert "/v1/internal/gateway/authorize" not in paths
     assert "/internal/synthetic/run" not in paths
+    assert "/chat-proxy/v1/chat/completions" not in paths
+    assert {
+        path
+        for path in paths
+        if path.startswith(("/internal/", "/v1/internal/"))
+    } == {
+        "/internal/chat/issue-browser-key",
+        "/v1/internal/chat/issue-browser-key",
+    }
+
+
+def test_chat_surface_owns_only_the_authenticated_proxy() -> None:
+    paths = _paths(_app("chat"))
+
+    assert paths == {
+        "/health",
+        "/v1/health",
+        "/ready",
+        "/v1/ready",
+        "/chat-proxy/v1/chat/completions",
+    }
+
+
+def test_webhooks_surface_owns_only_externally_signed_callbacks() -> None:
+    paths = _paths(_app("webhooks"))
+
+    callback_paths = {
+        "/internal/stripe/webhook",
+        "/internal/paypal/webhook",
+        "/internal/adyen/webhook",
+        "/internal/veriff/webhook",
+        "/internal/ses/notifications",
+    }
+    assert paths == {
+        "/health",
+        "/v1/health",
+        "/ready",
+        "/v1/ready",
+        *callback_paths,
+        *(f"/v1{path}" for path in callback_paths),
+    }
 
 
 def test_internal_surface_owns_gateway_federation_and_workers_only() -> None:
@@ -261,7 +318,7 @@ def test_versioned_api_pairs_never_split_across_surface_owners() -> None:
     combined = _app("combined")
     owners = {
         surface: _paths(_app(surface))
-        for surface in ("public", "actions", "control", "internal")
+        for surface in ("public", "actions", "console", "chat", "webhooks", "internal")
     }
 
     for paths in _endpoints(combined).values():
@@ -282,7 +339,9 @@ def test_versioned_api_pairs_never_split_across_surface_owners() -> None:
     [
         ("public", set()),
         ("actions", set()),
-        ("control", {"_start_activation_reminder_loop"}),
+        ("console", {"_start_activation_reminder_loop"}),
+        ("chat", set()),
+        ("webhooks", set()),
         (
             "internal",
             {
@@ -332,8 +391,10 @@ def test_anonymous_surface_ready_does_not_touch_the_billing_store(
     }
 
 
-def test_observer_ready_fails_when_its_status_store_is_unavailable(
+@pytest.mark.parametrize("surface", ["console", "chat", "webhooks", "internal", "observer"])
+def test_stateful_surface_ready_fails_when_its_store_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
+    surface: str,
 ) -> None:
     from fastapi.testclient import TestClient
 
@@ -344,7 +405,7 @@ def test_observer_ready_fails_when_its_status_store_is_unavailable(
         "trusted_router.storage.InMemoryStore.readiness_check",
         unavailable,
     )
-    response = TestClient(_app("observer")).get("/ready")
+    response = TestClient(_app(surface)).get("/ready")
 
     assert response.status_code == 503
     assert response.headers["retry-after"] == "5"

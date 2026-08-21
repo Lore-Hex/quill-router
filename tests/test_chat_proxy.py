@@ -1,5 +1,5 @@
 """Tests for /chat-proxy/v1/* — the same-origin streaming pipe the
-chat playground uses to reach api.trustedrouter.com without tripping
+chat playground uses to reach its domain's attested API without tripping
 browser CORS.
 
 These tests use httpx.MockTransport to stand in for api.trustedrouter.com
@@ -49,7 +49,10 @@ def _install_upstream(
 
 
 def _authenticated_client(settings: Settings) -> tuple[TestClient, str]:
-    client = TestClient(create_app(settings))
+    client = TestClient(
+        create_app(settings),
+        base_url="https://trustedrouter.com",
+    )
     user = STORE.ensure_user("chat-proxy@example.com")
     workspace = STORE.list_workspaces_for_user(user.id)[0]
     raw_key, _ = STORE.create_api_key(
@@ -132,6 +135,66 @@ def test_chat_proxy_forwards_body_and_returns_response(
     import json
 
     assert json.loads(captured["body"]) == body
+
+
+@pytest.mark.parametrize(
+    "domain",
+    ("trustedrouter.com", "allyrouter.com", "uptimerouter.com"),
+)
+def test_chat_proxy_keeps_each_managed_domain_on_its_attested_api_alias(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    domain: str,
+) -> None:
+    captured_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_urls.append(str(request.url))
+        return _streaming_response(status_code=200, content=b"{}")
+
+    _install_upstream(monkeypatch, handler)
+    client, raw_key = _authenticated_client(settings)
+
+    response = client.post(
+        "/chat-proxy/v1/chat/completions",
+        json={"model": "x", "messages": []},
+        headers={
+            "Authorization": f"Bearer {raw_key}",
+            "Host": domain,
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured_urls == [f"https://api.{domain}/v1/chat/completions"]
+
+
+def test_chat_proxy_rejects_an_untrusted_host_before_upstream_work(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_urls.append(str(request.url))
+        return _streaming_response(status_code=200, content=b"{}")
+
+    _install_upstream(monkeypatch, handler)
+    client, raw_key = _authenticated_client(settings)
+
+    response = client.post(
+        "/chat-proxy/v1/chat/completions",
+        json={"model": "x", "messages": []},
+        headers={
+            "Authorization": f"Bearer {raw_key}",
+            "Host": "attacker.example",
+        },
+    )
+
+    assert response.status_code == 421
+    assert response.json()["error"]["message"] == (
+        "Chat proxy request Host is not a configured domain"
+    )
+    assert captured_urls == []
 
 
 def test_chat_proxy_forwards_streaming_sse(

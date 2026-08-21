@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import hashlib
+import math
 import secrets
+import threading
+import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, NoReturn
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import (
     ManagementPrincipal,
@@ -37,7 +43,11 @@ from trusted_router.services.user_model_secrets import (
     encrypt_user_model_signing_secret,
 )
 from trusted_router.storage import STORE
-from trusted_router.storage_custom_models import normalize_custom_model_id
+from trusted_router.storage_custom_models import (
+    CUSTOM_MODEL_PREFIX,
+    CUSTOM_MODEL_SLUG_PATTERN,
+    normalize_custom_model_id,
+)
 from trusted_router.storage_models import UserProvidedModel
 from trusted_router.storage_user_models import USER_PROVIDED_MODEL_LIMIT_PER_USER
 from trusted_router.types import ErrorType
@@ -46,6 +56,152 @@ from trusted_router.user_model_rules import (
     validate_user_model_display_name,
     validate_user_model_slug,
     verify_clock_signature,
+)
+
+# Availability routes intentionally sit outside the normal management-only
+# dependency: a model owner can call them with that model's signing secret.
+# That also means an anonymous caller can reach the model-id boundary. Keep the
+# pre-Store admission state process-wide and fixed-cardinality so changing the
+# id on every request cannot grow a limiter map or turn misses into unbounded
+# database work.
+_CLOCK_ROUTE_MAX_IN_FLIGHT = 16
+_CLOCK_ROUTE_MAX_LOOKUPS_PER_WINDOW = 32
+_CLOCK_ROUTE_WINDOW_SECONDS = 1.0
+
+# A probe can occupy a socket for up to twenty seconds. Two per process is
+# enough to make progress without letting signed retries consume the whole
+# outbound pool. Per-model exclusion/cadence uses fixed stripes rather than a
+# process-lifetime dict keyed by attacker-controlled model ids.
+_CLOCK_PROBE_MAX_IN_FLIGHT = 2
+_CLOCK_PROBE_CADENCE_SECONDS = 15.0
+_CLOCK_PROBE_STRIPES = 256
+
+
+class _AdmissionLease:
+    def __init__(self, release: Callable[[], None]) -> None:
+        self._release = release
+        self._released = False
+
+    def __enter__(self) -> _AdmissionLease:
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc: BaseException | None,
+        _traceback: object,
+    ) -> None:
+        self.release()
+
+    def release(self) -> None:
+        if self._released:
+            return
+        self._released = True
+        self._release()
+
+
+class _ClockRouteAdmission:
+    """Bound concurrent and per-second Store admission without keyed state."""
+
+    def __init__(
+        self,
+        *,
+        max_in_flight: int,
+        max_per_window: int,
+        window_seconds: float,
+    ) -> None:
+        self._slots = threading.BoundedSemaphore(max_in_flight)
+        self._max_per_window = max_per_window
+        self._window_seconds = window_seconds
+        self._state_lock = threading.Lock()
+        self._window_started = time.monotonic()
+        self._accepted_in_window = 0
+
+    def acquire(self) -> _AdmissionLease:
+        if not self._slots.acquire(blocking=False):
+            _raise_clock_rate_limit(1.0)
+
+        try:
+            now = time.monotonic()
+            retry_after = 0.0
+            with self._state_lock:
+                elapsed = max(0.0, now - self._window_started)
+                if elapsed >= self._window_seconds:
+                    self._window_started = now
+                    self._accepted_in_window = 0
+                    elapsed = 0.0
+
+                if self._accepted_in_window >= self._max_per_window:
+                    retry_after = max(0.001, self._window_seconds - elapsed)
+                else:
+                    self._accepted_in_window += 1
+
+            if retry_after > 0:
+                _raise_clock_rate_limit(retry_after)
+        except BaseException:
+            self._slots.release()
+            raise
+        return _AdmissionLease(self._slots.release)
+
+
+class _ClockProbeAdmission:
+    """Very small global probe pool plus striped per-model exclusion."""
+
+    def __init__(
+        self,
+        *,
+        max_in_flight: int,
+        cadence_seconds: float,
+        stripes: int,
+    ) -> None:
+        self._global_slots = threading.BoundedSemaphore(max_in_flight)
+        self._model_slots = [threading.Lock() for _ in range(stripes)]
+        self._next_allowed = [-math.inf] * stripes
+        self._state_lock = threading.Lock()
+        self._cadence_seconds = cadence_seconds
+
+    def acquire(self, model_id: str) -> _AdmissionLease:
+        stripe = _clock_stripe(model_id, len(self._model_slots))
+        model_slot = self._model_slots[stripe]
+        if not model_slot.acquire(blocking=False):
+            _raise_clock_rate_limit(1.0)
+
+        global_acquired = False
+        try:
+            now = time.monotonic()
+            with self._state_lock:
+                retry_after = self._next_allowed[stripe] - now
+            if retry_after > 0:
+                _raise_clock_rate_limit(retry_after)
+            if not self._global_slots.acquire(blocking=False):
+                _raise_clock_rate_limit(1.0)
+            global_acquired = True
+        except BaseException:
+            if global_acquired:
+                self._global_slots.release()
+            model_slot.release()
+            raise
+
+        def release() -> None:
+            with self._state_lock:
+                self._next_allowed[stripe] = (
+                    time.monotonic() + self._cadence_seconds
+                )
+            self._global_slots.release()
+            model_slot.release()
+
+        return _AdmissionLease(release)
+
+
+_CLOCK_ROUTE_ADMISSION = _ClockRouteAdmission(
+    max_in_flight=_CLOCK_ROUTE_MAX_IN_FLIGHT,
+    max_per_window=_CLOCK_ROUTE_MAX_LOOKUPS_PER_WINDOW,
+    window_seconds=_CLOCK_ROUTE_WINDOW_SECONDS,
+)
+_CLOCK_PROBE_ADMISSION = _ClockProbeAdmission(
+    max_in_flight=_CLOCK_PROBE_MAX_IN_FLIGHT,
+    cadence_seconds=_CLOCK_PROBE_CADENCE_SECONDS,
+    stripes=_CLOCK_PROBE_STRIPES,
 )
 
 
@@ -265,20 +421,25 @@ def register_user_model_routes(router: APIRouter) -> None:
         request: Request,
         settings: SettingsDep,
     ) -> dict[str, Any]:
-        existing = await _clock_target(model_id, request, settings)
-        result = await probe_user_model(existing, settings)
-        if not result.ok:
-            STORE.set_user_model_online(
+        canonical_model_id = _persisted_user_model_id(model_id)
+        with _CLOCK_ROUTE_ADMISSION.acquire():
+            existing = await _clock_target(canonical_model_id, request, settings)
+            with _CLOCK_PROBE_ADMISSION.acquire(_clock_probe_subject(existing)):
+                result = await probe_user_model(existing, settings)
+            if not result.ok:
+                await run_in_threadpool(
+                    STORE.set_user_model_online,
+                    existing.id,
+                    owner_user_id=existing.owner_user_id,
+                    online=False,
+                )
+                raise api_error(409, result.detail, ErrorType.CONFLICT)
+            updated = await run_in_threadpool(
+                STORE.set_user_model_online,
                 existing.id,
                 owner_user_id=existing.owner_user_id,
-                online=False,
+                online=True,
             )
-            raise api_error(409, result.detail, ErrorType.CONFLICT)
-        updated = STORE.set_user_model_online(
-            existing.id,
-            owner_user_id=existing.owner_user_id,
-            online=True,
-        )
         return {"data": user_model_owner_shape(updated)}
 
     @router.post("/user-models/{model_id:path}/clock-out")
@@ -287,12 +448,15 @@ def register_user_model_routes(router: APIRouter) -> None:
         request: Request,
         settings: SettingsDep,
     ) -> dict[str, Any]:
-        existing = await _clock_target(model_id, request, settings)
-        updated = STORE.set_user_model_online(
-            existing.id,
-            owner_user_id=existing.owner_user_id,
-            online=False,
-        )
+        canonical_model_id = _persisted_user_model_id(model_id)
+        with _CLOCK_ROUTE_ADMISSION.acquire():
+            existing = await _clock_target(canonical_model_id, request, settings)
+            updated = await run_in_threadpool(
+                STORE.set_user_model_online,
+                existing.id,
+                owner_user_id=existing.owner_user_id,
+                online=False,
+            )
         return {"data": user_model_owner_shape(updated)}
 
     @router.post("/user-models/{model_id:path}/heartbeat")
@@ -301,19 +465,22 @@ def register_user_model_routes(router: APIRouter) -> None:
         request: Request,
         settings: SettingsDep,
     ) -> dict[str, Any]:
-        existing = await _clock_target(model_id, request, settings)
-        interval = existing.heartbeat_interval_seconds
-        if interval is None:
-            raise api_error(
-                400,
-                "No heartbeat interval is configured for this model",
-                ErrorType.BAD_REQUEST,
+        canonical_model_id = _persisted_user_model_id(model_id)
+        with _CLOCK_ROUTE_ADMISSION.acquire():
+            existing = await _clock_target(canonical_model_id, request, settings)
+            interval = existing.heartbeat_interval_seconds
+            if interval is None:
+                raise api_error(
+                    400,
+                    "No heartbeat interval is configured for this model",
+                    ErrorType.BAD_REQUEST,
+                )
+            expires_at = datetime.now(UTC) + timedelta(seconds=2 * interval)
+            updated = await run_in_threadpool(
+                STORE.record_user_model_heartbeat,
+                existing.id,
+                expires_at=expires_at.isoformat().replace("+00:00", "Z"),
             )
-        expires_at = datetime.now(UTC) + timedelta(seconds=2 * interval)
-        updated = STORE.record_user_model_heartbeat(
-            existing.id,
-            expires_at=expires_at.isoformat().replace("+00:00", "Z"),
-        )
         return {"data": user_model_owner_shape(updated)}
 
     @router.post("/user-models/{model_id:path}/probe")
@@ -436,21 +603,18 @@ async def _clock_target(
     key can do. It deliberately does NOT extend to editing the model: changing
     endpoint_url decides where prompts go, so it stays with the owner's account.
     """
-    model = STORE.get_user_model(normalize_custom_model_id(model_id))
+    # The route validates and admits the canonical persisted id before this
+    # function. Keep the synchronous backend entirely off the event loop.
+    model = await run_in_threadpool(STORE.get_user_model, model_id)
     signature = request.headers.get("tr-signature")
     if signature and model is not None and model.encrypted_signing_secret is not None:
         try:
-            secret = decrypt_user_model_secret(
-                model.encrypted_signing_secret,
+            await run_in_threadpool(
+                _verify_model_clock_signature,
+                model,
                 settings,
-                workspace_id=model.owner_workspace_id,
-                purpose=USER_MODEL_SIGNING_PURPOSE,
-            )
-            verify_clock_signature(
-                secret,
                 signature,
                 await request.body(),
-                now=datetime.now(UTC),
             )
         except ValueError as exc:
             raise api_error(
@@ -459,8 +623,78 @@ async def _clock_target(
                 ErrorType.UNAUTHORIZED,
             ) from exc
         return model
-    principal = require_management(request, settings)
-    return _require_owner_user_model(model_id, principal)
+    principal = await run_in_threadpool(require_management, request, settings)
+    if model is None or model.owner_user_id != _owner_user_id(principal):
+        raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)
+    return model
+
+
+def _persisted_user_model_id(model_id: str) -> str:
+    """Validate the bounded persisted id grammar without touching Store."""
+
+    # The canonical prefix plus the 64-character slug is well below this cap.
+    # Check raw length first so normalization never does attacker-sized work.
+    if len(model_id) > 128:
+        raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)
+    canonical = normalize_custom_model_id(model_id)
+    if not canonical.startswith(CUSTOM_MODEL_PREFIX):
+        raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)
+    slug = canonical.removeprefix(CUSTOM_MODEL_PREFIX)
+    if not CUSTOM_MODEL_SLUG_PATTERN.fullmatch(slug):
+        raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)
+    return canonical
+
+
+def _verify_model_clock_signature(
+    model: UserProvidedModel,
+    settings: Settings,
+    signature: str,
+    body: bytes,
+) -> None:
+    encrypted_secret = model.encrypted_signing_secret
+    if encrypted_secret is None:
+        raise ValueError("model signing secret is unavailable")
+    secret = decrypt_user_model_secret(
+        encrypted_secret,
+        settings,
+        workspace_id=model.owner_workspace_id,
+        purpose=USER_MODEL_SIGNING_PURPOSE,
+    )
+    verify_clock_signature(
+        secret,
+        signature,
+        body,
+        now=datetime.now(UTC),
+    )
+
+
+def _clock_stripe(value: str, stripe_count: int) -> int:
+    digest = hashlib.sha256(value.encode("utf-8")).digest()
+    return int.from_bytes(digest[:4], "big") % stripe_count
+
+
+def _clock_probe_subject(model: UserProvidedModel) -> str:
+    # Recreating a deleted model with the same slug is a new persisted model,
+    # so it must not inherit the old incarnation's cooldown. The encrypted
+    # signing secret is unique per creation/rotation; hash it before building
+    # the fixed-stripe subject so limiter state never retains ciphertext.
+    encrypted_secret = model.encrypted_signing_secret
+    incarnation = (
+        f"{encrypted_secret.ciphertext}:{encrypted_secret.nonce}"
+        if encrypted_secret is not None
+        else model.created_at
+    )
+    incarnation_hash = hashlib.sha256(incarnation.encode("utf-8")).hexdigest()
+    return f"{model.id}:{incarnation_hash}"
+
+
+def _raise_clock_rate_limit(retry_after_seconds: float) -> NoReturn:
+    raise api_error(
+        429,
+        "Model availability endpoint is busy; retry",
+        ErrorType.RATE_LIMITED,
+        headers={"Retry-After": str(max(1, math.ceil(retry_after_seconds)))},
+    )
 
 
 def _require_owner_user_model(

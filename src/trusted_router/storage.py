@@ -79,7 +79,7 @@ from trusted_router.storage_models import (
     normalize_provider_access_role,
     normalize_provider_access_slug,
 )
-from trusted_router.storage_oauth_codes import InMemoryOAuthCodes
+from trusted_router.storage_oauth_codes import InMemoryOAuthCodes, OAuthCodeExchange
 from trusted_router.storage_rate_limits import InMemoryRateLimits
 from trusted_router.storage_synthetic import InMemorySyntheticChecks
 from trusted_router.storage_user_models import InMemoryUserProvidedModels
@@ -147,13 +147,21 @@ class InMemoryStore:
         self.broadcast_store = InMemoryBroadcastDestinations(lock=self._lock)
         self.video_job_store = InMemoryVideoJobs(lock=self._lock)
         self.auth_session_store = InMemoryAuthSessions(lock=self._lock)
-        self.oauth_code_store = InMemoryOAuthCodes(lock=self._lock)
+        self.oauth_code_store = InMemoryOAuthCodes(
+            lock=self._lock,
+            workspaces=self.workspaces,
+            users=self.users,
+            api_keys=self.api_keys.keys,
+            api_key_ids_by_lookup_hash=self.api_keys.key_ids_by_lookup_hash,
+        )
         self.rate_limit_store = InMemoryRateLimits(lock=self._lock)
         self.wallet_challenges = InMemoryWalletChallenges()
         self.verification_tokens = InMemoryVerificationTokens()
         self.email_blocks = InMemoryEmailBlocks()
 
     def reset(self) -> None:
+        from trusted_router.public_user_models import reset_public_user_model_cache
+
         with self._lock:
             self.users.clear()
             self.user_ids_by_email.clear()
@@ -188,6 +196,7 @@ class InMemoryStore:
             self.wallet_challenges.reset()
             self.verification_tokens.reset()
             self.email_blocks.reset()
+        reset_public_user_model_cache()
 
     def readiness_check(self) -> None:
         """The in-memory backend has no external serving dependency."""
@@ -766,6 +775,25 @@ class InMemoryStore:
             tags=tags,
         )
 
+    def issue_chat_browser_key(
+        self,
+        *,
+        workspace_id: str,
+        name: str,
+        creator_user_id: str,
+        limit_microdollars: int,
+        expires_at: str,
+        active_key_cap: int,
+    ) -> tuple[str, ApiKey] | None:
+        return self.api_keys.issue_chat_browser_key(
+            workspace_id=workspace_id,
+            name=name,
+            creator_user_id=creator_user_id,
+            limit_microdollars=limit_microdollars,
+            expires_at=expires_at,
+            active_key_cap=active_key_cap,
+        )
+
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None:
         return self.api_keys.get_by_hash(key_hash)
 
@@ -1112,8 +1140,9 @@ class InMemoryStore:
         self,
         *,
         kind: str | None = None,
+        limit: int | None = None,
     ) -> list[UserProvidedModel]:
-        return self.user_model_store.list_public(kind=kind)
+        return self.user_model_store.list_public(kind=kind, limit=limit)
 
     def create_broadcast_destination(
         self,
@@ -2218,6 +2247,19 @@ class InMemoryStore:
     def consume_oauth_authorization_code(self, raw_code: str) -> OAuthAuthorizationCode | None:
         return self.oauth_code_store.consume(raw_code)
 
+    def exchange_oauth_authorization_code(
+        self,
+        raw_code: str,
+        *,
+        code_verifier: str | None,
+        code_challenge_method: str | None,
+    ) -> OAuthCodeExchange | None:
+        return self.oauth_code_store.exchange(
+            raw_code,
+            code_verifier=code_verifier,
+            code_challenge_method=code_challenge_method,
+        )
+
     # ── Email send blocks (SES bounce/complaint suppression) ────────────
     # Delegates to the composed InMemoryEmailBlocks store; see
     # storage_email_blocks.py for the data + logic.
@@ -2339,7 +2381,10 @@ STORE: Store = cast(Store, _STORE_PROXY)
 
 
 def configure_store(target: Store) -> None:
+    from trusted_router.public_user_models import reset_public_user_model_cache
+
     _STORE_PROXY._configure(target)
+    reset_public_user_model_cache()
 
 
 def typed_billing_store(store: Any = None) -> TypedBillingStore | None:

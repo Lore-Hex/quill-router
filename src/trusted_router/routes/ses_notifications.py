@@ -29,10 +29,10 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
-from starlette.concurrency import run_in_threadpool
 
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
+from trusted_router.routes.internal.webhook_work import run_provider_webhook_work
 from trusted_router.services.ses_suppression import (
     SesSuppressionService,
     SesSuppressionSyncError,
@@ -42,6 +42,7 @@ from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
 log = logging.getLogger(__name__)
+SES_FEEDBACK_MAX_RECIPIENTS = 100
 _SNS_CONFIRM_MAX_CONCURRENT = 2
 _SNS_CONFIRM_SLOTS = threading.BoundedSemaphore(_SNS_CONFIRM_MAX_CONCURRENT)
 
@@ -61,7 +62,7 @@ def register_ses_notification_routes(router: APIRouter, settings: Settings) -> N
             # Verification may fetch/cache an AWS signing certificate. It is
             # synchronous cryptographic/network work and must not block the
             # shared control-plane event loop.
-            await run_in_threadpool(verify_sns_message, envelope)
+            await run_provider_webhook_work("ses", verify_sns_message, envelope)
         except SnsVerificationError as exc:
             log.warning("ses_notification.signature_invalid reason=%s", exc)
             # TEMP(2026-07-05): mirror the failure to stderr so it reaches
@@ -96,7 +97,11 @@ def register_ses_notification_routes(router: APIRouter, settings: Settings) -> N
                 )
             try:
                 try:
-                    await run_in_threadpool(_confirm_subscription, subscribe_url)
+                    await run_provider_webhook_work(
+                        "ses",
+                        _confirm_subscription,
+                        subscribe_url,
+                    )
                 finally:
                     _SNS_CONFIRM_SLOTS.release()
             except httpx.HTTPError as exc:
@@ -104,12 +109,20 @@ def register_ses_notification_routes(router: APIRouter, settings: Settings) -> N
                 raise api_error(502, "failed to confirm SNS subscription", ErrorType.INTERNAL_ERROR) from exc
             log.info("ses_notification.subscribed topic=%s", envelope.get("TopicArn"))
             if message_id:
-                await run_in_threadpool(STORE.record_sns_message_once, message_id)
+                await run_provider_webhook_work(
+                    "ses",
+                    STORE.record_sns_message_once,
+                    message_id,
+                )
             return JSONResponse({"data": {"confirmed": True, "topic_arn": envelope.get("TopicArn")}})
 
         if msg_type == "UnsubscribeConfirmation":
             if message_id:
-                await run_in_threadpool(STORE.record_sns_message_once, message_id)
+                await run_provider_webhook_work(
+                    "ses",
+                    STORE.record_sns_message_once,
+                    message_id,
+                )
             return JSONResponse({"data": {"unsubscribed": True}})
 
         # Notification path: parse the SES feedback envelope.
@@ -117,20 +130,25 @@ def register_ses_notification_routes(router: APIRouter, settings: Settings) -> N
         if not isinstance(feedback_raw, str):
             return JSONResponse({"data": {"ignored": True, "reason": "non-string Message"}})
         try:
-            feedback: dict[str, Any] = json.loads(feedback_raw)
+            parsed_feedback: Any = json.loads(feedback_raw)
         except json.JSONDecodeError:
             return JSONResponse({"data": {"ignored": True, "reason": "Message is not JSON"}})
+        if not isinstance(parsed_feedback, dict):
+            return JSONResponse({"data": {"ignored": True, "reason": "Message is not an object"}})
+        feedback: dict[str, Any] = parsed_feedback
 
         kind = str(feedback.get("notificationType") or feedback.get("eventType") or "")
+        _validate_feedback_recipient_cap(kind, feedback)
         # Apply the suppression first so a transient storage failure leaves the
         # SNS message retryable. The message-id claim only controls reporting:
         # suppression writes are idempotent, while duplicate SNS deliveries
         # must not inflate bounce/complaint counts.
         try:
-            # Suppression sync and the replay check both talk to the Store;
-            # keep them off the event loop (the bounded-verification contract)
-            # while preserving the account-suppression failure mapping.
-            blocked_count = await run_in_threadpool(
+            # The bounded per-provider work pool replaces the shared threadpool
+            # (the bounded-verification contract) while preserving the
+            # account-suppression failure mapping from the suppression mirror.
+            blocked_count = await run_provider_webhook_work(
+                "ses",
                 _apply_feedback,
                 kind,
                 feedback,
@@ -146,7 +164,11 @@ def register_ses_notification_routes(router: APIRouter, settings: Settings) -> N
             ) from exc
         replayed = bool(
             message_id
-            and not await run_in_threadpool(STORE.record_sns_message_once, message_id)
+            and not await run_provider_webhook_work(
+                "ses",
+                STORE.record_sns_message_once,
+                message_id,
+            )
         )
         if replayed:
             blocked_count = 0
@@ -168,6 +190,30 @@ def _confirm_subscription(url: str) -> None:
     response.raise_for_status()
 
 
+def _feedback_recipients(kind: str, feedback: dict[str, Any]) -> list[Any]:
+    if kind in {"Bounce", "bounce"}:
+        raw_feedback = feedback.get("bounce")
+        field_name = "bouncedRecipients"
+    elif kind in {"Complaint", "complaint"}:
+        raw_feedback = feedback.get("complaint")
+        field_name = "complainedRecipients"
+    else:
+        return []
+    provider_feedback = raw_feedback if isinstance(raw_feedback, dict) else {}
+    raw_recipients = provider_feedback.get(field_name)
+    return raw_recipients if isinstance(raw_recipients, list) else []
+
+
+def _validate_feedback_recipient_cap(kind: str, feedback: dict[str, Any]) -> None:
+    recipient_count = len(_feedback_recipients(kind, feedback))
+    if recipient_count > SES_FEEDBACK_MAX_RECIPIENTS:
+        raise api_error(
+            400,
+            f"SES feedback may contain at most {SES_FEEDBACK_MAX_RECIPIENTS} recipients",
+            ErrorType.BAD_REQUEST,
+        )
+
+
 def _apply_feedback(
     kind: str,
     feedback: dict[str, Any],
@@ -182,6 +228,10 @@ def _apply_feedback(
     supported. Processing is idempotent because suppression writes use the
     normalized recipient as their key.
     """
+    # Keep the invariant at the Store boundary as well as in the route. A
+    # future caller cannot accidentally turn one signed message into an
+    # unbounded sequence of writes by bypassing route-level validation.
+    _validate_feedback_recipient_cap(kind, feedback)
     blocked_count = 0
     tags = _mail_tags(feedback)
     if kind in {"Bounce", "bounce"}:

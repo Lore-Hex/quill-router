@@ -1,30 +1,44 @@
 from __future__ import annotations
 
-import base64
 import datetime as dt
 import hashlib
 import re
+import threading
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import ManagementPrincipal, SettingsDep, principal_from_request
 from trusted_router.config import Settings
 from trusted_router.domains import request_control_origin
-from trusted_router.errors import api_error, assert_workspace_billing_active
+from trusted_router.errors import api_error
 from trusted_router.money import (
     dollars_to_microdollars,
     format_money_display,
     microdollars_to_decimal,
+)
+from trusted_router.request_limits import (
+    fingerprint_subject,
+    normalized_client_identity,
 )
 from trusted_router.routes.helpers import json_body
 from trusted_router.schemas import CheckoutRequest
 from trusted_router.serialization import key_shape
 from trusted_router.services.stripe_billing import create_checkout_session
 from trusted_router.storage import STORE, OAuthAuthorizationCode
+from trusted_router.storage_oauth_codes import (
+    OAuthCodeMethodMismatch,
+    OAuthCodeVerifierMismatch,
+    OAuthCodeVerifierNotAscii,
+    OAuthCodeVerifierRequired,
+    OAuthWorkspaceBillingPaused,
+    OAuthWorkspaceUnavailable,
+)
+from trusted_router.storage_rate_limits import InMemoryRateLimits
 from trusted_router.typed_balance import live_credit_summary
 from trusted_router.types import ErrorType
 from trusted_router.views import render_template
@@ -47,6 +61,21 @@ OAUTH_AUTHORIZATION_FIELDS = (
     "spawn_agent",
     "spawn_cloud",
 )
+OAUTH_CODE_PATTERN = re.compile(r"^auth_code-[A-Za-z0-9_-]{43}$")
+_OAUTH_EXCHANGE_SLOTS = threading.BoundedSemaphore(4)
+_OAUTH_EXCHANGE_RATE_LIMITS = InMemoryRateLimits(
+    lock=threading.RLock(),
+    max_buckets=10_000,
+)
+_OAUTH_EXCHANGE_GLOBAL_RATE_LIMITS = InMemoryRateLimits(
+    lock=threading.RLock(),
+    max_buckets=1,
+)
+_OAUTH_EXCHANGE_PER_SOURCE_LIMIT = 120
+# One source can consume at most one eighth of this process-local backstop.
+# That keeps a bounded aggregate ceiling without letting a single attacker
+# reserve every exchange slot for the rest of the minute.
+_OAUTH_EXCHANGE_GLOBAL_LIMIT = 960
 
 
 def register_oauth_key_routes(router: APIRouter) -> None:
@@ -152,38 +181,108 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         )
 
     @router.post("/auth/keys")
-    async def auth_keys(request: Request) -> JSONResponse:
+    async def auth_keys(request: Request, settings: SettingsDep) -> JSONResponse:
         body = await json_body(request)
-        raw_code = str(body.get("code") or "")
+        raw_value = body.get("code")
+        raw_code = raw_value if isinstance(raw_value, str) else ""
         if not raw_code:
             raise api_error(400, "code is required", ErrorType.BAD_REQUEST)
-        code = STORE.consume_oauth_authorization_code(raw_code)
-        if code is None:
-            raise api_error(403, "Invalid or expired authorization code", ErrorType.FORBIDDEN)
-        _verify_pkce(code, body)
-        # Quiesce: a pre-pause OAuth code must not mint a key during pause.
-        assert_workspace_billing_active(STORE.get_workspace(code.workspace_id))
-        raw_key, key = STORE.create_api_key(
-            workspace_id=code.workspace_id,
-            name=code.key_label,
-            creator_user_id=code.user_id,
-            management=False,
-            limit_microdollars=code.limit_microdollars,
-            limit_reset=code.limit_reset,
-            expires_at=code.expires_at,
+        if not OAUTH_CODE_PATTERN.fullmatch(raw_code):
+            raise api_error(
+                403,
+                "Invalid or expired authorization code",
+                ErrorType.FORBIDDEN,
+            )
+        if not _OAUTH_EXCHANGE_SLOTS.acquire(blocking=False):
+            raise api_error(
+                429,
+                "Authorization-code exchange is busy",
+                ErrorType.RATE_LIMITED,
+                headers={"Retry-After": "1"},
+            )
+        try:
+            if settings.rate_limit_enabled:
+                source = fingerprint_subject(
+                    normalized_client_identity(request, settings)
+                )
+                hit = _OAUTH_EXCHANGE_RATE_LIMITS.hit(
+                    namespace="oauth_code_exchange_source",
+                    subject=source,
+                    limit=_OAUTH_EXCHANGE_PER_SOURCE_LIMIT,
+                    window_seconds=60,
+                )
+                if not hit.allowed:
+                    raise api_error(
+                        429,
+                        "Authorization-code exchange rate exceeded",
+                        ErrorType.RATE_LIMITED,
+                        headers={"Retry-After": str(hit.retry_after_seconds)},
+                    )
+                global_hit = _OAUTH_EXCHANGE_GLOBAL_RATE_LIMITS.hit(
+                    namespace="oauth_code_exchange_global",
+                    subject="all",
+                    limit=_OAUTH_EXCHANGE_GLOBAL_LIMIT,
+                    window_seconds=60,
+                )
+                if not global_hit.allowed:
+                    raise api_error(
+                        429,
+                        "Authorization-code exchange is busy",
+                        ErrorType.RATE_LIMITED,
+                        headers={"Retry-After": str(global_hit.retry_after_seconds)},
+                    )
+            payload = await run_in_threadpool(_exchange_oauth_code, raw_code, body)
+        finally:
+            _OAUTH_EXCHANGE_SLOTS.release()
+        return JSONResponse(payload)
+
+
+def _exchange_oauth_code(raw_code: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Run one atomic Store exchange outside the ASGI event loop."""
+    verifier_value = body.get("code_verifier")
+    method_value = body.get("code_challenge_method")
+    code_verifier = str(verifier_value or "") or None
+    code_challenge_method = str(method_value or "") or None
+    try:
+        exchange = STORE.exchange_oauth_authorization_code(
+            raw_code,
+            code_verifier=code_verifier,
+            code_challenge_method=code_challenge_method,
         )
-        # Return the signed-in user's identity alongside the key so the app
-        # knows WHO signed in without a second /auth/userinfo round-trip
-        # ("Sign in with TrustedRouter" = key + identity).
-        user = STORE.get_user(code.user_id) if code.user_id else None
-        return JSONResponse(
-            {
-                "key": raw_key,
-                "user_id": code.user_id,
-                "identity": _identity_payload(user),
-                "data": key_shape(key),
-            }
-        )
+    except OAuthCodeMethodMismatch as exc:
+        raise api_error(
+            400,
+            "code_challenge_method does not match authorization code",
+            ErrorType.BAD_REQUEST,
+        ) from exc
+    except OAuthCodeVerifierRequired as exc:
+        raise api_error(400, "code_verifier is required", ErrorType.BAD_REQUEST) from exc
+    except OAuthCodeVerifierNotAscii as exc:
+        raise api_error(400, "code_verifier must be ASCII", ErrorType.BAD_REQUEST) from exc
+    except OAuthCodeVerifierMismatch as exc:
+        raise api_error(403, "Invalid code_verifier", ErrorType.FORBIDDEN) from exc
+    except OAuthWorkspaceBillingPaused as exc:
+        raise api_error(
+            503,
+            "Workspace billing is paused",
+            ErrorType.SERVICE_UNAVAILABLE,
+            headers={"Retry-After": "30"},
+        ) from exc
+    except OAuthWorkspaceUnavailable as exc:
+        raise api_error(
+            503,
+            "Authorization workspace is unavailable",
+            ErrorType.SERVICE_UNAVAILABLE,
+            headers={"Retry-After": "30"},
+        ) from exc
+    if exchange is None:
+        raise api_error(403, "Invalid or expired authorization code", ErrorType.FORBIDDEN)
+    return {
+        "key": exchange.raw_key,
+        "user_id": exchange.authorization_code.user_id,
+        "identity": _identity_payload(exchange.user),
+        "data": key_shape(exchange.api_key),
+    }
 
 
 def _create_code(
@@ -354,33 +453,6 @@ def _key_label(raw: Any, callback_url: str) -> str:
     if len(value) > 100:
         raise api_error(400, "key_label must be at most 100 characters", ErrorType.BAD_REQUEST)
     return value
-
-
-def _verify_pkce(code: OAuthAuthorizationCode, body: dict[str, Any]) -> None:
-    if not code.code_challenge:
-        return
-    supplied_method = body.get("code_challenge_method")
-    if supplied_method not in {None, ""} and str(supplied_method) != code.code_challenge_method:
-        raise api_error(
-            400, "code_challenge_method does not match authorization code", ErrorType.BAD_REQUEST
-        )
-    verifier = str(body.get("code_verifier") or "")
-    if not verifier:
-        raise api_error(400, "code_verifier is required", ErrorType.BAD_REQUEST)
-    if code.code_challenge_method == "plain":
-        expected = verifier
-    else:
-        try:
-            verifier_bytes = verifier.encode("ascii")
-        except UnicodeEncodeError as exc:
-            raise api_error(400, "code_verifier must be ASCII", ErrorType.BAD_REQUEST) from exc
-        expected = (
-            base64.urlsafe_b64encode(hashlib.sha256(verifier_bytes).digest())
-            .decode("ascii")
-            .rstrip("=")
-        )
-    if expected != code.code_challenge:
-        raise api_error(403, "Invalid code_verifier", ErrorType.FORBIDDEN)
 
 
 def _principal_user_id(principal: Any) -> str | None:

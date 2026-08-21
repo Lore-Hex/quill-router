@@ -486,10 +486,12 @@ def test_alias_oauth_credentials_are_normalized_and_fail_closed() -> None:
 def test_production_oauth_requires_credentials_for_every_backup_domain() -> None:
     values = {
         "environment": "production",
-        "service_surface": "control",
+        "service_surface": "console",
         "attribution_cookie_secret": "oauth-attribution-" + "a" * 32,
-        "stripe_webhook_secret": "whsec-test",
         "stripe_secret_key": "sk-test",
+        "google_oauth_login_available": True,
+        "github_oauth_login_available": False,
+        "paypal_checkout_enabled": False,
         "sentry_dsn": "https://example@example.ingest.sentry.io/1",
         "aws_access_key_id": "test-access-key",
         "aws_secret_access_key": "test-secret-key",

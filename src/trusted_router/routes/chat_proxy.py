@@ -16,8 +16,8 @@ ACAO headers).
 This module adds a minimal same-origin streaming pipe at the one browser-used
 endpoint, ``POST /chat-proxy/v1/chat/completions``. A valid inference key is
 resolved locally before any body read or outbound allocation; the handler then
-forwards the request bytes-for-bytes to api.trustedrouter.com and streams the
-response bytes back.
+forwards the request bytes-for-bytes to the same managed domain's attested API
+host and streams the response bytes back.
 The proxy:
 
   * NEVER deserializes / inspects / logs the request or response body.
@@ -42,6 +42,13 @@ from fastapi.responses import StreamingResponse
 
 from trusted_router.auth import InferencePrincipal, SettingsDep
 from trusted_router.config import Settings
+from trusted_router.domains import (
+    configured_control_domains,
+    request_api_base_url,
+    request_hostname,
+)
+from trusted_router.errors import api_error
+from trusted_router.types import ErrorType
 
 # Headers we strip from the incoming browser request before forwarding
 # (httpx will re-derive Host/Content-Length itself; hop-by-hop headers
@@ -97,7 +104,7 @@ def register_chat_proxy_routes(router: APIRouter | FastAPI) -> None:
 async def _forward(
     request: Request, path: str, settings: Settings
 ) -> StreamingResponse:
-    upstream_base = _upstream_base_url(settings)
+    upstream_base = _upstream_base_url(request, settings)
     upstream_url = f"{upstream_base}/v1/{path}"
     query = request.url.query
     if query:
@@ -163,12 +170,22 @@ async def _forward(
     )
 
 
-def _upstream_base_url(settings: Settings) -> str:
-    # settings.api_base_url is "https://api.trustedrouter.com/v1" in
-    # production. Strip the trailing /v1 so we can rebuild it from the
-    # {path} parameter in the route — also future-proofs against
-    # non-/v1 paths (e.g. /openai/v1/responses).
-    base = settings.api_base_url.rstrip("/")
+def _upstream_base_url(request: Request, settings: Settings) -> str:
+    # Keep each operational alias on its own attested API hostname. The domain
+    # helper derives only from the configured first-party allowlist. Reject an
+    # unknown or malformed Host before allocating an outbound client: the edge
+    # should never send one here, and silently falling back would let a valid
+    # browser key turn a misdirected request into canonical API traffic.
+    if request_hostname(request) not in configured_control_domains(settings):
+        raise api_error(
+            421,
+            "Chat proxy request Host is not a configured domain",
+            ErrorType.BAD_REQUEST,
+        )
+    base = request_api_base_url(request, settings).rstrip("/")
+    # Strip the trailing /v1 so we can rebuild it from the {path} parameter in
+    # the route — also future-proofs against non-/v1 paths (for example,
+    # /openai/v1/responses).
     if base.endswith("/v1"):
         base = base[: -len("/v1")]
     return base

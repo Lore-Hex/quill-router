@@ -89,7 +89,7 @@ def create_paypal_checkout_session(
     if workspace is None:
         raise api_error(404, "Workspace not found", ErrorType.NOT_FOUND)
 
-    if not settings.paypal_enabled:
+    if not settings.paypal_checkout_ready:
         if settings.environment.lower() in {"local", "test"}:
             record_checkout_started(
                 workspace_id,
@@ -174,7 +174,7 @@ def capture_paypal_order_for_workspace(
     workspace_id: str,
     settings: Settings,
 ) -> PayPalCaptureResult:
-    if not settings.paypal_enabled:
+    if not settings.paypal_checkout_ready:
         raise api_error(400, "PayPal checkout is not configured", ErrorType.BAD_REQUEST)
     order = _paypal_post(
         settings,
@@ -248,7 +248,7 @@ def verify_paypal_webhook_signature(
     event: Mapping[str, Any],
     settings: Settings,
 ) -> None:
-    if not settings.paypal_enabled:
+    if not settings.paypal_client_id or not settings.paypal_client_secret:
         raise api_error(400, "PayPal webhook is not configured", ErrorType.BAD_REQUEST)
     if not settings.paypal_webhook_id:
         if settings.environment.lower() in {"local", "test"}:

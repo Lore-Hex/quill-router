@@ -53,6 +53,7 @@ from trusted_router.storage_models import (
     WalletChallenge,
     Workspace,
 )
+from trusted_router.storage_oauth_codes import OAuthCodeExchange
 from trusted_router.types import UsageType
 
 
@@ -269,6 +270,13 @@ class Store(Protocol):
         spawn_cloud: str | None = ...,
     ) -> tuple[str, OAuthAuthorizationCode]: ...
     def consume_oauth_authorization_code(self, raw_code: str) -> OAuthAuthorizationCode | None: ...
+    def exchange_oauth_authorization_code(
+        self,
+        raw_code: str,
+        *,
+        code_verifier: str | None,
+        code_challenge_method: str | None,
+    ) -> OAuthCodeExchange | None: ...
 
     # Email send blocks (SES bounce/complaint suppression) -------------------
     def block_email_sending(
@@ -308,6 +316,16 @@ class Store(Protocol):
         budget_alert_only: bool = ...,
         tags: dict[str, str] | None = ...,
     ) -> tuple[str, ApiKey]: ...
+    def issue_chat_browser_key(
+        self,
+        *,
+        workspace_id: str,
+        name: str,
+        creator_user_id: str,
+        limit_microdollars: int,
+        expires_at: str,
+        active_key_cap: int,
+    ) -> tuple[str, ApiKey] | None: ...
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None: ...
     def typed_key_usage(
         self,
@@ -526,6 +544,7 @@ class Store(Protocol):
         self,
         *,
         kind: str | None = ...,
+        limit: int | None = ...,
     ) -> list[UserProvidedModel]: ...
 
     # Broadcast destinations -------------------------------------------------

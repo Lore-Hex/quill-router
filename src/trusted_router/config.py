@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import warnings
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
 from urllib.parse import urlsplit
@@ -220,55 +221,69 @@ def _comma_set(raw: str, *, primary: str | None = None) -> tuple[str, ...]:
 # adding a credential requires naming every process allowed to receive it.
 SERVICE_SURFACE_SECRET_OWNERS: dict[str, frozenset[str]] = {
     "ops_chat_webhook_secret": frozenset({"actions"}),
-    "postgres_dsn": frozenset({"public", "control", "internal", "observer"}),
-    "postgres_iam_auth": frozenset({"public", "control", "internal", "observer"}),
-    "clickhouse_url": frozenset({"control", "internal"}),
-    "clickhouse_password": frozenset({"control", "internal"}),
-    "provider_analytics_clickhouse_url": frozenset({"control"}),
-    "provider_analytics_clickhouse_password": frozenset({"control"}),
+    "postgres_dsn": frozenset(
+        {"public", "console", "chat", "webhooks", "internal", "observer"}
+    ),
+    "postgres_iam_auth": frozenset(
+        {"public", "console", "chat", "webhooks", "internal", "observer"}
+    ),
+    "clickhouse_url": frozenset({"console", "internal"}),
+    "clickhouse_password": frozenset({"console", "internal"}),
+    "provider_analytics_clickhouse_url": frozenset({"console"}),
+    "provider_analytics_clickhouse_password": frozenset({"console"}),
     "operational_analytics_clickhouse_url": frozenset(
-        {"public", "control", "internal", "observer"}
+        {"public", "console", "internal", "observer"}
     ),
     "operational_analytics_clickhouse_password": frozenset(
-        {"public", "control", "internal", "observer"}
+        {"public", "console", "internal", "observer"}
     ),
-    "sentry_dsn": frozenset({"control", "internal", "observer"}),
-    "google_data_manager_enabled": frozenset({"control"}),
-    "google_data_manager_kms_key_name": frozenset({"control"}),
-    "attribution_cookie_secret": frozenset({"public", "control"}),
+    "sentry_dsn": frozenset({"console", "chat", "webhooks", "internal", "observer"}),
+    "google_data_manager_enabled": frozenset({"console"}),
+    "google_data_manager_kms_key_name": frozenset({"console"}),
+    "attribution_cookie_secret": frozenset({"public", "console"}),
     "internal_gateway_token": frozenset({"internal"}),
     # Internal owns this only for synthetic/Sentry routes; its billing routes
     # still select internal_gateway_token by path.
     "observer_internal_token": frozenset({"internal", "observer"}),
-    "stripe_webhook_secret": frozenset({"control"}),
-    "stripe_secret_key": frozenset({"control"}),
-    "paypal_client_id": frozenset({"control"}),
-    "paypal_client_secret": frozenset({"control"}),
-    "paypal_webhook_id": frozenset({"control"}),
-    "adyen_enabled": frozenset({"control"}),
-    "adyen_api_key": frozenset({"control"}),
-    "adyen_client_key": frozenset({"control"}),
-    "adyen_hmac_key": frozenset({"control"}),
-    "adyen_reference_key": frozenset({"control"}),
-    "byok_kms_key_name": frozenset({"control", "internal"}),
-    "byok_envelope_key_b64": frozenset({"control", "internal"}),
-    "google_client_id": frozenset({"control"}),
-    "google_client_secret": frozenset({"control"}),
-    "google_alias_credentials_json": frozenset({"control"}),
-    "github_client_id": frozenset({"control"}),
-    "github_client_secret": frozenset({"control"}),
-    "github_alias_credentials_json": frozenset({"control"}),
-    "x402_enabled": frozenset({"control"}),
-    "notify_enabled": frozenset({"control"}),
-    "veriff_enabled": frozenset({"control"}),
-    "veriff_api_key": frozenset({"control"}),
-    "veriff_shared_secret_key": frozenset({"control"}),
-    "telnyx_api_key": frozenset({"control"}),
-    "twilio_account_sid": frozenset({"control"}),
-    "twilio_auth_token": frozenset({"control"}),
-    "twilio_api_key_secret": frozenset({"control"}),
-    "aws_access_key_id": frozenset({"control", "actions"}),
-    "aws_secret_access_key": frozenset({"control", "actions"}),
+    "stripe_webhook_secret": frozenset({"webhooks"}),
+    # Console uses its checkout credential; internal receives a distinct,
+    # provider-restricted PaymentIntent credential for settlement auto-refill.
+    "stripe_secret_key": frozenset({"console", "internal"}),
+    # PayPal verifies callbacks through its API, so the receiver needs the
+    # OAuth client pair as well as its webhook id.  The console needs only the
+    # client pair for checkout/capture.
+    "paypal_checkout_enabled": frozenset({"console", "webhooks"}),
+    "paypal_client_id": frozenset({"console", "webhooks"}),
+    "paypal_client_secret": frozenset({"console", "webhooks"}),
+    "paypal_webhook_id": frozenset({"webhooks"}),
+    "adyen_enabled": frozenset({"console", "webhooks"}),
+    "adyen_api_key": frozenset({"console"}),
+    "adyen_client_key": frozenset({"console"}),
+    "adyen_hmac_key": frozenset({"webhooks"}),
+    # The console signs the opaque merchant reference; the webhook service
+    # verifies it before crediting the ledger.
+    "adyen_reference_key": frozenset({"console", "webhooks"}),
+    "byok_kms_key_name": frozenset({"console", "internal"}),
+    "byok_envelope_key_b64": frozenset({"console", "internal"}),
+    "google_client_id": frozenset({"console"}),
+    "google_client_secret": frozenset({"console"}),
+    "google_alias_credentials_json": frozenset({"console"}),
+    "github_client_id": frozenset({"console"}),
+    "github_client_secret": frozenset({"console"}),
+    "github_alias_credentials_json": frozenset({"console"}),
+    "x402_enabled": frozenset({"console"}),
+    "notify_enabled": frozenset({"console"}),
+    "veriff_enabled": frozenset({"console", "webhooks"}),
+    "veriff_api_key": frozenset({"console"}),
+    "veriff_shared_secret_key": frozenset({"webhooks"}),
+    "telnyx_api_key": frozenset({"console"}),
+    "twilio_account_sid": frozenset({"console"}),
+    "twilio_auth_token": frozenset({"console"}),
+    "twilio_api_key_secret": frozenset({"console"}),
+    # Each surface receives an independently provisioned SES send-only
+    # credential.  Internal needs it for post-settlement budget alerts.
+    "aws_access_key_id": frozenset({"console", "actions", "internal"}),
+    "aws_secret_access_key": frozenset({"console", "actions", "internal"}),
     "synthetic_monitor_api_key": frozenset({"internal", "observer"}),
     "federation_peer_token": frozenset({"internal"}),
     "federation_home_token": frozenset({"internal"}),
@@ -305,7 +320,10 @@ class Settings(BaseSettings):
         "combined",
         "public",
         "actions",
+        "console",
         "control",
+        "chat",
+        "webhooks",
         "internal",
         "observer",
     ] = "combined"
@@ -535,7 +553,7 @@ class Settings(BaseSettings):
     # on the safe default and aggregate into the untrusted_lb bucket.
     rate_limit_client_ip_mode: str = "untrusted"
 
-    # Shared only by the anonymous public surface and the account/control
+    # Shared only by the anonymous public surface and the account/console
     # surface so an attribution cookie survives the LB hand-off between them.
     # This must never reuse the internal gateway credential: compromise of the
     # public renderer must not disclose a token accepted by billing routes.
@@ -563,6 +581,10 @@ class Settings(BaseSettings):
     paypal_client_id: str | None = None
     paypal_client_secret: str | None = None
     paypal_webhook_id: str | None = None
+    # Explicit paired-surface capability bit. Deployed console and webhooks
+    # revisions must both receive the same true/false value before URL-map
+    # promotion; credentials alone never turn checkout on in production.
+    paypal_checkout_enabled: bool | None = None
     paypal_api_base_url: str = "https://api-m.paypal.com"
     # Adyen is staged dark until the test merchant, HMAC webhook, and end-to-end
     # checkout canary are all green. Keep checkout enablement separate from
@@ -600,10 +622,10 @@ class Settings(BaseSettings):
     google_client_secret: str | None = None
     google_oauth_redirect_url: str | None = None
     # The public service must render login links without receiving the OAuth
-    # client secrets owned by the control service. These are deliberately
+    # client secrets owned by the console service. These are deliberately
     # non-secret presentation flags, set from the same rollout manifest that
-    # configures the control service. ``None`` is rejected on a deployed public
-    # surface so a split rollout cannot silently remove a login method.
+    # configures the console service. ``None`` is rejected on both deployed
+    # surfaces so a split rollout cannot silently remove a login method.
     google_oauth_login_available: bool | None = None
     # Backup domains use independent provider credentials so login remains
     # available even if the canonical domain or its OAuth app is unavailable.
@@ -967,10 +989,11 @@ class Settings(BaseSettings):
     # status page reads as "we are not sure our own service works".
     # Defaults True (the GCP shape); standalone deployments set it False.
     synthetic_image_probe_enabled: bool = True
-    # Explicit control-plane /health URL attached to the canonical
-    # target. Standalone deployments set this to their own control plane
-    # (e.g. the App Runner URL) so control_plane_health measures the
-    # RIGHT cloud; on GCP the per-region Cloud Run URLs already cover it.
+    # Explicit private regional billing-origin /health URL attached to the
+    # canonical target. It must never be auto-derived from the legacy public
+    # run.app URL. Standalone deployments set this to their own control plane
+    # (e.g. the App Runner URL) so control_plane_health measures the RIGHT
+    # cloud; on GCP it names the private regional billing origin.
     synthetic_control_plane_health_url: str | None = None
     # Extra gateway targets that share the canonical hostname but are
     # addressed at a SPECIFIC TCP endpoint: "name=connect_host,..." (e.g.
@@ -1070,6 +1093,14 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def production_is_fail_closed(self) -> Settings:
         environment = self.environment.lower()
+        if self.service_surface == "control":
+            warnings.warn(
+                "TR_SERVICE_SURFACE=control is deprecated; use console",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.service_surface = "console"
+        surface = self.service_surface
         if self.synthetic_control_plane_base_url:
             parsed_control_plane = urlsplit(self.synthetic_control_plane_base_url)
             if (
@@ -1326,14 +1357,17 @@ class Settings(BaseSettings):
         if self.identity_session_stale_after_days <= 0:
             raise ValueError("TR_IDENTITY_SESSION_STALE_AFTER_DAYS must be positive")
         if self.veriff_enabled and environment not in {"local", "test"}:
-            missing_veriff = [
-                name
-                for name, value in (
+            required_veriff = (
+                (("TR_VERIFF_API_KEY", self.veriff_api_key),)
+                if surface == "console"
+                else (("TR_VERIFF_SHARED_SECRET_KEY", self.veriff_shared_secret_key),)
+                if surface == "webhooks"
+                else (
                     ("TR_VERIFF_API_KEY", self.veriff_api_key),
                     ("TR_VERIFF_SHARED_SECRET_KEY", self.veriff_shared_secret_key),
                 )
-                if not value
-            ]
+            )
+            missing_veriff = [name for name, value in required_veriff if not value]
             if missing_veriff:
                 raise ValueError("TR_VERIFF_ENABLED requires " + ", ".join(missing_veriff))
         if self.adyen_environment not in {"test", "live"}:
@@ -1356,46 +1390,67 @@ class Settings(BaseSettings):
         if self.adyen_reference_key and len(self.adyen_reference_key.encode("utf-8")) < 32:
             raise ValueError("TR_ADYEN_REFERENCE_KEY must be at least 32 bytes")
         if self.adyen_enabled:
-            missing_adyen = [
-                name
-                for name, value in (
+            required_adyen = (
+                (
+                    ("TR_ADYEN_API_KEY", self.adyen_api_key),
+                    ("TR_ADYEN_CLIENT_KEY", self.adyen_client_key),
+                    ("TR_ADYEN_REFERENCE_KEY", self.adyen_reference_key),
+                    ("TR_ADYEN_MERCHANT_ACCOUNT", self.adyen_merchant_account),
+                )
+                if surface == "console"
+                else (
+                    ("TR_ADYEN_HMAC_KEY", self.adyen_hmac_key),
+                    ("TR_ADYEN_REFERENCE_KEY", self.adyen_reference_key),
+                    ("TR_ADYEN_MERCHANT_ACCOUNT", self.adyen_merchant_account),
+                )
+                if surface == "webhooks"
+                else (
                     ("TR_ADYEN_API_KEY", self.adyen_api_key),
                     ("TR_ADYEN_CLIENT_KEY", self.adyen_client_key),
                     ("TR_ADYEN_HMAC_KEY", self.adyen_hmac_key),
                     ("TR_ADYEN_REFERENCE_KEY", self.adyen_reference_key),
                     ("TR_ADYEN_MERCHANT_ACCOUNT", self.adyen_merchant_account),
                 )
-                if not value
-            ]
-            if self.adyen_environment == "live" and not self.adyen_live_endpoint_prefix:
+            )
+            missing_adyen = [name for name, value in required_adyen if not value]
+            if (
+                surface in {"combined", "console"}
+                and self.adyen_environment == "live"
+                and not self.adyen_live_endpoint_prefix
+            ):
                 missing_adyen.append("TR_ADYEN_LIVE_ENDPOINT_PREFIX")
             if missing_adyen:
                 raise ValueError("TR_ADYEN_ENABLED requires " + ", ".join(missing_adyen))
         if (
             self.x402_enabled
             and environment not in {"local", "test"}
-            and (not self.stripe_secret_key or not self.stripe_webhook_secret)
         ):
-            raise ValueError(
-                "TR_X402_ENABLED requires TR_STRIPE_SECRET_KEY and "
-                "TR_STRIPE_WEBHOOK_SECRET outside local/test"
-            )
+            if surface == "console" and not self.stripe_secret_key:
+                raise ValueError(
+                    "TR_X402_ENABLED requires TR_STRIPE_SECRET_KEY outside local/test"
+                )
+            if surface == "combined" and (
+                not self.stripe_secret_key or not self.stripe_webhook_secret
+            ):
+                raise ValueError(
+                    "TR_X402_ENABLED requires TR_STRIPE_SECRET_KEY and "
+                    "TR_STRIPE_WEBHOOK_SECRET outside local/test"
+                )
         if environment in {"local", "test"}:
             return self
         production = environment == "production"
         missing = []
-        surface = self.service_surface
-        if environment != "worker" and surface in {"control", "public"}:
+        if environment != "worker" and surface in {"console", "public"}:
             if not self.attribution_cookie_secret:
                 missing.append("TR_ATTRIBUTION_COOKIE_SECRET")
             elif len(self.attribution_cookie_secret.encode("utf-8")) < 32:
                 missing.append("TR_ATTRIBUTION_COOKIE_SECRET (at least 32 bytes)")
-        if environment != "worker" and surface == "public":
+        if environment != "worker" and surface in {"public", "console"}:
             if self.google_oauth_login_available is None:
-                missing.append("TR_GOOGLE_OAUTH_LOGIN_AVAILABLE")
+                missing.append("TR_GOOGLE_OAUTH_LOGIN_AVAILABLE=true or false")
             if self.github_oauth_login_available is None:
-                missing.append("TR_GITHUB_OAUTH_LOGIN_AVAILABLE")
-        if environment != "worker" and surface == "control":
+                missing.append("TR_GITHUB_OAUTH_LOGIN_AVAILABLE=true or false")
+        if environment != "worker" and surface == "console":
             for provider, advertised, configured in (
                 (
                     "GOOGLE",
@@ -1410,7 +1465,7 @@ class Settings(BaseSettings):
             ):
                 if advertised is not None and advertised != configured:
                     missing.append(
-                        f"TR_{provider}_OAUTH_LOGIN_AVAILABLE must match the control "
+                        f"TR_{provider}_OAUTH_LOGIN_AVAILABLE must match the console "
                         f"service's {provider} OAuth credential capability"
                     )
         if (
@@ -1452,28 +1507,48 @@ class Settings(BaseSettings):
         # rejects it before any deployed server starts, so do not let missing
         # credentials mask that clearer ownership error here.
         gateway_surfaces = {"internal"}
-        sentry_surfaces = {"combined", "control", "internal", "observer"}
-        account_surfaces = {"combined", "control"}
-        email_surfaces = {"combined", "control", "actions"}
+        sentry_surfaces = {
+            "combined",
+            "console",
+            "chat",
+            "webhooks",
+            "internal",
+            "observer",
+        }
+        account_surfaces = {"combined", "console"}
+        email_surfaces = {"combined", "console", "actions", "internal"}
         if surface in gateway_surfaces and not self.internal_gateway_token:
             missing.append("TR_INTERNAL_GATEWAY_TOKEN")
         if surface in {"internal", "observer"} and not self.observer_internal_token:
             missing.append("TR_OBSERVER_INTERNAL_TOKEN")
-        if surface == "control" and environment != "worker":
-            if not self.stripe_webhook_secret:
-                missing.append("TR_STRIPE_WEBHOOK_SECRET")
+        if surface in {"console", "internal"} and environment != "worker":
             if not self.stripe_secret_key:
                 missing.append("TR_STRIPE_SECRET_KEY")
-        paypal_fields = [
-            self.paypal_client_id,
-            self.paypal_client_secret,
-            self.paypal_webhook_id,
-        ]
-        if any(paypal_fields) and not all(paypal_fields):
+        if surface == "webhooks" and environment != "worker":
+            if not self.stripe_webhook_secret:
+                missing.append("TR_STRIPE_WEBHOOK_SECRET")
+        if surface in {"console", "webhooks"} and self.paypal_checkout_enabled is None:
+            missing.append("TR_PAYPAL_CHECKOUT_ENABLED=true or false")
+        paypal_client_fields = [self.paypal_client_id, self.paypal_client_secret]
+        if any(paypal_client_fields) and not all(paypal_client_fields):
+            missing.append(
+                "TR_PAYPAL_CLIENT_ID and TR_PAYPAL_CLIENT_SECRET must both be set or both unset"
+            )
+        if surface == "webhooks" and any(
+            (*paypal_client_fields, self.paypal_webhook_id)
+        ) and not all((*paypal_client_fields, self.paypal_webhook_id)):
             missing.append(
                 "TR_PAYPAL_CLIENT_ID, TR_PAYPAL_CLIENT_SECRET, and "
-                "TR_PAYPAL_WEBHOOK_ID must all be set or all unset"
+                "TR_PAYPAL_WEBHOOK_ID must all be set on the webhooks surface or all unset"
             )
+        if self.paypal_checkout_enabled:
+            required_paypal = [*paypal_client_fields]
+            if surface == "webhooks":
+                required_paypal.append(self.paypal_webhook_id)
+            if not all(required_paypal):
+                missing.append(
+                    "TR_PAYPAL_CHECKOUT_ENABLED=true requires the surface's PayPal credentials"
+                )
         if production:
             if surface in sentry_surfaces and not self.sentry_dsn:
                 missing.append("TR_SENTRY_DSN")
@@ -1529,7 +1604,14 @@ class Settings(BaseSettings):
                 missing.append("TR_BIGTABLE_MIRROR_WRITES_ENABLED=false")
             if self.request_record_write_mode != "typed":
                 missing.append("TR_REQUEST_RECORD_WRITE_MODE=typed")
-        if storage_required and self.analytics_read_mode != "bigtable":
+        analytics_reader_surfaces = {
+            "combined",
+            "public",
+            "console",
+            "internal",
+            "observer",
+        }
+        if surface in analytics_reader_surfaces and self.analytics_read_mode != "bigtable":
             if not self.operational_analytics_clickhouse_url:
                 missing.append("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL")
             if not self.operational_analytics_clickhouse_password:
@@ -1684,8 +1766,29 @@ class Settings(BaseSettings):
         )
 
     @property
+    def paypal_checkout_ready(self) -> bool:
+        credentials_ready = bool(self.paypal_client_id and self.paypal_client_secret)
+        if self.paypal_checkout_enabled is not None:
+            return self.paypal_checkout_enabled and credentials_ready
+        # Preserve the local/test composite developer experience. Deployed
+        # surfaces reject an unspecified capability bit during validation.
+        return self.environment.lower() in {"local", "test"} and credentials_ready
+
+    @property
+    def paypal_webhook_ready(self) -> bool:
+        # Deliberately independent of the checkout capability bit: signed
+        # callbacks already in flight must still settle after new checkout is
+        # disabled.
+        return bool(
+            self.paypal_client_id
+            and self.paypal_client_secret
+            and self.paypal_webhook_id
+        )
+
+    @property
     def paypal_enabled(self) -> bool:
-        return bool(self.paypal_client_id and self.paypal_client_secret)
+        """Compatibility presentation alias for checkout readiness."""
+        return self.paypal_checkout_ready
 
     @property
     def phone_verification_funding_enforced(self) -> bool:
@@ -1701,7 +1804,10 @@ class Settings(BaseSettings):
 
     @property
     def veriff_configured(self) -> bool:
-        return bool(self.veriff_api_key and self.veriff_shared_secret_key)
+        # Session creation and callback verification live in different
+        # processes. The console needs only the API credential; the webhooks
+        # service checks its signature secret in the receiver itself.
+        return bool(self.veriff_api_key)
 
     @property
     def adyen_checkout_ready(self) -> bool:
@@ -1709,7 +1815,6 @@ class Settings(BaseSettings):
             self.adyen_enabled
             and self.adyen_api_key
             and self.adyen_client_key
-            and self.adyen_hmac_key
             and self.adyen_reference_key
             and self.adyen_merchant_account
             and (self.adyen_environment == "test" or self.adyen_live_endpoint_prefix)

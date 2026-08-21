@@ -24,13 +24,12 @@ session cookie that backs /console/*). Returns 302 → /?reason=signin
 when unauth (the existing console-shaped gate; the chat JS catches
 the redirect and pops the sign-in modal).
 
-Each call creates a NEW key — we do not cache raw keys server-side
-(would violate the "we only ever store hashes" invariant). Client
-preserves continuity across page refreshes and browser restarts via a
-scoped localStorage key plus a one-shot `tr_chat_key` cookie that JS
-reads + clears on page load. So this endpoint is only called when the
-current user/workspace has no reusable browser key or when a cached key
-is rejected and must rotate.
+Each successful call creates a NEW key — we do not cache raw keys
+server-side (would violate the "we only ever store hashes" invariant).
+Client preserves continuity across page refreshes and browser restarts
+via a scoped localStorage key plus a one-shot `tr_chat_key` cookie that
+JS reads + clears on page load. A small atomic per-workspace cap bounds
+lost-storage/retry amplification without changing that browser contract.
 """
 
 from __future__ import annotations
@@ -40,11 +39,13 @@ import secrets
 from typing import Any
 
 from fastapi import APIRouter, Response
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import SettingsDep
-from trusted_router.errors import assert_workspace_billing_active
+from trusted_router.errors import api_error, assert_workspace_billing_active
 from trusted_router.routes.console._shared import ConsoleDep
 from trusted_router.storage import STORE
+from trusted_router.types import ErrorType
 
 # Soft cap per browser-issued key. $5/day in microdollars. This caps the
 # blast radius if the key leaks via XSS or shared DevTools session. The
@@ -55,6 +56,11 @@ CHAT_BROWSER_KEY_LIMIT_MICRODOLLARS = 5_000_000
 # 30 days. The chat client sees this via browser storage; when it expires
 # the next Send pops a fresh `/internal/chat/issue-browser-key` call.
 CHAT_BROWSER_KEY_TTL_DAYS = 30
+
+# Normal clients reuse one workspace-scoped key from browser storage. Five
+# slots allow several browsers/profiles while bounding repeated or concurrent
+# issuance. Expired and disabled keys do not consume a slot.
+CHAT_BROWSER_ACTIVE_KEY_CAP = 5
 
 # Short-lived cookie that hands the raw key from server → JS. HttpOnly
 # would defeat the point (JS needs to read it). Mitigations:
@@ -90,15 +96,26 @@ def register(router: APIRouter) -> None:
         ).replace("+00:00", "Z")
 
         assert_workspace_billing_active(ctx.workspace)  # quiesce: no new keys while paused
-        raw_key, api_key = STORE.create_api_key(
+        issued = await run_in_threadpool(
+            STORE.issue_chat_browser_key,
             workspace_id=ctx.workspace.id,
             name=name,
             creator_user_id=ctx.user.id,
-            management=False,  # never grant management on a browser key
             limit_microdollars=CHAT_BROWSER_KEY_LIMIT_MICRODOLLARS,
             expires_at=expires_at,
-            include_byok_in_limit=True,
+            active_key_cap=CHAT_BROWSER_ACTIVE_KEY_CAP,
         )
+        if issued is None:
+            raise api_error(
+                429,
+                (
+                    "This workspace already has the maximum number of active "
+                    "browser keys. Reuse a saved key or revoke one in the console."
+                ),
+                ErrorType.RATE_LIMITED,
+                headers={"Retry-After": "60"},
+            )
+        raw_key, api_key = issued
 
         # Set the one-shot cookie so the chat client's page-load
         # bootstrap can pick up the key without an extra request. JS
