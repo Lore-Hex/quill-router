@@ -275,9 +275,11 @@
       "title": "deepseek-v4-flash",
       "created": 1777368120,
       "context_length": 1048576,
-      "input_token_price_per_m": 200000,
-      "output_token_price_per_m": 400000,
-      "cached_input_token_price_per_m": 20000,
+      "input_token_price_per_m": 138000,
+      "output_token_price_per_m": 275000,
+      "cached_input_token_price_per_m": 28000,
+      "retirement_at": "2026-10-09T16:00:00Z",
+      "replacement_model_id": "deepseek/deepseek-v4-flash-0731",
       "model_type": "chat",
       "endpoints": [
         "chat/completions"
@@ -2237,9 +2239,16 @@
         "chat/completions"
       ],
       "created": 1785563363,
-      "routable": false,
-      "routable_reason": "awaiting-price",
-      "unresolved_since": "2026-08-01"
+      "context_length": 1000000,
+      "input_token_price_per_m": 138000,
+      "output_token_price_per_m": 275000,
+      "cached_input_token_price_per_m": 28000,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
     },
     {
       "id": "qwen/qwen3.8-max",

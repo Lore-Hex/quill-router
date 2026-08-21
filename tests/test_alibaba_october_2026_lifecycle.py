@@ -16,6 +16,8 @@ def test_alibaba_october_retirements_are_effective_at_announced_cutoff() -> None
         ("qwen/qwen3-235b-a22b-instruct-2507", "qwen3-235b-a22b-instruct-2507"),
         ("qwen/qwen-mt-turbo", "qwen-mt-turbo"),
         ("deepseek/deepseek-v3.2", "deepseek-v3.2"),
+        ("deepseek/deepseek-v4-flash", "deepseek-v4-flash"),
+        ("deepseek/deepseek-v4-flash-us", "deepseek-v4-flash-us"),
         ("z-ai/glm-4.7", "glm-4.7"),
     )
 
@@ -55,5 +57,26 @@ def test_alibaba_retirement_does_not_disable_other_providers() -> None:
         "novita",
         "qwen/qwen3-32b",
         "qwen/qwen3-32b",
+        at=_CUTOFF,
+    )
+
+
+def test_alibaba_deepseek_v4_flash_ga_replacements_remain_available() -> None:
+    replacements = (
+        ("deepseek/deepseek-v4-flash-0731", "deepseek-v4-flash-0731"),
+        ("deepseek/deepseek-v4-flash-0731-us", "deepseek-v4-flash-0731-us"),
+    )
+
+    for model_id, upstream_id in replacements:
+        assert not provider_lifecycle.provider_model_retired(
+            "alibaba", model_id, upstream_id, at=_CUTOFF
+        )
+
+
+def test_alibaba_deepseek_v4_flash_retirement_is_provider_scoped() -> None:
+    assert not provider_lifecycle.provider_model_retired(
+        "another-provider",
+        "deepseek/deepseek-v4-flash",
+        "deepseek-v4-flash",
         at=_CUTOFF,
     )
