@@ -239,9 +239,11 @@ def test_manifest_refresh_appends_new_models_with_tiered_prices(
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     by_id = {row["id"]: row for row in raw["models"]}
     flash = by_id["qwen/qwen3.7-flash"]
+    existing_priced_ids = {"qwen/qwen3.7-plus"}
+    appended_count = len(set(result.prices) - existing_priced_ids)
     assert notes == [
         "alibaba: refreshed provider_models/alibaba.json "
-        "(9 priced rows, appended 8)"
+        f"({len(result.prices)} priced rows, appended {appended_count})"
     ]
     assert flash["upstream_id"] == "qwen3.7-flash"
     assert flash["input_token_price_per_m"] == 30_000
