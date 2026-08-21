@@ -147,10 +147,12 @@ _RETIREMENTS = (
         effective_at=NEBIUS_AUGUST_2026_RETIREMENT_AT,
     ),
     # Alibaba Cloud Model Studio is consolidating its previously announced
-    # retirements at 2026-10-10 00:00 UTC+08. Keep this provider-scoped: the
-    # same open-weight models remain routable through other healthy providers.
-    # Alibaba explicitly canceled retirement for qwen-vl-ocr, qwen-mt-image,
-    # and the named ASR/live-translation routes, so none appear here.
+    # retirements at 2026-10-10 00:00 UTC+08. The original DeepSeek V4 Flash
+    # preview aliases retire at the same instant in favor of the dated 0731 GA
+    # routes. Keep this provider-scoped: the same open-weight models remain
+    # routable through other healthy providers. Alibaba explicitly canceled
+    # retirement for qwen-vl-ocr, qwen-mt-image, and the named
+    # ASR/live-translation routes, so none appear here.
     _Retirement(
         provider="alibaba",
         model_ids=frozenset(
@@ -164,6 +166,8 @@ _RETIREMENTS = (
                 "deepseek/deepseek-v3.1",
                 "deepseek/deepseek-v3.2",
                 "deepseek/deepseek-v3.2-exp",
+                "deepseek/deepseek-v4-flash",
+                "deepseek/deepseek-v4-flash-us",
                 "minimax/minimax-m2.1",
                 "moonshotai/kimi-k2-instruct",
                 "moonshotai/kimi-k2-thinking",
@@ -216,6 +220,8 @@ _RETIREMENTS = (
                 "deepseek-v3.1",
                 "deepseek-v3.2",
                 "deepseek-v3.2-exp",
+                "deepseek-v4-flash",
+                "deepseek-v4-flash-us",
                 "MiniMax-M2.1",
                 "Moonshot-Kimi-K2-Instruct",
                 "kimi-k2-thinking",
