@@ -10,6 +10,10 @@ more credit than it owns.
 ## Safety model
 
 The global ledger grants a region a bounded amount of already-reserved credit.
+Each active grant also has a transactionally maintained
+`regional_quota_lease_open` index row ordered by expiry. Reconciliation reads a
+bounded prefix of that index instead of scanning historical closed leases; the
+same Spanner transaction removes the index row when it closes the grant.
 Creating a lease and increasing the workspace's global `reserved` total happen
 in one exact Spanner transaction. A region can authorize only against its local
 durable lease. The maximum unreconciled exposure is therefore the sum of active
@@ -95,6 +99,18 @@ accepts true only with typed request records, the durable settle outbox, a
 non-empty workspace allowlist, a Bigtable instance, and fixed regional app
 profiles. Ordinary deploys preserve the serving revision's state rather than
 silently flipping it.
+
+Reconciliation is intentionally independent from traffic issuance. A
+versioned one-shot Cloud Run Job continues draining leases that were already
+issued even after operators disable the serving feature, so a kill switch
+cannot strand globally reserved credit. Cloud Scheduler invokes the job with
+Google OAuth; the deploy identity never reads the internal gateway token. A
+new version must complete a real Spanner read and a Bigtable data read through
+every fixed app profile before the stable schedule points to it. Executions
+have no task or scheduler retry and a 50-second deadline under the one-minute
+cadence, preventing retry-driven overlap. Clean runs publish the
+`job:regional-quota-reconcile` heartbeat; failures reach Cloud Logging and
+Sentry.
 
 Production activation requires all of the following:
 

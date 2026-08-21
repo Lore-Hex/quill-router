@@ -20,6 +20,8 @@ from trusted_router.services.regional_quota_leases import (
 from trusted_router.spend_windows import utcnow, window_floors
 from trusted_router.storage_gcp_codec import json_body
 from trusted_router.storage_gcp_counter_dml import (
+    delete_entity_dml,
+    insert_entity_dml_at,
     insert_reservation,
     key_limit_exists,
     read_reservation_by_idempotency,
@@ -34,6 +36,7 @@ from trusted_router.storage_models import GatewayAuthorization
 log = logging.getLogger(__name__)
 
 _LEASE_KIND = "regional_quota_lease"
+_OPEN_LEASE_KIND = "regional_quota_lease_open"
 _FENCE_KIND = "regional_quota_fence"
 
 
@@ -71,6 +74,19 @@ class RegionalQuotaFence:
     quota_shard: int = 0
     active_lease_id: str | None = None
     updated_at: str = field(default_factory=lambda: _iso(utcnow()))
+
+
+@dataclass(frozen=True)
+class OpenRegionalQuotaLease:
+    lease_entity_id: str
+    workspace_id: str
+    region: str
+    lease_id: str
+    expires_at: str
+
+    @property
+    def entity_id(self) -> str:
+        return _open_lease_entity_id(self)
 
 
 @dataclass(frozen=True)
@@ -190,6 +206,24 @@ def grant_regional_quota_lease(
             entity_id,
             lease,
         )
+        open_lease = OpenRegionalQuotaLease(
+            lease_entity_id=entity_id,
+            workspace_id=workspace_id,
+            region=region,
+            lease_id=lease_id,
+            expires_at=_iso(expires_at),
+        )
+        # Use a client timestamp for this third tr_entities DML statement;
+        # Spanner permits only one pending commit timestamp write per table in
+        # a transaction.
+        insert_entity_dml_at(
+            transaction,
+            store._param_types,
+            _OPEN_LEASE_KIND,
+            open_lease.entity_id,
+            json_body(open_lease),
+            now,
+        )
         return lease
 
     return store._run_in_transaction(txn)
@@ -306,6 +340,12 @@ def reconcile_regional_quota_lease(
             raise RuntimeError("global regional lease is missing")
         _validate_same_global_lease(global_lease, current)
         if current.state == "closed":
+            delete_entity_dml(
+                transaction,
+                store._param_types,
+                _OPEN_LEASE_KIND,
+                _open_lease_entity_id(current),
+            )
             return RegionalReconcileResult(
                 lease_id=current.lease_id,
                 spent_delta_microdollars=0,
@@ -403,6 +443,12 @@ def reconcile_regional_quota_lease(
                     active_lease_id=None,
                     updated_at=_iso(now),
                 ),
+            )
+            delete_entity_dml(
+                transaction,
+                store._param_types,
+                _OPEN_LEASE_KIND,
+                _open_lease_entity_id(current),
             )
         updated = dataclasses.replace(
             current,
@@ -665,6 +711,10 @@ def _lease_entity_id(workspace_id: str, region: str, lease_id: str) -> str:
 
 def _fence_entity_id(workspace_id: str, region: str, quota_shard: int) -> str:
     return f"{workspace_id}#{region}#{quota_shard}"
+
+
+def _open_lease_entity_id(lease: GlobalRegionalQuotaLease | OpenRegionalQuotaLease) -> str:
+    return f"{lease.expires_at}#{lease.workspace_id}#{lease.region}#{lease.lease_id}"
 
 
 def _key_total_id(key_hash: str, shard: int) -> str:

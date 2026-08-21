@@ -119,6 +119,23 @@ def test_bigtable_ledger_fails_closed_without_authoritative_region_profile() -> 
         ledger.get("rql-test", region="europe-west4")
 
 
+def test_bigtable_health_check_proves_conditional_write_and_read() -> None:
+    table = _FakeBigtableTable()
+    ledger = BigtableRegionalQuotaLedger({"us-central1": table})
+
+    assert ledger.health_check() == ("us-central1",)
+    assert b"health#regional-quota#us-central1" in table.rows
+
+
+def test_bigtable_health_check_fails_when_transactional_writes_fail() -> None:
+    table = _FakeBigtableTable()
+    table.reject_conditional_commits = True
+    ledger = BigtableRegionalQuotaLedger({"us-central1": table})
+
+    with pytest.raises(RegionalLeaseLedgerError, match="transactional health check"):
+        ledger.health_check()
+
+
 @dataclass
 class _Cell:
     value: bytes
@@ -147,6 +164,8 @@ class _FakeConditionalRow:
         self.mutations.append((state, column, value))
 
     def commit(self) -> bool:
+        if self.table.reject_conditional_commits:
+            raise RuntimeError("transactional writes disabled")
         current = self.table.rows.get(self.row_key)
         regex_filter = next(
             (
@@ -183,6 +202,7 @@ class _FakeBigtableTable:
     def __init__(self) -> None:
         self.rows: dict[bytes, dict[bytes, bytes]] = {}
         self.raise_after_next_applied_commit = False
+        self.reject_conditional_commits = False
 
     def row(self, row_key: bytes, *, filter_: Any) -> _FakeConditionalRow:
         return _FakeConditionalRow(self, row_key, filter_)

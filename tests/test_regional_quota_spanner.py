@@ -12,6 +12,7 @@ from trusted_router.storage_gcp_authorize import settle_atomic
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
 from trusted_router.storage_gcp_regional_quota import (
     GlobalRegionalQuotaLease,
+    OpenRegionalQuotaLease,
     activate_regional_quota_lease,
     grant_regional_quota_lease,
     reconcile_regional_quota_lease,
@@ -62,6 +63,11 @@ def test_global_grant_and_reconcile_preserve_exact_credit_and_key_totals() -> No
     )
     assert global_lease is not None
     assert global_lease.granted_microdollars == 6_250_000
+    open_leases = store._list_entities(
+        "regional_quota_lease_open",
+        cls=OpenRegionalQuotaLease,
+    )
+    assert [open_lease.lease_id for open_lease in open_leases] == [global_lease.lease_id]
     assert _credit_totals(database, workspace.id) == (
         100_000_000,
         0,
@@ -111,6 +117,13 @@ def test_global_grant_and_reconcile_preserve_exact_credit_and_key_totals() -> No
         0,
     )
     assert database.typed[KEY_LIMIT_TABLE][(key.hash, 7)]["usage"] == 3_250
+    assert (
+        store._list_entities(
+            "regional_quota_lease_open",
+            cls=OpenRegionalQuotaLease,
+        )
+        == []
+    )
 
     replay = reconcile_regional_quota_lease(
         store,

@@ -641,9 +641,9 @@ jobs:
         run: bash scripts/deploy/google_data_manager.sh
 
       - name: Deploy regional quota reconciler
-        # Safe while the feature is disabled (the endpoint is a no-op) and
-        # mandatory once a workspace canary is enabled. Keep it in the normal
-        # rollout so scheduler drift cannot strand bounded escrow.
+        # The worker cannot authorize traffic. It continues draining already
+        # issued bounded escrow even when serving issuance is disabled, and is
+        # mandatory once a workspace canary has ever been enabled.
         run: bash scripts/deploy/regional_quota_reconciler.sh
 
       # No cross-region "final watchdog" step. Each region's health is

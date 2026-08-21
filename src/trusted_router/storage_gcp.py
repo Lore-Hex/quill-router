@@ -3015,24 +3015,30 @@ class SpannerBigtableStore:
         from trusted_router.services.regional_quota_leases import HoldState
         from trusted_router.storage_gcp_regional_quota import (
             GlobalRegionalQuotaLease,
+            OpenRegionalQuotaLease,
             reconcile_regional_quota_lease,
         )
 
         now = dt.datetime.now(dt.UTC) if now is None else now
-        records = [
-            record
-            for record in self._list_entities(
-                "regional_quota_lease",
-                cls=GlobalRegionalQuotaLease,
-            )
-            if record.state != "closed"
-        ]
-        records.sort(key=lambda record: (record.expires_datetime, record.lease_id))
-        records = records[: max(1, min(limit, 1000))]
+        bounded_limit = max(1, min(limit, 1000))
+        open_leases = self._list_entities(
+            "regional_quota_lease_open",
+            cls=OpenRegionalQuotaLease,
+            limit=bounded_limit,
+        )
         result = {"inspected": 0, "reconciled": 0, "closed": 0, "errors": 0}
-        for record in records:
+        for open_lease in open_leases:
             result["inspected"] += 1
             try:
+                record = self._read_entity(
+                    "regional_quota_lease",
+                    open_lease.lease_entity_id,
+                    GlobalRegionalQuotaLease,
+                )
+                if record is None:
+                    raise RuntimeError("indexed global regional lease is missing")
+                if record.state == "closed":
+                    raise RuntimeError("closed regional lease retained an open index")
                 local = ledger.get(record.lease_id, region=record.region)
                 if local is None:
                     raise RuntimeError("regional lease row is missing")
@@ -3083,11 +3089,19 @@ class SpannerBigtableStore:
                 result["errors"] += 1
                 log.error(
                     "regional quota reconciliation failed lease_id=%s workspace_id=%s",
-                    record.lease_id,
-                    record.workspace_id,
+                    open_lease.lease_id,
+                    open_lease.workspace_id,
                     exc_info=True,
                 )
         return result
+
+    def verify_regional_quota_ledger(self) -> tuple[str, ...]:
+        """Prove conditional writes and reads through every fixed app profile."""
+
+        ledger = self._regional_quota_ledger
+        if ledger is None:
+            raise RuntimeError("regional quota ledger is disabled")
+        return ledger.health_check()
 
     def authorize_gateway_typed(
         self,

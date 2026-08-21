@@ -645,6 +645,12 @@ class Settings(BaseSettings):
     regional_quota_lease_max_available_basis_points: int = 1_000
     regional_quota_lease_shard_count: int = 16
     regional_quota_bigtable_table: str = "trustedrouter-regional-quota"
+    # True only in the one-shot reconciliation Cloud Run Job. Serving
+    # processes must never set this: it exempts the worker from duplicating the
+    # traffic-issuance allowlist because the worker can only drain leases that
+    # already exist.
+    regional_quota_reconciler_worker: bool = False
+    regional_quota_reconcile_limit: int = 25
     # Comma-separated region=single-cluster-app-profile pairs. A fixed profile
     # is required because one lease has exactly one regional writer authority.
     regional_quota_bigtable_app_profiles: str = ""
@@ -991,8 +997,22 @@ class Settings(BaseSettings):
             )
         if not 1 <= self.regional_quota_lease_shard_count <= 64:
             raise ValueError("TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT must be between 1 and 64")
+        if not 1 <= self.regional_quota_reconcile_limit <= 1_000:
+            raise ValueError("TR_REGIONAL_QUOTA_RECONCILE_LIMIT must be between 1 and 1000")
+        if self.regional_quota_reconciler_worker and environment != "worker":
+            raise ValueError(
+                "TR_REGIONAL_QUOTA_RECONCILER_WORKER is valid only in worker processes"
+            )
         if self.regional_quota_leases_enabled:
-            if not self.regional_quota_lease_pilot_workspace_ids.strip():
+            # Serving processes must always be allowlisted. The one-shot
+            # reconciler worker scans only already-issued global leases and
+            # cannot authorize traffic, so duplicating the serving allowlist
+            # into that job would add configuration drift without narrowing
+            # its authority.
+            if (
+                not self.regional_quota_reconciler_worker
+                and not self.regional_quota_lease_pilot_workspace_ids.strip()
+            ):
                 raise ValueError(
                     "TR_REGIONAL_QUOTA_LEASES_ENABLED requires "
                     "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS"

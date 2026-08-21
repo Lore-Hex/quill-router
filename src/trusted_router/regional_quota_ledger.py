@@ -294,6 +294,30 @@ class BigtableRegionalQuotaLedger:
         state, _version = _state_and_version(row)
         return _deserialize_lease(state)
 
+    def health_check(self) -> tuple[str, ...]:
+        """Prove conditional writes and reads through every fixed profile."""
+
+        for region in sorted(self._tables):
+            table = self._tables[region]
+            row_key = f"health#regional-quota#{region}".encode()
+            version = uuid.uuid4().hex.encode("ascii")
+            row = table.row(row_key, filter_=self._version_exists_filter())
+            for state in (False, True):
+                row.set_cell(_FAMILY, _STATE_COLUMN, b'{"status":"ok"}', state=state)
+                row.set_cell(_FAMILY, _VERSION_COLUMN, version, state=state)
+            try:
+                row.commit()
+                durable = table.read_row(row_key, filter_=self._state_filter())
+            except Exception as exc:  # pragma: no cover - remote transport
+                raise RegionalLeaseLedgerError(
+                    "regional ledger transactional health check failed"
+                ) from exc
+            if durable is None:
+                raise RegionalLeaseLedgerError(
+                    "regional ledger health check write was not durable"
+                )
+        return tuple(sorted(self._tables))
+
     def reserve(
         self,
         lease_id: str,
