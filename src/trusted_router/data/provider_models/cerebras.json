@@ -154,6 +154,8 @@
       "status": 1,
       "id": "cerebras/gemma-4-31b",
       "upstream_id": "gemma-4-31b",
+      "retirement_at": "2026-09-03T00:00:00Z",
+      "replacement_model_id": "qwen/qwen3.8-27b",
       "features": [
         "function-calling",
         "high-throughput",
@@ -187,6 +189,8 @@
       "status": 1,
       "id": "google/gemma-4-31b-it",
       "upstream_id": "gemma-4-31b",
+      "retirement_at": "2026-09-03T00:00:00Z",
+      "replacement_model_id": "qwen/qwen3.8-27b",
       "features": [
         "function-calling",
         "high-throughput",
