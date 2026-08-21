@@ -257,6 +257,11 @@ jobs:
       - name: Sync shared public analytics snapshots
         run: scripts/deploy/sync_public_analytics_snapshots.sh --apply
 
+      - name: Provision bounded regional quota ledger
+        # Idempotent. The table and fixed single-cluster app profiles must
+        # exist before any serving revision can enable the workspace canary.
+        run: bash scripts/deploy/regional_quota_ledger.sh
+
   sync-runtime-secrets:
     # Validate the small set of runtime credentials while the image build and
     # schema verification run. SES credentials are rotated directly in GCP
@@ -634,6 +639,12 @@ jobs:
         # deploy leaves conversions durably queued, but this workflow stays red
         # so ad spend is never scaled under silently broken attribution.
         run: bash scripts/deploy/google_data_manager.sh
+
+      - name: Deploy regional quota reconciler
+        # Safe while the feature is disabled (the endpoint is a no-op) and
+        # mandatory once a workspace canary is enabled. Keep it in the normal
+        # rollout so scheduler drift cannot strand bounded escrow.
+        run: bash scripts/deploy/regional_quota_reconciler.sh
 
       # No cross-region "final watchdog" step. Each region's health is
       # gated by its own per-region canary above (us-central1 first,

@@ -545,11 +545,11 @@ class Settings(BaseSettings):
     x402_settle_rate_limit_per_window: int = 30
     x402_settle_workspace_per_window: int = 120
     multi_region_enabled: bool = True
-    # Regional quota leases are a future latency optimization for prepaid
-    # authorization. The state machine and design are intentionally dark: the
-    # exact typed Spanner counters remain the only production authority until
-    # a durable regional ledger and reconciliation worker have passed the
-    # rollout gates in docs/design/regional-quota-leases.md.
+    # Regional quota leases remove hot global counter mutations from eligible
+    # prepaid authorization. Global Spanner still reserves every bounded grant
+    # and remains the source of truth; a fixed-cluster Bigtable row is only the
+    # regional escrow ledger. Production activation is workspace-allowlisted
+    # and validated fail-closed below.
     # ---- notifications (email / sms / voice to the account owner) ----------
     # Delivery credentials. TrustedRouter is the registered A2P 10DLC brand and
     # every customer's notification sends from these numbers, so a customer
@@ -643,6 +643,11 @@ class Settings(BaseSettings):
     regional_quota_lease_ttl_seconds: int = 60
     regional_quota_lease_max_microdollars: int = 10_000_000
     regional_quota_lease_max_available_basis_points: int = 1_000
+    regional_quota_lease_shard_count: int = 16
+    regional_quota_bigtable_table: str = "trustedrouter-regional-quota"
+    # Comma-separated region=single-cluster-app-profile pairs. A fixed profile
+    # is required because one lease has exactly one regional writer authority.
+    regional_quota_bigtable_app_profiles: str = ""
     # Operational read-only flag. When set, write paths (credit
     # reservations, gateway authorize, signup, etc.) return 503 with
     # `Retry-After`; reads keep working. Used for the Spanner →
@@ -984,17 +989,39 @@ class Settings(BaseSettings):
             raise ValueError(
                 "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS must be between 1 and 5000"
             )
+        if not 1 <= self.regional_quota_lease_shard_count <= 64:
+            raise ValueError("TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT must be between 1 and 64")
         if self.regional_quota_leases_enabled:
-            if environment not in {"local", "test"}:
-                raise ValueError(
-                    "TR_REGIONAL_QUOTA_LEASES_ENABLED is not production-ready; "
-                    "the durable regional ledger and reconciliation gates are incomplete"
-                )
             if not self.regional_quota_lease_pilot_workspace_ids.strip():
                 raise ValueError(
                     "TR_REGIONAL_QUOTA_LEASES_ENABLED requires "
                     "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS"
                 )
+            if environment not in {"local", "test"}:
+                if self.storage_backend not in {
+                    "spanner-bigtable",
+                    "spanner-clickhouse",
+                }:
+                    raise ValueError(
+                        "TR_REGIONAL_QUOTA_LEASES_ENABLED requires a Spanner GCP backend"
+                    )
+                if self.request_record_write_mode != "typed":
+                    raise ValueError(
+                        "TR_REGIONAL_QUOTA_LEASES_ENABLED requires typed request records"
+                    )
+                if not self.settle_outbox_enabled:
+                    raise ValueError(
+                        "TR_REGIONAL_QUOTA_LEASES_ENABLED requires the settle outbox"
+                    )
+                if not self.bigtable_instance_id:
+                    raise ValueError(
+                        "TR_REGIONAL_QUOTA_LEASES_ENABLED requires a Bigtable instance"
+                    )
+                if not self.regional_quota_bigtable_app_profile_map:
+                    raise ValueError(
+                        "TR_REGIONAL_QUOTA_LEASES_ENABLED requires fixed regional "
+                        "Bigtable app profiles"
+                    )
         # Parse for effect: a malformed entry must fail the process at
         # construction, not degrade into "no extra targets" that nobody
         # notices until a dead enclave goes unreported.
@@ -1384,6 +1411,28 @@ class Settings(BaseSettings):
             for workspace_id in self.regional_quota_lease_pilot_workspace_ids.split(",")
             if workspace_id.strip()
         )
+
+    @property
+    def regional_quota_bigtable_app_profile_map(self) -> dict[str, str]:
+        profiles: dict[str, str] = {}
+        for raw_entry in self.regional_quota_bigtable_app_profiles.split(","):
+            entry = raw_entry.strip()
+            if not entry:
+                continue
+            region, separator, profile = entry.partition("=")
+            region = region.strip()
+            profile = profile.strip()
+            if not separator or not region or not profile:
+                raise ValueError(
+                    "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES entries must be "
+                    "region=app-profile"
+                )
+            if region in profiles:
+                raise ValueError(
+                    "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES contains a duplicate region"
+                )
+            profiles[region] = profile
+        return profiles
 
     @property
     def ses_enabled(self) -> bool:

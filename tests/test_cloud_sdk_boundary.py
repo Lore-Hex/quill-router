@@ -39,9 +39,12 @@ ALLOWED = {
     "storage_gcp_authorize.py",
     "storage_gcp_google_ads.py",
     "storage_gcp_io.py",
+    "storage_gcp_regional_quota.py",
     "storage_gcp_settle_outbox.py",
     "storage_gcp_synthetic_rollups.py",
     "storage_gcp_synthetic_index.py",
+    # Fixed-cluster Bigtable CAS implementation of the regional storage port.
+    "regional_quota_ledger.py",
     # The two explicit cloud ports. Both import lazily so a non-GCP deployment
     # need not install the Google libraries at all.
     "storage_errors.py",

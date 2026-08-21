@@ -136,7 +136,9 @@ def test_spanner_bulk_key_usage_preserves_missing_row_fallback() -> None:
         name="legacy-json-counters",
         creator_user_id=user.id,
     )
-    database.typed["tr_key_limit"].pop((key.hash, 0))
+    for row_key in list(database.typed["tr_key_limit"]):
+        if row_key[0] == key.hash:
+            database.typed["tr_key_limit"].pop(row_key)
     key.usage_microdollars = 1234
     key.byok_usage_microdollars = 56
     key.reserved_microdollars = 7
@@ -170,7 +172,9 @@ def test_spanner_bulk_projection_matches_the_legacy_fanout_values() -> None:
     # One legacy JSON-only key, one ordinary typed key, and one three-shard
     # key exercise all of the old route's result branches.
     legacy = keys[0]
-    database.typed["tr_key_limit"].pop((legacy.hash, 0))
+    for row_key in list(database.typed["tr_key_limit"]):
+        if row_key[0] == legacy.hash:
+            database.typed["tr_key_limit"].pop(row_key)
     legacy.usage_microdollars = 17
     store._write_entity("api_key", legacy.hash, legacy)
 
@@ -227,12 +231,7 @@ def test_spanner_bulk_key_usage_fails_closed_on_incomplete_shards() -> None:
     )
     key.usage_shard_count = 3
     store._write_entity("api_key", key.hash, key)
-    base = database.typed["tr_key_limit"][(key.hash, 0)]
-    database.typed["tr_key_limit"][(key.hash, 2)] = {
-        **base,
-        "key_hash": key.hash,
-        "shard": 2,
-    }
+    database.typed["tr_key_limit"].pop((key.hash, 1))
 
     with pytest.raises(RuntimeError, match="usage shard set is incomplete"):
         store.list_api_keys_with_usage(workspace.id)

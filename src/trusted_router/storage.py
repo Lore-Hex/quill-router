@@ -2439,6 +2439,19 @@ def create_store(settings: Any) -> Store:
             analytics_dual_read_grace_seconds=getattr(
                 settings, "analytics_dual_read_grace_seconds", 30
             ),
+            regional_quota_leases_enabled=getattr(
+                settings, "regional_quota_leases_enabled", False
+            ),
+            regional_quota_bigtable_table=getattr(
+                settings,
+                "regional_quota_bigtable_table",
+                "trustedrouter-regional-quota",
+            ),
+            regional_quota_bigtable_app_profiles=getattr(
+                settings,
+                "regional_quota_bigtable_app_profile_map",
+                {},
+            ),
         )
     raise ValueError(f"unsupported storage backend: {backend}")
 

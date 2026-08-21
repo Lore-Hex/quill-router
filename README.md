@@ -402,7 +402,10 @@ done carefully:
   not terminate TLS. Cloudflare orange-cloud proxying remains incompatible
   with the prompt-path trust claim.
 - Authorize through regional quota leases, not a synchronous global Spanner
-  transaction for every request.
+  counter mutation for every request. New workspaces and keys start with 16
+  exact billing shards; eligible allowlisted traffic can additionally use 16
+  independently fenced regional escrow rows whose combined grant is already
+  reserved in Spanner.
 - Write generation metadata to regional Bigtable clusters, then aggregate into
   global activity views asynchronously.
 - Keep provider routing regional, with provider-specific circuit breakers,

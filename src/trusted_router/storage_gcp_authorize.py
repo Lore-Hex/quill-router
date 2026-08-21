@@ -486,6 +486,23 @@ def settle_atomic(
         if not won:
             return {"outcome": SettleOutcome.ALREADY_SETTLED}  # replay, no double-apply
 
+        # A regional authorization spent from an already escrowed lease. The
+        # regional ledger is settled/refunded before this transaction and the
+        # lease reconciler imports aggregate spend later. Releasing counters
+        # here would double-release the grant and recreate the hot global row.
+        if res.get("hold_usage_type") == "RegionalCredits":
+            if mark_authorization_terminal and res.get("authorization_id"):
+                close_reaped_gateway_authorization(
+                    transaction,
+                    pt,
+                    str(res["authorization_id"]),
+                    terminal_at=terminal_at,
+                )
+            return {
+                "outcome": SettleOutcome.SETTLED,
+                "missing_key_releases": [],
+            }
+
         # key first, then credit (single lock order everywhere — codex#2 #2).
         key_actual = book_actual  # key usage counts under both Credits and BYOK
         missing_key_releases = []

@@ -10,6 +10,11 @@ application bugs, quota exhaustion, or hot-row retries.
 - Source project: `quill-cloud-proxy`
 - Source instance/database: `trusted-router-nam6` / `trusted-router`
 - Configuration: `nam6`, Enterprise Plus, 300 processing units
+- Replica topology: two read-write locations (`us-central1`, `us-east1`), two
+  read-only locations (`us-west1`, `us-west2`), and one witness
+  (`us-central2`). This is five replica locations, not four application
+  regions. `nam6` cannot be edited down to three locations; a three-location
+  topology would require a separate migration to `nam7`.
 - Database deletion protection: enabled
 - Point-in-time recovery: 7 days
 - Backups: daily full plus incremental every 4 hours, retained for 7 days
@@ -54,6 +59,11 @@ incident remains open. Unauthenticated safe reads use a process-local
 rate-limit counter so a crawler cannot create a transactional Spanner hot row.
 The alerts use status, latency, path, and aggregate transaction metadata only;
 they never inspect or export prompts or outputs.
+
+New workspaces and their new API keys start with 16 exact billing shards.
+Existing workspaces retain their current shard count until the pause, drain,
+verify, reshard workflow completes; changing the default never rewrites a live
+ledger in place.
 
 ## Alert response
 
