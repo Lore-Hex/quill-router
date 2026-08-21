@@ -33,29 +33,279 @@ def test_cloud_run_security_defaults_are_per_service_and_cost_bounded() -> None:
     assert 'TR_CLOUD_RUN_MAX_INSTANCES="${TR_CLOUD_RUN_MAX_INSTANCES:-20}"' in shared
 
 
-def test_gcp_edge_reconciler_preserves_headers_and_repairs_every_security_control(
+def _exact_policy() -> dict[str, object]:
+    allowed = (
+        r"^(trustedrouter[.]com|www[.]trustedrouter[.]com|status[.]trustedrouter[.]com|"
+        r"trust[.]trustedrouter[.]com|eu[.]trustedrouter[.]com|status-us[.]trustedrouter[.]com|"
+        r"status-eu[.]trustedrouter[.]com|allyrouter[.]com|www[.]allyrouter[.]com|"
+        r"status[.]allyrouter[.]com|trust[.]allyrouter[.]com|uptimerouter[.]com|"
+        r"www[.]uptimerouter[.]com|status[.]uptimerouter[.]com|trust[.]uptimerouter[.]com)"
+        r"(:[0-9]+)?$"
+    )
+
+    def rate(count: int) -> dict[str, object]:
+        return {
+            "rateLimitThreshold": {"count": count, "intervalSec": 60},
+            "conformAction": "allow",
+            "exceedAction": "deny(429)",
+            "enforceOnKey": "IP",
+        }
+
+    source = {"config": {"srcIpRanges": ["*"]}, "versionedExpr": "SRC_IPS_V1"}
+    return {
+        "type": "CLOUD_ARMOR",
+        "description": (
+            "TrustedRouter exact edge controls; host and all-path gates enforced, "
+            "route-shape rules previewed"
+        ),
+        "rules": [
+            {
+                "priority": 900,
+                "action": "deny(403)",
+                "description": "Reject hosts outside canonical and marketing aliases",
+                "preview": False,
+                "match": {
+                    "expr": {
+                        "expression": (
+                            "!has(request.headers['host']) || "
+                            f"!request.headers['host'].lower().matches('{allowed}')"
+                        )
+                    }
+                },
+            },
+            {
+                "priority": 1000,
+                "action": "throttle",
+                "description": "Browser inference proxy per-client throttle",
+                "preview": True,
+                "match": {
+                    "expr": {"expression": "request.path.startsWith('/chat-proxy/')"}
+                },
+                "rateLimitOptions": rate(120),
+            },
+            {
+                "priority": 1100,
+                "action": "throttle",
+                "description": "State-changing request per-client throttle",
+                "preview": True,
+                "match": {
+                    "expr": {
+                        "expression": (
+                            "request.method != 'GET' && request.method != 'HEAD' && "
+                            "request.method != 'OPTIONS'"
+                        )
+                    }
+                },
+                "rateLimitOptions": rate(300),
+            },
+            {
+                "priority": 1200,
+                "action": "throttle",
+                "description": "All-path per-source safety ceiling",
+                "preview": False,
+                "match": source,
+                "rateLimitOptions": rate(2400),
+            },
+            {
+                "priority": 2_147_483_647,
+                "action": "allow",
+                "description": (
+                    "Default allow; bounded route classes are evaluated first"
+                ),
+                "preview": False,
+                "match": source,
+            },
+        ]
+    }
+
+
+def _exact_public_backend() -> dict[str, object]:
+    return {
+        "customRequestHeaders": ["X-TrustedRouter-Client-IP:{client_ip_address}"],
+        "customResponseHeaders": [],
+        "edgeSecurityPolicy": "",
+        "iap": {"enabled": False, "oauth2ClientId": " "},
+        "logConfig": {
+            "enable": True,
+            "sampleRate": 0.1,
+        },
+        "enableCDN": True,
+        "compressionMode": "AUTOMATIC",
+        "cdnPolicy": {
+            "cacheMode": "USE_ORIGIN_HEADERS",
+            "negativeCaching": False,
+            "negativeCachingPolicy": [],
+            "serveWhileStale": 600,
+            "cacheKeyPolicy": {
+                "includeHost": True,
+                "includeProtocol": True,
+                "includeQueryString": True,
+                "queryStringBlacklist": [],
+                "queryStringWhitelist": [],
+                "includeHttpHeaders": [],
+                "includeNamedCookies": [],
+            },
+        },
+    }
+
+
+def _exact_rollout_public_backend() -> dict[str, object]:
+    backend = _exact_public_backend()
+    backend.update(
+        {
+            "name": "trusted-router-public-backend",
+            "loadBalancingScheme": "EXTERNAL_MANAGED",
+            "protocol": "HTTP",
+            "timeoutSec": 60,
+            "securityPolicy": (
+                "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/"
+                "global/securityPolicies/trusted-router-public-edge"
+            ),
+            "backends": [
+                {
+                    "group": (
+                        "https://www.googleapis.com/compute/v1/projects/"
+                        "quill-cloud-proxy/regions/us-central1/networkEndpointGroups/"
+                        "trusted-router-public-neg"
+                    )
+                },
+                {
+                    "group": (
+                        "https://www.googleapis.com/compute/v1/projects/"
+                        "quill-cloud-proxy/regions/europe-west4/networkEndpointGroups/"
+                        "trusted-router-public-neg"
+                    )
+                },
+            ],
+        }
+    )
+    return backend
+
+
+def _set_nested(value: dict[str, object], path: tuple[object, ...], replacement: object) -> None:
+    current: object = value
+    for component in path[:-1]:
+        if isinstance(component, int):
+            assert isinstance(current, list)
+            current = current[component]
+        else:
+            assert isinstance(current, dict)
+            current = current[component]
+    last = path[-1]
+    if isinstance(last, int):
+        assert isinstance(current, list)
+        current[last] = replacement
+    else:
+        assert isinstance(current, dict)
+        current[last] = replacement
+
+
+def test_shared_edge_verifiers_accept_only_the_exact_rollout_contract(
+    tmp_path: Path,
+) -> None:
+    driver = tmp_path / "driver.sh"
+    driver.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+source {ROOT / 'scripts/deploy/_edge_security.sh'}
+verify_edge_backend_contract_json public "$BACKEND_JSON" quill-cloud-proxy \
+  us-central1,europe-west4 trusted-router-public trusted-router-public-neg \
+  trusted-router-public-edge 60
+verify_cloud_armor_policy_contract_json "$POLICY_JSON"
+""",
+        encoding="utf-8",
+    )
+    exact_env = {
+        "BACKEND_JSON": json.dumps(_exact_rollout_public_backend(), separators=(",", ":")),
+        "POLICY_JSON": json.dumps(_exact_policy(), separators=(",", ":")),
+    }
+    exact = _run_bash(driver, env=exact_env)
+    assert exact.returncode == 0, exact.stderr
+
+    armor_drifts: tuple[tuple[tuple[object, ...], object], ...] = (
+        (("userIpRequestHeaders",), ["X-Forwarded-For"]),
+        (("recaptchaOptionsConfig",), {"redirectSiteKey": "injected"}),
+        (("rules", 0, "headerAction"), {"requestHeadersToAdds": []}),
+        (("rules", 1, "rateLimitOptions", "banDurationSec"), 600),
+    )
+    for path, replacement in armor_drifts:
+        policy = json.loads(json.dumps(_exact_policy()))
+        _set_nested(policy, path, replacement)
+        drift = _run_bash(
+            driver,
+            env={**exact_env, "POLICY_JSON": json.dumps(policy, separators=(",", ":"))},
+        )
+        assert drift.returncode != 0, path
+
+    backend_drifts: tuple[tuple[tuple[object, ...], object], ...] = (
+        (("cdnPolicy", "requestCoalescing"), False),
+        (("cdnPolicy", "signedUrlCacheMaxAgeSec"), 3600),
+        (("cdnPolicy", "signedUrlKeyNames"), ["legacy-key"]),
+        (("cdnPolicy", "clientTtl"), 60),
+        (("cdnPolicy", "defaultTtl"), 60),
+        (("cdnPolicy", "maxTtl"), 60),
+        (("cdnPolicy", "bypassCacheOnRequestHeaders"), [{"headerName": "Authorization"}]),
+        (("cdnPolicy", "cacheKeyPolicy", "includeHttpHeaders"), ["Authorization"]),
+        (("cdnPolicy", "cacheKeyPolicy", "includeNamedCookies"), ["session"]),
+        (("cdnPolicy", "cacheKeyPolicy", "includeUserAgent"), True),
+        (("cdnPolicy", "unknownProviderField"), True),
+    )
+    for path, replacement in backend_drifts:
+        backend = json.loads(json.dumps(_exact_rollout_public_backend()))
+        _set_nested(backend, path, replacement)
+        drift = _run_bash(
+            driver,
+            env={**exact_env, "BACKEND_JSON": json.dumps(backend, separators=(",", ":"))},
+        )
+        assert drift.returncode != 0, path
+
+
+def test_gcp_edge_reconciler_clears_stale_backend_and_armor_state(
     tmp_path: Path,
 ) -> None:
     calls = tmp_path / "calls.log"
+    imported_policy = tmp_path / "imported-policy.json"
     driver = tmp_path / "driver.sh"
     driver.write_text(
         f"""#!/usr/bin/env bash
 set -euo pipefail
 source {ROOT / 'scripts/deploy/_edge_security.sh'}
 CALLS={calls}
+IMPORTED_POLICY={imported_policy}
+POLICY_IMPORTED=0
+BACKEND_UPDATES=0
 gc() {{
   printf '%s\\n' "$*" >> "$CALLS"
   case "$*" in
-    "compute security-policies describe tr-public-policy --global") return 1 ;;
-    "compute security-policies rules describe "*) return 1 ;;
+    "compute security-policies import tr-public-policy "*)
+      for value in "$@"; do
+        case "$value" in
+          --file-name=*) cp "${{value#--file-name=}}" "$IMPORTED_POLICY" ;;
+        esac
+      done
+      [ -s "$IMPORTED_POLICY" ] || return 92
+      POLICY_IMPORTED=1
+      ;;
+    "compute security-policies describe tr-public-policy --global --format=json")
+      [ "$POLICY_IMPORTED" = 1 ] || return 91
+      if [ "${{FAKE_ARMOR_EXTRA:-0}}" = 1 ]; then
+        python3 -c 'import json,sys; value=json.load(open(sys.argv[1], encoding="utf-8")); value["rules"][0]["headerAction"]={{"requestHeadersToAdds":[{{"headerName":"X-Injected","headerValue":"unsafe"}}]}}; print(json.dumps(value))' "$IMPORTED_POLICY"
+      else
+        command cat "$IMPORTED_POLICY"
+      fi
+      ;;
+    "compute backend-services update tr-public-backend "*)
+      BACKEND_UPDATES=$((BACKEND_UPDATES + 1))
+      ;;
     "compute backend-services describe tr-public-backend --global --format=json")
-      printf '%s\\n' '{{"customRequestHeaders":["X-Existing:keep","x-trustedrouter-client-ip:spoof"]}}'
+      if [ "$BACKEND_UPDATES" -eq 0 ]; then
+        printf '%s\\n' '{{"customRequestHeaders":["Authorization: stale"],"customResponseHeaders":["X-Internal: stale"],"edgeSecurityPolicy":"stale","iap":{{"enabled":true}},"enableCDN":false}}'
+      else
+        printf '%s\\n' "$FAKE_BACKEND_JSON"
+      fi
       ;;
     "compute backend-services describe tr-public-backend --global --format=value(securityPolicy.basename())")
       printf '%s\\n' tr-public-policy
-      ;;
-    "compute backend-services describe tr-public-backend --global --format=json(customRequestHeaders,securityPolicy)")
-      printf '%s\\n' '{{"customRequestHeaders":["X-Existing:keep","X-TrustedRouter-Client-IP:{{client_ip_address}}"],"securityPolicy":"/global/securityPolicies/tr-public-policy"}}'
       ;;
   esac
 }}
@@ -65,84 +315,117 @@ reconcile_edge_backend tr-public-backend tr-public-policy
         encoding="utf-8",
     )
 
-    result = _run_bash(driver)
+    result = _run_bash(
+        driver,
+        env={
+            "TR_PUBLIC_BACKEND": "tr-public-backend",
+            "FAKE_BACKEND_JSON": json.dumps(
+                _exact_public_backend(), separators=(",", ":")
+            ),
+        },
+    )
     assert result.returncode == 0, result.stderr
     invoked = calls.read_text(encoding="utf-8")
-    assert "security-policies create tr-public-policy" in invoked
-    assert "security-policies rules update 2147483647" in invoked
-    assert invoked.count("security-policies rules create") == 4
-    assert invoked.count("--action=throttle") == 3
-    assert invoked.count("--preview") == 2
-    host_rule = next(
-        line
-        for line in invoked.splitlines()
-        if "security-policies rules create 900" in line
-    )
-    assert "--preview" not in host_rule
-    assert "--action=deny-403" in host_rule
-    global_rule = next(
-        line
-        for line in invoked.splitlines()
-        if "security-policies rules create 1200" in line
-    )
-    assert "--preview" not in global_rule
-    assert "--action=throttle" in global_rule
-    assert "--exceed-action=deny-429" in global_rule
-    assert "--enforce-on-key=IP" in global_rule
+    assert "security-policies import tr-public-policy" in invoked
     assert "--security-policy=tr-public-policy" in invoked
+    assert "--edge-security-policy=" in invoked
+    assert "--iap=disabled,oauth2-client-id= ,oauth2-client-secret= " in invoked
+    assert "--no-custom-request-headers" in invoked
+    assert "--no-custom-response-headers" in invoked
     assert "--enable-logging" in invoked
-    assert "--custom-request-header=X-Existing:keep" in invoked
-    assert (
-        "--custom-request-header=X-TrustedRouter-Client-IP:{client_ip_address}" in invoked
+    assert "--logging-sample-rate=0.1" in invoked
+    assert "--logging-optional=" not in invoked
+    assert "--custom-request-header=X-TrustedRouter-Client-IP:{client_ip_address}" in invoked
+    assert "--enable-cdn" in invoked
+    assert "--cache-mode=USE_ORIGIN_HEADERS" in invoked
+    assert "--no-negative-caching" in invoked
+    assert "--request-coalescing" in invoked
+    assert "--compression-mode=AUTOMATIC" in invoked
+    imported = json.loads(imported_policy.read_text(encoding="utf-8"))
+    contract_fields = ("priority", "action", "preview", "match", "rateLimitOptions")
+    assert [
+        {field: rule[field] for field in contract_fields if field in rule}
+        for rule in imported["rules"]
+    ] == [
+        {field: rule[field] for field in contract_fields if field in rule}
+        for rule in _exact_policy()["rules"]
+    ]
+    assert all(
+        field not in rule
+        for rule in imported["rules"]
+        for field in ("headerAction", "redirectOptions", "preconfiguredWafConfig")
     )
-    assert "--custom-request-header=x-trustedrouter-client-ip:spoof" not in invoked
+
+    drift_result = _run_bash(
+        driver,
+        env={
+            "TR_PUBLIC_BACKEND": "tr-public-backend",
+            "FAKE_ARMOR_EXTRA": "1",
+            "FAKE_BACKEND_JSON": json.dumps(
+                _exact_public_backend(), separators=(",", ":")
+            ),
+        },
+    )
+    assert drift_result.returncode != 0
+    assert "retains forbidden fields" in drift_result.stderr
+
+    for field, value in (
+        ("requestCoalescing", False),
+        ("signedUrlCacheMaxAgeSec", "3600"),
+    ):
+        stale_backend = _exact_public_backend()
+        assert isinstance(stale_backend["cdnPolicy"], dict)
+        stale_backend["cdnPolicy"][field] = value
+        drift_result = _run_bash(
+            driver,
+            env={
+                "TR_PUBLIC_BACKEND": "tr-public-backend",
+                "FAKE_BACKEND_JSON": json.dumps(stale_backend, separators=(",", ":")),
+            },
+        )
+        assert drift_result.returncode != 0
+        assert "CDN/cache-key contract drifted" in drift_result.stderr
+
+    stale_backend = _exact_public_backend()
+    assert isinstance(stale_backend["cdnPolicy"], dict)
+    cache_key = stale_backend["cdnPolicy"]["cacheKeyPolicy"]
+    assert isinstance(cache_key, dict)
+    cache_key["includeUserAgent"] = True
+    drift_result = _run_bash(
+        driver,
+        env={
+            "TR_PUBLIC_BACKEND": "tr-public-backend",
+            "FAKE_BACKEND_JSON": json.dumps(stale_backend, separators=(",", ":")),
+        },
+    )
+    assert drift_result.returncode != 0
+    assert "CDN/cache-key contract drifted" in drift_result.stderr
 
 
-def test_gcp_existing_host_gate_and_all_path_ceiling_are_forced_out_of_preview(
+@pytest.mark.parametrize(
+    "setting",
+    ("TR_CLOUD_ARMOR_PREVIEW", "TR_EDGE_ALLOWED_HOST_REGEX"),
+)
+def test_gcp_edge_contract_rejects_runtime_tuning_overrides(
     tmp_path: Path,
+    setting: str,
 ) -> None:
-    calls = tmp_path / "calls.log"
     driver = tmp_path / "driver.sh"
     driver.write_text(
         f"""#!/usr/bin/env bash
 set -euo pipefail
 source {ROOT / 'scripts/deploy/_edge_security.sh'}
-CALLS={calls}
-gc() {{
-  printf '%s\\n' "$*" >> "$CALLS"
-}}
+gc() {{ :; }}
 log() {{ :; }}
-TR_CLOUD_ARMOR_PREVIEW=1 _reconcile_cloud_armor_policy tr-existing-policy
+{setting}=unsafe _reconcile_cloud_armor_policy tr-existing-policy
 """,
         encoding="utf-8",
     )
 
     result = _run_bash(driver)
 
-    assert result.returncode == 0, result.stderr
-    updates = calls.read_text(encoding="utf-8").splitlines()
-    host_updates = [
-        line
-        for line in updates
-        if "security-policies rules update 900" in line
-    ]
-    assert len(host_updates) == 1
-    assert "--no-preview" in host_updates[0]
-    assert "--preview" not in host_updates[0]
-    assert "--action=deny-403" in host_updates[0]
-
-    global_updates = [
-        line
-        for line in updates
-        if "security-policies rules update 1200" in line
-    ]
-    assert len(global_updates) == 1
-    global_update = global_updates[0]
-    assert "--no-preview" in global_update
-    assert "--preview" not in global_update
-    assert "--enforce-on-key=IP" in global_update
-    assert "--action=throttle" in global_update
-    assert "--exceed-action=deny-429" in global_update
+    assert result.returncode == 2
+    assert "not an operator override" in result.stderr
 
 
 def test_gcp_edge_reconciler_is_parameterized_for_multiple_backends(tmp_path: Path) -> None:
@@ -182,7 +465,7 @@ TR_CLOUD_ARMOR_LOG_SAMPLE_RATE=0.not-a-number \
 
     result = _run_bash(driver)
     assert result.returncode == 2
-    assert "must be between 0 and 1" in result.stderr
+    assert "fixed at 0.1" in result.stderr
 
 
 def test_private_run_app_reconciler_uses_private_google_access(tmp_path: Path) -> None:
@@ -698,10 +981,18 @@ def test_every_synthetic_job_uses_private_run_app_ingress() -> None:
 
     assert 'source "${SCRIPT_DIR}/_private_run_ingress.sh"' in deploy
     assert '"TR_SERVICE_SURFACE=observer"' in deploy
+    assert "resolve_newest_enabled_secret_version" in deploy
+    assert "enabled secret version name is not numeric" in deploy
     assert (
-        '"TR_OBSERVER_INTERNAL_TOKEN=trustedrouter-observer-internal-token:latest"'
-        in deploy
+        '"TR_OBSERVER_INTERNAL_TOKEN=trustedrouter-observer-internal-token:'
+        '${OBSERVER_SECRET_VERSION}"' in deploy
     )
+    assert (
+        '"TR_SYNTHETIC_MONITOR_API_KEY=trustedrouter-synthetic-monitor-api-key:'
+        '${MONITOR_SECRET_VERSION}"' in deploy
+    )
+    assert "trustedrouter-observer-internal-token:latest" not in deploy
+    assert "trustedrouter-synthetic-monitor-api-key:latest" not in deploy
     assert '"TR_INTERNAL_GATEWAY_TOKEN=' not in deploy
     assert "TR_INTERNAL_GATEWAY_TOKEN=trustedrouter" not in deploy
     assert (
@@ -721,7 +1012,11 @@ def test_every_synthetic_job_uses_private_run_app_ingress() -> None:
 def test_secret_bootstrap_provisions_a_distinct_observer_credential() -> None:
     deploy = (ROOT / "scripts/deploy/secrets.sh").read_text(encoding="utf-8")
 
-    assert "generated secret trustedrouter-observer-internal-token" in deploy
+    assert (
+        "ensure_generated_secret_resource trustedrouter-observer-internal-token"
+        in deploy
+    )
+    assert 'log "generated secret ${secret_name}"' in deploy
     assert "secrets.token_urlsafe(48)" in deploy
     assert "--secret=trustedrouter-observer-internal-token" in deploy
     assert "--secret=trustedrouter-internal-gateway-token" in deploy
@@ -761,14 +1056,16 @@ def test_edge_surface_inventory_is_total_and_never_claims_live_completion() -> N
 def test_runbook_has_emergency_promotion_and_independent_cost_caps() -> None:
     runbook = (ROOT / "docs/runbooks/ddos-edge-hardening.md").read_text(encoding="utf-8")
 
-    assert "TR_CLOUD_ARMOR_PREVIEW=0" in runbook
+    assert "preview-only until a separately approved" in runbook
     assert "TR_AWS_WAF_PREVIEW=0" in runbook
     assert "HighRatePerIpBlock" in runbook
-    assert "actions-backend=actions-edge" in runbook
+    assert "public, actions, console, chat, webhooks, and" in runbook
     for row in (
         "| Public/static | 4 | 10 |",
         "| Anonymous actions | 4 | 2 |",
-        "| Control | 4 | 20 |",
+        "| Console | 4 | 20 |",
+        "| Chat proxy | 2 | 20 |",
+        "| Webhooks | 4 | 10 |",
         "| Billing/internal gateway | 8 | 50 |",
         "| Observer/status worker | 4 | 4 |",
     ):

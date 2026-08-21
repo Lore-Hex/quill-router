@@ -10,15 +10,13 @@ source "${SCRIPT_DIR}/_lib.sh"
 # shellcheck source=scripts/deploy/_private_run_ingress.sh
 source "${SCRIPT_DIR}/_private_run_ingress.sh"
 
+validate_runtime_service_accounts
+
 # Observer-token jobs cannot safely target the legacy combined service: before
 # the split that service accepts only the billing gateway token, so the jobs
 # would deploy successfully and then silently 401 every ingest. Require the
-# independently named internal service explicitly and re-check its live
+# independently named internal service and re-check its live
 # contract immediately before every job deployment below.
-[ -n "${TR_BILLING_SERVICE:-}" ] || {
-  echo "ERROR: TR_BILLING_SERVICE is required; refusing observer-token jobs against the legacy service" >&2
-  exit 1
-}
 [ "$TR_BILLING_SERVICE" != "$SERVICE" ] || {
   echo "ERROR: TR_BILLING_SERVICE must be separate from legacy SERVICE" >&2
   exit 1
@@ -30,6 +28,52 @@ case "$TR_BILLING_SERVICE" in
     ;;
 esac
 SYNTHETIC_INGEST_SERVICE="$TR_BILLING_SERVICE"
+[ "$SYNTHETIC_RUN_SERVICE_ACCOUNT" = "tr-synthetic@${PROJECT_ID}.iam.gserviceaccount.com" ] || {
+  echo "ERROR: synthetic Jobs require the canonical dedicated tr-synthetic identity" >&2
+  exit 1
+}
+synthetic_account_json="$(gc iam service-accounts describe \
+  "$SYNTHETIC_RUN_SERVICE_ACCOUNT" --format=json)" || {
+    echo "ERROR: dedicated synthetic identity is not provisioned; separate narrow IAM approval is required" >&2
+    exit 1
+  }
+if ! printf '%s' "$synthetic_account_json" | python3 -c '
+import json
+import sys
+
+account = json.load(sys.stdin)
+if account.get("email") != sys.argv[1] or account.get("disabled", False) is not False:
+    raise SystemExit("synthetic identity is missing, disabled, or renamed")
+' "$SYNTHETIC_RUN_SERVICE_ACCOUNT"; then
+  echo "ERROR: dedicated synthetic identity is missing, disabled, or renamed" >&2
+  exit 1
+fi
+synthetic_account_policy="$(gc iam service-accounts get-iam-policy \
+  "$SYNTHETIC_RUN_SERVICE_ACCOUNT" --format=json)" || exit 1
+if ! printf '%s' "$synthetic_account_policy" | python3 -c '
+import json
+import sys
+
+policy = json.load(sys.stdin)
+bindings = policy.get("bindings") or []
+if len(bindings) != 1:
+    raise SystemExit("synthetic identity IAM binding inventory differs")
+binding = bindings[0]
+if binding.get("role") != "roles/iam.serviceAccountUser":
+    raise SystemExit("synthetic identity actAs role differs")
+if binding.get("condition") is not None:
+    raise SystemExit("synthetic identity actAs grant is conditional")
+if (binding.get("members") or []) != [sys.argv[1]]:
+    raise SystemExit("synthetic identity actAs member inventory differs")
+' "serviceAccount:${DEPLOY_SERVICE_ACCOUNT}"; then
+  echo "ERROR: dedicated synthetic identity IAM is not the narrow reviewed policy" >&2
+  exit 1
+fi
+verify_exact_unconditional_roles \
+  "project IAM roles on the synthetic Job identity" \
+  "serviceAccount:${SYNTHETIC_RUN_SERVICE_ACCOUNT}" \
+  "" \
+  gc projects get-iam-policy "$PROJECT_ID"
 
 if ! gc secrets describe trustedrouter-synthetic-monitor-api-key >/dev/null 2>&1; then
   log "synthetic monitor key secret is missing; skipping synthetic monitor deploy"
@@ -40,30 +84,132 @@ if ! gc secrets describe trustedrouter-observer-internal-token >/dev/null 2>&1; 
   exit 1
 fi
 
-SECRET_ENVS=(
-  "TR_SENTRY_DSN=trustedrouter-sentry-dsn:latest"
-  "TR_OBSERVER_INTERNAL_TOKEN=trustedrouter-observer-internal-token:latest"
-  "TR_SYNTHETIC_MONITOR_API_KEY=trustedrouter-synthetic-monitor-api-key:latest"
-)
-add_secret_env_if_exists() {
-  local env_name="$1"
-  local secret_name="$2"
-  if gc secrets describe "$secret_name" >/dev/null 2>&1; then
-    SECRET_ENVS+=("${env_name}=${secret_name}:latest")
-  fi
+verify_synthetic_secret_access() {
+  local secret_name policy_json expected_surfaces
+  for secret_name in \
+    trustedrouter-observer-internal-token \
+    trustedrouter-synthetic-monitor-api-key; do
+    expected_surfaces="$(secret_expected_surfaces "$secret_name")" || return 1
+    policy_json="$(gc secrets get-iam-policy "$secret_name" --format=json)" || return 1
+    if ! printf '%s' "$policy_json" | secret_iam_policy_contract_json verify \
+        "$secret_name" "$expected_surfaces"; then
+      echo "ERROR: ${secret_name} does not have the exact reviewed accessor policy" >&2
+      return 1
+    fi
+  done
 }
-add_secret_env_if_exists "ANTHROPIC_API_KEY" "trustedrouter-anthropic-api-key"
-add_secret_env_if_exists "OPENAI_API_KEY" "trustedrouter-openai-api-key"
-add_secret_env_if_exists "GEMINI_API_KEY" "trustedrouter-gemini-api-key"
-add_secret_env_if_exists "CEREBRAS_API_KEY" "trustedrouter-cerebras-api-key"
-add_secret_env_if_exists "DEEPSEEK_API_KEY" "trustedrouter-deepseek-api-key"
-add_secret_env_if_exists "MISTRAL_API_KEY" "trustedrouter-mistral-api-key"
-add_secret_env_if_exists "KIMI_API_KEY" "trustedrouter-kimi-api-key"
-add_secret_env_if_exists "ZAI_API_KEY" "trustedrouter-zai-api-key"
+
+resolve_newest_enabled_secret_version() {
+  local secret_name="$1" versions_json
+  versions_json="$(gc secrets versions list "$secret_name" \
+    --filter='state=ENABLED' --format=json)" || return 1
+  printf '%s' "$versions_json" | python3 -c '
+import json
+import sys
+
+items = json.load(sys.stdin)
+versions = []
+for item in items:
+    if item.get("state") != "ENABLED":
+        continue
+    version = str(item.get("name") or "").rstrip("/").split("/")[-1]
+    if not version.isdigit() or version.startswith("0"):
+        raise SystemExit("enabled secret version name is not numeric")
+    versions.append(int(version))
+if not versions:
+    raise SystemExit("secret has no enabled numeric version")
+print(max(versions))
+'
+}
+
+OBSERVER_SECRET_VERSION="$(resolve_newest_enabled_secret_version \
+  trustedrouter-observer-internal-token)" || {
+    echo "ERROR: cannot resolve an enabled observer-token version" >&2
+    exit 1
+  }
+MONITOR_SECRET_VERSION="$(resolve_newest_enabled_secret_version \
+  trustedrouter-synthetic-monitor-api-key)" || {
+    echo "ERROR: cannot resolve an enabled synthetic-monitor version" >&2
+    exit 1
+  }
+SECRET_ENVS=(
+  "TR_OBSERVER_INTERNAL_TOKEN=trustedrouter-observer-internal-token:${OBSERVER_SECRET_VERSION}"
+  "TR_SYNTHETIC_MONITOR_API_KEY=trustedrouter-synthetic-monitor-api-key:${MONITOR_SECRET_VERSION}"
+)
 # Complete allowlist: --set-secrets removes legacy gateway/payment bindings
 # from an existing job instead of preserving omitted secrets across updates.
 SET_SECRETS="$(IFS=,; echo "${SECRET_ENVS[*]}")"
 
+verify_synthetic_job_secret_contract() {
+  local job_name="$1" region="$2" job_json
+  job_json="$(gc run jobs describe "$job_name" --region="$region" --format=json)" || {
+    echo "ERROR: cannot read deployed synthetic Job ${region}/${job_name}" >&2
+    return 1
+  }
+  printf '%s' "$job_json" | python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+expected_identity, observer_version, monitor_version = sys.argv[1:]
+containers = []
+identities = []
+
+def visit(value):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key in {"serviceAccount", "serviceAccountName"} and isinstance(child, str):
+                identities.append(child)
+            if key == "containers" and isinstance(child, list):
+                containers.extend(child)
+            visit(child)
+    elif isinstance(value, list):
+        for child in value:
+            visit(child)
+
+visit(data.get("spec") or {})
+if sorted(set(identities)) != [expected_identity]:
+    raise SystemExit("synthetic Job runtime identity differs")
+if len(containers) != 1:
+    raise SystemExit("synthetic Job container inventory differs")
+env = {
+    item.get("name"): item
+    for item in containers[0].get("env", [])
+    if item.get("name")
+}
+actual = {}
+for name, item in env.items():
+    if "valueFrom" not in item:
+        continue
+    reference = (item.get("valueFrom") or {}).get("secretKeyRef") or {}
+    actual[name] = {
+        "resource": str(reference.get("name") or reference.get("secret") or "").split("/")[-1],
+        "version": str(reference.get("key") or reference.get("version") or ""),
+    }
+expected = {
+    "TR_OBSERVER_INTERNAL_TOKEN": {
+        "resource": "trustedrouter-observer-internal-token",
+        "version": observer_version,
+    },
+    "TR_SYNTHETIC_MONITOR_API_KEY": {
+        "resource": "trustedrouter-synthetic-monitor-api-key",
+        "version": monitor_version,
+    },
+}
+if actual != expected:
+    raise SystemExit("synthetic Job exact numeric secret map differs")
+' "$SYNTHETIC_RUN_SERVICE_ACCOUNT" \
+    "$OBSERVER_SECRET_VERSION" "$MONITOR_SECRET_VERSION" || {
+      echo "ERROR: deployed synthetic Job ${region}/${job_name} secret contract failed" >&2
+      return 1
+    }
+}
+
+SYNTHETIC_RELEASE="${TR_RELEASE:-$(git rev-parse --short HEAD 2>/dev/null || echo local)}"
+[[ "$SYNTHETIC_RELEASE" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || {
+  echo "ERROR: synthetic release is invalid" >&2
+  exit 1
+}
 BASE_ENV_VARS=(
   # These are one-shot workers, not the public control-plane process. Using
   # the worker runtime keeps control-plane-only dependencies such as SES out
@@ -71,7 +217,7 @@ BASE_ENV_VARS=(
   # remain explicit below.
   "TR_ENVIRONMENT=worker"
   "TR_SERVICE_SURFACE=observer"
-  "TR_RELEASE=$(git rev-parse --short HEAD 2>/dev/null || echo local)"
+  "TR_RELEASE=${SYNTHETIC_RELEASE}"
   "TR_ENABLE_LIVE_PROVIDERS=false"
   "TR_API_BASE_URL=https://api.trustedrouter.com/v1"
   "TR_TRUSTED_DOMAIN=trustedrouter.com"
@@ -101,6 +247,8 @@ BASE_ENV_VARS=(
 verify_synthetic_ingest_service_contract() {
   local target_region="$1"
   local service_json=""
+  local revision_name=""
+  local revision_json=""
 
   service_json="$(gc run services describe "$SYNTHETIC_INGEST_SERVICE" \
     --region "$target_region" \
@@ -108,12 +256,12 @@ verify_synthetic_ingest_service_contract() {
       echo "ERROR: internal synthetic ingest service is absent in ${target_region}" >&2
       return 1
     }
-  if ! printf '%s' "$service_json" | python3 -c '
+  revision_name="$(printf '%s' "$service_json" | python3 -c '
 import json
 import sys
 
 data = json.load(sys.stdin)
-expected_name, expected_observer_secret, expected_gateway_secret = sys.argv[1:4]
+expected_name = sys.argv[1]
 metadata = data.get("metadata", {})
 reported_name = metadata.get("name")
 if reported_name and reported_name != expected_name:
@@ -129,11 +277,41 @@ if not ready:
 annotations = metadata.get("annotations", {}) or {}
 if annotations.get("run.googleapis.com/ingress") != "internal-and-cloud-load-balancing":
     raise SystemExit("service ingress is not internal-and-cloud-load-balancing")
-template = data.get("spec", {}).get("template", {})
-pod_spec = template.get("spec", template)
-containers = pod_spec.get("containers", [])
+traffic = [
+    item
+    for item in data.get("status", {}).get("traffic", []) or []
+    if int(item.get("percent", 0) or 0) > 0
+]
+if len(traffic) != 1 or int(traffic[0].get("percent", 0) or 0) != 100:
+    raise SystemExit("service must have exactly one revision serving 100 percent")
+revision = traffic[0].get("revisionName")
+if not revision:
+    raise SystemExit("serving traffic does not name an immutable revision")
+print(revision)
+' "$SYNTHETIC_INGEST_SERVICE")" || {
+    echo "ERROR: internal synthetic ingest service contract failed in ${target_region}" >&2
+    return 1
+  }
+  revision_json="$(gc run revisions describe "$revision_name" \
+    --region "$target_region" --format=json)" || {
+    echo "ERROR: serving internal revision ${revision_name} is absent in ${target_region}" >&2
+    return 1
+  }
+  if ! printf '%s' "$revision_json" | python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+expected_identity, expected_observer_secret, expected_gateway_secret = sys.argv[1:4]
+spec = data.get("spec", {})
+actual_identity = spec.get("serviceAccountName") or spec.get("serviceAccount")
+if actual_identity != expected_identity:
+    raise SystemExit(
+        f"serving revision identity is {actual_identity!r}, expected {expected_identity!r}"
+    )
+containers = spec.get("containers", [])
 if len(containers) != 1:
-    raise SystemExit("service must have exactly one container")
+    raise SystemExit("serving revision must have exactly one container")
 env = {
     item.get("name"): item
     for item in containers[0].get("env", [])
@@ -150,21 +328,99 @@ if secret_name("TR_OBSERVER_INTERNAL_TOKEN") != expected_observer_secret:
     raise SystemExit("observer token is not bound to the dedicated secret")
 if secret_name("TR_INTERNAL_GATEWAY_TOKEN") != expected_gateway_secret:
     raise SystemExit("billing gateway token is not bound to the dedicated secret")
-' "$SYNTHETIC_INGEST_SERVICE" \
+' "$INTERNAL_RUN_SERVICE_ACCOUNT" \
       trustedrouter-observer-internal-token \
       trustedrouter-internal-gateway-token; then
-    echo "ERROR: internal synthetic ingest service contract failed in ${target_region}" >&2
+    echo "ERROR: serving internal revision contract failed in ${target_region}" >&2
     return 1
   fi
 }
 
-if ! gc artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
+IMAGE_METADATA="$(gc artifacts docker images describe "$IMAGE" --format=json)" || {
   echo "ERROR: image ${IMAGE} does not exist. Run scripts/deploy/image.sh before synthetic.sh." >&2
   exit 1
-fi
+}
+IMAGE="$(printf '%s' "$IMAGE_METADATA" | python3 -c '
+import json
+import sys
 
-ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/run.developer"
-ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/secretmanager.secretAccessor"
+data = json.load(sys.stdin)
+summary = data.get("image_summary") or data.get("imageSummary") or {}
+value = (
+    summary.get("fully_qualified_digest")
+    or summary.get("fullyQualifiedDigest")
+    or data.get("fully_qualified_digest")
+    or data.get("fullyQualifiedDigest")
+)
+if not isinstance(value, str):
+    raise SystemExit("image metadata omits fully qualified digest")
+print(value)
+')" || {
+  echo "ERROR: synthetic image did not resolve to an immutable digest" >&2
+  exit 1
+}
+[[ "$IMAGE" =~ ^[^,|[:space:]@]+@sha256:[0-9a-f]{64}$ ]] || {
+  echo "ERROR: synthetic image digest is invalid" >&2
+  exit 1
+}
+
+verify_exact_synthetic_job_invoker_policy() {
+  local job_name="$1"
+  local region="$2"
+  local policy_json
+  policy_json="$(gc run jobs get-iam-policy "$job_name" \
+    --region="$region" --format=json)" || return 1
+  if ! printf '%s' "$policy_json" | python3 -c '
+import json
+import sys
+
+policy = json.load(sys.stdin)
+bindings = policy.get("bindings") or []
+if len(bindings) != 1:
+    raise SystemExit("synthetic Job IAM binding inventory differs")
+binding = bindings[0]
+if binding.get("role") != "roles/run.invoker" or binding.get("condition") is not None:
+    raise SystemExit("synthetic Job invoker binding differs")
+if (binding.get("members") or []) != [sys.argv[1]]:
+    raise SystemExit("synthetic Job invoker member inventory differs")
+' "serviceAccount:${SYNTHETIC_RUN_SERVICE_ACCOUNT}"; then
+    echo "ERROR: Cloud Run Job ${region}/${job_name} IAM is not the exact singleton invoker policy" >&2
+    return 1
+  fi
+}
+
+ensure_synthetic_job_invoker() {
+  local job_name="$1"
+  local region="$2"
+  local member="serviceAccount:${SYNTHETIC_RUN_SERVICE_ACCOUNT}"
+  gc run jobs add-iam-policy-binding "$job_name" \
+    --region="$region" \
+    --member="$member" \
+    --role="roles/run.invoker" \
+    --condition=None \
+    --quiet >/dev/null
+  verify_exact_synthetic_job_invoker_policy "$job_name" "$region"
+}
+
+verify_existing_synthetic_job_invoker_or_absent() {
+  local job_name="$1"
+  local region="$2"
+  local describe_error=""
+  if describe_error="$(gc run jobs describe "$job_name" \
+      --region="$region" --format='value(metadata.name)' 2>&1)"; then
+    verify_exact_synthetic_job_invoker_policy "$job_name" "$region"
+    return
+  fi
+  case "$describe_error" in
+    *NOT_FOUND*|*not\ found*|*Not\ Found*|*Cannot\ find*|*could\ not\ be\ found*|*was\ not\ found*)
+      return 0
+      ;;
+    *)
+      echo "ERROR: cannot determine whether Cloud Run job ${region}/${job_name} exists: ${describe_error}" >&2
+      return 1
+      ;;
+  esac
+}
 
 upsert_scheduler() {
   local scheduler_name="$1"
@@ -178,9 +434,18 @@ upsert_scheduler() {
     if ! gc scheduler jobs update http "$scheduler_name" \
       --location "$region" \
       --schedule "$schedule" \
+      --time-zone Etc/UTC \
       --uri "$run_uri" \
       --http-method POST \
-      --oauth-service-account-email "$RUN_SERVICE_ACCOUNT" \
+      --oauth-service-account-email "$SYNTHETIC_RUN_SERVICE_ACCOUNT" \
+      --clear-headers \
+      --clear-message-body \
+      --attempt-deadline=300s \
+      --max-retry-attempts=0 \
+      --max-retry-duration=0s \
+      --min-backoff=5s \
+      --max-backoff=60s \
+      --max-doublings=3 \
       --quiet >/dev/null; then
       log "WARN: failed to update synthetic scheduler ${scheduler_name}; leaving existing schedule in place"
       return 1
@@ -190,9 +455,16 @@ upsert_scheduler() {
     if ! gc scheduler jobs create http "$scheduler_name" \
       --location "$region" \
       --schedule "$schedule" \
+      --time-zone Etc/UTC \
       --uri "$run_uri" \
       --http-method POST \
-      --oauth-service-account-email "$RUN_SERVICE_ACCOUNT" \
+      --oauth-service-account-email "$SYNTHETIC_RUN_SERVICE_ACCOUNT" \
+      --attempt-deadline=300s \
+      --max-retry-attempts=0 \
+      --max-retry-duration=0s \
+      --min-backoff=5s \
+      --max-backoff=60s \
+      --max-doublings=3 \
       --quiet >/dev/null; then
       log "WARN: failed to create synthetic scheduler ${scheduler_name}; deploy the job exists but is not scheduled"
       return 1
@@ -200,8 +472,7 @@ upsert_scheduler() {
   fi
 }
 
-SYNTHETIC_MONITOR_REGIONS="${TR_SYNTHETIC_MONITOR_REGIONS:-us-central1,europe-west4}"
-IFS=',' read -ra _REGION_LIST <<<"$SYNTHETIC_MONITOR_REGIONS"
+IFS=',' read -ra _REGION_LIST <<<"$TR_SYNTHETIC_MONITOR_REGIONS"
 monitor_index=0
 for monitor_region in "${_REGION_LIST[@]}"; do
   [ -n "$monitor_region" ] || continue
@@ -219,6 +490,7 @@ for monitor_region in "${_REGION_LIST[@]}"; do
     # Cloud Run URL. Otherwise an apex TLS/DNS incident prevents the monitor
     # from recording the very failure it observed.
     "TR_SYNTHETIC_INGEST_URL=${regional_ingest_base}/v1/internal/synthetic/samples"
+    "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL=${regional_ingest_base}"
     "TR_SYNTHETIC_BENCHMARK_INGEST_URL=${regional_ingest_base}/v1/internal/synthetic/benchmark"
     "TR_SYNTHETIC_ROUTE_HEALTH_URL=${regional_ingest_base}/v1/internal/synthetic/route-health"
     "TR_SYNTHETIC_BILLING_CONCURRENCY=2"
@@ -242,21 +514,27 @@ for monitor_region in "${_REGION_LIST[@]}"; do
 
   ensure_private_run_app_access "$monitor_region"
   verify_synthetic_ingest_service_contract "$monitor_region"
+  verify_synthetic_secret_access
+  verify_existing_synthetic_job_invoker_or_absent "$job_name" "$monitor_region"
   log "deploying synthetic Cloud Run job ${job_name} in ${monitor_region}"
   gc run jobs deploy "$job_name" \
     --region "$monitor_region" \
     --image "$IMAGE" \
     --command="/app/.venv/bin/python" \
     --args="-m,trusted_router.synthetic.cli" \
-    --service-account "$RUN_SERVICE_ACCOUNT" \
+    --service-account "$SYNTHETIC_RUN_SERVICE_ACCOUNT" \
     "${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]}" \
     --set-env-vars "$set_env_vars" \
     --set-secrets "$SET_SECRETS" \
+    --tasks 1 \
+    --parallelism 1 \
     --max-retries 0 \
     --task-timeout 300s \
     --cpu 2 \
     --memory 1Gi \
     --quiet >/dev/null
+  verify_synthetic_job_secret_contract "$job_name" "$monitor_region"
+  ensure_synthetic_job_invoker "$job_name" "$monitor_region"
   # CPU 2 + 1Gi mem: the synthetic CLI fans out N probes per pass
   # concurrently via asyncio.gather + httpx. On 1 CPU / 512Mi (the
   # Cloud Run default) the parallel TLS handshakes serialize and
@@ -281,7 +559,7 @@ done
 # Sustained-output benchmark: one deterministic top-200 route per tick. This
 # has a separate Cloud Run Job so a slow 512-token stream cannot delay or
 # overlap TLS, attestation, billing, fallback, or short provider probes.
-throughput_region="us-central1"
+throughput_region="$TR_SYNTHETIC_THROUGHPUT_REGION"
 throughput_ingest_base="https://${SYNTHETIC_INGEST_SERVICE}-${PROJECT_NUMBER}.${throughput_region}.run.app"
 throughput_job_name="trusted-router-throughput-${throughput_region}"
 throughput_scheduler_name="${throughput_job_name}-every-five-minutes"
@@ -293,6 +571,7 @@ throughput_env_vars=(
   "${BASE_ENV_VARS[@]}"
   "TR_SYNTHETIC_MONITOR_REGION=${throughput_region}"
   "TR_SYNTHETIC_INGEST_URL=${throughput_ingest_base}/v1/internal/synthetic/samples"
+  "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL=${throughput_ingest_base}"
   "TR_SYNTHETIC_BENCHMARK_INGEST_URL=${throughput_ingest_base}/v1/internal/synthetic/benchmark"
   "TR_SYNTHETIC_ROUTE_HEALTH_URL=${throughput_ingest_base}/v1/internal/synthetic/route-health"
   "TR_SYNTHETIC_BILLING_CONCURRENCY=1"
@@ -316,21 +595,28 @@ throughput_set_env_vars="$(IFS='|'; echo "^|^${throughput_env_vars[*]}")"
 
 ensure_private_run_app_access "$throughput_region"
 verify_synthetic_ingest_service_contract "$throughput_region"
+verify_synthetic_secret_access
+verify_existing_synthetic_job_invoker_or_absent \
+  "$throughput_job_name" "$throughput_region"
 log "deploying isolated throughput Cloud Run job ${throughput_job_name}"
 gc run jobs deploy "$throughput_job_name" \
   --region "$throughput_region" \
   --image "$IMAGE" \
   --command="/app/.venv/bin/python" \
   --args="-m,trusted_router.synthetic.cli" \
-  --service-account "$RUN_SERVICE_ACCOUNT" \
+  --service-account "$SYNTHETIC_RUN_SERVICE_ACCOUNT" \
   "${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]}" \
   --set-env-vars "$throughput_set_env_vars" \
   --set-secrets "$SET_SECRETS" \
+  --tasks 1 \
+  --parallelism 1 \
   --max-retries 0 \
   --task-timeout 300s \
   --cpu 1 \
   --memory 1Gi \
   --quiet >/dev/null
+verify_synthetic_job_secret_contract "$throughput_job_name" "$throughput_region"
+ensure_synthetic_job_invoker "$throughput_job_name" "$throughput_region"
 
 upsert_scheduler \
   "$throughput_scheduler_name" \
@@ -354,7 +640,7 @@ done
 
 # Image generation is materially more expensive than text PONG probes. Keep it
 # isolated and run one canonical end-to-end request every six hours.
-image_region="us-central1"
+image_region="$TR_SYNTHETIC_IMAGE_REGION"
 image_ingest_base="https://${SYNTHETIC_INGEST_SERVICE}-${PROJECT_NUMBER}.${image_region}.run.app"
 image_job_name="trusted-router-image-generation-${image_region}"
 image_scheduler_name="${image_job_name}-every-six-hours"
@@ -362,6 +648,7 @@ image_env_vars=(
   "${BASE_ENV_VARS[@]}"
   "TR_SYNTHETIC_MONITOR_REGION=${image_region}"
   "TR_SYNTHETIC_INGEST_URL=${image_ingest_base}/v1/internal/synthetic/samples"
+  "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL=${image_ingest_base}"
   "TR_SYNTHETIC_IMAGE_MODEL=google/gemini-3.1-flash-image-preview"
   "TR_SYNTHETIC_IMAGE_PROVIDER=google-ai-studio"
   "TR_SYNTHETIC_IMAGE_TIMEOUT_SECONDS=120"
@@ -371,21 +658,27 @@ image_set_env_vars="$(IFS='|'; echo "^|^${image_env_vars[*]}")"
 
 ensure_private_run_app_access "$image_region"
 verify_synthetic_ingest_service_contract "$image_region"
+verify_synthetic_secret_access
+verify_existing_synthetic_job_invoker_or_absent "$image_job_name" "$image_region"
 log "deploying isolated image-generation Cloud Run job ${image_job_name}"
 gc run jobs deploy "$image_job_name" \
   --region "$image_region" \
   --image "$IMAGE" \
   --command="/app/.venv/bin/python" \
   --args="-m,trusted_router.synthetic.image_generation" \
-  --service-account "$RUN_SERVICE_ACCOUNT" \
+  --service-account "$SYNTHETIC_RUN_SERVICE_ACCOUNT" \
   "${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]}" \
   --set-env-vars "$image_set_env_vars" \
   --set-secrets "$SET_SECRETS" \
+  --tasks 1 \
+  --parallelism 1 \
   --max-retries 0 \
   --task-timeout 300s \
   --cpu 1 \
   --memory 512Mi \
   --quiet >/dev/null
+verify_synthetic_job_secret_contract "$image_job_name" "$image_region"
+ensure_synthetic_job_invoker "$image_job_name" "$image_region"
 
 upsert_scheduler \
   "$image_scheduler_name" \
@@ -398,7 +691,7 @@ upsert_scheduler \
 # The current seven-day total is $2.499276 including TrustedRouter's 20% fee,
 # or about $10.71 per 30 days. max-retries=0 plus a date-scoped idempotency key
 # prevents duplicate billing.
-video_region="us-central1"
+video_region="$TR_SYNTHETIC_VIDEO_REGION"
 video_ingest_base="https://${SYNTHETIC_INGEST_SERVICE}-${PROJECT_NUMBER}.${video_region}.run.app"
 video_job_name="trusted-router-video-generation-${video_region}"
 video_scheduler_name="${video_job_name}-daily"
@@ -406,6 +699,7 @@ video_env_vars=(
   "${BASE_ENV_VARS[@]}"
   "TR_SYNTHETIC_MONITOR_REGION=${video_region}"
   "TR_SYNTHETIC_INGEST_URL=${video_ingest_base}/v1/internal/synthetic/samples"
+  "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL=${video_ingest_base}"
   "TR_SYNTHETIC_VIDEO_TIMEOUT_SECONDS=900"
   "TR_SYNTHETIC_VIDEO_POLL_INTERVAL_SECONDS=5"
 )
@@ -413,21 +707,27 @@ video_set_env_vars="$(IFS='|'; echo "^|^${video_env_vars[*]}")"
 
 ensure_private_run_app_access "$video_region"
 verify_synthetic_ingest_service_contract "$video_region"
+verify_synthetic_secret_access
+verify_existing_synthetic_job_invoker_or_absent "$video_job_name" "$video_region"
 log "deploying isolated daily video-generation Cloud Run job ${video_job_name}"
 gc run jobs deploy "$video_job_name" \
   --region "$video_region" \
   --image "$IMAGE" \
   --command="/app/.venv/bin/python" \
   --args="-m,trusted_router.synthetic.video_generation" \
-  --service-account "$RUN_SERVICE_ACCOUNT" \
+  --service-account "$SYNTHETIC_RUN_SERVICE_ACCOUNT" \
   "${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]}" \
   --set-env-vars "$video_set_env_vars" \
   --set-secrets "$SET_SECRETS" \
+  --tasks 1 \
+  --parallelism 1 \
   --max-retries 0 \
   --task-timeout 1200s \
   --cpu 1 \
   --memory 512Mi \
   --quiet >/dev/null
+verify_synthetic_job_secret_contract "$video_job_name" "$video_region"
+ensure_synthetic_job_invoker "$video_job_name" "$video_region"
 
 upsert_scheduler \
   "$video_scheduler_name" \
