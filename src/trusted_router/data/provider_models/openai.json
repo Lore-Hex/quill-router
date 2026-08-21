@@ -2,6 +2,69 @@
   "provider": "openai",
   "models": [
     {
+      "display_name": "gpt-image-2",
+      "title": "GPT Image 2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "id": "openai/gpt-image-2",
+      "upstream_id": "gpt-image-2",
+      "created": 1782264714,
+      "routable": true,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 30000000
+    },
+    {
+      "display_name": "gpt-image-1",
+      "title": "GPT Image 1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "id": "openai/gpt-image-1",
+      "upstream_id": "gpt-image-1",
+      "created": 1782264713,
+      "routable": true,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 40000000
+    },
+    {
+      "display_name": "gpt-image-1-mini",
+      "title": "GPT Image 1 Mini",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "id": "openai/gpt-image-1-mini",
+      "upstream_id": "gpt-image-1-mini",
+      "created": 1782264713,
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 8000000
+    },
+    {
       "display_name": "chat-latest",
       "title": "chat-latest",
       "model_type": "chat",
@@ -845,5 +908,5 @@
   "source": "https://api.openai.com/v1/models",
   "generated_at": "2026-08-21T03:47:58Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 34
+  "model_count": 37
 }

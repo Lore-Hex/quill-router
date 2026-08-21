@@ -53,6 +53,7 @@ from trusted_router.custom_model_billing import (
     user_model_payout_event_id,
 )
 from trusted_router.errors import api_error, assert_workspace_billing_active
+from trusted_router.image_generation import fixed_image_provider_cost_microdollars
 from trusted_router.money import money_pair, token_cost_microdollars
 from trusted_router.openai_service_tiers import (
     OPENAI_PRIORITY_MAX_PROMPT_TOKENS,
@@ -404,13 +405,13 @@ def _authorize_gateway_sync(
     )
     additional_cost_reservation = body.additional_cost_reservation_microdollars
     if additional_cost_reservation:
-        if body.route_type not in {"responses.web_search.planner", "videos"}:
+        if body.route_type not in {"responses.web_search.planner", "images", "videos"}:
             raise api_error(
                 400,
-                "additional cost reservations are only available for hosted search or video",
+                "additional cost reservations are only available for hosted search or media",
                 ErrorType.BAD_REQUEST,
             )
-        # Hosted tools and asynchronous media are operator-funded, so their
+        # Hosted tools and fixed-price media are operator-funded, so their
         # fixed cost must settle against Credits rather than a BYOK route.
         endpoint_candidates = [
             (candidate_model, candidate_endpoint)
@@ -424,6 +425,15 @@ def _authorize_gateway_sync(
             ErrorType.PROVIDER_NOT_SUPPORTED,
         )
     model, endpoint = endpoint_candidates[0]
+    if is_image_request and additional_cost_reservation:
+        try:
+            fixed_image_provider_cost_microdollars(model.id, additional_cost_reservation)
+        except (KeyError, ValueError) as exc:
+            raise api_error(
+                400,
+                "unknown fixed-price image reservation",
+                ErrorType.BAD_REQUEST,
+            ) from exc
     region = choose_region(settings, body.region or None)
 
     output_tokens = body.output_estimate
@@ -452,6 +462,11 @@ def _authorize_gateway_sync(
             for _candidate_model, candidate_endpoint in endpoint_candidates
         )
     )
+    if is_image_request and additional_cost_reservation:
+        # Fixed-price image endpoints settle entirely through the quoted media
+        # cost. Their zero token tariff would otherwise contribute the generic
+        # one-microdollar minimum charge on top of the published image price.
+        model_estimate = 0
     estimate = model_estimate + additional_cost_reservation
     model_usage_type = UsageType.for_endpoint(endpoint)
     has_credit_candidate = any(
@@ -1794,6 +1809,8 @@ def _settle_gateway_authorization(
             service_tier=service_tier,
         )
     )
+    if body.route_type == "images" and authorization.additional_cost_reservation_microdollars:
+        actual_cost = 0
     if not success:
         # A refund books zero and releases the frozen hold. Never require a
         # route marker from a generic abort path; the authorization id is the
@@ -1850,11 +1867,22 @@ def _settle_gateway_authorization(
             "User-provided models do not support additional settlement cost",
             ErrorType.BAD_REQUEST,
         )
+    if (
+        success
+        and body.route_type == "images"
+        and authorization.additional_cost_reservation_microdollars
+        and additional_cost != authorization.additional_cost_reservation_microdollars
+    ):
+        raise api_error(
+            400,
+            "fixed-price image settlement must match the authorized reservation",
+            ErrorType.BAD_REQUEST,
+        )
     if additional_cost:
-        if body.route_type not in {"responses.web_search.planner", "videos"}:
+        if body.route_type not in {"responses.web_search.planner", "images", "videos"}:
             raise api_error(
                 400,
-                "additional cost settlement is only available for hosted search or video",
+                "additional cost settlement is only available for hosted search or media",
                 ErrorType.BAD_REQUEST,
             )
         if additional_cost > authorization.additional_cost_reservation_microdollars:
@@ -1870,6 +1898,19 @@ def _settle_gateway_authorization(
                 ErrorType.BAD_REQUEST,
             )
         actual_cost += additional_cost
+        if body.route_type == "images":
+            try:
+                operator_cost = fixed_image_provider_cost_microdollars(
+                    model.id, additional_cost
+                )
+            except (KeyError, ValueError) as exc:
+                # Authorization validates this quote before reserving money;
+                # reaching this branch means control/enclave registries drifted.
+                raise api_error(
+                    400,
+                    "unknown fixed-price image settlement",
+                    ErrorType.BAD_REQUEST,
+                ) from exc
     input_tokens = total_input
     selected_usage_type = UsageType.for_endpoint(selected_endpoint)
     if (

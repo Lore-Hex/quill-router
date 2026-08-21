@@ -196,7 +196,10 @@ COMPONENT_DEFINITIONS: tuple[dict[str, str], ...] = (
     {
         "id": "image_generation",
         "name": "Image Generation",
-        "description": "Public attested Gemini image generation and binary image validation.",
+        "description": (
+            "Normalized multi-provider image generation and binary image validation "
+            "through the public attested API."
+        ),
     },
     {
         "id": "model_inference",

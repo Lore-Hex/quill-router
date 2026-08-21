@@ -17,17 +17,24 @@ curl 'https://api.trustedrouter.com/v1/models?output_modalities=image'
 ```
 
 The image catalog follows OpenRouter's normalized capability descriptors and
-per-endpoint pricing records. `supported_parameters` is authoritative: an
-absent parameter is unsupported and the gateway rejects it instead of silently
-ignoring it.
+per-endpoint pricing records. `supported_parameters` is authoritative for
+model-varying controls; contract-wide request fields are described below.
 
-The launch models are:
+The current models are:
 
-- `google/gemini-3.1-flash-image` (stable)
-- `google/gemini-3.1-flash-image-preview`
+| Normalized model | Direct provider | Main endpoint capabilities |
+| --- | --- | --- |
+| `google/gemini-3.1-flash-image` | Google AI Studio | `n: 1`, 512/1K/2K/4K, fourteen references |
+| `google/gemini-3.1-flash-image-preview` | Google AI Studio | `n: 1`, 512/1K/2K/4K, fourteen references |
+| `openai/gpt-image-2` | OpenAI | `n: 1..10`, quality, background, compression, wide aspect ratios |
+| `openai/gpt-image-1` | OpenAI | `n: 1..10`, quality, transparent background, compression |
+| `openai/gpt-image-1-mini` | OpenAI | `n: 1..10`, quality, transparent background, compression |
+| `x-ai/grok-imagine-image-2.0` | xAI | `n: 1`, 1K/2K, low/medium quality, broad aspect ratios |
+| `x-ai/grok-imagine-image-quality` | xAI | `n: 1`, 1K/2K, broad aspect ratios |
 
-Both currently route directly to Google AI Studio. More providers can be added
-behind the same normalized contract without changing callers.
+The gateway uses one model-spec registry for discovery, validation, routing,
+provider translation, and billing. That keeps the public contract stable while
+each direct provider receives only the native parameters it actually supports.
 
 ## Generate an image
 
@@ -68,27 +75,35 @@ The buffered response contains one complete, validated image:
 `cost` is the exact settled USD amount; use live endpoint discovery for current
 prices rather than the illustrative value above.
 
-## Size, references, routing, and streaming
+## How provider-specific parameters are normalized
 
-- `resolution` accepts `512`, `1K`, `2K`, or `4K`.
-- `aspect_ratio` accepts the values advertised by the model catalog.
-- `size` accepts a resolution tier or an exact provider-native pixel size such
-  as `1376x768`. Conflicting `size`, `resolution`, and `aspect_ratio` values are
-  rejected.
-- `output_format` is not currently exposed for this model. Google returns JPEG,
-  and the gateway rejects a requested format instead of silently ignoring it.
-- `seed` is not currently exposed for this model and is rejected rather than
-  silently ignored.
-- `input_references` accepts up to fourteen HTTPS or base64 data-URL images. Public
-  URLs are fetched inside the enclave with private-network, redirect, type,
-  byte-size, and decoded-dimension protections.
+- `resolution`, `aspect_ratio`, `size`, `quality`, `background`, and `n` are
+  checked against the selected endpoint's discovery record before any provider
+  call. `size` is translated to the provider-native representation; conflicting
+  `size`, `resolution`, and `aspect_ratio` values are rejected.
+- `output_format` is available for the OpenAI image models (`png`, `jpeg`, or
+  `webp`). Google and xAI return their native JPEG output. Compression is sent
+  only for JPEG/WebP; for PNG it is accepted but has no effect, matching the
+  normalized OpenRouter behavior.
+- `quality` is mapped when the provider has a native quality knob. When the
+  selected endpoint has no such knob, the normalized contract intentionally
+  ignores it rather than inventing an unsupported provider value.
+- `input_references` is currently available on the Google endpoints, with up to
+  fourteen HTTPS or base64 data-URL images. Public URLs are fetched inside the
+  enclave with private-network, redirect, type, byte-size, and decoded-dimension
+  protections. The direct OpenAI/xAI launch endpoints are truthfully advertised
+  as text-to-image until edit/reference transport receives the same protections.
+- `seed` is rejected on endpoints that do not advertise it.
+- Provider-only extensions live under `provider.options.<provider-slug>` and
+  are allowlisted by endpoint. OpenAI currently permits only `moderation`; an
+  unknown provider or option is rejected.
 - `provider.only`, `order`, `ignore`, `sort`, and `allow_fallbacks` use the same
   routing contract as other TrustedRouter endpoints.
-- The launch endpoint generates one image per request (`n: 1`).
 
-The current Google endpoint does not emit native partial renders, so discovery
+The current direct endpoints do not relay native partial renders, so discovery
 reports `supports_streaming: false`. For clients that request `stream: true`,
-TrustedRouter still returns a compatible completion-only SSE stream:
+TrustedRouter still returns the compatible completion-only SSE sequence after
+all images have been validated and billing has settled:
 
 ```text
 data: {"type":"image_generation.completed","b64_json":"...","media_type":"image/jpeg","created":1787169600,"usage":{...}}
@@ -99,12 +114,13 @@ data: [DONE]
 ## Billing and failure semantics
 
 Image billing is all-or-nothing. TrustedRouter reserves a conservative maximum
-before generation, then replaces the hold with provider-reported usage only
-after exactly one complete image passes base64, media-type, byte-size, and
-dimension validation. Provider failures, malformed or truncated output, and
-client cancellation are refunded and return an error instead of a partial
-image.
+before generation, then replaces the hold with provider-reported token usage or
+the endpoint's fixed image price only after every returned image passes base64,
+media-type, byte-size, complete-decode, and dimension validation. Provider
+failures, malformed or truncated output, and client cancellation are refunded
+and return an error instead of a partial image.
 
-The generated image is returned directly from enclave memory and is not stored
-by the TrustedRouter control plane. Google receives the prompt and references
-under the provider policy published in the endpoint catalog.
+Generated images are returned directly from enclave memory and are not stored
+by the TrustedRouter control plane. The selected provider receives the prompt
+and any supported references under the provider policy published in the
+endpoint catalog.

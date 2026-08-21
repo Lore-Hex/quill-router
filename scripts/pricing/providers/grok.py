@@ -13,6 +13,7 @@ from scripts.pricing.manifest import (
     write_discovered_chat_manifest,
 )
 from scripts.pricing.openai_catalog import positive_int, probe_openai_chat
+from trusted_router.image_generation import IMAGE_MODEL_SPECS
 
 SLUG = "grok"
 BASE_URL = "https://api.x.ai/v1"
@@ -38,6 +39,11 @@ UPSTREAM_ID_MAP: dict[str, str] = {
     model_id: native_id for native_id, model_id in _NATIVE_TO_MODEL_ID.items()
 }
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
+_PRESERVED_IMAGE_MODEL_IDS = frozenset(
+    model_id
+    for model_id, spec in IMAGE_MODEL_SPECS.items()
+    if spec.provider == SLUG
+)
 
 
 def _model_id(native_id: str) -> str | None:
@@ -169,4 +175,5 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         manifest_path=MANIFEST_PATH,
         discovered_rows=_DISCOVERED_MANIFEST_ROWS,
         source_url=URL,
+        preserved_model_ids=_PRESERVED_IMAGE_MODEL_IDS,
     )

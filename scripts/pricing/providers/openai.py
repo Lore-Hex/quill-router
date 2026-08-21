@@ -17,6 +17,7 @@ from scripts.pricing.openai_catalog import (
     discover_available_priced_chat_catalog,
     probe_openai_chat,
 )
+from trusted_router.image_generation import IMAGE_MODEL_SPECS
 
 SLUG = "openai"
 URL = "https://developers.openai.com/api/docs/pricing"
@@ -56,6 +57,11 @@ _NON_CHAT_MARKERS = (
 _DATED_MODEL_RE = re.compile(r"-(?:20\d{2}-\d{2}-\d{2}|20\d{6})$")
 UPSTREAM_ID_MAP: dict[str, str] = {}
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
+_PRESERVED_IMAGE_MODEL_IDS = frozenset(
+    model_id
+    for model_id, spec in IMAGE_MODEL_SPECS.items()
+    if spec.provider == SLUG
+)
 
 
 def _is_stable_chat_model(row: dict[str, Any]) -> bool:
@@ -137,4 +143,5 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         manifest_path=MANIFEST_PATH,
         discovered_rows=_DISCOVERED_MANIFEST_ROWS,
         source_url=MODELS_URL,
+        preserved_model_ids=_PRESERVED_IMAGE_MODEL_IDS,
     )

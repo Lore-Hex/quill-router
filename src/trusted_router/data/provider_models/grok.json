@@ -2,9 +2,51 @@
   "provider": "grok",
   "source": "https://api.x.ai/v1/language-models",
   "generated_at": "2026-08-21T03:47:58Z",
-  "model_count": 7,
+  "model_count": 9,
   "_note": "xAI first-party OpenAI-compatible chat at api.x.ai/v1. Model IDs are verified against the authenticated xAI catalog; context and tiered prices come from xAI's official pricing table.",
   "models": [
+    {
+      "id": "x-ai/grok-imagine-image-2.0",
+      "upstream_id": "grok-imagine-image-2.0",
+      "display_name": "grok-imagine-image-2.0",
+      "title": "Grok Imagine Image 2.0",
+      "created": 1786486044,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0,
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "routable": true
+    },
+    {
+      "id": "x-ai/grok-imagine-image-quality",
+      "upstream_id": "grok-imagine-image-quality",
+      "display_name": "grok-imagine-image-quality",
+      "title": "Grok Imagine Image Quality",
+      "created": 1779117584,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0,
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "routable": true
+    },
     {
       "id": "x-ai/grok-4.6",
       "upstream_id": "grok-4.6",

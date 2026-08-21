@@ -33,7 +33,8 @@ from trusted_router.catalog import (
 )
 from trusted_router.image_generation import (
     IMAGE_MODEL_ID_SET,
-    image_pricing_by_resolution,
+    image_model_spec,
+    image_pricing,
     image_supported_parameters,
 )
 from trusted_router.money import microdollars_per_million_tokens_to_token_decimal
@@ -353,35 +354,39 @@ def _has_public_model_filters(request: Request) -> bool:
 
 
 def _image_model_shape(model: Any) -> dict[str, Any]:
+    spec = image_model_spec(model.id)
     shape = model_to_openrouter_shape(model)
     raw_architecture = shape.get("architecture")
     architecture = dict(raw_architecture) if isinstance(raw_architecture, dict) else {}
-    architecture["input_modalities"] = ["text", "image"]
+    supports_references = "input_references" in spec.supported_parameters
+    architecture["input_modalities"] = ["text", "image"] if supports_references else ["text"]
     architecture["output_modalities"] = ["image"]
-    architecture["modality"] = "text+image->image"
+    architecture["modality"] = "text+image->image" if supports_references else "text->image"
     return {
         "id": shape["id"],
         "name": shape["name"],
         "description": shape["description"],
         "created": shape["created"],
         "architecture": architecture,
-        "supported_parameters": image_supported_parameters(),
-        "supports_streaming": False,
+        "supported_parameters": image_supported_parameters(model.id),
+        "supports_streaming": spec.supports_streaming,
         "endpoints": f"/v1/images/models/{model.id}/endpoints",
         "trustedrouter": shape["trustedrouter"],
     }
 
 
 def _image_endpoint_shape(model: Any, endpoint: ModelEndpoint) -> dict[str, Any]:
+    spec = image_model_spec(model.id)
     provider = PROVIDERS[endpoint.provider]
     return {
         "provider_name": provider.name,
         "provider_slug": endpoint.provider,
         "provider_tag": endpoint.provider,
-        "supported_parameters": image_supported_parameters(),
-        "allowed_passthrough_parameters": [],
-        "supports_streaming": False,
-        "pricing": image_pricing_by_resolution(
+        "supported_parameters": image_supported_parameters(model.id),
+        "allowed_passthrough_parameters": list(spec.allowed_passthrough_parameters),
+        "supports_streaming": spec.supports_streaming,
+        "pricing": image_pricing(
+            model.id,
             endpoint.prompt_price_microdollars_per_million_tokens,
             endpoint.completion_price_microdollars_per_million_tokens
         ),

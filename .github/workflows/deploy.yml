@@ -799,7 +799,7 @@ jobs:
             | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('data',[])))")
           [[ "$count" -gt 100 ]] || { echo "/v1/models has only $count models, expected >100"; exit 1; }
           image_models=$(curl -fsS --max-time 15 https://trustedrouter.com/v1/images/models)
-          python3 -c 'import json,sys; rows=json.load(sys.stdin)["data"]; assert any(row["id"] == "google/gemini-3.1-flash-image" and row["architecture"]["output_modalities"] == ["image"] for row in rows)' <<<"${image_models}"
+          PYTHONPATH=src python3 -c 'import json,sys; from trusted_router.image_generation import IMAGE_MODEL_ID_SET; rows=json.load(sys.stdin)["data"]; assert {row["id"] for row in rows} == IMAGE_MODEL_ID_SET; assert all(row["architecture"]["output_modalities"] == ["image"] for row in rows)' <<<"${image_models}"
           echo "smoke ok: homepage, liveness, readiness, regions, status, $count catalog models, and image discovery"
 
       - name: Retire legacy settle-outbox hotspot index
