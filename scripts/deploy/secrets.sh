@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Phase 3: push provider/OAuth/SES/Stripe secrets to Secret Manager and
-# grant the Cloud Run runtime service account access to them. Reads
+# verify exact per-resource split-runtime access. Reads
 # values from $TR_LOCAL_KEYS_FILE (~/.quill_cloud_keys.private by default)
 # or from the current shell environment.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
+
+validate_runtime_service_accounts
 
 validate_synthetic_monitor_candidate() {
   local value="$1"
@@ -83,6 +85,205 @@ require_secret_from_env_file() {
   log "uploaded secret ${secret_name}"
 }
 
+secret_exists_or_error() {
+  local secret_name="$1"
+  local describe_error=""
+  if describe_error="$(gc secrets describe "$secret_name" --format='value(name)' 2>&1)"; then
+    return 0
+  fi
+  if [[ "$describe_error" == *"NOT_FOUND"* ]] ||
+     [[ "$describe_error" == *"not found"* ]]; then
+    return 1
+  fi
+  echo "ERROR: cannot determine whether secret ${secret_name} exists: ${describe_error}" >&2
+  return 2
+}
+
+ensure_generated_secret_resource() {
+  local secret_name="$1"
+  local existence_rc=0
+  if secret_exists_or_error "$secret_name"; then
+    return 0
+  else
+    existence_rc=$?
+  fi
+  if [ "$existence_rc" -ne 1 ]; then
+    return 1
+  fi
+  ensure_secret_value "$secret_name" "$(python3 - <<'PY'
+import secrets
+print(secrets.token_urlsafe(48))
+PY
+)"
+  log "generated secret ${secret_name}"
+}
+
+reconcile_declared_secret_iam() {
+  local inventory_json=""
+  local secret_names=""
+  local plans_file=""
+  local secret_name=""
+  local expected_surfaces=""
+  local policy_json=""
+  local plan=""
+  local action=""
+  local role=""
+  local member=""
+  local declared=0
+
+  inventory_json="$(gc secrets list --format=json)" || {
+    echo "ERROR: cannot inventory Secret Manager before exact IAM reconciliation" >&2
+    return 1
+  }
+  secret_names="$(printf '%s' "$inventory_json" | python3 -c '
+import json
+import re
+import sys
+
+project = sys.argv[1]
+items = json.load(sys.stdin)
+if not isinstance(items, list):
+    raise SystemExit("Secret Manager inventory is not a list")
+prefix = f"projects/{project}/secrets/"
+names = []
+for item in items:
+    if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+        raise SystemExit("Secret Manager inventory entry is malformed")
+    name = item["name"]
+    if name.startswith("projects/"):
+        if not name.startswith(prefix):
+            raise SystemExit("Secret Manager inventory contains a cross-project resource")
+        name = name[len(prefix):]
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,255}", name):
+        raise SystemExit("Secret Manager inventory contains an invalid resource name")
+    names.append(name)
+if len(names) != len(set(names)):
+    raise SystemExit("Secret Manager inventory contains duplicate resources")
+print("\n".join(sorted(names)))
+' "$PROJECT_ID")" || return 1
+  if ! printf '%s' "$TR_SECRET_IAM_PRESERVED_ACCESSORS_JSON" | python3 -c '
+import json
+import sys
+
+inventory = set(sys.argv[1].splitlines())
+value = json.load(sys.stdin)
+if set(value) - inventory:
+    raise SystemExit("preserved accessor allowlist references an absent secret")
+' "$secret_names"; then
+    echo "ERROR: preserved secret accessor allowlist references absent resources" >&2
+    return 1
+  fi
+
+  plans_file="$(mktemp "${TMPDIR:-/tmp}/tr-secret-iam-plans-XXXXXX")"
+  chmod 600 "$plans_file"
+  # Inventory and validate the complete project before the first mutation.
+  # Unrelated non-public bindings are never removed: they must be explicitly
+  # listed in TR_SECRET_IAM_PRESERVED_ACCESSORS_JSON or this preflight fails.
+  while IFS= read -r secret_name; do
+    [ -n "$secret_name" ] || continue
+    policy_json="$(gc secrets get-iam-policy "$secret_name" --format=json)" || {
+      echo "ERROR: cannot read Secret Manager IAM for ${secret_name}" >&2
+      return 1
+    }
+    if expected_surfaces="$(secret_expected_surfaces "$secret_name")"; then
+      declared=1
+    else
+      expected_surfaces=""
+      declared=0
+      if deploy_service_account_owns_secret "$secret_name" ||
+         synthetic_service_account_owns_secret "$secret_name"; then
+        declared=1
+      fi
+    fi
+    plan="$(printf '%s' "$policy_json" | secret_iam_policy_contract_json plan \
+      "$secret_name" "$expected_surfaces")" || {
+      echo "ERROR: unsafe Secret Manager IAM preflight for ${secret_name}" >&2
+      return 1
+    }
+    if [ "$declared" = "0" ] && [ -n "$plan" ]; then
+      echo "ERROR: unknown secret ${secret_name} has runtime, deploy, synthetic, or public IAM; remove it in a separately reviewed owner change" >&2
+      return 1
+    fi
+    while IFS=$'\t' read -r action role member; do
+      [ -n "$action" ] || continue
+      [ "$declared" = "1" ] || continue
+      printf '%s\t%s\t%s\t%s\n' \
+        "$secret_name" "$action" "$role" "$member" >>"$plans_file"
+    done <<<"$plan"
+  done <<<"$secret_names"
+
+  while IFS=$'\t' read -r secret_name action role member; do
+    [ -n "$secret_name" ] || continue
+    case "$action" in
+      add)
+        gc secrets add-iam-policy-binding "$secret_name" \
+          --member="$member" \
+          --role="$role" \
+          --condition=None \
+          --quiet >/dev/null
+        ;;
+      remove)
+        gc secrets remove-iam-policy-binding "$secret_name" \
+          --member="$member" \
+          --role="$role" \
+          --condition=None \
+          --quiet >/dev/null
+        ;;
+      *)
+        echo "ERROR: invalid preflighted secret IAM action ${action}" >&2
+        return 1
+        ;;
+    esac
+  done <"$plans_file"
+
+  while IFS= read -r secret_name; do
+    [ -n "$secret_name" ] || continue
+    if expected_surfaces="$(secret_expected_surfaces "$secret_name")"; then
+      :
+    else
+      expected_surfaces=""
+    fi
+    policy_json="$(gc secrets get-iam-policy "$secret_name" --format=json)" || return 1
+    if ! printf '%s' "$policy_json" | secret_iam_policy_contract_json verify \
+        "$secret_name" "$expected_surfaces"; then
+      echo "ERROR: exact Secret Manager IAM postcondition failed for ${secret_name}" >&2
+      return 1
+    fi
+  done <<<"$secret_names"
+  rm -f "$plans_file"
+}
+
+verify_runtime_secret_access() {
+  local requirement="$1"
+  local secret_name="$2"
+  local expected_surfaces=""
+  local existence_rc=0
+  local policy_json=""
+  if secret_exists_or_error "$secret_name"; then
+    :
+  else
+    existence_rc=$?
+    if [ "$existence_rc" -eq 1 ] && [ "$requirement" = "optional" ]; then
+      return 0
+    fi
+    if [ "$existence_rc" -eq 1 ]; then
+      echo "ERROR: required runtime secret ${secret_name} does not exist" >&2
+    fi
+    return 1
+  fi
+  if expected_surfaces="$(secret_expected_surfaces "$secret_name")"; then
+    :
+  else
+    expected_surfaces=""
+  fi
+  policy_json="$(gc secrets get-iam-policy "$secret_name" --format=json)" || return 1
+  if ! printf '%s' "$policy_json" | secret_iam_policy_contract_json verify \
+      "$secret_name" "$expected_surfaces"; then
+    echo "ERROR: exact Secret Manager accessor contract failed for ${secret_name}" >&2
+    return 1
+  fi
+}
+
 ensure_secret_from_prompt_file() {
   local secret_name="$1"
   local prompt_file="$2"
@@ -139,13 +340,11 @@ ensure_secret_from_env_file "TOGETHER_API_KEY" "trustedrouter-together-api-key" 
 ensure_secret_from_env_file "FIREWORKS_API_KEY" "trustedrouter-fireworks-api-key" "FIREWORKS_AI_API_KEY"
 ensure_secret_from_env_file "DEEPINFRA_API_KEY" "trustedrouter-deepinfra-api-key"
 # Cohere — embeddings only (native /v2/embed in the enclave). Reads
-# COHERE_API_KEY from ~/.quill_cloud_keys.private. Runtime read access comes
-# from the project-level secretAccessor binding (infra.sh), like every other
-# provider secret.
+# COHERE_API_KEY from ~/.quill_cloud_keys.private. The chat-only resource
+# binding is verified below with every other provider secret.
 ensure_secret_from_env_file "COHERE_API_KEY" "trustedrouter-cohere-api-key"
 # Voyage AI — embeddings only (OpenAI-shaped /v1/embeddings in the enclave).
-# Reads VOYAGE_API_KEY from ~/.quill_cloud_keys.private. Same project-level
-# secretAccessor binding as every other provider secret.
+# Reads VOYAGE_API_KEY from ~/.quill_cloud_keys.private. It is also chat-only.
 ensure_secret_from_env_file "VOYAGE_API_KEY" "trustedrouter-voyage-api-key"
 # Xiaomi MiMo — OpenAI-compatible chat (api.xiaomimimo.com/v1). Reads
 # XIAOMI_API_KEY from ~/.quill_cloud_keys.private.
@@ -228,7 +427,7 @@ ensure_secret_from_prompt_file "trustedrouter-socrates-advisor-prompt-v1" "$SOCR
 ensure_secret_from_prompt_file "trustedrouter-athena-worker-prompt-v1" "$ATHENA_PROMPTS_FILE" "Worker Prompt V1"
 
 ensure_secret_from_env_file "TR_SYNTHETIC_MONITOR_API_KEY" "trustedrouter-synthetic-monitor-api-key" "SYNTHETIC_MONITOR_API_KEY"
-ensure_secret_from_env_file "SENTRY_DSN" "trustedrouter-sentry-dsn"
+require_secret_from_env_file "SENTRY_DSN" "trustedrouter-sentry-dsn"
 ensure_secret_from_env_file \
   "TR_OPS_CHAT_WEBHOOK_SECRET" \
   "trustedrouter-ops-chat-webhook-secret" \
@@ -238,68 +437,11 @@ ensure_secret_from_env_file \
 # pushed to Secret Manager like every other TR secret. The GHA WIF service
 # account receives access only to the individual secrets it needs.
 ensure_secret_from_env_file "TR_API_KEY_FOR_SELF_HEAL" "trustedrouter-tr-api-key-for-self-heal"
-TR_DEPLOY_SA="${TR_DEPLOY_SA:-tr-deploy@${PROJECT_ID}.iam.gserviceaccount.com}"
-
-grant_tr_deploy_secret_access() {
-  local secret_name="$1"
-  if ! gc secrets describe "$secret_name" >/dev/null 2>&1; then
-    return
-  fi
-  log "granting ${TR_DEPLOY_SA} accessor on ${secret_name}"
-  gc secrets add-iam-policy-binding "$secret_name" \
-    --member="serviceAccount:${TR_DEPLOY_SA}" \
-    --role="roles/secretmanager.secretAccessor" \
-    --quiet >/dev/null \
-    || log "WARN: per-secret binding for ${secret_name} returned non-zero"
-}
-
-grant_tr_deploy_secret_access "trustedrouter-tr-api-key-for-self-heal"
-grant_tr_deploy_secret_access "trustedrouter-ops-chat-webhook-secret"
-grant_tr_deploy_secret_access "trustedrouter-together-api-key"
-grant_tr_deploy_secret_access "trustedrouter-parasail-api-key"
-grant_tr_deploy_secret_access "trustedrouter-lightning-api-key"
-grant_tr_deploy_secret_access "trustedrouter-gmi-api-key"
-grant_tr_deploy_secret_access "trustedrouter-deepinfra-api-key"
-grant_tr_deploy_secret_access "trustedrouter-phala-confidential-api-key"
-grant_tr_deploy_secret_access "trustedrouter-siliconflow-api-key"
-grant_tr_deploy_secret_access "trustedrouter-venice-api-key"
-grant_tr_deploy_secret_access "trustedrouter-openai-api-key"
-grant_tr_deploy_secret_access "trustedrouter-grok-api-key"
-grant_tr_deploy_secret_access "trustedrouter-deepseek-api-key"
-grant_tr_deploy_secret_access "trustedrouter-mistral-api-key"
-grant_tr_deploy_secret_access "trustedrouter-zai-api-key"
-grant_tr_deploy_secret_access "trustedrouter-cerebras-api-key"
-grant_tr_deploy_secret_access "trustedrouter-kimi-api-key"
-grant_tr_deploy_secret_access "trustedrouter-fireworks-api-key"
-grant_tr_deploy_secret_access "trustedrouter-gemini-api-key"
-grant_tr_deploy_secret_access "trustedrouter-novita-api-key"
-grant_tr_deploy_secret_access "trustedrouter-nebius-api-key"
-grant_tr_deploy_secret_access "trustedrouter-minimax-api-key"
-grant_tr_deploy_secret_access "trustedrouter-crusoe-api-key"
-grant_tr_deploy_secret_access "trustedrouter-friendli-api-key"
-grant_tr_deploy_secret_access "trustedrouter-baseten-api-key"
-grant_tr_deploy_secret_access "trustedrouter-telnyx-api-key"
-grant_tr_deploy_secret_access "trustedrouter-veriff-api-key"
-grant_tr_deploy_secret_access "trustedrouter-veriff-shared-secret-key"
-grant_tr_deploy_secret_access "trustedrouter-wafer-api-key"
-grant_tr_deploy_secret_access "trustedrouter-alibaba-api-key"
-grant_tr_deploy_secret_access "trustedrouter-makora-api-key"
-grant_tr_deploy_secret_access "trustedrouter-chutes-api-key"
-grant_tr_deploy_secret_access "trustedrouter-digitalocean-api-key"
-grant_tr_deploy_secret_access "trustedrouter-cloudflare-workers-ai-api-token"
-grant_tr_deploy_secret_access "trustedrouter-inceptron-api-key"
-grant_tr_deploy_secret_access "trustedrouter-morph-api-key"
-grant_tr_deploy_secret_access "trustedrouter-atlas-cloud-api-key"
-grant_tr_deploy_secret_access "trustedrouter-streamlake-api-key"
-grant_tr_deploy_secret_access "trustedrouter-neurometric-api-key"
-grant_tr_deploy_secret_access "trustedrouter-engy-api-key"
-grant_tr_deploy_secret_access "trustedrouter-pearl-api-key"
-grant_tr_deploy_secret_access "trustedrouter-zero-g-api-key"
-grant_tr_deploy_secret_access "trustedrouter-clickhouse-control-read-password"
-grant_tr_deploy_secret_access "trustedrouter-adyen-test-api-key"
-grant_tr_deploy_secret_access "trustedrouter-adyen-test-client-key"
-grant_tr_deploy_secret_access "trustedrouter-adyen-test-hmac-key"
-grant_tr_deploy_secret_access "trustedrouter-adyen-test-reference-key"
+if [ -n "${TR_DEPLOY_SA:-}" ] && [ "$TR_DEPLOY_SA" != "$DEPLOY_SERVICE_ACCOUNT" ]; then
+  echo "ERROR: TR_DEPLOY_SA must match TR_DEPLOY_SERVICE_ACCOUNT" >&2
+  exit 1
+fi
+TR_DEPLOY_SA="$DEPLOY_SERVICE_ACCOUNT"
 
 # Axiom logging — ship structured logs to a dedicated dataset for
 # slice-and-dice analysis (request_id correlation, rate-limit hits,
@@ -309,6 +451,57 @@ grant_tr_deploy_secret_access "trustedrouter-adyen-test-reference-key"
 ensure_secret_from_env_file "AXIOM_API_TOKEN" "trustedrouter-axiom-api-token" "AXIOM_TOKEN" "AXIOM_API_KEY"
 require_secret_from_env_file "STRIPE_SECRET_KEY" "trustedrouter-stripe-secret-key" "STRIPE_KEY"
 require_secret_from_env_file "STRIPE_WEBHOOK_SECRET" "trustedrouter-stripe-webhook-secret"
+require_secret_from_env_file \
+  "TR_INTERNAL_STRIPE_PAYMENT_INTENTS_KEY" \
+  "trustedrouter-internal-stripe-payment-intents-key"
+
+# The internal billing process creates off-session PaymentIntents but must not
+# inherit the console's full Stripe key. Stripe restricted live keys carry the
+# rk_live_ prefix; the exact dashboard permission contract is documented and
+# must be verified provider-side because Secret Manager can only attest to the
+# stored bytes and IAM, not Stripe's permission switches.
+_internal_stripe_key="$(gc secrets versions access latest \
+  --secret=trustedrouter-internal-stripe-payment-intents-key)"
+_console_stripe_key="$(gc secrets versions access latest \
+  --secret=trustedrouter-stripe-secret-key)"
+case "$_internal_stripe_key" in
+  rk_live_?*) ;;
+  *)
+    echo "ERROR: internal Stripe key must be a live restricted rk_live_ key" >&2
+    exit 1
+    ;;
+esac
+if [ "$_internal_stripe_key" = "$_console_stripe_key" ]; then
+  echo "ERROR: internal Stripe key must differ from the console Stripe key" >&2
+  exit 1
+fi
+unset _internal_stripe_key _console_stripe_key
+
+ensure_secret_from_env_file \
+  "TR_ATTRIBUTION_COOKIE_SECRET" \
+  "trustedrouter-attribution-cookie-secret"
+_attribution_exists_rc=0
+if secret_exists_or_error trustedrouter-attribution-cookie-secret; then
+  :
+else
+  _attribution_exists_rc=$?
+  if [ "$_attribution_exists_rc" -ne 1 ]; then
+    exit 1
+  fi
+  ensure_secret_value trustedrouter-attribution-cookie-secret "$(python3 - <<'PY'
+import secrets
+print(secrets.token_hex(32))
+PY
+)"
+  log "generated secret trustedrouter-attribution-cookie-secret"
+fi
+_attribution_cookie_secret="$(gc secrets versions access latest \
+  --secret=trustedrouter-attribution-cookie-secret)"
+if [ "${#_attribution_cookie_secret}" -lt 32 ]; then
+  echo "ERROR: attribution cookie secret must contain at least 32 characters" >&2
+  exit 1
+fi
+unset _attribution_exists_rc _attribution_cookie_secret
 
 # OAuth + SES secrets — independently optional. Push to Secret Manager only
 # when the local keys file (or env) supplies a value; production fail-closed
@@ -323,9 +516,36 @@ ensure_secret_from_env_file "GITHUB_CLIENT_SECRET" "trustedrouter-github-client-
 ensure_secret_from_env_file \
   "GITHUB_ALIAS_CREDENTIALS_JSON" \
   "trustedrouter-github-alias-credentials-json"
-# SES email credentials only; not used for AWS hosting or failover.
-ensure_secret_from_env_file "AWS_ACCESS_KEY_ID" "trustedrouter-aws-access-key-id"
-ensure_secret_from_env_file "AWS_SECRET_ACCESS_KEY" "trustedrouter-aws-secret-access-key"
+# SES email credentials only; not used for AWS hosting or failover. Internal
+# billing gets an independent AWS principal whose provider-side policy allows
+# ses:SendEmail and nothing else; sharing the console/actions key would undo
+# the service-account split even if Secret Manager resource names differed.
+require_secret_from_env_file "AWS_ACCESS_KEY_ID" "trustedrouter-aws-access-key-id"
+require_secret_from_env_file "AWS_SECRET_ACCESS_KEY" "trustedrouter-aws-secret-access-key"
+require_secret_from_env_file \
+  "TR_INTERNAL_SES_ACCESS_KEY_ID" \
+  "trustedrouter-internal-ses-access-key-id"
+require_secret_from_env_file \
+  "TR_INTERNAL_SES_SECRET_ACCESS_KEY" \
+  "trustedrouter-internal-ses-secret-access-key"
+_internal_ses_access_key_id="$(gc secrets versions access latest \
+  --secret=trustedrouter-internal-ses-access-key-id)"
+_internal_ses_secret_access_key="$(gc secrets versions access latest \
+  --secret=trustedrouter-internal-ses-secret-access-key)"
+_shared_ses_access_key_id="$(gc secrets versions access latest \
+  --secret=trustedrouter-aws-access-key-id)"
+_shared_ses_secret_access_key="$(gc secrets versions access latest \
+  --secret=trustedrouter-aws-secret-access-key)"
+if [ "$_internal_ses_access_key_id" = "$_shared_ses_access_key_id" ] ||
+   [ "$_internal_ses_secret_access_key" = "$_shared_ses_secret_access_key" ]; then
+  echo "ERROR: internal SES credentials must differ from console/actions SES credentials" >&2
+  exit 1
+fi
+unset \
+  _internal_ses_access_key_id \
+  _internal_ses_secret_access_key \
+  _shared_ses_access_key_id \
+  _shared_ses_secret_access_key
 ensure_secret_from_env_file "PAYPAL_CLIENT_ID" "trustedrouter-paypal-client-id"
 ensure_secret_from_env_file "PAYPAL_CLIENT_SECRET" "trustedrouter-paypal-client-secret"
 ensure_secret_from_env_file "PAYPAL_WEBHOOK_ID" "trustedrouter-paypal-webhook-id"
@@ -334,33 +554,214 @@ ensure_secret_from_env_file "ADYEN_CLIENT_KEY" "trustedrouter-adyen-test-client-
 ensure_secret_from_env_file "ADYEN_HMAC_KEY" "trustedrouter-adyen-test-hmac-key"
 ensure_secret_from_env_file \
   "ADYEN_REFERENCE_KEY" "trustedrouter-adyen-test-reference-key"
-if ! gc secrets describe trustedrouter-internal-gateway-token >/dev/null 2>&1; then
-  ensure_secret_value trustedrouter-internal-gateway-token "$(python3 - <<'PY'
-import secrets
-print(secrets.token_urlsafe(48))
-PY
-)"
-  log "generated secret trustedrouter-internal-gateway-token"
-fi
-if ! gc secrets describe trustedrouter-observer-internal-token >/dev/null 2>&1; then
-  ensure_secret_value trustedrouter-observer-internal-token "$(python3 - <<'PY'
-import secrets
-print(secrets.token_urlsafe(48))
-PY
-)"
-  log "generated secret trustedrouter-observer-internal-token"
-fi
+ensure_generated_secret_resource trustedrouter-internal-gateway-token
+ensure_generated_secret_resource trustedrouter-observer-internal-token
 # A copied billing token would silently undo the surface split. Compare values
 # without logging either secret and fail before the rollout can consume them.
 _observer_token_check="$(gc secrets versions access latest \
   --secret=trustedrouter-observer-internal-token)"
 _gateway_token_check="$(gc secrets versions access latest \
   --secret=trustedrouter-internal-gateway-token)"
+_attribution_token_check="$(gc secrets versions access latest \
+  --secret=trustedrouter-attribution-cookie-secret)"
 if [ "$_observer_token_check" = "$_gateway_token_check" ]; then
   echo "ERROR: observer internal token must differ from billing gateway token" >&2
   exit 1
 fi
-unset _observer_token_check _gateway_token_check
+if [ "$_attribution_token_check" = "$_gateway_token_check" ] ||
+   [ "$_attribution_token_check" = "$_observer_token_check" ]; then
+  echo "ERROR: attribution cookie secret must differ from internal credentials" >&2
+  exit 1
+fi
+if secret_exists_or_error trustedrouter-synthetic-monitor-api-key; then
+  _monitor_token_check="$(gc secrets versions access latest \
+    --secret=trustedrouter-synthetic-monitor-api-key)"
+  if [ "$_monitor_token_check" = "$_observer_token_check" ] ||
+     [ "$_monitor_token_check" = "$_gateway_token_check" ] ||
+     [ "$_monitor_token_check" = "$_attribution_token_check" ]; then
+    echo "ERROR: synthetic monitor key must differ from browser and internal credentials" >&2
+    exit 1
+  fi
+  unset _monitor_token_check
+else
+  _monitor_exists_rc=$?
+  if [ "$_monitor_exists_rc" -ne 1 ]; then
+    exit 1
+  fi
+  unset _monitor_exists_rc
+fi
+unset _observer_token_check _gateway_token_check _attribution_token_check
+
+# Reconcile only the declared six-surface, synthetic, and checked-in deploy
+# resources. The complete project inventory is still read before the first
+# mutation: an unknown secret with runtime, deploy, synthetic, or public access
+# fails closed for a separate owner review instead of being rewritten here.
+log "reconciling declared Secret Manager accessor ownership"
+reconcile_declared_secret_iam
+
+# Repeat the named capability checks as readable postconditions. Optional
+# means the resource may be absent, never that an existing resource may have a
+# broader owner set.
+log "verifying required split-runtime Secret Manager ownership"
+verify_runtime_secret_access required \
+  trustedrouter-attribution-cookie-secret \
+  "$PUBLIC_RUN_SERVICE_ACCOUNT" "$CONSOLE_RUN_SERVICE_ACCOUNT"
+verify_runtime_secret_access required \
+  trustedrouter-sentry-dsn \
+  "$CONSOLE_RUN_SERVICE_ACCOUNT" \
+  "$CHAT_RUN_SERVICE_ACCOUNT" \
+  "$WEBHOOKS_RUN_SERVICE_ACCOUNT" \
+  "$INTERNAL_RUN_SERVICE_ACCOUNT"
+verify_runtime_secret_access required \
+  trustedrouter-stripe-secret-key \
+  "$CONSOLE_RUN_SERVICE_ACCOUNT"
+verify_runtime_secret_access required \
+  trustedrouter-stripe-webhook-secret \
+  "$WEBHOOKS_RUN_SERVICE_ACCOUNT"
+verify_runtime_secret_access required \
+  trustedrouter-internal-stripe-payment-intents-key \
+  "$INTERNAL_RUN_SERVICE_ACCOUNT"
+for secret_name in \
+  trustedrouter-aws-access-key-id \
+  trustedrouter-aws-secret-access-key; do
+  verify_runtime_secret_access required "$secret_name" \
+    "$ACTIONS_RUN_SERVICE_ACCOUNT" "$CONSOLE_RUN_SERVICE_ACCOUNT"
+done
+for secret_name in \
+  trustedrouter-internal-ses-access-key-id \
+  trustedrouter-internal-ses-secret-access-key \
+  trustedrouter-internal-gateway-token \
+  trustedrouter-observer-internal-token \
+  trustedrouter-synthetic-monitor-api-key; do
+  verify_runtime_secret_access required "$secret_name" \
+    "$INTERNAL_RUN_SERVICE_ACCOUNT"
+done
+
+log "verifying optional split-runtime Secret Manager ownership"
+verify_runtime_secret_access optional \
+  trustedrouter-ops-chat-webhook-secret \
+  "$ACTIONS_RUN_SERVICE_ACCOUNT"
+for secret_name in \
+  trustedrouter-google-client-id \
+  trustedrouter-google-client-secret \
+  trustedrouter-google-alias-credentials-json \
+  trustedrouter-github-client-id \
+  trustedrouter-github-client-secret \
+  trustedrouter-github-alias-credentials-json \
+  trustedrouter-clickhouse-provider-read-password \
+  trustedrouter-twilio-account-sid \
+  trustedrouter-twilio-api-key-sid \
+  trustedrouter-twilio-api-key-secret \
+  trustedrouter-twilio-auth-token; do
+  verify_runtime_secret_access optional "$secret_name" \
+    "$CONSOLE_RUN_SERVICE_ACCOUNT"
+done
+for secret_name in \
+  trustedrouter-paypal-client-id \
+  trustedrouter-paypal-client-secret \
+  trustedrouter-adyen-test-reference-key; do
+  verify_runtime_secret_access optional "$secret_name" \
+    "$CONSOLE_RUN_SERVICE_ACCOUNT" "$WEBHOOKS_RUN_SERVICE_ACCOUNT"
+done
+for secret_name in \
+  trustedrouter-paypal-webhook-id \
+  trustedrouter-adyen-test-hmac-key \
+  trustedrouter-veriff-shared-secret-key; do
+  verify_runtime_secret_access optional "$secret_name" \
+    "$WEBHOOKS_RUN_SERVICE_ACCOUNT"
+done
+for secret_name in \
+  trustedrouter-adyen-test-api-key \
+  trustedrouter-adyen-test-client-key \
+  trustedrouter-veriff-api-key; do
+  verify_runtime_secret_access optional "$secret_name" \
+    "$CONSOLE_RUN_SERVICE_ACCOUNT"
+done
+verify_runtime_secret_access optional \
+  trustedrouter-clickhouse-password \
+  "$CONSOLE_RUN_SERVICE_ACCOUNT" "$INTERNAL_RUN_SERVICE_ACCOUNT"
+verify_runtime_secret_access optional \
+  trustedrouter-clickhouse-control-read-password \
+  "$PUBLIC_RUN_SERVICE_ACCOUNT" \
+  "$CONSOLE_RUN_SERVICE_ACCOUNT" \
+  "$INTERNAL_RUN_SERVICE_ACCOUNT"
+# None of the six split runtimes reads AXIOM_API_TOKEN. Keep the secret
+# detached instead of granting a logging credential by habit; an explicitly
+# approved external shipper can own it separately.
+verify_runtime_secret_access optional trustedrouter-axiom-api-token
+for secret_name in \
+  trustedrouter-federation-peer-token \
+  trustedrouter-federation-home-token \
+  trustedrouter-federation-credit-inbound-token \
+  trustedrouter-federation-credit-peer-token \
+  trustedrouter-federation-settlement-inbound-tokens \
+  trustedrouter-federation-settlement-home-token; do
+  verify_runtime_secret_access optional "$secret_name" \
+    "$INTERNAL_RUN_SERVICE_ACCOUNT"
+done
+
+# The chat surface validates the caller and forwards to the separately attested
+# API service; it never calls inference providers directly.  Keep every
+# upstream provider credential and inference prompt detached from all six
+# split runtimes.  Telnyx is the sole exception because console owns the voice
+# operation routes; it is still forbidden on chat.
+DETACHED_PROVIDER_SECRET_NAMES=(
+  trustedrouter-anthropic-api-key
+  trustedrouter-openai-api-key
+  trustedrouter-openai-video-api-key
+  trustedrouter-gemini-api-key
+  trustedrouter-cerebras-api-key
+  trustedrouter-deepseek-api-key
+  trustedrouter-mistral-api-key
+  trustedrouter-kimi-api-key
+  trustedrouter-zai-api-key
+  trustedrouter-together-api-key
+  trustedrouter-fireworks-api-key
+  trustedrouter-deepinfra-api-key
+  trustedrouter-cohere-api-key
+  trustedrouter-voyage-api-key
+  trustedrouter-xiaomi-api-key
+  trustedrouter-grok-api-key
+  trustedrouter-novita-api-key
+  trustedrouter-phala-api-key
+  trustedrouter-phala-confidential-api-key
+  trustedrouter-siliconflow-api-key
+  trustedrouter-tinfoil-api-key
+  trustedrouter-venice-api-key
+  trustedrouter-nebius-api-key
+  trustedrouter-minimax-api-key
+  trustedrouter-friendli-api-key
+  trustedrouter-baseten-api-key
+  trustedrouter-telnyx-api-key
+  trustedrouter-thinking-machines-api-key
+  trustedrouter-wafer-api-key
+  trustedrouter-crusoe-api-key
+  trustedrouter-makora-api-key
+  trustedrouter-alibaba-api-key
+  trustedrouter-ltx-api-key
+  trustedrouter-runway-api-key
+  trustedrouter-kling-api-key
+  trustedrouter-chutes-api-key
+  trustedrouter-digitalocean-api-key
+  trustedrouter-cloudflare-workers-ai-api-token
+  trustedrouter-inceptron-api-key
+  trustedrouter-morph-api-key
+  trustedrouter-atlas-cloud-api-key
+  trustedrouter-streamlake-api-key
+  trustedrouter-neurometric-api-key
+  trustedrouter-engy-api-key
+  trustedrouter-pearl-api-key
+  trustedrouter-zero-g-api-key
+  trustedrouter-athena-worker-prompt-v1
+)
+for secret_name in "${DETACHED_PROVIDER_SECRET_NAMES[@]}"; do
+  if [ "$secret_name" = "trustedrouter-telnyx-api-key" ]; then
+    verify_runtime_secret_access optional "$secret_name" \
+      "$CONSOLE_RUN_SERVICE_ACCOUNT"
+  else
+    verify_runtime_secret_access optional "$secret_name"
+  fi
+done
 
 # Runtime-SA project-level IAM bindings live in infra.sh (Phase 1
 # bootstrap, run as a project Owner). Calling projects.setIamPolicy

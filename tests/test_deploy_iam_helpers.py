@@ -20,7 +20,13 @@ case "$*" in
     ;;
   *"projects get-iam-policy"*)
     if [ "${FAKE_BINDING_PRESENT:-0}" = "1" ]; then
-      printf '%s\\n' "${FAKE_ROLE}"
+      if [ "${FAKE_BINDING_CONDITIONAL:-0}" = "1" ]; then
+        printf '{"bindings":[{"role":"%s","members":["%s"],"condition":{"title":"temporary","expression":"true"}}]}\\n' "${FAKE_ROLE}" "${FAKE_MEMBER}"
+      else
+        printf '{"bindings":[{"role":"%s","members":["%s"]}]}\\n' "${FAKE_ROLE}" "${FAKE_MEMBER}"
+      fi
+    else
+      printf '{"bindings":[]}\\n'
     fi
     ;;
   *"projects add-iam-policy-binding"*)
@@ -45,6 +51,7 @@ def _run_ensure_project_role(
     tmp_path: Path,
     *,
     binding_present: bool,
+    binding_conditional: bool = False,
     add_denied: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     _, calls = _fake_gcloud(tmp_path)
@@ -55,8 +62,10 @@ def _run_ensure_project_role(
         "PROJECT_ID": "test-project",
         "FAKE_GCLOUD_CALLS": str(calls),
         "FAKE_BINDING_PRESENT": "1" if binding_present else "0",
+        "FAKE_BINDING_CONDITIONAL": "1" if binding_conditional else "0",
         "FAKE_ADD_DENIED": "1" if add_denied else "0",
         "FAKE_ROLE": role,
+        "FAKE_MEMBER": "serviceAccount:runtime@test-project.iam.gserviceaccount.com",
     }
     result = subprocess.run(  # noqa: S603 - fixed local test command
         [
@@ -96,3 +105,18 @@ def test_missing_project_role_fails_after_one_denied_write(tmp_path: Path) -> No
     assert result.returncode != 0
     assert sum("add-iam-policy-binding" in call for call in calls) == 1
     assert "Policy update access denied" in result.stderr
+
+
+def test_conditional_project_role_does_not_satisfy_unconditional_grant(
+    tmp_path: Path,
+) -> None:
+    result, calls = _run_ensure_project_role(
+        tmp_path,
+        binding_present=True,
+        binding_conditional=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    writes = [call for call in calls if "add-iam-policy-binding" in call]
+    assert len(writes) == 1
+    assert "--condition=None" in writes[0]

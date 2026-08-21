@@ -148,6 +148,29 @@ _STUB = r"""#!/usr/bin/env bash
 # have any. The run's stdin is /dev/null, so this returns immediately when the
 # stub is not in a pipeline.
 cat >/dev/null 2>&1 || true
+if [ -n "${HARNESS_SEQUENCE_FIXTURES:-}" ] && [ -f "$HARNESS_SEQUENCE_FIXTURES" ]; then
+  joined="${0##*/} $*"
+  while IFS=$'\t' read -r sequence_id pattern; do
+    [ -n "$pattern" ] || continue
+    if printf '%s' "$joined" | grep -Eq -- "$pattern"; then
+      count_file="$HARNESS_STATE_DIR/sequence-${sequence_id}.count"
+      response_file="$HARNESS_STATE_DIR/sequence-${sequence_id}.responses"
+      count=0
+      if [ -f "$count_file" ]; then
+        IFS= read -r count < "$count_file"
+      fi
+      count=$((count + 1))
+      printf '%s\n' "$count" > "$count_file"
+      encoded_reply="$(sed -n "${count}p" "$response_file")"
+      if [ -z "$encoded_reply" ]; then
+        encoded_reply="$(tail -n 1 "$response_file")"
+      fi
+      printf '%s' "$encoded_reply" | base64 --decode
+      printf '\n'
+      exit 0
+    fi
+  done < "$HARNESS_SEQUENCE_FIXTURES"
+fi
 if [ -n "${HARNESS_FIXTURES:-}" ] && [ -f "$HARNESS_FIXTURES" ]; then
   joined="${0##*/} $*"
   while IFS=$'\t' read -r pattern encoded_reply; do
@@ -194,7 +217,12 @@ _SYNTHETIC_INGEST_SERVICE_JSON = json.dumps(
                 "run.googleapis.com/ingress": "internal-and-cloud-load-balancing"
             },
         },
-        "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+        "status": {
+            "conditions": [{"type": "Ready", "status": "True"}],
+            "traffic": [
+                {"revisionName": "trusted-router-billing-harness", "percent": 100}
+            ],
+        },
         "spec": {
             "template": {
                 "spec": {
@@ -229,6 +257,142 @@ _SYNTHETIC_INGEST_SERVICE_JSON = json.dumps(
     },
     separators=(",", ":"),
 )
+_SYNTHETIC_INGEST_REVISION_JSON = json.dumps(
+    {
+        "metadata": {"name": "trusted-router-billing-harness"},
+        "spec": {
+            "serviceAccountName": "tr-internal@quill-cloud-proxy.iam.gserviceaccount.com",
+            "containers": [
+                {
+                    "env": [
+                        {"name": "TR_SERVICE_SURFACE", "value": "internal"},
+                        {
+                            "name": "TR_OBSERVER_INTERNAL_TOKEN",
+                            "valueFrom": {
+                                "secretKeyRef": {
+                                    "name": "trustedrouter-observer-internal-token",
+                                    "key": "latest",
+                                }
+                            },
+                        },
+                        {
+                            "name": "TR_INTERNAL_GATEWAY_TOKEN",
+                            "valueFrom": {
+                                "secretKeyRef": {
+                                    "name": "trustedrouter-internal-gateway-token",
+                                    "key": "latest",
+                                }
+                            },
+                        },
+                    ]
+                }
+            ],
+        },
+    },
+    separators=(",", ":"),
+)
+_SYNTHETIC_SECRET_POLICY_JSON = json.dumps(
+    {
+        "bindings": [
+            {
+                "role": "roles/secretmanager.secretAccessor",
+                "members": [
+                    "serviceAccount:tr-internal@quill-cloud-proxy.iam.gserviceaccount.com",
+                    "serviceAccount:tr-synthetic@quill-cloud-proxy.iam.gserviceaccount.com",
+                ],
+            }
+        ]
+    },
+    separators=(",", ":"),
+)
+_SYNTHETIC_ACCOUNT_JSON = json.dumps(
+    {
+        "email": "tr-synthetic@quill-cloud-proxy.iam.gserviceaccount.com",
+        "disabled": False,
+    },
+    separators=(",", ":"),
+)
+_SYNTHETIC_ACCOUNT_POLICY_JSON = json.dumps(
+    {
+        "bindings": [
+            {
+                "role": "roles/iam.serviceAccountUser",
+                "members": [
+                    "serviceAccount:tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com"
+                ],
+            }
+        ]
+    },
+    separators=(",", ":"),
+)
+_SYNTHETIC_VERSION_LIST_JSON = json.dumps(
+    [
+        {
+            "name": "projects/quill-cloud-proxy/secrets/fixture/versions/7",
+            "state": "ENABLED",
+        }
+    ],
+    separators=(",", ":"),
+)
+_SYNTHETIC_JOB_POLICY_JSON = json.dumps(
+    {
+        "bindings": [
+            {
+                "role": "roles/run.invoker",
+                "members": [
+                    "serviceAccount:tr-synthetic@quill-cloud-proxy.iam.gserviceaccount.com"
+                ],
+            }
+        ]
+    },
+    separators=(",", ":"),
+)
+_SYNTHETIC_JOB_JSON = json.dumps(
+    {
+        "spec": {
+            "template": {
+                "spec": {
+                    "template": {
+                        "spec": {
+                            "serviceAccountName": (
+                                "tr-synthetic@quill-cloud-proxy.iam.gserviceaccount.com"
+                            ),
+                            "containers": [
+                                {
+                                    "env": [
+                                        {
+                                            "name": "TR_OBSERVER_INTERNAL_TOKEN",
+                                            "valueFrom": {
+                                                "secretKeyRef": {
+                                                    "name": (
+                                                        "trustedrouter-observer-internal-token"
+                                                    ),
+                                                    "key": "7",
+                                                }
+                                            },
+                                        },
+                                        {
+                                            "name": "TR_SYNTHETIC_MONITOR_API_KEY",
+                                            "valueFrom": {
+                                                "secretKeyRef": {
+                                                    "name": (
+                                                        "trustedrouter-synthetic-monitor-api-key"
+                                                    ),
+                                                    "key": "7",
+                                                }
+                                            },
+                                        },
+                                    ]
+                                }
+                            ],
+                        }
+                    }
+                }
+            }
+        }
+    },
+    separators=(",", ":"),
+)
 
 
 @dataclass(frozen=True)
@@ -240,6 +404,11 @@ class ScriptFixture:
     env: dict[str, str] = field(default_factory=dict)
     #: ``(extended-regex over "<command> <argv...>", stdout)`` in priority order.
     responses: tuple[tuple[str, str], ...] = ()
+    #: Like ``responses``, but each matching call consumes the next reply and
+    #: then repeats the last one. This lets tests model an IAM policy changing
+    #: between two preflight reads instead of proving ordering against a
+    #: forever-static fake control plane.
+    sequential_responses: tuple[tuple[str, tuple[str, ...]], ...] = ()
     #: Extended regexes whose matching command must exit 1 instead of succeeding.
     failures: tuple[str, ...] = ()
     #: Files to create under ``$HOME`` before the run, path -> contents.
@@ -375,9 +544,42 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
     "scripts/deploy/synthetic.sh": ScriptFixture(
         env={"TR_BILLING_SERVICE": "trusted-router-billing"},
         responses=(
+            (r"projects describe .*--format=value\(projectNumber\)", "123456789"),
+            (r"projects get-iam-policy .*--format=json", '{"bindings":[]}'),
+            (
+                r"iam service-accounts describe tr-synthetic@.*--format=json",
+                _SYNTHETIC_ACCOUNT_JSON,
+            ),
+            (
+                r"iam service-accounts get-iam-policy tr-synthetic@.*--format=json",
+                _SYNTHETIC_ACCOUNT_POLICY_JSON,
+            ),
+            (
+                r"secrets versions list .*--filter=state=ENABLED.*--format=json",
+                _SYNTHETIC_VERSION_LIST_JSON,
+            ),
+            (
+                r"secrets get-iam-policy .*--format=json",
+                _SYNTHETIC_SECRET_POLICY_JSON,
+            ),
+            (
+                r"run jobs get-iam-policy .*--format=json",
+                _SYNTHETIC_JOB_POLICY_JSON,
+            ),
+            (r"run jobs describe .*--format=json", _SYNTHETIC_JOB_JSON),
+            (
+                r"artifacts docker images describe .*--format=json",
+                '{"image_summary":{"fully_qualified_digest":'
+                '"us-central1-docker.pkg.dev/quill-cloud-proxy/trusted-router/'
+                'trusted-router@sha256:' + "a" * 64 + '"}}',
+            ),
             (
                 r"run services describe trusted-router-billing.*--format=json",
                 _SYNTHETIC_INGEST_SERVICE_JSON,
+            ),
+            (
+                r"run revisions describe trusted-router-billing-harness.*--format=json",
+                _SYNTHETIC_INGEST_REVISION_JSON,
             ),
             (
                 r"dns managed-zones describe trusted-router-private-run-app --format=json",
@@ -526,6 +728,24 @@ class DeployScriptHarness:
                 for pattern, reply in fixture.responses
             )
         )
+        state_dir = run_dir / "state"
+        state_dir.mkdir()
+        sequence_fixtures_file = run_dir / "sequence-fixtures.tsv"
+        sequence_fixtures_file.write_text(
+            "".join(
+                f"{index}\t{pattern}\n"
+                for index, (pattern, _) in enumerate(fixture.sequential_responses)
+            )
+        )
+        for index, (_, replies) in enumerate(fixture.sequential_responses):
+            if not replies:
+                raise ValueError("sequential response fixtures must not be empty")
+            (state_dir / f"sequence-{index}.responses").write_text(
+                "".join(
+                    f"{base64.b64encode(reply.encode()).decode('ascii')}\n"
+                    for reply in replies
+                )
+            )
         failures_file = run_dir / "failures.txt"
         failures_file.write_text("".join(f"{pattern}\n" for pattern in fixture.failures))
 
@@ -536,6 +756,8 @@ class DeployScriptHarness:
             "LANG": "C",
             "HARNESS_ARGV_LOG": str(argv_log),
             "HARNESS_FIXTURES": str(fixtures_file),
+            "HARNESS_SEQUENCE_FIXTURES": str(sequence_fixtures_file),
+            "HARNESS_STATE_DIR": str(state_dir),
             "HARNESS_FAILURES": str(failures_file),
             "HARNESS_VERIFIER_RC": str(verifier_rc),
             **{k: v for k, v in fixture.env.items() if k not in omit_env},
