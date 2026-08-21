@@ -115,6 +115,8 @@ def test_bigtable_round_trip_preserves_key_shard_expiry_and_settlement() -> None
 
 def test_bigtable_ledger_fails_closed_without_authoritative_region_profile() -> None:
     ledger = BigtableRegionalQuotaLedger({"us-central1": _FakeBigtableTable()})
+    assert ledger.supports_region("us-central1") is True
+    assert ledger.supports_region("europe-west4") is False
     with pytest.raises(RegionalLeaseLedgerError, match="no fixed Bigtable app profile"):
         ledger.get("rql-test", region="europe-west4")
 
