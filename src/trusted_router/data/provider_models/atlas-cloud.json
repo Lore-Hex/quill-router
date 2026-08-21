@@ -3416,8 +3416,8 @@
         "max_tokens",
         "logit_bias"
       ],
-      "input_token_price_per_m": 140000,
-      "output_token_price_per_m": 280000,
+      "input_token_price_per_m": 440000,
+      "output_token_price_per_m": 1320000,
       "cached_input_token_price_per_m": 28000
     },
     {

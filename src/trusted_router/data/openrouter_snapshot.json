@@ -3160,8 +3160,8 @@
           "tr_provider_slug": "atlas-cloud",
           "context_length": 1310720,
           "pricing": {
-            "prompt": "0.00000014",
-            "completion": "0.00000028",
+            "prompt": "0.00000044",
+            "completion": "0.00000132",
             "input_cache_read": "0.000000028"
           },
           "pricing_source": "provider_direct",
