@@ -3,7 +3,7 @@
   "provider": "alibaba",
   "source": "https://ws-el6e4bpnggpx7g88.eu-central-1.maas.aliyuncs.com/compatible-mode/v1/models",
   "price_source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
-  "generated_at": "2026-08-21T20:28:30Z",
+  "generated_at": "2026-08-21T21:27:26Z",
   "price_scale": "microdollars_per_million",
   "model_count": 80,
   "models": [
