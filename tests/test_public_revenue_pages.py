@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from trusted_router.catalog import endpoints_for_model
 from trusted_router.dashboard import PUBLIC_PAGES
 from trusted_router.storage import STORE
 
@@ -480,14 +481,17 @@ def test_public_models_page_does_not_require_api_key(client: TestClient) -> None
 
 
 def test_public_model_detail_lists_distinct_serving_providers(client: TestClient) -> None:
-    response = client.get("/models/moonshotai/kimi-k2.6")
+    model_id = "moonshotai/kimi-k2.6"
+    response = client.get(f"/models/{model_id}")
 
     assert response.status_code == 200
     assert "Providers serving this model" in response.text
     assert "Endpoints</th>" in response.text
     assert 'href="https://aiiq.org/models/kimi-k2.6/"' in response.text
     assert "IQ 116" in response.text
-    for provider in ["kimi", "parasail", "together", "novita"]:
+    expected_providers = {endpoint.provider for endpoint in endpoints_for_model(model_id)}
+    assert "kimi" in expected_providers
+    for provider in expected_providers:
         assert f'title="{provider}"' in response.text
 
 

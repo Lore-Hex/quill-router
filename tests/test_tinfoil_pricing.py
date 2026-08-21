@@ -141,9 +141,12 @@ def test_tinfoil_deepseek_route_is_confidential_and_uses_live_prices() -> None:
     provider = PROVIDERS["tinfoil"]
 
     assert endpoint.upstream_id == "deepseek-v4-flash"
-    assert endpoint.prompt_price_microdollars_per_million_tokens == 211_000
-    assert endpoint.completion_price_microdollars_per_million_tokens == 422_000
-    assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 21_100
+    # Accepted against Tinfoil's authoritative /v1/models feed on
+    # 2026-08-21: $0.30 input, $0.06 cached input, and $0.70 output.
+    # Customer prices below include TrustedRouter's 5.5% markup.
+    assert endpoint.prompt_price_microdollars_per_million_tokens == 316_500
+    assert endpoint.completion_price_microdollars_per_million_tokens == 738_500
+    assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 63_300
     assert provider.provider_zero_data_retention is True
     assert provider.provider_confidential_compute is True
     assert provider.provider_e2ee is True

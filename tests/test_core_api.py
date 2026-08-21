@@ -592,7 +592,10 @@ def test_embeddings_and_model_endpoints(
         "Credits",
         "BYOK",
     ]
-    assert {item["provider"] for item in kimi.json()["data"]} >= {"kimi", "together"}
+    # The first-party Moonshot route is the stable contract. Secondary
+    # providers are discovered from their live serverless catalogs and may
+    # legitimately add or remove Kimi K2.6 without a code change.
+    assert "kimi" in {item["provider"] for item in kimi.json()["data"]}
 
     # gpt-5.5 is OpenAI's served flagship (Credits + BYOK on the openai
     # provider). NB: the GPT-5.4 line and the "-pro" tiers are dropped from
