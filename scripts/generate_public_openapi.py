@@ -169,7 +169,13 @@ def generated_bytes() -> tuple[bytes, bytes]:
     ]
     if leaked:
         raise ValueError("private credential names leaked into public OpenAPI: " + ", ".join(leaked))
-    return body, gzip.compress(body, compresslevel=6, mtime=0)
+    compressed = bytearray(gzip.compress(body, compresslevel=6, mtime=0))
+    # mtime=0 alone is not byte-stable: the gzip header's OS byte (offset 9)
+    # differs across Python runtimes (3.12 wrote 19, 3.14 writes 255), which
+    # would fail the byte-exact drift test under a different interpreter than
+    # the one that committed the asset. Pin it to 255 ("unknown").
+    compressed[9] = 0xFF
+    return body, bytes(compressed)
 
 
 def main() -> int:

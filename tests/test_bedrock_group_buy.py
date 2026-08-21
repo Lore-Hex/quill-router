@@ -394,9 +394,19 @@ def test_public_group_buy_page_never_reads_or_varies_on_session(
     with_session = client.get("/bedrock-group-buy?saved=1", headers=user_headers)
 
     assert anonymous.status_code == with_session.status_code == 200
-    # The CSP nonce is per-request, not per-session; strip it before comparing
-    # so this keeps proving the page never varies on the caller's session.
-    nonce = re.compile(r'nonce="[^"]+"')
+    # The CSP nonce is per-request, not per-session, so the byte comparison
+    # runs with nonces normalized. Normalizing alone could mask a nonce
+    # mistakenly derived from the session, so first pin every nonce to the
+    # 22-char token_urlsafe(16) shape and prove the session render's nonce
+    # carries no session material.
+    nonce = re.compile(r'nonce="([^"]+)"')
+    anonymous_nonces = set(nonce.findall(anonymous.text))
+    session_nonces = set(nonce.findall(with_session.text))
+    for value in anonymous_nonces | session_nonces:
+        assert re.fullmatch(r"[A-Za-z0-9_-]{22}", value), value
+    session_material = "".join(user_headers.values())
+    for value in session_nonces:
+        assert value not in session_material and session_material not in value
     assert nonce.sub('nonce=""', anonymous.text) == nonce.sub('nonce=""', with_session.text)
     assert anonymous.headers["cache-control"].startswith("public,")
     assert with_session.headers["cache-control"].startswith("public,")
