@@ -41,6 +41,9 @@ CEREBRAS_GEMMA4_SHARED_RETIREMENT_AT = datetime(2026, 9, 3, 0, 0, tzinfo=UTC)
 NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
 ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
+FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT = datetime(
+    2026, 8, 22, 12, 0, tzinfo=UTC
+)
 
 # DeepSeek prices direct V4 traffic at twice the off-peak rate during these
 # half-open UTC windows. Keep them as seconds since midnight so boundary
@@ -77,6 +80,12 @@ _DEEPSEEK_V4_PRICES = {
         "off_peak": ProviderPrice(660_000, 1_980_000, 22_000),
         "peak": ProviderPrice(1_320_000, 3_960_000, 44_000),
     },
+}
+
+_FIREWORKS_DSV4_FLASH_0731_MODEL_ID = "deepseek/deepseek-v4-flash-0731"
+_FIREWORKS_DSV4_FLASH_0731_PRICES = {
+    "legacy": ProviderPrice(140_000, 280_000, 28_000),
+    "new": ProviderPrice(220_000, 660_000, 7_000),
 }
 
 
@@ -463,6 +472,7 @@ def latest_scheduled_cutover() -> datetime:
     """
     return max(
         DEEPSEEK_V4_PRICING_EFFECTIVE_AT,
+        FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT,
         PHALA_JULY_2026_EFFECTIVE_AT,
         *(retirement.effective_at for retirement in _RETIREMENTS),
     )
@@ -529,9 +539,30 @@ def provider_pricing_schedule(
     at: datetime | str | None = None,
 ) -> dict[str, object] | None:
     """Public timing metadata for a provider's variable token pricing."""
+    effective_at = _effective_time(at)
+
+    if (
+        provider_slug == "fireworks"
+        and model_id == _FIREWORKS_DSV4_FLASH_0731_MODEL_ID
+    ):
+        return {
+            "kind": "fixed_cutover",
+            "timezone": "UTC",
+            "effective_at": (
+                FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT.isoformat().replace(
+                    "+00:00", "Z"
+                )
+            ),
+            "current_period": (
+                "legacy"
+                if effective_at < FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT
+                else "new"
+            ),
+            "rate_locked_at": "authorization",
+        }
+
     if _deepseek_v4_family(provider_slug, model_id) is None:
         return None
-    effective_at = _effective_time(at)
 
     def clock(seconds: int) -> str:
         return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}"
@@ -567,6 +598,17 @@ def provider_price_microdollars(
     family = _deepseek_v4_family(provider_slug, model_id)
     if family is not None:
         return _DEEPSEEK_V4_PRICES[family][_deepseek_v4_period(effective_at)]
+
+    if (
+        provider_slug == "fireworks"
+        and model_id == _FIREWORKS_DSV4_FLASH_0731_MODEL_ID
+    ):
+        period = (
+            "legacy"
+            if effective_at < FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT
+            else "new"
+        )
+        return _FIREWORKS_DSV4_FLASH_0731_PRICES[period]
 
     if provider_slug == "phala" and model_id == "qwen/qwen-2.5-7b-instruct":
         if effective_at < PHALA_JULY_2026_EFFECTIVE_AT:
