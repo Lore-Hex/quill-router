@@ -277,6 +277,90 @@ def test_confirmed_deepseek_and_gmi_price_transitions_are_allowed(
     assert "deepseek/deepseek-v4-pro" in capsys.readouterr().out
 
 
+def test_confirmed_atlas_v4_flash_0731_transition_is_allowed(
+    tmp_path: Path, capsys
+) -> None:
+    from scripts.check_price_spike import main
+
+    before = _write(
+        tmp_path,
+        "before.json",
+        _make_endpoint_snapshot(
+            ("0.00000008", "0.00000018"),
+            [
+                (
+                    "atlas-cloud",
+                    "deepseek/deepseek-v4-flash-0731",
+                    "0.00000014",
+                    "0.00000028",
+                )
+            ],
+            model_id="deepseek/deepseek-v4-flash-0731",
+        ),
+    )
+    after = _write(
+        tmp_path,
+        "after.json",
+        _make_endpoint_snapshot(
+            ("0.00000008", "0.00000018"),
+            [
+                (
+                    "atlas-cloud",
+                    "deepseek/deepseek-v4-flash-0731",
+                    "0.00000044",
+                    "0.00000132",
+                )
+            ],
+            model_id="deepseek/deepseek-v4-flash-0731",
+        ),
+    )
+
+    assert main([str(before), str(after), "--summary"]) == 0
+    assert "PRICE SPIKE FAILURES" not in capsys.readouterr().out
+
+
+def test_different_atlas_v4_flash_0731_transition_still_blocks(
+    tmp_path: Path, capsys
+) -> None:
+    from scripts.check_price_spike import main
+
+    before = _write(
+        tmp_path,
+        "before.json",
+        _make_endpoint_snapshot(
+            ("0.00000008", "0.00000018"),
+            [
+                (
+                    "atlas-cloud",
+                    "deepseek/deepseek-v4-flash-0731",
+                    "0.00000014",
+                    "0.00000028",
+                )
+            ],
+            model_id="deepseek/deepseek-v4-flash-0731",
+        ),
+    )
+    after = _write(
+        tmp_path,
+        "after.json",
+        _make_endpoint_snapshot(
+            ("0.00000008", "0.00000018"),
+            [
+                (
+                    "atlas-cloud",
+                    "deepseek/deepseek-v4-flash-0731",
+                    "0.00000045",
+                    "0.00000132",
+                )
+            ],
+            model_id="deepseek/deepseek-v4-flash-0731",
+        ),
+    )
+
+    assert main([str(before), str(after), "--summary"]) == 1
+    assert "PRICE SPIKE FAILURES" in capsys.readouterr().out
+
+
 def test_unapproved_deepseek_price_transition_still_blocks(
     tmp_path: Path, capsys
 ) -> None:

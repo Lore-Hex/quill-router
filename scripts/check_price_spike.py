@@ -69,6 +69,23 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
             Decimal("0.000000695999"),
             Decimal("0.000001392"),
         ),
+        # Atlas's authenticated /v1/models feed distinguishes the cheap
+        # unversioned route from the newer 0731 weights. The old snapshot had
+        # inherited the unversioned rate; approve only the exact correction.
+        (
+            "deepseek/deepseek-v4-flash-0731 "
+            "[atlas-cloud:atlas-cloud:deepseek/deepseek-v4-flash-0731]",
+            "prompt",
+            Decimal("0.00000014"),
+            Decimal("0.00000044"),
+        ),
+        (
+            "deepseek/deepseek-v4-flash-0731 "
+            "[atlas-cloud:atlas-cloud:deepseek/deepseek-v4-flash-0731]",
+            "completion",
+            Decimal("0.00000028"),
+            Decimal("0.00000132"),
+        ),
         (
             "moonshotai/kimi-k3 [tinfoil:tinfoil:kimi-k3]",
             "prompt",
