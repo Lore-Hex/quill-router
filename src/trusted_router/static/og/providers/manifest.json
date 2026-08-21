@@ -145,19 +145,19 @@
   },
   "gmi": {
     "card_version": 2,
-    "model_count": 77,
+    "model_count": 61,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 82,
+    "route_count": 66,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 12,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 24,
+    "route_count": 22,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },
@@ -208,10 +208,10 @@
   },
   "lightning": {
     "card_version": 2,
-    "model_count": 37,
+    "model_count": 36,
     "name": "Lightning AI",
     "privacy": "Policy documented",
-    "route_count": 63,
+    "route_count": 61,
     "route_mode": "Prepaid + BYOK",
     "slug": "lightning"
   },
@@ -406,10 +406,10 @@
   },
   "venice": {
     "card_version": 2,
-    "model_count": 58,
+    "model_count": 57,
     "name": "Venice",
     "privacy": "Policy documented",
-    "route_count": 99,
+    "route_count": 97,
     "route_mode": "Prepaid + BYOK",
     "slug": "venice"
   },
