@@ -1,10 +1,10 @@
 {
   "alibaba": {
     "card_version": 2,
-    "model_count": 76,
+    "model_count": 77,
     "name": "Alibaba Cloud Model Studio",
     "privacy": "Policy documented",
-    "route_count": 76,
+    "route_count": 77,
     "route_mode": "Prepaid",
     "slug": "alibaba"
   },
