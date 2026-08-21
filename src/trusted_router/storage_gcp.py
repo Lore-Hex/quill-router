@@ -413,17 +413,25 @@ class SpannerBigtableStore:
         self._regional_quota_ledger = None
         self._regional_quota_lease_cache: dict[tuple[str, str, int], Any] = {}
         self._regional_quota_lease_cache_lock = threading.Lock()
+        profiles = dict(regional_quota_bigtable_app_profiles or {})
         if regional_quota_leases_enabled:
-            profiles = dict(regional_quota_bigtable_app_profiles or {})
             if not bigtable_instance_id or not profiles:
                 raise ValueError(
                     "regional quota leases require a Bigtable instance and fixed app profiles"
+                )
+        # Issuance is region-local, but settlement and refund callbacks may land
+        # on any control-plane region. Every serving process with the fixed
+        # profile map therefore opens the ledger even when local issuance is off.
+        if profiles:
+            if not bigtable_instance_id:
+                raise ValueError(
+                    "regional quota app profiles require a Bigtable instance"
                 )
             try:
                 from google.cloud import bigtable
             except ImportError as exc:  # pragma: no cover - production image.
                 raise RuntimeError(
-                    "Install google-cloud-bigtable when regional quota leases are enabled"
+                    "Install google-cloud-bigtable when regional quota access is configured"
                 ) from exc
             from trusted_router.regional_quota_ledger import (
                 BigtableRegionalQuotaLedger,
@@ -3019,6 +3027,8 @@ class SpannerBigtableStore:
         from trusted_router.storage_gcp_regional_quota import (
             GlobalRegionalQuotaLease,
             OpenRegionalQuotaLease,
+            close_expired_uninitialized_regional_quota_lease,
+            delete_closed_regional_quota_open_index,
             reconcile_regional_quota_lease,
         )
 
@@ -3041,10 +3051,34 @@ class SpannerBigtableStore:
                 if record is None:
                     raise RuntimeError("indexed global regional lease is missing")
                 if record.state == "closed":
-                    raise RuntimeError("closed regional lease retained an open index")
+                    if not delete_closed_regional_quota_open_index(
+                        self,
+                        record,
+                        open_lease,
+                    ):
+                        raise RuntimeError("closed regional lease index cleanup lost its fence")
+                    result["closed"] += 1
+                    continue
                 local = ledger.get(record.lease_id, region=record.region)
                 if local is None:
-                    raise RuntimeError("regional lease row is missing")
+                    closed = close_expired_uninitialized_regional_quota_lease(
+                        self,
+                        record,
+                        now=now,
+                    )
+                    result["reconciled"] += 1
+                    if closed.closed:
+                        with self._regional_quota_lease_cache_lock:
+                            self._regional_quota_lease_cache.pop(
+                                (
+                                    record.workspace_id,
+                                    record.region,
+                                    record.quota_shard,
+                                ),
+                                None,
+                            )
+                        result["closed"] += 1
+                    continue
                 for hold in local.holds:
                     if (
                         hold.state == HoldState.RESERVED
@@ -3097,6 +3131,42 @@ class SpannerBigtableStore:
                     exc_info=True,
                 )
         return result
+
+    def acquire_regional_quota_reconciler_lock(
+        self,
+        *,
+        owner: str,
+        ttl_seconds: int,
+        now: dt.datetime | None = None,
+    ) -> Any | None:
+        from trusted_router.storage_gcp_regional_quota import (
+            acquire_regional_quota_reconciler_lock,
+        )
+
+        return acquire_regional_quota_reconciler_lock(
+            self,
+            owner=owner,
+            ttl_seconds=ttl_seconds,
+            now=now,
+        )
+
+    def release_regional_quota_reconciler_lock(
+        self,
+        *,
+        owner: str,
+        fencing_token: int,
+        now: dt.datetime | None = None,
+    ) -> bool:
+        from trusted_router.storage_gcp_regional_quota import (
+            release_regional_quota_reconciler_lock,
+        )
+
+        return release_regional_quota_reconciler_lock(
+            self,
+            owner=owner,
+            fencing_token=fencing_token,
+            now=now,
+        )
 
     def verify_regional_quota_ledger(self) -> tuple[str, ...]:
         """Prove conditional writes and reads through every fixed app profile."""

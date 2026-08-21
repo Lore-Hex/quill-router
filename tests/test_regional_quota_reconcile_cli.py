@@ -14,9 +14,11 @@ def _isolate_observability(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class _Store:
-    def __init__(self, result: dict[str, int]) -> None:
+    def __init__(self, result: dict[str, int], *, lock_available: bool = True) -> None:
         self.result = result
         self.limits: list[int] = []
+        self.lock_available = lock_available
+        self.released: list[tuple[str, int]] = []
 
     def reconcile_regional_quota_leases(self, *, limit: int) -> dict[str, int]:
         self.limits.append(limit)
@@ -24,6 +26,27 @@ class _Store:
 
     def verify_regional_quota_ledger(self) -> tuple[str, ...]:
         return ("us-central1",)
+
+    def acquire_regional_quota_reconciler_lock(
+        self,
+        *,
+        owner: str,
+        ttl_seconds: int,
+    ) -> SimpleNamespace | None:
+        assert owner.startswith("rqrec-")
+        assert ttl_seconds == 90
+        if not self.lock_available:
+            return None
+        return SimpleNamespace(fencing_token=7)
+
+    def release_regional_quota_reconciler_lock(
+        self,
+        *,
+        owner: str,
+        fencing_token: int,
+    ) -> bool:
+        self.released.append((owner, fencing_token))
+        return True
 
 
 def test_disabled_worker_does_not_open_storage(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -61,6 +84,8 @@ def test_worker_reconciles_with_bounded_limit(monkeypatch: pytest.MonkeyPatch) -
     )
     assert worker.main() == 0
     assert store.limits == [1000]
+    assert len(store.released) == 1
+    assert store.released[0][1] == 7
     assert heartbeats == ["job:regional-quota-reconcile"]
 
 
@@ -80,6 +105,7 @@ def test_worker_fails_execution_when_any_lease_fails(
     monkeypatch.setattr(worker, "create_store", lambda _settings: store)
 
     assert worker.main() == 1
+    assert len(store.released) == 1
 
 
 def test_worker_fails_closed_without_reconcile_capability(
@@ -99,6 +125,10 @@ def test_worker_fails_closed_without_reconcile_capability(
         "create_store",
         lambda _settings: SimpleNamespace(
             verify_regional_quota_ledger=lambda: ("us-central1",),
+            acquire_regional_quota_reconciler_lock=lambda **_kwargs: SimpleNamespace(
+                fencing_token=1
+            ),
+            release_regional_quota_reconciler_lock=lambda **_kwargs: True,
         ),
     )
 
@@ -123,10 +153,37 @@ def test_worker_fails_closed_when_no_ledger_region_is_verified(
         lambda _settings: SimpleNamespace(
             verify_regional_quota_ledger=lambda: (),
             reconcile_regional_quota_leases=lambda **_kwargs: {},
+            acquire_regional_quota_reconciler_lock=lambda **_kwargs: SimpleNamespace(
+                fencing_token=1
+            ),
+            release_regional_quota_reconciler_lock=lambda **_kwargs: True,
         ),
     )
 
     assert worker.main() == 1
+
+
+def test_worker_skips_when_another_reconciler_owns_the_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store(
+        {"inspected": 1, "reconciled": 1, "closed": 1, "errors": 0},
+        lock_available=False,
+    )
+    monkeypatch.setattr(
+        worker,
+        "get_settings",
+        lambda: SimpleNamespace(
+            regional_quota_reconciler_worker=True,
+            regional_quota_leases_enabled=True,
+            regional_quota_reconcile_limit=25,
+        ),
+    )
+    monkeypatch.setattr(worker, "create_store", lambda _settings: store)
+
+    assert worker.main() == 0
+    assert store.limits == []
+    assert store.released == []
 
 
 def test_worker_environment_does_not_require_serving_pilot_allowlist() -> None:

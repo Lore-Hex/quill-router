@@ -16,6 +16,11 @@ RELEASE="$(git rev-parse --short HEAD 2>/dev/null || echo local)"
 JOB_PREFIX="${TR_REGIONAL_QUOTA_RECONCILER_JOB_PREFIX:-trusted-router-regional-quota-reconciler}"
 JOB_NAME="${TR_REGIONAL_QUOTA_RECONCILER_JOB:-${JOB_PREFIX}-${RELEASE}}"
 RECONCILE_LIMIT="${TR_REGIONAL_QUOTA_RECONCILE_LIMIT:-25}"
+scheduler_state="$(
+  gc scheduler jobs describe "$SCHEDULER_NAME" \
+    --location="$SCHEDULER_REGION" \
+    --format='value(state)' 2>/dev/null || true
+)"
 
 if ! gc artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
   log "refusing regional quota reconciler deploy: image ${IMAGE} does not exist"
@@ -64,13 +69,20 @@ gc run jobs add-iam-policy-binding "$JOB_NAME" \
   --role="roles/run.invoker" \
   --quiet >/dev/null
 
-# Verify the versioned job before changing the stable scheduler. A failed
-# deployment therefore leaves the previous known-good job scheduled.
-log "verifying regional quota reconciliation job"
-gc run jobs execute "$JOB_NAME" \
-  --region "$JOB_REGION" \
-  --wait \
-  --quiet >/dev/null
+# Verify the versioned job before changing the stable scheduler. An operator
+# containment pause forbids even this one-shot mutation; the repair run is
+# executed manually after review instead.
+verification_complete=false
+if [ "$scheduler_state" = "PAUSED" ]; then
+  log "skipping automatic reconciler execution while containment pause is active"
+else
+  log "verifying regional quota reconciliation job"
+  gc run jobs execute "$JOB_NAME" \
+    --region "$JOB_REGION" \
+    --wait \
+    --quiet >/dev/null
+  verification_complete=true
+fi
 
 uri="https://${JOB_REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${JOB_NAME}:run"
 common_args=(
@@ -87,8 +99,7 @@ common_args=(
   --quiet
 )
 
-if gc scheduler jobs describe "$SCHEDULER_NAME" \
-  --location="$SCHEDULER_REGION" >/dev/null 2>&1; then
+if [ -n "$scheduler_state" ]; then
   log "updating regional quota reconciler schedule"
   # The legacy HTTP scheduler stored the internal gateway token in a custom
   # header. Clear every legacy header while moving to Google OAuth so that
@@ -100,30 +111,38 @@ else
   gc scheduler jobs create http "$SCHEDULER_NAME" "${common_args[@]}" >/dev/null
 fi
 
-# The new version has passed a real Spanner and Bigtable execution, so it is
-# now safe to make it the stable schedule target. Resume is idempotent.
-gc scheduler jobs resume "$SCHEDULER_NAME" \
-  --location="$SCHEDULER_REGION" --quiet >/dev/null 2>&1 || true
+# A containment pause is operator state, not deployment state. Preserve it
+# across releases instead of silently re-enabling a worker during an incident.
+if [ "$scheduler_state" = "PAUSED" ]; then
+  log "preserving intentional regional quota reconciler pause"
+else
+  gc scheduler jobs resume "$SCHEDULER_NAME" \
+    --location="$SCHEDULER_REGION" --quiet >/dev/null 2>&1 || true
+fi
 
 # Retain the current and one previous verified version for immediate rollback;
 # stale definitions cost no runtime money but eventually consume the regional
 # Cloud Run Job quota.
-previous_kept=0
-while IFS= read -r old_job; do
-  [[ "$old_job" == "${JOB_PREFIX}-"* ]] || continue
-  [ "$old_job" = "$JOB_NAME" ] && continue
-  if [ "$previous_kept" -eq 0 ]; then
-    previous_kept=1
-    continue
-  fi
-  if ! gc run jobs delete "$old_job" \
-      --region "$JOB_REGION" --quiet >/dev/null; then
-    log "WARN: unable to remove stale regional quota job ${old_job}"
-  fi
-done < <(
-  gc run jobs list \
-    --region "$JOB_REGION" \
-    --sort-by='~metadata.creationTimestamp' \
-    --format='value(metadata.name)'
-)
-log "regional quota reconciler is verified and scheduled once per minute"
+if [ "$verification_complete" = true ]; then
+  previous_kept=0
+  while IFS= read -r old_job; do
+    [[ "$old_job" == "${JOB_PREFIX}-"* ]] || continue
+    [ "$old_job" = "$JOB_NAME" ] && continue
+    if [ "$previous_kept" -eq 0 ]; then
+      previous_kept=1
+      continue
+    fi
+    if ! gc run jobs delete "$old_job" \
+        --region "$JOB_REGION" --quiet >/dev/null; then
+      log "WARN: unable to remove stale regional quota job ${old_job}"
+    fi
+  done < <(
+    gc run jobs list \
+      --region "$JOB_REGION" \
+      --sort-by='~metadata.creationTimestamp' \
+      --format='value(metadata.name)'
+  )
+  log "regional quota reconciler is verified and scheduled once per minute"
+else
+  log "regional quota reconciler deployed but remains paused and unexecuted"
+fi

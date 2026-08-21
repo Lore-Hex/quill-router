@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -12,6 +13,7 @@ from trusted_router.storage import configure_store, create_store
 from trusted_router.synthetic.fleet import record_heartbeat
 
 logger = logging.getLogger(__name__)
+_LOCK_TTL_SECONDS = 90
 
 
 def main() -> int:
@@ -27,6 +29,47 @@ def main() -> int:
 
     store = create_store(settings)
     configure_store(store)
+    acquire = cast(
+        Callable[..., Any] | None,
+        getattr(store, "acquire_regional_quota_reconciler_lock", None),
+    )
+    release = cast(
+        Callable[..., bool] | None,
+        getattr(store, "release_regional_quota_reconciler_lock", None),
+    )
+    if acquire is None or release is None:
+        logger.error("regional_quota.reconciler_lock_unsupported")
+        return 1
+    owner = f"rqrec-{uuid.uuid4().hex}"
+    lock = acquire(owner=owner, ttl_seconds=_LOCK_TTL_SECONDS)
+    if lock is None:
+        logger.info("regional_quota.reconciler_lock_busy")
+        return 0
+
+    exit_code = 1
+    try:
+        exit_code = _run_reconcile(settings, store)
+    except Exception:
+        logger.exception("regional_quota.reconciler_failed")
+        exit_code = 1
+    finally:
+        try:
+            released = release(
+                owner=owner,
+                fencing_token=int(lock.fencing_token),
+            )
+        except Exception:
+            logger.exception("regional_quota.reconciler_lock_release_failed")
+            released = False
+        if not released:
+            logger.error("regional_quota.reconciler_lock_release_lost")
+            exit_code = 1
+    if exit_code == 0:
+        record_heartbeat("job:regional-quota-reconcile", settings=settings)
+    return exit_code
+
+
+def _run_reconcile(settings: Any, store: Any) -> int:
     verify = cast(
         Callable[[], tuple[str, ...]] | None,
         getattr(store, "verify_regional_quota_ledger", None),
@@ -57,7 +100,6 @@ def main() -> int:
     )
     if int(result.get("errors", 0)):
         return 1
-    record_heartbeat("job:regional-quota-reconcile", settings=settings)
     return 0
 
 
