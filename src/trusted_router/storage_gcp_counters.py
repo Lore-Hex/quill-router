@@ -18,6 +18,7 @@ KEY_LIMIT_TABLE = "tr_key_limit"
 UNSHARDED = 0
 MAX_CREDIT_SHARDS = 64
 MAX_KEY_USAGE_SHARDS = 64
+DEFAULT_NEW_BILLING_SHARDS = 16
 
 # Creation-time credit seed columns. `reserved` + `total_usage` are deliberately
 # omitted so a new row gets the Spanner defaults (0) and later typed DML owns
@@ -187,6 +188,29 @@ def credit_balance_mirror_row(workspace_id: str, total_micro: int, commit_ts: An
         commit_ts,  # source_updated_at — the JSON row's updated_at, same commit
         commit_ts,  # this mirror's updated_at
     )
+
+
+def credit_balance_seed_rows(
+    workspace_id: str,
+    total_micro: int,
+    commit_ts: Any,
+    *,
+    shard_count: int,
+) -> list[tuple]:
+    """Seed a new workspace's exact balance across independent sub-ledgers."""
+
+    count = credit_shard_count({"shard_count": shard_count})
+    parts = distribute_credit_amount(total_micro, count)
+    return [
+        (
+            workspace_id,
+            shard,
+            parts[shard],
+            commit_ts,
+            commit_ts,
+        )
+        for shard in range(count)
+    ]
 
 
 def key_limit_mirror_row(key_hash: str, value: Any, commit_ts: Any) -> tuple:

@@ -307,6 +307,64 @@ if [ "$ANALYTICS_READ_MODE" = "clickhouse" ] && {
   ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 fi
 
+read_primary_env() {
+  local name="$1"
+  local default_value="${2:-}"
+  gc run services describe "$SERVICE" \
+    --region="$TR_PRIMARY_REGION" \
+    --format=json 2>/dev/null \
+    | jq -r --arg name "$name" --arg default_value "$default_value" '
+        [
+          .spec.template.spec.containers[0].env[]?
+          | select(.name == $name)
+          | .value
+        ][0] // $default_value
+      ' || true
+}
+
+# Regional quota leases are opt-in and workspace allowlisted. Preserve the
+# serving revision's state during ordinary deploys so a routine release cannot
+# silently turn a canary on or off. A fresh environment remains fail-closed.
+LIVE_REGIONAL_QUOTA_LEASES_ENABLED="$(
+  read_primary_env "TR_REGIONAL_QUOTA_LEASES_ENABLED" "false"
+)"
+REGIONAL_QUOTA_LEASES_ENABLED="${TR_REGIONAL_QUOTA_LEASES_ENABLED:-${LIVE_REGIONAL_QUOTA_LEASES_ENABLED:-false}}"
+case "$REGIONAL_QUOTA_LEASES_ENABLED" in
+  true|false) ;;
+  *)
+    log "refusing rollout: TR_REGIONAL_QUOTA_LEASES_ENABLED must be true or false"
+    exit 1
+    ;;
+esac
+REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS="${TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS:-$(
+  read_primary_env "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS"
+)}"
+REGIONAL_QUOTA_BIGTABLE_TABLE="${TR_REGIONAL_QUOTA_BIGTABLE_TABLE:-$(
+  read_primary_env "TR_REGIONAL_QUOTA_BIGTABLE_TABLE" "trustedrouter-regional-quota"
+)}"
+REGIONAL_QUOTA_BIGTABLE_APP_PROFILES="${TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES:-$(
+  read_primary_env "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES"
+)}"
+REGIONAL_QUOTA_LEASE_TTL_SECONDS="${TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS:-$(
+  read_primary_env "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS" "60"
+)}"
+REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS="${TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS:-$(
+  read_primary_env "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS" "10000000"
+)}"
+REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS="${TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS:-$(
+  read_primary_env "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS" "1000"
+)}"
+REGIONAL_QUOTA_LEASE_SHARD_COUNT="${TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT:-$(
+  read_primary_env "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT" "16"
+)}"
+if [ "$REGIONAL_QUOTA_LEASES_ENABLED" = "true" ] && {
+  [ -z "$REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS" ] ||
+  [ -z "$REGIONAL_QUOTA_BIGTABLE_APP_PROFILES" ];
+}; then
+  log "refusing rollout: regional quota canary requires pilot workspaces and fixed Bigtable app profiles"
+  exit 1
+fi
+
 # Prefer the private three-replica ClickHouse load balancer once provisioned.
 # The direct node-1 address remains only as a migration fallback for projects
 # that have not run clickhouse_cluster.sh yet.
@@ -477,9 +535,17 @@ ENV_VARS=(
   # operator overrides it. This prevents routine rollouts from reopening the
   # unbounded generic write path.
   "TR_REQUEST_RECORD_WRITE_MODE=${REQUEST_RECORD_WRITE_MODE}"
-  # Dark foundation only. Do not let a stale service-level env var activate a
-  # second billing authority during an ordinary production rollout.
-  "TR_REGIONAL_QUOTA_LEASES_ENABLED=false"
+  # Bounded regional escrow. This stays off by default and can serve only the
+  # explicit workspace allowlist. Ordinary deploys preserve the serving
+  # revision's state; startup fails closed if a required fixed profile is gone.
+  "TR_REGIONAL_QUOTA_LEASES_ENABLED=${REGIONAL_QUOTA_LEASES_ENABLED}"
+  "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS=${REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS}"
+  "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS=${REGIONAL_QUOTA_LEASE_TTL_SECONDS}"
+  "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS=${REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS}"
+  "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS=${REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS}"
+  "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT=${REGIONAL_QUOTA_LEASE_SHARD_COUNT}"
+  "TR_REGIONAL_QUOTA_BIGTABLE_TABLE=${REGIONAL_QUOTA_BIGTABLE_TABLE}"
+  "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES=${REGIONAL_QUOTA_BIGTABLE_APP_PROFILES}"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 

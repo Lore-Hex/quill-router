@@ -460,8 +460,9 @@ class SettleOutboxRow:
 class CreditAccount:
     workspace_id: str
     # Number of independent tr_credit_balance sub-ledgers owned by this
-    # workspace. The default preserves the original one-row behavior; only the
-    # pause/drain operator path may activate more shards for a hot workspace.
+    # workspace. The dataclass default must remain one so legacy JSON that
+    # predates this field keeps its original row interpretation. Production
+    # account creation explicitly chooses the current multi-shard default.
     shard_count: int = 1
     # Auto-refill: when available drops below threshold, charge the saved
     # Stripe payment method off-session for `auto_refill_amount_microdollars`.
@@ -558,6 +559,12 @@ class GatewayAuthorization:
     # authorization before this field existed); "deferred_home" records the
     # spend as debt to the home plane's ledger, forwarded asynchronously.
     settlement: str = "local"
+    # Present only when a bounded regional escrow authorized this request.
+    # These are content-free routing facts used to settle/refund the durable
+    # regional hold before the global request record becomes terminal.
+    regional_lease_id: str | None = None
+    regional_fencing_token: int | None = None
+    regional_hold_id: str | None = None
     # Only deferred authorizations carry an expiry: it is what lets the reaper
     # reclaim the outstanding-counter estimate when the enclave dies between
     # authorize and settle. Local authorizations keep their pre-existing

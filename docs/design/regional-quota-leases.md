@@ -1,11 +1,11 @@
 # Regional quota leases
 
-Status: **dark foundation, not production authority**
+Status: **canary-capable, off by default, workspace allowlisted**
 
-The current typed Spanner counter path remains TrustedRouter's only prepaid
-billing authority. Regional quota leases are the planned way to remove a
-cross-continent Spanner transaction from first-token latency without changing
-the invariant that a workspace cannot spend more credit than it owns.
+Global Spanner remains TrustedRouter's prepaid billing source of truth.
+Regional quota leases remove the hot global counter mutation from eligible
+authorizations without changing the invariant that a workspace cannot spend
+more credit than it owns.
 
 ## Safety model
 
@@ -18,7 +18,7 @@ balance.
 
 This is escrow, not an eventually consistent copy of account balance.
 
-Every lease has:
+Every lease shard has:
 
 - one workspace and one region;
 - a monotonically increasing fencing token;
@@ -26,6 +26,13 @@ Every lease has:
 - a short expiration;
 - durable reservation, settlement, and refund records;
 - `active`, `draining`, `closed`, or `quarantined` state.
+
+Each workspace-region pool is split across 16 independently fenced Bigtable
+rows. The configured dollar cap and available-balance percentage apply to the
+whole pool and are divided across those rows, so sharding does not multiply
+financial exposure. A Spanner fence permits only one globally escrowed grant
+per row until reconciliation closes it. The request idempotency fingerprint
+selects a stable row.
 
 The regional ledger rejects stale fencing tokens, expired leases, duplicate
 request IDs with changed fingerprints, settlement above the exact reservation,
@@ -60,55 +67,46 @@ The grant is the minimum of:
 
 All values are integer microdollars. No floating-point money enters this path.
 
-## Durable schema sketch
+## Durable storage
 
-The production implementation should use a regional strongly consistent store,
-not process memory. A representative schema is:
+Global grants, fences, and compact reconciliation totals are stored in Spanner.
+Each regional lease shard is one row in the
+`trustedrouter-regional-quota` Bigtable table. A single-cluster transactional
+app profile binds that row to exactly one physical regional writer, and every
+transition uses compare-and-swap on a random version value. The table retains
+only the latest cell version and expires rows after seven days.
 
-```sql
-CREATE TABLE tr_regional_quota_lease (
-  lease_id STRING(64) NOT NULL,
-  workspace_id STRING(64) NOT NULL,
-  region STRING(32) NOT NULL,
-  fencing_token INT64 NOT NULL,
-  granted_micro INT64 NOT NULL,
-  state STRING(16) NOT NULL,
-  expires_at TIMESTAMP NOT NULL,
-  updated_at TIMESTAMP OPTIONS (allow_commit_timestamp=true)
-) PRIMARY KEY (lease_id);
+The regional row stores authorization IDs, key hashes, integer amounts,
+expiry, and terminal state. It never stores raw keys, prompts, outputs, or
+request bodies. The normal typed Spanner authorization and reservation rows
+still provide global idempotent replay, but carry a zero global counter hold;
+the bounded regional escrow owns that hold until reconciliation.
 
-CREATE TABLE tr_regional_quota_hold (
-  lease_id STRING(64) NOT NULL,
-  hold_id STRING(64) NOT NULL,
-  fingerprint STRING(64) NOT NULL,
-  reserved_micro INT64 NOT NULL,
-  actual_micro INT64,
-  state STRING(16) NOT NULL,
-  updated_at TIMESTAMP OPTIONS (allow_commit_timestamp=true)
-) PRIMARY KEY (lease_id, hold_id),
-  INTERLEAVE IN PARENT tr_regional_quota_lease ON DELETE CASCADE;
-```
-
-The final regional store choice must preserve conditional writes and fencing.
-Redis without durable, strongly consistent persistence is not acceptable.
+The initial fixed profile exists only for `us-central1`. Bigtable warns against
+transactional profiles that target separate clusters in one replicated
+instance because they could write the same row concurrently. TrustedRouter
+does not override that guard. A request served from Europe or another region
+uses the exact Spanner path until that region has an isolated local ledger.
 
 ## Rollout gates
 
-`TR_REGIONAL_QUOTA_LEASES_ENABLED` defaults to false and production startup
-currently rejects true. Ordinary deploys explicitly set it false so stale
-configuration cannot activate a second billing authority.
+`TR_REGIONAL_QUOTA_LEASES_ENABLED` defaults to false. Production startup
+accepts true only with typed request records, the durable settle outbox, a
+non-empty workspace allowlist, a Bigtable instance, and fixed regional app
+profiles. Ordinary deploys preserve the serving revision's state rather than
+silently flipping it.
 
 Production activation requires all of the following:
 
-1. Durable regional schema and transactional adapter.
-2. Global grant and close transactions that escrow and release exact credit.
-3. Reconciliation worker with drift, orphan, and stuck-lease repair.
-4. Property tests proving aggregate spend never exceeds the escrowed grant.
-5. Crash tests at every boundary, including grant-write ambiguity and regional
-   settlement before reconciliation.
-6. Fencing tests for region replacement and split-brain workers.
-7. Shadow accounting with zero drift on a pilot workspace.
-8. A one-workspace rollout with a hard exposure cap and automatic rollback.
+Implemented gates include the transactional adapter, exact global grant and
+close transactions, a once-per-minute reconciler, integer-only property tests,
+ambiguous Bigtable commit replay, fencing, concurrent idempotency, exact key
+usage import, and 16-way local sharding. Production activation remains a
+one-workspace canary. Any local read, conditional write, missing profile, or
+initialization ambiguity falls back to exact Spanner authorization. Missing
+lease state is quarantined and its global escrow is not guessed back into the
+available balance.
 
-Until those gates pass, the latency work in this change improves connection,
-TLS, health, and region selection while billing remains exact in Spanner.
+Before expanding the allowlist, verify zero reconciliation errors, bounded
+lease-row size and CAS retries under the canary's real concurrency, no global
+counter drift, and successful failback when a Bigtable profile is disabled.

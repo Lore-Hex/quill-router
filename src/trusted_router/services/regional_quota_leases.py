@@ -1,9 +1,4 @@
-"""Pure, dark state machine for future regional prepaid quota leases.
-
-This module is deliberately not connected to gateway authorization. It models
-the invariants that a durable regional ledger must enforce before the exact
-typed Spanner billing path can safely delegate bounded spend.
-"""
+"""Pure state machine for bounded regional prepaid quota escrow."""
 
 from __future__ import annotations
 
@@ -54,6 +49,9 @@ class QuotaLeaseHold:
     hold_id: str
     fingerprint: str
     reserved_microdollars: int
+    key_hash: str = ""
+    key_shard: int = 0
+    expires_at: datetime | None = None
     state: HoldState = HoldState.RESERVED
     actual_microdollars: int | None = None
 
@@ -62,6 +60,10 @@ class QuotaLeaseHold:
             raise RegionalQuotaLeaseError("hold_id and fingerprint are required")
         if self.reserved_microdollars <= 0:
             raise RegionalQuotaLeaseError("reserved_microdollars must be positive")
+        if self.key_shard < 0:
+            raise RegionalQuotaLeaseError("key_shard must not be negative")
+        if self.expires_at is not None and self.expires_at.tzinfo is None:
+            raise RegionalQuotaLeaseError("hold expires_at must be timezone-aware")
         if self.state == HoldState.RESERVED and self.actual_microdollars is not None:
             raise RegionalQuotaLeaseError("reserved hold cannot have an actual amount")
         if self.state == HoldState.SETTLED and not (
@@ -95,9 +97,7 @@ class RegionalQuotaLease:
 
     def __post_init__(self) -> None:
         if not self.lease_id or not self.workspace_id or not self.region:
-            raise RegionalQuotaLeaseError(
-                "lease_id, workspace_id, and region are required"
-            )
+            raise RegionalQuotaLeaseError("lease_id, workspace_id, and region are required")
         if self.fencing_token <= 0:
             raise RegionalQuotaLeaseError("fencing_token must be positive")
         if self.granted_microdollars <= 0:
@@ -112,17 +112,13 @@ class RegionalQuotaLease:
     @property
     def reserved_microdollars(self) -> int:
         return sum(
-            hold.reserved_microdollars
-            for hold in self.holds
-            if hold.state == HoldState.RESERVED
+            hold.reserved_microdollars for hold in self.holds if hold.state == HoldState.RESERVED
         )
 
     @property
     def spent_microdollars(self) -> int:
         return sum(
-            hold.actual_microdollars or 0
-            for hold in self.holds
-            if hold.state == HoldState.SETTLED
+            hold.actual_microdollars or 0 for hold in self.holds if hold.state == HoldState.SETTLED
         )
 
     @property
@@ -140,6 +136,9 @@ class RegionalQuotaLease:
         fingerprint: str,
         amount_microdollars: int,
         fencing_token: int,
+        key_hash: str = "",
+        key_shard: int = 0,
+        hold_expires_at: datetime | None = None,
         now: datetime | None = None,
     ) -> LeaseTransition:
         now = _utc_now() if now is None else now
@@ -150,6 +149,9 @@ class RegionalQuotaLease:
             if (
                 existing.fingerprint != fingerprint
                 or existing.reserved_microdollars != amount_microdollars
+                or existing.key_hash != key_hash
+                or existing.key_shard != key_shard
+                or existing.expires_at != hold_expires_at
             ):
                 raise LeaseIdempotencyConflictError(
                     "hold ID was reused with different reservation inputs"
@@ -167,6 +169,9 @@ class RegionalQuotaLease:
             hold_id=hold_id,
             fingerprint=fingerprint,
             reserved_microdollars=amount_microdollars,
+            key_hash=key_hash,
+            key_shard=key_shard,
+            expires_at=hold_expires_at,
         )
         lease = replace(self, holds=(*self.holds, hold))
         return LeaseTransition(lease, hold, False)
@@ -182,9 +187,7 @@ class RegionalQuotaLease:
         hold = self._required_hold(hold_id)
         if hold.state == HoldState.SETTLED:
             if hold.actual_microdollars != actual_microdollars:
-                raise LeaseIdempotencyConflictError(
-                    "settlement replay changed the actual amount"
-                )
+                raise LeaseIdempotencyConflictError("settlement replay changed the actual amount")
             return LeaseTransition(self, hold, True)
         if hold.state == HoldState.REFUNDED:
             raise LeaseSettlementError("refunded hold cannot be settled")
@@ -257,8 +260,7 @@ class RegionalQuotaLease:
         return replace(
             self,
             holds=tuple(
-                replacement if hold.hold_id == replacement.hold_id else hold
-                for hold in self.holds
+                replacement if hold.hold_id == replacement.hold_id else hold for hold in self.holds
             ),
         )
 
@@ -272,19 +274,18 @@ def bounded_lease_grant_microdollars(
 ) -> int:
     """Return a bounded grant; the global transaction must escrow this amount."""
 
-    if min(
-        available_microdollars,
-        requested_microdollars,
-        per_lease_cap_microdollars,
-    ) < 0:
+    if (
+        min(
+            available_microdollars,
+            requested_microdollars,
+            per_lease_cap_microdollars,
+        )
+        < 0
+    ):
         raise RegionalQuotaLeaseError("lease grant inputs cannot be negative")
     if not 1 <= max_available_basis_points <= 10_000:
-        raise RegionalQuotaLeaseError(
-            "max_available_basis_points must be between 1 and 10000"
-        )
-    fraction_cap = (
-        available_microdollars * max_available_basis_points // 10_000
-    )
+        raise RegionalQuotaLeaseError("max_available_basis_points must be between 1 and 10000")
+    fraction_cap = available_microdollars * max_available_basis_points // 10_000
     return min(requested_microdollars, per_lease_cap_microdollars, fraction_cap)
 
 

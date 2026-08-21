@@ -69,6 +69,12 @@ BIGTABLE_CLUSTER_ID="${TR_BIGTABLE_CLUSTER_ID:-trusted-router-logs-c1}"
 BIGTABLE_APP_PROFILE_ID="${TR_BIGTABLE_APP_PROFILE_ID:-}"
 BIGTABLE_GENERATION_TABLE="${TR_BIGTABLE_GENERATION_TABLE:-trustedrouter-generations}"
 BIGTABLE_INSTANCE_TYPE="${TR_BIGTABLE_INSTANCE_TYPE:-PRODUCTION}"
+# The first canary has one transactional writer. Bigtable rejects a second
+# transactional profile on another cluster unless its split-brain warning is
+# forcibly bypassed. EU and other gateways therefore use exact Spanner until
+# they receive isolated regional ledgers.
+TR_REGIONAL_QUOTA_CLUSTER_MAP="${TR_REGIONAL_QUOTA_CLUSTER_MAP:-us-central1=trusted-router-logs-c1}"
+TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES="${TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES:-us-central1=tr-quota-us-central1}"
 KMS_KEYRING_ID="${TR_KMS_KEYRING_ID:-trusted-router}"
 BYOK_KMS_KEY_ID="${TR_BYOK_KMS_KEY_ID:-byok-envelope}"
 BYOK_KMS_KEY_NAME="${TR_BYOK_KMS_KEY_NAME:-projects/${PROJECT_ID}/locations/${REGION}/keyRings/${KMS_KEYRING_ID}/cryptoKeys/${BYOK_KMS_KEY_ID}}"

@@ -128,10 +128,47 @@ def test_all_attested_control_plane_regions_remain_warm() -> None:
     assert '--min-instances "$min_instances"' in rollout
 
 
-def test_production_deploy_keeps_regional_quota_leases_dark() -> None:
+def test_production_deploy_preserves_allowlisted_regional_quota_canary() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
 
-    assert '"TR_REGIONAL_QUOTA_LEASES_ENABLED=false"' in rollout
+    assert 'read_primary_env "TR_REGIONAL_QUOTA_LEASES_ENABLED" "false"' in rollout
+    assert (
+        '"TR_REGIONAL_QUOTA_LEASES_ENABLED=${REGIONAL_QUOTA_LEASES_ENABLED}"'
+        in rollout
+    )
+    assert '"TR_REGIONAL_QUOTA_LEASES_ENABLED=false"' not in rollout
+    assert "regional quota canary requires pilot workspaces" in rollout
+    assert (
+        '"TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES=${REGIONAL_QUOTA_BIGTABLE_APP_PROFILES}"'
+        in rollout
+    )
+
+
+def test_production_deploy_provisions_and_schedules_regional_quota_reconciliation() -> None:
+    orchestrator = (ROOT / "scripts/deploy-gcp.sh").read_text()
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text()
+    library = (ROOT / "scripts/deploy/_lib.sh").read_text()
+    provisioner = (ROOT / "scripts/deploy/regional_quota_ledger.sh").read_text()
+    reconciler = (ROOT / "scripts/deploy/regional_quota_reconciler.sh").read_text()
+
+    assert 'deploy/regional_quota_ledger.sh' in orchestrator
+    assert 'deploy/regional_quota_reconciler.sh' in orchestrator
+    assert "bash scripts/deploy/regional_quota_ledger.sh" in workflow
+    assert "bash scripts/deploy/regional_quota_reconciler.sh" in workflow
+    assert workflow.index("bash scripts/deploy/regional_quota_ledger.sh") < workflow.index(
+        "bash scripts/deploy/rollout.sh"
+    )
+    assert workflow.index("bash scripts/deploy/regional_quota_reconciler.sh") > workflow.index(
+        "- name: Roll secondary warm regions sequentially"
+    )
+    assert "--transactional-writes" in provisioner
+    assert "trusted-router-logs-c1" in library
+    assert "us-central1=tr-quota-us-central1" in library
+    assert "europe-west4=tr-quota-europe-west4" not in library
+    assert 'SCHEDULE="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULE:-* * * * *}"' in reconciler
+    assert "/v1/internal/gateway/regional-quota/reconcile?limit=250" in reconciler
+    assert "x-trustedrouter-internal-token=${internal_token}" in reconciler
+    assert "echo \"$internal_token\"" not in reconciler
 
 
 def test_deploy_preserves_request_record_mode_without_silent_legacy_fallback() -> None:

@@ -2517,6 +2517,9 @@ def make_fake_store(
     store._analytics_read_mode = "bigtable"
     store._analytics_dual_read_grace_seconds = 0
     store._operational_analytics = None
+    store._regional_quota_ledger = None
+    store._regional_quota_lease_cache = {}
+    store._regional_quota_lease_cache_lock = threading.Lock()
     from trusted_router.storage_gcp_credit_shards import CreditShardCountCache
 
     store._credit_shard_counts = CreditShardCountCache()

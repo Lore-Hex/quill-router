@@ -4,7 +4,11 @@ import json
 
 from tests.fakes.spanner import make_fake_store
 from trusted_router.storage_gcp_authorize import AuthorizeOutcome
-from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
+from trusted_router.storage_gcp_counters import (
+    CREDIT_BALANCE_TABLE,
+    DEFAULT_NEW_BILLING_SHARDS,
+    KEY_LIMIT_TABLE,
+)
 
 
 def _json_credit(db, workspace_id: str) -> dict:
@@ -15,8 +19,26 @@ def _typed_credit(db, workspace_id: str) -> dict:
     return db.typed[CREDIT_BALANCE_TABLE][(workspace_id, 0)]
 
 
+def _typed_credit_rows(db, workspace_id: str) -> list[dict]:
+    return [
+        row
+        for (candidate_workspace_id, _shard), row in db.typed[
+            CREDIT_BALANCE_TABLE
+        ].items()
+        if candidate_workspace_id == workspace_id
+    ]
+
+
 def _typed_key(db, key_hash: str) -> dict:
     return db.typed[KEY_LIMIT_TABLE][(key_hash, 0)]
+
+
+def _typed_key_rows(db, key_hash: str) -> list[dict]:
+    return [
+        row
+        for (candidate_key_hash, _shard), row in db.typed[KEY_LIMIT_TABLE].items()
+        if candidate_key_hash == key_hash
+    ]
 
 
 def test_create_workspace_seeds_tr_credit_balance_row() -> None:
@@ -28,12 +50,15 @@ def test_create_workspace_seeds_tr_credit_balance_row() -> None:
         trial_credit_microdollars=7_000_000,
     )
 
-    row = _typed_credit(db, workspace.id)
-    assert row["workspace_id"] == workspace.id
-    assert row["shard"] == 0
-    assert row["total_credits"] == 7_000_000
-    assert row["total_usage"] == 0
-    assert row["reserved"] == 0
+    rows = _typed_credit_rows(db, workspace.id)
+    assert len(rows) == DEFAULT_NEW_BILLING_SHARDS
+    assert {row["workspace_id"] for row in rows} == {workspace.id}
+    assert {row["shard"] for row in rows} == set(
+        range(DEFAULT_NEW_BILLING_SHARDS)
+    )
+    assert sum(row["total_credits"] for row in rows) == 7_000_000
+    assert sum(row["total_usage"] for row in rows) == 0
+    assert sum(row["reserved"] for row in rows) == 0
 
 
 def test_create_api_key_seeds_tr_key_limit_row() -> None:
@@ -49,17 +74,20 @@ def test_create_api_key_seeds_tr_key_limit_row() -> None:
         include_byok_in_limit=False,
     )
 
-    row = _typed_key(db, key.hash)
-    assert row["key_hash"] == key.hash
-    assert row["shard"] == 0
-    assert row["limit_micro"] == 1_000_000
-    assert row["day_limit_micro"] == 250_000
-    assert row["week_limit_micro"] is None
-    assert row["month_limit_micro"] is None
-    assert row["include_byok"] is False
-    assert row["usage"] == 0
-    assert row["byok_usage"] == 0
-    assert row["reserved"] == 0
+    rows = _typed_key_rows(db, key.hash)
+    assert len(rows) == DEFAULT_NEW_BILLING_SHARDS
+    assert {row["key_hash"] for row in rows} == {key.hash}
+    assert {row["shard"] for row in rows} == set(
+        range(DEFAULT_NEW_BILLING_SHARDS)
+    )
+    assert sum(row["limit_micro"] for row in rows) == 1_000_000
+    assert {row["day_limit_micro"] for row in rows} == {250_000}
+    assert {row["week_limit_micro"] for row in rows} == {None}
+    assert {row["month_limit_micro"] for row in rows} == {None}
+    assert {row["include_byok"] for row in rows} == {False}
+    assert sum(row["usage"] for row in rows) == 0
+    assert sum(row["byok_usage"] for row in rows) == 0
+    assert sum(row["reserved"] for row in rows) == 0
 
 
 def test_metadata_writes_never_reseed_or_clobber_typed_topups() -> None:
@@ -71,17 +99,32 @@ def test_metadata_writes_never_reseed_or_clobber_typed_topups() -> None:
     )
 
     assert store.credit_workspace_once(workspace.id, 50_000_000, "evt-topup")
-    assert _typed_credit(db, workspace.id)["total_credits"] == 150_000_000
+    assert sum(
+        row["total_credits"] for row in _typed_credit_rows(db, workspace.id)
+    ) == 150_000_000
     assert "total_credits_microdollars" not in _json_credit(db, workspace.id)
-    typed_version = db.typed_versions[(CREDIT_BALANCE_TABLE, (workspace.id, 0))]
+    typed_versions = {
+        shard: db.typed_versions[(CREDIT_BALANCE_TABLE, (workspace.id, shard))]
+        for shard in range(DEFAULT_NEW_BILLING_SHARDS)
+    }
 
     assert store.record_auto_refill_outcome(workspace.id, status="succeeded") is not None
-    assert _typed_credit(db, workspace.id)["total_credits"] == 150_000_000
-    assert db.typed_versions[(CREDIT_BALANCE_TABLE, (workspace.id, 0))] == typed_version
+    assert sum(
+        row["total_credits"] for row in _typed_credit_rows(db, workspace.id)
+    ) == 150_000_000
+    assert {
+        shard: db.typed_versions[(CREDIT_BALANCE_TABLE, (workspace.id, shard))]
+        for shard in range(DEFAULT_NEW_BILLING_SHARDS)
+    } == typed_versions
 
     assert store.set_stripe_customer(workspace.id, customer_id="cus_c2a") is not None
-    assert _typed_credit(db, workspace.id)["total_credits"] == 150_000_000
-    assert db.typed_versions[(CREDIT_BALANCE_TABLE, (workspace.id, 0))] == typed_version
+    assert sum(
+        row["total_credits"] for row in _typed_credit_rows(db, workspace.id)
+    ) == 150_000_000
+    assert {
+        shard: db.typed_versions[(CREDIT_BALANCE_TABLE, (workspace.id, shard))]
+        for shard in range(DEFAULT_NEW_BILLING_SHARDS)
+    } == typed_versions
 
 
 def test_brand_new_workspace_authorizes_immediately_after_topup() -> None:
@@ -93,7 +136,9 @@ def test_brand_new_workspace_authorizes_immediately_after_topup() -> None:
         creator_user_id="owner",
     )
 
-    assert _typed_credit(db, workspace.id)["total_credits"] == 0
+    assert sum(
+        row["total_credits"] for row in _typed_credit_rows(db, workspace.id)
+    ) == 0
     assert _typed_key(db, key.hash)["limit_micro"] is None
     assert store.credit_workspace_typed_direct(workspace.id, 10_000_000, "evt-new") is True
 
@@ -116,4 +161,6 @@ def test_brand_new_workspace_authorizes_immediately_after_topup() -> None:
 
     assert outcome == AuthorizeOutcome.ACCEPTED
     assert authorization is not None
-    assert _typed_credit(db, workspace.id)["reserved"] == 1_000_000
+    assert sum(
+        row["reserved"] for row in _typed_credit_rows(db, workspace.id)
+    ) == 1_000_000

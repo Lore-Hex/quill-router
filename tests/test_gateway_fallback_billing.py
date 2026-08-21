@@ -14,6 +14,7 @@ from trusted_router.partner_billing import (
     PARTNER_OPERATOR_COST_SETTLE_FIELD,
 )
 from trusted_router.provider_lifecycle import provider_model_retired
+from trusted_router.regional_quota_ledger import InMemoryRegionalQuotaLedger
 from trusted_router.routes.helpers import cost_microdollars
 from trusted_router.routes.internal import gateway as gateway_routes
 from trusted_router.storage import STORE, CreditAccount, Workspace, configure_store
@@ -73,6 +74,125 @@ def test_gateway_authorize_fake_spanner_uses_typed_without_allowlist_settings() 
     data = authorize.json()["data"]
     assert data["credit_reservation_id"] in db.reservations
     assert ("reservation", data["credit_reservation_id"]) not in db.rows
+
+
+def test_allowlisted_uncapped_key_authorizes_from_bounded_regional_escrow() -> None:
+    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
+    workspace = store.create_workspace(
+        "owner",
+        "regional-pilot",
+        trial_credit_microdollars=100_000_000,
+    )
+    _raw, api_key = store.create_api_key(
+        workspace_id=workspace.id,
+        name="regional",
+        creator_user_id="owner",
+    )
+    configure_store(store)
+    settings = Settings(
+        environment="test",
+        regional_quota_leases_enabled=True,
+        regional_quota_lease_pilot_workspace_ids=workspace.id,
+    )
+    client = TestClient(
+        create_app(
+            settings,
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+
+    response = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": api_key.hash,
+            "model": "anthropic/claude-opus-4.7",
+            "estimated_input_tokens": 1_000,
+            "max_output_tokens": 100,
+            "route_type": "chat.completions",
+            "idempotency_key": "regional-pilot-request",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    authorization = store.get_gateway_authorization(response.json()["data"]["authorization_id"])
+    assert authorization is not None
+    assert authorization.settlement == "regional_lease"
+    reservation = db.reservations[str(authorization.credit_reservation_id)]
+    assert reservation["hold_usage_type"] == "RegionalCredits"
+    assert reservation["credit_reserved_micro"] == 0
+    assert sum(row["reserved"] for row in db.typed[CREDIT_BALANCE_TABLE].values()) > 0
+
+
+def test_capped_key_stays_on_exact_global_authorization_path() -> None:
+    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    ledger = InMemoryRegionalQuotaLedger()
+    store._regional_quota_ledger = ledger
+    workspace = store.create_workspace(
+        "owner",
+        "regional-ineligible",
+        trial_credit_microdollars=100_000_000,
+    )
+    _raw, api_key = store.create_api_key(
+        workspace_id=workspace.id,
+        name="capped",
+        creator_user_id="owner",
+        limit_microdollars=1_000_000,
+    )
+    configure_store(store)
+    client = TestClient(
+        create_app(
+            Settings(
+                environment="test",
+                regional_quota_leases_enabled=True,
+                regional_quota_lease_pilot_workspace_ids=workspace.id,
+            ),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+
+    response = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": api_key.hash,
+            "model": "anthropic/claude-opus-4.7",
+            "estimated_input_tokens": 1_000,
+            "max_output_tokens": 100,
+            "route_type": "chat.completions",
+            "idempotency_key": "regional-capped-key",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    authorization = store.get_gateway_authorization(response.json()["data"]["authorization_id"])
+    assert authorization is not None
+    assert authorization.settlement == "local"
+    assert store._list_entities("regional_quota_lease", cls=dict) == []
+
+
+def test_regional_reconciler_fails_scheduler_tick_when_any_lease_errors() -> None:
+    store, _db, _ = make_fake_store(request_record_write_mode="typed")
+    store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
+    store.reconcile_regional_quota_leases = lambda **_kwargs: {
+        "inspected": 2,
+        "reconciled": 1,
+        "closed": 0,
+        "errors": 1,
+    }
+    configure_store(store)
+    settings = Settings(
+        environment="test",
+        regional_quota_leases_enabled=True,
+        regional_quota_lease_pilot_workspace_ids="pilot",
+    )
+    client = TestClient(create_app(settings, configure_store_arg=False, init_observability=False))
+
+    response = client.post("/v1/internal/gateway/regional-quota/reconcile")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["type"] == "service_unavailable"
 
 
 def test_gateway_web_search_cost_uses_typed_reservation_and_finalize() -> None:

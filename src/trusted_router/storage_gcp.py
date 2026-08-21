@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import hashlib
 import json
 import logging
 import os
@@ -99,8 +100,9 @@ from trusted_router.storage_gcp_counter_dml import (
 from trusted_router.storage_gcp_counters import (
     CREDIT_BALANCE_COLUMNS,
     CREDIT_BALANCE_TABLE,
+    DEFAULT_NEW_BILLING_SHARDS,
     UNSHARDED,
-    credit_balance_mirror_row,
+    credit_balance_seed_rows,
     credit_shard_count,
     distribute_credit_amount,
     key_usage_shard_count,
@@ -290,6 +292,9 @@ class SpannerBigtableStore:
         operational_analytics_clickhouse_database: str = "tr",
         analytics_read_mode: str = "bigtable",
         analytics_dual_read_grace_seconds: int = 30,
+        regional_quota_leases_enabled: bool = False,
+        regional_quota_bigtable_table: str = "trustedrouter-regional-quota",
+        regional_quota_bigtable_app_profiles: dict[str, str] | None = None,
     ) -> None:
         if not spanner_instance_id or not spanner_database_id:
             raise ValueError("Spanner instance and database IDs are required")
@@ -405,6 +410,39 @@ class SpannerBigtableStore:
             else:
                 self._bt_table = bt_instance.table(generation_table)
         self._bigtable_app_profile_id = bigtable_app_profile_id
+        self._regional_quota_ledger = None
+        self._regional_quota_lease_cache: dict[tuple[str, str, int], Any] = {}
+        self._regional_quota_lease_cache_lock = threading.Lock()
+        if regional_quota_leases_enabled:
+            profiles = dict(regional_quota_bigtable_app_profiles or {})
+            if not bigtable_instance_id or not profiles:
+                raise ValueError(
+                    "regional quota leases require a Bigtable instance and fixed app profiles"
+                )
+            try:
+                from google.cloud import bigtable
+            except ImportError as exc:  # pragma: no cover - production image.
+                raise RuntimeError(
+                    "Install google-cloud-bigtable when regional quota leases are enabled"
+                ) from exc
+            from trusted_router.regional_quota_ledger import (
+                BigtableRegionalQuotaLedger,
+            )
+
+            quota_instance = bigtable.Client(
+                project=project_id,
+                credentials=credentials,
+                admin=False,
+            ).instance(bigtable_instance_id)
+            self._regional_quota_ledger = BigtableRegionalQuotaLedger(
+                {
+                    region: quota_instance.table(
+                        regional_quota_bigtable_table,
+                        app_profile_id=profile,
+                    )
+                    for region, profile in profiles.items()
+                }
+            )
         # Composed feature stores. Each owns its own logic and is importable
         # on its own — keeps the core SpannerBigtableStore body focused on
         # identity + credit ledger. Mirrors the InMemoryStore pattern.
@@ -642,7 +680,10 @@ class SpannerBigtableStore:
             )
             member = Member(workspace_id=workspace.id, user_id=new_user.id, role="owner")
             initial_total = 0 if trial_credit_microdollars is None else trial_credit_microdollars
-            credit = CreditAccount(workspace_id=workspace.id)
+            credit = CreditAccount(
+                workspace_id=workspace.id,
+                shard_count=DEFAULT_NEW_BILLING_SHARDS,
+            )
             self._write_entity_tx(transaction, "user", new_user.id, new_user)
             self._write_entity_tx(
                 transaction, "email_user", normalized_email, {"user_id": new_user.id}
@@ -652,7 +693,12 @@ class SpannerBigtableStore:
                 transaction, "member", _member_id(workspace.id, new_user.id), member
             )
             self._write_entity_tx(transaction, "credit", workspace.id, credit)
-            self._seed_credit_balance_on_create(transaction, workspace.id, initial_total)
+            self._seed_credit_balance_on_create(
+                transaction,
+                workspace.id,
+                initial_total,
+                shard_count=credit.shard_count,
+            )
             return new_user
 
         return self._run_in_transaction(txn)
@@ -734,17 +780,18 @@ class SpannerBigtableStore:
         writer: Any,
         workspace_id: str,
         initial_total_micro: int,
+        *,
+        shard_count: int,
     ) -> None:
         writer.insert_or_update(
             table=CREDIT_BALANCE_TABLE,
             columns=CREDIT_BALANCE_COLUMNS,
-            values=[
-                credit_balance_mirror_row(
-                    workspace_id,
-                    initial_total_micro,
-                    self._spanner.COMMIT_TIMESTAMP,
-                )
-            ],
+            values=credit_balance_seed_rows(
+                workspace_id,
+                initial_total_micro,
+                self._spanner.COMMIT_TIMESTAMP,
+                shard_count=shard_count,
+            ),
         )
 
     # Auth sessions delegate to storage_gcp_auth_sessions.SpannerAuthSessions.
@@ -848,14 +895,22 @@ class SpannerBigtableStore:
         # Account creation passes the configured starter amount explicitly.
         # Secondary workspaces omit it and therefore start at zero.
         initial_total = 0 if trial_credit_microdollars is None else trial_credit_microdollars
-        credit = CreditAccount(workspace_id=workspace.id)
+        credit = CreditAccount(
+            workspace_id=workspace.id,
+            shard_count=DEFAULT_NEW_BILLING_SHARDS,
+        )
         with self._database.batch() as batch:
             self._write_entity_batch(batch, "workspace", workspace.id, workspace)
             self._write_entity_batch(
                 batch, "member", _member_id(workspace.id, owner_user_id), member
             )
             self._write_entity_batch(batch, "credit", workspace.id, credit)
-            self._seed_credit_balance_on_create(batch, workspace.id, initial_total)
+            self._seed_credit_balance_on_create(
+                batch,
+                workspace.id,
+                initial_total,
+                shard_count=credit.shard_count,
+            )
         return workspace
 
     def list_workspaces_for_user(self, user_id: str) -> list[Workspace]:
@@ -1024,7 +1079,10 @@ class SpannerBigtableStore:
                 owner_user_id=new_user.id,
             )
             member = Member(workspace_id=workspace.id, user_id=new_user.id, role="owner")
-            credit = CreditAccount(workspace_id=workspace.id)
+            credit = CreditAccount(
+                workspace_id=workspace.id,
+                shard_count=DEFAULT_NEW_BILLING_SHARDS,
+            )
             self._write_entity_tx(transaction, "user", new_user.id, new_user)
             self._write_entity_tx(transaction, "wallet_user", normalized, {"user_id": new_user.id})
             self._write_entity_tx(transaction, "workspace", workspace.id, workspace)
@@ -1036,6 +1094,7 @@ class SpannerBigtableStore:
                 transaction,
                 workspace.id,
                 0,
+                shard_count=credit.shard_count,
             )
             return new_user
 
@@ -1395,11 +1454,7 @@ class SpannerBigtableStore:
         api_key = _auth_record(str(rows[0][0]), ApiKey)
         if not verify_api_key(raw_key, api_key.salt, api_key.secret_hash):
             return None
-        workspace = (
-            _auth_record(str(rows[0][1]), Workspace)
-            if rows[0][1] is not None
-            else None
-        )
+        workspace = _auth_record(str(rows[0][1]), Workspace) if rows[0][1] is not None else None
         if workspace is not None and workspace.deleted:
             workspace = None
         return ApiKeyAuthContext(api_key=api_key, workspace=workspace)
@@ -2061,9 +2116,7 @@ class SpannerBigtableStore:
                 amount_microdollars=amount,
                 counterparty_account_id=payer_workspace_id,
                 custom_model_id=custom_model_id,
-                authorization_id=(
-                    user_model_authorization_id_from_payout_event_id(event_id)
-                ),
+                authorization_id=(user_model_authorization_id_from_payout_event_id(event_id)),
                 created_at=now,
             )
             insert_entity_dml_at(
@@ -2476,9 +2529,7 @@ class SpannerBigtableStore:
             custom_model_revision=custom_model_revision,
             user_provided_model_id=user_provided_model_id,
             user_provided_model_revision=user_provided_model_revision,
-            user_model_prompt_price_microdollars_per_m=(
-                user_model_prompt_price_microdollars_per_m
-            ),
+            user_model_prompt_price_microdollars_per_m=(user_model_prompt_price_microdollars_per_m),
             user_model_completion_price_microdollars_per_m=(
                 user_model_completion_price_microdollars_per_m
             ),
@@ -2586,6 +2637,12 @@ class SpannerBigtableStore:
         authorization = self.get_gateway_authorization(authorization_id)
         if authorization is None or authorization.credit_reservation_id is None:
             return TypedFinalizeResult(finalized=False, activity_indexed=False)
+        if authorization.settlement == "regional_lease":
+            self._finalize_regional_quota_hold(
+                authorization,
+                success=success,
+                actual_microdollars=actual_microdollars,
+            )
         actual_usage_type = UsageType.coerce(selected_usage_type)
         generation_writes: list[tuple[str, str, str]] = []
         if success and generation is not None:
@@ -2667,6 +2724,370 @@ class SpannerBigtableStore:
             finalized=False,
             activity_indexed=False,
         )  # already_settled / not_found
+
+    def authorize_gateway_regional(
+        self,
+        *,
+        authorization_id: str,
+        workspace_id: str,
+        key_hash: str,
+        key_usage_shards: int,
+        estimate: int,
+        model_id: str,
+        provider: str,
+        requested_model_id: str | None,
+        candidate_model_ids: list[str],
+        region: str,
+        endpoint_id: str | None,
+        candidate_endpoint_ids: list[str],
+        idempotency_key: str | None,
+        idempotency_fingerprint: str | None,
+        tags: dict[str, str] | None,
+        expires_at: dt.datetime,
+        lease_ttl_seconds: int,
+        lease_max_microdollars: int,
+        lease_max_available_basis_points: int,
+        lease_shard_count: int,
+    ) -> tuple[str, GatewayAuthorization | None]:
+        """Authorize from bounded regional escrow without touching hot counters."""
+
+        ledger = self._regional_quota_ledger
+        if ledger is None:
+            return "unavailable", None
+        from trusted_router.regional_quota_ledger import (
+            RegionalLeaseLedgerError,
+        )
+        from trusted_router.services.regional_quota_leases import (
+            LeaseExhaustedError,
+            LeaseUnavailableError,
+        )
+        from trusted_router.storage_gcp_keys import (
+            _gateway_authorization_idempotency_index_id,
+        )
+        from trusted_router.storage_gcp_regional_quota import (
+            activate_regional_quota_lease,
+            active_regional_quota_leases,
+            grant_regional_quota_lease,
+            quarantine_regional_quota_lease,
+            record_regional_gateway_authorization,
+            regional_lease_from_global,
+        )
+
+        scope = (
+            _gateway_authorization_idempotency_index_id(
+                workspace_id,
+                key_hash,
+                idempotency_key,
+            )
+            if idempotency_key is not None
+            else None
+        )
+        if lease_shard_count <= 0:
+            return "unavailable", None
+        shard_source = idempotency_fingerprint or authorization_id
+        quota_shard = (
+            int.from_bytes(
+                hashlib.sha256(shard_source.encode("utf-8")).digest()[:4],
+                "big",
+            )
+            % lease_shard_count
+        )
+        cache_key = (workspace_id, region, quota_shard)
+        with self._regional_quota_lease_cache_lock:
+            cached = self._regional_quota_lease_cache.get(cache_key)
+        candidates = []
+        if cached is not None and cached.expires_datetime > dt.datetime.now(dt.UTC):
+            candidates.append(cached)
+        else:
+            candidates.extend(
+                active_regional_quota_leases(
+                    self,
+                    workspace_id=workspace_id,
+                    region=region,
+                    quota_shard=quota_shard,
+                )
+            )
+
+        selected_global = None
+        selected_local = None
+        key_shard = randomized_credit_shards(
+            key_usage_shard_count({"usage_shard_count": key_usage_shards})
+        )[0]
+        for candidate in candidates:
+            try:
+                local = ledger.get(candidate.lease_id, region=region)
+                if local is None:
+                    quarantine_regional_quota_lease(
+                        self,
+                        candidate,
+                        reason="active global lease has no regional row",
+                    )
+                    continue
+                selected_local = ledger.reserve(
+                    candidate.lease_id,
+                    region=region,
+                    hold_id=authorization_id,
+                    fingerprint=idempotency_fingerprint or authorization_id,
+                    amount_microdollars=estimate,
+                    fencing_token=candidate.fencing_token,
+                    key_hash=key_hash,
+                    key_shard=key_shard,
+                    hold_expires_at=expires_at,
+                )
+                selected_global = candidate
+                break
+            except (LeaseExhaustedError, LeaseUnavailableError):
+                continue
+            except RegionalLeaseLedgerError:
+                log.warning(
+                    "regional quota lease read/reserve failed workspace_id=%s region=%s",
+                    workspace_id,
+                    region,
+                    exc_info=True,
+                )
+                return "unavailable", None
+
+        if selected_global is None:
+            # These caps describe the whole regional pool. Divide both across
+            # the independently fenced rows so sharding removes contention
+            # without multiplying the globally escrowed exposure.
+            per_shard_cap = max(1, lease_max_microdollars // lease_shard_count)
+            per_shard_basis_points = max(
+                1,
+                lease_max_available_basis_points // lease_shard_count,
+            )
+            global_lease = grant_regional_quota_lease(
+                self,
+                workspace_id=workspace_id,
+                region=region,
+                quota_shard=quota_shard,
+                requested_microdollars=per_shard_cap,
+                per_lease_cap_microdollars=per_shard_cap,
+                max_available_basis_points=per_shard_basis_points,
+                ttl_seconds=lease_ttl_seconds,
+                minimum_grant_microdollars=estimate,
+            )
+            if global_lease is None:
+                return "unavailable", None
+            try:
+                ledger.initialize(regional_lease_from_global(global_lease))
+                global_lease = activate_regional_quota_lease(self, global_lease)
+                selected_local = ledger.reserve(
+                    global_lease.lease_id,
+                    region=region,
+                    hold_id=authorization_id,
+                    fingerprint=idempotency_fingerprint or authorization_id,
+                    amount_microdollars=estimate,
+                    fencing_token=global_lease.fencing_token,
+                    key_hash=key_hash,
+                    key_shard=key_shard,
+                    hold_expires_at=expires_at,
+                )
+                selected_global = global_lease
+            except Exception as exc:
+                try:
+                    quarantine_regional_quota_lease(
+                        self,
+                        global_lease,
+                        reason=f"regional initialization ambiguity: {type(exc).__name__}",
+                    )
+                except Exception:
+                    log.error(
+                        "regional quota quarantine failed lease_id=%s",
+                        global_lease.lease_id,
+                        exc_info=True,
+                    )
+                log.warning(
+                    "regional quota lease initialization failed workspace_id=%s region=%s",
+                    workspace_id,
+                    region,
+                    exc_info=True,
+                )
+                return "unavailable", None
+
+        assert selected_global is not None and selected_local is not None
+        with self._regional_quota_lease_cache_lock:
+            self._regional_quota_lease_cache[cache_key] = selected_global
+        authorization = GatewayAuthorization(
+            id=authorization_id,
+            workspace_id=workspace_id,
+            key_hash=key_hash,
+            model_id=model_id,
+            provider=provider,
+            usage_type=UsageType.CREDITS,
+            estimated_microdollars=estimate,
+            requested_model_id=requested_model_id,
+            candidate_model_ids=list(candidate_model_ids),
+            region=region,
+            endpoint_id=endpoint_id,
+            candidate_endpoint_ids=list(candidate_endpoint_ids),
+            idempotency_key=idempotency_key,
+            tags=dict(tags or {}),
+            idempotency_fingerprint=idempotency_fingerprint,
+            settlement="regional_lease",
+            regional_lease_id=selected_global.lease_id,
+            regional_fencing_token=selected_global.fencing_token,
+            regional_hold_id=authorization_id,
+        )
+        try:
+            result = record_regional_gateway_authorization(
+                self,
+                authorization=authorization,
+                idempotency_scope=scope,
+                idempotency_fingerprint=idempotency_fingerprint,
+                expires_at=expires_at,
+            )
+        except Exception:
+            self._refund_regional_quota_hold_safely(authorization)
+            raise
+        if result["outcome"] == "accepted":
+            authorization.credit_reservation_id = str(result["reservation_id"])
+            return "accepted", authorization
+        self._refund_regional_quota_hold_safely(authorization)
+        if result["outcome"] == "idempotency_mismatch":
+            return "idempotency_mismatch", None
+        replay = self.get_gateway_authorization(str(result["authorization_id"]))
+        return "replay", replay
+
+    def _finalize_regional_quota_hold(
+        self,
+        authorization: GatewayAuthorization,
+        *,
+        success: bool,
+        actual_microdollars: int,
+    ) -> None:
+        ledger = self._regional_quota_ledger
+        if ledger is None:
+            raise RuntimeError("regional quota ledger is unavailable")
+        lease_id = authorization.regional_lease_id
+        fencing_token = authorization.regional_fencing_token
+        hold_id = authorization.regional_hold_id
+        region = authorization.region
+        if not lease_id or not fencing_token or not hold_id or not region:
+            raise RuntimeError("regional authorization is missing lease identity")
+        if actual_microdollars > authorization.estimated_microdollars:
+            raise RuntimeError("regional settlement exceeds its exact reservation")
+        if success:
+            ledger.settle(
+                lease_id,
+                region=region,
+                hold_id=hold_id,
+                actual_microdollars=actual_microdollars,
+                fencing_token=fencing_token,
+            )
+        else:
+            ledger.refund(
+                lease_id,
+                region=region,
+                hold_id=hold_id,
+                fencing_token=fencing_token,
+            )
+
+    def _refund_regional_quota_hold_safely(
+        self,
+        authorization: GatewayAuthorization,
+    ) -> None:
+        try:
+            self._finalize_regional_quota_hold(
+                authorization,
+                success=False,
+                actual_microdollars=0,
+            )
+        except Exception:
+            log.error(
+                "regional quota hold compensation failed authorization_id=%s lease_id=%s",
+                authorization.id,
+                authorization.regional_lease_id,
+                exc_info=True,
+            )
+
+    def reconcile_regional_quota_leases(
+        self,
+        *,
+        limit: int = 100,
+        now: dt.datetime | None = None,
+    ) -> dict[str, int]:
+        """Reconcile bounded local escrow; expired open holds refund first."""
+
+        ledger = self._regional_quota_ledger
+        if ledger is None:
+            return {"inspected": 0, "reconciled": 0, "closed": 0, "errors": 0}
+        from trusted_router.services.regional_quota_leases import HoldState
+        from trusted_router.storage_gcp_regional_quota import (
+            GlobalRegionalQuotaLease,
+            reconcile_regional_quota_lease,
+        )
+
+        now = dt.datetime.now(dt.UTC) if now is None else now
+        records = [
+            record
+            for record in self._list_entities(
+                "regional_quota_lease",
+                cls=GlobalRegionalQuotaLease,
+            )
+            if record.state != "closed"
+        ]
+        records.sort(key=lambda record: (record.expires_datetime, record.lease_id))
+        records = records[: max(1, min(limit, 1000))]
+        result = {"inspected": 0, "reconciled": 0, "closed": 0, "errors": 0}
+        for record in records:
+            result["inspected"] += 1
+            try:
+                local = ledger.get(record.lease_id, region=record.region)
+                if local is None:
+                    raise RuntimeError("regional lease row is missing")
+                for hold in local.holds:
+                    if (
+                        hold.state == HoldState.RESERVED
+                        and hold.expires_at is not None
+                        and hold.expires_at <= now
+                    ):
+                        local = ledger.refund(
+                            record.lease_id,
+                            region=record.region,
+                            hold_id=hold.hold_id,
+                            fencing_token=record.fencing_token,
+                        )
+                if local.expires_at <= now and local.state.value == "active":
+                    local = ledger.begin_drain(
+                        record.lease_id,
+                        region=record.region,
+                        fencing_token=record.fencing_token,
+                    )
+                should_close = local.state.value == "draining" and local.reserved_microdollars == 0
+                reconcile_regional_quota_lease(
+                    self,
+                    record,
+                    local,
+                    close=should_close,
+                    now=now,
+                )
+                result["reconciled"] += 1
+                if should_close:
+                    ledger.close(
+                        record.lease_id,
+                        region=record.region,
+                        fencing_token=record.fencing_token,
+                    )
+                    with self._regional_quota_lease_cache_lock:
+                        self._regional_quota_lease_cache.pop(
+                            (
+                                record.workspace_id,
+                                record.region,
+                                record.quota_shard,
+                            ),
+                            None,
+                        )
+                    result["closed"] += 1
+            except Exception:
+                result["errors"] += 1
+                log.error(
+                    "regional quota reconciliation failed lease_id=%s workspace_id=%s",
+                    record.lease_id,
+                    record.workspace_id,
+                    exc_info=True,
+                )
+        return result
 
     def authorize_gateway_typed(
         self,
@@ -2807,10 +3228,7 @@ class SpannerBigtableStore:
             )
 
         result = run_authorize(credit_shard_candidates)
-        if (
-            result["outcome"] == AuthorizeOutcome.KEY_LIMIT_EXCEEDED
-            and key_counter_shards > 1
-        ):
+        if result["outcome"] == AuthorizeOutcome.KEY_LIMIT_EXCEEDED and key_counter_shards > 1:
             from trusted_router.storage_gcp_key_escrow import (
                 rebalance_key_limit_headroom,
             )
