@@ -999,56 +999,6 @@ def _check_run_script(workflow: dict[str, object]) -> str:
     raise AssertionError("no step runs the fleet freshness module")
 
 
-def test_workflow_ships_without_a_schedule_or_a_push_trigger() -> None:
-    """No trigger may fire this job before a control plane publishes the section.
-
-    Merging main auto-deploys the GCP control plane ONLY (deploy.yml); AWS-EU
-    and Azure are hand-run scripts and are already behind. A `schedule:` landed
-    in the same commit as the publisher would file an issue every morning about
-    two clouds nobody has redeployed -- and the daily issue teaches people to
-    close this job unread, at which point it is not watching the clouds it CAN
-    read either. That is the same failure the client-telemetry check's
-    `CANARY_COUNT_GATE_FROM` ramp-up guard exists to avoid, and the same reason
-    this job's single-cloud predecessor shipped scheduleless.
-
-    `push:` was held to be different -- one run, on the merge, aimed at
-    somebody still holding the context. It is not. On that merge NO plane
-    publishes the section yet, so the run fails, and the failure step opens a
-    LABELLED PUBLIC ISSUE about a state this repository has already written
-    down as expected. Filing an automated issue against a known, documented,
-    not-yet-true precondition is the cry-wolf failure with a shorter fuse. The
-    honest sequencing is: deploy, dispatch once by hand, then enable both
-    triggers in one commit that also deletes this test.
-
-    `workflow_dispatch` is the whole trigger surface until then.
-    """
-    on_block = _on_block(_workflow())
-
-    assert "schedule" not in on_block
-    assert "push" not in on_block
-    assert set(on_block) == {"workflow_dispatch"}
-
-
-def test_workflow_header_states_the_precondition_and_the_follow_up() -> None:
-    """A withheld trigger is only honest if the note says how to un-withhold it.
-
-    Including the part that is only discoverable by breaking it: turning the
-    triggers on fails two tests, and the header names both, so nobody learns
-    what they changed from a red CI run.
-    """
-    workflow = WORKFLOW.read_text()
-
-    assert "OPERATOR STEPS BEFORE THE SCHEDULE IS ENABLED" in workflow
-    assert "PRECONDITION" in workflow
-    assert 'schedule: [{cron: "20 7 * * *"}]' in workflow
-    assert "cries wolf" in workflow
-    # Named, not described. A rename that does not update the header fails here.
-    assert "::test_workflow_ships_without_a_schedule_or_a_push_trigger" in workflow
-    assert "::test_workflow_still_does_not_page_before_the_field_is_deployed" in workflow
-    assert "tests/test_analytics_freshness_registry.py" in workflow
-    assert "tests/test_aws_analytics_drain_install.py" in workflow
-
-
 def test_the_scheduled_run_line_can_never_be_narrowed_to_one_cloud() -> None:
     """Structural, because the string version of this test proved nothing.
 
@@ -1084,7 +1034,10 @@ def test_the_scheduled_run_line_can_never_be_narrowed_to_one_cloud() -> None:
 def test_workflow_runs_the_fleet_module_not_the_single_cloud_alias() -> None:
     script = _check_run_script(_workflow())
 
-    assert "python3 -m clickhouse.check_fleet_analytics_freshness" in script
+    # Launcher-agnostic on purpose: the job runs this through `uv run` now
+    # that it installs the package it imports. What this test is about is WHICH
+    # module runs -- the fleet checker, not the single-cloud alias it replaced.
+    assert "-m clickhouse.check_fleet_analytics_freshness" in script
 
 
 def test_workflow_needs_no_cloud_credentials() -> None:

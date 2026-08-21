@@ -63,29 +63,35 @@ name: Check fleet analytics freshness
 # stronger than a ClickHouse timestamp -- it cannot be satisfied by a drain that
 # is writing nowhere.
 #
-# OPERATOR STEPS BEFORE THE SCHEDULE IS ENABLED
-# ---------------------------------------------
-# The `schedule:` trigger is intentionally absent, exactly as it was in this
-# job's single-cloud predecessor and for the same reason one layer up. So is
-# `push:`, and that one is worth stating outright rather than leaving to be
-# rediscovered: a push trigger on these paths fires on the very merge that
-# lands them, at which point NO control plane publishes the `analytics` section
-# yet. The run fails -- correctly -- and the failure step below opens a
-# labelled public issue about a state we already know about and have written
-# down here. An automated issue filed against a known, documented, not-yet-true
-# precondition is the cry-wolf failure in miniature, one hour after merge
-# instead of one morning after.
+# WHY THE TRIGGERS ARE ON NOW
+# ---------------------------
+# `schedule:` and `push:` were both withheld until every cloud in
+# ANALYTICS_FRESHNESS_FLEET was actually SERVING code that publishes the
+# `analytics` section. Merging to main was never that: it auto-deploys the GCP
+# control plane only (deploy.yml), while AWS-EU and Azure are hand-run scripts
+# and were both behind. A schedule enabled before then would have filed an
+# issue every morning about two clouds nobody had redeployed, and a check that
+# cries wolf is a check people learn to close unread -- at which point it is
+# not watching the clouds it CAN read either.
 #
-# PRECONDITION: every cloud in ANALYTICS_FRESHNESS_FLEET must actually be
-# SERVING the code that publishes the `analytics` section. Merging to main is
-# not that. Merging auto-deploys the GCP control plane only (deploy.yml);
-# AWS-EU and Azure are deployed by hand-run scripts
-# (scripts/deploy/aws_eu_control_plane.sh, scripts/deploy/azure_control_plane.sh)
-# and are already behind main. A schedule turned on in the same commit as the
-# publisher would therefore file an issue every morning about two clouds that
-# were never redeployed -- a check that cries wolf is a check people learn to
-# ignore, which is the failure `CANARY_COUNT_GATE_FROM` in
-# clickhouse/check_client_telemetry_freshness.py was written to avoid.
+# That precondition was met on 2026-08-21:
+#
+#   aws    was publishing "unreachable" -- deployed 2026-08-18, two days
+#          before #672, so it still sent Aurora DSQL a SET LOCAL
+#          statement_timeout that DSQL rejects. Redeployed.
+#   azure  was publishing no analytics section at all -- the control plane had
+#          never been redeployed past revision 0000001. Redeployed; it now
+#          reports not_configured, which is the honest answer for a cloud with
+#          no outbox and is what expects_outbox=False asserts.
+#
+#   fleet analytics freshness: OK aws=0.0 azure=None gcp=0.287 unchecked=1
+#
+# The documented sequencing was deploy, dispatch once by hand, then enable the
+# triggers. Doing the hand dispatch is what found that this job could not run
+# AT ALL: it installed no dependencies, so the checker died on `import
+# pydantic` before reading a single status page. Its entire run history was
+# that one failure. The install step below is the fix, and it is the reason
+# the dispatch step was worth insisting on rather than treating as ceremony.
 #
 #   1. Deploy all three control planes; verify with
 #        curl -s https://trustedrouter.com/status.json | jq .data.analytics
@@ -121,6 +127,30 @@ name: Check fleet analytics freshness
 # of a late detection is freshness and storage, never data.
 
 on:
+  schedule:
+    # Every six hours. The cadence is set by what this check is FOR: the
+    # drain's own backlog_alarm is emitted by the drain process, so a drain
+    # that does not exist cannot alarm about not existing -- which is how
+    # AWS-EU went fifteen days and 470,370 rows unnoticed. This is the
+    # out-of-band backstop for exactly that.
+    #
+    # Not hourly: the drain tolerates an hour of lag by design
+    # (max_drain_lag_seconds defaults to 3600), so a sub-hourly run reports
+    # the same number more often without learning anything new, and a check
+    # that cries wolf is one people learn to skip. Not daily either: at that
+    # cadence a stopped drain is a day of silence, and the whole complaint
+    # about the original outage was the length of the silence.
+    - cron: "0 */6 * * *"
+  push:
+    branches: [main]
+    # Only when the check ITSELF changes. One run, on the merge, while somebody
+    # still holds the context -- which is what the withheld push trigger was
+    # always for. Not on every main push: the clouds it reads are deployed by
+    # hand, so an unrelated merge says nothing new about their drains.
+    paths:
+      - "clickhouse/check_fleet_analytics_freshness.py"
+      - "src/trusted_router/operational_analytics_fleet.py"
+      - ".github/workflows/check-analytics-freshness.yml"
   workflow_dispatch:
     inputs:
       cloud:
@@ -155,6 +185,24 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      # The checker imports trusted_router.operational_analytics_fleet, whose
+      # import chain reaches trusted_router.config and therefore pydantic. This
+      # job set PYTHONPATH=src and installed NOTHING, so it had never once
+      # completed: the only run in its entire history -- a hand dispatch on
+      # 2026-08-21 -- died with ModuleNotFoundError before reading a single
+      # status page.
+      #
+      # A check built to catch a fifteen-day silent outage was itself silently
+      # incapable of running. It is worth saying plainly, because the shape is
+      # the one this repository keeps finding: configured, documented, tested,
+      # and never executed.
+      - name: Install the package the checker imports
+        run: uv sync --frozen
+
       # No credentials, no cloud SDK, no VPC. The whole point of reading the
       # public status feeds is that this step is a handful of plain HTTPS GETs.
       - name: Check every cloud's drain lag
@@ -176,7 +224,7 @@ jobs:
           if [ -n "${MAX_LAG}" ]; then
             args+=(--max-drain-lag-seconds "${MAX_LAG}")
           fi
-          python3 -m clickhouse.check_fleet_analytics_freshness "${args[@]}"
+          uv run python -m clickhouse.check_fleet_analytics_freshness "${args[@]}"
 
       - name: Open or update the freshness issue
         if: failure()
