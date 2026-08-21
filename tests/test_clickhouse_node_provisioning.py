@@ -75,7 +75,7 @@ def test_rollout_prefers_private_clickhouse_load_balancer() -> None:
     script = (ROOT / "scripts/deploy/rollout.sh").read_text()
 
     assert "compute addresses describe tr-clickhouse-ilb" in script
-    assert 'TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL=${PROVIDER_ANALYTICS_CLICKHOUSE_URL}' in script
+    assert 'TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL=${PROVIDER_CLICKHOUSE_URL}' in script
 
 
 def test_operational_deploy_moves_benchmark_code_schema_and_replay_together() -> None:
