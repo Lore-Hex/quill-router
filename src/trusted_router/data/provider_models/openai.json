@@ -210,21 +210,21 @@
       "upstream_id": "gpt-5.6-sol",
       "created": 1782228018,
       "routable": true,
-      "input_token_price_per_m": 5000000,
-      "output_token_price_per_m": 30000000,
-      "cached_input_token_price_per_m": 500000,
+      "input_token_price_per_m": 4000000,
+      "output_token_price_per_m": 20000000,
+      "cached_input_token_price_per_m": 400000,
       "price_tiers": [
         {
           "max_prompt_tokens": 272000,
-          "input_token_price_per_m": 5000000,
-          "output_token_price_per_m": 30000000,
-          "cached_input_token_price_per_m": 500000
+          "input_token_price_per_m": 4000000,
+          "output_token_price_per_m": 20000000,
+          "cached_input_token_price_per_m": 400000
         },
         {
           "max_prompt_tokens": null,
-          "input_token_price_per_m": 10000000,
-          "output_token_price_per_m": 45000000,
-          "cached_input_token_price_per_m": 1000000
+          "input_token_price_per_m": 8000000,
+          "output_token_price_per_m": 30000000,
+          "cached_input_token_price_per_m": 800000
         }
       ]
     },
@@ -843,7 +843,7 @@
     }
   ],
   "source": "https://api.openai.com/v1/models",
-  "generated_at": "2026-08-21T18:39:10Z",
+  "generated_at": "2026-08-21T19:28:28Z",
   "price_scale": "microdollars_per_million",
   "model_count": 34
 }

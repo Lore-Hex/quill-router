@@ -100,10 +100,10 @@
   },
   "deepseek": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 5,
     "name": "DeepSeek",
     "privacy": "Policy documented",
-    "route_count": 10,
+    "route_count": 8,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepseek"
   },
@@ -271,10 +271,10 @@
   },
   "nebius": {
     "card_version": 2,
-    "model_count": 30,
+    "model_count": 31,
     "name": "Nebius Token Factory",
     "privacy": "Zero retention",
-    "route_count": 58,
+    "route_count": 60,
     "route_mode": "Prepaid + BYOK",
     "slug": "nebius"
   },
