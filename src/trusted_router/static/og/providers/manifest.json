@@ -316,10 +316,10 @@
   },
   "pearl": {
     "card_version": 2,
-    "model_count": 3,
+    "model_count": 2,
     "name": "Pearl Research Labs",
     "privacy": "Policy documented",
-    "route_count": 3,
+    "route_count": 2,
     "route_mode": "Prepaid",
     "slug": "pearl"
   },
