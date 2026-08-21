@@ -418,6 +418,12 @@ _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
         ("PEARL_RESEARCH_API_KEY",),
         _canonical_provider_model_id,
     ),
+    (
+        "poolside",
+        "https://inference.poolside.ai/v1/models",
+        ("POOLSIDE_API_KEY",),
+        _identity_model_id,
+    ),
 )
 
 _GLM_DISCOVERABLE_PROVIDER_APIS: tuple[tuple[str, str, tuple[str, ...]], ...] = (

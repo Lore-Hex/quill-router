@@ -119,6 +119,7 @@ PROVIDER_SLUGS = [
     "neurometric",
     "engy",
     "pearl",
+    "poolside",
     "databricks",
     # 0G Private Computer publishes exact per-route prices and trust metadata
     # in its public marketplace hydration data. The adapter admits only

@@ -9,6 +9,8 @@ from scripts import check_price_coverage
 from scripts.check_price_coverage import audit
 
 _NEW_AUTOMATIC_FEED_MODELS = {
+    "poolside/laguna-s-2.1",
+    "poolside/laguna-xs-2.1",
     "openai/gpt-5.6-sol",
     "x-ai/grok-4.6",
     "deepseek/deepseek-v4-flash",
@@ -72,6 +74,13 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "glm-5.2"}]}
     if "inference.pearlresearch.ai" in url:
         return {"data": [{"id": "deepseek/deepseek-v4-flash"}]}
+    if "inference.poolside.ai" in url:
+        return {
+            "data": [
+                {"id": "poolside/laguna-s-2.1"},
+                {"id": "poolside/laguna-xs-2.1"},
+            ]
+        }
     return {"data": []}
 
 

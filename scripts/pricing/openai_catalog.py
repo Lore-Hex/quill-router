@@ -64,11 +64,13 @@ def discover_openai_chat_catalog(
     explicit_map: dict[str, str],
     upstream_id_map: dict[str, str],
     include: Callable[[dict[str, Any]], bool] | None = None,
+    allow_zero_prices: bool = False,
 ) -> tuple[dict[str, ModelPrice], dict[str, dict[str, Any]]]:
     """Normalize text-chat rows while preserving exact upstream IDs.
 
     All-zero prices remain in ``discovered`` so manifest writers can disable
-    an existing route immediately, but never enter ``prices`` as billable.
+    an existing route immediately. They enter ``prices`` only when a provider
+    adapter explicitly opts in after independently validating a free tier.
     """
 
     prices: dict[str, ModelPrice] = {}
@@ -117,7 +119,11 @@ def discover_openai_chat_catalog(
             if isinstance(value, list):
                 row[field] = [str(item) for item in value]
         discovered[model_id] = row
-        if price.prompt_micro_per_m > 0 or price.completion_micro_per_m > 0:
+        if (
+            allow_zero_prices
+            or price.prompt_micro_per_m > 0
+            or price.completion_micro_per_m > 0
+        ):
             prices[model_id] = price
     return prices, discovered
 
@@ -177,6 +183,7 @@ def probe_openai_chat(
     model: str,
     extra_headers: dict[str, str] | None = None,
     expected_content: str | None = None,
+    prompt: str = "Reply PONG",
     max_tokens: int = 4,
     max_tokens_field: str = "max_tokens",
 ) -> bool:
@@ -196,7 +203,7 @@ def probe_openai_chat(
             headers=headers,
             json={
                 "model": model,
-                "messages": [{"role": "user", "content": "Reply PONG"}],
+                "messages": [{"role": "user", "content": prompt}],
                 max_tokens_field: max_tokens,
                 "stream": False,
             },

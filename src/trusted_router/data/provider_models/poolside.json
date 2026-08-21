@@ -1,0 +1,75 @@
+{
+  "provider": "poolside",
+  "models": [
+    {
+      "display_name": "Laguna S 2.1",
+      "title": "poolside/laguna-s-2.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "poolside/laguna-s-2.1",
+      "upstream_id": "poolside/laguna-s-2.1",
+      "context_length": 262144,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "chat",
+        "completion",
+        "reasoning",
+        "tools",
+        "prompt_caching"
+      ],
+      "supported_sampling_parameters": [
+        "temperature"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0,
+      "cached_input_token_price_per_m": 0
+    },
+    {
+      "display_name": "Laguna XS 2.1",
+      "title": "poolside/laguna-xs-2.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "poolside/laguna-xs-2.1",
+      "upstream_id": "poolside/laguna-xs-2.1",
+      "context_length": 262144,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "chat",
+        "completion",
+        "reasoning",
+        "tools",
+        "prompt_caching"
+      ],
+      "supported_sampling_parameters": [
+        "temperature"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0,
+      "cached_input_token_price_per_m": 0
+    }
+  ],
+  "source": "https://inference.poolside.ai/v1/models",
+  "generated_at": "2026-08-21T22:32:13Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 2
+}
