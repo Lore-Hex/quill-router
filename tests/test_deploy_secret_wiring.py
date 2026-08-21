@@ -166,9 +166,11 @@ def test_production_deploy_provisions_and_schedules_regional_quota_reconciliatio
     assert "us-central1=tr-quota-us-central1" in library
     assert "europe-west4=tr-quota-europe-west4" not in library
     assert 'SCHEDULE="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULE:-* * * * *}"' in reconciler
-    assert "/v1/internal/gateway/regional-quota/reconcile?limit=250" in reconciler
-    assert "x-trustedrouter-internal-token=${internal_token}" in reconciler
-    assert "echo \"$internal_token\"" not in reconciler
+    assert "trusted_router.regional_quota_reconcile_cli" in reconciler
+    assert "--oauth-service-account-email=\"$RUN_SERVICE_ACCOUNT\"" in reconciler
+    assert "gcloud.secrets" not in reconciler
+    assert "internal_gateway_token" not in reconciler
+    assert "gc run jobs execute" in reconciler
 
 
 def test_deploy_preserves_request_record_mode_without_silent_legacy_fallback() -> None:

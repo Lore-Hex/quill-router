@@ -992,7 +992,15 @@ class Settings(BaseSettings):
         if not 1 <= self.regional_quota_lease_shard_count <= 64:
             raise ValueError("TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT must be between 1 and 64")
         if self.regional_quota_leases_enabled:
-            if not self.regional_quota_lease_pilot_workspace_ids.strip():
+            # Serving processes must always be allowlisted. The one-shot
+            # reconciler worker scans only already-issued global leases and
+            # cannot authorize traffic, so duplicating the serving allowlist
+            # into that job would add configuration drift without narrowing
+            # its authority.
+            if (
+                environment != "worker"
+                and not self.regional_quota_lease_pilot_workspace_ids.strip()
+            ):
                 raise ValueError(
                     "TR_REGIONAL_QUOTA_LEASES_ENABLED requires "
                     "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS"
