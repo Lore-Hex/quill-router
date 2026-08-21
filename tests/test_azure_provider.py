@@ -1140,8 +1140,8 @@ def test_azure_image_canary_assets_are_distinct_valid_solid_color_pngs() -> None
             ">IIBBBBB", chunks[b"IHDR"][0]
         )
         assert (width, height, depth, color_type, compression, filtering, interlace) == (
-            8,
-            8,
+            64,
+            64,
             8,
             2,
             0,
@@ -1177,7 +1177,7 @@ def test_azure_image_canary_sends_ordered_distinct_pair_for_exact_five_routes(
         assert isinstance(messages, list)
         content = messages[0]["content"]
         assert isinstance(content, list)
-        expected_answer = ", ".join(
+        expected_answer = ",".join(
             label_by_url[item["image_url"]["url"]] for item in content[1:]
         )
         return httpx.Response(
@@ -1192,7 +1192,11 @@ def test_azure_image_canary_sends_ordered_distinct_pair_for_exact_five_routes(
         sync._image_canary(_canary_candidate(model_id), account_key="test")  # noqa: SLF001
 
     assert len(requests) == 5
-    for request in requests:
+    for model_id, request in zip(
+        sorted(sync._IMAGE_CANARY_MODEL_IDS),  # noqa: SLF001
+        requests,
+        strict=True,
+    ):
         messages = request["messages"]
         assert isinstance(messages, list)
         content = messages[0]["content"]
@@ -1208,11 +1212,54 @@ def test_azure_image_canary_sends_ordered_distinct_pair_for_exact_five_routes(
             assert data_url.startswith("data:image/png;base64,")
             route_urls.append(data_url)
         assert len(set(route_urls)) == 2
+        expected_token_field = (
+            "max_completion_tokens" if model_id == "openai/gpt-5-mini" else "max_tokens"
+        )
+        assert request[expected_token_field] == 4096
+        assert ({"max_tokens", "max_completion_tokens"} & request.keys()) == {
+            expected_token_field
+        }
+
+
+@pytest.mark.parametrize("answer", ["RED,BLUE", " red , BlUe "])
+def test_azure_image_canary_accepts_exact_labels_with_flexible_case_and_spacing(
+    monkeypatch: pytest.MonkeyPatch,
+    answer: str,
+) -> None:
+    assets = dict(sync._IMAGE_CANARY_ASSETS)  # noqa: SLF001
+    monkeypatch.setattr(
+        sync,
+        "_image_canary_challenges",
+        lambda: [("RED", assets["RED"]), ("BLUE", assets["BLUE"])],
+    )
+
+    def fake_post(url: str, **_kwargs: object) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": answer}}]},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(sync.httpx, "post", fake_post)
+
+    sync._image_canary(  # noqa: SLF001
+        _canary_candidate("openai/gpt-5-mini"),
+        account_key="test",
+    )
 
 
 @pytest.mark.parametrize(
     "answer",
-    ["BLUE, RED", "The colors are RED, BLUE", "RED", "RED BLUE", "RED, BLUE, GREEN", "", None],
+    [
+        "BLUE, RED",
+        "RED, PURPLE",
+        "The colors are RED, BLUE",
+        "RED",
+        "RED BLUE",
+        "RED, BLUE, GREEN",
+        "",
+        None,
+    ],
 )
 def test_azure_image_canary_requires_exact_selected_label(
     monkeypatch: pytest.MonkeyPatch,

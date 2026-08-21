@@ -54,6 +54,7 @@ ANTHROPIC_BASE_URL = "https://trustedrouter-foundry-eastus2.services.ai.azure.co
 CANARY_TIMEOUT = httpx.Timeout(connect=10, read=30, write=10, pool=10)
 DEPLOYMENT_VERSION_UPGRADE_OPTION = "NoAutoUpgrade"
 MINIMUM_LAUNCH_CAPACITY = 10
+IMAGE_CANARY_OUTPUT_TOKEN_BUDGET = 4096
 _IMAGE_CANARY_MODEL_IDS = frozenset(
     {
         "moonshotai/kimi-k2.5",
@@ -63,29 +64,37 @@ _IMAGE_CANARY_MODEL_IDS = frozenset(
         "x-ai/grok-4.20-reasoning",
     }
 )
-# Prevalidated deterministic 8x8 solid RGB PNGs avoid third-party URLs. Two
+# Prevalidated deterministic 64x64 solid RGB PNGs avoid third-party URLs. Two
 # distinct assets are cryptographically selected for each admission attempt,
 # so a model cannot pass by returning one canned color without reading images.
 _IMAGE_CANARY_ASSETS = (
     (
         "RED",
         "data:image/png;base64,"
-        "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR42mP4z8CAFTEMLQkAKP8/wc53yE8AAAAASUVORK5CYII=",
+        "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAS0lEQVR42u3PQQkAAAgAsetfWiP4FgYrsKZe"
+        "S0BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEDgsqnc8OJg6Ln3AAAAAElF"
+        "TkSuQmCC",
     ),
     (
         "GREEN",
         "data:image/png;base64,"
-        "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEElEQVR42mNg+M+AHQ0tCQDpMD/BHYHcAQAAAABJRU5ErkJggg==",
+        "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAS0lEQVR42u3PQQkAAAgAsetfWiP4FgYrsJp+"
+        "ExAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBC4LLjs8OJxKlMxAAAAAElF"
+        "TkSuQmCC",
     ),
     (
         "BLUE",
         "data:image/png;base64,"
-        "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEElEQVR42mNgYPiPAw0pCQCpcD/B/MtF/AAAAABJRU5ErkJggg==",
+        "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAS0lEQVR42u3PQQkAAAgAsetfWiP4FgYrsGqe"
+        "ExAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBA4LMf88OL0EKXAAAAAAElF"
+        "TkSuQmCC",
     ),
     (
         "YELLOW",
         "data:image/png;base64,"
-        "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR42mP4/58BK2IYWhIAEXZ/gVEmf+cAAAAASUVORK5CYII=",
+        "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAATElEQVR42u3PMQkAAAwDsPo33UnoPQjEQNLm"
+        "tQgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgILAcyl+HSEp61MQAAAABJRU5E"
+        "rkJggg==",
     ),
 )
 # The pricing adapter intentionally admits only global meters. Azure's Data
@@ -721,9 +730,10 @@ def _image_canary_challenges() -> list[tuple[str, str]]:
 
 
 def _image_canary(candidate: DeploymentCandidate, *, account_key: str) -> None:
+    allowed_labels = frozenset(label.casefold() for label, _data_url in _IMAGE_CANARY_ASSETS)
     labels = ", ".join(sorted(label for label, _data_url in _IMAGE_CANARY_ASSETS))
     challenges = _image_canary_challenges()
-    expected_answer = ", ".join(label for label, _data_url in challenges)
+    expected_labels = tuple(label.casefold() for label, _data_url in challenges)
     content: list[dict[str, Any]] = [
         {
             "type": "text",
@@ -743,13 +753,19 @@ def _image_canary(candidate: DeploymentCandidate, *, account_key: str) -> None:
         headers={"api-key": account_key},
         request={
             "model": candidate.deployment_name,
-            _openai_token_field(candidate): 64,
+            _openai_token_field(candidate): IMAGE_CANARY_OUTPUT_TOKEN_BUDGET,
             "stream": False,
             "messages": [{"role": "user", "content": content}],
         },
     )
     text = _extract_openai_text(payload)
-    if text.upper() != expected_answer:
+    answer_parts = text.split(",")
+    answer_labels = tuple(part.strip().casefold() for part in answer_parts)
+    if (
+        len(answer_labels) != 2
+        or any(label not in allowed_labels for label in answer_labels)
+        or answer_labels != expected_labels
+    ):
         raise RuntimeError(
             f"Azure image canary did not identify the embedded images for "
             f"{candidate.deployment_name}"
