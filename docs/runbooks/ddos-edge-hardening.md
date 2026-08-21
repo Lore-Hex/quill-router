@@ -187,17 +187,19 @@ recorded suffix and cohort, then use `--verify-artifact` before bootstrap.
    resource.name == "projects/_/buckets/BUCKET/objects/trusted-router-rollouts/PROJECT/authority.json" || resource.name.startsWith("projects/_/buckets/BUCKET/objects/trusted-router-rollouts/PROJECT/releases/MANIFEST_EPOCH/")
    ```
    Provisioning commands for that approval window. These create exactly what
-   the read-only IAM verifier accepts — a versioned bucket with seven-day
-   retention, one three-permission custom role shared by the journal and
-   recovery bindings, and object-scoped conditional bindings for the deploy
-   identity — so a value drifting from these commands fails
-   `rollout_iam_verify.sh` rather than passing loosely:
+   the read-only IAM verifier accepts. In recovery mode the verifier requires
+   EXACTLY ONE deploy binding on the bucket -- the recovery condition, which
+   covers the authority object and the release bundle (the durable journal is
+   `${BUNDLE}/promotion-state.json`, inside the bundle, so no separate journal
+   binding may exist). The epoch is assigned, not implied: use the reviewed
+   manifest's sha256 so it is unique and canonical per release.
 
    ```bash
    PROJECT=quill-cloud-proxy
    BUCKET="${PROJECT}-tr-rollout-state"
    DEPLOY_SA="tr-deploy@${PROJECT}.iam.gserviceaccount.com"
    PREFIX="trusted-router-rollouts/${PROJECT}"
+   MANIFEST_EPOCH="$(shasum -a 256 "$ROLLOUT_MANIFEST" | cut -c1-64)"
 
    gcloud storage buckets create "gs://${BUCKET}" --project="$PROJECT" \
      --location=us-central1 --uniform-bucket-level-access \
@@ -207,13 +209,10 @@ recorded suffix and cohort, then use `--verify-artifact` before bootstrap.
    gcloud iam roles create trRolloutJournal --project="$PROJECT" \
      --title="TrustedRouter rollout journal" --stage=GA \
      --permissions=storage.objects.get,storage.objects.create,storage.objects.delete
-   # Journal binding: exactly one object.
-   gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
-     --member="serviceAccount:${DEPLOY_SA}" \
-     --role="projects/${PROJECT}/roles/trRolloutJournal" \
-     --condition="title=trusted-router-rollout-journal,expression=resource.name == \"projects/_/buckets/${BUCKET}/objects/${PREFIX}/state.json\""
-   # Recovery binding: the authority object plus this manifest epoch's bundle.
-   # MANIFEST_EPOCH comes from the reviewed manifest; re-run per release.
+   # THE one binding. Per release, remove the previous epoch's binding first --
+   # the verifier rejects accumulated stale bindings, and remove-then-add is
+   # the reviewed rotation:
+   #   gcloud storage buckets remove-iam-policy-binding ... --condition=<prior>
    gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
      --member="serviceAccount:${DEPLOY_SA}" \
      --role="projects/${PROJECT}/roles/trRolloutJournal" \
@@ -221,14 +220,15 @@ recorded suffix and cohort, then use `--verify-artifact` before bootstrap.
    ```
 
    Then export, for both the operator stage/promote commands and
-   `rollout_iam_verify.sh`:
+   `rollout_iam_verify.sh`. The state URI is the promotion journal INSIDE the
+   bundle; a standalone state object fails recovery verification:
 
    ```bash
-   export TR_ROLLOUT_STATE_GCS_URI="gs://${BUCKET}/${PREFIX}/state.json"
    export TR_ROLLOUT_RECOVERY_GCS_PREFIX="gs://${BUCKET}/${PREFIX}"
    export TR_ROLLOUT_RECOVERY_GCS_ROLE="projects/${PROJECT}/roles/trRolloutJournal"
    export TR_ROLLOUT_BUNDLE_GCS_URI="gs://${BUCKET}/${PREFIX}/releases/${MANIFEST_EPOCH}"
    export TR_ROLLOUT_AUTHORITY_GCS_URI="gs://${BUCKET}/${PREFIX}/authority.json"
+   export TR_ROLLOUT_STATE_GCS_URI="${TR_ROLLOUT_BUNDLE_GCS_URI}/promotion-state.json"
    export TR_ROLLOUT_REQUIRE_RECOVERY_BUNDLE=true
    ```
 
