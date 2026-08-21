@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Fail a rollout when its region emitted a billing-path 5xx after the supplied
-# timestamp. Cloud Run readiness alone cannot detect exhausted Spanner retries.
+# Fail a rollout when its candidate revision emitted a billing-path 5xx after
+# the supplied timestamp. Cloud Run readiness cannot detect exhausted retries.
 set -euo pipefail
 
-REGION="${1:?usage: assert_no_billing_5xx.sh REGION SINCE_TIMESTAMP}"
-SINCE="${2:?usage: assert_no_billing_5xx.sh REGION SINCE_TIMESTAMP}"
+REGION="${1:?usage: assert_no_billing_5xx.sh REGION SINCE_TIMESTAMP REVISION}"
+SINCE="${2:?usage: assert_no_billing_5xx.sh REGION SINCE_TIMESTAMP REVISION}"
+REVISION="${3:?usage: assert_no_billing_5xx.sh REGION SINCE_TIMESTAMP REVISION}"
 PROJECT_ID="${PROJECT_ID:-quill-cloud-proxy}"
 SERVICE="${SERVICE:-trusted-router}"
 
@@ -19,6 +20,7 @@ sleep "${TR_BILLING_5XX_LOG_GRACE_SECONDS:-20}"
 query="resource.type=\"cloud_run_revision\"
 resource.labels.service_name=\"${SERVICE}\"
 resource.labels.location=\"${REGION}\"
+resource.labels.revision_name=\"${REVISION}\"
 timestamp>=\"${SINCE}\"
 httpRequest.status>=500
 httpRequest.requestUrl:\"/internal/gateway/\""
@@ -30,8 +32,8 @@ failure="$(gcloud logging read "${query}" \
   --format='value(timestamp,httpRequest.requestUrl,httpRequest.status,httpRequest.latency)')"
 
 if [ -n "${failure}" ]; then
-  echo "billing-path 5xx detected in ${REGION} after ${SINCE}: ${failure}"
+  echo "billing-path 5xx detected in ${REGION} revision ${REVISION} after ${SINCE}: ${failure}"
   exit 1
 fi
 
-echo "billing-path 5xx gate passed for ${REGION}"
+echo "billing-path 5xx gate passed for ${REGION} revision ${REVISION}"
