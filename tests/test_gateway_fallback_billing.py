@@ -851,7 +851,10 @@ def test_gateway_prepaid_route_does_not_return_byok_secret_even_if_configured() 
     assert data["route_candidates"][0]["byok_secret_ref"] is None
     assert data["route_candidates"][0]["byok_encrypted_secret"] is None
     assert [item["usage_type"] for item in data["route_candidates"]][:2] == ["Credits", "BYOK"]
-    assert {item["provider"] for item in data["route_candidates"]} >= {"kimi", "together"}
+    # Kimi direct is the stable prepaid route. Together and other secondary
+    # routes are live-discovered and must disappear when the provider stops
+    # advertising this model as started serverless capacity.
+    assert "kimi" in {item["provider"] for item in data["route_candidates"]}
 
 
 def test_gateway_can_prefer_byok_endpoint_for_dual_mode_model() -> None:
