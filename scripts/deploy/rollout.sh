@@ -7,6 +7,8 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
+# shellcheck source=scripts/deploy/regional_quota_rollout.sh
+source "${SCRIPT_DIR}/regional_quota_rollout.sh"
 
 TRUST_SOURCE_COMMIT=""
 TRUST_IMAGE_REFERENCE=""
@@ -307,26 +309,41 @@ if [ "$ANALYTICS_READ_MODE" = "clickhouse" ] && {
   ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 fi
 
-read_primary_env() {
+# Regional quota capability and traffic issuance are separate switches. Resolve
+# preserved values from the one revision receiving 100% of primary traffic,
+# never the latest candidate or service template: both still point at a rejected
+# revision after rollback. Only an exact missing-service response represents a
+# fresh environment; every other control-plane read error aborts the rollout.
+REGIONAL_QUOTA_PRIMARY_FRESH=false
+REGIONAL_QUOTA_PRIMARY_REVISION_JSON=""
+if REGIONAL_QUOTA_PRIMARY_REVISION_JSON="$(
+  regional_quota_active_revision_json "$TR_PRIMARY_REGION" true
+)"; then
+  :
+else
+  regional_quota_primary_status=$?
+  if [ "$regional_quota_primary_status" -eq 3 ]; then
+    REGIONAL_QUOTA_PRIMARY_FRESH=true
+  else
+    exit "$regional_quota_primary_status"
+  fi
+fi
+
+read_primary_regional_quota_env() {
   local name="$1"
   local default_value="${2:-}"
-  gc run services describe "$SERVICE" \
-    --region="$TR_PRIMARY_REGION" \
-    --format=json 2>/dev/null \
-    | jq -r --arg name "$name" --arg default_value "$default_value" '
-        [
-          .spec.template.spec.containers[0].env[]?
-          | select(.name == $name)
-          | .value
-        ][0] // $default_value
-      ' || true
+  if [ "$REGIONAL_QUOTA_PRIMARY_FRESH" = "true" ]; then
+    printf '%s\n' "$default_value"
+    return 0
+  fi
+  regional_quota_revision_env \
+    "$REGIONAL_QUOTA_PRIMARY_REVISION_JSON" \
+    "$name" \
+    "$default_value"
 }
 
-# Regional quota leases are opt-in and workspace allowlisted. Preserve the
-# serving revision's state during ordinary deploys so a routine release cannot
-# silently turn a canary on or off. A fresh environment remains fail-closed.
 LIVE_REGIONAL_QUOTA_LEASES_ENABLED="$(
-  read_primary_env "TR_REGIONAL_QUOTA_LEASES_ENABLED" "false"
+  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASES_ENABLED" "false"
 )"
 REGIONAL_QUOTA_LEASES_ENABLED="${TR_REGIONAL_QUOTA_LEASES_ENABLED:-${LIVE_REGIONAL_QUOTA_LEASES_ENABLED:-false}}"
 case "$REGIONAL_QUOTA_LEASES_ENABLED" in
@@ -336,33 +353,63 @@ case "$REGIONAL_QUOTA_LEASES_ENABLED" in
     exit 1
     ;;
 esac
+
+# workflow_dispatch passes one of preserve/false/true through unchanged. The
+# deploy shell, not GitHub's expression coercion, turns that raw operator intent
+# into the boolean written on the Cloud Run revision. A missing marker on the
+# first compatibility deploy defaults OFF.
+LIVE_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$(
+  read_primary_regional_quota_env \
+    "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" \
+    "false"
+)"
+REGIONAL_QUOTA_LEASE_ISSUANCE_CONTROL="${TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED:-}"
+REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$(
+  regional_quota_normalize_issuance_control \
+    "$REGIONAL_QUOTA_LEASE_ISSUANCE_CONTROL" \
+    "$LIVE_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"
+)"
+if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ] &&
+   [ "$REGIONAL_QUOTA_LEASES_ENABLED" != "true" ]; then
+  log "refusing rollout: regional quota issuance requires lease capability"
+  exit 1
+fi
+
 REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS="${TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS:-$(
-  read_primary_env "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS"
+  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS"
 )}"
 REGIONAL_QUOTA_BIGTABLE_TABLE="${TR_REGIONAL_QUOTA_BIGTABLE_TABLE:-$(
-  read_primary_env "TR_REGIONAL_QUOTA_BIGTABLE_TABLE" "trustedrouter-regional-quota"
+  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_BIGTABLE_TABLE" "trustedrouter-regional-quota"
 )}"
 REGIONAL_QUOTA_BIGTABLE_APP_PROFILES="${TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES:-$(
-  read_primary_env "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES"
+  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES"
 )}"
 REGIONAL_QUOTA_LEASE_TTL_SECONDS="${TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS:-$(
-  read_primary_env "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS" "60"
+  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS" "60"
 )}"
 REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS="${TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS:-$(
-  read_primary_env "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS" "10000000"
+  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS" "10000000"
 )}"
 REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS="${TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS:-$(
-  read_primary_env "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS" "1000"
+  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS" "1000"
 )}"
 REGIONAL_QUOTA_LEASE_SHARD_COUNT="${TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT:-$(
-  read_primary_env "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT" "16"
+  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT" "16"
 )}"
-if [ "$REGIONAL_QUOTA_LEASES_ENABLED" = "true" ] && {
+if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ] && {
   [ -z "$REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS" ] ||
   [ -z "$REGIONAL_QUOTA_BIGTABLE_APP_PROFILES" ];
 }; then
-  log "refusing rollout: regional quota canary requires pilot workspaces and fixed Bigtable app profiles"
+  log "refusing rollout: regional quota issuance requires pilot workspaces and fixed Bigtable app profiles"
   exit 1
+fi
+
+# This executes before gcloud run deploy can create any issuance-enabled
+# revision. Every currently active fleet member must already be settlement-
+# capable and must explicitly carry the new boolean marker. That creates a
+# compatibility phase between landing the code and enabling issuance.
+if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ]; then
+  regional_quota_preflight_issuance_fleet
 fi
 
 # Prefer the private three-replica ClickHouse load balancer once provisioned.
@@ -535,10 +582,10 @@ ENV_VARS=(
   # operator overrides it. This prevents routine rollouts from reopening the
   # unbounded generic write path.
   "TR_REQUEST_RECORD_WRITE_MODE=${REQUEST_RECORD_WRITE_MODE}"
-  # Bounded regional escrow. This stays off by default and can serve only the
-  # explicit workspace allowlist. Ordinary deploys preserve the serving
-  # revision's state; startup fails closed if a required fixed profile is gone.
+  # Bounded regional escrow. Capability keeps settlement/reconciliation ready;
+  # the independent issuance marker stays off through the compatibility phase.
   "TR_REGIONAL_QUOTA_LEASES_ENABLED=${REGIONAL_QUOTA_LEASES_ENABLED}"
+  "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED=${REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED}"
   "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS=${REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS}"
   "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS=${REGIONAL_QUOTA_LEASE_TTL_SECONDS}"
   "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS=${REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS}"

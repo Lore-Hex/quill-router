@@ -94,11 +94,55 @@ uses the exact Spanner path until that region has an isolated local ledger.
 
 ## Rollout gates
 
-`TR_REGIONAL_QUOTA_LEASES_ENABLED` defaults to false. Production startup
-accepts true only with typed request records, the durable settle outbox, a
-non-empty workspace allowlist, a Bigtable instance, and fixed regional app
-profiles. Ordinary deploys preserve the serving revision's state rather than
-silently flipping it.
+Two independent flags make a rolling deploy safe:
+
+- `TR_REGIONAL_QUOTA_LEASES_ENABLED` is fleet capability. It keeps the fixed
+  regional ledger available for settlement, refund, and reconciliation.
+- `TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED` is the traffic mutation switch.
+  It defaults to false, requires capability, and is the only flag that lets an
+  allowlisted authorization create a new regional hold.
+
+Capability in production requires typed request records, the durable settle
+outbox, a Bigtable instance, and fixed regional app profiles. Issuance also
+requires a non-empty workspace allowlist. An issuance-off revision can still
+finish a regional hold created by an issuance-on peer, which is the required
+mixed-revision behavior during a ramp or rollback.
+
+The rollout reads preserved quota state from the revision receiving exactly
+100% of primary-region traffic. It never reads the service template, latest
+created revision, or latest ready revision, because all three can name a failed
+candidate after traffic has rolled back. An ambiguous traffic split or any
+control-plane read error aborts. Only an exact missing-service response is
+treated as a fresh environment, with issuance off.
+
+Activation is intentionally two separate full-fleet deployments:
+
+1. Compatibility phase — deploy every region with issuance explicitly false.
+   Wait for the normal staged traffic, billing-path, and production smoke gates
+   to complete everywhere.
+2. Issuance phase — dispatch the same workflow with issuance true. Before
+   creating any issuance-enabled revision, the rollout checks every active
+   control-plane region for `TR_REGIONAL_QUOTA_LEASES_ENABLED=true` and an
+   explicit boolean `TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED` marker. Missing,
+   split, unreadable, or incapable regions fail closed.
+
+Operator commands (run only from the reviewed `main` commit) are:
+
+```bash
+gh workflow run deploy.yml --repo Lore-Hex/quill-router --ref main \
+  -f regional_quota_lease_issuance=false
+```
+
+After that run is fully green in every region:
+
+```bash
+gh workflow run deploy.yml --repo Lore-Hex/quill-router --ref main \
+  -f regional_quota_lease_issuance=true
+```
+
+Routine workflow dispatches use `preserve`; push-triggered deploys normalize an
+empty input to the same behavior. The shell writes only a normalized boolean to
+the Cloud Run revision.
 
 Reconciliation is intentionally independent from traffic issuance. A
 versioned one-shot Cloud Run Job continues draining leases that were already

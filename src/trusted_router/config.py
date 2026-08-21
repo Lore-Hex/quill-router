@@ -638,7 +638,12 @@ class Settings(BaseSettings):
     notify_max_per_hour: int = 30
     notify_max_voice_per_hour: int = 4
 
+    # Fleet capability: initialize and retain the regional ledger so any
+    # revision can settle/refund/reconcile leases created elsewhere.
     regional_quota_leases_enabled: bool = False
+    # Traffic mutation: authorize new requests from bounded regional escrow.
+    # This is deliberately independent and default-off for two-phase rollouts.
+    regional_quota_lease_issuance_enabled: bool = False
     regional_quota_lease_pilot_workspace_ids: str = ""
     regional_quota_lease_ttl_seconds: int = 60
     regional_quota_lease_max_microdollars: int = 10_000_000
@@ -1003,20 +1008,21 @@ class Settings(BaseSettings):
             raise ValueError(
                 "TR_REGIONAL_QUOTA_RECONCILER_WORKER is valid only in worker processes"
             )
-        if self.regional_quota_leases_enabled:
-            # Serving processes must always be allowlisted. The one-shot
-            # reconciler worker scans only already-issued global leases and
-            # cannot authorize traffic, so duplicating the serving allowlist
-            # into that job would add configuration drift without narrowing
-            # its authority.
-            if (
-                not self.regional_quota_reconciler_worker
-                and not self.regional_quota_lease_pilot_workspace_ids.strip()
-            ):
+        if (
+            self.regional_quota_lease_issuance_enabled
+            and not self.regional_quota_leases_enabled
+        ):
+            raise ValueError(
+                "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED requires "
+                "TR_REGIONAL_QUOTA_LEASES_ENABLED"
+            )
+        if self.regional_quota_lease_issuance_enabled:
+            if not self.regional_quota_lease_pilot_workspace_ids.strip():
                 raise ValueError(
-                    "TR_REGIONAL_QUOTA_LEASES_ENABLED requires "
+                    "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED requires "
                     "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS"
                 )
+        if self.regional_quota_leases_enabled:
             if environment not in {"local", "test"}:
                 if self.storage_backend not in {
                     "spanner-bigtable",

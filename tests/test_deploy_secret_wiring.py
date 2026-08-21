@@ -128,16 +128,36 @@ def test_all_attested_control_plane_regions_remain_warm() -> None:
     assert '--min-instances "$min_instances"' in rollout
 
 
-def test_production_deploy_preserves_allowlisted_regional_quota_canary() -> None:
+def test_production_deploy_interlocks_regional_quota_issuance() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+    helper = (ROOT / "scripts/deploy/regional_quota_rollout.sh").read_text()
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text()
 
-    assert 'read_primary_env "TR_REGIONAL_QUOTA_LEASES_ENABLED" "false"' in rollout
+    assert 'source "${SCRIPT_DIR}/regional_quota_rollout.sh"' in rollout
+    assert (
+        'read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASES_ENABLED" "false"'
+        in rollout
+    )
     assert (
         '"TR_REGIONAL_QUOTA_LEASES_ENABLED=${REGIONAL_QUOTA_LEASES_ENABLED}"'
         in rollout
     )
+    assert (
+        '"TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED='
+        '${REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED}"'
+        in rollout
+    )
     assert '"TR_REGIONAL_QUOTA_LEASES_ENABLED=false"' not in rollout
-    assert "regional quota canary requires pilot workspaces" in rollout
+    assert "regional_quota_preflight_issuance_fleet" in rollout
+    assert 'service.get("status", {}).get("traffic", [])' in helper
+    assert "latestCreatedRevisionName" in helper
+    assert "latestReadyRevisionName" in helper
+    assert 'regional_quota_lease_issuance:' in workflow
+    assert (
+        "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED: "
+        "${{ inputs.regional_quota_lease_issuance }}"
+        in workflow
+    )
     assert (
         '"TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES=${REGIONAL_QUOTA_BIGTABLE_APP_PROFILES}"'
         in rollout

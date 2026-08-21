@@ -308,9 +308,18 @@ def test_invalid_construction_and_grant_inputs_fail_closed() -> None:
 def test_regional_leases_default_off_and_fail_closed_without_dependencies() -> None:
     defaults = Settings(environment="test")
     assert defaults.regional_quota_leases_enabled is False
+    assert defaults.regional_quota_lease_issuance_enabled is False
     assert defaults.regional_quota_lease_shard_count == 16
+    capability_only = Settings(environment="test", regional_quota_leases_enabled=True)
+    assert capability_only.regional_quota_lease_issuance_enabled is False
+    with pytest.raises(ValidationError, match="requires TR_REGIONAL_QUOTA_LEASES_ENABLED"):
+        Settings(environment="test", regional_quota_lease_issuance_enabled=True)
     with pytest.raises(ValidationError, match="PILOT_WORKSPACE_IDS"):
-        Settings(environment="test", regional_quota_leases_enabled=True)
+        Settings(
+            environment="test",
+            regional_quota_leases_enabled=True,
+            regional_quota_lease_issuance_enabled=True,
+        )
     with pytest.raises(ValidationError, match="Spanner GCP backend"):
         Settings(
             environment="staging",
@@ -327,6 +336,7 @@ def test_regional_leases_default_off_and_fail_closed_without_dependencies() -> N
     settings = Settings(
         environment="test",
         regional_quota_leases_enabled=True,
+        regional_quota_lease_issuance_enabled=True,
         regional_quota_lease_pilot_workspace_ids=" workspace-1,workspace-2 ",
     )
     assert settings.regional_quota_lease_pilot_workspaces == {
@@ -345,8 +355,10 @@ def test_regional_lease_production_config_requires_fixed_profiles_and_outbox() -
     common = {
         "environment": "staging",
         "storage_backend": "spanner-bigtable",
+        "bigtable_instance_id": "trusted-router-logs",
         "request_record_write_mode": "typed",
         "regional_quota_leases_enabled": True,
+        "regional_quota_lease_issuance_enabled": True,
         "regional_quota_lease_pilot_workspace_ids": "workspace-1",
     }
     with pytest.raises(ValidationError, match="settle outbox"):
