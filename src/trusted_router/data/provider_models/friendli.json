@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for FriendliAI serverless Model API routes. Verified against https://api.friendli.ai/serverless/v1/models on 2026-06-22.",
   "provider": "friendli",
   "source": "https://api.friendli.ai/serverless/v1/models",
-  "generated_at": "2026-08-21T17:31:12Z",
+  "generated_at": "2026-08-21T18:39:10Z",
   "model_count": 10,
   "models": [
     {
