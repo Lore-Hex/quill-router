@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for SiliconFlow models whose live /v1/models feed is ahead of the shared snapshot. Verified against https://api.siliconflow.com/v1/models on 2026-06-22.",
   "provider": "siliconflow",
   "source": "https://api.siliconflow.com/v1/models",
-  "generated_at": "2026-08-21T07:44:38Z",
-  "model_count": 75,
+  "generated_at": "2026-08-21T08:42:50Z",
+  "model_count": 76,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -1497,6 +1497,26 @@
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-08-15"
+    },
+    {
+      "display_name": "zai-org/GLM-5.3",
+      "title": "zai-org/GLM-5.3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3",
+      "upstream_id": "zai-org/GLM-5.3",
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-08-21"
     }
   ],
   "price_scale": "microdollars_per_million"
