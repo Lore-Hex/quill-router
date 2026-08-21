@@ -2,7 +2,7 @@
   "_about": "Provider-native GMI Cloud catalog. Account-visible models are intersected with GMI's official billing feed; explicitly approved routes omitted from /v1/models remain current only after an exact visible-content PONG canary succeeds.",
   "provider": "gmi",
   "source": "https://console.gmicloud.ai/api/v1/billing/model_prices",
-  "generated_at": "2026-08-20T23:32:49Z",
+  "generated_at": "2026-08-21T03:47:58Z",
   "model_count": 86,
   "models": [
     {
@@ -136,7 +136,8 @@
       "context_length": 409600,
       "input_token_price_per_m": 15000000,
       "output_token_price_per_m": 75000000,
-      "cached_input_token_price_per_m": 1500000
+      "cached_input_token_price_per_m": 1500000,
+      "missing_since": "2026-08-21"
     },
     {
       "display_name": "Claude Opus 4.5",
@@ -359,7 +360,8 @@
       "upstream_id": "bytedance/seed-2.0-mini",
       "context_length": 262144,
       "input_token_price_per_m": 100000,
-      "output_token_price_per_m": 400000
+      "output_token_price_per_m": 400000,
+      "missing_since": "2026-08-21"
     },
     {
       "display_name": "deepseek-ai/DeepSeek-R1-0528",
@@ -935,7 +937,8 @@
       "context_length": 131072,
       "input_token_price_per_m": 2500000,
       "output_token_price_per_m": 10000000,
-      "cached_input_token_price_per_m": 1250000
+      "cached_input_token_price_per_m": 1250000,
+      "missing_since": "2026-08-21"
     },
     {
       "display_name": "GPT-4o-mini",
@@ -956,7 +959,8 @@
       "context_length": 131072,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 600000,
-      "cached_input_token_price_per_m": 80000
+      "cached_input_token_price_per_m": 80000,
+      "missing_since": "2026-08-21"
     },
     {
       "display_name": "GPT-5",
@@ -977,7 +981,8 @@
       "context_length": 409600,
       "input_token_price_per_m": 1250000,
       "output_token_price_per_m": 10000000,
-      "cached_input_token_price_per_m": 130000
+      "cached_input_token_price_per_m": 130000,
+      "missing_since": "2026-08-21"
     },
     {
       "display_name": "GPT-5.1",
@@ -998,7 +1003,8 @@
       "context_length": 409600,
       "input_token_price_per_m": 1250000,
       "output_token_price_per_m": 10000000,
-      "cached_input_token_price_per_m": 130000
+      "cached_input_token_price_per_m": 130000,
+      "missing_since": "2026-08-21"
     },
     {
       "display_name": "GPT-5.1-chat",
@@ -1019,7 +1025,8 @@
       "context_length": 409600,
       "input_token_price_per_m": 1250000,
       "output_token_price_per_m": 10000000,
-      "cached_input_token_price_per_m": 130000
+      "cached_input_token_price_per_m": 130000,
+      "missing_since": "2026-08-21"
     },
     {
       "display_name": "GPT-5.2",
@@ -1040,7 +1047,8 @@
       "context_length": 409600,
       "input_token_price_per_m": 1750000,
       "output_token_price_per_m": 14000000,
-      "cached_input_token_price_per_m": 180000
+      "cached_input_token_price_per_m": 180000,
+      "missing_since": "2026-08-21"
     },
     {
       "display_name": "GPT-5.2-chat",
@@ -1061,7 +1069,8 @@
       "context_length": 409600,
       "input_token_price_per_m": 1750000,
       "output_token_price_per_m": 14000000,
-      "cached_input_token_price_per_m": 180000
+      "cached_input_token_price_per_m": 180000,
+      "missing_since": "2026-08-21"
     },
     {
       "display_name": "GPT-5.2-codex",
@@ -1082,7 +1091,8 @@
       "context_length": 409600,
       "input_token_price_per_m": 1750000,
       "output_token_price_per_m": 14000000,
-      "cached_input_token_price_per_m": 180000
+      "cached_input_token_price_per_m": 180000,
+      "missing_since": "2026-08-21"
     },
     {
       "display_name": "GPT-5.3-codex",
@@ -1103,7 +1113,8 @@
       "context_length": 409600,
       "input_token_price_per_m": 1750000,
       "output_token_price_per_m": 14000000,
-      "cached_input_token_price_per_m": 180000
+      "cached_input_token_price_per_m": 180000,
+      "missing_since": "2026-08-21"
     },
     {
       "display_name": "GPT-5.4",
@@ -1514,7 +1525,8 @@
       "upstream_id": "Qwen/Qwen3.5-122B-A10B",
       "context_length": 262144,
       "input_token_price_per_m": 400000,
-      "output_token_price_per_m": 3200000
+      "output_token_price_per_m": 3200000,
+      "missing_since": "2026-08-21"
     },
     {
       "display_name": "Qwen3.5 27B",
@@ -1534,7 +1546,8 @@
       "upstream_id": "Qwen/Qwen3.5-27B",
       "context_length": 262144,
       "input_token_price_per_m": 300000,
-      "output_token_price_per_m": 2400000
+      "output_token_price_per_m": 2400000,
+      "missing_since": "2026-08-21"
     },
     {
       "display_name": "Qwen3.5 35B A3B",
@@ -1554,7 +1567,8 @@
       "upstream_id": "Qwen/Qwen3.5-35B-A3B",
       "context_length": 262144,
       "input_token_price_per_m": 250000,
-      "output_token_price_per_m": 2000000
+      "output_token_price_per_m": 2000000,
+      "missing_since": "2026-08-21"
     },
     {
       "display_name": "Qwen3.5 397B A17B",
@@ -1574,7 +1588,8 @@
       "upstream_id": "Qwen/Qwen3.5-397B-A17B",
       "context_length": 262144,
       "input_token_price_per_m": 600000,
-      "output_token_price_per_m": 3600000
+      "output_token_price_per_m": 3600000,
+      "missing_since": "2026-08-21"
     },
     {
       "display_name": "Qwen3.6-35B-A3B",
@@ -1594,7 +1609,8 @@
       "upstream_id": "Qwen/Qwen3.6-35B-A3B",
       "context_length": 262144,
       "input_token_price_per_m": 248000,
-      "output_token_price_per_m": 1485000
+      "output_token_price_per_m": 1485000,
+      "missing_since": "2026-08-21"
     },
     {
       "display_name": "Qwen3.6 Max Preview",
@@ -1614,7 +1630,8 @@
       "upstream_id": "Qwen/Qwen3.6-Max-Preview",
       "context_length": 262144,
       "input_token_price_per_m": 1300000,
-      "output_token_price_per_m": 7800000
+      "output_token_price_per_m": 7800000,
+      "missing_since": "2026-08-21"
     },
     {
       "display_name": "Qwen3.6 Plus",
@@ -1634,7 +1651,8 @@
       "upstream_id": "Qwen/Qwen3.6-Plus",
       "context_length": 262144,
       "input_token_price_per_m": 500000,
-      "output_token_price_per_m": 3000000
+      "output_token_price_per_m": 3000000,
+      "missing_since": "2026-08-21"
     },
     {
       "display_name": "Qwen3.6 Plus 2026-04-02",
@@ -1654,7 +1672,8 @@
       "upstream_id": "Qwen/Qwen3.6-Plus-2026-04-02",
       "context_length": 262144,
       "input_token_price_per_m": 500000,
-      "output_token_price_per_m": 3000000
+      "output_token_price_per_m": 3000000,
+      "missing_since": "2026-08-21"
     },
     {
       "display_name": "Qwen3.7 Max",

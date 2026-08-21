@@ -154,10 +154,10 @@
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 13,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 22,
+    "route_count": 24,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },
@@ -208,10 +208,10 @@
   },
   "lightning": {
     "card_version": 2,
-    "model_count": 36,
+    "model_count": 37,
     "name": "Lightning AI",
     "privacy": "Policy documented",
-    "route_count": 61,
+    "route_count": 63,
     "route_mode": "Prepaid + BYOK",
     "slug": "lightning"
   },
@@ -388,10 +388,10 @@
   },
   "together": {
     "card_version": 2,
-    "model_count": 21,
+    "model_count": 20,
     "name": "Together",
     "privacy": "Zero retention",
-    "route_count": 42,
+    "route_count": 40,
     "route_mode": "Prepaid + BYOK",
     "slug": "together"
   },

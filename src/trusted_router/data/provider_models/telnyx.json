@@ -2,7 +2,7 @@
   "_about": "Provider-native Telnyx inference routes, context windows, capabilities, and reconciled account-billable prices refreshed hourly from Telnyx-owned sources.",
   "provider": "telnyx",
   "source": "https://api.telnyx.com/v2/ai/openai/models",
-  "generated_at": "2026-08-19T21:51:06Z",
+  "generated_at": "2026-08-21T03:47:58Z",
   "price_scale": "microdollars_per_million",
   "model_count": 14,
   "models": [
@@ -356,7 +356,10 @@
       "id": "qwen/qwen3.8-27b",
       "upstream_id": "Qwen/Qwen3.8-27B",
       "context_length": 262144,
-      "provider_regions": [],
+      "provider_regions": [
+        "us-east-1",
+        "us-west-1"
+      ],
       "input_token_price_per_m": 400000,
       "output_token_price_per_m": 3000000,
       "cached_input_token_price_per_m": 50000
