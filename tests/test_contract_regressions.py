@@ -156,7 +156,7 @@ def test_gateway_refund_repeat_cannot_restore_credit_twice(
 
 
 def test_production_prompt_routes_are_absent_and_gateway_requires_internal_token() -> None:
-    control_client = TestClient(_production_app("control"))
+    control_client = TestClient(_production_app("console"))
     internal_client = TestClient(_production_app("internal"))
 
     prompt = control_client.post(
@@ -202,7 +202,6 @@ def test_all_stubbed_coverage_routes_have_stable_error_shapes(client: TestClient
 
 def _production_app(surface: str):
     internal_token = "prod" + "-internal-token"
-    webhook_secret = "whsec_" + "test"
     stripe_key = "sk_" + "test_secret"
     values = {
         "environment": "production",
@@ -213,12 +212,14 @@ def _production_app(surface: str):
         "spanner_database_id": "trusted-router",
         "bigtable_instance_id": "trusted-router-logs",
     }
-    if surface == "control":
+    if surface == "console":
         values.update(
             {
                 "attribution_cookie_secret": "attribution-cookie-" + "a" * 32,
-                "stripe_webhook_secret": webhook_secret,
                 "stripe_secret_key": stripe_key,
+                "google_oauth_login_available": False,
+                "github_oauth_login_available": False,
+                "paypal_checkout_enabled": False,
                 "aws_access_key_id": "test-access-key",
                 "aws_secret_access_key": "test-secret-key",
                 "ses_from_email": "noreply@example.com",
@@ -230,6 +231,10 @@ def _production_app(surface: str):
             {
                 "internal_gateway_token": internal_token,
                 "observer_internal_token": "prod-observer-token",
+                "stripe_secret_key": "rk_test_payment_intents",
+                "aws_access_key_id": "internal-ses-access",
+                "aws_secret_access_key": "internal-ses-secret",
+                "ses_from_email": "noreply@example.com",
             }
         )
     return create_app(

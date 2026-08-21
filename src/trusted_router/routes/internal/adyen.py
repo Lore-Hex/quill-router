@@ -10,6 +10,7 @@ from fastapi.responses import PlainTextResponse
 
 from trusted_router.auth import SettingsDep
 from trusted_router.errors import api_error
+from trusted_router.routes.internal.webhook_work import run_provider_webhook_work
 from trusted_router.services.adyen_billing import (
     apply_adyen_notification,
     notification_items,
@@ -17,6 +18,8 @@ from trusted_router.services.adyen_billing import (
     verify_adyen_notification,
 )
 from trusted_router.types import ErrorType
+
+MAX_ADYEN_NOTIFICATION_ITEMS = 100
 
 
 def register(router: APIRouter) -> None:
@@ -31,22 +34,44 @@ def register(router: APIRouter) -> None:
             raise api_error(400, "Invalid Adyen webhook payload", ErrorType.BAD_REQUEST)
 
         items = notification_items(payload)
-        # Validate the whole batch before mutating anything. If one item is
-        # forged or malformed, Adyen can retry the batch without leaving a
-        # partially accepted payment behind.
-        for item in items:
-            verify_adyen_notification(item, settings)
-        live_value: Any = payload.get("live")
-        if isinstance(live_value, bool):
-            live = live_value
-        elif isinstance(live_value, str) and live_value.lower() in {"true", "false"}:
-            live = live_value.lower() == "true"
-        else:
-            raise api_error(400, "Invalid Adyen webhook environment", ErrorType.BAD_REQUEST)
-        prepared = [
-            prepare_adyen_notification(item, live=live, settings=settings)
-            for item in items
-        ]
-        for notification in prepared:
-            apply_adyen_notification(notification)
-        return PlainTextResponse("[accepted]")
+        if len(items) > MAX_ADYEN_NOTIFICATION_ITEMS:
+            raise api_error(
+                413,
+                "Adyen webhook batch is too large",
+                ErrorType.BAD_REQUEST,
+            )
+        return await run_provider_webhook_work(
+            "adyen",
+            _process_adyen_notifications,
+            items,
+            payload,
+            settings,
+        )
+
+
+def _process_adyen_notifications(
+    items: list[Any],
+    payload: dict[str, Any],
+    settings: Any,
+) -> PlainTextResponse:
+    """Verify the complete batch before any synchronous Store mutation."""
+
+    # Validate the whole batch before mutating anything. If one item is
+    # forged or malformed, Adyen can retry the batch without leaving a
+    # partially accepted payment behind.
+    for item in items:
+        verify_adyen_notification(item, settings)
+    live_value: Any = payload.get("live")
+    if isinstance(live_value, bool):
+        live = live_value
+    elif isinstance(live_value, str) and live_value.lower() in {"true", "false"}:
+        live = live_value.lower() == "true"
+    else:
+        raise api_error(400, "Invalid Adyen webhook environment", ErrorType.BAD_REQUEST)
+    prepared = [
+        prepare_adyen_notification(item, live=live, settings=settings)
+        for item in items
+    ]
+    for notification in prepared:
+        apply_adyen_notification(notification)
+    return PlainTextResponse("[accepted]")

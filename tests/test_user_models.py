@@ -1213,11 +1213,13 @@ def test_earnings_console_renders_and_transfers_with_idempotent_flash(
 def test_https_is_required_outside_local_and_test() -> None:
     settings = Settings(
         environment="staging",
-        service_surface="control",
+        service_surface="console",
         custom_models_require_verification=False,
         attribution_cookie_secret="staging-attribution-" + "a" * 32,
-        stripe_webhook_secret="whsec_staging",  # noqa: S106 - test fixture.
         stripe_secret_key="sk_staging",  # noqa: S106 - test fixture.
+        google_oauth_login_available=False,
+        github_oauth_login_available=False,
+        paypal_checkout_enabled=False,
     )
     client = TestClient(create_app(settings, init_observability=False))
     user = STORE.ensure_user("staging-owner@example.com")

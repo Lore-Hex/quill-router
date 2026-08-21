@@ -152,6 +152,7 @@ from trusted_router.storage_models import (
     UserModelPayout,
     _is_expired,
 )
+from trusted_router.storage_oauth_codes import OAuthCodeExchange
 from trusted_router.types import IdentityVerificationStatus, UsageType
 
 T = TypeVar("T")
@@ -1214,6 +1215,19 @@ class SpannerBigtableStore:
     def consume_oauth_authorization_code(self, raw_code: str) -> OAuthAuthorizationCode | None:
         return self.oauth_code_store.consume(raw_code)
 
+    def exchange_oauth_authorization_code(
+        self,
+        raw_code: str,
+        *,
+        code_verifier: str | None,
+        code_challenge_method: str | None,
+    ) -> OAuthCodeExchange | None:
+        return self.oauth_code_store.exchange(
+            raw_code,
+            code_verifier=code_verifier,
+            code_challenge_method=code_challenge_method,
+        )
+
     # API key + per-key spend cap. The actual logic lives in
     # storage_gcp_keys.SpannerApiKeys; these methods are thin delegations.
     def create_api_key(
@@ -1258,6 +1272,25 @@ class SpannerBigtableStore:
             budget_alert_only=budget_alert_only,
             tags=tags,
             usage_shard_count=usage_shard_count,
+        )
+
+    def issue_chat_browser_key(
+        self,
+        *,
+        workspace_id: str,
+        name: str,
+        creator_user_id: str,
+        limit_microdollars: int,
+        expires_at: str,
+        active_key_cap: int,
+    ) -> tuple[str, ApiKey] | None:
+        return self.api_keys.issue_chat_browser_key(
+            workspace_id=workspace_id,
+            name=name,
+            creator_user_id=creator_user_id,
+            limit_microdollars=limit_microdollars,
+            expires_at=expires_at,
+            active_key_cap=active_key_cap,
         )
 
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None:
@@ -1635,8 +1668,9 @@ class SpannerBigtableStore:
         self,
         *,
         kind: str | None = None,
+        limit: int | None = None,
     ) -> list[UserProvidedModel]:
-        return self.user_model_store.list_public(kind=kind)
+        return self.user_model_store.list_public(kind=kind, limit=limit)
 
     def create_broadcast_destination(
         self,

@@ -53,6 +53,11 @@ from trusted_router.security import (
 )
 from trusted_router.spend_windows import KeyWindowLimitExceeded, window_floors
 from trusted_router.storage_auth_context import build_session_auth_context
+from trusted_router.storage_chat_browser_keys import (
+    is_active_chat_browser_key,
+    new_chat_browser_api_key,
+    validate_chat_browser_key_cap,
+)
 from trusted_router.storage_codec import json_body
 from trusted_router.storage_custom_models import normalize_custom_model_id
 from trusted_router.storage_errors import (
@@ -116,6 +121,13 @@ from trusted_router.storage_models import (
     normalize_provider_access_role,
     normalize_provider_access_slug,
     utcnow,
+)
+from trusted_router.storage_oauth_codes import (
+    OAuthCodeExchange,
+    OAuthWorkspaceBillingPaused,
+    OAuthWorkspaceUnavailable,
+    new_oauth_delegated_api_key,
+    verify_oauth_pkce,
 )
 from trusted_router.storage_postgres_group_buy import PostgresBedrockGroupBuy
 from trusted_router.storage_postgres_operational_analytics_outbox import (
@@ -1619,6 +1631,99 @@ class PostgresStore:
             expiry_field="code_expires_at",
         )
 
+    def exchange_oauth_authorization_code(
+        self,
+        raw_code: str,
+        *,
+        code_verifier: str | None,
+        code_challenge_method: str | None,
+    ) -> OAuthCodeExchange | None:
+        """Lock, verify, consume, and mint in one SQL transaction."""
+        lookup_hash = lookup_hash_api_key(raw_code)
+
+        def exchange(conn: Any) -> OAuthCodeExchange | None:
+            lookup = self._read_entity_tx(
+                conn,
+                "oauth_code_lookup",
+                lookup_hash,
+                dict,
+            )
+            if lookup is None:
+                return None
+            code = self._read_entity_tx(
+                conn,
+                "oauth_code",
+                str(lookup["code_id"]),
+                OAuthAuthorizationCode,
+                for_update=True,
+            )
+            if code is None or code.consumed_at is not None:
+                return None
+            if _is_expired(code.code_expires_at):
+                return None
+            if not verify_api_key(raw_code, code.salt, code.secret_hash):
+                return None
+
+            verify_oauth_pkce(
+                code,
+                code_verifier=code_verifier,
+                code_challenge_method=code_challenge_method,
+            )
+            workspace = self._read_entity_tx(
+                conn,
+                "workspace",
+                code.workspace_id,
+                Workspace,
+                for_update=True,
+            )
+            if workspace is None or workspace.deleted:
+                raise OAuthWorkspaceUnavailable
+            if workspace.billing_paused:
+                raise OAuthWorkspaceBillingPaused
+            user = (
+                self._read_entity_tx(conn, "user", code.user_id, User)
+                if code.user_id
+                else None
+            )
+
+            raw_key, key = new_oauth_delegated_api_key(code)
+            self._write_entity_tx(conn, "api_key", key.hash, key)
+            self._write_entity_tx(
+                conn,
+                "api_key_lookup",
+                key.lookup_hash,
+                {"key_id": key.hash},
+            )
+            self._write_entity_tx(
+                conn,
+                "api_key_by_workspace",
+                workspace_key_id(code.workspace_id, key.hash),
+                {"key_id": key.hash},
+            )
+            conn.execute(
+                "INSERT INTO tr_key_limit "
+                "(workspace_id, key_hash, shard, limit_micro, include_byok, "
+                "day_limit_micro, week_limit_micro, month_limit_micro, "
+                "source_updated_at, updated_at) "
+                "VALUES (%s, %s, 0, %s, true, NULL, NULL, NULL, "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (
+                    code.workspace_id,
+                    key.hash,
+                    _int8_param(code.limit_microdollars),
+                ),
+            )
+            code.consumed_at = iso_now()
+            self._write_entity_tx(conn, "oauth_code", code.hash, code)
+            return OAuthCodeExchange(
+                raw_key=raw_key,
+                api_key=key,
+                authorization_code=code,
+                user=user,
+            )
+
+        return self._run_transaction(exchange)
+
     # Email send blocks ------------------------------------------------------
 
     def block_email_sending(
@@ -1739,6 +1844,78 @@ class PostgresStore:
 
         self._run_transaction(create)
         return raw, key
+
+    def issue_chat_browser_key(
+        self,
+        *,
+        workspace_id: str,
+        name: str,
+        creator_user_id: str,
+        limit_microdollars: int,
+        expires_at: str,
+        active_key_cap: int,
+    ) -> tuple[str, ApiKey] | None:
+        """Lock the workspace so concurrent issuers share one cap check."""
+        validate_chat_browser_key_cap(active_key_cap)
+
+        def issue(conn: Any) -> tuple[str, ApiKey] | None:
+            workspace = self._read_entity_tx(
+                conn,
+                "workspace",
+                workspace_id,
+                Workspace,
+                for_update=True,
+            )
+            if workspace is None:
+                raise ValueError("workspace not found")
+            rows = conn.execute(
+                _CONSOLE_API_KEYS_SQL,
+                (workspace_id, workspace_id, workspace_id),
+            ).fetchall()
+            keys_by_hash: dict[str, ApiKey] = {}
+            for row in rows:
+                key = api_key_from_json(row[0])
+                keys_by_hash[key.hash] = key
+            if (
+                sum(is_active_chat_browser_key(key) for key in keys_by_hash.values())
+                >= active_key_cap
+            ):
+                # Refusal performs reads only: no raw secret generation and no
+                # partial lookup/index/limit rows.
+                return None
+
+            raw, key = new_chat_browser_api_key(
+                workspace_id=workspace_id,
+                name=name,
+                creator_user_id=creator_user_id,
+                limit_microdollars=limit_microdollars,
+                expires_at=expires_at,
+            )
+            self._write_entity_tx(conn, "api_key", key.hash, key)
+            self._write_entity_tx(
+                conn,
+                "api_key_lookup",
+                key.lookup_hash,
+                {"key_id": key.hash},
+            )
+            self._write_entity_tx(
+                conn,
+                "api_key_by_workspace",
+                workspace_key_id(workspace_id, key.hash),
+                {"key_id": key.hash},
+            )
+            conn.execute(
+                "INSERT INTO tr_key_limit "
+                "(workspace_id, key_hash, shard, limit_micro, include_byok, "
+                "day_limit_micro, week_limit_micro, month_limit_micro, "
+                "source_updated_at, updated_at) "
+                "VALUES (%s, %s, 0, %s, true, NULL, NULL, NULL, "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (workspace_id, key.hash, _int8_param(limit_microdollars)),
+            )
+            return raw, key
+
+        return self._run_transaction(issue)
 
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None:
         return self._read_entity("api_key", key_hash, ApiKey)
@@ -2629,6 +2806,7 @@ class PostgresStore:
         self,
         *,
         kind: str | None = None,
+        limit: int | None = None,
     ) -> list[UserProvidedModel]:
         self._not_implemented("list_public_user_models")
 

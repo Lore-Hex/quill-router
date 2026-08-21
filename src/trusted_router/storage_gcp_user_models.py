@@ -406,21 +406,37 @@ class SpannerUserProvidedModels:
             [_user_model_slot_id(normalize_custom_model_id(model_id), authorization_id)],
         )
 
-    def list_public(self, *, kind: str | None = None) -> list[UserProvidedModel]:
-        rows = self._io.list_entities(
-            _USER_PROVIDED_MODEL_KIND,
-            prefix="",
-            cls=UserProvidedModel,
+    def list_public(
+        self,
+        *,
+        kind: str | None = None,
+        limit: int | None = None,
+    ) -> list[UserProvidedModel]:
+        where = (
+            "kind=@entity_kind "
+            "AND JSON_VALUE(body, '$.enabled')='true' "
+            "AND JSON_VALUE(body, '$.status')='active'"
         )
-        models = [
-            model
-            for model in rows
-            if model.enabled
-            and model.status == "active"
-            and (kind is None or model.kind == kind)
-        ]
-        models.sort(key=lambda item: item.created_at)
-        return models
+        params: dict[str, Any] = {"entity_kind": _USER_PROVIDED_MODEL_KIND}
+        param_types: dict[str, Any] = {
+            "entity_kind": self._io.param_types.STRING,
+        }
+        if kind is not None:
+            where += " AND JSON_VALUE(body, '$.kind')=@model_kind"
+            params["model_kind"] = kind
+            param_types["model_kind"] = self._io.param_types.STRING
+        suffix = " ORDER BY JSON_VALUE(body, '$.created_at'), id"
+        if limit is not None:
+            suffix += " LIMIT @limit"
+            params["limit"] = max(0, int(limit))
+            param_types["limit"] = self._io.param_types.INT64
+        with self._io.database.snapshot() as snapshot:
+            rows = snapshot.execute_sql(
+                f"SELECT body FROM tr_entities WHERE {where}{suffix}",  # noqa: S608 - predicates are fixed; values are bound parameters.
+                params=params,
+                param_types=param_types,
+            )
+            return [_decode_user_model(row[0]) for row in rows]
 
     def _mutate(
         self,

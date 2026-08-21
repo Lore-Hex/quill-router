@@ -57,7 +57,7 @@ from trusted_router.routes.email_verify import register_email_verify_routes
 from trusted_router.routes.identity_verify import register_identity_verify_routes
 from trusted_router.routes.inference import register_inference_routes
 from trusted_router.routes.internal import (
-    register_control_internal_routes,
+    register_console_internal_routes,
     register_external_webhook_routes,
     register_gateway_internal_routes,
     register_internal_routes,
@@ -102,7 +102,8 @@ def create_app(
     if surface == "combined" and settings.environment.lower() not in {"local", "test"}:
         raise ValueError(
             "TR_SERVICE_SURFACE=combined is restricted to local/test; deploy an explicit "
-            "public, actions, control, internal, or observer service surface"
+            "public, actions, console, chat, webhooks, internal, or observer "
+            "service surface"
         )
     validate_auto_model_order(settings.auto_model_order)
     if configure_store_arg:
@@ -177,7 +178,7 @@ def create_app(
             threading.Thread(target=loop, name="home-settlement", daemon=True).start()
 
     if (
-        surface in {"combined", "control"}
+        surface in {"combined", "console"}
         and settings.activation_reminder_interval_seconds > 0
     ):
 
@@ -382,20 +383,21 @@ def create_app(
         register_bedrock_group_buy_public_routes(app, settings)
     if surface in {"combined", "actions"}:
         register_public_action_routes(app, settings)
-    if surface in {"combined", "control"}:
+    if surface in {"combined", "console"}:
         register_bedrock_group_buy_control_routes(app, settings)
     api = _make_api_router(settings, surface)
-    if surface in {"combined", "control"}:
+    if surface in {"combined", "console"}:
         register_oauth_routes(app, api)
         register_console_routes(app)
         register_provider_portal_routes(app)
         register_mcp_routes(app, settings)
+    if surface in {"combined", "chat"}:
         # Same-origin streaming pipe for the authenticated chat playground.
         # It is deliberately absent from anonymous and billing processes.
         register_chat_proxy_routes(app)
     app.include_router(api)
     app.include_router(api, prefix="/v1")
-    if surface in {"combined", "control"}:
+    if surface in {"combined", "console"}:
         versioned_compat = APIRouter()
         register_versioned_compat_stub_routes(versioned_compat)
         app.include_router(versioned_compat, prefix="/v1")
@@ -513,7 +515,7 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
         # into 500s (or widening the observer database role).
         register_user_model_public_routes(router)
 
-    if surface in {"combined", "control"}:
+    if surface in {"combined", "console"}:
         register_authenticated_catalog_routes(router)
         register_auth_routes(router)
         register_byok_routes(router)
@@ -526,7 +528,7 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
         register_activity_routes(router)
         register_client_events_routes(router)
         register_workspace_routes(router)
-        if _control_plane_inference_enabled(settings):
+        if _console_inference_enabled(settings):
             register_inference_routes(inference_router)
             router.include_router(inference_router)
         register_compat_stub_routes(router)
@@ -536,13 +538,16 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
         register_identity_verify_routes(router)
         register_notify_routes(router)
         register_wallet_oauth_routes(router)
+
+    if surface in {"combined", "webhooks"}:
         register_ses_notification_routes(router)
 
     if surface == "combined":
         register_internal_routes(router)
-    elif surface == "control":
+    elif surface == "console":
+        register_console_internal_routes(router)
+    elif surface == "webhooks":
         register_external_webhook_routes(router)
-        register_control_internal_routes(router)
     elif surface == "internal":
         register_gateway_internal_routes(router)
         register_observer_internal_routes(router)
@@ -551,8 +556,8 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
     return router
 
 
-def _control_plane_inference_enabled(settings: Settings) -> bool:
-    """Inference handlers run in the *control plane* only in local/test
+def _console_inference_enabled(settings: Settings) -> bool:
+    """Inference handlers run in the *console service* only in local/test
     environments — production inference goes through the attested
     enclave (api.trustedrouter.com) and never touches this service. This
     gate keeps the local dev loop fast (no enclave dependency) while

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 from pathlib import Path
 from types import ModuleType
@@ -24,13 +25,25 @@ def _load_url_map_module() -> ModuleType:
 
 
 URL_MAP = _load_url_map_module()
+PRESERVED_HOSTS = [
+    "api.trustedrouter.com",
+    "api.allyrouter.com",
+    "api.uptimerouter.com",
+    "api-aws.trustedrouter.com",
+    "api-azure.trustedrouter.com",
+    "api-azure-nz.trustedrouter.com",
+    "api-azure-sea.trustedrouter.com",
+    "api-eu-west-1.trustedrouter.com",
+]
 
 
 def _concrete(path: str) -> str:
     return re.sub(r"\{[^}]+\}", "sample", path)
 
 
-@pytest.mark.parametrize("surface", ["public", "actions", "control", "internal"])
+@pytest.mark.parametrize(
+    "surface", ["public", "actions", "console", "chat", "webhooks", "internal"]
+)
 def test_every_registered_route_maps_to_its_service_surface(surface: str) -> None:
     app = create_app(
         Settings(environment="test", service_surface=surface),
@@ -52,13 +65,18 @@ def test_every_registered_route_maps_to_its_service_surface(surface: str) -> Non
         "/internal/adyen/webhook",
         "/internal/veriff/webhook",
         "/internal/ses/notifications",
-        "/internal/chat/issue-browser-key",
     ],
 )
-def test_control_exceptions_beat_the_internal_wildcard(prefix: str, path: str) -> None:
+def test_webhook_exceptions_beat_the_internal_wildcard(prefix: str, path: str) -> None:
     unversioned = path.removeprefix("/internal")
     candidate = f"{prefix}/internal{unversioned}"
-    assert URL_MAP.route_surface(candidate) == "control"
+    assert URL_MAP.route_surface(candidate) == "webhooks"
+    assert URL_MAP.route_surface(f"{prefix}/internal/gateway/authorize") == "internal"
+
+
+@pytest.mark.parametrize("prefix", ["", "/v1"])
+def test_console_browser_key_exception_beats_the_internal_wildcard(prefix: str) -> None:
+    assert URL_MAP.route_surface(f"{prefix}/internal/chat/issue-browser-key") == "console"
     assert URL_MAP.route_surface(f"{prefix}/internal/gateway/authorize") == "internal"
 
 
@@ -67,7 +85,7 @@ def test_catalog_public_and_authenticated_paths_have_distinct_owners(prefix: str
     assert URL_MAP.route_surface(f"{prefix}/models/count") == "public"
     assert URL_MAP.route_surface(f"{prefix}/models/picker") == "public"
     assert URL_MAP.route_surface(f"{prefix}/models/author/slug/endpoints") == "public"
-    assert URL_MAP.route_surface(f"{prefix}/models/user") == "control"
+    assert URL_MAP.route_surface(f"{prefix}/models/user") == "console"
     assert URL_MAP.route_surface(f"{prefix}/models/user-provided") == "public"
     assert URL_MAP.route_surface(f"{prefix}/models/user-provided/sample") == "public"
 
@@ -82,18 +100,18 @@ def test_group_buy_public_reads_and_private_state_have_distinct_owners() -> None
     assert URL_MAP.route_surface("/bedrock-group-buy") == "public"
     assert URL_MAP.route_surface("/bedrock-group-buy/") == "public"
     assert URL_MAP.route_surface("/v1/bedrock-group-buy") == "public"
-    assert URL_MAP.route_surface("/bedrock-group-buy/manage") == "control"
-    assert URL_MAP.route_surface("/bedrock-group-buy/pledge") == "control"
-    assert URL_MAP.route_surface("/bedrock-group-buy/withdraw") == "control"
-    assert URL_MAP.route_surface("/v1/bedrock-group-buy/me") == "control"
-    assert URL_MAP.route_surface("/v1/bedrock-group-buy/pledge") == "control"
+    assert URL_MAP.route_surface("/bedrock-group-buy/manage") == "console"
+    assert URL_MAP.route_surface("/bedrock-group-buy/pledge") == "console"
+    assert URL_MAP.route_surface("/bedrock-group-buy/withdraw") == "console"
+    assert URL_MAP.route_surface("/v1/bedrock-group-buy/me") == "console"
+    assert URL_MAP.route_surface("/v1/bedrock-group-buy/pledge") == "console"
 
 
 @pytest.mark.parametrize("prefix", ["", "/v1"])
-def test_carrier_texml_is_public_but_notification_mutations_are_control(prefix: str) -> None:
+def test_carrier_texml_is_public_but_notification_mutations_are_console(prefix: str) -> None:
     assert URL_MAP.route_surface(f"{prefix}/notify/texml") == "public"
-    assert URL_MAP.route_surface(f"{prefix}/notify") == "control"
-    assert URL_MAP.route_surface(f"{prefix}/notify/phone/start") == "control"
+    assert URL_MAP.route_surface(f"{prefix}/notify") == "console"
+    assert URL_MAP.route_surface(f"{prefix}/notify/phone/start") == "console"
 
 
 def test_rewrite_preserves_explicit_unrelated_hosts_but_defaults_unknown_to_public() -> None:
@@ -106,7 +124,7 @@ def test_rewrite_preserves_explicit_unrelated_hosts_but_defaults_unknown_to_publ
             {"hosts": ["trustedrouter.com", "www.trustedrouter.com"], "pathMatcher": "old"},
             {
                 "hosts": [
-                    "api.trustedrouter.com",
+                    *PRESERVED_HOSTS,
                     "aws.trustedrouter.com",
                     "azure.trustedrouter.com",
                     "b.trustedrouter.com",
@@ -136,9 +154,12 @@ def test_rewrite_preserves_explicit_unrelated_hosts_but_defaults_unknown_to_publ
         existing,
         "public-backend",
         "actions-backend",
-        "control-backend",
+        "console-backend",
+        "chat-backend",
+        "webhooks-backend",
         "internal-backend",
         ["trustedrouter.com", "allyrouter.com", "uptimerouter.com"],
+        PRESERVED_HOSTS,
     )
 
     assert result["defaultService"] == "public-backend"
@@ -169,8 +190,7 @@ def test_rewrite_preserves_explicit_unrelated_hosts_but_defaults_unknown_to_publ
         if rule is not first_party
         for host in rule["hosts"]
     }
-    assert preserved_hosts == {
-        "api.trustedrouter.com",
+    assert preserved_hosts == set(PRESERVED_HOSTS) | {
         "aws.trustedrouter.com",
         "azure.trustedrouter.com",
         "b.trustedrouter.com",
@@ -186,7 +206,9 @@ def test_rewrite_preserves_explicit_unrelated_hosts_but_defaults_unknown_to_publ
     assert {rule["service"] for rule in matcher["pathRules"]} == {
         "public-backend",
         "actions-backend",
-        "control-backend",
+        "console-backend",
+        "chat-backend",
+        "webhooks-backend",
         "internal-backend",
     }
     assert result["tests"][0]["service"] == "public-backend"
@@ -202,9 +224,12 @@ def test_rewrite_refuses_an_existing_catch_all_host_rule() -> None:
             },
             "public",
             "actions",
-            "control",
+            "console",
+            "chat",
+            "webhooks",
             "internal",
             ["trustedrouter.com"],
+            PRESERVED_HOSTS,
         )
 
 
@@ -214,9 +239,12 @@ def test_rewrite_refuses_missing_unrelated_default_service() -> None:
             {"hostRules": []},
             "public",
             "actions",
-            "control",
+            "console",
+            "chat",
+            "webhooks",
             "internal",
             ["trustedrouter.com"],
+            PRESERVED_HOSTS,
         )
 
 
@@ -231,9 +259,12 @@ def test_rewrite_refuses_first_party_wildcard_instead_of_stealing_subdomains() -
             },
             "public",
             "actions",
-            "control",
+            "console",
+            "chat",
+            "webhooks",
             "internal",
             ["trustedrouter.com"],
+            PRESERVED_HOSTS,
         )
 
 
@@ -244,13 +275,15 @@ def test_rewrite_refuses_reserved_matcher_owned_by_unrelated_host() -> None:
             {
                 "hosts": ["unrelated.example"],
                 "pathMatcher": "trusted-router-service-surfaces",
-            }
+            },
+            {"hosts": PRESERVED_HOSTS, "pathMatcher": "regional"},
         ],
         "pathMatchers": [
             {
                 "name": "trusted-router-service-surfaces",
                 "defaultService": "unrelated-backend",
-            }
+            },
+            {"name": "regional", "defaultService": "regional-backend"},
         ],
     }
 
@@ -259,7 +292,111 @@ def test_rewrite_refuses_reserved_matcher_owned_by_unrelated_host() -> None:
             existing,
             "public-backend",
             "actions-backend",
-            "control-backend",
+            "console-backend",
+            "chat-backend",
+            "webhooks-backend",
             "internal-backend",
             ["trustedrouter.com", "allyrouter.com", "uptimerouter.com"],
+            PRESERVED_HOSTS,
         )
+
+
+def test_rewrite_refuses_preserved_host_that_relied_on_old_default() -> None:
+    missing = "api-azure-sea.trustedrouter.com"
+    explicitly_routed = [host for host in PRESERVED_HOSTS if host != missing]
+
+    with pytest.raises(ValueError, match="top-level default"):
+        URL_MAP.rewrite_url_map(
+            {
+                "defaultService": "legacy-attested-default",
+                "hostRules": [
+                    {"hosts": explicitly_routed, "pathMatcher": "attested"}
+                ],
+                "pathMatchers": [
+                    {"name": "attested", "defaultService": "attested-backend"}
+                ],
+            },
+            "public-backend",
+            "actions-backend",
+            "console-backend",
+            "chat-backend",
+            "webhooks-backend",
+            "internal-backend",
+            ["trustedrouter.com", "allyrouter.com", "uptimerouter.com"],
+            PRESERVED_HOSTS,
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        (
+            "headerAction",
+            {
+                "requestHeadersToAdd": [
+                    {"headerName": "Authorization", "headerValue": "Bearer stale"}
+                ]
+            },
+            "header action",
+        ),
+        ("defaultRouteAction", {"weightedBackendServices": []}, "default route action"),
+    ],
+)
+def test_rewrite_refuses_global_actions_that_can_affect_managed_hosts(
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    existing = {
+        "defaultService": "legacy",
+        "hostRules": [{"hosts": PRESERVED_HOSTS, "pathMatcher": "preserved"}],
+        "pathMatchers": [{"name": "preserved", "defaultService": "legacy"}],
+        field: value,
+    }
+
+    with pytest.raises(ValueError, match=message):
+        URL_MAP.rewrite_url_map(
+            existing,
+            "public",
+            "actions",
+            "console",
+            "chat",
+            "webhooks",
+            "internal",
+            ["trustedrouter.com", "allyrouter.com", "uptimerouter.com"],
+            PRESERVED_HOSTS,
+        )
+
+
+def test_atomic_url_map_output_is_private_and_complete(tmp_path: Path) -> None:
+    output = tmp_path / "candidate-url-map.json"
+    output.write_text('{"stale":true}\n', encoding="utf-8")
+    output.chmod(0o644)
+
+    expected = {"name": "candidate", "hostRules": [{"hosts": ["example.com"]}]}
+    URL_MAP._atomic_write_json(output, expected)
+
+    assert json.loads(output.read_text(encoding="utf-8")) == expected
+    assert output.stat().st_mode & 0o777 == 0o600
+    assert list(tmp_path.glob(f".{output.name}.*.tmp")) == []
+
+
+def test_atomic_url_map_replace_failure_preserves_prior_file_and_cleans_temp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "candidate-url-map.json"
+    prior = b'{"name":"known-good"}\n'
+    output.write_bytes(prior)
+    output.chmod(0o640)
+
+    def fail_replace(_source: str, _destination: Path) -> None:
+        raise OSError("injected os.replace failure")
+
+    monkeypatch.setattr(URL_MAP.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="injected os.replace failure"):
+        URL_MAP._atomic_write_json(output, {"name": "candidate"})
+
+    assert output.read_bytes() == prior
+    assert output.stat().st_mode & 0o777 == 0o640
+    assert list(tmp_path.glob(f".{output.name}.*.tmp")) == []

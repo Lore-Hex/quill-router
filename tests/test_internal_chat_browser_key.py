@@ -17,18 +17,26 @@ Contract being locked:
 from __future__ import annotations
 
 import datetime as dt
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
+import pytest
 from fastapi.testclient import TestClient
 
+import trusted_router.storage_chat_browser_keys as chat_browser_key_storage
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.routes.internal import chat_browser_key as chat_browser_key_routes
 from trusted_router.routes.internal.chat_browser_key import (
+    CHAT_BROWSER_ACTIVE_KEY_CAP,
     CHAT_BROWSER_KEY_COOKIE_MAX_AGE,
     CHAT_BROWSER_KEY_COOKIE_NAME,
     CHAT_BROWSER_KEY_LIMIT_MICRODOLLARS,
     CHAT_BROWSER_KEY_TTL_DAYS,
 )
-from trusted_router.storage import STORE
+from trusted_router.storage import STORE, InMemoryStore
+from trusted_router.storage_chat_browser_keys import is_active_chat_browser_key
+from trusted_router.storage_models import ApiKey
 
 
 def _console_client() -> tuple[TestClient, str, str]:
@@ -110,6 +118,24 @@ def test_issue_chat_browser_key_creates_scoped_key_and_sets_cookie() -> None:
     assert "SameSite=lax" in set_cookie or "samesite=lax" in set_cookie.lower()
 
 
+def test_issue_chat_browser_key_offloads_atomic_store_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, _, _ = _console_client()
+    offloaded: list[str] = []
+
+    async def recorded_threadpool(func, *args, **kwargs):
+        offloaded.append(func.__name__)
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(chat_browser_key_routes, "run_in_threadpool", recorded_threadpool)
+
+    response = client.post("/internal/chat/issue-browser-key")
+
+    assert response.status_code == 200, response.text
+    assert offloaded == ["issue_chat_browser_key"]
+
+
 def test_issue_chat_browser_key_creates_non_management_key() -> None:
     """Browser keys MUST NOT be management-tier. Management gives access
     to /v1/keys and other admin surfaces — way too much for a chat
@@ -163,6 +189,95 @@ def test_issue_chat_browser_key_multiple_calls_produce_distinct_keys() -> None:
     assert body2["key_hash"] in hashes
 
 
+def test_issue_chat_browser_key_refuses_after_active_workspace_cap() -> None:
+    client, _, workspace_id = _console_client()
+
+    responses = [
+        client.post("/internal/chat/issue-browser-key")
+        for _ in range(CHAT_BROWSER_ACTIVE_KEY_CAP)
+    ]
+    assert all(response.status_code == 200 for response in responses)
+
+    refused = client.post("/internal/chat/issue-browser-key")
+    assert refused.status_code == 429
+    assert refused.headers["retry-after"] == "60"
+    assert "revoke one in the console" in refused.json()["error"]["message"]
+    assert sum(
+        is_active_chat_browser_key(key) for key in STORE.list_keys(workspace_id)
+    ) == CHAT_BROWSER_ACTIVE_KEY_CAP
+    assert CHAT_BROWSER_KEY_COOKIE_NAME not in refused.headers.get("set-cookie", "")
+
+
+def test_chat_browser_key_cap_refusal_generates_no_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = InMemoryStore()
+    user = store.ensure_user("chat-key-cap-no-work@example.com")
+    workspace = store.list_workspaces_for_user(user.id)[0]
+    expires_at = (dt.datetime.now(dt.UTC) + dt.timedelta(days=1)).isoformat()
+    first = store.issue_chat_browser_key(
+        workspace_id=workspace.id,
+        name="chat-browser-first",
+        creator_user_id=user.id,
+        limit_microdollars=1,
+        expires_at=expires_at,
+        active_key_cap=1,
+    )
+    assert first is not None
+    before = list(store.list_keys(workspace.id))
+    secret_calls = 0
+    original_new_api_key = chat_browser_key_storage.new_api_key
+
+    def counted_new_api_key() -> str:
+        nonlocal secret_calls
+        secret_calls += 1
+        return original_new_api_key()
+
+    monkeypatch.setattr(chat_browser_key_storage, "new_api_key", counted_new_api_key)
+    refused = store.issue_chat_browser_key(
+        workspace_id=workspace.id,
+        name="chat-browser-refused",
+        creator_user_id=user.id,
+        limit_microdollars=1,
+        expires_at=expires_at,
+        active_key_cap=1,
+    )
+
+    assert refused is None
+    assert secret_calls == 0
+    assert store.list_keys(workspace.id) == before
+
+
+def test_concurrent_chat_browser_key_issuance_never_exceeds_cap() -> None:
+    store = InMemoryStore()
+    user = store.ensure_user("chat-key-cap-concurrency@example.com")
+    workspace = store.list_workspaces_for_user(user.id)[0]
+    expires_at = (dt.datetime.now(dt.UTC) + dt.timedelta(days=1)).isoformat()
+    callers = CHAT_BROWSER_ACTIVE_KEY_CAP * 3
+    barrier = threading.Barrier(callers)
+
+    def issue(index: int) -> tuple[str, ApiKey] | None:
+        barrier.wait(timeout=5)
+        return store.issue_chat_browser_key(
+            workspace_id=workspace.id,
+            name=f"chat-browser-concurrent-{index}",
+            creator_user_id=user.id,
+            limit_microdollars=1,
+            expires_at=expires_at,
+            active_key_cap=CHAT_BROWSER_ACTIVE_KEY_CAP,
+        )
+
+    with ThreadPoolExecutor(max_workers=callers) as executor:
+        results = list(executor.map(issue, range(callers)))
+
+    assert sum(result is not None for result in results) == CHAT_BROWSER_ACTIVE_KEY_CAP
+    stored = store.list_keys(workspace.id)
+    assert sum(is_active_chat_browser_key(key) for key in stored) == CHAT_BROWSER_ACTIVE_KEY_CAP
+    raw_keys = {result[0] for result in results if result is not None}
+    assert len(raw_keys) == CHAT_BROWSER_ACTIVE_KEY_CAP
+    assert all(raw not in repr(stored) for raw in raw_keys)
+
+
 def test_issue_chat_browser_key_secure_flag_in_production() -> None:
     """In production env the Secure flag is set so the cookie is never
     sent over plain HTTP. In local env it's omitted so http://127.0.0.1
@@ -170,10 +285,12 @@ def test_issue_chat_browser_key_secure_flag_in_production() -> None:
     # Production app
     prod_settings = Settings(
         environment="production",
-        service_surface="control",
+        service_surface="console",
         attribution_cookie_secret="attribution-cookie-secret-for-control-test",  # noqa: S106
-        stripe_webhook_secret="w",  # noqa: S106 - test fixture.
         stripe_secret_key="s",  # noqa: S106 - test fixture.
+        google_oauth_login_available=False,
+        github_oauth_login_available=False,
+        paypal_checkout_enabled=False,
         sentry_dsn="https://example@example.ingest.sentry.io/1",
         aws_access_key_id="test-access-key",
         aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.

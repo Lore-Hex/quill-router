@@ -34,10 +34,12 @@ def fixed_rate_limit_clock(monkeypatch: pytest.MonkeyPatch) -> None:
 def _production_settings(**updates: object) -> Settings:
     values: dict[str, object] = {
         "environment": "production",
-        "service_surface": "control",
+        "service_surface": "console",
         "attribution_cookie_secret": "test-attribution-cookie-secret-32-bytes",
-        "stripe_webhook_secret": "whsec_test",
         "stripe_secret_key": "sk_test_secret",
+        "google_oauth_login_available": False,
+        "github_oauth_login_available": False,
+        "paypal_checkout_enabled": False,
         "sentry_dsn": "https://example@example.ingest.sentry.io/1",
         "aws_access_key_id": "test-access-key",
         "aws_secret_access_key": "test-secret-key",

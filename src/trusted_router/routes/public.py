@@ -124,8 +124,14 @@ from trusted_router.provider_contract import (
     PROVIDER_CATALOG_V2_SCHEMA,
 )
 from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
+from trusted_router.public_user_models import (
+    PUBLIC_USER_MODEL_CACHE_CONTROL,
+    PublicUserModelReadLimited,
+    PublicUserModelUnavailable,
+    cached_public_user_model,
+    normalized_public_user_model_id,
+)
 from trusted_router.request_limits import normalized_client_identity
-from trusted_router.serialization import user_model_public_shape
 from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.services.ops_chat import OpsChatSupportMessage, fanout_support_message
 from trusted_router.services.trust_release import (
@@ -1599,15 +1605,30 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return public_chat_html(settings)
 
     @public_html_route("/user-chat")
-    async def user_chat(model: str = Query(..., min_length=1)) -> str:
+    async def user_chat(model: str = Query(..., min_length=1)) -> HTMLResponse:
         locked_model_id = normalize_custom_model_id(model)
-        user_model = STORE.get_user_model(locked_model_id)
-        return public_chat_html(
-            settings,
-            locked_model_id=locked_model_id,
-            locked_model_label=(
-                "User-provided model" if user_model is not None else "Custom model"
+        user_model = None
+        public_model_id = normalized_public_user_model_id(locked_model_id)
+        if public_model_id is not None:
+            try:
+                user_model = await run_in_threadpool(
+                    cached_public_user_model,
+                    public_model_id,
+                    lambda: STORE.get_user_model(public_model_id),
+                )
+            except (PublicUserModelReadLimited, PublicUserModelUnavailable):
+                # The chat page can still proxy a custom model when the
+                # cosmetic user-model label is temporarily unavailable.
+                user_model = None
+        return HTMLResponse(
+            public_chat_html(
+                settings,
+                locked_model_id=locked_model_id,
+                locked_model_label=(
+                    "User-provided model" if user_model is not None else "Custom model"
+                ),
             ),
+            headers={"cache-control": PUBLIC_USER_MODEL_CACHE_CONTROL},
         )
 
     @public_html_route("/synth")
@@ -1647,22 +1668,37 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 )
             return HTMLResponse(body)
         body = public_model_detail_html(settings, cleaned)
-        if body is None:
-            user_model = STORE.get_user_model(normalize_custom_model_id(cleaned))
-            if (
-                user_model is not None
-                and user_model.enabled
-                and user_model.status == "active"
-            ):
-                shape = user_model_public_shape(user_model)
+        normalized = normalized_public_user_model_id(cleaned)
+        checked_user_model = body is None and normalized is not None
+        if checked_user_model:
+            assert normalized is not None
+            try:
+                shape = await run_in_threadpool(
+                    cached_public_user_model,
+                    normalized,
+                    lambda: STORE.get_user_model(normalized),
+                )
+            except PublicUserModelReadLimited:
+                return HTMLResponse(
+                    public_model_not_found_html(settings, cleaned),
+                    status_code=429,
+                    headers={"Retry-After": "30", "cache-control": "no-store"},
+                )
+            except PublicUserModelUnavailable:
+                return HTMLResponse(
+                    public_model_not_found_html(settings, cleaned),
+                    status_code=503,
+                    headers={"Retry-After": "2", "cache-control": "no-store"},
+                )
+            if shape is not None:
                 body = render_template(
                     "public/user_model_detail.html",
                     api_base_url=settings.api_base_url,
                     site_url=(
-                        f"https://{settings.trusted_domain}/models/{user_model.id}"
+                        f"https://{settings.trusted_domain}/models/{shape['id']}"
                     ),
-                    title=f"{user_model.name} | User-provided model",
-                    heading=user_model.name,
+                    title=f"{shape['name']} | User-provided model",
+                    heading=shape["name"],
                     description=shape["privacy_notice"],
                     robots_meta="noindex",
                     model=shape,
@@ -1674,8 +1710,20 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             return HTMLResponse(
                 public_model_not_found_html(settings, cleaned),
                 status_code=404,
+                headers=(
+                    {"cache-control": PUBLIC_USER_MODEL_CACHE_CONTROL}
+                    if checked_user_model
+                    else None
+                ),
             )
-        return HTMLResponse(body)
+        return HTMLResponse(
+            body,
+            headers=(
+                {"cache-control": PUBLIC_USER_MODEL_CACHE_CONTROL}
+                if checked_user_model
+                else None
+            ),
+        )
 
     @app.get("/og.png")
     async def og_image() -> FileResponse:

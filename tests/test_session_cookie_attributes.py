@@ -63,10 +63,12 @@ def _looks_like_date(piece: str) -> bool:
 def production_settings() -> Settings:
     return Settings(
         environment="production",
-        service_surface="control",
+        service_surface="console",
         attribution_cookie_secret="attribution-cookie-secret-for-control-test",  # noqa: S106
-        stripe_webhook_secret="whsec_test",  # noqa: S106 - test fixture.
         stripe_secret_key="sk_test",  # noqa: S106 - test fixture.
+        google_oauth_login_available=True,
+        github_oauth_login_available=False,
+        paypal_checkout_enabled=False,
         sentry_dsn="https://example@example.ingest.sentry.io/1",
         aws_access_key_id="test-access-key",
         aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
@@ -127,10 +129,12 @@ def test_session_cookie_is_httponly_secure_lax_in_production() -> None:
 
     settings = Settings(
         environment="production",
-        service_surface="control",
+        service_surface="console",
         attribution_cookie_secret="attribution-cookie-secret-for-control-test",  # noqa: S106
-        stripe_webhook_secret="w",  # noqa: S106 - test fixture.
         stripe_secret_key="s",  # noqa: S106 - test fixture.
+        google_oauth_login_available=False,
+        github_oauth_login_available=False,
+        paypal_checkout_enabled=False,
         sentry_dsn="https://example@example.ingest.sentry.io/1",
         aws_access_key_id="test-access-key",
         aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
@@ -214,10 +218,12 @@ def test_set_session_cookie_also_sets_signed_in_hint_for_marketing_js() -> None:
 
     settings = Settings(
         environment="production",
-        service_surface="control",
+        service_surface="console",
         attribution_cookie_secret="attribution-cookie-secret-for-control-test",  # noqa: S106
-        stripe_webhook_secret="w",  # noqa: S106 - test fixture.
         stripe_secret_key="s",  # noqa: S106 - test fixture.
+        google_oauth_login_available=False,
+        github_oauth_login_available=False,
+        paypal_checkout_enabled=False,
         sentry_dsn="https://example@example.ingest.sentry.io/1",
         aws_access_key_id="test-access-key",
         aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.

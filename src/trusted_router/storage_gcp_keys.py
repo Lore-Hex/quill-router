@@ -24,6 +24,12 @@ from trusted_router.security import (
     new_key_id,
     verify_api_key,
 )
+from trusted_router.storage_chat_browser_keys import (
+    CHAT_BROWSER_KEY_GUARD_KIND,
+    is_active_chat_browser_key,
+    new_chat_browser_api_key,
+    validate_chat_browser_key_cap,
+)
 from trusted_router.storage_gcp_codec import workspace_key_id as _workspace_key_id
 from trusted_router.storage_gcp_counters import (
     KEY_LIMIT_COLUMNS,
@@ -145,6 +151,90 @@ class SpannerApiKeys:
                 {"key_id": key.hash},
             )
         return raw, key
+
+    def issue_chat_browser_key(
+        self,
+        *,
+        workspace_id: str,
+        name: str,
+        creator_user_id: str,
+        limit_microdollars: int,
+        expires_at: str,
+        active_key_cap: int,
+    ) -> tuple[str, ApiKey] | None:
+        """Serialize cap check + key creation on one workspace guard row."""
+        validate_chat_browser_key_cap(active_key_cap)
+
+        def txn(transaction: Any) -> tuple[str, ApiKey] | None:
+            guard = self._io.read_entity_tx(
+                transaction,
+                CHAT_BROWSER_KEY_GUARD_KIND,
+                workspace_id,
+                dict,
+            )
+            rows = list(
+                transaction.execute_sql(
+                    _CONSOLE_API_KEYS_SQL,
+                    params={
+                        "workspace_id": workspace_id,
+                        "prefix": f"{workspace_id}#",
+                    },
+                    param_types={
+                        "workspace_id": self._io.param_types.STRING,
+                        "prefix": self._io.param_types.STRING,
+                    },
+                )
+            )
+            keys_by_hash: dict[str, ApiKey] = {}
+            for row in rows:
+                key = api_key_from_json(row[0])
+                keys_by_hash[key.hash] = key
+            if (
+                sum(is_active_chat_browser_key(key) for key in keys_by_hash.values())
+                >= active_key_cap
+            ):
+                # No raw secret, key id, salt, or durable row is created on
+                # refusal. The transaction is read-only in this branch.
+                return None
+
+            raw, key = new_chat_browser_api_key(
+                workspace_id=workspace_id,
+                name=name,
+                creator_user_id=creator_user_id,
+                limit_microdollars=limit_microdollars,
+                expires_at=expires_at,
+            )
+            self._io.write_entity_tx(transaction, "api_key", key.hash, key)
+            transaction.insert_or_update(
+                table=KEY_LIMIT_TABLE,
+                columns=KEY_LIMIT_COLUMNS,
+                values=key_limit_mirror_rows(
+                    key.hash,
+                    key,
+                    self._io.spanner_module.COMMIT_TIMESTAMP,
+                ),
+            )
+            self._io.write_entity_tx(
+                transaction,
+                "api_key_lookup",
+                key.lookup_hash,
+                {"key_id": key.hash},
+            )
+            self._io.write_entity_tx(
+                transaction,
+                "api_key_by_workspace",
+                _workspace_key_id(workspace_id, key.hash),
+                {"key_id": key.hash},
+            )
+            self._io.write_entity_tx(
+                transaction,
+                CHAT_BROWSER_KEY_GUARD_KIND,
+                workspace_id,
+                {"revision": int((guard or {}).get("revision", 0)) + 1},
+            )
+            return raw, key
+
+        return run_in_transaction_with_retry(self._io.database, txn)
 
     def get_by_hash(self, key_hash: str) -> ApiKey | None:
         return self._io.read_entity("api_key", key_hash, ApiKey)

@@ -164,10 +164,10 @@ class TestTargetPlumbing:
         assert all(t.expected_pcr0 is None for t in configured_targets(settings))
 
     def test_standalone_topology_is_one_canonical_target(self) -> None:
-        """Regional alias/Cloud-Run probing is GCP topology. On a
-        standalone deployment the templates fabricate hostnames that do
-        not exist (api-eu-west-3.quillrouter.com, a nonexistent *.run.app
-        URL) which would sit permanently down on the status page."""
+        """Regional alias probing is GCP topology. On a standalone
+        deployment the template fabricates a hostname that does not exist
+        (api-eu-west-3.quillrouter.com), which would sit permanently down on
+        the status page."""
         settings = Settings(
             environment="test",
             sentry_dsn=None,
@@ -183,9 +183,64 @@ class TestTargetPlumbing:
 
     def test_gcp_topology_unchanged_by_standalone_settings(self) -> None:
         settings = Settings(environment="test", sentry_dsn=None)
-        names = [t.name for t in configured_targets(settings)]
+        targets = configured_targets(settings)
+        names = [target.name for target in targets]
         assert names[0] == "canonical"
         assert len(names) > 1  # regional targets still present by default
+        assert all(target.control_plane_url is None for target in targets)
+
+    def test_regional_health_targets_configured_private_billing_origin(self) -> None:
+        origin = (
+            "https://trusted-router-billing-44325983244.europe-west4.run.app"
+        )
+        settings = Settings(
+            environment="test",
+            sentry_dsn=None,
+            regions="us-central1,europe-west4",
+            synthetic_monitor_region="europe-west4",
+            synthetic_control_plane_health_url=origin,
+        )
+
+        targets = configured_targets(settings)
+
+        assert [
+            (target.name, target.control_plane_url)
+            for target in targets
+            if target.control_plane_url is not None
+        ] == [("europe-west4", origin)]
+        assert all(
+            target.control_plane_url is None
+            or "trusted-router-billing-" in target.control_plane_url
+            for target in targets
+        )
+
+    @pytest.mark.parametrize(
+        "origin",
+        [
+            "https://trusted-router-44325983244.europe-west4.run.app",
+            "https://trusted-router-console-44325983244.europe-west4.run.app",
+            "https://trusted-router-public-44325983244.europe-west4.run.app",
+            "https://trusted-router-billing-44325983244.us-central1.run.app",
+            "https://trusted-router-billing-44325983244.europe-west4.run.app/health",
+            "https://trusted-router-billing-44325983244.europe-west4.run.app?probe=1",
+            "http://trusted-router-billing-44325983244.europe-west4.run.app",
+            "https://billing.example.com",
+        ],
+    )
+    def test_regional_health_rejects_non_private_billing_origin(self, origin: str) -> None:
+        settings = Settings(
+            environment="test",
+            sentry_dsn=None,
+            regions="us-central1,europe-west4",
+            synthetic_monitor_region="europe-west4",
+            synthetic_control_plane_health_url=origin,
+        )
+
+        with pytest.raises(
+            ValueError,
+            match=r"\$\{SERVICE\}-billing Cloud Run origin",
+        ):
+            configured_targets(settings)
 
     def test_target_defaults_are_backward_compatible(self) -> None:
         target = SyntheticTarget("canonical", "https://api.trustedrouter.com/v1")

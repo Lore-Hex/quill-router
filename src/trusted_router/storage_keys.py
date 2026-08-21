@@ -41,6 +41,11 @@ from trusted_router.spend_windows import (
     utcnow,
     window_floors,
 )
+from trusted_router.storage_chat_browser_keys import (
+    is_active_chat_browser_key,
+    new_chat_browser_api_key,
+    validate_chat_browser_key_cap,
+)
 from trusted_router.storage_errors import DeferredSettlementCapReached
 from trusted_router.storage_models import (
     ApiKey,
@@ -145,6 +150,37 @@ class InMemoryApiKeys:
             self.keys[key_id] = api_key
             self.key_ids_by_lookup_hash[lookup_hash] = key_id
             return key, api_key
+
+    def issue_chat_browser_key(
+        self,
+        *,
+        workspace_id: str,
+        name: str,
+        creator_user_id: str,
+        limit_microdollars: int,
+        expires_at: str,
+        active_key_cap: int,
+    ) -> tuple[str, ApiKey] | None:
+        """Atomically refuse before secret generation when the cap is full."""
+        validate_chat_browser_key_cap(active_key_cap)
+        with self._lock:
+            active = sum(
+                is_active_chat_browser_key(key)
+                for key in self.keys.values()
+                if key.workspace_id == workspace_id
+            )
+            if active >= active_key_cap:
+                return None
+            raw, key = new_chat_browser_api_key(
+                workspace_id=workspace_id,
+                name=name,
+                creator_user_id=creator_user_id,
+                limit_microdollars=limit_microdollars,
+                expires_at=expires_at,
+            )
+            self.keys[key.hash] = key
+            self.key_ids_by_lookup_hash[key.lookup_hash] = key.hash
+            return raw, key
 
     def get_by_hash(self, key_hash: str) -> ApiKey | None:
         with self._lock:

@@ -13,7 +13,7 @@ import ssl
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 from typing import Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -69,15 +69,11 @@ class SyntheticTarget:
     name: str
     api_base_url: str
     region: str | None = None
-    # Cloud Run direct URL for this region's control plane. When set,
-    # the synthetic monitor probes /health here too — separately from
-    # api_base_url's enclave probe — so we get a distinct per-region
-    # signal even when api_base_url's regional hostname CNAMEs to the
-    # global LB (cold regions, or warm regions whose ACME cert hasn't
-    # been issued yet because the MIG is at targetSize=0).
-    #
-    # None for the canonical target since that probe already hits the
-    # global enclave LB by definition.
+    # Explicit internal-service origin whose /health endpoint the synthetic
+    # monitor probes. GCP regional targets may only receive a separately
+    # configured ${SERVICE}-billing Cloud Run origin; it is never inferred
+    # from public region metadata. Standalone deployments may attach their
+    # explicitly configured control-plane origin to the canonical target.
     control_plane_url: str | None = None
     # ATTESTED-CERT-ONLY target: the gateway serves a self-signed cert it
     # minted inside the TEE (AWS Nitro standalone deployments), so CA
@@ -217,12 +213,67 @@ def _region_api_base_url(canonical_url: str, public_host: str) -> str:
     return urlunsplit(parsed._replace(netloc=netloc))
 
 
+def _regional_internal_health_origin(settings: Settings) -> str | None:
+    """Return the configured regional billing origin, failing closed.
+
+    Regional GCP health checks need a specific service and region, but public
+    region metadata must not disclose a private service URL. Accept only an
+    exact Cloud Run origin for a ``${SERVICE}-billing`` service in the
+    monitor's own region. In particular, legacy, console, and public service
+    origins cannot become credentialed synthetic targets.
+    """
+    raw_origin = settings.synthetic_control_plane_health_url
+    if not raw_origin:
+        return None
+    monitor_region = settings.synthetic_monitor_region
+    if not monitor_region:
+        raise ValueError(
+            "TR_SYNTHETIC_MONITOR_REGION is required when regional internal "
+            "health is configured"
+        )
+
+    parsed = urlsplit(raw_origin)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError(
+            "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL must be an exact HTTPS "
+            "${SERVICE}-billing Cloud Run origin in TR_SYNTHETIC_MONITOR_REGION"
+        ) from exc
+    host = parsed.hostname or ""
+    expected_suffix = f".{monitor_region}.run.app"
+    service_and_project = (
+        host[: -len(expected_suffix)] if host.endswith(expected_suffix) else ""
+    )
+    service, separator, project_number = service_and_project.rpartition("-")
+    if (
+        parsed.scheme != "https"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or port is not None
+        or not separator
+        or not project_number.isdigit()
+        or not service.endswith("-billing")
+    ):
+        raise ValueError(
+            "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL must be an exact HTTPS "
+            "${SERVICE}-billing Cloud Run origin in TR_SYNTHETIC_MONITOR_REGION"
+        )
+    return urlunsplit(("https", host, "", "", ""))
+
+
 def configured_targets(settings: Settings) -> list[SyntheticTarget]:
+    regional_probes_enabled = settings.synthetic_regional_probes_enabled
     canonical = SyntheticTarget(
         "canonical",
         settings.api_base_url,
         choose_region(settings),
-        control_plane_url=settings.synthetic_control_plane_health_url,
+        control_plane_url=(
+            None if regional_probes_enabled else settings.synthetic_control_plane_health_url
+        ),
         attested=settings.synthetic_canonical_attested,
         expected_pcr0=settings.attestation_expected_pcr0,
     )
@@ -230,21 +281,21 @@ def configured_targets(settings: Settings) -> list[SyntheticTarget]:
     # and must find the canonical target, not a per-enclave sibling that
     # shares the same hostname.
     targets = [canonical, *_gateway_region_targets(settings, canonical)]
-    if not settings.synthetic_regional_probes_enabled:
+    if not regional_probes_enabled:
         # Standalone single-gateway deployment: the per-region alias and
-        # Cloud Run URL templates below are GCP topology and would
+        # regional hostname templates below are GCP topology and would
         # fabricate targets that do not exist (verified live: with
         # TR_REGIONS=eu-west-3 the loop appends
-        # api-eu-west-3.quillrouter.com + a nonexistent *.run.app URL,
-        # both permanently down). One hostname, one canonical target — plus
+        # api-eu-west-3.quillrouter.com, which is permanently down). One
+        # hostname, one canonical target — plus
         # whatever per-enclave endpoints are explicitly configured above,
         # which are real addresses of that same hostname rather than
         # hostnames derived from a template.
         return targets
+    internal_health_origin = _regional_internal_health_origin(settings)
     for region in region_payload(settings):
         name = str(region["id"])
         api_base_url = str(region["api_base_url"])
-        control_plane_url = region.get("control_plane_url") or None
         if name == choose_region(settings):
             # The canonical hostname now publishes all healthy gateway regions,
             # so it is not a primary-region-only signal. Probe the primary
@@ -253,28 +304,37 @@ def configured_targets(settings: Settings) -> list[SyntheticTarget]:
             regional_hostname = settings.regional_api_hostname_template.format(region=name)
             regional_api_base_url = f"https://{regional_hostname}/v1"
             if regional_api_base_url != settings.api_base_url:
-                targets.append(
-                    SyntheticTarget(name, regional_api_base_url, name, control_plane_url)
-                )
+                targets.append(SyntheticTarget(name, regional_api_base_url, name))
                 continue
         # If the api_base_url is already represented (e.g. the primary
         # region whose api_base_url == settings.api_base_url), skip
-        # adding a duplicate enclave target — but DO still attach the
-        # control_plane_url to the canonical target so we don't lose
-        # the per-region health probe.
+        # adding a duplicate enclave target.
         existing = next((t for t in targets if t.api_base_url == api_base_url), None)
         if existing is not None:
-            if control_plane_url and existing.control_plane_url is None:
-                # Replace canonical target with one carrying the
-                # primary's Cloud Run direct URL.
-                targets[targets.index(existing)] = SyntheticTarget(
-                    existing.name,
-                    existing.api_base_url,
-                    existing.region,
-                    control_plane_url,
-                )
             continue
-        targets.append(SyntheticTarget(name, api_base_url, name, control_plane_url))
+        targets.append(SyntheticTarget(name, api_base_url, name))
+
+    if internal_health_origin:
+        monitor_region = settings.synthetic_monitor_region
+        target_index = next(
+            (index for index, target in enumerate(targets) if target.name == monitor_region),
+            None,
+        )
+        if target_index is None:
+            regional_matches = [
+                index
+                for index, target in enumerate(targets)
+                if target.region == monitor_region
+            ]
+            if len(regional_matches) != 1:
+                raise ValueError(
+                    "TR_SYNTHETIC_MONITOR_REGION must identify one configured "
+                    "regional target"
+                )
+            target_index = regional_matches[0]
+        targets[target_index] = replace(
+            targets[target_index], control_plane_url=internal_health_origin
+        )
     return targets
 
 
