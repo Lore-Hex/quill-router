@@ -30,6 +30,7 @@ from trusted_router.auth import SettingsDep
 from trusted_router.errors import api_error
 from trusted_router.money import MICRODOLLARS_PER_CENT
 from trusted_router.routes.helpers import json_body
+from trusted_router.routes.internal.webhook_work import run_provider_webhook_work
 from trusted_router.services.x402_billing import X402_PAYMENT_METHOD, credit_x402_payment_intent
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
@@ -44,9 +45,15 @@ def register(router: APIRouter) -> None:
         sig = request.headers.get("stripe-signature")
         if settings.stripe_webhook_secret:
             try:
-                constructed = stripe.Webhook.construct_event(
-                    raw, sig, settings.stripe_webhook_secret
+                constructed = await run_provider_webhook_work(
+                    "stripe",
+                    stripe.Webhook.construct_event,
+                    raw,
+                    sig,
+                    settings.stripe_webhook_secret,
                 )
+            except HTTPException:
+                raise
             except Exception as exc:
                 raise api_error(400, "Invalid Stripe webhook", ErrorType.BAD_REQUEST) from exc
             # `construct_event` returns a `stripe.Event` (a `StripeObject`
@@ -92,10 +99,17 @@ def register(router: APIRouter) -> None:
             workspace_id = metadata.get("workspace_id")
             amount_total = int(obj.get("amount_total") or 0)
             customer_id = obj.get("customer")
-            if workspace_id and STORE.get_credit_account(workspace_id) is not None:
+            if workspace_id and await run_provider_webhook_work(
+                "stripe", STORE.get_credit_account, workspace_id
+            ) is not None:
                 if event_type == "checkout.session.completed" and obj.get("mode") == "setup":
                     if isinstance(customer_id, str):
-                        STORE.set_stripe_customer(workspace_id, customer_id=customer_id)
+                        await run_provider_webhook_work(
+                            "stripe",
+                            STORE.set_stripe_customer,
+                            workspace_id,
+                            customer_id=customer_id,
+                        )
                     return {
                         "data": {
                             "setup_pending": True,
@@ -135,14 +149,18 @@ def register(router: APIRouter) -> None:
                     checkout_session=obj,
                     payment_method=payment_method,
                 )
-                credited = STORE.credit_workspace_typed_direct(
+                credited = await run_provider_webhook_work(
+                    "stripe",
+                    _credit_workspace_with_lifetime,
                     workspace_id,
                     amount_microdollars,
                     credit_event_id,
-                    lifetime_topup_user_id=_lifetime_topup_user_id(workspace_id, metadata),
+                    metadata,
                 )
                 if credited:
-                    record_credit_purchase(
+                    await run_provider_webhook_work(
+                        "stripe",
+                        record_credit_purchase,
                         workspace_id,
                         amount_microdollars=amount_microdollars,
                         payment_method=(
@@ -155,7 +173,12 @@ def register(router: APIRouter) -> None:
                 # PaymentIntent's `payment_method` if Checkout was set up
                 # with `setup_future_usage`).
                 if isinstance(customer_id, str) and payment_method != "ach":
-                    STORE.set_stripe_customer(workspace_id, customer_id=customer_id)
+                    await run_provider_webhook_work(
+                        "stripe",
+                        STORE.set_stripe_customer,
+                        workspace_id,
+                        customer_id=customer_id,
+                    )
                 return {
                     "data": {
                         "credited": credited,
@@ -177,14 +200,21 @@ def register(router: APIRouter) -> None:
                 isinstance(workspace_id, str)
                 and isinstance(customer_id, str)
                 and isinstance(payment_method, str)
-                and STORE.get_credit_account(workspace_id) is not None
+                and await run_provider_webhook_work(
+                    "stripe", STORE.get_credit_account, workspace_id
+                )
+                is not None
             ):
-                STORE.set_stripe_customer(
+                await run_provider_webhook_work(
+                    "stripe",
+                    STORE.set_stripe_customer,
                     workspace_id,
                     customer_id=customer_id,
                     payment_method_id=payment_method,
                 )
-                record_payment_method_saved(
+                await run_provider_webhook_work(
+                    "stripe",
+                    record_payment_method_saved,
                     workspace_id,
                     payment_method="stripe_card",
                 )
@@ -201,7 +231,9 @@ def register(router: APIRouter) -> None:
             metadata = obj.get("metadata") or {}
             if metadata.get("payment_method") == X402_PAYMENT_METHOD:
                 try:
-                    result = credit_x402_payment_intent(
+                    result = await run_provider_webhook_work(
+                        "stripe",
+                        credit_x402_payment_intent,
                         obj,
                         expected_workspace_id=None,
                         settings=settings,
@@ -237,30 +269,43 @@ def register(router: APIRouter) -> None:
                     metadata=metadata,
                     payment_intent_amount_cents=obj.get("amount"),
                 )
-                credited = STORE.credit_workspace_typed_direct(
+                credited = await run_provider_webhook_work(
+                    "stripe",
+                    _credit_workspace_with_lifetime,
                     workspace_id,
                     amount_microdollars,
                     event_id,
-                    lifetime_topup_user_id=_lifetime_topup_user_id(workspace_id, metadata),
+                    metadata,
                 )
                 if credited:
-                    record_credit_purchase(
+                    await run_provider_webhook_work(
+                        "stripe",
+                        record_credit_purchase,
                         workspace_id,
                         amount_microdollars=amount_microdollars,
                         payment_method="stripe_auto_refill",
                     )
-                STORE.record_auto_refill_outcome(workspace_id, status="succeeded")
+                await run_provider_webhook_work(
+                    "stripe",
+                    STORE.record_auto_refill_outcome,
+                    workspace_id,
+                    status="succeeded",
+                )
                 # Also persist the payment-method if Stripe surfaced one —
                 # first auto-refill after a Checkout that didn't include
                 # setup_future_usage might be the first time we see the PM.
                 payment_method = obj.get("payment_method")
                 if isinstance(payment_method, str):
-                    STORE.set_stripe_customer(
+                    await run_provider_webhook_work(
+                        "stripe",
+                        STORE.set_stripe_customer,
                         workspace_id,
                         customer_id=str(obj.get("customer") or ""),
                         payment_method_id=payment_method,
                     )
-                    record_payment_method_saved(
+                    await run_provider_webhook_work(
+                        "stripe",
+                        record_payment_method_saved,
                         workspace_id,
                         payment_method="stripe_card",
                     )
@@ -268,17 +313,24 @@ def register(router: APIRouter) -> None:
             if (
                 metadata.get("payment_method") in {None, "auto", "card"}
                 and isinstance(workspace_id, str)
-                and STORE.get_credit_account(workspace_id) is not None
+                and await run_provider_webhook_work(
+                    "stripe", STORE.get_credit_account, workspace_id
+                )
+                is not None
             ):
                 payment_method = obj.get("payment_method")
                 customer_id = obj.get("customer")
                 if isinstance(payment_method, str) and isinstance(customer_id, str):
-                    STORE.set_stripe_customer(
+                    await run_provider_webhook_work(
+                        "stripe",
+                        STORE.set_stripe_customer,
                         workspace_id,
                         customer_id=customer_id,
                         payment_method_id=payment_method,
                     )
-                    record_payment_method_saved(
+                    await run_provider_webhook_work(
+                        "stripe",
+                        record_payment_method_saved,
                         workspace_id,
                         payment_method="stripe_card",
                     )
@@ -316,7 +368,12 @@ def register(router: APIRouter) -> None:
             if metadata.get("auto_refill") == "true" and isinstance(workspace_id, str):
                 last_error = obj.get("last_payment_error") or {}
                 code = last_error.get("code") or "unknown"
-                STORE.record_auto_refill_outcome(workspace_id, status=f"failed:{code}")
+                await run_provider_webhook_work(
+                    "stripe",
+                    STORE.record_auto_refill_outcome,
+                    workspace_id,
+                    status=f"failed:{code}",
+                )
                 return {"data": {"event_id": event_id, "auto_refill_failed": True, "code": code}}
 
         if event_type in {"charge.refunded", "charge.refund.updated"}:
@@ -341,6 +398,20 @@ def register(router: APIRouter) -> None:
                 }
 
         return {"data": {"ignored": True, "event_id": event_id}}
+
+
+def _credit_workspace_with_lifetime(
+    workspace_id: str,
+    amount_microdollars: int,
+    event_id: str,
+    metadata: dict[str, Any],
+) -> bool:
+    return STORE.credit_workspace_typed_direct(
+        workspace_id,
+        amount_microdollars,
+        event_id,
+        lifetime_topup_user_id=_lifetime_topup_user_id(workspace_id, metadata),
+    )
 
 
 def _lifetime_topup_user_id(workspace_id: str, metadata: dict[str, Any]) -> str | None:

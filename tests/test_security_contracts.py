@@ -103,6 +103,10 @@ def test_sentry_test_route_is_disabled_in_production_unless_explicitly_enabled()
         service_surface="internal",
         internal_gateway_token="internal-prod-sentry-test",  # noqa: S106 - test config.
         observer_internal_token="observer-prod-sentry-test",  # noqa: S106 - test config.
+        stripe_secret_key="rk_test_payment_intents",  # noqa: S106 - test config.
+        aws_access_key_id="internal-ses-access",
+        aws_secret_access_key="internal-ses-secret",  # noqa: S106 - test config.
+        ses_from_email="noreply@example.com",
         sentry_dsn="https://example@example.ingest.sentry.io/1",
         storage_backend="spanner-bigtable",
         spanner_instance_id="trusted-router",
@@ -140,16 +144,17 @@ def test_sentry_test_route_is_disabled_in_production_unless_explicitly_enabled()
 
 
 def test_production_rejects_spoofable_user_header_auth() -> None:
-    webhook_secret = "whsec_" + "test"
     stripe_key = "sk_" + "test_secret"
     prod_client = TestClient(
         create_app(
             Settings(
                 environment="production",
-                service_surface="control",
+                service_surface="console",
                 attribution_cookie_secret="attribution-cookie-" + "a" * 32,
-                stripe_webhook_secret=webhook_secret,
                 stripe_secret_key=stripe_key,
+                google_oauth_login_available=False,
+                github_oauth_login_available=False,
+                paypal_checkout_enabled=False,
                 sentry_dsn="https://example@example.ingest.sentry.io/1",
                 aws_access_key_id="test-access-key",
                 aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
@@ -241,7 +246,7 @@ def test_deployed_stripe_webhook_fails_closed_without_verification_secret() -> N
     # Bypass Settings' startup validation to independently pin the route's
     # defense in depth. A future construction-path regression still must not
     # make an Internet-deployed webhook trust raw JSON.
-    settings = Settings(environment="test", service_surface="control")
+    settings = Settings(environment="test", service_surface="webhooks")
     settings.environment = "canary"
     client = TestClient(create_app(settings, init_observability=False))
 
@@ -812,11 +817,19 @@ def test_local_key_file_is_not_loaded_under_pytest(monkeypatch) -> None:
 
 
 def test_playwright_server_runs_with_test_observability_disabled() -> None:
-    config = (Path(__file__).resolve().parents[1] / "playwright.config.js").read_text(encoding="utf-8")
+    repository = Path(__file__).resolve().parents[1]
+    config = (repository / "playwright.config.js").read_text(encoding="utf-8")
+    server = (repository / "tests/browser/six_surface_server.py").read_text(
+        encoding="utf-8"
+    )
 
-    assert "TR_ENVIRONMENT=test" in config
-    assert "TR_STORAGE_BACKEND=memory" in config
-    assert "TR_SENTRY_DSN=" in config
+    assert "tests.browser.six_surface_server:app" in config
+    assert "reuseExistingServer: false" in config
+    assert '"environment": "test"' in server
+    assert '"storage_backend": "memory"' in server
+    assert '"sentry_dsn": None' in server
+    assert "_without_ambient_credentials()" in server
+    assert "_without_outbound_network()" in server
 
 
 def test_inference_key_labels_are_partial_and_raw_key_is_one_time_only(

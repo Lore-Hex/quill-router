@@ -21,10 +21,12 @@ _PRODUCTION_STORAGE = {
     "spanner_database_id": "trusted-router",
     "bigtable_instance_id": "trusted-router-logs",
 }
-_CONTROL_SECRETS = {
+_CONSOLE_SECRETS = {
     "attribution_cookie_secret": _ATTRIBUTION_SECRET,
-    "stripe_webhook_secret": "whsec-test",
     "stripe_secret_key": "sk-test",
+    "paypal_checkout_enabled": False,
+    "google_oauth_login_available": False,
+    "github_oauth_login_available": False,
     "sentry_dsn": "https://example@example.ingest.sentry.io/1",
     "aws_access_key_id": "ses-access",
     "aws_secret_access_key": "ses-secret",
@@ -32,6 +34,17 @@ _CONTROL_SECRETS = {
     "byok_kms_key_name": (
         "projects/test/locations/global/keyRings/trusted-router/cryptoKeys/byok-envelope"
     ),
+}
+_INTERNAL_BILLING_SECRETS = {
+    "internal_gateway_token": _GATEWAY_SECRET,
+    "observer_internal_token": "observer-only-" + "o" * 32,
+    # These values model independently provisioned, restricted credentials;
+    # they deliberately do not reuse the console/actions secret resources.
+    "stripe_secret_key": "rk-test-payment-intents",
+    "sentry_dsn": "https://example@example.ingest.sentry.io/1",
+    "aws_access_key_id": "internal-ses-access",
+    "aws_secret_access_key": "internal-ses-secret",
+    "ses_from_email": "noreply@example.com",
 }
 
 _ACTION_FORBIDDEN_CONFIG: tuple[tuple[str, object, str], ...] = (
@@ -148,6 +161,7 @@ _SENSITIVE_TEST_VALUES: dict[str, object] = {
     "observer_internal_token": "observer-only-" + "o" * 32,
     "stripe_webhook_secret": "whsec-test",
     "stripe_secret_key": "sk-test",
+    "paypal_checkout_enabled": True,
     "paypal_client_id": "paypal-client",
     "paypal_client_secret": "paypal-secret",
     "paypal_webhook_id": "paypal-webhook",
@@ -187,16 +201,23 @@ _SENSITIVE_TEST_VALUES: dict[str, object] = {
 _EXPECTED_OWNER_GROUPS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
     (frozenset({"actions"}), ("ops_chat_webhook_secret",)),
     (
-        frozenset({"public", "control", "internal", "observer"}),
+        frozenset(
+            {"public", "console", "chat", "webhooks", "internal", "observer"}
+        ),
         (
             "postgres_dsn",
             "postgres_iam_auth",
+        ),
+    ),
+    (
+        frozenset({"public", "console", "internal", "observer"}),
+        (
             "operational_analytics_clickhouse_url",
             "operational_analytics_clickhouse_password",
         ),
     ),
     (
-        frozenset({"control", "internal"}),
+        frozenset({"console", "internal"}),
         (
             "clickhouse_url",
             "clickhouse_password",
@@ -205,22 +226,14 @@ _EXPECTED_OWNER_GROUPS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
         ),
     ),
     (
-        frozenset({"control"}),
+        frozenset({"console"}),
         (
             "provider_analytics_clickhouse_url",
             "provider_analytics_clickhouse_password",
             "google_data_manager_enabled",
             "google_data_manager_kms_key_name",
-            "stripe_webhook_secret",
-            "stripe_secret_key",
-            "paypal_client_id",
-            "paypal_client_secret",
-            "paypal_webhook_id",
-            "adyen_enabled",
             "adyen_api_key",
             "adyen_client_key",
-            "adyen_hmac_key",
-            "adyen_reference_key",
             "google_client_id",
             "google_client_secret",
             "google_alias_credentials_json",
@@ -229,17 +242,32 @@ _EXPECTED_OWNER_GROUPS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
             "github_alias_credentials_json",
             "x402_enabled",
             "notify_enabled",
-            "veriff_enabled",
             "veriff_api_key",
-            "veriff_shared_secret_key",
             "telnyx_api_key",
             "twilio_account_sid",
             "twilio_auth_token",
             "twilio_api_key_secret",
         ),
     ),
-    (frozenset({"control", "internal", "observer"}), ("sentry_dsn",)),
-    (frozenset({"public", "control"}), ("attribution_cookie_secret",)),
+    (frozenset({"console", "internal"}), ("stripe_secret_key",)),
+    (
+        frozenset({"console", "webhooks"}),
+        (
+            "paypal_checkout_enabled",
+            "paypal_client_id",
+            "paypal_client_secret",
+            "adyen_enabled",
+            "veriff_enabled",
+        ),
+    ),
+    (frozenset({"webhooks"}), ("paypal_webhook_id", "adyen_hmac_key")),
+    (frozenset({"console", "webhooks"}), ("adyen_reference_key",)),
+    (frozenset({"webhooks"}), ("stripe_webhook_secret", "veriff_shared_secret_key")),
+    (
+        frozenset({"console", "chat", "webhooks", "internal", "observer"}),
+        ("sentry_dsn",),
+    ),
+    (frozenset({"public", "console"}), ("attribution_cookie_secret",)),
     (
         frozenset({"internal"}),
         ("internal_gateway_token",),
@@ -253,7 +281,7 @@ _EXPECTED_OWNER_GROUPS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
         ("synthetic_monitor_api_key",),
     ),
     (
-        frozenset({"control", "actions"}),
+        frozenset({"console", "actions", "internal"}),
         ("aws_access_key_id", "aws_secret_access_key"),
     ),
     (
@@ -273,7 +301,15 @@ _EXPECTED_SENSITIVE_SETTING_OWNERS = {
     for owners, field_names in _EXPECTED_OWNER_GROUPS
     for field_name in field_names
 }
-_DEPLOYED_WEB_SURFACES = ("public", "actions", "control", "internal", "observer")
+_DEPLOYED_WEB_SURFACES = (
+    "public",
+    "actions",
+    "console",
+    "chat",
+    "webhooks",
+    "internal",
+    "observer",
+)
 _UNAUTHORIZED_SENSITIVE_CASES = tuple(
     (field_name, surface)
     for field_name, owners in sorted(_EXPECTED_SENSITIVE_SETTING_OWNERS.items())
@@ -296,7 +332,7 @@ def test_every_sensitive_setting_rejects_an_unauthorized_deployed_surface(
     assert set(_SENSITIVE_TEST_VALUES) == set(_EXPECTED_SENSITIVE_SETTING_OWNERS)
     assert SERVICE_SURFACE_SECRET_OWNERS == _EXPECTED_SENSITIVE_SETTING_OWNERS
     overrides: dict[str, object] = {field_name: _SENSITIVE_TEST_VALUES[field_name]}
-    if surface in {"public", "control"}:
+    if surface in {"public", "console"}:
         overrides.setdefault("attribution_cookie_secret", _ATTRIBUTION_SECRET)
     if surface in {"internal", "observer"}:
         overrides.setdefault(
@@ -305,6 +341,10 @@ def test_every_sensitive_setting_rejects_an_unauthorized_deployed_surface(
         )
         if surface == "internal":
             overrides.setdefault("internal_gateway_token", _GATEWAY_SECRET)
+            overrides.setdefault("stripe_secret_key", "rk-test-payment-intents")
+            overrides.setdefault("aws_access_key_id", "internal-ses-access")
+            overrides.setdefault("aws_secret_access_key", "internal-ses-secret")
+            overrides.setdefault("ses_from_email", "noreply@example.com")
     if field_name == "ops_chat_webhook_secret":
         overrides["ops_chat_webhook_urls"] = "https://ops.example/hook"
     if field_name == "postgres_iam_auth":
@@ -369,28 +409,69 @@ def test_public_production_needs_only_attribution_and_non_secret_login_flags() -
     assert settings.github_oauth_enabled is False
 
 
-def test_control_rejects_oauth_presentation_capability_drift() -> None:
-    with pytest.raises(ValidationError, match="must match the control service"):
+def test_console_rejects_oauth_presentation_capability_drift() -> None:
+    with pytest.raises(ValidationError, match="must match the console service"):
         Settings(
             environment="canary",
-            service_surface="control",
+            service_surface="console",
             attribution_cookie_secret=_ATTRIBUTION_SECRET,
-            stripe_webhook_secret="whsec-test",  # noqa: S106 - test credential.
             stripe_secret_key="sk-test",  # noqa: S106 - test credential.
+            paypal_checkout_enabled=False,
             google_oauth_login_available=True,
             github_oauth_login_available=False,
         )
 
     settings = Settings(
         environment="canary",
-        service_surface="control",
+        service_surface="console",
         attribution_cookie_secret=_ATTRIBUTION_SECRET,
-        stripe_webhook_secret="whsec-test",  # noqa: S106 - test credential.
         stripe_secret_key="sk-test",  # noqa: S106 - test credential.
+        paypal_checkout_enabled=False,
         google_oauth_login_available=False,
         github_oauth_login_available=False,
     )
     assert settings.google_oauth_enabled is False
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    ("google_oauth_login_available", "github_oauth_login_available"),
+)
+def test_console_requires_explicit_oauth_presentation_capabilities(
+    missing_field: str,
+) -> None:
+    capabilities = {
+        "google_oauth_login_available": False,
+        "github_oauth_login_available": False,
+    }
+    capabilities.pop(missing_field)
+
+    with pytest.raises(ValidationError, match=f"TR_{missing_field.upper()}=true or false"):
+        Settings(
+            environment="canary",
+            service_surface="console",
+            attribution_cookie_secret=_ATTRIBUTION_SECRET,
+            stripe_secret_key="sk-test",  # noqa: S106 - test credential.
+            paypal_checkout_enabled=False,
+            **capabilities,
+        )
+
+
+def test_console_accepts_oauth_capabilities_that_exactly_match_credentials() -> None:
+    settings = Settings(
+        environment="canary",
+        service_surface="console",
+        attribution_cookie_secret=_ATTRIBUTION_SECRET,
+        stripe_secret_key="sk-test",  # noqa: S106 - test credential.
+        paypal_checkout_enabled=False,
+        google_client_id="google-client",
+        google_client_secret="google-secret",  # noqa: S106 - test credential.
+        google_oauth_login_available=True,
+        github_oauth_login_available=False,
+    )
+
+    assert settings.google_oauth_enabled is True
+    assert settings.github_oauth_enabled is False
 
 
 def test_actions_production_has_no_store_or_private_plane_credentials() -> None:
@@ -525,24 +606,30 @@ def test_public_production_rejects_private_surface_secrets(name: str, value: str
         )
 
 
-def test_internal_and_observer_require_gateway_observability_but_not_account_secrets() -> None:
-    for surface in ("internal", "observer"):
-        auth = {
-            "observer_internal_token": _SENSITIVE_TEST_VALUES["observer_internal_token"]
-        }
-        if surface == "internal":
-            auth["internal_gateway_token"] = _GATEWAY_SECRET
-        settings = _production(
-            surface,
-            sentry_dsn="https://example@example.ingest.sentry.io/1",
-            **auth,
-        )
-        assert settings.stripe_secret_key is None
-        assert settings.aws_access_key_id is None
-        assert settings.byok_kms_key_name is None
+def test_internal_requires_restricted_billing_and_email_credentials() -> None:
+    settings = _production("internal", **_INTERNAL_BILLING_SECRETS)
+
+    assert settings.stripe_secret_key == "rk-test-payment-intents"  # noqa: S105
+    assert settings.aws_access_key_id == "internal-ses-access"
+    assert settings.aws_secret_access_key == "internal-ses-secret"  # noqa: S105
+    assert settings.ses_from_email == "noreply@example.com"
+    assert settings.stripe_webhook_secret is None
 
 
-@pytest.mark.parametrize("surface", ("internal", "observer"))
+@pytest.mark.parametrize(
+    "missing_field",
+    ("stripe_secret_key", "aws_access_key_id", "aws_secret_access_key", "ses_from_email"),
+)
+def test_internal_fails_closed_when_a_billing_side_effect_credential_is_missing(
+    missing_field: str,
+) -> None:
+    values = dict(_INTERNAL_BILLING_SECRETS)
+    values.pop(missing_field)
+
+    with pytest.raises(ValidationError, match=f"TR_{missing_field.upper()}"):
+        _production("internal", **values)
+
+
 @pytest.mark.parametrize(
     ("name", "value"),
     (
@@ -553,58 +640,223 @@ def test_internal_and_observer_require_gateway_observability_but_not_account_sec
         ("aws_secret_access_key", "ses-secret"),
     ),
 )
-def test_non_account_surfaces_reject_account_secrets(
-    surface: str,
+def test_observer_rejects_billing_and_account_secrets(
     name: str,
     value: str,
 ) -> None:
-    auth = {
-        "observer_internal_token": _SENSITIVE_TEST_VALUES["observer_internal_token"]
-    }
-    if surface == "internal":
-        auth["internal_gateway_token"] = _GATEWAY_SECRET
     with pytest.raises(ValidationError, match=f"unset TR_{name.upper()}"):
         _production(
-            surface,
+            "observer",
             sentry_dsn="https://example@example.ingest.sentry.io/1",
-            **auth,
+            observer_internal_token=_SENSITIVE_TEST_VALUES["observer_internal_token"],
             **{name: value},
         )
 
 
-def test_control_requires_dedicated_attribution_secret() -> None:
-    with pytest.raises(ValidationError, match="TR_ATTRIBUTION_COOKIE_SECRET"):
-        _production("control", **{k: v for k, v in _CONTROL_SECRETS.items() if k != "attribution_cookie_secret"})
+@pytest.mark.parametrize(
+    ("name", "value"),
+    (
+        ("attribution_cookie_secret", _ATTRIBUTION_SECRET),
+        ("stripe_webhook_secret", "whsec-test"),
+    ),
+)
+def test_internal_rejects_console_and_webhook_only_secrets(
+    name: str,
+    value: str,
+) -> None:
+    with pytest.raises(ValidationError, match=f"unset TR_{name.upper()}"):
+        _production("internal", **_INTERNAL_BILLING_SECRETS, **{name: value})
 
-    settings = _production("control", **_CONTROL_SECRETS)
+
+def test_console_requires_dedicated_attribution_secret() -> None:
+    with pytest.raises(ValidationError, match="TR_ATTRIBUTION_COOKIE_SECRET"):
+        _production(
+            "console",
+            **{
+                k: v
+                for k, v in _CONSOLE_SECRETS.items()
+                if k != "attribution_cookie_secret"
+            },
+        )
+
+    settings = _production("console", **_CONSOLE_SECRETS)
     assert settings.attribution_cookie_secret == _ATTRIBUTION_SECRET
     assert settings.internal_gateway_token is None
 
 
-def test_control_rejects_the_internal_gateway_credential() -> None:
+def test_console_rejects_the_internal_gateway_credential() -> None:
     with pytest.raises(ValidationError, match="unset TR_INTERNAL_GATEWAY_TOKEN"):
         _production(
-            "control",
-            **_CONTROL_SECRETS,
+            "console",
+            **_CONSOLE_SECRETS,
             internal_gateway_token=_GATEWAY_SECRET,
         )
 
 
+def test_console_x402_needs_checkout_key_but_rejects_webhook_secret() -> None:
+    settings = _production("console", **_CONSOLE_SECRETS, x402_enabled=True)
+
+    assert settings.x402_enabled is True
+    assert settings.stripe_secret_key == "sk-test"  # noqa: S105 - test credential.
+    assert settings.stripe_webhook_secret is None
+
+    with pytest.raises(ValidationError, match="unset TR_STRIPE_WEBHOOK_SECRET"):
+        _production(
+            "console",
+            **_CONSOLE_SECRETS,
+            x402_enabled=True,
+            stripe_webhook_secret="whsec-test",  # noqa: S106 - test credential.
+        )
+
+
+def test_paypal_credentials_are_split_between_console_and_webhooks() -> None:
+    console = _production(
+        "console",
+        **{**_CONSOLE_SECRETS, "paypal_checkout_enabled": True},
+        paypal_client_id="paypal-client",
+        paypal_client_secret="paypal-secret",  # noqa: S106 - test credential.
+    )
+    assert console.paypal_enabled is True
+    assert console.paypal_webhook_id is None
+
+    webhooks = _production(
+        "webhooks",
+        sentry_dsn="https://example@example.ingest.sentry.io/1",
+        stripe_webhook_secret="whsec-test",  # noqa: S106 - test credential.
+        paypal_checkout_enabled=True,
+        paypal_client_id="paypal-client",
+        paypal_client_secret="paypal-secret",  # noqa: S106 - test credential.
+        paypal_webhook_id="paypal-webhook",
+    )
+    assert webhooks.paypal_webhook_ready is True
+
+    with pytest.raises(ValidationError, match="must all be set on the webhooks surface"):
+        _production(
+            "webhooks",
+            sentry_dsn="https://example@example.ingest.sentry.io/1",
+            stripe_webhook_secret="whsec-test",  # noqa: S106 - test credential.
+            paypal_checkout_enabled=True,
+            paypal_client_id="paypal-client",
+            paypal_client_secret="paypal-secret",  # noqa: S106 - test credential.
+        )
+
+
+def test_adyen_checkout_and_webhook_credentials_are_disjoint() -> None:
+    console = _production(
+        "console",
+        **_CONSOLE_SECRETS,
+        adyen_enabled=True,
+        adyen_api_key="adyen-api",
+        adyen_client_key="adyen-client",
+        adyen_reference_key="r" * 32,
+        adyen_merchant_account="merchant",
+    )
+    assert console.adyen_checkout_ready is True
+    assert console.adyen_hmac_key is None
+
+    webhooks = _production(
+        "webhooks",
+        sentry_dsn="https://example@example.ingest.sentry.io/1",
+        stripe_webhook_secret="whsec-test",  # noqa: S106 - test credential.
+        paypal_checkout_enabled=False,
+        adyen_hmac_key="ab" * 32,
+        adyen_reference_key="r" * 32,
+        adyen_merchant_account="merchant",
+    )
+    assert webhooks.adyen_webhook_ready is True
+    assert webhooks.adyen_api_key is None
+    assert webhooks.adyen_client_key is None
+
+
+def test_veriff_session_and_callback_credentials_are_disjoint() -> None:
+    console = _production(
+        "console",
+        **_CONSOLE_SECRETS,
+        veriff_enabled=True,
+        veriff_api_key="veriff-api",
+    )
+    assert console.veriff_configured is True
+    assert console.veriff_shared_secret_key is None
+
+    webhooks = _production(
+        "webhooks",
+        sentry_dsn="https://example@example.ingest.sentry.io/1",
+        stripe_webhook_secret="whsec-test",  # noqa: S106 - test credential.
+        paypal_checkout_enabled=False,
+        veriff_shared_secret_key="veriff-shared",  # noqa: S106 - test credential.
+    )
+    assert webhooks.veriff_api_key is None
+
+    with pytest.raises(ValidationError, match="unset TR_VERIFF_SHARED_SECRET_KEY"):
+        _production(
+            "console",
+            **_CONSOLE_SECRETS,
+            veriff_enabled=True,
+            veriff_api_key="veriff-api",
+            veriff_shared_secret_key="veriff-shared",  # noqa: S106 - test credential.
+        )
+    with pytest.raises(ValidationError, match="unset TR_VERIFF_API_KEY"):
+        _production(
+            "webhooks",
+            sentry_dsn="https://example@example.ingest.sentry.io/1",
+            stripe_webhook_secret="whsec-test",  # noqa: S106 - test credential.
+            paypal_checkout_enabled=False,
+            veriff_shared_secret_key="veriff-shared",  # noqa: S106 - test credential.
+            veriff_api_key="veriff-api",
+        )
+
+
+@pytest.mark.parametrize(
+    ("surface", "surface_secrets"),
+    [
+        ("chat", {}),
+        (
+            "webhooks",
+            {
+                "stripe_webhook_secret": "whsec-test",
+                "paypal_checkout_enabled": False,
+            },
+        ),
+    ],
+)
+def test_narrow_store_surfaces_do_not_receive_clickhouse_credentials(
+    surface: str,
+    surface_secrets: dict[str, object],
+) -> None:
+    settings = _production(
+        surface,
+        storage_backend="spanner-clickhouse",
+        analytics_read_mode="clickhouse-only",
+        generation_records_enabled=True,
+        operational_analytics_outbox_enabled=True,
+        analytics_outbox_enabled=True,
+        bigtable_mirror_writes_enabled=False,
+        request_record_write_mode="typed",
+        settle_outbox_enabled=True,
+        sentry_dsn="https://example@example.ingest.sentry.io/1",
+        **surface_secrets,
+    )
+
+    assert settings.operational_analytics_clickhouse_url == ""
+    assert settings.operational_analytics_clickhouse_password == ""
+
+
 def test_deployed_canary_surfaces_enforce_secret_ownership_too() -> None:
-    with pytest.raises(ValidationError, match="TR_STRIPE_WEBHOOK_SECRET"):
+    with pytest.raises(ValidationError, match="TR_STRIPE_SECRET_KEY"):
         Settings(
             environment="canary",
-            service_surface="control",
+            service_surface="console",
             attribution_cookie_secret=_ATTRIBUTION_SECRET,
+            paypal_checkout_enabled=False,
         )
 
     with pytest.raises(ValidationError, match="unset TR_INTERNAL_GATEWAY_TOKEN"):
         Settings(
             environment="canary",
-            service_surface="control",
+            service_surface="console",
             attribution_cookie_secret=_ATTRIBUTION_SECRET,
-            stripe_webhook_secret="whsec-test",  # noqa: S106 - test credential.
             stripe_secret_key="sk-test",  # noqa: S106 - test credential.
+            paypal_checkout_enabled=False,
             internal_gateway_token=_GATEWAY_SECRET,
         )
 
@@ -630,7 +882,7 @@ def test_attribution_and_gateway_credentials_cannot_be_reused() -> None:
         _production(
             "combined",
             **{
-                **_CONTROL_SECRETS,
+                **_CONSOLE_SECRETS,
                 "internal_gateway_token": _GATEWAY_SECRET,
                 "attribution_cookie_secret": _GATEWAY_SECRET,
             },
@@ -678,13 +930,13 @@ def test_deployed_validation_errors_hide_misrouted_secret_values() -> None:
     assert canary not in message
 
 
-def test_public_cookie_survives_control_handoff_without_sharing_gateway_secret() -> None:
+def test_public_cookie_survives_console_handoff_without_sharing_gateway_secret() -> None:
     public = Settings(
         service_surface="public",
         attribution_cookie_secret=_ATTRIBUTION_SECRET,
     )
-    control = Settings(
-        service_surface="control",
+    console = Settings(
+        service_surface="console",
         attribution_cookie_secret=_ATTRIBUTION_SECRET,
     )
     now = dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -693,12 +945,12 @@ def test_public_cookie_survives_control_handoff_without_sharing_gateway_secret()
 
     encoded = encode_attribution_cookie(context, public)
 
-    assert decode_attribution_cookie(encoded, control) == context
+    assert decode_attribution_cookie(encoded, console) == context
     assert (
         decode_attribution_cookie(
             encoded,
             Settings(
-                service_surface="control",
+                service_surface="console",
                 attribution_cookie_secret="rotated-" + "r" * 32,
             ),
         )

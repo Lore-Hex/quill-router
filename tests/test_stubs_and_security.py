@@ -512,10 +512,12 @@ def test_production_dashboard_does_not_default_to_dev_user_header() -> None:
         Settings(
             **TEST_SES_SETTINGS,
             environment="production",
-            service_surface="control",
+            service_surface="console",
             attribution_cookie_secret="attribution-cookie-" + "a" * 32,
-            stripe_webhook_secret="whsec_test",  # noqa: S106
             stripe_secret_key="sk_test",  # noqa: S106
+            google_oauth_login_available=False,
+            github_oauth_login_available=False,
+            paypal_checkout_enabled=False,
             sentry_dsn="https://example@example.ingest.sentry.io/1",
             storage_backend="spanner-bigtable",
             spanner_instance_id="trusted-router",
@@ -961,10 +963,12 @@ def test_production_config_fails_closed() -> None:
 def test_production_config_requires_ses_delivery_credentials() -> None:
     values = {
         "environment": "production",
-        "service_surface": "control",
+        "service_surface": "console",
         "attribution_cookie_secret": "attribution-cookie-" + "a" * 32,
-        "stripe_webhook_secret": "whsec_" + "test",
         "stripe_secret_key": "sk_" + "test_secret",
+        "google_oauth_login_available": False,
+        "github_oauth_login_available": False,
+        "paypal_checkout_enabled": False,
         "sentry_dsn": "https://example@example.ingest.sentry.io/1",
         "storage_backend": "spanner-bigtable",
         "spanner_instance_id": "trusted-router",
@@ -991,10 +995,12 @@ def test_production_config_requires_ses_delivery_credentials() -> None:
 def test_production_spanner_clickhouse_config_is_explicit_and_bigtable_free() -> None:
     values = {
         "environment": "production",
-        "service_surface": "control",
+        "service_surface": "console",
         "attribution_cookie_secret": "attribution-cookie-" + "a" * 32,
-        "stripe_webhook_secret": "whsec_" + "test",
         "stripe_secret_key": "sk_" + "test_secret",
+        "google_oauth_login_available": False,
+        "github_oauth_login_available": False,
+        "paypal_checkout_enabled": False,
         "sentry_dsn": "https://example@example.ingest.sentry.io/1",
         "storage_backend": "spanner-clickhouse",
         "spanner_instance_id": "trusted-router",
@@ -1023,17 +1029,18 @@ def test_production_spanner_clickhouse_config_is_explicit_and_bigtable_free() ->
 
 
 def test_production_control_plane_does_not_register_inference_routes() -> None:
-    webhook_secret = "whsec_" + "test"
     stripe_key = "sk_" + "test_secret"
     sentry_dsn = "https://example@example.ingest.sentry.io/1"
     prod_app = create_app(
         Settings(
             **TEST_SES_SETTINGS,
             environment="production",
-            service_surface="control",
+            service_surface="console",
             attribution_cookie_secret="attribution-cookie-" + "a" * 32,
-            stripe_webhook_secret=webhook_secret,
             stripe_secret_key=stripe_key,
+            google_oauth_login_available=False,
+            github_oauth_login_available=False,
+            paypal_checkout_enabled=False,
             sentry_dsn=sentry_dsn,
             storage_backend="spanner-bigtable",
             spanner_instance_id="trusted-router",

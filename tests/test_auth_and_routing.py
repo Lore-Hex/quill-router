@@ -288,6 +288,8 @@ def test_regions_endpoint_and_gateway_authorize_include_routing_metadata() -> No
         "europe-west4",
         "asia-northeast1",
     ]
+    assert all("control_plane_url" not in item for item in regions.json()["data"])
+    assert ".run.app" not in regions.text
     assert regions.json()["trustedrouter"]["primary_region"] == "europe-west4"
     assert authorize.status_code == 200, authorize.text
     data = authorize.json()["data"]
@@ -295,6 +297,8 @@ def test_regions_endpoint_and_gateway_authorize_include_routing_metadata() -> No
     assert data["requested_model"] == "trustedrouter/auto"
     assert data["model"] == auto_leader
     assert data["region"] == "asia-northeast1"
+    assert all("control_plane_url" not in item for item in data["regions"])
+    assert ".run.app" not in str(data["regions"])
     assert len(data["route_candidates"]) >= 2
     assert data["route_candidates"][0]["model"] == auto_leader
     # The exact tail of the auto rollover depends on which providers are

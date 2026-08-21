@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from collections.abc import Iterator
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
@@ -13,7 +15,17 @@ from fastapi.testclient import TestClient
 from tests.fakes.spanner import make_fake_store
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.routes import oauth_keys as oauth_key_routes
 from trusted_router.storage import STORE, InMemoryStore
+
+
+@pytest.fixture(autouse=True)
+def _reset_oauth_exchange_limiter() -> Iterator[None]:
+    oauth_key_routes._OAUTH_EXCHANGE_RATE_LIMITS.reset()
+    oauth_key_routes._OAUTH_EXCHANGE_GLOBAL_RATE_LIMITS.reset()
+    yield
+    oauth_key_routes._OAUTH_EXCHANGE_RATE_LIMITS.reset()
+    oauth_key_routes._OAUTH_EXCHANGE_GLOBAL_RATE_LIMITS.reset()
 
 
 def _pkce_challenge(verifier: str) -> str:
@@ -164,11 +176,25 @@ def test_oauth_code_exchange_rejects_wrong_pkce_verifier(
 ) -> None:
     code, _ = _create_code(client, user_headers, verifier="correct-" + "c" * 43)
 
-    response = client.post("/v1/auth/keys", json={"code": code, "code_verifier": "wrong-" + "d" * 43})
+    response = client.post(
+        "/v1/auth/keys",
+        json={"code": code, "code_verifier": "wrong-" + "d" * 43},
+    )
 
     assert response.status_code == 403
     assert response.json()["error"]["message"] == "Invalid code_verifier"
-    assert not STORE.list_keys(STORE.find_user_by_email("alice@example.com").id)
+    alice = STORE.find_user_by_email("alice@example.com")
+    assert alice is not None
+    workspace = STORE.list_workspaces_for_user(alice.id)[0]
+    assert STORE.list_keys(workspace.id) == []
+
+    retry = client.post(
+        "/v1/auth/keys",
+        json={"code": code, "code_verifier": "correct-" + "c" * 43},
+    )
+
+    assert retry.status_code == 200, retry.text
+    assert len(STORE.list_keys(workspace.id)) == 1
 
 
 def test_oauth_plain_pkce_exchange(
@@ -218,6 +244,63 @@ def test_oauth_code_exchange_rejects_method_mismatch(
     assert response.status_code == 400
     assert response.json()["error"]["message"] == "code_challenge_method does not match authorization code"
 
+    retry = client.post(
+        "/v1/auth/keys",
+        json={
+            "code": code,
+            "code_verifier": verifier,
+            "code_challenge_method": "plain",
+        },
+    )
+
+    assert retry.status_code == 200, retry.text
+
+
+def test_oauth_code_exchange_missing_verifier_does_not_consume_code(
+    client: TestClient,
+    user_headers: dict[str, str],
+) -> None:
+    verifier = "required-verifier-" + "r" * 43
+    code, _ = _create_code(client, user_headers, verifier=verifier)
+
+    missing = client.post("/v1/auth/keys", json={"code": code})
+    retry = client.post(
+        "/v1/auth/keys",
+        json={"code": code, "code_verifier": verifier},
+    )
+
+    assert missing.status_code == 400
+    assert missing.json()["error"]["message"] == "code_verifier is required"
+    assert retry.status_code == 200, retry.text
+
+
+def test_oauth_code_exchange_paused_workspace_can_retry_after_resume(
+    client: TestClient,
+    user_headers: dict[str, str],
+) -> None:
+    code, _ = _create_code(
+        client,
+        user_headers,
+        code_challenge=None,
+        code_challenge_method=None,
+    )
+    alice = STORE.find_user_by_email("alice@example.com")
+    assert alice is not None
+    workspace = STORE.list_workspaces_for_user(alice.id)[0]
+    STORE.update_workspace(workspace.id, billing_paused=True)
+
+    paused = client.post("/v1/auth/keys", json={"code": code})
+
+    assert paused.status_code == 503
+    assert paused.headers["retry-after"] == "30"
+    assert STORE.list_keys(workspace.id) == []
+
+    STORE.update_workspace(workspace.id, billing_paused=False)
+    retry = client.post("/v1/auth/keys", json={"code": code})
+
+    assert retry.status_code == 200, retry.text
+    assert len(STORE.list_keys(workspace.id)) == 1
+
 
 def test_oauth_code_exchange_requires_code(client: TestClient) -> None:
     response = client.post("/v1/auth/keys", json={})
@@ -226,11 +309,288 @@ def test_oauth_code_exchange_requires_code(client: TestClient) -> None:
     assert response.json()["error"]["message"] == "code is required"
 
 
-def test_oauth_code_exchange_rejects_unknown_code(client: TestClient) -> None:
+def test_oauth_code_exchange_rejects_malformed_code_before_store(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_reads = 0
+
+    def forbidden_exchange(
+        _self: InMemoryStore,
+        _raw_code: str,
+        **_kwargs: Any,
+    ) -> None:
+        nonlocal store_reads
+        store_reads += 1
+        raise AssertionError("malformed code reached the Store")
+
+    monkeypatch.setattr(
+        InMemoryStore,
+        "exchange_oauth_authorization_code",
+        forbidden_exchange,
+    )
     response = client.post("/v1/auth/keys", json={"code": "auth_code-missing"})
 
     assert response.status_code == 403
     assert response.json()["error"]["message"] == "Invalid or expired authorization code"
+    assert store_reads == 0
+
+
+def test_oauth_code_exchange_offloads_store_transaction(
+    client: TestClient,
+    user_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    code, _ = _create_code(
+        client,
+        user_headers,
+        code_challenge=None,
+        code_challenge_method=None,
+    )
+    offloaded: list[object] = []
+
+    async def recorded_threadpool(func, *args):
+        offloaded.append(func)
+        return func(*args)
+
+    monkeypatch.setattr(oauth_key_routes, "run_in_threadpool", recorded_threadpool)
+
+    response = client.post("/v1/auth/keys", json={"code": code})
+
+    assert response.status_code == 200, response.text
+    assert offloaded == [oauth_key_routes._exchange_oauth_code]
+
+
+def test_oauth_code_exchange_refuses_when_store_slots_are_full(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_reads = 0
+
+    def forbidden_exchange(
+        _self: InMemoryStore,
+        _raw_code: str,
+        **_kwargs: Any,
+    ) -> None:
+        nonlocal store_reads
+        store_reads += 1
+        raise AssertionError("busy OAuth exchange reached the Store")
+
+    monkeypatch.setattr(
+        InMemoryStore,
+        "exchange_oauth_authorization_code",
+        forbidden_exchange,
+    )
+    acquired = 0
+    try:
+        for _ in range(4):
+            assert oauth_key_routes._OAUTH_EXCHANGE_SLOTS.acquire(blocking=False)
+            acquired += 1
+
+        response = client.post(
+            "/v1/auth/keys",
+            json={"code": "auth_code-" + "a" * 43},
+        )
+    finally:
+        for _ in range(acquired):
+            oauth_key_routes._OAUTH_EXCHANGE_SLOTS.release()
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "1"
+    assert store_reads == 0
+
+
+def test_oauth_code_exchange_rate_denial_releases_slot_and_keeps_cors(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_reads = 0
+
+    def forbidden_exchange(
+        _self: InMemoryStore,
+        _raw_code: str,
+        **_kwargs: Any,
+    ) -> None:
+        nonlocal store_reads
+        store_reads += 1
+        raise AssertionError("rate-limited OAuth exchange reached the Store")
+
+    monkeypatch.setattr(
+        InMemoryStore,
+        "exchange_oauth_authorization_code",
+        forbidden_exchange,
+    )
+    monkeypatch.setattr(
+        oauth_key_routes._OAUTH_EXCHANGE_RATE_LIMITS,
+        "hit",
+        lambda **_kwargs: SimpleNamespace(allowed=False, retry_after_seconds=17),
+    )
+
+    response = client.post(
+        "/v1/auth/keys",
+        headers={"origin": "https://web.lorehex.co"},
+        json={"code": "auth_code-" + "a" * 43},
+    )
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "17"
+    assert response.headers["access-control-allow-origin"] == "*"
+    assert store_reads == 0
+    assert oauth_key_routes._OAUTH_EXCHANGE_SLOTS.acquire(blocking=False)
+    oauth_key_routes._OAUTH_EXCHANGE_SLOTS.release()
+
+
+def test_oauth_code_exchange_one_source_cannot_throttle_another(
+    client: TestClient,
+    user_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    verifier = "isolated-source-verifier-" + "i" * 43
+    code, _ = _create_code(client, user_headers, verifier=verifier)
+    monkeypatch.setattr(oauth_key_routes, "_OAUTH_EXCHANGE_PER_SOURCE_LIMIT", 2)
+    monkeypatch.setattr(
+        oauth_key_routes,
+        "normalized_client_identity",
+        lambda request, _settings: request.headers.get("x-test-source", "unknown"),
+    )
+
+    attacker_headers = {"x-test-source": "attacker"}
+    invalid_code = "auth_code-" + "a" * 43
+    assert client.post(
+        "/v1/auth/keys",
+        headers=attacker_headers,
+        json={"code": invalid_code},
+    ).status_code == 403
+    assert client.post(
+        "/v1/auth/keys",
+        headers=attacker_headers,
+        json={"code": invalid_code},
+    ).status_code == 403
+    denied = client.post(
+        "/v1/auth/keys",
+        headers=attacker_headers,
+        json={"code": invalid_code},
+    )
+
+    assert denied.status_code == 429
+    victim = client.post(
+        "/v1/auth/keys",
+        headers={"x-test-source": "victim"},
+        json={"code": code, "code_verifier": verifier},
+    )
+    assert victim.status_code == 200, victim.text
+    stored_subjects = {
+        key[1] for key in oauth_key_routes._OAUTH_EXCHANGE_RATE_LIMITS.buckets
+    }
+    assert oauth_key_routes.fingerprint_subject("attacker") in stored_subjects
+    assert oauth_key_routes.fingerprint_subject("victim") in stored_subjects
+    assert "attacker" not in stored_subjects
+    assert "victim" not in stored_subjects
+
+
+def test_oauth_code_exchange_global_denial_releases_slot(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        oauth_key_routes._OAUTH_EXCHANGE_RATE_LIMITS,
+        "hit",
+        lambda **_kwargs: SimpleNamespace(allowed=True, retry_after_seconds=0),
+    )
+    monkeypatch.setattr(
+        oauth_key_routes._OAUTH_EXCHANGE_GLOBAL_RATE_LIMITS,
+        "hit",
+        lambda **_kwargs: SimpleNamespace(allowed=False, retry_after_seconds=23),
+    )
+
+    response = client.post(
+        "/v1/auth/keys",
+        json={"code": "auth_code-" + "g" * 43},
+    )
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "23"
+    acquired = 0
+    try:
+        for _ in range(4):
+            assert oauth_key_routes._OAUTH_EXCHANGE_SLOTS.acquire(blocking=False)
+            acquired += 1
+    finally:
+        for _ in range(acquired):
+            oauth_key_routes._OAUTH_EXCHANGE_SLOTS.release()
+
+
+def test_oauth_code_exchange_honors_disabled_rate_limiting(
+    test_settings: Settings,
+    user_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_limit(**_kwargs):
+        raise AssertionError("disabled OAuth limiter was called")
+
+    monkeypatch.setattr(
+        oauth_key_routes._OAUTH_EXCHANGE_RATE_LIMITS,
+        "hit",
+        unexpected_limit,
+    )
+    monkeypatch.setattr(
+        oauth_key_routes._OAUTH_EXCHANGE_GLOBAL_RATE_LIMITS,
+        "hit",
+        unexpected_limit,
+    )
+    settings = test_settings.model_copy(update={"rate_limit_enabled": False})
+    with TestClient(create_app(settings, init_observability=False)) as disabled_client:
+        verifier = "disabled-limiter-verifier-" + "d" * 43
+        code, _ = _create_code(disabled_client, user_headers, verifier=verifier)
+        response = disabled_client.post(
+            "/v1/auth/keys",
+            json={"code": code, "code_verifier": verifier},
+        )
+
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.parametrize(
+    "limiter_name",
+    ["_OAUTH_EXCHANGE_RATE_LIMITS", "_OAUTH_EXCHANGE_GLOBAL_RATE_LIMITS"],
+)
+def test_oauth_code_exchange_limiter_failure_releases_slot(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    limiter_name: str,
+) -> None:
+    def limiter_failure(**_kwargs):
+        raise RuntimeError("limiter unavailable")
+
+    if limiter_name == "_OAUTH_EXCHANGE_GLOBAL_RATE_LIMITS":
+        monkeypatch.setattr(
+            oauth_key_routes._OAUTH_EXCHANGE_RATE_LIMITS,
+            "hit",
+            lambda **_kwargs: SimpleNamespace(
+                allowed=True,
+                retry_after_seconds=0,
+            ),
+        )
+    monkeypatch.setattr(
+        getattr(oauth_key_routes, limiter_name),
+        "hit",
+        limiter_failure,
+    )
+
+    with pytest.raises(RuntimeError, match="limiter unavailable"):
+        client.post(
+            "/v1/auth/keys",
+            json={"code": "auth_code-" + "b" * 43},
+        )
+
+    acquired = 0
+    try:
+        for _ in range(4):
+            assert oauth_key_routes._OAUTH_EXCHANGE_SLOTS.acquire(blocking=False)
+            acquired += 1
+    finally:
+        for _ in range(acquired):
+            oauth_key_routes._OAUTH_EXCHANGE_SLOTS.release()
 
 
 def test_oauth_key_exchange_has_browser_cors_preflight(client: TestClient) -> None:
@@ -279,12 +639,18 @@ def test_oauth_code_exchange_rejects_non_ascii_verifier(
     client: TestClient,
     user_headers: dict[str, str],
 ) -> None:
-    code, _ = _create_code(client, user_headers, verifier="ascii-" + "g" * 43)
+    verifier = "ascii-" + "g" * 43
+    code, _ = _create_code(client, user_headers, verifier=verifier)
 
     response = client.post("/v1/auth/keys", json={"code": code, "code_verifier": "not-ascii-é"})
 
     assert response.status_code == 400
     assert response.json()["error"]["message"] == "code_verifier must be ASCII"
+    retry = client.post(
+        "/v1/auth/keys",
+        json={"code": code, "code_verifier": verifier},
+    )
+    assert retry.status_code == 200, retry.text
 
 
 def test_oauth_code_creation_requires_management_auth(client: TestClient) -> None:

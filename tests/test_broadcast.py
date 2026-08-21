@@ -56,6 +56,10 @@ def test_broadcast_inline_drain_defaults_to_non_production_only() -> None:
             storage_backend="spanner-bigtable",
             internal_gateway_token="token",  # noqa: S106 - placeholder test secret.
             observer_internal_token="observer-token",  # noqa: S106 - test secret.
+            stripe_secret_key="rk_test_payment_intents",  # noqa: S106
+            aws_access_key_id="internal-ses-access",
+            aws_secret_access_key="internal-ses-secret",  # noqa: S106
+            ses_from_email="noreply@example.com",
             sentry_dsn="https://example@sentry.invalid/1",
             spanner_instance_id="inst",
             spanner_database_id="db",

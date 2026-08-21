@@ -30,8 +30,8 @@ def register_external_webhook_routes(router: APIRouter) -> None:
     veriff.register(router)
 
 
-def register_control_internal_routes(router: APIRouter) -> None:
-    """Register private helpers owned by the authenticated control surface."""
+def register_console_internal_routes(router: APIRouter) -> None:
+    """Register session-authenticated helpers owned by the console surface."""
     chat_browser_key.register(router)
 
 
@@ -54,13 +54,13 @@ def register_observer_internal_routes(router: APIRouter) -> None:
 def register_internal_routes(router: APIRouter) -> None:
     """Legacy local/test composite containing every internal route group."""
     register_external_webhook_routes(router)
-    register_control_internal_routes(router)
+    register_console_internal_routes(router)
     register_gateway_internal_routes(router)
     register_observer_internal_routes(router)
 
 
 __all__ = [
-    "register_control_internal_routes",
+    "register_console_internal_routes",
     "register_external_webhook_routes",
     "register_gateway_internal_routes",
     "register_internal_routes",

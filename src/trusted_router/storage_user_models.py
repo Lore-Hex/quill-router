@@ -286,7 +286,12 @@ class InMemoryUserProvidedModels:
             if not slots:
                 self.slots.pop(canonical, None)
 
-    def list_public(self, *, kind: str | None = None) -> list[UserProvidedModel]:
+    def list_public(
+        self,
+        *,
+        kind: str | None = None,
+        limit: int | None = None,
+    ) -> list[UserProvidedModel]:
         with self._lock:
             rows = [
                 model
@@ -296,7 +301,7 @@ class InMemoryUserProvidedModels:
                 and (kind is None or model.kind == kind)
             ]
         rows.sort(key=lambda item: item.created_at)
-        return rows
+        return rows if limit is None else rows[: max(0, int(limit))]
 
     def _owned_model(self, model_id: str, owner_user_id: str) -> UserProvidedModel:
         model = self.models.get(normalize_custom_model_id(model_id))

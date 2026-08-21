@@ -25,11 +25,19 @@ Known limits of this suite — read before trusting it
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
+import hashlib
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from trusted_router.storage_oauth_codes import (
+    OAuthCodeMethodMismatch,
+    OAuthCodeVerifierMismatch,
+    OAuthWorkspaceUnavailable,
+)
 from trusted_router.store_protocol import Store
 from trusted_router.typed_balance import live_credit_summary
 
@@ -696,6 +704,174 @@ def test_oauth_authorization_code_is_single_use(store: Store, workspace_id: str)
     )
     assert store.consume_oauth_authorization_code(raw_code) is not None
     assert store.consume_oauth_authorization_code(raw_code) is None
+
+
+@pytest.mark.parametrize("method", [None, "plain", "S256"])
+def test_atomic_oauth_exchange_supports_every_pkce_mode(
+    store: Store,
+    workspace_id: str,
+    user_id: str,
+    unique: str,
+    method: str | None,
+) -> None:
+    """Every backend must mint one non-management key in the grant transaction."""
+    verifier = f"conformance-{unique}-" + "v" * 43
+    challenge = None
+    if method == "plain":
+        challenge = verifier
+    elif method == "S256":
+        challenge = (
+            base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
+            .decode("ascii")
+            .rstrip("=")
+        )
+    raw_code, _code = store.create_oauth_authorization_code(
+        workspace_id=workspace_id,
+        user_id=user_id,
+        callback_url=f"https://{unique}.example.com/cb",
+        key_label="atomic conformance",
+        ttl_seconds=300,
+        app_id=2,
+        code_challenge=challenge,
+        code_challenge_method=method,
+    )
+
+    result = store.exchange_oauth_authorization_code(
+        raw_code,
+        code_verifier=verifier if method else None,
+        code_challenge_method=method,
+    )
+
+    assert result is not None
+    assert result.api_key.management is False
+    assert result.api_key.workspace_id == workspace_id
+    assert result.user is not None and result.user.id == user_id
+    stored_key = store.get_key_by_raw(result.raw_key)
+    assert stored_key is not None and stored_key.hash == result.api_key.hash
+    assert (
+        store.exchange_oauth_authorization_code(
+            raw_code,
+            code_verifier=verifier if method else None,
+            code_challenge_method=method,
+        )
+        is None
+    )
+
+
+def test_atomic_oauth_exchange_rejections_do_not_burn_grant(
+    store: Store,
+    workspace_id: str,
+    user_id: str,
+    unique: str,
+) -> None:
+    verifier = f"correct-{unique}-" + "c" * 43
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
+        .decode("ascii")
+        .rstrip("=")
+    )
+    raw_code, _code = store.create_oauth_authorization_code(
+        workspace_id=workspace_id,
+        user_id=user_id,
+        callback_url=f"https://retry-{unique}.example.com/cb",
+        key_label="retry conformance",
+        ttl_seconds=300,
+        app_id=3,
+        code_challenge=challenge,
+        code_challenge_method="S256",
+    )
+
+    with pytest.raises(OAuthCodeMethodMismatch):
+        store.exchange_oauth_authorization_code(
+            raw_code,
+            code_verifier=verifier,
+            code_challenge_method="plain",
+        )
+    with pytest.raises(OAuthCodeVerifierMismatch):
+        store.exchange_oauth_authorization_code(
+            raw_code,
+            code_verifier="wrong-" + "w" * 43,
+            code_challenge_method="S256",
+        )
+
+    result = store.exchange_oauth_authorization_code(
+        raw_code,
+        code_verifier=verifier,
+        code_challenge_method="S256",
+    )
+    assert result is not None
+    assert result.api_key.management is False
+
+
+def test_deleted_workspace_cannot_redeem_oauth_grant(
+    store: Store,
+    workspace_id: str,
+    user_id: str,
+    unique: str,
+) -> None:
+    raw_code, _code = store.create_oauth_authorization_code(
+        workspace_id=workspace_id,
+        user_id=user_id,
+        callback_url=f"https://deleted-{unique}.example.com/cb",
+        key_label="deleted workspace conformance",
+        ttl_seconds=300,
+        app_id=5,
+    )
+    store.update_workspace(workspace_id, deleted=True)
+    assert store.get_workspace(workspace_id) is None
+
+    with pytest.raises(OAuthWorkspaceUnavailable):
+        store.exchange_oauth_authorization_code(
+            raw_code,
+            code_verifier=None,
+            code_challenge_method=None,
+        )
+
+    assert store.list_keys(workspace_id) == []
+    restored = store.update_workspace(workspace_id, deleted=False)
+    assert restored is not None
+    assert (
+        store.exchange_oauth_authorization_code(
+            raw_code,
+            code_verifier=None,
+            code_challenge_method=None,
+        )
+        is not None
+    )
+
+
+def test_concurrent_atomic_oauth_exchange_mints_exactly_one_key(
+    store: Store,
+    workspace_id: str,
+    user_id: str,
+    unique: str,
+) -> None:
+    raw_code, _code = store.create_oauth_authorization_code(
+        workspace_id=workspace_id,
+        user_id=user_id,
+        callback_url=f"https://race-{unique}.example.com/cb",
+        key_label="concurrent conformance",
+        ttl_seconds=300,
+        app_id=4,
+    )
+    callers = 8
+    ready = threading.Barrier(callers)
+
+    def exchange(_index: int):
+        ready.wait(timeout=10)
+        return store.exchange_oauth_authorization_code(
+            raw_code,
+            code_verifier=None,
+            code_challenge_method=None,
+        )
+
+    with ThreadPoolExecutor(max_workers=callers) as executor:
+        results = list(executor.map(exchange, range(callers)))
+
+    assert sum(result is not None for result in results) == 1
+    keys = store.list_keys(workspace_id)
+    assert len(keys) == 1
+    assert keys[0].management is False
 
 
 # --------------------------------------------------------------------------
