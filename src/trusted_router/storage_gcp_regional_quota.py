@@ -38,6 +38,8 @@ log = logging.getLogger(__name__)
 _LEASE_KIND = "regional_quota_lease"
 _OPEN_LEASE_KIND = "regional_quota_lease_open"
 _FENCE_KIND = "regional_quota_fence"
+_RECONCILER_LOCK_KIND = "regional_quota_reconciler_lock"
+_RECONCILER_LOCK_ID = "singleton"
 
 
 @dataclass
@@ -96,6 +98,106 @@ class RegionalReconcileResult:
     unused_released_microdollars: int
     closed: bool
     replayed: bool
+
+
+@dataclass(frozen=True)
+class RegionalQuotaReconcilerLock:
+    owner: str | None
+    fencing_token: int
+    expires_at: str
+    updated_at: str
+
+    @property
+    def expires_datetime(self) -> datetime:
+        return _parse_iso(self.expires_at)
+
+
+def acquire_regional_quota_reconciler_lock(
+    store: Any,
+    *,
+    owner: str,
+    ttl_seconds: int,
+    now: datetime | None = None,
+) -> RegionalQuotaReconcilerLock | None:
+    """Acquire the singleton worker lease with an expiry and fencing token."""
+
+    now = utcnow() if now is None else now
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    if not owner or len(owner) > 128:
+        raise ValueError("owner must contain between 1 and 128 characters")
+    if not 1 <= ttl_seconds <= 600:
+        raise ValueError("ttl_seconds must be between 1 and 600")
+
+    def txn(transaction: Any) -> RegionalQuotaReconcilerLock | None:
+        current = store._read_entity_tx(
+            transaction,
+            _RECONCILER_LOCK_KIND,
+            _RECONCILER_LOCK_ID,
+            RegionalQuotaReconcilerLock,
+        )
+        if current is not None and current.owner is not None and current.expires_datetime > now:
+            return None
+        lock = RegionalQuotaReconcilerLock(
+            owner=owner,
+            fencing_token=1 if current is None else current.fencing_token + 1,
+            expires_at=_iso(now + timedelta(seconds=ttl_seconds)),
+            updated_at=_iso(now),
+        )
+        _upsert_entity_dml(
+            transaction,
+            store._param_types,
+            _RECONCILER_LOCK_KIND,
+            _RECONCILER_LOCK_ID,
+            lock,
+        )
+        return lock
+
+    return store._run_in_transaction(txn)
+
+
+def release_regional_quota_reconciler_lock(
+    store: Any,
+    *,
+    owner: str,
+    fencing_token: int,
+    now: datetime | None = None,
+) -> bool:
+    """Release only the lock generation owned by this worker."""
+
+    now = utcnow() if now is None else now
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+
+    def txn(transaction: Any) -> bool:
+        current = store._read_entity_tx(
+            transaction,
+            _RECONCILER_LOCK_KIND,
+            _RECONCILER_LOCK_ID,
+            RegionalQuotaReconcilerLock,
+        )
+        if (
+            current is None
+            or current.owner != owner
+            or current.fencing_token != fencing_token
+        ):
+            return False
+        released = dataclasses.replace(
+            current,
+            owner=None,
+            expires_at=_iso(now),
+            updated_at=_iso(now),
+        )
+        _upsert_entity_dml(
+            transaction,
+            store._param_types,
+            _RECONCILER_LOCK_KIND,
+            _RECONCILER_LOCK_ID,
+            released,
+        )
+        return True
+
+    return bool(store._run_in_transaction(txn))
 
 
 def grant_regional_quota_lease(
@@ -473,6 +575,71 @@ def reconcile_regional_quota_lease(
         )
 
     return store._run_in_transaction(txn)
+
+
+def close_expired_uninitialized_regional_quota_lease(
+    store: Any,
+    global_lease: GlobalRegionalQuotaLease,
+    *,
+    now: datetime | None = None,
+) -> RegionalReconcileResult:
+    """Release escrow after a failed Bigtable initialization left no row.
+
+    A missing row is recoverable only for an expired quarantined lease with no
+    previously imported spend. Bigtable reads through a single-cluster profile
+    are strongly consistent, so absence proves the grant was never usable.
+    """
+
+    now = utcnow() if now is None else now
+    if global_lease.state != "quarantined":
+        raise RuntimeError("regional lease row is missing")
+    if global_lease.expires_datetime > now:
+        raise RuntimeError("quarantined regional lease has not expired")
+    if (
+        global_lease.reconciled_spent_microdollars != 0
+        or global_lease.reconciled_key_microdollars
+    ):
+        raise RuntimeError("quarantined regional lease has imported usage")
+    empty = regional_lease_from_global(global_lease).begin_drain(
+        fencing_token=global_lease.fencing_token
+    )
+    return reconcile_regional_quota_lease(
+        store,
+        global_lease,
+        empty,
+        close=True,
+        now=now,
+    )
+
+
+def delete_closed_regional_quota_open_index(
+    store: Any,
+    global_lease: GlobalRegionalQuotaLease,
+    open_lease: OpenRegionalQuotaLease,
+) -> bool:
+    """Idempotently remove a stale derived index after canonical close."""
+
+    def txn(transaction: Any) -> bool:
+        current = store._read_entity_tx(
+            transaction,
+            _LEASE_KIND,
+            global_lease.entity_id,
+            GlobalRegionalQuotaLease,
+        )
+        if current is None:
+            raise RuntimeError("indexed global regional lease is missing")
+        _validate_same_global_lease(global_lease, current)
+        if current.state != "closed":
+            return False
+        delete_entity_dml(
+            transaction,
+            store._param_types,
+            _OPEN_LEASE_KIND,
+            open_lease.entity_id,
+        )
+        return True
+
+    return bool(store._run_in_transaction(txn))
 
 
 def record_regional_gateway_authorization(

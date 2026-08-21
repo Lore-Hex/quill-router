@@ -154,6 +154,56 @@ def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
     ]
 
 
+def test_gcp_store_opens_regional_ledger_when_local_issuance_is_disabled(
+    monkeypatch: Any,
+) -> None:
+    """Every control-plane region must settle leases issued by another region."""
+    from google.cloud import bigtable, spanner
+
+    monkeypatch.setattr(
+        "trusted_router.storage_gcp.configure_spanner_rpc_deadlines",
+        lambda _database: None,
+    )
+
+    class FakeSpannerClient:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        def instance(self, _instance_id: str) -> FakeSpannerClient:
+            return self
+
+        def database(self, _database_id: str, **_kwargs: Any) -> object:
+            return object()
+
+    class FakeBigtableClient:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        def instance(self, _instance_id: str) -> FakeBigtableClient:
+            return self
+
+        def table(self, _table_id: str, *, app_profile_id: str) -> object:
+            assert app_profile_id == "quota-us"
+            return object()
+
+    monkeypatch.setattr(spanner, "Client", FakeSpannerClient)
+    monkeypatch.setattr(bigtable, "Client", FakeBigtableClient)
+
+    store = SpannerBigtableStore(
+        project_id="project",
+        spanner_instance_id="spanner",
+        spanner_database_id="database",
+        bigtable_instance_id="bigtable",
+        bigtable_enabled=False,
+        analytics_read_mode="clickhouse-only",
+        regional_quota_leases_enabled=False,
+        regional_quota_bigtable_app_profiles={"us-central1": "quota-us"},
+    )
+
+    assert store._regional_quota_ledger is not None
+    assert store._regional_quota_ledger.supports_region("us-central1") is True
+
+
 def test_gcp_api_key_lookup_uses_index_and_never_stores_raw_key() -> None:
     store, db, _ = make_fake_store()
     store._write_entity(

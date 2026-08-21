@@ -177,6 +177,14 @@ def test_production_deploy_provisions_and_schedules_regional_quota_reconciliatio
     assert "--max-retries 0" in reconciler
     assert "--task-timeout 50s" in reconciler
     assert "--max-retry-attempts=0" in reconciler
+    assert "scheduler_state" in reconciler
+    assert '[ "$scheduler_state" = "PAUSED" ]' in reconciler
+    assert "skipping automatic reconciler execution while containment pause is active" in reconciler
+    assert "preserving intentional regional quota reconciler pause" in reconciler
+    assert '--route-to="$cluster"' in provisioner
+    assert "singleClusterRouting.clusterId" in provisioner
+    assert "singleClusterRouting.allowTransactionalWrites" in provisioner
+    assert "refusing regional quota profile drift" in provisioner
     assert "gc run jobs delete" in reconciler
 
 

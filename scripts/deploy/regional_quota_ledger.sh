@@ -43,7 +43,18 @@ for entry in "${entries[@]}"; do
   profiles+=("${region}=${profile}")
   if gcloud bigtable app-profiles describe "$profile" \
     --project="$PROJECT" --instance="$INSTANCE" >/dev/null 2>&1; then
-    log "app profile $profile exists"
+    profile_config="$(
+      gcloud bigtable app-profiles describe "$profile" \
+        --project="$PROJECT" \
+        --instance="$INSTANCE" \
+        --format='value(singleClusterRouting.clusterId,singleClusterRouting.allowTransactionalWrites)'
+    )"
+    read -r actual_cluster transactional_writes <<<"$profile_config"
+    if [ "$actual_cluster" != "$cluster" ] || [ "$transactional_writes" != "True" ]; then
+      log "refusing regional quota profile drift: ${profile} must route only to ${cluster} with transactional writes"
+      exit 1
+    fi
+    log "app profile $profile is transactionally pinned to $cluster"
   else
     log "creating transactional single-cluster profile $profile -> $cluster"
     gcloud bigtable app-profiles create "$profile" \

@@ -4,6 +4,8 @@ import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from tests.fakes.spanner import make_fake_store
 from trusted_router.regional_quota_ledger import InMemoryRegionalQuotaLedger
 from trusted_router.services.settle_outbox_apply import ApplyOutcome, apply_frozen_settle
@@ -15,6 +17,7 @@ from trusted_router.storage_gcp_regional_quota import (
     OpenRegionalQuotaLease,
     activate_regional_quota_lease,
     grant_regional_quota_lease,
+    quarantine_regional_quota_lease,
     reconcile_regional_quota_lease,
     record_regional_gateway_authorization,
     regional_lease_from_global,
@@ -581,3 +584,152 @@ def test_settle_outbox_recovery_settles_regional_hold_before_spanner_terminal() 
     )
     assert reconciled["errors"] == 0
     assert _credit_totals(database, workspace.id) == (100_000_000, 7_500, 0)
+
+
+def test_reconciler_closes_expired_quarantine_when_local_initialization_is_absent() -> None:
+    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
+    workspace = store.create_workspace(
+        "owner",
+        "regional-quarantine",
+        trial_credit_microdollars=10_000_000,
+    )
+    lease = grant_regional_quota_lease(
+        store,
+        workspace_id=workspace.id,
+        region="us-central1",
+        requested_microdollars=1_000_000,
+        per_lease_cap_microdollars=1_000_000,
+        max_available_basis_points=1_000,
+        ttl_seconds=60,
+        minimum_grant_microdollars=1_000,
+        now=NOW,
+    )
+    assert lease is not None
+    quarantine_regional_quota_lease(
+        store,
+        lease,
+        reason="regional initialization ambiguity",
+        now=NOW,
+    )
+    quarantined = store._read_entity(
+        "regional_quota_lease",
+        lease.entity_id,
+        GlobalRegionalQuotaLease,
+    )
+    assert quarantined is not None
+    with pytest.raises(RuntimeError, match="quarantined"):
+        activate_regional_quota_lease(store, quarantined, now=NOW + timedelta(seconds=1))
+    assert _credit_totals(database, workspace.id)[2] == lease.granted_microdollars
+
+    result = store.reconcile_regional_quota_leases(now=NOW + timedelta(minutes=2))
+
+    assert result == {
+        "inspected": 1,
+        "reconciled": 1,
+        "closed": 1,
+        "errors": 0,
+    }
+    assert _credit_totals(database, workspace.id) == (10_000_000, 0, 0)
+    closed = store._read_entity("regional_quota_lease", lease.entity_id, GlobalRegionalQuotaLease)
+    assert closed is not None and closed.state == "closed"
+    assert store._list_entities("regional_quota_lease_open", cls=OpenRegionalQuotaLease) == []
+
+
+def test_reconciler_cleans_stale_open_index_for_already_closed_lease() -> None:
+    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    ledger = InMemoryRegionalQuotaLedger()
+    store._regional_quota_ledger = ledger
+    workspace = store.create_workspace(
+        "owner",
+        "regional-stale-index",
+        trial_credit_microdollars=10_000_000,
+    )
+    lease = grant_regional_quota_lease(
+        store,
+        workspace_id=workspace.id,
+        region="us-central1",
+        requested_microdollars=1_000_000,
+        per_lease_cap_microdollars=1_000_000,
+        max_available_basis_points=1_000,
+        ttl_seconds=60,
+        minimum_grant_microdollars=1_000,
+        now=NOW,
+    )
+    assert lease is not None
+    lease = activate_regional_quota_lease(store, lease, now=NOW)
+    local = ledger.initialize(regional_lease_from_global(lease))
+    local = ledger.begin_drain(
+        local.lease_id,
+        region=local.region,
+        fencing_token=local.fencing_token,
+    )
+    reconcile_regional_quota_lease(
+        store,
+        lease,
+        local,
+        close=True,
+        now=NOW + timedelta(minutes=2),
+    )
+    stale = OpenRegionalQuotaLease(
+        lease_entity_id=lease.entity_id,
+        workspace_id=lease.workspace_id,
+        region=lease.region,
+        lease_id=lease.lease_id,
+        expires_at=lease.expires_at,
+    )
+    store._write_entity("regional_quota_lease_open", stale.entity_id, stale)
+
+    result = store.reconcile_regional_quota_leases(now=NOW + timedelta(minutes=3))
+
+    assert result == {
+        "inspected": 1,
+        "reconciled": 0,
+        "closed": 1,
+        "errors": 0,
+    }
+    assert _credit_totals(database, workspace.id) == (10_000_000, 0, 0)
+    assert store._list_entities("regional_quota_lease_open", cls=OpenRegionalQuotaLease) == []
+
+
+def test_reconciler_lock_is_single_owner_and_fenced_after_expiry() -> None:
+    store, _database, _ = make_fake_store(request_record_write_mode="typed")
+
+    first = store.acquire_regional_quota_reconciler_lock(
+        owner="worker-a",
+        ttl_seconds=90,
+        now=NOW,
+    )
+    assert first is not None
+    assert (
+        store.acquire_regional_quota_reconciler_lock(
+            owner="worker-b",
+            ttl_seconds=90,
+            now=NOW + timedelta(seconds=30),
+        )
+        is None
+    )
+
+    replacement = store.acquire_regional_quota_reconciler_lock(
+        owner="worker-b",
+        ttl_seconds=90,
+        now=NOW + timedelta(seconds=91),
+    )
+    assert replacement is not None
+    assert replacement.fencing_token == first.fencing_token + 1
+    assert (
+        store.release_regional_quota_reconciler_lock(
+            owner="worker-a",
+            fencing_token=first.fencing_token,
+            now=NOW + timedelta(seconds=92),
+        )
+        is False
+    )
+    assert (
+        store.release_regional_quota_reconciler_lock(
+            owner="worker-b",
+            fencing_token=replacement.fencing_token,
+            now=NOW + timedelta(seconds=92),
+        )
+        is True
+    )
