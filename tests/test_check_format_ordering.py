@@ -165,12 +165,12 @@ COMMIT_V1_AND_V2 = "2222222"
 GCP_DIGEST = "sha256:" + "fa" * 32
 AWS_PCR0 = "23" * 48
 AZURE_UAEN = "c5" * 32
-AZURE_SEA = "f3" * 32
+AZURE_SYD = "f3" * 32
 
 UAEN_ISSUER = "https://trquilluaen.uaen.attest.azure.net"
-SEA_ISSUER = "https://trquillsea.sasia.attest.azure.net"
+SYD_ISSUER = "https://trquillsyd.eau.attest.azure.net"
 UAEN_URL = "https://api-azure.trustedrouter.com/attestation"
-SEA_URL = "https://api-azure-sea.trustedrouter.com/attestation"
+SYD_URL = "https://api-azure-syd.trustedrouter.com/attestation"
 
 
 # --------------------------------------------------------------------------
@@ -350,8 +350,8 @@ def azure_record(**overrides: Any) -> dict[str, Any]:
         "platform": "azure-confidential-containers-sev-snp",
         "api_base_url": "https://api-azure.trustedrouter.com/v1",
         "hostdata": AZURE_UAEN,
-        "accepted_hostdata": [AZURE_UAEN, AZURE_SEA],
-        "attestation_issuers": [UAEN_ISSUER, SEA_ISSUER],
+        "accepted_hostdata": [AZURE_UAEN, AZURE_SYD],
+        "attestation_issuers": [UAEN_ISSUER, SYD_ISSUER],
         "source_commit": COMMIT_V1_AND_V2,
         "regions": [
             {
@@ -360,9 +360,9 @@ def azure_record(**overrides: Any) -> dict[str, Any]:
                 "attestation_issuer": UAEN_ISSUER,
             },
             {
-                "attestation_url": SEA_URL,
-                "hostdata": AZURE_SEA,
-                "attestation_issuer": SEA_ISSUER,
+                "attestation_url": SYD_URL,
+                "hostdata": AZURE_SYD,
+                "attestation_issuer": SYD_ISSUER,
             },
         ],
     }
@@ -374,7 +374,7 @@ LIVE: dict[str, bytes] = {
     "https://api.trustedrouter.com/attestation": gcp_attestation(),
     "https://api-aws.trustedrouter.com/attestation": aws_attestation(),
     UAEN_URL: azure_attestation(AZURE_UAEN, UAEN_ISSUER),
-    SEA_URL: azure_attestation(AZURE_SEA, SEA_ISSUER),
+    SYD_URL: azure_attestation(AZURE_SYD, SYD_ISSUER),
 }
 
 
@@ -450,7 +450,7 @@ def test_every_cloud_clears_when_every_enclave_reads_what_the_plane_writes() -> 
         "api.trustedrouter.com",
         "api-aws.trustedrouter.com",
         "api-azure.trustedrouter.com",
-        "api-azure-sea.trustedrouter.com",
+        "api-azure-syd.trustedrouter.com",
     ], "all four serving regions must be checked, and Azure's two come from the record"
     assert all(result.ok for result in results), problems(results)
     assert all(result.accepts == frozenset({V1, V2}) for result in results)
@@ -475,7 +475,7 @@ def test_azure_regions_are_enumerated_from_the_record_not_from_this_file() -> No
 
     assert hosts == [
         "api-azure.trustedrouter.com",
-        "api-azure-sea.trustedrouter.com",
+        "api-azure-syd.trustedrouter.com",
         "api-azure-nz.trustedrouter.com",
     ]
 
@@ -600,7 +600,7 @@ def test_an_accepted_measurement_no_region_served_blocks() -> None:
     """The live Azure mirror's exact shape: two accepted hostdata, no regions array.
 
     The check probes api-azure.trustedrouter.com, is never routed to the
-    Southeast Asia enclave, and used to print "Every enclave serving azure
+    Australia East enclave, and used to print "Every enclave serving azure
     accepts every format this build writes" over a sample of one. The second
     accepted measurement belongs to a build nothing here checked, so the run is
     a refusal, not a green with a footnote.
@@ -614,7 +614,7 @@ def test_an_accepted_measurement_no_region_served_blocks() -> None:
     assert results[0].ok, "the region that did answer is fine; the coverage is not"
     assert not results[-1].ok
     assert "never checked" in problems(results)
-    assert AZURE_SEA in problems(results)
+    assert AZURE_SYD in problems(results)
 
 
 def test_the_bind_window_refusal_does_not_depend_on_probe_routing() -> None:
@@ -649,7 +649,7 @@ def test_a_region_serving_outside_the_record_blocks() -> None:
     """
     surprise = "https://trquillnz.nz.attest.azure.net"
     live = dict(LIVE)
-    live[SEA_URL] = azure_attestation(AZURE_SEA, surprise)
+    live[SYD_URL] = azure_attestation(AZURE_SYD, surprise)
 
     results = run("azure", azure_record(), frozenset({V2}), transport=transport_from(live))
 

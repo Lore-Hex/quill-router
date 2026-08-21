@@ -40,7 +40,7 @@ operational wide-column store and was never a columnar warehouse.
 | AWS deployment | **Serving and attesting** — Nitro enclave + Fargate control plane |
 | Azure deployment | **Serving and attesting** — SEV-SNP/MAA enclave + Container App control plane |
 | Per-cloud *control-plane* independence — AWS | **LIVE 2026-08-06.** All 4 enclaves rolled to `aws-release-20260806-ownplane`, PCR0 `aef48a4539…`, dialling `aws.trustedrouter.com` first with the canonical plane as a dial-failure fallback. Status `up`, single measurement, 0 errors (§4.5) |
-| Per-cloud *control-plane* independence — Azure | **LIVE 2026-08-06** (uaenorth). Enclave rebuilt from main, `TR_CONTROL_PLANE_BASE_URL=azure.trustedrouter.com/v1,trustedrouter.com/v1`, HOST_DATA `1936719d7398e9ad…`, attestation verified. Second region (southeastasia) pending (§4.5b) |
+| Per-cloud *control-plane* independence — Azure | **LIVE 2026-08-06** (uaenorth). Enclave rebuilt from main, `TR_CONTROL_PLANE_BASE_URL=azure.trustedrouter.com/v1,trustedrouter.com/v1`, HOST_DATA `1936719d7398e9ad…`, attestation verified. Second region (australiaeast) pending (§4.5b) |
 | Postgres can serve `authorize` | **Fixed**, router#452 — 11 gateway-reachable methods used to raise (§4.6) |
 
 ### The single most useful result
@@ -321,10 +321,10 @@ python3 tools/verify-attestation.py --api-host api-azure.trustedrouter.com \
   --expected-maa-issuer https://trquilluaen.uaen.attest.azure.net --expected-hostdata "$HD"
 ```
 
-**Second region.** Confidential ACI validates in **southeastasia**, northeurope,
+**Second region.** Confidential ACI validates in **australiaeast**, northeurope,
 eastus2, switzerlandnorth and swedencentral; **westeurope is blocked by policy**
-on this subscription. southeastasia is the chosen second region — with the
-gateway in UAE North and GCP/AWS in US/EU, Singapore adds real geographic spread
+on this subscription. australiaeast is the chosen second region — with the
+gateway in UAE North and GCP/AWS in US/EU, Sydney adds real geographic spread
 rather than a second European site. Confirm a region with an ARM
 `deployment group validate` of the real template (rename the resource, drop
 `outputs`) rather than trusting a docs list.
@@ -398,18 +398,27 @@ Two things to check before trusting any green:
 
 So AWS and Azure simply never schedule the throughput commands. No cross-cloud pipe.
 
-### 4.8 Azure region two (southeastasia) — BLOCKED on four IAM grants
+### 4.8 Azure region two (australiaeast) — BLOCKED on four IAM grants
 
 Everything except the grants is done and merged-or-in-review.
 
-**Provisioned and Ready:** resource group `TR-TEE-SEA` (southeastasia), MAA instance
-`trquillsea` → `https://trquillsea.sasia.attest.azure.net`, managed identity
-`tr-skr-identity` (principal `e8193e32-34ba-4a22-8159-7db7a0687874`).
+**Provisioned and Ready** (verified 2026-08-21): resource group `tr-tee-sydney`
+(australiaeast), MAA instance `trquillsyd` → `https://trquillsyd.eau.attest.azure.net`,
+managed identity `tr-skr-identity` (principal `f8879ad4-734b-4091-85f7-3d7e3e169016`,
+client `24bea69e-9f18-4f6e-9c1e-fd1206fbcace`). Confidential ACI was proved in this
+region by provisioning a real SEV-SNP group with a genuine CCE policy, not by reading
+a docs list — the capabilities API reports nothing about the Confidential SKU.
 
 **The block.** The identity has *no role assignments*. `az role assignment create` is refused
-by this session's permission classifier — correctly, it is an IAM grant — so a human must run
-the four commands in `tools/bootstrap-azure-region.sh`'s plan output. Until then the deploy
-dies at its prerequisite check, which is the intended behaviour.
+by this session's permission classifier — correctly, it is an IAM grant against the vault that
+holds every provider key — so a human applies them. They are now declared in
+quill-cloud-proxy `tools/azure-enclave/` (terraform): `bash import.sh` adopts what exists,
+then `terraform apply` creates exactly the four. Until then the deploy dies at its
+prerequisite check, which is the intended behaviour.
+
+Sydney is deliberately **not** granted `Key Vault Crypto Officer`, which uaenorth's identity
+holds: that role lets a workload rewrite the release policy constraining it, so the TEE
+becomes self-authorizing. `bind`/`narrow` run under the operator's credential instead.
 
 **Shared vs regional.** Vault `trquillkv`, wrapping key `tr-bootstrap-wrap` and registry
 `trquillacr` are **shared** across regions; the resource group, MAA instance, identity and
@@ -420,7 +429,7 @@ means per-region bundle re-sealing, and a bundle that drifts between regions is 
 that 401s *in one region only*. Wrong trade.
 
 **Region availability**, confirmed against ARM `deployment group validate` rather than docs:
-confidential ACI is supported in southeastasia, northeurope, eastus2, switzerlandnorth and
+confidential ACI is supported in australiaeast, northeurope, eastus2, switzerlandnorth and
 swedencentral on this subscription. **westeurope is blocked by policy.**
 
 **What region two exposed in one-region code** (qcp #120):
@@ -444,7 +453,7 @@ Four nines is 52 minutes a year *total*. Here is each term, honestly.
 
 | | status |
 |---|---|
-| two regions, each attesting to its own MAA | **done** — uaenorth + southeastasia |
+| two regions, each attesting to its own MAA | **done** — uaenorth + australiaeast |
 | auto-recovery from a container fault | **done** — `restartPolicy: OnFailure` |
 | automatic failover *between* the two regions | **MISSING** — this is the blocker |
 | auto-recovery from group-level loss | **MISSING** |
@@ -457,7 +466,7 @@ forever, serving nothing, until a human noticed. One such event spends the entir
 budget before anyone has read the page.
 
 **Why two regions do not currently compose.** Each has its own hostname
-(`api-azure` / `api-azure-sea`), so a client pointed at one gets nothing when that region dies.
+(`api-azure` / `api-azure-syd`), so a client pointed at one gets nothing when that region dies.
 Two regions with no failover is two independent single points of failure, not redundancy.
 
 **The mechanism to fix it already exists** and is how GCP runs many enclaves behind one name:
@@ -532,7 +541,8 @@ LOCATION=uaenorth RESOURCE_GROUP=tr-tee-dubai \
 ```
 
 **Do not redeploy uaenorth again before then** — each attempt burns the next issuance the
-moment the window reopens. southeastasia is unaffected and serving.
+moment the window reopens. southeastasia was unaffected and serving at the time
+(it has since been retired in favour of australiaeast).
 
 **Run `audit` against every region before believing a green dashboard.** It is read-only:
 
