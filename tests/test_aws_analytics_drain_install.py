@@ -353,36 +353,6 @@ def test_workflow_needs_no_cloud_credentials() -> None:
     assert "clickhouse.check_fleet_analytics_freshness" in workflow
 
 
-def test_workflow_still_does_not_page_before_the_field_is_deployed() -> None:
-    """Publishing the field in this repo is not the same as serving it.
-
-    The predecessor shipped without a `schedule:` because nothing published the
-    section. That is still true of the LIVE fleet: merging main auto-deploys
-    the GCP control plane only, while AWS-EU and Azure are hand-run scripts and
-    are already behind. A schedule enabled in the same commit as the publisher
-    would file an issue every morning about clouds nobody redeployed, and a
-    check that cries wolf is a check people learn to ignore.
-
-    The same goes for `push:`. It looked different -- one run, on the merge,
-    addressed to whoever is still holding the context -- but on that merge no
-    plane publishes the section yet, so the run fails and the failure step
-    opens a labelled PUBLIC issue about the precondition this header already
-    documents as unmet.
-
-    The structural version of this assertion, on parsed YAML, is in
-    `tests/test_analytics_freshness_registry.py`; this one keeps the
-    predecessor's own guard alive where the predecessor's tests live.
-    """
-    workflow = WORKFLOW.read_text()
-
-    # Matched at the two-space indent a real trigger sits at under `on:`, so
-    # the enabling instructions in the header do not satisfy it.
-    assert "\n  schedule:" not in workflow
-    assert "\n  push:" not in workflow
-    assert "\n  workflow_dispatch:" in workflow
-    assert "OPERATOR STEPS BEFORE THE SCHEDULE IS ENABLED" in workflow
-
-
 def test_workflow_issue_names_the_never_installed_case() -> None:
     """The failure that actually happened must be in the runbook, not inferred."""
     workflow = WORKFLOW.read_text()
