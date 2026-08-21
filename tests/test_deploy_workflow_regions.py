@@ -95,15 +95,34 @@ def test_superseded_push_stops_before_production_mutation() -> None:
     assert "if: ${{ needs.confirm-current-main.outputs.proceed == 'true' }}" in workflow
 
 
-def test_runtime_secret_validation_is_parallel_and_does_not_restore_stale_ses_keys() -> None:
+def test_runtime_secret_validation_is_metadata_only_and_covers_every_surface() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     sync = workflow.index("sync-runtime-secrets:")
     confirm = workflow.index("confirm-current-main:", sync)
     section = workflow[sync:confirm]
 
     assert "needs: [gate-on-ci]" in section
+    for surface in ("public", "actions", "console", "chat", "webhooks", "internal"):
+        assert f'"{surface}|' in section
+    for secret in (
+        "trustedrouter-attribution-cookie-secret",
+        "trustedrouter-stripe-secret-key",
+        "trustedrouter-stripe-webhook-secret",
+        "trustedrouter-internal-stripe-payment-intents-key",
+        "trustedrouter-aws-access-key-id",
+        "trustedrouter-aws-secret-access-key",
+        "trustedrouter-internal-ses-access-key-id",
+        "trustedrouter-internal-ses-secret-access-key",
+        "trustedrouter-internal-gateway-token",
+        "trustedrouter-observer-internal-token",
+        "trustedrouter-synthetic-monitor-api-key",
+        "trustedrouter-sentry-dsn",
+    ):
+        assert secret in section
     assert "trustedrouter-aws-access-key-id" in section
-    assert "gcloud secrets versions access latest" in section
+    assert "gcloud secrets versions list" in section
+    assert "--filter='state=ENABLED'" in section
+    assert "gcloud secrets versions access" not in section
     assert "secrets.TR_AWS_ACCESS_KEY_ID" not in section
     assert "secrets.TR_AWS_SECRET_ACCESS_KEY" not in section
     assert "trustedrouter-clickhouse-provider-read-password" in section
@@ -115,3 +134,16 @@ def test_shared_load_balancer_is_reconciled_once_per_workflow() -> None:
 
     assert workflow.count('TR_DEPLOY_RECONCILE_LB: "1"') == 1
     assert workflow.count('TR_DEPLOY_RECONCILE_LB: "0"') == 1
+
+
+def test_synthetic_deploy_requires_billing_surface_and_cannot_be_masked() -> None:
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    start = workflow.index("- name: Deploy synthetic monitor Cloud Run Job")
+    end = workflow.index("- name: Deploy Google Ads conversion uploader", start)
+    synthetic = workflow[start:end]
+
+    assert "continue-on-error" not in synthetic
+    assert "TR_BILLING_SERVICE: trusted-router-billing" in synthetic
+    assert "TR_BILLING_SERVICE must name the internal billing service" in synthetic
+    assert "bash scripts/deploy/synthetic.sh" in synthetic
+    assert "|| true" not in synthetic

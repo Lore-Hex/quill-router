@@ -258,10 +258,13 @@ jobs:
         run: scripts/deploy/sync_public_analytics_snapshots.sh --apply
 
   sync-runtime-secrets:
-    # Validate the small set of runtime credentials while the image build and
-    # schema verification run. SES credentials are rotated directly in GCP
-    # Secret Manager; deploys must never copy a stale long-lived key back from
-    # GitHub Actions and silently undo an incident-response rotation.
+    # Validate the six process surfaces' credential contract while the image
+    # build and schema verification run. Credentials are rotated directly in
+    # GCP Secret Manager; deploys must never copy a stale long-lived key back
+    # from GitHub Actions and silently undo an incident-response rotation.
+    # This job needs only per-resource Secret Manager Viewer bindings. It
+    # verifies that an ENABLED version exists without reading or logging any
+    # secret value.
     needs: [gate-on-ci]
     runs-on: ubuntu-latest
     steps:
@@ -272,15 +275,58 @@ jobs:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@v2
-      - name: Validate required SES credentials
+      - name: Validate six-surface credential metadata
         run: |
           set -euo pipefail
-          for secret in \
-            trustedrouter-aws-access-key-id \
-            trustedrouter-aws-secret-access-key; do
-            gcloud secrets versions access latest \
+          # surface|Secret Manager resource. Repeated resources document the
+          # intentional sharing contract while `checked` avoids duplicate API
+          # reads. Internal billing has distinct Stripe and SES credentials.
+          surface_secret_contract=(
+            "public|trustedrouter-attribution-cookie-secret"
+            "actions|trustedrouter-aws-access-key-id"
+            "actions|trustedrouter-aws-secret-access-key"
+            "console|trustedrouter-attribution-cookie-secret"
+            "console|trustedrouter-aws-access-key-id"
+            "console|trustedrouter-aws-secret-access-key"
+            "console|trustedrouter-stripe-secret-key"
+            "console|trustedrouter-sentry-dsn"
+            "chat|trustedrouter-sentry-dsn"
+            "webhooks|trustedrouter-sentry-dsn"
+            "webhooks|trustedrouter-stripe-webhook-secret"
+            "internal|trustedrouter-sentry-dsn"
+            "internal|trustedrouter-internal-stripe-payment-intents-key"
+            "internal|trustedrouter-internal-ses-access-key-id"
+            "internal|trustedrouter-internal-ses-secret-access-key"
+            "internal|trustedrouter-internal-gateway-token"
+            "internal|trustedrouter-observer-internal-token"
+            "internal|trustedrouter-synthetic-monitor-api-key"
+          )
+          declare -A checked=()
+          declare -A represented=()
+          for binding in "${surface_secret_contract[@]}"; do
+            surface="${binding%%|*}"
+            secret="${binding#*|}"
+            represented["${surface}"]=1
+            if [ -n "${checked[${secret}]:-}" ]; then
+              continue
+            fi
+            enabled_version="$(gcloud secrets versions list "${secret}" \
               --project=quill-cloud-proxy \
-              --secret="${secret}" >/dev/null
+              --filter='state=ENABLED' \
+              --limit=1 \
+              --format='value(name)')"
+            if [ -z "${enabled_version}" ]; then
+              echo "required secret has no ENABLED version: ${secret}" >&2
+              exit 1
+            fi
+            checked["${secret}"]=1
+            echo "validated enabled-version metadata for ${secret}"
+          done
+          for surface in public actions console chat webhooks internal; do
+            if [ -z "${represented[${surface}]:-}" ]; then
+              echo "credential contract omitted surface: ${surface}" >&2
+              exit 1
+            fi
           done
       - name: Push provider analytics reader credential
         env:
@@ -335,6 +381,14 @@ jobs:
       REGION: us-central1
       REPO: trusted-router
       SERVICE: trusted-router
+      TR_PUBLIC_SERVICE: trusted-router-public
+      TR_ACTIONS_SERVICE: trusted-router-actions
+      TR_CONSOLE_SERVICE: trusted-router
+      TR_CHAT_SERVICE: trusted-router-chat
+      TR_WEBHOOKS_SERVICE: trusted-router-webhooks
+      TR_INTERNAL_SERVICE: trusted-router-billing
+      TR_BILLING_SERVICE: trusted-router-billing
+      TR_ROLLOUT_MANIFEST: ${{ runner.temp }}/tr-rollout/manifest.json
       SHA: ${{ needs.build-image.outputs.sha }}
       IMAGE: ${{ needs.build-image.outputs.image }}
     steps:
@@ -610,13 +664,16 @@ jobs:
         # 06:00Z 2026-06-02 pong surge to persist after PR #14 + #15
         # "deployed".
         #
-        # The script is idempotent and gracefully no-ops if the
-        # synthetic monitor secret isn't present in this environment
-        # (test, staging). Failure here does NOT block the API rollout
-        # (continue-on-error) because synthetic monitoring is observability,
-        # not user-serving traffic.
-        continue-on-error: true
-        run: bash scripts/deploy/synthetic.sh
+        # The script is idempotent and gracefully no-ops if the synthetic
+        # monitor secret isn't present in a non-production environment. A real
+        # deploy failure is release-critical: silently leaving stale probes
+        # would make the canary evidence untrustworthy for the next rollout.
+        env:
+          TR_BILLING_SERVICE: trusted-router-billing
+        run: |
+          set -euo pipefail
+          : "${TR_BILLING_SERVICE:?TR_BILLING_SERVICE must name the internal billing service}"
+          bash scripts/deploy/synthetic.sh
 
       - name: Deploy Google Ads conversion uploader
         if: ${{ steps.optional.outputs.deploy_google_data_manager == 'true' }}

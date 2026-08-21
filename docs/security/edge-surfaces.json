@@ -6,7 +6,7 @@
     {
       "id": "gcp-control-domains",
       "cloud": "gcp",
-      "plane": "public-actions-control-internal",
+      "plane": "public-actions-console-chat-webhooks-internal",
       "hosts": [
         "trustedrouter.com",
         "www.trustedrouter.com",
@@ -26,12 +26,12 @@
       ],
       "front_door": "Google global external Application Load Balancer with serverless NEGs",
       "tls_termination": "Google load balancer",
-      "required_protection": "Cloud Armor policies on public, actions, control, and internal backends; LB-only Cloud Run ingress; private run.app access to the internal service only for regional synthetic jobs; independent Cloud Run max caps",
+      "required_protection": "Independent Cloud Armor policies and exact regional serverless NEGs on public, actions, console, chat, webhooks, and internal backends; LB-only Cloud Run ingress; no default URL except the preflighted private internal synthetic path; independent service and revision max caps",
       "trusted_client_identity": "X-TrustedRouter-Client-IP overwritten by the load balancer from {client_ip_address}",
-      "code_status": "helpers_ready_rollout_integration_pending_explicit_approval",
+      "code_status": "implemented-but-not-live",
       "protection_state": "p0_integration",
       "owner": "Lore-Hex/quill-router",
-      "verification": "scripts/deploy/rollout.sh reconciliation plus exact-host URL-map totality, .github/workflows/deploy.yml LB smoke, Admin API drift checks, and rejected external run.app probes"
+      "verification": "manifest-bound scripts/deploy/rollout.sh staging and rollout_rollback.sh phased promotion/attempt-scoped rollback; exact-host three-domain URL-map totality preserving explicit API/AWS/Azure/Quill aliases; six backend/NEG/Cloud Armor/header postconditions; six direct Admin API checks; authenticated LB/browser smoke; private internal billing synthetic; rejected external run.app probes"
     },
     {
       "id": "gcp-attested-api-aliases",
@@ -40,7 +40,8 @@
       "hosts": [
         "api.trustedrouter.com",
         "api.allyrouter.com",
-        "api.uptimerouter.com"
+        "api.uptimerouter.com",
+        "api.quillrouter.com"
       ],
       "host_patterns": [
         "api-<region>.quillrouter.com"
@@ -92,7 +93,8 @@
       "cloud": "aws",
       "plane": "attested-inference",
       "hosts": [
-        "api-aws.trustedrouter.com"
+        "api-aws.trustedrouter.com",
+        "api-eu-west-1.trustedrouter.com"
       ],
       "front_door": "AWS Global Accelerator to NLB to Nitro Enclaves",
       "tls_termination": "inside Nitro Enclave",
@@ -125,6 +127,7 @@
       "plane": "attested-inference",
       "hosts": [
         "api-azure.trustedrouter.com",
+        "api-azure-nz.trustedrouter.com",
         "api-azure-sea.trustedrouter.com"
       ],
       "front_door": "Azure regional public endpoints to SEV-SNP confidential workloads",

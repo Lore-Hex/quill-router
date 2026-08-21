@@ -111,7 +111,8 @@ def test_rollout_preserves_dual_read_mode_and_uses_distinct_reader_secret() -> N
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
     secrets = (ROOT / "scripts/deploy/secrets.sh").read_text()
     assert "TR_ANALYTICS_READ_MODE" in rollout
-    assert "LIVE_ANALYTICS_READ_MODE" in rollout
+    assert 'serving_env_value TR_ANALYTICS_READ_MODE bigtable' in rollout
+    assert 'TR_ANALYTICS_READ_MODE=${ANALYTICS_READ_MODE}' in rollout
     assert "TR_ANALYTICS_DUAL_READ_STARTED_AT" in rollout
     assert "TR_ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT" in rollout
     assert "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true" in rollout

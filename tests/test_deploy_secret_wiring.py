@@ -9,6 +9,13 @@ from scripts.check_price_coverage import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _deploy_secret_owner_allowlist() -> str:
+    library = (ROOT / "scripts/deploy/_lib.sh").read_text(encoding="utf-8")
+    start = library.index("deploy_service_account_owns_secret() {")
+    end = library.index("synthetic_service_account_owns_secret() {", start)
+    return library[start:end]
+
+
 def test_top_level_deploy_passes_spanner_config_to_unshared_migration() -> None:
     deploy = (ROOT / "scripts/deploy-gcp.sh").read_text()
 
@@ -40,20 +47,17 @@ def test_deploy_pins_thirty_cent_signup_credit_policy() -> None:
     assert '"TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=300000"' in rollout
 
 
-def test_deploy_removes_only_explicitly_missing_optional_secrets() -> None:
+def test_deploy_uses_complete_surface_secret_sets_and_fails_closed_on_lookup_errors() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
 
-    mandatory_block = rollout.split("SECRET_ENVS=(", 1)[1].split(")", 1)[0]
-    assert "TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD" not in mandatory_block
-    assert (
-        'REMOVE_SECRET_ENVS=("TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")' in rollout
-    )
+    assert 'surface_secret_bindings()' in rollout
+    assert 'pin_surface_secret_versions' in rollout
+    assert '--set-secrets="$set_secrets"' in rollout
+    assert '--remove-secrets' not in rollout
     assert "trustedrouter-google-ads-conversion-feed-password" not in rollout
-    assert '[[ "$describe_error" == *"NOT_FOUND"* ]]' in rollout
-    assert "cannot determine whether optional secret" in rollout
-    assert 'REMOVE_SECRET_ENVS+=("${env_name}")' in rollout
-    assert 'REMOVE_SECRETS_ARGS=(--remove-secrets ' in rollout
-    assert '"${REMOVE_SECRETS_ARGS[@]}"' in rollout
+    assert '*NOT_FOUND*|*"not found"*) echo absent' in rollout
+    assert "cannot determine Secret Manager state" in rollout
+    assert "KNOWN_OPTIONAL_RUNTIME_SECRETS=(" in rollout
 
 
 def test_deploy_wires_three_cloud_ops_chat_support_fanout() -> None:
@@ -64,10 +68,7 @@ def test_deploy_wires_three_cloud_ops_chat_support_fanout() -> None:
     assert "https://b.trustedrouter.com,https://c.allyrouter.com" in rollout
     assert "trustedrouter-ops-chat-webhook-secret" in rollout
     assert '"OPS_SUPPORT_HOOK_SECRET"' in secrets
-    assert (
-        'grant_tr_deploy_secret_access "trustedrouter-ops-chat-webhook-secret"'
-        in secrets
-    )
+    assert "trustedrouter-ops-chat-webhook-secret" not in _deploy_secret_owner_allowlist()
 
 
 def test_deploy_serves_user_provided_models() -> None:
@@ -87,29 +88,22 @@ def test_deploy_wires_veriff_config_and_secrets() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
     secrets = (ROOT / "scripts/deploy/secrets.sh").read_text()
 
-    # A PAIR that must agree: enabling the custom-model gate without a
-    # reachable Veriff would 403 every create/edit with an unsatisfiable
-    # requirement. Activated together 2026-08-16 (secrets exist); if either
-    # ever flips back, the other must flip with it in the same commit.
-    veriff_enabled = '"TR_VERIFF_ENABLED=true"' in rollout
-    gate_enabled = '"TR_CUSTOM_MODELS_REQUIRE_VERIFICATION=true"' in rollout
-    assert veriff_enabled == gate_enabled, (
-        "TR_VERIFF_ENABLED and TR_CUSTOM_MODELS_REQUIRE_VERIFICATION must flip together"
-    )
-    assert veriff_enabled, "identity verification is meant to be live in prod"
+    # The explicit/serving bit, never secret existence, controls new identity
+    # verification. Console and webhook receive the same bit; a complete
+    # verifier group remains mounted for late callbacks when disabled.
+    assert "resolve_explicit_or_serving_flag" in rollout
+    assert "TR_VERIFF_ENABLED TR_VERIFF_ENABLED" in rollout
+    assert '"TR_VERIFF_ENABLED=${VERIFF_ENABLED}"' in rollout
+    assert '"TR_CUSTOM_MODELS_REQUIRE_VERIFICATION=${VERIFF_ENABLED}"' in rollout
+    assert "VERIFF_SECRET_GROUP_STATE" in rollout
     assert '"TR_VERIFF_BASE_URL=https://stationapi.veriff.com"' in rollout
-    assert (
-        'add_secret_env_if_exists "TR_VERIFF_API_KEY" "trustedrouter-veriff-api-key"'
-        in rollout
-    )
+    assert '"TR_VERIFF_API_KEY=trustedrouter-veriff-api-key"' in rollout
     assert "TR_VERIFF_SHARED_SECRET_KEY" in rollout
     assert '"VERIFF_API_KEY" "trustedrouter-veriff-api-key"' in secrets
     assert "VERIFF_SHARED_SECRET_KEY" in secrets
-    assert 'grant_tr_deploy_secret_access "trustedrouter-veriff-api-key"' in secrets
-    assert (
-        'grant_tr_deploy_secret_access "trustedrouter-veriff-shared-secret-key"'
-        in secrets
-    )
+    deploy_allowlist = _deploy_secret_owner_allowlist()
+    assert "trustedrouter-veriff-api-key" not in deploy_allowlist
+    assert "trustedrouter-veriff-shared-secret-key" not in deploy_allowlist
 
 
 def test_all_attested_control_plane_regions_remain_warm() -> None:
@@ -125,7 +119,7 @@ def test_all_attested_control_plane_regions_remain_warm() -> None:
         'southamerica-east1}"'
         in library
     )
-    assert '--min-instances "$min_instances"' in rollout
+    assert '--min-instances="$MIN_INSTANCES"' in rollout
 
 
 def test_production_deploy_keeps_regional_quota_leases_dark() -> None:
@@ -137,14 +131,14 @@ def test_production_deploy_keeps_regional_quota_leases_dark() -> None:
 def test_deploy_preserves_request_record_mode_without_silent_legacy_fallback() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
 
-    assert '--format=json 2>/dev/null' in rollout
-    assert 'select(.name == "TR_REQUEST_RECORD_WRITE_MODE")' in rollout
+    assert 'serving_env_value TR_REQUEST_RECORD_WRITE_MODE' in rollout
+    assert 'case "$REQUEST_RECORD_WRITE_MODE" in legacy|typed)' in rollout
     assert 'cannot determine TR_REQUEST_RECORD_WRITE_MODE' in rollout
     assert '*) REQUEST_RECORD_WRITE_MODE="legacy"' not in rollout
-    assert "[?name='TR_REQUEST_RECORD_WRITE_MODE']" not in rollout
+    assert 'TR_REQUEST_RECORD_WRITE_MODE=${REQUEST_RECORD_WRITE_MODE}' in rollout
 
 
-def test_deploy_provider_secrets_include_priced_glm52_backends() -> None:
+def test_deploy_detaches_provider_keys_but_keeps_discovery_secret_provisioning() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
     secrets = (ROOT / "scripts/deploy/secrets.sh").read_text()
 
@@ -153,15 +147,17 @@ def test_deploy_provider_secrets_include_priced_glm52_backends() -> None:
         "FIREWORKS_API_KEY": "trustedrouter-fireworks-api-key",
         "NOVITA_API_KEY": "trustedrouter-novita-api-key",
         "BASETEN_API_KEY": "trustedrouter-baseten-api-key",
-        "TELNYX_API_KEY": "trustedrouter-telnyx-api-key",
         "THINKING_MACHINES_API_KEY": "trustedrouter-thinking-machines-api-key",
         "WAFER_API_KEY": "trustedrouter-wafer-api-key",
         "CRUSOE_API_KEY": "trustedrouter-crusoe-api-key",
         "MAKORA_API_KEY": "trustedrouter-makora-api-key",
     }
     for env_name, secret_name in expected.items():
-        assert f'add_secret_env_if_exists "{env_name}" "{secret_name}"' in rollout
+        assert secret_name in rollout
+        assert f"{env_name}={secret_name}" not in rollout
         assert f'ensure_secret_from_env_file "{env_name}" "{secret_name}"' in secrets
+    assert "trustedrouter-telnyx-api-key|trustedrouter-twilio-account-sid" in rollout
+    assert '"TR_TELNYX_API_KEY=trustedrouter-telnyx-api-key"' in rollout
 
 
 def test_deploy_prefers_explicit_google_ai_studio_key() -> None:
@@ -175,7 +171,7 @@ def test_deploy_prefers_explicit_google_ai_studio_key() -> None:
     assert 'value="${!alias:-}"' in secrets
 
 
-def test_deploy_wires_athena_worker_prompt_secret() -> None:
+def test_deploy_keeps_athena_prompt_out_of_all_six_web_services() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
     secrets = (ROOT / "scripts/deploy/secrets.sh").read_text()
 
@@ -184,16 +180,14 @@ def test_deploy_wires_athena_worker_prompt_secret() -> None:
         'ensure_secret_from_prompt_file "trustedrouter-athena-worker-prompt-v1" '
         '"$ATHENA_PROMPTS_FILE" "Worker Prompt V1"'
     ) in secrets
-    assert (
-        'add_secret_env_if_exists "TR_ATHENA_WORKER_PROMPT" "trustedrouter-athena-worker-prompt-v1"'
-    ) in rollout
+    assert "trustedrouter-athena-worker-prompt-v1" in rollout
+    assert "TR_ATHENA_WORKER_PROMPT=" not in rollout
 
 
 def test_hourly_kimi_discovery_has_narrow_secret_access_wiring() -> None:
-    secrets = (ROOT / "scripts/deploy/secrets.sh").read_text()
     workflow = (ROOT / ".github/workflows/refresh-prices.yml").read_text()
 
-    assert 'grant_tr_deploy_secret_access "trustedrouter-kimi-api-key"' in secrets
+    assert "trustedrouter-kimi-api-key" in _deploy_secret_owner_allowlist()
     assert "KIMI_API_KEY:trustedrouter-kimi-api-key" in workflow
     assert "no project-wide Secret" in workflow
 
@@ -207,7 +201,6 @@ def test_hourly_cloudflare_discovery_uses_funded_account() -> None:
 
 
 def test_every_authenticated_discovery_feed_is_wired_to_narrow_secret_access() -> None:
-    secrets = (ROOT / "scripts/deploy/secrets.sh").read_text(encoding="utf-8")
     workflow = (ROOT / ".github/workflows/refresh-prices.yml").read_text(
         encoding="utf-8"
     )
@@ -234,7 +227,7 @@ def test_every_authenticated_discovery_feed_is_wired_to_narrow_secret_access() -
             "workflow loads none of them"
         )
         secret_name = workflow_pairs[wired_env]
-        assert f'grant_tr_deploy_secret_access "{secret_name}"' in secrets, (
+        assert secret_name in _deploy_secret_owner_allowlist(), (
             f"{provider} discovery loads {secret_name}, but secrets.sh does not "
             "grant the refresh service account narrow access"
         )
@@ -249,12 +242,14 @@ def test_provider_portal_uses_private_vpc_and_dedicated_clickhouse_reader() -> N
     ).read_text(encoding="utf-8")
 
     assert "compute addresses describe tr-clickhouse-ilb" in rollout
-    assert 'PROVIDER_ANALYTICS_CLICKHOUSE_URL="http://${clickhouse_ilb_ip}:8123"' in rollout
-    assert 'PROVIDER_ANALYTICS_CLICKHOUSE_URL="http://10.128.15.214:8123"' in rollout
+    assert 'PROVIDER_CLICKHOUSE_URL="http://${clickhouse_address_output}:8123"' in rollout
+    assert "provider ClickHouse URL must resolve through a private VPC address" in rollout
     assert "TR_PROVIDER_ANALYTICS_CLICKHOUSE_USER=tr_provider_read" in rollout
-    assert "--vpc-egress private-ranges-only" in rollout
-    assert '--network "${TR_CLOUD_RUN_NETWORK:-default}"' in rollout
-    assert '--subnet "${TR_CLOUD_RUN_SUBNET:-default}"' in rollout
+    assert "--vpc-egress=private-ranges-only" in rollout
+    assert 'CLOUD_RUN_NETWORK="${TR_CLOUD_RUN_NETWORK:-default}"' in rollout
+    assert 'CLOUD_RUN_SUBNET="${TR_CLOUD_RUN_SUBNET:-default}"' in rollout
+    assert '--network="$CLOUD_RUN_NETWORK"' in rollout
+    assert '--subnet="$CLOUD_RUN_SUBNET"' in rollout
 
     for content in (secrets, rollout, reader):
         assert "trustedrouter-clickhouse-provider-read-password" in content

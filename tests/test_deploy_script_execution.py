@@ -957,6 +957,36 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
         and call[4:6] == ["jobs", "deploy"]
     ]
     assert len(deploys) == 5
+    version_reads = [
+        call
+        for call in run.calls
+        if call[:6]
+        == [
+            "gcloud",
+            "--project",
+            "quill-cloud-proxy",
+            "secrets",
+            "versions",
+            "list",
+        ]
+    ]
+    assert len(version_reads) == 2
+    assert max(run.calls.index(call) for call in version_reads) < deploys[0][0]
+    postdeploy_secret_checks = [
+        call
+        for call in run.calls
+        if call[:6]
+        == [
+            "gcloud",
+            "--project",
+            "quill-cloud-proxy",
+            "run",
+            "jobs",
+            "describe",
+        ]
+        and "--format=json" in call
+    ]
+    assert len(postdeploy_secret_checks) == 5
     subnet_updates = [
         (index, call)
         for index, call in enumerate(run.calls)
@@ -991,10 +1021,24 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
     for deploy_index, deploy in deploys:
         region = deploy[deploy.index("--region") + 1]
         deploy_text = " ".join(deploy)
+        regional_internal_origin = (
+            f"https://trusted-router-billing-123456789.{region}.run.app"
+        )
         assert "TR_SERVICE_SURFACE=observer" in deploy_text
         assert (
-            "TR_OBSERVER_INTERNAL_TOKEN=trustedrouter-observer-internal-token:latest"
+            "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL="
+            f"{regional_internal_origin}"
+        ) in deploy_text
+        assert (
+            "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL="
+            f"{regional_internal_origin}/"
+        ) not in deploy_text
+        assert (
+            "TR_OBSERVER_INTERNAL_TOKEN=trustedrouter-observer-internal-token:7"
             in deploy_text
+        )
+        assert deploy[deploy.index("--service-account") + 1] == (
+            "tr-synthetic@quill-cloud-proxy.iam.gserviceaccount.com"
         )
         assert "TR_INTERNAL_GATEWAY_TOKEN" not in deploy_text
         assert "--set-secrets" in deploy
@@ -1036,6 +1080,47 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
         contract_read = fresh_contract_reads[0]
         assert contract_read[6] == "trusted-router-billing"
         assert contract_read[contract_read.index("--region") + 1] == region
+        contract_index = max(
+            index
+            for index, call in enumerate(run.calls[:deploy_index])
+            if call is contract_read
+        )
+        immediate_job_window = run.calls[contract_index + 1 : deploy_index]
+        assert sum(
+            call[:5]
+            == [
+                "gcloud",
+                "--project",
+                "quill-cloud-proxy",
+                "secrets",
+                "get-iam-policy",
+            ]
+            for call in immediate_job_window
+        ) == 2
+        assert sum(
+            call[:6]
+            == [
+                "gcloud",
+                "--project",
+                "quill-cloud-proxy",
+                "run",
+                "jobs",
+                "get-iam-policy",
+            ]
+            for call in immediate_job_window
+        ) == 1
+        assert any(
+            call[:6]
+            == [
+                "gcloud",
+                "--project",
+                "quill-cloud-proxy",
+                "run",
+                "revisions",
+                "describe",
+            ]
+            for call in immediate_job_window
+        )
         latest_preflight = fresh_subnet_updates[0]
         preflight_region = next(
             (
@@ -1050,10 +1135,10 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
         previous_deploy_index = deploy_index
 
 
-def test_synthetic_deploy_requires_explicit_split_billing_service_before_any_job(
+def test_synthetic_deploy_defaults_to_split_billing_service_and_checks_live_contract(
     tmp_path: Path,
 ) -> None:
-    isolated = DeployScriptHarness(tmp_path / "synthetic-no-split-service")
+    isolated = DeployScriptHarness(tmp_path / "synthetic-default-split-service")
 
     run = isolated.run(
         "scripts/deploy/synthetic.sh",
@@ -1061,15 +1146,17 @@ def test_synthetic_deploy_requires_explicit_split_billing_service_before_any_job
         omit_env=("TR_BILLING_SERVICE",),
     )
 
-    assert run.returncode != 0
-    assert "TR_BILLING_SERVICE is required" in run.stderr
-    assert not any(
-        call[:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
+    assert run.returncode == 0, summarise(run)
+    deploy_indices = [
+        index
+        for index, call in enumerate(run.calls)
+        if call[:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
         and call[4:6] == ["jobs", "deploy"]
-        for call in run.calls
-    )
-    assert not any(
-        call[:6]
+    ]
+    contract_indices = [
+        index
+        for index, call in enumerate(run.calls)
+        if call[:6]
         == [
             "gcloud",
             "--project",
@@ -1078,8 +1165,168 @@ def test_synthetic_deploy_requires_explicit_split_billing_service_before_any_job
             "services",
             "describe",
         ]
-        for call in run.calls
+        and call[6] == "trusted-router-billing"
+    ]
+    assert len(deploy_indices) == len(contract_indices) == 5
+    assert all(
+        contract < deploy
+        for contract, deploy in zip(contract_indices, deploy_indices, strict=True)
     )
+
+
+def test_synthetic_deploy_rejects_internal_billing_alias_divergence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = "scripts/deploy/synthetic.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        script,
+        replace(
+            fixture,
+            env={
+                **fixture.env,
+                "TR_INTERNAL_SERVICE": "trusted-router-other-internal",
+            },
+        ),
+    )
+    run = DeployScriptHarness(tmp_path / "synthetic-alias-drift").run(script)
+
+    assert run.returncode != 0
+    assert "must resolve to the same Cloud Run service" in run.stderr
+    assert not any(call[4:6] == ["jobs", "deploy"] for call in run.calls)
+
+
+def test_synthetic_deploy_rechecks_secret_iam_and_stops_on_mid_run_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = "scripts/deploy/synthetic.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    member = "serviceAccount:tr-synthetic@quill-cloud-proxy.iam.gserviceaccount.com"
+    internal_member = (
+        "serviceAccount:tr-internal@quill-cloud-proxy.iam.gserviceaccount.com"
+    )
+    valid = json.dumps(
+        {
+            "bindings": [
+                {
+                    "role": "roles/secretmanager.secretAccessor",
+                    "members": [internal_member, member],
+                }
+            ]
+        }
+    )
+    conditional = json.dumps(
+        {
+            "bindings": [
+                {
+                    "role": "roles/secretmanager.secretAccessor",
+                    "members": [member],
+                    "condition": {
+                        "title": "expires",
+                        "expression": "request.time < timestamp('2030-01-01T00:00:00Z')",
+                    },
+                }
+            ]
+        }
+    )
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        script,
+        replace(
+            fixture,
+            sequential_responses=(
+                    (
+                        r"secrets get-iam-policy .*--format=json",
+                        (valid, valid, conditional),
+                    ),
+            ),
+        ),
+    )
+    run = DeployScriptHarness(tmp_path / "synthetic-secret-drift").run(script)
+
+    assert run.returncode != 0
+    assert "noncanonical role or condition" in run.stderr
+    deploys = [call for call in run.calls if call[4:6] == ["jobs", "deploy"]]
+    assert len(deploys) == 1
+
+
+def test_synthetic_deploy_rejects_conditional_existing_job_invoker_before_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = "scripts/deploy/synthetic.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    member = "serviceAccount:tr-synthetic@quill-cloud-proxy.iam.gserviceaccount.com"
+    conditional_policy = json.dumps(
+        {
+            "bindings": [
+                {
+                    "role": "roles/run.invoker",
+                    "members": [member],
+                    "condition": {
+                        "title": "temporary",
+                        "expression": "request.time < timestamp('2030-01-01T00:00:00Z')",
+                    },
+                }
+            ]
+        }
+    )
+    responses = (
+        (r"run jobs get-iam-policy .*--format=json", conditional_policy),
+        *(
+            response
+            for response in fixture.responses
+            if "run jobs get-iam-policy" not in response[0]
+        ),
+    )
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        script,
+        replace(fixture, responses=responses),
+    )
+    run = DeployScriptHarness(tmp_path / "synthetic-invoker-condition").run(script)
+
+    assert run.returncode != 0
+    assert "not the exact singleton invoker policy" in run.stderr
+    assert not any(call[4:6] == ["jobs", "deploy"] for call in run.calls)
+
+
+def test_synthetic_deploy_rejects_wrong_serving_revision_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = "scripts/deploy/synthetic.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    revision_reply = next(
+        reply
+        for pattern, reply in fixture.responses
+        if "run revisions describe" in pattern
+    )
+    revision = json.loads(revision_reply)
+    revision["spec"]["serviceAccountName"] = (
+        "tr-console@quill-cloud-proxy.iam.gserviceaccount.com"
+    )
+    responses = (
+        (r"run revisions describe .*--format=json", json.dumps(revision)),
+        *(
+            response
+            for response in fixture.responses
+            if "run revisions describe" not in response[0]
+        ),
+    )
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        script,
+        replace(fixture, responses=responses),
+    )
+    run = DeployScriptHarness(tmp_path / "synthetic-serving-identity").run(script)
+
+    assert run.returncode != 0
+    assert "serving internal revision contract failed" in run.stderr
+    assert not any(call[4:6] == ["jobs", "deploy"] for call in run.calls)
 
 
 @pytest.mark.parametrize(
@@ -1204,6 +1451,7 @@ def test_synthetic_private_ingress_drift_stops_before_any_job_deploy(
             r"dns managed-zones describe trusted-router-private-run-app --format=json",
             zone_json,
         ),
+        *fixture.responses,
     )
     monkeypatch.setitem(
         SCRIPT_FIXTURES,
