@@ -33,7 +33,6 @@ REQUIRED_HOSTS = (
     "trustedrouter.com",
     "www.trustedrouter.com",
     "status.trustedrouter.com",
-    "trust.trustedrouter.com",
     "eu.trustedrouter.com",
     "status-us.trustedrouter.com",
     "status-eu.trustedrouter.com",
@@ -228,7 +227,18 @@ def _gcloud(arguments: list[str], *, expected: type[dict] | type[list], label: s
     return value
 
 
-def _dig(host: str, record_type: str) -> list[str]:
+def _dig(
+    host: str, record_type: str, managed_hosts: frozenset[str]
+) -> tuple[list[str], list[str]]:
+    """Resolve one managed host; return (addresses, cname_chain).
+
+    A managed host may be a CNAME, but only to another managed host: the
+    production DNS policy (quill-cloud-proxy/tools/fix-trustedrouter-dns.sh)
+    keeps www as a CNAME to the apex, and the apex is itself attested here.
+    Any other non-address answer is fail-closed, so a host delegated outside
+    the managed set - a static-site CNAME, a parked domain - can never be
+    attested as resolving to the VIP by way of whatever it delegates to.
+    """
     raw = _run_read_only(
         ["dig", "+time=5", "+tries=1", "+short", host, record_type],
         label=f"DNS {record_type}",
@@ -238,6 +248,7 @@ def _dig(host: str, record_type: str) -> list[str]:
     except UnicodeDecodeError as error:
         raise AttestationError("DNS response is malformed") from error
     addresses: set[str] = set()
+    chain: list[str] = []
     version = 4 if record_type == "A" else 6
     for line in text.splitlines():
         candidate = line.strip()
@@ -245,14 +256,22 @@ def _dig(host: str, record_type: str) -> list[str]:
             continue
         try:
             address = ipaddress.ip_address(candidate)
-        except ValueError as error:
-            # CNAMEs and any other non-address answer are fail-closed.  The
-            # rollout domains must resolve directly to the attested VIP.
-            raise AttestationError("DNS response contains a non-address answer") from error
+        except ValueError:
+            target = candidate.lower().rstrip(".")
+            if target not in managed_hosts or target == host:
+                raise AttestationError(
+                    "DNS response delegates outside the managed hosts"
+                ) from None
+            if addresses:
+                raise AttestationError(
+                    "DNS response interleaves a CNAME after addresses"
+                ) from None
+            chain.append(target)
+            continue
         if address.version != version:
             raise AttestationError("DNS response contains the wrong address family")
         addresses.add(address.compressed)
-    return sorted(addresses, key=lambda item: ipaddress.ip_address(item).packed)
+    return sorted(addresses, key=lambda item: ipaddress.ip_address(item).packed), chain
 
 
 def _provider_name(resource: dict[str, Any], expected: str, label: str) -> None:
@@ -634,12 +653,18 @@ def _capture_frontend(request: dict[str, Any]) -> dict[str, Any]:
     dns: list[dict[str, Any]] = []
     expected_a = [vip] if ipaddress.ip_address(vip).version == 4 else []
     expected_aaaa = [vip] if ipaddress.ip_address(vip).version == 6 else []
+    managed = frozenset(hosts)
     for host in hosts:
-        records_a = _dig(host, "A")
-        records_aaaa = _dig(host, "AAAA")
+        records_a, chain_a = _dig(host, "A", managed)
+        records_aaaa, chain_aaaa = _dig(host, "AAAA", managed)
         if records_a != expected_a or records_aaaa != expected_aaaa:
             raise AttestationError("public DNS does not resolve exactly to the attested VIP")
-        dns.append({"host": host, "a": records_a, "aaaa": records_aaaa})
+        if chain_a != chain_aaaa:
+            raise AttestationError("public DNS CNAME chain differs between address families")
+        entry: dict[str, Any] = {"host": host, "a": records_a, "aaaa": records_aaaa}
+        if chain_a:
+            entry["cname"] = chain_a
+        dns.append(entry)
 
     return {
         "forwarding_rule": {
@@ -867,9 +892,22 @@ def _validate_frontend_artifact(value: Any, request: dict[str, Any]) -> None:
         raise AttestationError("artifact DNS inventory is invalid")
     expected_a = [vip] if ipaddress.ip_address(vip).version == 4 else []
     expected_aaaa = [vip] if ipaddress.ip_address(vip).version == 6 else []
+    managed = frozenset(request["hosts"])
     for item, host in zip(dns, request["hosts"], strict=True):
-        item = _exact_dict(item, {"host", "a", "aaaa"}, "DNS attestation")
-        if item != {"host": host, "a": expected_a, "aaaa": expected_aaaa}:
+        if not isinstance(item, dict):
+            raise AttestationError("DNS attestation fields differ from schema v1")
+        keys = {"host", "a", "aaaa"} | ({"cname"} if "cname" in item else set())
+        item = _exact_dict(item, keys, "DNS attestation")
+        chain = item.get("cname", [])
+        chain_ok = (
+            isinstance(chain, list)
+            and (chain or "cname" not in item)
+            and len(set(chain)) == len(chain)
+            and all(isinstance(t, str) and t in managed and t != host for t in chain)
+        )
+        if not chain_ok:
+            raise AttestationError("artifact DNS CNAME chain is invalid")
+        if (item["host"], item["a"], item["aaaa"]) != (host, expected_a, expected_aaaa):
             raise AttestationError("artifact DNS contract differs")
 
 

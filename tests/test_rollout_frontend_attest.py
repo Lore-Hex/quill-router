@@ -24,7 +24,6 @@ HOSTS = [
     "trustedrouter.com",
     "www.trustedrouter.com",
     "status.trustedrouter.com",
-    "trust.trustedrouter.com",
     "eu.trustedrouter.com",
     "status-us.trustedrouter.com",
     "status-eu.trustedrouter.com",
@@ -478,3 +477,46 @@ def test_capture_replaces_existing_artifact_with_mode_0600(harness: Harness) -> 
     assert captured.returncode == 0, captured.stderr
     assert stat.S_IMODE(harness.artifact.stat().st_mode) == 0o600
     assert json.loads(harness.artifact.read_text(encoding="utf-8"))["schema_version"] == 1
+
+
+def test_capture_accepts_a_cname_that_chains_through_a_managed_host(harness: Harness) -> None:
+    """www is a CNAME to the apex by production DNS policy; the apex is attested.
+
+    The chain is recorded in the artifact so verify re-checks the same path.
+    """
+    harness.state["dns"]["www.trustedrouter.com"]["A"] = ["trustedrouter.com.", VIP]
+    harness.state["dns"]["www.trustedrouter.com"]["AAAA"] = ["trustedrouter.com."]
+    harness.write_state()
+
+    captured = harness.capture()
+    assert captured.returncode == 0, captured.stderr
+    artifact = json.loads(harness.artifact.read_text(encoding="utf-8"))
+    entries = {entry["host"]: entry for entry in artifact["frontend"]["dns"]}
+    assert entries["www.trustedrouter.com"]["cname"] == ["trustedrouter.com"]
+    assert entries["www.trustedrouter.com"]["a"] == [VIP]
+    assert "cname" not in entries["trustedrouter.com"]
+
+    verified = harness.verify()
+    assert verified.returncode == 0, verified.stderr
+
+
+@pytest.mark.parametrize(
+    "answers",
+    [
+        ["lore-hex.github.io.", "185.199.111.153"],
+        ["trustedrouter.com.", "lore-hex.github.io.", VIP],
+        [VIP, "trustedrouter.com."],
+        ["www.trustedrouter.com.", VIP],
+    ],
+    ids=["outside-managed", "outside-mid-chain", "cname-after-address", "self-cname"],
+)
+def test_capture_rejects_cnames_that_leave_the_managed_set(
+    harness: Harness, answers: list[str]
+) -> None:
+    harness.state["dns"]["www.trustedrouter.com"]["A"] = answers
+    harness.write_state()
+
+    captured = harness.capture()
+    assert captured.returncode != 0
+    assert "DNS response" in captured.stderr
+    assert not harness.artifact.exists()

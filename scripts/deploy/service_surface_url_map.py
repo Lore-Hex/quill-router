@@ -228,6 +228,13 @@ def first_party_hosts(domains: list[str] | tuple[str, ...]) -> list[str]:
                 "status-eu.trustedrouter.com",
             }
         )
+        # trust.trustedrouter.com is published by the enclave repository
+        # (quill-cloud-proxy) as a static site and its DNS is owned there
+        # (tools/fix-trustedrouter-dns.sh pins the CNAME). The control LB must
+        # not claim it: a host rule here would be unreachable today and would
+        # invite a later DNS flip that the enclave tooling reverts. The brand
+        # trust hosts stay, because the application serves them.
+        hosts.discard("trust.trustedrouter.com")
     return sorted(hosts)
 
 

@@ -96,7 +96,6 @@ FRONTEND_HOSTS = (
     "trustedrouter.com",
     "www.trustedrouter.com",
     "status.trustedrouter.com",
-    "trust.trustedrouter.com",
     "eu.trustedrouter.com",
     "status-us.trustedrouter.com",
     "status-eu.trustedrouter.com",
@@ -554,6 +553,7 @@ def _initial_state() -> dict[str, Any]:
         f"{prefix}{domain}"
         for domain in ("trustedrouter.com", "allyrouter.com", "uptimerouter.com")
         for prefix in ("", "www.", "status.", "trust.")
+        if f"{prefix}{domain}" != "trust.trustedrouter.com"
     ] + ["eu.trustedrouter.com", "status-us.trustedrouter.com", "status-eu.trustedrouter.com"]
     prior_map = {
         "name": "trusted-router-map",

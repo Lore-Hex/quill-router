@@ -10,7 +10,12 @@ false until every provider-side verification has been captured after rollout.
 - The exact managed apex, `www`, `status`, and `trust` hosts for
   `trustedrouter.com`, `allyrouter.com`, and `uptimerouter.com` share the GCP
   public load balancer, along with the enumerated TrustedRouter regional/status
-  hosts. First-party wildcard rules are forbidden so attested `api*`, AWS,
+  hosts -- with one exclusion: `trust.trustedrouter.com` is the enclave
+  repository's static site (GitHub Pages; DNS pinned by
+  `quill-cloud-proxy/tools/fix-trustedrouter-dns.sh`) and is not an LB host.
+  `www.trustedrouter.com` is a CNAME to the apex by that same policy; the
+  attestation accepts a CNAME only when it chains through another managed host
+  to the attested VIP. First-party wildcard rules are forbidden so attested `api*`, AWS,
   Azure, alerting, and operational subdomains cannot be stolen during import.
   Every selected backend needs its own attached Cloud Armor policy.
 - The load balancer overwrites `X-TrustedRouter-Client-IP` from

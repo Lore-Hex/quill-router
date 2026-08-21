@@ -171,7 +171,6 @@ def test_rewrite_preserves_explicit_unrelated_hosts_but_defaults_unknown_to_publ
         "trustedrouter.com",
         "www.trustedrouter.com",
         "status.trustedrouter.com",
-        "trust.trustedrouter.com",
         "eu.trustedrouter.com",
         "status-us.trustedrouter.com",
         "status-eu.trustedrouter.com",

@@ -1037,8 +1037,11 @@ def test_edge_surface_inventory_is_total_and_never_claims_live_completion() -> N
     required_hosts.update(
         {"eu.trustedrouter.com", "status-us.trustedrouter.com", "status-eu.trustedrouter.com"}
     )
+    # Enclave-published static site; DNS owned by quill-cloud-proxy, not the LB.
+    required_hosts.discard("trust.trustedrouter.com")
     declared_hosts = {host for surface in surfaces for host in surface.get("hosts", [])}
     assert required_hosts <= declared_hosts
+    assert "trust.trustedrouter.com" not in declared_hosts
     assert {"aws.trustedrouter.com", "api-aws.trustedrouter.com"} <= declared_hosts
     assert {
         "azure.trustedrouter.com",

@@ -65,7 +65,6 @@ FRONTEND_HOSTS = [
     "trustedrouter.com",
     "www.trustedrouter.com",
     "status.trustedrouter.com",
-    "trust.trustedrouter.com",
     "eu.trustedrouter.com",
     "status-us.trustedrouter.com",
     "status-eu.trustedrouter.com",
