@@ -1,5 +1,5 @@
 {
-  "_about": "Azure AI Foundry production candidates for this TrustedRouter subscription. This release artifact has exact approved pricing; deployment, quota, and direct capability canaries must pass the account sync before publication.",
+  "_about": "Azure AI Foundry deployments verified for this TrustedRouter subscription. The account sync publishes only synchronous chat deployments with remaining quota, exact pricing, and successful direct text, tool-call, and required image capability canaries.",
   "provider": "azure",
   "source": "https://management.azure.com/providers/Microsoft.CognitiveServices/locations/eastus2/models",
   "pricing_source": "https://prices.azure.com/api/retail/prices?$filter=serviceName%20eq%20%27Foundry%20Models%27%20and%20armRegionName%20eq%20%27eastus2%27",
@@ -232,5 +232,5 @@
       "azure_deployment_sku": "GlobalStandard"
     }
   ],
-  "generated_at": "2026-08-05T15:58:05Z"
+  "generated_at": "2026-08-21T02:53:54Z"
 }
