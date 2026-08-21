@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Together AI routes that are live ahead of the shared OpenRouter snapshot. Verified against https://api.together.xyz/v1/models on 2026-06-22.",
   "provider": "together",
   "source": "https://api.together.xyz/v1/endpoints?type=serverless",
-  "generated_at": "2026-08-21T21:27:26Z",
+  "generated_at": "2026-08-21T22:27:41Z",
   "model_count": 22,
   "models": [
     {

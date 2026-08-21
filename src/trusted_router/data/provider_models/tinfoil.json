@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Tinfoil models whose live API is ahead of the snapshot. Tinfoil launched Kimi K3 and DeepSeek V4 Flash on 2026-08-20 and supports confidential prompt caching where published by its live feed. Deprecated Tinfoil routes are filtered in catalog.py.",
   "provider": "tinfoil",
   "source": "https://inference.tinfoil.sh/v1/models",
-  "generated_at": "2026-08-21T21:27:26Z",
+  "generated_at": "2026-08-21T22:27:41Z",
   "model_count": 4,
   "models": [
     {
