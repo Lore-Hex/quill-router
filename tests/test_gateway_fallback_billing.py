@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.fakes.spanner import make_fake_store
@@ -93,6 +94,7 @@ def test_allowlisted_uncapped_key_authorizes_from_bounded_regional_escrow() -> N
     settings = Settings(
         environment="test",
         regional_quota_leases_enabled=True,
+        regional_quota_lease_issuance_enabled=True,
         regional_quota_lease_pilot_workspace_ids=workspace.id,
     )
     client = TestClient(
@@ -125,6 +127,128 @@ def test_allowlisted_uncapped_key_authorizes_from_bounded_regional_escrow() -> N
     assert sum(row["reserved"] for row in db.typed[CREDIT_BALANCE_TABLE].values()) > 0
 
 
+def test_capability_only_revision_keeps_uncapped_key_on_exact_global_path() -> None:
+    store, _db, _ = make_fake_store(request_record_write_mode="typed")
+    store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
+    workspace = store.create_workspace(
+        "owner",
+        "regional-capability-only",
+        trial_credit_microdollars=100_000_000,
+    )
+    _raw, api_key = store.create_api_key(
+        workspace_id=workspace.id,
+        name="capability-only",
+        creator_user_id="owner",
+    )
+    configure_store(store)
+    client = TestClient(
+        create_app(
+            Settings(
+                environment="test",
+                regional_quota_leases_enabled=True,
+                regional_quota_lease_issuance_enabled=False,
+                regional_quota_lease_pilot_workspace_ids=workspace.id,
+            ),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+
+    response = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": api_key.hash,
+            "model": "anthropic/claude-opus-4.7",
+            "estimated_input_tokens": 1_000,
+            "max_output_tokens": 100,
+            "route_type": "chat.completions",
+            "idempotency_key": "regional-capability-only",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    authorization = store.get_gateway_authorization(response.json()["data"]["authorization_id"])
+    assert authorization is not None
+    assert authorization.settlement == "local"
+    assert store._list_entities("regional_quota_lease", cls=dict) == []
+
+
+@pytest.mark.parametrize("finalize_kind", ["settle", "refund"])
+def test_capability_only_peer_finalizes_lease_issued_by_enabled_peer(
+    finalize_kind: str,
+) -> None:
+    store, _db, _ = make_fake_store(request_record_write_mode="typed")
+    store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
+    workspace = store.create_workspace(
+        "owner",
+        f"regional-mixed-revision-{finalize_kind}",
+        trial_credit_microdollars=100_000_000,
+    )
+    _raw, api_key = store.create_api_key(
+        workspace_id=workspace.id,
+        name="mixed-revision",
+        creator_user_id="owner",
+    )
+    configure_store(store)
+    issuing_peer = TestClient(
+        create_app(
+            Settings(
+                environment="test",
+                regional_quota_leases_enabled=True,
+                regional_quota_lease_issuance_enabled=True,
+                regional_quota_lease_pilot_workspace_ids=workspace.id,
+            ),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+
+    authorize = issuing_peer.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": api_key.hash,
+            "model": "anthropic/claude-opus-4.7",
+            "estimated_input_tokens": 1_000,
+            "max_output_tokens": 100,
+            "route_type": "chat.completions",
+            "idempotency_key": f"regional-mixed-{finalize_kind}",
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    authorization_id = authorize.json()["data"]["authorization_id"]
+    authorization = store.get_gateway_authorization(authorization_id)
+    assert authorization is not None
+    assert authorization.settlement == "regional_lease"
+
+    # This app represents a different active revision: it retains the ledger
+    # capability, but its traffic-issuance switch is intentionally off.
+    settlement_peer = TestClient(
+        create_app(
+            Settings(
+                environment="test",
+                regional_quota_leases_enabled=True,
+                regional_quota_lease_issuance_enabled=False,
+            ),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+    finalized = settlement_peer.post(
+        f"/v1/internal/gateway/{finalize_kind}",
+        json={
+            "authorization_id": authorization_id,
+            "actual_input_tokens": 900,
+            "actual_output_tokens": 50,
+            "route_type": "chat.completions",
+            "elapsed_seconds": 0.2,
+        },
+    )
+
+    assert finalized.status_code == 200, finalized.text
+    expected = "settled" if finalize_kind == "settle" else "refunded"
+    assert finalized.json()["data"]["finalization_outcome"] == expected
+
+
 def test_capped_key_stays_on_exact_global_authorization_path() -> None:
     store, db, _ = make_fake_store(request_record_write_mode="typed")
     ledger = InMemoryRegionalQuotaLedger()
@@ -146,6 +270,7 @@ def test_capped_key_stays_on_exact_global_authorization_path() -> None:
             Settings(
                 environment="test",
                 regional_quota_leases_enabled=True,
+                regional_quota_lease_issuance_enabled=True,
                 regional_quota_lease_pilot_workspace_ids=workspace.id,
             ),
             configure_store_arg=False,

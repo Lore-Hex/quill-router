@@ -206,7 +206,7 @@ def test_worker_environment_does_not_require_serving_pilot_allowlist() -> None:
     assert settings.regional_quota_lease_pilot_workspaces == frozenset()
 
 
-def test_generic_worker_still_requires_serving_pilot_allowlist() -> None:
+def test_generic_worker_issuance_still_requires_serving_pilot_allowlist() -> None:
     from pydantic import ValidationError
 
     from trusted_router.config import Settings
@@ -222,5 +222,6 @@ def test_generic_worker_still_requires_serving_pilot_allowlist() -> None:
             request_record_write_mode="typed",
             settle_outbox_enabled=True,
             regional_quota_leases_enabled=True,
+            regional_quota_lease_issuance_enabled=True,
             regional_quota_bigtable_app_profiles="us-central1=quota-us",
         )

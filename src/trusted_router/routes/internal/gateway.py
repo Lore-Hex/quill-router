@@ -615,6 +615,7 @@ def _authorize_gateway_sync(
             )
             regional_eligible = (
                 settings.regional_quota_leases_enabled
+                and settings.regional_quota_lease_issuance_enabled
                 and workspace.id in settings.regional_quota_lease_pilot_workspaces
                 and callable(regional_authorize)
                 and estimate > 0
