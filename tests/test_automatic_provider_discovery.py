@@ -35,6 +35,27 @@ def test_openai_discovers_only_live_priced_stable_chat_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manifest = tmp_path / "openai.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "provider": "openai",
+                "models": [
+                    {
+                        "id": "openai/gpt-image-2",
+                        "upstream_id": "gpt-image-2",
+                        "model_type": "chat",
+                        "input_modalities": ["text"],
+                        "output_modalities": ["image"],
+                        "endpoints": ["images"],
+                        "routable": True,
+                        "input_token_price_per_m": 5_000_000,
+                        "output_token_price_per_m": 30_000_000,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(openai, "MANIFEST_PATH", manifest)
     monkeypatch.setattr(openai, "UPSTREAM_ID_MAP", {})
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
@@ -74,9 +95,12 @@ def test_openai_discovers_only_live_priced_stable_chat_models(
     notes = openai.write_provider_manifest(result)
 
     raw = json.loads(manifest.read_text(encoding="utf-8"))
-    assert [row["id"] for row in raw["models"]] == ["openai/gpt-5.6-sol"]
-    assert raw["models"][0]["upstream_id"] == "gpt-5.6-sol"
-    assert raw["models"][0]["input_token_price_per_m"] == 800_000
+    by_id = {row["id"]: row for row in raw["models"]}
+    assert set(by_id) == {"openai/gpt-5.6-sol", "openai/gpt-image-2"}
+    assert by_id["openai/gpt-5.6-sol"]["upstream_id"] == "gpt-5.6-sol"
+    assert by_id["openai/gpt-5.6-sol"]["input_token_price_per_m"] == 800_000
+    assert by_id["openai/gpt-image-2"]["endpoints"] == ["images"]
+    assert by_id["openai/gpt-image-2"]["routable"] is True
     assert probes == [
         {
             "base_url": openai.BASE_URL,
@@ -178,7 +202,18 @@ def test_grok_api_discovers_new_model_with_exact_tiered_prices(
                         "upstream_id": "grok-4.6",
                         "input_token_price_per_m": 1,
                         "output_token_price_per_m": 1,
-                    }
+                    },
+                    {
+                        "id": "x-ai/grok-imagine-image-2.0",
+                        "upstream_id": "grok-imagine-image-2.0",
+                        "model_type": "chat",
+                        "input_modalities": ["text"],
+                        "output_modalities": ["image"],
+                        "endpoints": ["images"],
+                        "routable": True,
+                        "input_token_price_per_m": 0,
+                        "output_token_price_per_m": 0,
+                    },
                 ],
             }
         ),
@@ -235,8 +270,14 @@ def test_grok_api_discovers_new_model_with_exact_tiered_prices(
 
     raw = json.loads(manifest.read_text(encoding="utf-8"))
     by_id = {row["id"]: row for row in raw["models"]}
-    assert set(by_id) == {"x-ai/grok-4.6", "x-ai/grok-6"}
+    assert set(by_id) == {
+        "x-ai/grok-4.6",
+        "x-ai/grok-6",
+        "x-ai/grok-imagine-image-2.0",
+    }
     assert probed == ["grok-6"]
+    assert by_id["x-ai/grok-imagine-image-2.0"]["endpoints"] == ["images"]
+    assert by_id["x-ai/grok-imagine-image-2.0"]["routable"] is True
     assert by_id["x-ai/grok-6"]["price_tiers"] == [
         {
             "max_prompt_tokens": 200_000,

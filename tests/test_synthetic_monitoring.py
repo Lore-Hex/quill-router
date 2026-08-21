@@ -1647,7 +1647,7 @@ async def test_attestation_http_error_is_availability_failure_not_format_failure
 @pytest.mark.asyncio
 async def test_image_generation_probe_validates_binary_and_records_only_metadata() -> None:
     image = b"\xff\xd8\xff" + (b"\x00" * 2048) + b"\xff\xd9"
-    data_url = f"data:image/jpeg;base64,{base64.b64encode(image).decode()}"
+    encoded = base64.b64encode(image).decode()
     requests: list[dict[str, Any]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1655,19 +1655,9 @@ async def test_image_generation_probe_validates_binary_and_records_only_metadata
         return httpx.Response(
             200,
             json={
-                "id": "chatcmpl-image",
-                "model": IMAGE_GENERATION_MODEL,
-                "choices": [{"message": {"content": data_url}}],
-                "trustedrouter": {
-                    "routing": {
-                        "selected_provider": IMAGE_GENERATION_PROVIDER,
-                        "selected_model": IMAGE_GENERATION_MODEL,
-                    }
-                },
-                "usage": {
-                    "cost_microdollars": 88_207,
-                    "provider_usage": {"generation_id": "gen-image"},
-                },
+                "created": 1787200000,
+                "data": [{"b64_json": encoded, "media_type": "image/jpeg"}],
+                "usage": {"prompt_tokens": 7, "completion_tokens": 1120, "total_tokens": 1127, "cost": 0.088207},
             },
         )
 
@@ -1684,26 +1674,20 @@ async def test_image_generation_probe_validates_binary_and_records_only_metadata
     assert sample.output_match is True
     assert sample.selected_provider == IMAGE_GENERATION_PROVIDER
     assert sample.selected_model == IMAGE_GENERATION_MODEL
-    assert sample.generation_id == "gen-image"
+    assert sample.generation_id is None
     assert sample.cost_microdollars == 88_207
     assert requests == [
         {
             "model": IMAGE_GENERATION_MODEL,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": (
-                        "Generate and return an actual square image now, not a textual "
-                        "description. Show one solid red circle centered on a white "
-                        "background."
-                    ),
-                }
-            ],
+            "prompt": (
+                "Generate and return an actual square image now, not a textual "
+                "description. Show one solid red circle centered on a white background."
+            ),
+            "n": 1,
             "provider": {
                 "only": [IMAGE_GENERATION_PROVIDER],
                 "allow_fallbacks": False,
             },
-            "max_tokens": 2048,
             "metadata": {
                 "trustedrouter_synthetic": "true",
                 "probe": "image_generation",
@@ -1712,31 +1696,45 @@ async def test_image_generation_probe_validates_binary_and_records_only_metadata
     ]
     public = json.dumps(sample.public_dict())
     assert "solid red circle" not in public
-    assert data_url not in public
+    assert encoded not in public
     assert "base64" not in public
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("content", "expected_error"),
+    ("data", "expected_error"),
     [
-        ("plain text instead of an image", "invalid_image_payload"),
-        ("data:image/jpeg;base64,not-base64!", "invalid_image_payload"),
+        ([], "invalid_image_payload"),
+        ([{"b64_json": "not-base64!", "media_type": "image/jpeg"}], "invalid_image_payload"),
         (
-            "data:image/jpeg;base64,"
-            + base64.b64encode(b"\xff\xd8\xff" + b"\x00" * 2048).decode(),
+            [{
+                "b64_json": base64.b64encode(b"\xff\xd8\xff" + b"\x00" * 2048).decode(),
+                "media_type": "image/jpeg",
+            }],
+            "invalid_image_payload",
+        ),
+        (
+            [
+                {
+                    "b64_json": base64.b64encode(
+                        b"\xff\xd8\xff" + b"\x00" * 2048 + b"\xff\xd9"
+                    ).decode(),
+                    "media_type": "image/jpeg",
+                },
+                {"b64_json": "not-base64!", "media_type": "image/jpeg"},
+            ],
             "invalid_image_payload",
         ),
     ],
 )
 async def test_image_generation_probe_rejects_missing_or_invalid_images(
-    content: str,
+    data: list[dict[str, str]],
     expected_error: str,
 ) -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            json={"choices": [{"message": {"content": content}}]},
+            json={"data": data},
         )
 
     target = SyntheticTarget("canonical", "https://api.trustedrouter.com/v1", "us-central1")
@@ -2903,23 +2901,19 @@ async def test_image_generation_job_runs_one_probe_and_ingests_metadata(
     from trusted_router.synthetic import image_generation as image_job
 
     image = b"\xff\xd8\xff" + (b"\x00" * 2048) + b"\xff\xd9"
-    data_url = f"data:image/jpeg;base64,{base64.b64encode(image).decode()}"
+    encoded = base64.b64encode(image).decode()
     seen_paths: list[str] = []
     ingested: list[dict[str, Any]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen_paths.append(request.url.path)
-        if request.url.path == "/v1/chat/completions":
+        if request.url.path == "/v1/images":
             return httpx.Response(
                 200,
                 json={
-                    "id": "chatcmpl-image",
-                    "model": IMAGE_GENERATION_MODEL,
-                    "choices": [{"message": {"content": data_url}}],
-                    "trustedrouter": {
-                        "routing": {"selected_provider": IMAGE_GENERATION_PROVIDER}
-                    },
-                    "usage": {"provider_usage": {"generation_id": "gen-image-job"}},
+                    "created": 1787200000,
+                    "data": [{"b64_json": encoded, "media_type": "image/jpeg"}],
+                    "usage": {"cost": 0.09},
                 },
             )
         if request.url.path == "/v1/internal/synthetic/samples":
@@ -2949,15 +2943,16 @@ async def test_image_generation_job_runs_one_probe_and_ingests_metadata(
     result = await image_job.run()
 
     assert result == 0
-    assert seen_paths == ["/v1/chat/completions", "/v1/internal/synthetic/samples"]
+    assert seen_paths == ["/v1/images", "/v1/internal/synthetic/samples"]
     assert len(ingested) == 1
     sample = ingested[0]["samples"][0]
     assert sample["probe_type"] == "image_generation"
     assert sample["status"] == "up"
-    assert data_url not in json.dumps(ingested)
+    assert encoded not in json.dumps(ingested)
     output = json.loads(capsys.readouterr().out)
     assert output["status"] == "up"
-    assert output["generation_id"] == "gen-image-job"
+    assert output["generation_id"] is None
+    assert output["cost_microdollars"] == 90_000
 
 
 @pytest.mark.asyncio
@@ -2968,29 +2963,28 @@ async def test_image_generation_job_confirms_a_text_only_response(
     from trusted_router.synthetic import image_generation as image_job
 
     image = b"\xff\xd8\xff" + (b"\x00" * 2048) + b"\xff\xd9"
-    data_url = f"data:image/jpeg;base64,{base64.b64encode(image).decode()}"
+    encoded = base64.b64encode(image).decode()
     chat_calls = 0
     ingested: list[dict[str, Any]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal chat_calls
-        if request.url.path == "/v1/chat/completions":
+        if request.url.path == "/v1/images":
             chat_calls += 1
             if chat_calls == 1:
                 return httpx.Response(
                     200,
                     json={
-                        "id": "chatcmpl-text-only",
-                        "choices": [{"message": {"content": "I cannot create an image."}}],
-                        "usage": {"cost_microdollars": 82},
+                        "data": [],
+                        "usage": {"cost": 0.000082},
                     },
                 )
             return httpx.Response(
                 200,
                 json={
-                    "id": "chatcmpl-image-confirmed",
-                    "choices": [{"message": {"content": data_url}}],
-                    "usage": {"cost_microdollars": 90_000},
+                    "created": 1787200000,
+                    "data": [{"b64_json": encoded, "media_type": "image/jpeg"}],
+                    "usage": {"cost": 0.09},
                 },
             )
         if request.url.path == "/v1/internal/synthetic/samples":
@@ -3024,11 +3018,12 @@ async def test_image_generation_job_confirms_a_text_only_response(
     assert chat_calls == 2
     assert len(ingested) == 1
     assert [sample["status"] for sample in ingested[0]["samples"]] == ["down", "up"]
-    assert data_url not in json.dumps(ingested)
+    assert encoded not in json.dumps(ingested)
     output = json.loads(capsys.readouterr().out)
     assert output["status"] == "up"
     assert output["attempts"] == 2
-    assert output["generation_id"] == "chatcmpl-image-confirmed"
+    assert output["generation_id"] is None
+    assert output["total_cost_microdollars"] == 90_082
 
 
 class _FakeCell:

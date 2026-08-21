@@ -172,10 +172,10 @@
   },
   "grok": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 9,
     "name": "xAI Grok",
     "privacy": "Policy documented",
-    "route_count": 13,
+    "route_count": 17,
     "route_mode": "Prepaid + BYOK",
     "slug": "grok"
   },
@@ -298,10 +298,10 @@
   },
   "openai": {
     "card_version": 2,
-    "model_count": 44,
+    "model_count": 47,
     "name": "OpenAI",
     "privacy": "Zero retention",
-    "route_count": 74,
+    "route_count": 80,
     "route_mode": "Prepaid + BYOK",
     "slug": "openai"
   },

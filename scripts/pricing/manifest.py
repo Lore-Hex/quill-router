@@ -80,12 +80,15 @@ def write_discovered_chat_manifest(
     manifest_path: Path,
     discovered_rows: dict[str, dict[str, Any]],
     source_url: str,
+    preserved_model_ids: Collection[str] = (),
 ) -> list[str]:
     """Rebuild a chat-provider manifest from a fresh provider catalog.
 
     Discovery modules own model normalization. This shared writer owns the
     safety behavior: preserve annotations, never publish an unpriced route,
     tombstone only after repeated fresh misses, and block mass pruning.
+    ``preserved_model_ids`` keeps separately discovered non-chat surfaces in
+    the same provider manifest without teaching this chat writer their schema.
     """
 
     if manifest_path.exists():
@@ -107,6 +110,11 @@ def write_discovered_chat_manifest(
         if isinstance(row, dict) and isinstance(row.get("id"), str)
     }
     present_rows: dict[str, dict[str, Any]] = {}
+    preserved = set(preserved_model_ids)
+    for model_id in sorted(preserved):
+        existing = existing_by_id.get(model_id)
+        if existing is not None:
+            present_rows[model_id] = dict(existing)
     updated: list[str] = []
     appended: list[str] = []
     for model_id, discovered in sorted(discovered_rows.items()):
@@ -181,7 +189,7 @@ def write_discovered_chat_manifest(
     rebuilt = reconcile_manifest_tombstones(
         rows,
         present_rows,
-        priced_ids=set(result.prices),
+        priced_ids=set(result.prices) | preserved,
         source=result.source,
     )
     guarded = guard_manifest_prune(rows, rebuilt, provider_slug=result.slug)

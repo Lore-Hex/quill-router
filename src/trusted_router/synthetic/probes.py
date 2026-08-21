@@ -1233,13 +1233,13 @@ async def image_generation_probe(
     model: str = IMAGE_GENERATION_MODEL,
     provider: str = IMAGE_GENERATION_PROVIDER,
 ) -> SyntheticProbeSample:
-    """Generate and validate one image without retaining its content."""
-    url = _api_url(target.api_base_url, "/chat/completions")
+    """Generate and validate one normalized image without retaining content."""
+    url = _api_url(target.api_base_url, "/images")
     body = {
         "model": model,
-        "messages": [{"role": "user", "content": _IMAGE_CANARY_PROMPT}],
+        "prompt": _IMAGE_CANARY_PROMPT,
+        "n": 1,
         "provider": {"only": [provider], "allow_fallbacks": False},
-        "max_tokens": 2048,
         "metadata": {
             "trustedrouter_synthetic": "true",
             "probe": "image_generation",
@@ -1276,8 +1276,8 @@ async def image_generation_probe(
             ),
             provider=provider,
             model=model,
-            selected_provider=metadata["selected_provider"],
-            selected_model=metadata["selected_model"],
+            selected_provider=metadata["selected_provider"] or provider,
+            selected_model=metadata["selected_model"] or model,
             generation_id=metadata["generation_id"],
             cost_microdollars=metadata["cost_microdollars"],
             output_match=valid_image,
@@ -1554,6 +1554,15 @@ def _json_object(response: httpx.Response) -> dict[str, Any]:
 
 
 def _has_valid_generated_image(payload: dict[str, Any]) -> bool:
+    data = payload.get("data")
+    if isinstance(data, list):
+        return bool(data) and all(
+            isinstance(item, dict)
+            and isinstance(item.get("b64_json"), str)
+            and isinstance(item.get("media_type"), str)
+            and _valid_base64_image(str(item["b64_json"]), str(item["media_type"]))
+            for item in data
+        )
     return any(_valid_image_data_url(value) for value in _generated_image_data_urls(payload))
 
 
@@ -1601,15 +1610,24 @@ def _valid_image_data_url(value: str) -> bool:
         "data:image/png;base64",
     }:
         return False
+    return _valid_base64_image(encoded, header_lower.removeprefix("data:").removesuffix(";base64"))
+
+
+def _valid_base64_image(encoded: str, media_type: str) -> bool:
+    if len(encoded) > _MAX_IMAGE_DATA_URL_CHARACTERS:
+        return False
     try:
         image = base64.b64decode(encoded, validate=True)
     except (binascii.Error, ValueError):
         return False
     if len(image) < _MIN_VALID_IMAGE_BYTES:
         return False
-    if header_lower in {"data:image/jpeg;base64", "data:image/jpg;base64"}:
+    media_type = media_type.strip().lower()
+    if media_type in {"image/jpeg", "image/jpg"}:
         return image.startswith(b"\xff\xd8\xff") and image.endswith(b"\xff\xd9")
-    return image.startswith(_PNG_SIGNATURE) and image.endswith(_PNG_END)
+    if media_type == "image/png":
+        return image.startswith(_PNG_SIGNATURE) and image.endswith(_PNG_END)
+    return False
 
 
 def _completion_metadata(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1630,6 +1648,8 @@ def _completion_metadata(payload: dict[str, Any]) -> dict[str, Any]:
         raw_cost = provider_usage.get("total_cost_microdollars") or provider_usage.get(
             "cost_microdollars"
         )
+    if raw_cost is None and isinstance(usage.get("cost"), (int, float)):
+        raw_cost = round(float(usage["cost"]) * 1_000_000)
     try:
         cost_microdollars = int(raw_cost or 0)
     except (TypeError, ValueError):
