@@ -360,6 +360,56 @@ def test_store_regional_authorize_settle_replay_and_reconcile_end_to_end() -> No
     )
 
 
+def test_regional_authorize_does_not_escrow_for_unconfigured_region() -> None:
+    store, database, _ = make_fake_store(request_record_write_mode="typed")
+
+    class UsCentralOnlyLedger(InMemoryRegionalQuotaLedger):
+        def supports_region(self, region: str) -> bool:
+            return region == "us-central1"
+
+    store._regional_quota_ledger = UsCentralOnlyLedger()
+    workspace = store.create_workspace(
+        "owner",
+        "regional-unsupported-region",
+        trial_credit_microdollars=100_000_000,
+    )
+    _raw, key = store.create_api_key(
+        workspace_id=workspace.id,
+        name="uncapped",
+        creator_user_id="owner",
+    )
+    before = _credit_totals(database, workspace.id)
+
+    outcome, authorization = store.authorize_gateway_regional(
+        authorization_id="gwa-eu-exact-fallback",
+        workspace_id=workspace.id,
+        key_hash=key.hash,
+        key_usage_shards=key.usage_shard_count,
+        estimate=10_000,
+        model_id="model",
+        provider="provider",
+        requested_model_id="model",
+        candidate_model_ids=["model"],
+        region="europe-west4",
+        endpoint_id="provider/model",
+        candidate_endpoint_ids=["provider/model"],
+        idempotency_key="unsupported-region",
+        idempotency_fingerprint="c" * 64,
+        tags={},
+        expires_at=NOW + timedelta(hours=2),
+        lease_ttl_seconds=60,
+        lease_max_microdollars=10_000_000,
+        lease_max_available_basis_points=1_000,
+        lease_shard_count=16,
+    )
+
+    assert outcome == "unavailable"
+    assert authorization is None
+    assert store._list_entities("regional_quota_lease", cls=dict) == []
+    assert store._list_entities("regional_quota_lease_open", cls=dict) == []
+    assert _credit_totals(database, workspace.id) == before
+
+
 def test_regional_pool_spreads_hot_workspace_across_bounded_lease_shards() -> None:
     store, database, _ = make_fake_store(request_record_write_mode="typed")
     store._regional_quota_ledger = InMemoryRegionalQuotaLedger()

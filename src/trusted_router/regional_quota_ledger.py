@@ -43,6 +43,8 @@ class RegionalLeaseNotFound(RegionalLeaseLedgerError):
 
 
 class RegionalQuotaLedger(Protocol):
+    def supports_region(self, region: str) -> bool: ...
+
     def initialize(self, lease: RegionalQuotaLease) -> RegionalQuotaLease: ...
 
     def get(self, lease_id: str, *, region: str) -> RegionalQuotaLease | None: ...
@@ -104,6 +106,9 @@ class InMemoryRegionalQuotaLedger:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._leases: dict[tuple[str, str], RegionalQuotaLease] = {}
+
+    def supports_region(self, region: str) -> bool:
+        return bool(region)
 
     def initialize(self, lease: RegionalQuotaLease) -> RegionalQuotaLease:
         key = (lease.region, lease.lease_id)
@@ -257,6 +262,9 @@ class BigtableRegionalQuotaLedger:
         self._family_filter = FamilyNameRegexFilter
         self._chain_filter = RowFilterChain
         self._value_filter = ValueRegexFilter
+
+    def supports_region(self, region: str) -> bool:
+        return region in self._tables
 
     def initialize(self, lease: RegionalQuotaLease) -> RegionalQuotaLease:
         table = self._table(lease.region)

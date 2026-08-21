@@ -2752,7 +2752,10 @@ class SpannerBigtableStore:
         """Authorize from bounded regional escrow without touching hot counters."""
 
         ledger = self._regional_quota_ledger
-        if ledger is None:
+        # Do not reserve global Spanner escrow for a region that has no fixed
+        # transactional Bigtable app profile. Unsupported regions remain on
+        # the exact Spanner path without creating a lease to quarantine later.
+        if ledger is None or not ledger.supports_region(region):
             return "unavailable", None
         from trusted_router.regional_quota_ledger import (
             RegionalLeaseLedgerError,
