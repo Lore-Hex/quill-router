@@ -2848,7 +2848,7 @@ async def test_primary_synthetic_job_invokes_scheduled_remediator(
     assert seen_urls == ["https://trustedrouter.com/v1/internal/synthetic/remediate"]
 
 
-def test_synthetic_credential_selection_never_falls_back_to_billing_gateway() -> None:
+def test_synthetic_credential_selection_uses_gateway_only_for_combined_bridge() -> None:
     from trusted_router.synthetic.internal_auth import synthetic_observer_token
 
     both = Settings(
@@ -2860,9 +2860,16 @@ def test_synthetic_credential_selection_never_falls_back_to_billing_gateway() ->
         environment="test",
         internal_gateway_token="billing-only",  # noqa: S106 - test placeholder.
     )
+    bridged = Settings(
+        environment="test",
+        service_surface="combined",
+        allow_deployed_combined_surface=True,
+        internal_gateway_token="billing-only",  # noqa: S106 - test placeholder.
+    )
 
     assert synthetic_observer_token(both) == "observer-only"
     assert synthetic_observer_token(billing_only) is None
+    assert synthetic_observer_token(bridged) == "billing-only"
 
 
 @pytest.mark.asyncio

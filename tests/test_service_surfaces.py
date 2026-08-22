@@ -5,6 +5,7 @@ from collections.abc import Iterable
 import pytest
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
+from pydantic import ValidationError
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
@@ -57,12 +58,31 @@ def _without_shared_health(routes: Iterable[tuple[str, str]]) -> set[tuple[str, 
     }
 
 
-def test_combined_surface_is_rejected_outside_local_and_test() -> None:
-    with pytest.raises(ValueError, match="TR_SERVICE_SURFACE"):
+def test_deployed_combined_surface_requires_the_explicit_migration_bridge() -> None:
+    with pytest.raises(ValidationError, match="TR_ALLOW_DEPLOYED_COMBINED_SURFACE"):
+        Settings(environment="canary", service_surface="combined")
+
+    # Defense in depth: even a Settings object constructed without validation
+    # cannot make create_app mount every authority in a deployed process.
+    unvalidated = Settings.model_construct(
+        environment="canary",
+        service_surface="combined",
+        allow_deployed_combined_surface=False,
+    )
+    with pytest.raises(ValueError, match="TR_ALLOW_DEPLOYED_COMBINED_SURFACE"):
         create_app(
-            Settings(environment="canary", service_surface="combined"),
+            unvalidated,
             configure_store_arg=False,
             init_observability=False,
+        )
+
+
+def test_combined_migration_bridge_cannot_be_enabled_on_a_split_surface() -> None:
+    with pytest.raises(ValidationError, match="may only be set"):
+        Settings(
+            environment="test",
+            service_surface="control",
+            allow_deployed_combined_surface=True,
         )
 
 
@@ -498,6 +518,102 @@ def test_observer_surface_accepts_only_its_own_internal_token() -> None:
 
     assert denied.status_code == 401
     assert admitted.status_code == 400
+
+
+@pytest.mark.parametrize("prefix", ["", "/v1"])
+def test_combined_bridge_preserves_gateway_auth_for_synthetic_and_sentry(
+    prefix: str,
+) -> None:
+    from fastapi.testclient import TestClient
+
+    gateway_token = "legacy-combined-gateway-token"  # noqa: S105 - test token.
+    observer_token = "future-split-observer-token"  # noqa: S105 - test token.
+    settings = Settings.model_construct(
+        environment="canary",
+        service_surface="combined",
+        allow_deployed_combined_surface=True,
+        rate_limit_enabled=False,
+        enable_sentry_test_route=True,
+        internal_gateway_token=gateway_token,
+        observer_internal_token=observer_token,
+    )
+    client = TestClient(
+        create_app(
+            settings,
+            configure_store_arg=False,
+            init_observability=False,
+        ),
+        raise_server_exceptions=False,
+    )
+    malformed = b'{"not": "finished"'
+
+    synthetic_denied = client.post(
+        f"{prefix}/internal/synthetic/run",
+        headers={
+            "x-trustedrouter-internal-token": observer_token,
+            "content-type": "application/json",
+        },
+        content=malformed,
+    )
+    synthetic_admitted = client.post(
+        f"{prefix}/internal/synthetic/run",
+        headers={
+            "x-trustedrouter-internal-token": gateway_token,
+            "content-type": "application/json",
+        },
+        content=malformed,
+    )
+    sentry_denied = client.get(
+        f"{prefix}/internal/sentry-test",
+        headers={"x-trustedrouter-internal-token": observer_token},
+    )
+    sentry_admitted = client.get(
+        f"{prefix}/internal/sentry-test",
+        headers={"x-trustedrouter-internal-token": gateway_token},
+    )
+
+    assert synthetic_denied.status_code == 401
+    assert synthetic_admitted.status_code == 400
+    assert sentry_denied.status_code == 401
+    assert sentry_admitted.status_code == 500
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        "/internal/synthetic/run",
+        "/v1/internal/synthetic/samples",
+        "/internal/sentry-test",
+        "/v1/internal/sentry-test",
+    ),
+)
+def test_observer_credential_selection_changes_only_for_the_combined_bridge(
+    path: str,
+) -> None:
+    from trusted_router.routes.internal._shared import internal_service_credential
+
+    gateway_token = "legacy-combined-gateway-token"  # noqa: S105 - test token.
+    observer_token = "future-split-observer-token"  # noqa: S105 - test token.
+    common = {
+        "environment": "test",
+        "internal_gateway_token": gateway_token,
+        "observer_internal_token": observer_token,
+    }
+    bridged = Settings(
+        **common,
+        service_surface="combined",
+        allow_deployed_combined_surface=True,
+    )
+    unbridged = Settings(**common, service_surface="combined")
+    internal = Settings(**common, service_surface="internal")
+    observer = Settings(**common, service_surface="observer")
+
+    assert internal_service_credential(bridged, path) == ("gateway", gateway_token)
+    for settings in (unbridged, internal, observer):
+        assert internal_service_credential(settings, path) == (
+            "observer",
+            observer_token,
+        )
 
 
 @pytest.mark.parametrize("prefix", ["", "/v1"])

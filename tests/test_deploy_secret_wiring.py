@@ -1,4 +1,6 @@
+import os
 import re
+import subprocess
 from pathlib import Path
 
 from scripts.check_price_coverage import (
@@ -32,6 +34,39 @@ def test_guarded_deploy_applies_clickhouse_delivery_schemas_before_rollout() -> 
     assert workflow.index(generation) < workflow.index(rollout)
     assert workflow.index(provider_outbox) < workflow.index(rollout)
     assert workflow.index(operational_outbox) < workflow.index(rollout)
+
+
+def test_legacy_combined_rollout_requires_and_emits_the_workflow_opt_in() -> None:
+    rollout_path = ROOT / "scripts/deploy/rollout.sh"
+    rollout = rollout_path.read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+
+    env = os.environ.copy()
+    env.pop("TR_ALLOW_DEPLOYED_COMBINED_SURFACE", None)
+    rejected = subprocess.run(  # noqa: S603 - fixed repo-owned script
+        ["bash", str(rollout_path)],  # noqa: S607 - fixed interpreter
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert rejected.returncode != 0
+    assert (
+        "refusing legacy combined rollout: set "
+        "TR_ALLOW_DEPLOYED_COMBINED_SURFACE=true" in rejected.stderr
+    )
+
+    env_vars = rollout.split("ENV_VARS=(", 1)[1].split("\n)", 1)[0]
+    assert '"TR_SERVICE_SURFACE=combined"' in env_vars
+    assert (
+        '"TR_ALLOW_DEPLOYED_COMBINED_SURFACE=${ALLOW_DEPLOYED_COMBINED_SURFACE}"'
+        in env_vars
+    )
+    assert '"TR_RATE_LIMIT_ENABLED=false"' in env_vars
+    assert 'TR_ALLOW_DEPLOYED_COMBINED_SURFACE: "true"' in workflow
+    assert "#712" in rollout
+    assert "#712" in workflow
 
 
 def test_deploy_pins_thirty_cent_signup_credit_policy() -> None:
@@ -197,6 +232,8 @@ def test_production_deploy_provisions_and_schedules_regional_quota_reconciliatio
     assert "europe-west4=tr-quota-europe-west4" not in library
     assert 'SCHEDULE="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULE:-* * * * *}"' in reconciler
     assert "trusted_router.regional_quota_reconcile_cli" in reconciler
+    assert '"TR_ENVIRONMENT=worker"' in reconciler
+    assert '"TR_SERVICE_SURFACE=control"' in reconciler
     assert "--oauth-service-account-email=\"$RUN_SERVICE_ACCOUNT\"" in reconciler
     assert "--clear-headers" in reconciler
     assert "gc secrets" not in reconciler

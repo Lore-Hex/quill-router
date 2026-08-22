@@ -323,12 +323,14 @@ def test_regional_leases_default_off_and_fail_closed_without_dependencies() -> N
     with pytest.raises(ValidationError, match="Spanner GCP backend"):
         Settings(
             environment="staging",
+            service_surface="internal",
             regional_quota_leases_enabled=True,
             regional_quota_lease_pilot_workspace_ids="workspace-1",
         )
     with pytest.raises(ValidationError, match="typed request records"):
         Settings(
             environment="staging",
+            service_surface="internal",
             storage_backend="spanner-bigtable",
             regional_quota_leases_enabled=True,
             regional_quota_lease_pilot_workspace_ids="workspace-1",
@@ -354,6 +356,9 @@ def test_regional_lease_shard_count_is_bounded(count: int) -> None:
 def test_regional_lease_production_config_requires_fixed_profiles_and_outbox() -> None:
     common = {
         "environment": "staging",
+        "service_surface": "internal",
+        "internal_gateway_token": "staging-gateway-" + "g" * 32,
+        "observer_internal_token": "staging-observer-" + "o" * 32,
         "storage_backend": "spanner-bigtable",
         "bigtable_instance_id": "trusted-router-logs",
         "request_record_write_mode": "typed",

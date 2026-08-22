@@ -52,10 +52,27 @@ def register_bedrock_group_buy_public_routes(app: FastAPI, settings: Settings) -
         response_class=HTMLResponse,
         include_in_schema=False,
     )
-    async def group_buy_page() -> HTMLResponse:
+    async def group_buy_page(request: Request) -> HTMLResponse:
+        if _legacy_combined_bridge(settings):
+            principal = _optional_user_principal(request, settings)
+            pledge = await _own_pledge(principal)
+            notice = ""
+            if request.query_params.get("saved") == "1":
+                notice = "Your commitment is saved. You can change or remove it at any time."
+            elif request.query_params.get("withdrawn") == "1":
+                notice = "Your commitment and anonymous message were removed."
+            return await _page_response(
+                settings,
+                principal=principal,
+                pledge=pledge,
+                notice=notice,
+                share_after_commit=request.query_params.get("saved") == "1",
+            )
         # This response is served by the anonymous/CDN-backed surface.  Never
         # inspect a session here: a signed-in visitor must receive the same
-        # cacheable document as everyone else.
+        # cacheable document as everyone else. The explicit legacy combined
+        # bridge above preserves the pre-#714 session-aware URL only until the
+        # split production cutover in #712.
         return await _page_response(settings, principal=None, pledge=None)
 
     @app.get("/v1/bedrock-group-buy")
@@ -80,8 +97,13 @@ def register_bedrock_group_buy_control_routes(app: FastAPI, settings: Settings) 
     async def manage_group_buy_page(request: Request) -> Response:
         principal = _optional_user_principal(request, settings)
         if principal is None:
+            next_path = (
+                "%2Fbedrock-group-buy"
+                if _legacy_combined_bridge(settings)
+                else "%2Fbedrock-group-buy%2Fmanage"
+            )
             return RedirectResponse(
-                "/bedrock-group-buy?reason=signin&next=%2Fbedrock-group-buy%2Fmanage",
+                f"/bedrock-group-buy?reason=signin&next={next_path}",
                 status_code=303,
             )
         pledge = await _own_pledge(principal)
@@ -103,8 +125,13 @@ def register_bedrock_group_buy_control_routes(app: FastAPI, settings: Settings) 
         _assert_same_origin(request, settings)
         principal = _optional_user_principal(request, settings)
         if principal is None:
+            next_path = (
+                "%2Fbedrock-group-buy"
+                if _legacy_combined_bridge(settings)
+                else "%2Fbedrock-group-buy%2Fmanage"
+            )
             return RedirectResponse(
-                "/bedrock-group-buy?reason=signin&next=%2Fbedrock-group-buy%2Fmanage",
+                f"/bedrock-group-buy?reason=signin&next={next_path}",
                 status_code=303,
             )
         payload: dict[str, object] = {}
@@ -123,6 +150,11 @@ def register_bedrock_group_buy_control_routes(app: FastAPI, settings: Settings) 
         _invalidate_public_snapshot()
         if saved is None:
             log.info("bedrock_group_buy.pledge_withdrawn")
+            if _legacy_combined_bridge(settings):
+                return RedirectResponse(
+                    "/bedrock-group-buy?withdrawn=1",
+                    status_code=303,
+                )
             return RedirectResponse(
                 "/bedrock-group-buy/manage?withdrawn=1",
                 status_code=303,
@@ -131,6 +163,11 @@ def register_bedrock_group_buy_control_routes(app: FastAPI, settings: Settings) 
             "bedrock_group_buy.pledge_saved public_message=%s",
             saved.publish_message,
         )
+        if _legacy_combined_bridge(settings):
+            return RedirectResponse(
+                "/bedrock-group-buy?saved=1#share",
+                status_code=303,
+            )
         return RedirectResponse("/bedrock-group-buy/manage?saved=1#share", status_code=303)
 
     @app.post("/bedrock-group-buy/withdraw")
@@ -138,14 +175,21 @@ def register_bedrock_group_buy_control_routes(app: FastAPI, settings: Settings) 
         _assert_same_origin(request, settings)
         principal = _optional_user_principal(request, settings)
         if principal is None:
+            next_path = (
+                "%2Fbedrock-group-buy"
+                if _legacy_combined_bridge(settings)
+                else "%2Fbedrock-group-buy%2Fmanage"
+            )
             return RedirectResponse(
-                "/bedrock-group-buy?reason=signin&next=%2Fbedrock-group-buy%2Fmanage",
+                f"/bedrock-group-buy?reason=signin&next={next_path}",
                 status_code=303,
             )
         assert principal.user is not None
         await run_in_threadpool(STORE.withdraw_bedrock_group_buy_pledge, principal.user.id)
         _invalidate_public_snapshot()
         log.info("bedrock_group_buy.pledge_withdrawn")
+        if _legacy_combined_bridge(settings):
+            return RedirectResponse("/bedrock-group-buy?withdrawn=1", status_code=303)
         return RedirectResponse("/bedrock-group-buy/manage?withdrawn=1", status_code=303)
 
     @app.get("/v1/bedrock-group-buy/me")
@@ -249,6 +293,13 @@ def _invalidate_public_snapshot() -> None:
     with _snapshot_lock:
         _snapshot_value = None
         _snapshot_expires_at = 0.0
+
+
+def _legacy_combined_bridge(settings: Settings) -> bool:
+    return (
+        settings.service_surface == "combined"
+        and settings.allow_deployed_combined_surface
+    )
 
 
 def _optional_user_principal(request: Request, settings: Settings) -> Principal | None:

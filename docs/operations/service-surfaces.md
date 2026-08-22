@@ -1,7 +1,10 @@
 # Service-surface bulkheads
 
 The TrustedRouter FastAPI image runs as an explicit, fail-closed process role.
-Production must never use the local/test-only `combined` role.
+Deployed `combined` mode is rejected by default. The sole temporary exception
+is the guarded GCP compatibility bridge described under Integration status;
+it exists only because the #714 enforcement landed before the #712 production
+split and requires a second, explicit opt-in.
 
 | Surface | Internet ownership | Background ownership | Capacity contract |
 |---|---|---|---|
@@ -138,3 +141,33 @@ service to `control`. Until that reviewed rollout patch lands, the helper must
 not be imported manually against the production URL map. The same patch must
 create and verify the four least-privilege runtime identities; an
 environment-only secret allowlist is insufficient.
+
+Because #714's enforcement landed before #712's production topology, the
+legacy service would otherwise refuse to start before the companion services
+and URL map exist. Until the full cutover in #712 lands, the guarded GCP
+workflow therefore explicitly sets
+`TR_SERVICE_SURFACE=combined` together with the temporary
+`TR_ALLOW_DEPLOYED_COMBINED_SURFACE=true` bridge. The application and rollout
+both reject deployed combined mode without that second opt-in. The bridge also
+requires `TR_RATE_LIMIT_ENABLED=false`: the legacy backend does not yet receive
+the edge-overwritten client identity, so #714's process limiter would otherwise
+collapse all Internet traffic into one bucket. Its existing synthetic and
+Sentry callers continue using the legacy internal gateway token only on this
+explicit bridge; split `internal` and `observer` services remain restricted to
+their dedicated observer token. The bridge also preserves the legacy
+session-aware `/bedrock-group-buy` page and its form return URLs; split
+`public` remains anonymous/cache-safe and split `control` owns the private
+`/bedrock-group-buy/manage` page. The two bounded inquiry/support form limiters
+likewise retain their pre-#714 socket-client identity only on the bridge;
+split `actions` continues to require the edge-overwritten identity contract.
+Remove the flag, rate-limit exception, legacy credential, form-identity and
+group-buy selections, and workflow wiring when #712 installs the split edge
+identity, services, and callers together. This is not an alternative
+production topology.
+
+The regional-quota reconciler Cloud Run Job also declares an explicit
+`TR_SERVICE_SURFACE=control`. It is a one-shot `worker` CLI and mounts no HTTP
+routes; `control` is the narrow role compatible with its existing Sentry and
+account-ledger storage bindings without granting either an internal gateway or
+observer credential. Worker validation skips the interactive control
+service's Stripe, attribution-cookie, and OAuth requirements.

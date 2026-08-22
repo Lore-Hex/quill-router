@@ -3,9 +3,10 @@
 `require_internal_gateway` selects the credential owned by the route, not just
 the process. Billing routes accept only TR_INTERNAL_GATEWAY_TOKEN, while
 synthetic/Sentry routes accept only TR_OBSERVER_INTERNAL_TOKEN even when they
-are mounted on the internal service. That lets provider-facing monitor jobs
-operate without holding the credential that authorizes billing mutations.
-The local/test escape hatch lets unit tests avoid wiring a token.
+are mounted on the internal service. The sole temporary exception is the
+explicit deployed-combined bridge: its pre-#714 monitor jobs still present the
+legacy gateway token until #712 completes the split. The local/test escape
+hatch lets unit tests avoid wiring a token.
 """
 
 from __future__ import annotations
@@ -31,7 +32,11 @@ def internal_service_credential(
     observer_path = normalized_path in _OBSERVER_INTERNAL_EXACT_PATHS or normalized_path.startswith(
         _OBSERVER_INTERNAL_PATH_PREFIXES
     )
-    if observer_path:
+    legacy_combined_bridge = (
+        settings.service_surface == "combined"
+        and settings.allow_deployed_combined_surface
+    )
+    if observer_path and not legacy_combined_bridge:
         return "observer", settings.observer_internal_token
     return "gateway", settings.internal_gateway_token
 

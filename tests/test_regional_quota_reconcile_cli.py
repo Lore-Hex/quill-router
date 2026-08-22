@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
+from trusted_router import config as config_module
 from trusted_router import regional_quota_reconcile_cli as worker
 
 
@@ -191,6 +195,7 @@ def test_worker_environment_does_not_require_serving_pilot_allowlist() -> None:
 
     settings = Settings(
         environment="worker",
+        service_surface="control",
         storage_backend="spanner-bigtable",
         gcp_project_id="project",
         spanner_instance_id="instance",
@@ -206,6 +211,58 @@ def test_worker_environment_does_not_require_serving_pilot_allowlist() -> None:
     assert settings.regional_quota_lease_pilot_workspaces == frozenset()
 
 
+def test_deployed_job_env_selects_only_surface_compatible_with_its_bindings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Exercise the same zero-argument factory the Cloud Run Job CLI calls,
+    # isolated from an operator shell, repo .env, or local developer key file.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(  # noqa: SLF001 - isolate the local-only Settings source.
+        config_module._LocalKeyFileSource,
+        "__call__",
+        lambda _self: {},
+    )
+    for name in tuple(os.environ):
+        if name.startswith("TR_"):
+            monkeypatch.delenv(name)
+    job_env = {
+        "TR_ENVIRONMENT": "worker",
+        "TR_STORAGE_BACKEND": "spanner-bigtable",
+        "TR_GCP_PROJECT_ID": "project",
+        "TR_SPANNER_INSTANCE_ID": "instance",
+        "TR_SPANNER_DATABASE_ID": "database",
+        "TR_BIGTABLE_INSTANCE_ID": "bigtable",
+        "TR_BIGTABLE_GENERATION_TABLE": "generations",
+        "TR_REQUEST_RECORD_WRITE_MODE": "typed",
+        "TR_SETTLE_OUTBOX_ENABLED": "true",
+        "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true",
+        "TR_REGIONAL_QUOTA_RECONCILER_WORKER": "true",
+        "TR_REGIONAL_QUOTA_BIGTABLE_TABLE": "regional-quota",
+        "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": "us-central1=quota-us",
+        "TR_REGIONAL_QUOTA_RECONCILE_LIMIT": "25",
+        "TR_PRIMARY_REGION": "us-central1",
+        "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED": "true",
+        "TR_SENTRY_DSN": "https://example@example.ingest.sentry.io/1",
+    }
+    for name, value in job_env.items():
+        monkeypatch.setenv(name, value)
+
+    invalid_surfaces = ("combined", "public", "actions", "internal", "observer")
+    for surface in invalid_surfaces:
+        monkeypatch.setenv("TR_SERVICE_SURFACE", surface)
+        with pytest.raises(ValidationError):
+            worker.get_settings()
+
+    monkeypatch.setenv("TR_SERVICE_SURFACE", "control")
+    settings = worker.get_settings()
+
+    assert settings.environment == "worker"
+    assert settings.service_surface == "control"
+    assert settings.regional_quota_reconciler_worker is True
+    assert settings.sentry_dsn == job_env["TR_SENTRY_DSN"]
+
+
 def test_generic_worker_issuance_still_requires_serving_pilot_allowlist() -> None:
     from pydantic import ValidationError
 
@@ -214,6 +271,7 @@ def test_generic_worker_issuance_still_requires_serving_pilot_allowlist() -> Non
     with pytest.raises(ValidationError, match="PILOT_WORKSPACE_IDS"):
         Settings(
             environment="worker",
+            service_surface="control",
             storage_backend="spanner-bigtable",
             gcp_project_id="project",
             spanner_instance_id="instance",

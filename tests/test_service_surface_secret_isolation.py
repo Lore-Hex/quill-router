@@ -11,6 +11,7 @@ from trusted_router.acquisition import (
     encode_attribution_cookie,
 )
 from trusted_router.config import SERVICE_SURFACE_SECRET_OWNERS, Settings
+from trusted_router.main import create_app
 
 _ATTRIBUTION_SECRET = "attribution-only-" + "a" * 32
 _GATEWAY_SECRET = "gateway-only-" + "g" * 32
@@ -286,6 +287,120 @@ def _production(surface: str, **overrides: object) -> Settings:
     values: dict[str, object] = {**_PRODUCTION_STORAGE, "service_surface": surface}
     values.update(overrides)
     return Settings(**values)
+
+
+def _full_combined_bridge_production() -> dict[str, object]:
+    """Legacy GCP bindings spanning every future split-service owner."""
+    return {
+        **_PRODUCTION_STORAGE,
+        **_SENSITIVE_TEST_VALUES,
+        "service_surface": "combined",
+        "allow_deployed_combined_surface": True,
+        "rate_limit_enabled": False,
+        "ses_from_email": "noreply@example.com",
+        "ops_chat_webhook_urls": "https://ops.example/hook",
+        "google_data_manager_account_id": "account",
+        "google_data_manager_signup_action_id": "signup",
+        "google_data_manager_activated_action_id": "activated",
+        "google_data_manager_purchase_action_id": "purchase",
+        "adyen_merchant_account": "merchant",
+        "federation_home_base_url": "https://home.example",
+        # The test credential fixtures contain exactly this alias.
+        "trusted_domain_aliases": "allyrouter.com",
+    }
+
+
+def test_production_combined_rejects_full_bindings_without_the_bridge() -> None:
+    values = _full_combined_bridge_production()
+    values.pop("allow_deployed_combined_surface")
+
+    with pytest.raises(
+        ValidationError,
+        match="TR_ALLOW_DEPLOYED_COMBINED_SURFACE",
+    ):
+        Settings(**values)
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ("internal_gateway_token", "stripe_webhook_secret", "stripe_secret_key"),
+)
+def test_combined_bridge_preserves_legacy_required_credentials(field_name: str) -> None:
+    values = _full_combined_bridge_production()
+    values[field_name] = None
+
+    with pytest.raises(ValidationError, match=f"TR_{field_name.upper()}"):
+        Settings(**values)
+
+
+def test_combined_bridge_requires_the_legacy_rate_limiter_to_stay_off() -> None:
+    values = _full_combined_bridge_production()
+    values["rate_limit_enabled"] = True
+
+    with pytest.raises(ValidationError, match="TR_RATE_LIMIT_ENABLED=false"):
+        Settings(**values)
+
+
+@pytest.mark.parametrize(
+    ("surface", "overrides"),
+    (
+        (
+            "public",
+            {
+                "attribution_cookie_secret": _ATTRIBUTION_SECRET,
+                "google_oauth_login_available": False,
+                "github_oauth_login_available": False,
+            },
+        ),
+        ("actions", {}),
+        (
+            "control",
+            {
+                "attribution_cookie_secret": _ATTRIBUTION_SECRET,
+                "stripe_webhook_secret": "whsec-test",
+                "stripe_secret_key": "sk-test",
+            },
+        ),
+        (
+            "internal",
+            {
+                "internal_gateway_token": _GATEWAY_SECRET,
+                "observer_internal_token": _SENSITIVE_TEST_VALUES[
+                    "observer_internal_token"
+                ],
+            },
+        ),
+        (
+            "observer",
+            {
+                "observer_internal_token": _SENSITIVE_TEST_VALUES[
+                    "observer_internal_token"
+                ],
+            },
+        ),
+    ),
+)
+def test_split_deployed_surfaces_keep_their_rate_limiter_default(
+    surface: str,
+    overrides: dict[str, object],
+) -> None:
+    settings = Settings(environment="canary", service_surface=surface, **overrides)
+
+    assert settings.rate_limit_enabled is True
+
+
+def test_combined_bridge_accepts_full_legacy_bindings_and_mounts_all_routes() -> None:
+    settings = Settings(**_full_combined_bridge_production())
+
+    for field_name, expected in _SENSITIVE_TEST_VALUES.items():
+        assert getattr(settings, field_name) == expected
+    app = create_app(
+        settings,
+        configure_store_arg=False,
+        init_observability=False,
+    )
+    paths = {route.path for route in app.routes}
+    assert {"/", "/console", "/internal/gateway/authorize"} <= paths
 
 
 @pytest.mark.parametrize(("field_name", "surface"), _UNAUTHORIZED_SENSITIVE_CASES)
@@ -631,6 +746,8 @@ def test_attribution_and_gateway_credentials_cannot_be_reused() -> None:
             "combined",
             **{
                 **_CONTROL_SECRETS,
+                "allow_deployed_combined_surface": True,
+                "rate_limit_enabled": False,
                 "internal_gateway_token": _GATEWAY_SECRET,
                 "attribution_cookie_secret": _GATEWAY_SECRET,
             },

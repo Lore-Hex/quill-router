@@ -72,7 +72,16 @@ def _console_client() -> tuple[TestClient, Any]:
 def test_phone_funding_default_is_off_in_test_and_local() -> None:
     assert Settings(environment="test").phone_verification_funding_enforced is False
     assert Settings(environment="local").phone_verification_funding_enforced is False
-    assert Settings(environment="staging").phone_verification_funding_enforced is True
+    assert (
+        Settings(
+            environment="staging",
+            service_surface="control",
+            attribution_cookie_secret="staging-attribution-" + "a" * 32,
+            stripe_webhook_secret="whsec_" + "staging",
+            stripe_secret_key="sk_" + "staging",
+        ).phone_verification_funding_enforced
+        is True
+    )
     assert (
         Settings(
             environment="test",
