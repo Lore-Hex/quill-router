@@ -21,13 +21,19 @@ TR_PRIMARY_REGION="${TR_PRIMARY_REGION:-us-central1}"
 # than TR_REGIONS because cold control-plane regions can serve cached public
 # pages without advertising non-existent regional attested gateway hostnames.
 TR_CONTROL_PLANE_REGIONS="${TR_CONTROL_PLANE_REGIONS:-us-central1,us-east4,europe-west4,southamerica-east1}"
-# Comma-separated subset of TR_REGIONS that should run with min_scale=1
-# (always-on warm capacity). Anything in TR_REGIONS but NOT in
-# TR_WARM_REGIONS gets min_scale=0 (scale-to-zero — ~$0/mo idle, cold-
-# start tax on first request). Defaults to the regions where we run an
-# attested enclave MIG. São Paulo is warm as well so its gateway does not pay
-# a control-plane cold-start penalty on authorization or settlement.
+# Comma-separated subset of TR_REGIONS that should run with always-on warm
+# capacity. Anything outside TR_WARM_REGIONS gets min_scale=0 unless the
+# per-region map below says otherwise.
 TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4,southamerica-east1}"
+# Service-level minimums stay allocated across staged revision traffic shifts.
+# US East is deliberately larger: a 2026-08-22 customer burst exhausted the
+# old one-instance / concurrency-two ceiling before Cloud Run could scale.
+TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION="${TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION:-us-central1=2,us-east4=8,europe-west4=2,southamerica-east1=2}"
+# Billing handlers are small, synchronous Spanner operations dispatched to a
+# worker thread. Eight concurrent requests fit comfortably in 2 GiB and avoid
+# cold-starting dozens of instances for a short burst.
+TR_CLOUD_RUN_CONCURRENCY="${TR_CLOUD_RUN_CONCURRENCY:-8}"
+TR_SPANNER_POOL_SIZE="${TR_SPANNER_POOL_SIZE:-8}"
 # Cloud Run memory limit. 2Gi as of 2026-05-10.
 #
 # History of the bloat profile (RSS at idle, then under load):
@@ -38,14 +44,14 @@ TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4,southameri
 #   ~85 MB    google-cloud SDK imports (Spanner gRPC stubs, Bigtable,
 #             KMS, protobuf descriptors) — unavoidable floor
 #   ~50 MB    Spanner FixedSizePool(size=10) (SDK default) at first
-#             use, ~5 MB per gRPC session × 10 sessions; reduced to
-#             FixedSizePool(size=4) in storage_gcp.py → ~30 MB saved
+#             use, ~5 MB per gRPC session × 10 sessions; production pins
+#             eight sessions to match request concurrency without using 10
 #   ~20 MB    FastAPI + Pydantic + Starlette + uvicorn
 #   ~25 MB    create_app() route registration (244 routes worth of
 #             Pydantic dataclass shape metadata + dependency graphs)
-#   ~50-200 MB peak per in-flight request × concurrency
-#             (httpx connection pool + JSON parsing + gRPC streams).
-#             Halved by `--concurrency=2` in rollout.sh.
+#   Billing calls are small metadata payloads and mostly wait on Spanner. The
+#   browser proxy and public routes remain bounded by the 2 GiB container
+#   limit and are covered by staged traffic checks.
 #   ~10 MB    Sentry SDK breadcrumb + transport buffers
 #
 # Lazy-imported only when their first route is hit (not in startup):
@@ -55,6 +61,21 @@ TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4,southameri
 # 2Gi is kept (not lowered to 1Gi) because the per-request peak under
 # spiky bursts can still pin a single instance; the surplus is cheap.
 TR_CLOUD_RUN_MEMORY="${TR_CLOUD_RUN_MEMORY:-2Gi}"
+# The public service must only be reachable from the external Application Load
+# Balancer or from an explicitly private Google path. Authentication is a
+# separate control: public pages remain unauthenticated, but the run.app origin
+# is not an Internet bypass around Cloud Armor.
+TR_CLOUD_RUN_INGRESS="${TR_CLOUD_RUN_INGRESS:-internal-and-cloud-load-balancing}"
+# The legacy combined service has trusted regional synthetic jobs that use its
+# run.app URL through Private Google Access, so it keeps that URL by default.
+# Split public/control/billing services override this independently and disable
+# the URL when they have no trusted direct consumer.
+TR_CLOUD_RUN_DISABLE_DEFAULT_URL="${TR_CLOUD_RUN_DISABLE_DEFAULT_URL:-0}"
+# Service-level cost/saturation bulkhead. Split services set their own value;
+# 20 per region is the safe intermediate ceiling for the legacy combined
+# service. rollout.sh uses Cloud Run's mutable --max service cap, not the
+# per-revision --max-instances setting, so staged traffic cannot double it.
+TR_CLOUD_RUN_MAX_INSTANCES="${TR_CLOUD_RUN_MAX_INSTANCES:-20}"
 SERVICE="${SERVICE:-trusted-router}"
 REPO="${REPO:-trusted-router}"
 IMAGE="${IMAGE:-${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE}:$(git rev-parse --short HEAD 2>/dev/null || echo local)}"

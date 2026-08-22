@@ -16,6 +16,7 @@ from trusted_router.og import (
     og_image_svg,
     pricing_og_image_svg,
 )
+from trusted_router.routes.workspaces import MAX_WORKSPACE_MEMBER_MUTATIONS
 from trusted_router.secrets import LocalKeyFile
 from trusted_router.sentry_config import before_send
 from trusted_router.storage import STORE, InMemoryStore
@@ -151,6 +152,139 @@ def test_users_have_uuid_ids_not_email_identifiers(client: TestClient, user_head
     assert remove.status_code == 200
     members = client.get("/v1/organization/members", headers=org_headers).json()["data"]
     assert all(item["email"] != "bob@example.com" for item in members)
+
+
+@pytest.mark.parametrize(
+    ("suffix", "field_name"),
+    [("add", "emails"), ("remove", "user_ids")],
+)
+def test_workspace_member_mutations_reject_oversized_batches_before_member_store_work(
+    client: TestClient,
+    user_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    suffix: str,
+    field_name: str,
+) -> None:
+    workspace = client.post(
+        "/v1/workspaces",
+        headers=user_headers,
+        json={"name": "Bounded membership"},
+    ).json()["data"]
+    headers = {**user_headers, "x-trustedrouter-workspace": workspace["id"]}
+    member_store_calls: list[str] = []
+
+    def unexpected_member_store_work(*_args: object, **_kwargs: object) -> None:
+        member_store_calls.append("called")
+        raise AssertionError("oversized membership mutation reached Store work")
+
+    monkeypatch.setattr(InMemoryStore, "find_user_by_email", unexpected_member_store_work)
+    monkeypatch.setattr(InMemoryStore, "add_members", unexpected_member_store_work)
+    monkeypatch.setattr(InMemoryStore, "remove_members", unexpected_member_store_work)
+
+    response = client.post(
+        f"/v1/workspaces/{workspace['id']}/members/{suffix}",
+        headers=headers,
+        json={field_name: ["duplicate@example.com"] * (MAX_WORKSPACE_MEMBER_MUTATIONS + 1)},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["type"] == "bad_request"
+    assert member_store_calls == []
+
+
+def test_workspace_member_mutations_deduplicate_before_store(
+    client: TestClient,
+    user_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = client.post(
+        "/v1/workspaces",
+        headers=user_headers,
+        json={"name": "Deduplicated membership"},
+    ).json()["data"]
+    headers = {**user_headers, "x-trustedrouter-workspace": workspace["id"]}
+    added: list[str] = []
+    removed: list[str] = []
+
+    def capture_add(
+        _store: InMemoryStore,
+        _workspace_id: str,
+        emails: list[str],
+        role: str = "member",
+    ) -> list[object]:
+        assert role == "member"
+        added.extend(emails)
+        return []
+
+    def capture_remove(
+        _store: InMemoryStore,
+        _workspace_id: str,
+        identifiers: list[str],
+    ) -> None:
+        removed.extend(identifiers)
+
+    monkeypatch.setattr(InMemoryStore, "add_members", capture_add)
+    monkeypatch.setattr(InMemoryStore, "remove_members", capture_remove)
+
+    add_response = client.post(
+        f"/v1/workspaces/{workspace['id']}/members/add",
+        headers=headers,
+        json={
+            "emails": [
+                " Alice@Example.com ",
+                "alice@example.com",
+                "BOB@example.com",
+            ]
+        },
+    )
+    remove_response = client.post(
+        f"/v1/workspaces/{workspace['id']}/members/remove",
+        headers=headers,
+        json={"user_ids": [" User-1 ", "user-1", "User-2"]},
+    )
+
+    assert add_response.status_code == 200
+    assert added == ["alice@example.com", "bob@example.com"]
+    assert remove_response.status_code == 200
+    assert removed == ["User-1", "User-2"]
+    assert remove_response.json()["data"]["removed"] == 2
+
+
+@pytest.mark.parametrize(
+    "role",
+    ["owner", "x" * 100_000],
+    ids=["privilege-escalation", "oversized"],
+)
+def test_workspace_member_add_rejects_invalid_role_before_member_store_work(
+    client: TestClient,
+    user_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    role: str,
+) -> None:
+    workspace = client.post(
+        "/v1/workspaces",
+        headers=user_headers,
+        json={"name": "Role validation"},
+    ).json()["data"]
+    headers = {**user_headers, "x-trustedrouter-workspace": workspace["id"]}
+    member_store_calls: list[str] = []
+
+    def unexpected_member_store_work(*_args: object, **_kwargs: object) -> None:
+        member_store_calls.append("called")
+        raise AssertionError("invalid role reached member Store work")
+
+    monkeypatch.setattr(InMemoryStore, "find_user_by_email", unexpected_member_store_work)
+    monkeypatch.setattr(InMemoryStore, "add_members", unexpected_member_store_work)
+
+    response = client.post(
+        f"/v1/workspaces/{workspace['id']}/members/add",
+        headers=headers,
+        json={"emails": ["member@example.com"], "role": role},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["type"] == "bad_request"
+    assert member_store_calls == []
 
 
 def test_api_key_secrets_are_salted(client: TestClient, user_headers: dict[str, str]) -> None:
@@ -378,7 +512,8 @@ def test_production_dashboard_does_not_default_to_dev_user_header() -> None:
         Settings(
             **TEST_SES_SETTINGS,
             environment="production",
-            internal_gateway_token="internal-prod-token",  # noqa: S106
+            service_surface="control",
+            attribution_cookie_secret="attribution-cookie-" + "a" * 32,
             stripe_webhook_secret="whsec_test",  # noqa: S106
             stripe_secret_key="sk_test",  # noqa: S106
             sentry_dsn="https://example@example.ingest.sentry.io/1",
@@ -553,21 +688,8 @@ def test_read_only_default_off_lets_writes_through() -> None:
     assert resp.status_code != 503
 
 
-def test_read_only_bypasses_rate_limit_writes() -> None:
-    """Read-only mode must short-circuit rate-limiting too.
-
-    `STORE.hit_rate_limit` does a windowed-counter Spanner write on
-    every allowed request. During a Stage-1 cutover (Phase B-D
-    window) we need ALL writes silent so the source snapshot we
-    exported and imported into nam6 doesn't drift before Phase D
-    flips the env var. The 2026-05-10 cutover surfaced this: ~9
-    rate_limit rows landed on source after Phase B set TR_READ_ONLY
-    because the rate-limit middleware writes regardless of method.
-
-    With read_only=True, even an aggressive rate limit (1 per window)
-    must NOT 429 — every request is just allowed through. Limits
-    resume the moment Phase E drops the flag.
-    """
+def test_read_only_keeps_storage_free_local_rate_limit() -> None:
+    """Read-only cutovers retain admission now that it performs no writes."""
     locked_app = create_app(
         Settings(
             environment="test",
@@ -577,16 +699,11 @@ def test_read_only_bypasses_rate_limit_writes() -> None:
         )
     )
     locked_client = TestClient(locked_app)
-    # Two GETs in the same window. Without the bypass, the second would
-    # be 429 (since limit=1). With the bypass, both pass — the
-    # underlying Spanner write was skipped on each.
+    # Reads keep working, but the second request is still bounded locally.
     first = locked_client.get("/v1/models")
     second = locked_client.get("/v1/models")
     assert first.status_code == 200
-    assert second.status_code == 200, (
-        f"second GET should not be 429 in read-only mode (got "
-        f"{second.status_code}); rate-limit middleware leaked a write"
-    )
+    assert second.status_code == 429
 
 
 def test_rate_limit_returns_stable_openrouter_style_error(
@@ -763,7 +880,7 @@ def test_internal_rate_limit_is_enforced_in_memory(
     assert limited.headers["x-ratelimit-reset"]
 
 
-def test_authenticated_key_rate_limit_still_uses_store(
+def test_public_bearer_does_not_authenticate_or_use_durable_limiter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[dict[str, object]] = []
@@ -783,15 +900,11 @@ def test_authenticated_key_rate_limit_still_uses_store(
     )
 
     assert response.status_code == 200
-    assert [call["namespace"] for call in calls] == ["key"]
+    assert calls == []
 
 
-def test_rate_limit_fails_open_on_store_error(monkeypatch) -> None:
-    """A Spanner abort/deadlock in the rate-limit counter must NEVER 500 a
-    request. Rate limiting is a best-effort guard, so a contended/unavailable
-    store fails OPEN (allow). Regression for the 2026-06-08 production
-    "Aborted: Deadlock with higher priority transaction" that surfaced as an
-    unhandled 500 on bot scanner traffic hammering one IP's counter row."""
+def test_rate_limit_does_not_touch_store_and_remains_local_on_store_error(monkeypatch) -> None:
+    """Request admission must not depend on or amplify a storage outage."""
     def boom(self, *_args, **_kwargs):
         del self
         raise RuntimeError("Aborted: Deadlock with higher priority transaction.")
@@ -805,12 +918,12 @@ def test_rate_limit_fails_open_on_store_error(monkeypatch) -> None:
     )
     client = TestClient(app)
     monkeypatch.setattr(InMemoryStore, "hit_rate_limit", boom)
-    # Even an aggressive limit + a raising store: both requests pass through
-    # (fail-open) — not 429, and crucially not 500.
+    # The storage method is never called. The bounded local source bucket still
+    # rejects the second request rather than failing open during an outage.
     first = client.post("/v1/signup", json={})
     second = client.post("/v1/signup", json={})
     assert first.status_code == 400
-    assert second.status_code == 400
+    assert second.status_code == 429
 
 
 def test_production_config_fails_closed() -> None:
@@ -848,7 +961,8 @@ def test_production_config_fails_closed() -> None:
 def test_production_config_requires_ses_delivery_credentials() -> None:
     values = {
         "environment": "production",
-        "internal_gateway_token": "tok" + "en",
+        "service_surface": "control",
+        "attribution_cookie_secret": "attribution-cookie-" + "a" * 32,
         "stripe_webhook_secret": "whsec_" + "test",
         "stripe_secret_key": "sk_" + "test_secret",
         "sentry_dsn": "https://example@example.ingest.sentry.io/1",
@@ -877,7 +991,8 @@ def test_production_config_requires_ses_delivery_credentials() -> None:
 def test_production_spanner_clickhouse_config_is_explicit_and_bigtable_free() -> None:
     values = {
         "environment": "production",
-        "internal_gateway_token": "tok" + "en",
+        "service_surface": "control",
+        "attribution_cookie_secret": "attribution-cookie-" + "a" * 32,
         "stripe_webhook_secret": "whsec_" + "test",
         "stripe_secret_key": "sk_" + "test_secret",
         "sentry_dsn": "https://example@example.ingest.sentry.io/1",
@@ -908,7 +1023,6 @@ def test_production_spanner_clickhouse_config_is_explicit_and_bigtable_free() ->
 
 
 def test_production_control_plane_does_not_register_inference_routes() -> None:
-    internal_token = "tok" + "en"
     webhook_secret = "whsec_" + "test"
     stripe_key = "sk_" + "test_secret"
     sentry_dsn = "https://example@example.ingest.sentry.io/1"
@@ -916,7 +1030,8 @@ def test_production_control_plane_does_not_register_inference_routes() -> None:
         Settings(
             **TEST_SES_SETTINGS,
             environment="production",
-            internal_gateway_token=internal_token,
+            service_surface="control",
+            attribution_cookie_secret="attribution-cookie-" + "a" * 32,
             stripe_webhook_secret=webhook_secret,
             stripe_secret_key=stripe_key,
             sentry_dsn=sentry_dsn,
@@ -938,7 +1053,8 @@ def test_production_control_plane_does_not_register_inference_routes() -> None:
     assert ("/v1/messages", "POST") not in registered
     assert ("/v1/responses", "POST") not in registered
     assert ("/v1/embeddings", "POST") not in registered
-    assert ("/v1/internal/gateway/authorize", "POST") in registered
+    assert ("/v1/keys", "POST") in registered
+    assert ("/v1/internal/gateway/authorize", "POST") not in registered
 
 
 def test_prompt_output_never_enter_metadata_store(client: TestClient, inference_headers: dict[str, str]) -> None:
@@ -1016,6 +1132,7 @@ def test_internal_rate_limit_guessed_tokens_share_the_ip_bucket(
         environment="test",
         internal_gateway_token=internal_token,
         rate_limit_enabled=True,
+        rate_limit_ip_per_window=3,
         rate_limit_internal_per_window=3,
         rate_limit_window_seconds=60,
     )
@@ -1028,7 +1145,7 @@ def test_internal_rate_limit_guessed_tokens_share_the_ip_bucket(
             headers={"x-trustedrouter-internal-token": f"guess-{n}"},
             json={"api_key_lookup_hash": "irrelevant"},
         )
-        for n in range(settings.rate_limit_internal_per_window + 1)
+        for n in range(settings.rate_limit_ip_per_window + 1)
     ]
 
     # Unique wrong tokens still consume ONE shared (per-IP) bucket: the
@@ -1076,6 +1193,7 @@ def test_internal_rate_limit_precedence_matches_route_auth(
         environment="test",
         internal_gateway_token=internal_token,
         rate_limit_enabled=True,
+        rate_limit_ip_per_window=2,
         rate_limit_internal_per_window=2,
         rate_limit_window_seconds=60,
     )
@@ -1097,7 +1215,7 @@ def test_internal_rate_limit_precedence_matches_route_auth(
             headers={"x-trustedrouter-internal-token": f"stale-{n}"},
             json={"api_key_lookup_hash": key.lookup_hash},
         )
-        for n in range(settings.rate_limit_internal_per_window + 1)
+        for n in range(settings.rate_limit_ip_per_window + 1)
     ]
     assert [r.status_code for r in guesses] == [401, 401, 429]
 
@@ -1157,7 +1275,7 @@ def test_in_memory_rate_limit_window_is_tumbling_not_sliding() -> None:
 def test_in_memory_rate_limit_bucket_cardinality_is_capped() -> None:
     """Attacker-fabricated identities (rotated tokens, spoofed XFF) must not
     grow the process map without bound (review finding on #400, round 3).
-    At the cap, new subjects fold into a shared per-namespace overflow bucket:
+    At the cap, new subjects fold into one shared global overflow bucket:
     memory stays bounded and fabricated identities throttle collectively."""
     import datetime as _dt
     import threading as _threading
@@ -1170,15 +1288,16 @@ def test_in_memory_rate_limit_bucket_cardinality_is_capped() -> None:
     # cap+1 bound below for a reason unrelated to cardinality. Pinning `now`
     # keeps this a test of the cap.
     fixed_now = _dt.datetime(2026, 1, 1, 0, 0, 30, tzinfo=_dt.UTC)
-    for n in range(200):
-        hit = limits.hit(
-            namespace="internal",
-            subject=f"fabricated-{n}",
-            limit=3,
-            window_seconds=60,
-            now=fixed_now,
-        )
-    assert len(limits.buckets) <= 51  # cap + at most the one overflow bucket
+    for namespace_n in range(100):
+        for subject_n in range(2):
+            hit = limits.hit(
+                namespace=f"fabricated-namespace-{namespace_n}",
+                subject=f"fabricated-{subject_n}",
+                limit=3,
+                window_seconds=60,
+                now=fixed_now,
+            )
+    assert len(limits.buckets) <= 50
     # Identities past the cap share the overflow bucket, so a rotation attack
     # is throttled collectively instead of resetting per identity.
     assert hit.allowed is False
@@ -1187,3 +1306,47 @@ def test_in_memory_rate_limit_bucket_cardinality_is_capped() -> None:
         namespace="internal", subject="fabricated-1", limit=3, window_seconds=60
     )
     assert early.allowed is True
+
+
+def test_in_memory_rate_limit_cleanup_keeps_different_window_lengths_independent() -> None:
+    import datetime as _dt
+    import threading as _threading
+
+    from trusted_router.storage_rate_limits import InMemoryRateLimits
+
+    limits = InMemoryRateLimits(lock=_threading.RLock(), max_buckets=10)
+    start = _dt.datetime(2026, 1, 1, 0, 0, 10, tzinfo=_dt.UTC)
+
+    short_first = limits.hit(
+        namespace="shared",
+        subject="subject",
+        limit=1,
+        window_seconds=60,
+        now=start,
+    )
+    long_first = limits.hit(
+        namespace="shared",
+        subject="subject",
+        limit=1,
+        window_seconds=3_600,
+        now=start,
+    )
+    short_next_window = limits.hit(
+        namespace="shared",
+        subject="subject",
+        limit=1,
+        window_seconds=60,
+        now=start + _dt.timedelta(seconds=61),
+    )
+    long_same_window = limits.hit(
+        namespace="shared",
+        subject="subject",
+        limit=1,
+        window_seconds=3_600,
+        now=start + _dt.timedelta(seconds=61),
+    )
+
+    assert short_first.allowed is True
+    assert long_first.allowed is True
+    assert short_next_window.allowed is True
+    assert long_same_window.allowed is False

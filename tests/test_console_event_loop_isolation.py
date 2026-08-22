@@ -177,7 +177,7 @@ def test_console_route_async_split_and_worker_boundaries_are_total() -> None:
     assert "is_wallet_only_user" in stripe_render_callback
 
 
-def test_probe_and_durable_limiter_keep_explicit_worker_boundaries() -> None:
+def test_probe_keeps_worker_boundaries_and_limiter_stays_storage_free() -> None:
     probe_path = _ROOT / "src" / "trusted_router" / "services" / "user_model_probe.py"
     probe_tree = ast.parse(probe_path.read_text(encoding="utf-8"), filename=str(probe_path))
     probe = next(
@@ -198,10 +198,11 @@ def test_probe_and_durable_limiter_keep_explicit_worker_boundaries() -> None:
         for node in ast.walk(middleware_tree)
         if isinstance(node, ast.AsyncFunctionDef) and node.name == "_rate_limit_request"
     )
-    assert _offload_targets(limiter) == ["hit_rate_limit"]
+    assert _offload_targets(limiter) == []
     source = ast.unparse(limiter)
-    assert "if durable:" in source
-    assert "else:\n            hit = hit_rate_limit" in source
+    assert "ingress_rate_limits.hit" in source
+    assert "STORE.hit_rate_limit" not in source
+    assert "run_in_threadpool" not in source
 
 
 async def _wait_until_started(started: threading.Event) -> None:
@@ -409,25 +410,22 @@ def test_stripe_fragment_template_render_runs_off_loop_and_keeps_heartbeat_alive
     asyncio.run(asyncio.wait_for(scenario(), timeout=10.0))
 
 
-def test_durable_rate_limit_runs_off_loop_and_keeps_heartbeat_alive(
+def test_http_rate_limit_never_schedules_durable_store_work(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = create_app(
         Settings(environment="test", rate_limit_enabled=True),
         init_observability=False,
     )
-    started = threading.Event()
-    release = threading.Event()
-    storage_thread: dict[str, int] = {}
-    original = InMemoryStore.hit_rate_limit
+    store_calls = 0
 
-    def blocking_hit(self: InMemoryStore, **kwargs: Any) -> Any:
-        storage_thread["id"] = threading.get_ident()
-        started.set()
-        assert release.wait(timeout=2.0), "durable limiter blocked the event loop"
-        return original(self, **kwargs)
+    def reject_store_hit(self: InMemoryStore, **_kwargs: Any) -> Any:
+        del self
+        nonlocal store_calls
+        store_calls += 1
+        raise AssertionError("HTTP limiter touched durable storage")
 
-    monkeypatch.setattr(InMemoryStore, "hit_rate_limit", blocking_hit)
+    monkeypatch.setattr(InMemoryStore, "hit_rate_limit", reject_store_hit)
 
     async def scenario() -> None:
         loop_thread = threading.get_ident()
@@ -436,23 +434,16 @@ def test_durable_rate_limit_runs_off_loop_and_keeps_heartbeat_alive(
             transport=transport,
             base_url="http://testserver",
         ) as client:
-            request = asyncio.create_task(
-                client.post(
-                    "/v1/signup",
-                    headers={"x-forwarded-for": "203.0.113.111"},
-                    json={},
-                )
+            response = await client.post(
+                "/v1/signup",
+                headers={"x-forwarded-for": "203.0.113.111"},
+                json={},
             )
-            try:
-                await _wait_until_started(started)
-                await _five_heartbeats()
-                assert storage_thread["id"] != loop_thread
-            finally:
-                release.set()
-            response = await asyncio.wait_for(request, timeout=5.0)
             assert response.status_code == 400
+            assert threading.get_ident() == loop_thread
+            assert store_calls == 0
 
-    asyncio.run(asyncio.wait_for(scenario(), timeout=10.0))
+    asyncio.run(scenario())
 
 
 def test_public_read_rate_limit_stays_inline(

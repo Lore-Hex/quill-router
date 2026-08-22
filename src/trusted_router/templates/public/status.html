@@ -96,6 +96,24 @@
           {% endfor %}
         </div>
       </div>
+      {% if client_observed.all_traffic %}
+      {% set all_traffic_24h = client_observed.all_traffic.windows["24h"] %}
+      <div class="component-row" data-calibration-view>
+        <div class="component-main">
+          <div>
+            <h3>24h all traffic</h3>
+            <p>calibration view — includes synthetic canary traffic; not the published number</p>
+          </div>
+          <span class="component-status status-unknown">calibration</span>
+        </div>
+        <div class="slo-metrics" aria-label="Client-observed all-traffic calibration view, 24h">
+          <span>Availability <strong>{% if all_traffic_24h.availability_percent is not none %}{{ '%.4f'|format(all_traffic_24h.availability_percent) }}%{% else %}n/a{% endif %}</strong></span>
+          <span>Requests <strong>{{ all_traffic_24h.requests }}</strong></span>
+          <span>p50 total <strong>{% if all_traffic_24h.p50_total_ms is not none %}{{ all_traffic_24h.p50_total_ms }} ms{% else %}n/a{% endif %}</strong></span>
+          <span>p95 total <strong>{% if all_traffic_24h.p95_total_ms is not none %}{{ all_traffic_24h.p95_total_ms }} ms{% else %}n/a{% endif %}</strong></span>
+        </div>
+      </div>
+      {% endif %}
       {% if client_observed.by_host_24h %}
       <div class="component-row">
         <div class="component-main">

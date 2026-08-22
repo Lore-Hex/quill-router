@@ -22,6 +22,12 @@ dependencies = [
   "python-multipart>=0.0.20",
   "sentry-sdk[fastapi]>=2.20.0",
   "stripe>=11.0.0",
+  # The synthetic monitor runs its inference probes through the official
+  # Python SDK so every pass exercises the SDK client-telemetry path
+  # (x-tr-client header + /v1/client-events beacon). It lives in the main
+  # dependencies because the Cloud Run jobs share the control-plane image,
+  # which installs with `uv sync --no-dev` and no extras (Dockerfile).
+  "trusted-router-py>=0.6.0",
   "uvicorn[standard]>=0.32.0",
 ]
 

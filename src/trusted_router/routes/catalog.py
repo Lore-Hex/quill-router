@@ -482,10 +482,6 @@ def register_catalog_routes(router: APIRouter) -> None:
     async def models_count(request: Request) -> dict[str, dict[str, int]]:
         return {"data": {"count": len(_public_model_shapes(request))}}
 
-    @router.get("/models/user")
-    async def models_user(_principal: ManagementPrincipal) -> dict[str, list[dict[str, Any]]]:
-        return {"data": _public_model_shapes()}
-
     @router.get("/models/picker")
     async def models_picker(request: Request) -> Response:
         return _cached_json_response(
@@ -619,3 +615,18 @@ def register_catalog_routes(router: APIRouter) -> None:
         return {
             "data": [provider_to_openrouter_shape(provider) for provider in providers_for_display()]
         }
+
+
+def register_authenticated_catalog_routes(router: APIRouter) -> None:
+    """Register catalog views that require a management principal.
+
+    Keeping this route out of :func:`register_catalog_routes` lets the public
+    service expose immutable catalog data without also mounting an auth-backed
+    endpoint on the anonymous failure domain.
+    """
+
+    @router.get("/models/user")
+    async def models_user(
+        _principal: ManagementPrincipal,
+    ) -> dict[str, list[dict[str, Any]]]:
+        return {"data": list(_public_catalog_payload().shapes)}

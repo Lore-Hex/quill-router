@@ -110,6 +110,7 @@ PROVIDER_SLUGS = [
     "nebius",
     "xiaomi",
     "alibaba",
+    "azure",
     "makora",
     "telnyx",
     "chutes",

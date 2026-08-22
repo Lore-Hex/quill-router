@@ -79,7 +79,7 @@ def test_configured_internal_gateway_token_is_required_even_in_test(user_headers
 
 def test_sentry_test_route_requires_internal_token_not_management_auth() -> None:
     internal_token = "internal" + "-sentry-test"
-    app = create_app(Settings(environment="test", internal_gateway_token=internal_token))
+    app = create_app(Settings(environment="test", observer_internal_token=internal_token))
     client = TestClient(app, raise_server_exceptions=False)
 
     missing = client.get("/v1/internal/sentry-test")
@@ -100,18 +100,14 @@ def test_sentry_test_route_requires_internal_token_not_management_auth() -> None
 def test_sentry_test_route_is_disabled_in_production_unless_explicitly_enabled() -> None:
     base_settings = dict(
         environment="production",
+        service_surface="internal",
         internal_gateway_token="internal-prod-sentry-test",  # noqa: S106 - test config.
-        stripe_webhook_secret="whsec_test",  # noqa: S106 - test config.
-        stripe_secret_key="sk_test_secret",  # noqa: S106 - test config.
+        observer_internal_token="observer-prod-sentry-test",  # noqa: S106 - test config.
         sentry_dsn="https://example@example.ingest.sentry.io/1",
-        aws_access_key_id="test-access-key",
-        aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
-        ses_from_email="noreply@example.com",
         storage_backend="spanner-bigtable",
         spanner_instance_id="trusted-router",
         spanner_database_id="trusted-router",
         bigtable_instance_id="trusted-router-logs",
-        byok_kms_key_name=TEST_BYOK_KMS_KEY_NAME,
     )
     disabled = TestClient(
         create_app(
@@ -132,11 +128,11 @@ def test_sentry_test_route_is_disabled_in_production_unless_explicitly_enabled()
 
     disabled_resp = disabled.get(
         "/v1/internal/sentry-test",
-        headers={"x-trustedrouter-internal-token": "internal-prod-sentry-test"},
+        headers={"x-trustedrouter-internal-token": "observer-prod-sentry-test"},
     )
     enabled_resp = enabled.get(
         "/v1/internal/sentry-test",
-        headers={"x-trustedrouter-internal-token": "internal-prod-sentry-test"},
+        headers={"x-trustedrouter-internal-token": "observer-prod-sentry-test"},
     )
 
     assert disabled_resp.status_code == 404
@@ -144,14 +140,14 @@ def test_sentry_test_route_is_disabled_in_production_unless_explicitly_enabled()
 
 
 def test_production_rejects_spoofable_user_header_auth() -> None:
-    internal_token = "internal" + "-prod-token"
     webhook_secret = "whsec_" + "test"
     stripe_key = "sk_" + "test_secret"
     prod_client = TestClient(
         create_app(
             Settings(
                 environment="production",
-                internal_gateway_token=internal_token,
+                service_surface="control",
+                attribution_cookie_secret="attribution-cookie-" + "a" * 32,
                 stripe_webhook_secret=webhook_secret,
                 stripe_secret_key=stripe_key,
                 sentry_dsn="https://example@example.ingest.sentry.io/1",
@@ -239,6 +235,23 @@ def test_stripe_webhook_rejects_bad_signature_when_secret_configured(monkeypatch
 
     assert rejected.status_code == 400
     assert rejected.json()["error"]["type"] == "bad_request"
+
+
+def test_deployed_stripe_webhook_fails_closed_without_verification_secret() -> None:
+    # Bypass Settings' startup validation to independently pin the route's
+    # defense in depth. A future construction-path regression still must not
+    # make an Internet-deployed webhook trust raw JSON.
+    settings = Settings(environment="test", service_surface="control")
+    settings.environment = "canary"
+    client = TestClient(create_app(settings, init_observability=False))
+
+    response = client.post(
+        "/v1/internal/stripe/webhook",
+        json={"id": "evt-forged", "type": "forged"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["type"] == "service_unavailable"
 
 
 def test_sentry_scrubber_redacts_every_declared_prefix_and_fragment() -> None:
@@ -388,7 +401,7 @@ def test_sentry_drops_untrusted_method_not_allowed_noise(
         {"X-TrustedRouter-Internal-Token": "filtered-secret"},
     ],
 )
-def test_sentry_keeps_trusted_405_and_fingerprints_method_and_path(
+def test_sentry_drops_405_with_spoofable_same_origin_or_unverified_internal_headers(
     headers: dict[str, str] | list[list[str]],
 ) -> None:
     reset_sentry_floodgate_for_tests()
@@ -397,11 +410,37 @@ def test_sentry_keeps_trusted_405_and_fingerprints_method_and_path(
         headers=headers,
     )
 
+    original = json.loads(json.dumps(event))
+
+    assert before_send(event, {}) is None
+    assert event == original
+
+
+def test_sentry_keeps_authenticated_internal_405_and_uses_server_route_identity() -> None:
+    internal_token = "observer" + "-sentry-token"
+    reset_sentry_floodgate_for_tests(
+        settings=Settings(
+            environment="test",
+            observer_internal_token=internal_token,
+        )
+    )
+    event = _method_not_allowed_event(
+        "https://trustedrouter.com/attacker-controlled/raw/path?source=probe",
+        headers={"X-TrustedRouter-Internal-Token": internal_token},
+    )
+    event["transaction"] = "trusted_router.routes.internal.synthetic.route_health"
+    event["transaction_info"] = {"source": "component"}
+
     captured = before_send(event, {})
 
     assert captured is not None
-    assert captured["fingerprint"] == ["http-405", "POST", "/console/settings"]
+    assert captured["fingerprint"] == [
+        "http-405",
+        "POST",
+        "trusted_router.routes.internal.synthetic.route_health",
+    ]
     assert "fingerprint" not in event
+    reset_sentry_floodgate_for_tests()
 
 
 @pytest.mark.parametrize(
@@ -449,17 +488,24 @@ def test_sentry_drops_crawler_405_even_with_same_origin_referer(
 
 
 def test_sentry_keeps_internal_worker_405_with_crawler_shaped_user_agent() -> None:
-    reset_sentry_floodgate_for_tests()
+    internal_token = "private" + "-token"
+    reset_sentry_floodgate_for_tests(
+        settings=Settings(
+            environment="test",
+            observer_internal_token=internal_token,
+        )
+    )
     event = _method_not_allowed_event(
         "https://trustedrouter.com/v1/internal/synthetic/route-health",
         method="GET",
         headers={
             "User-Agent": "trustedrouter-synthetic-bot/1.0",
-            "X-TrustedRouter-Internal-Token": "private-token",
+            "X-TrustedRouter-Internal-Token": internal_token,
         },
     )
 
     assert before_send(event, {}) is not None
+    reset_sentry_floodgate_for_tests()
 
 
 def test_sentry_keeps_crawler_originated_server_error() -> None:
@@ -555,21 +601,60 @@ def test_sentry_floodgate_drops_repeated_issue_after_per_fingerprint_limit() -> 
     reset_sentry_floodgate_for_tests()
 
 
-def test_sentry_floodgate_global_window_caps_repeats_but_keeps_new_issue_discovery() -> None:
+def test_sentry_floodgate_global_window_is_hard_cap_for_new_and_evicted_issues() -> None:
     reset_sentry_floodgate_for_tests(
         settings=Settings(
             environment="test",
             sentry_floodgate_window_seconds=60,
             sentry_floodgate_max_events_per_fingerprint=10,
             sentry_floodgate_max_events_per_window=2,
+            sentry_floodgate_max_fingerprints=1,
         ),
         clock=lambda: 2000.0,
     )
 
     assert before_send({"level": "error", "message": "issue a"}, {}) is not None
     assert before_send({"level": "error", "message": "issue b"}, {}) is not None
+    assert len(sentry_config._floodgate._fingerprints) == 1
     assert before_send({"level": "error", "message": "issue a"}, {}) is None
-    assert before_send({"level": "error", "message": "issue c"}, {}) is not None
+    assert before_send({"level": "error", "message": "issue c"}, {}) is None
+    assert len(sentry_config._floodgate._fingerprints) == 1
+    assert sentry_config._floodgate._global.count == 2
+    reset_sentry_floodgate_for_tests()
+
+
+def test_sentry_floodgate_caps_unique_authenticated_405_paths_and_cardinality() -> None:
+    internal_token = "observer" + "-unique-path-token"
+    hard_max = 3
+    max_fingerprints = 2
+    reset_sentry_floodgate_for_tests(
+        settings=Settings(
+            environment="test",
+            observer_internal_token=internal_token,
+            sentry_floodgate_window_seconds=60,
+            sentry_floodgate_max_events_per_fingerprint=100,
+            sentry_floodgate_max_events_per_window=hard_max,
+            sentry_floodgate_max_fingerprints=max_fingerprints,
+        ),
+        clock=lambda: 2500.0,
+    )
+
+    accepted = []
+    for index in range(hard_max + 20):
+        event = _method_not_allowed_event(
+            f"https://trustedrouter.com/probe/{index}/attacker-selected",
+            headers={"X-TrustedRouter-Internal-Token": internal_token},
+        )
+        captured = before_send(event, {})
+        if captured is not None:
+            accepted.append(captured)
+
+    assert len(accepted) == hard_max
+    assert {tuple(event["fingerprint"]) for event in accepted} == {
+        ("http-405", "POST", "unresolved-route")
+    }
+    assert len(sentry_config._floodgate._fingerprints) <= max_fingerprints
+    assert sentry_config._floodgate._global.count == hard_max
     reset_sentry_floodgate_for_tests()
 
 
@@ -638,10 +723,12 @@ def test_sentry_init_gates_logs_product_at_warning(monkeypatch) -> None:
     monkeypatch.setattr(sentry_logging, "LoggingIntegration", FakeLoggingIntegration)
 
     init_sentry(
-        Settings(
-            environment="staging",
-            sentry_dsn="https://example@example.ingest.sentry.io/1",
-        )
+            Settings(
+                environment="staging",
+                service_surface="observer",
+                observer_internal_token="observer-staging-token",  # noqa: S106
+                sentry_dsn="https://example@example.ingest.sentry.io/1",
+            )
     )
 
     assert len(init_calls) == 1
@@ -669,7 +756,12 @@ def test_sentry_init_is_noop_for_local_scripts_unless_explicitly_enabled() -> No
     )
     assert (
         sentry_should_init(
-            Settings(environment="staging", sentry_dsn=dsn),
+            Settings(
+                environment="staging",
+                service_surface="observer",
+                observer_internal_token="observer-staging-token",  # noqa: S106
+                sentry_dsn=dsn,
+            ),
             running_under_pytest=False,
         )
         is True

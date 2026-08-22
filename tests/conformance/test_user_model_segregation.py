@@ -52,9 +52,15 @@ def segregated_models(client: TestClient) -> list[dict[str, Any]]:
     return models
 
 
-def _mcp_call(client: TestClient, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+def _mcp_call(
+    client: TestClient,
+    headers: dict[str, str],
+    name: str,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
     response = client.post(
         "/mcp",
+        headers=headers,
         json={
             "jsonrpc": "2.0",
             "id": "segregation",
@@ -69,6 +75,7 @@ def _mcp_call(client: TestClient, name: str, arguments: dict[str, Any]) -> dict[
 def test_user_models_are_absent_from_every_frozen_catalog_surface(
     client: TestClient,
     segregated_models: list[dict[str, Any]],
+    inference_headers: dict[str, str],
 ) -> None:
     model_ids = {model["id"] for model in segregated_models}
     bodies = {
@@ -99,13 +106,19 @@ def test_user_models_are_absent_from_every_frozen_catalog_surface(
             assert model_id not in body, surface
         listed = _mcp_call(
             client,
+            inference_headers,
             "models-list",
             {"query": model_id, "limit": 100},
         )
         assert listed["isError"] is False
         listed_json = json.loads(listed["content"][0]["text"])
         assert listed_json["data"] == []
-        fetched = _mcp_call(client, "model-get", {"model": model_id})
+        fetched = _mcp_call(
+            client,
+            inference_headers,
+            "model-get",
+            {"model": model_id},
+        )
         assert fetched["isError"] is True
         assert "Unknown model" in fetched["content"][0]["text"]
 

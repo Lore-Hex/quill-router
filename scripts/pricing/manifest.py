@@ -80,6 +80,7 @@ def write_discovered_chat_manifest(
     manifest_path: Path,
     discovered_rows: dict[str, dict[str, Any]],
     source_url: str,
+    pricing_source_url: str | None = None,
 ) -> list[str]:
     """Rebuild a chat-provider manifest from a fresh provider catalog.
 
@@ -202,6 +203,8 @@ def write_discovered_chat_manifest(
     raw["models"] = rebuilt
     raw["provider"] = result.slug
     raw["source"] = source_url
+    if pricing_source_url is not None:
+        raw["pricing_source"] = pricing_source_url
     raw["generated_at"] = (
         datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     )

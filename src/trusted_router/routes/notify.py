@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Query, Response
 from fastapi.responses import JSONResponse
 
 from trusted_router import phone_verification as pv
@@ -46,6 +46,31 @@ log = logging.getLogger(__name__)
 
 MAX_BODY_CHARS = 1000
 MAX_SUBJECT_CHARS = 120
+
+
+def register_notify_public_routes(router: APIRouter) -> None:
+    @router.api_route("/notify/texml", methods=["GET", "POST"])
+    async def notify_texml(
+        text: str = Query(default="", max_length=MAX_BODY_CHARS),
+    ) -> Response:
+        """Call instructions, fetched by the carrier when a call connects.
+
+        Public and unauthenticated by necessity: a carrier fetches this from its
+        own infrastructure holding no credential of ours. It is safe because it
+        is a bounded pure function of the query string — it reads no state and
+        reveals nothing — and the most an attacker gets is their own sentence
+        read back. Keeping it on the public surface prevents carrier traffic or
+        an anonymous flood from consuming the logged-in control pool.
+        """
+        spoken = spoken_text(branded(text))
+        # XML metacharacters are already stripped by spoken_text; a document
+        # that fails to parse is a call that connects and says nothing, which is
+        # indistinguishable from a page that never arrived.
+        document = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            f'<Response><Say voice="alice">{spoken}</Say></Response>'
+        )
+        return Response(content=document, media_type="application/xml")
 
 
 def register_notify_routes(router: APIRouter) -> None:
@@ -177,26 +202,6 @@ def register_notify_routes(router: APIRouter) -> None:
         # 400 for a wrong code, 409 for a state problem the user must restart.
         code = 400 if status == "mismatch" else 409
         return JSONResponse({"verified": False, "status": status}, status_code=code)
-
-    @router.api_route("/notify/texml", methods=["GET", "POST"])
-    async def notify_texml(text: str = "") -> Response:
-        """Call instructions, fetched by the carrier when a call connects.
-
-        Public and unauthenticated by necessity: a carrier fetches this from its
-        own infrastructure holding no credential of ours. It is safe because it
-        is a pure function of the query string — it reads no state and reveals
-        nothing — and the most an attacker gets is their own sentence read back.
-        """
-        spoken = spoken_text(branded(text))
-        # XML metacharacters are already stripped by spoken_text; a document
-        # that fails to parse is a call that connects and says nothing, which is
-        # indistinguishable from a page that never arrived.
-        document = (
-            '<?xml version="1.0" encoding="UTF-8"?>'
-            f'<Response><Say voice="alice">{spoken}</Say></Response>'
-        )
-        return Response(content=document, media_type="application/xml")
-
 
 def _owner_of(principal: Principal) -> User | None:
     """api_key -> workspace -> owner. The one place a destination is chosen."""

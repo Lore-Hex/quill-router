@@ -21,6 +21,7 @@ from trusted_router.auth import SESSION_COOKIE_NAME, SettingsDep
 from trusted_router.config import Settings
 from trusted_router.domains import request_api_base_url
 from trusted_router.money import format_money_display
+from trusted_router.request_limits import enforce_authenticated_rate_limit
 from trusted_router.storage import (
     STORE,
     AuthSession,
@@ -58,6 +59,12 @@ def require_console_context(request: Request, settings: SettingsDep) -> ConsoleC
     user = context.user
     if user is None:
         raise HTTPException(status_code=302, headers={"Location": "/?reason=signin"})
+    enforce_authenticated_rate_limit(
+        request,
+        settings,
+        credential_kind="session",
+        stable_subject=session.lookup_hash,
+    )
     workspaces = list(context.workspaces)
     if not workspaces:
         raise HTTPException(status_code=302, headers={"Location": "/?reason=signin"})

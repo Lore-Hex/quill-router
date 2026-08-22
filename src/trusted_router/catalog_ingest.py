@@ -140,6 +140,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "databricks",
         "zero-g",
         "openrouter-exclusive",
+        "azure",
     }
 )
 
@@ -762,6 +763,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "tinfoil",
         "xiaomi",
         "alibaba",
+        "azure",
         "meta",
         "openrouter-exclusive",
     ):

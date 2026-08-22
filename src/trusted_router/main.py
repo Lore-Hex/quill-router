@@ -27,30 +27,49 @@ from trusted_router.config import Settings, get_settings
 from trusted_router.dashboard import public_not_found_html
 from trusted_router.errors import error_response
 from trusted_router.middleware import register_http_middleware
+from trusted_router.public_openapi import (
+    load_public_openapi_payload,
+    public_openapi_response,
+)
 from trusted_router.routes.acquisition import register_acquisition_routes
 from trusted_router.routes.activity import register_activity_routes
 from trusted_router.routes.auth import register_auth_routes
-from trusted_router.routes.bedrock_group_buy import register_bedrock_group_buy_routes
+from trusted_router.routes.bedrock_group_buy import (
+    register_bedrock_group_buy_control_routes,
+    register_bedrock_group_buy_public_routes,
+)
 from trusted_router.routes.billing import register_billing_routes
 from trusted_router.routes.broadcast import register_broadcast_routes
 from trusted_router.routes.byok import register_byok_routes
-from trusted_router.routes.catalog import register_catalog_routes
+from trusted_router.routes.catalog import (
+    register_authenticated_catalog_routes,
+    register_catalog_routes,
+)
 from trusted_router.routes.chat_proxy import register_chat_proxy_routes
 from trusted_router.routes.client_events import register_client_events_routes
-from trusted_router.routes.compat import register_compat_stub_routes
+from trusted_router.routes.compat import (
+    register_compat_stub_routes,
+    register_versioned_compat_stub_routes,
+)
 from trusted_router.routes.console import register_console_routes
 from trusted_router.routes.custom_models import register_custom_model_routes
 from trusted_router.routes.email_verify import register_email_verify_routes
 from trusted_router.routes.identity_verify import register_identity_verify_routes
 from trusted_router.routes.inference import register_inference_routes
-from trusted_router.routes.internal import register_internal_routes
+from trusted_router.routes.internal import (
+    register_control_internal_routes,
+    register_external_webhook_routes,
+    register_gateway_internal_routes,
+    register_internal_routes,
+    register_observer_internal_routes,
+)
 from trusted_router.routes.keys import register_key_routes
 from trusted_router.routes.mcp import register_mcp_routes
-from trusted_router.routes.notify import register_notify_routes
+from trusted_router.routes.notify import register_notify_public_routes, register_notify_routes
 from trusted_router.routes.oauth import register_oauth_routes
 from trusted_router.routes.oauth_keys import register_oauth_key_routes
 from trusted_router.routes.provider_portal import register_provider_portal_routes
-from trusted_router.routes.public import register_public_routes
+from trusted_router.routes.public import register_public_action_routes, register_public_routes
 from trusted_router.routes.ses_notifications import register_ses_notification_routes
 from trusted_router.routes.signup import register_signup_routes
 from trusted_router.routes.user_models import register_user_model_routes
@@ -79,6 +98,12 @@ def create_app(
     init_observability: bool = True,
 ) -> FastAPI:
     settings = settings or get_settings()
+    surface = settings.service_surface
+    if surface == "combined" and settings.environment.lower() not in {"local", "test"}:
+        raise ValueError(
+            "TR_SERVICE_SURFACE=combined is restricted to local/test; deploy an explicit "
+            "public, actions, control, internal, or observer service surface"
+        )
     validate_auto_model_order(settings.auto_model_order)
     if configure_store_arg:
         configure_store(create_store(settings))
@@ -95,6 +120,11 @@ def create_app(
         docs_url=None,
         redoc_url=None,
         swagger_ui_oauth2_redirect_url=None,
+        # A combined local/test app keeps FastAPI's dynamic schema. The public
+        # service installs a pre-serialized, comprehensive customer schema
+        # after route registration; protected and regional observer services
+        # expose no local schema endpoint.
+        openapi_url="/openapi.json" if surface == "combined" else None,
     )
     app.state.settings = settings
 
@@ -104,7 +134,8 @@ def create_app(
     # fleet of instances doesn't synchronize; single-flight inside the
     # forwarder collapses overlaps; daemon threads die with the process.
     if (
-        settings.federation_deferred_settlement_enabled
+        surface in {"combined", "internal"}
+        and settings.federation_deferred_settlement_enabled
         and settings.federation_settlement_home_token
     ):
 
@@ -145,7 +176,10 @@ def create_app(
 
             threading.Thread(target=loop, name="home-settlement", daemon=True).start()
 
-    if settings.activation_reminder_interval_seconds > 0:
+    if (
+        surface in {"combined", "control"}
+        and settings.activation_reminder_interval_seconds > 0
+    ):
 
         @app.on_event("startup")
         async def _start_activation_reminder_loop() -> None:  # pragma: no cover - thread wiring
@@ -176,8 +210,13 @@ def create_app(
             _asyncio.create_task(loop())  # noqa: RUF006 - lifetime is the process
 
     # In-process synthetic monitor. See the settings docstring for why the
-    # trigger lives here rather than in each cloud's own scheduler.
-    if settings.synthetic_scheduler_interval_seconds > 0:
+    # trigger lives here rather than in each cloud's own scheduler. Deployments
+    # that use this observer owner must pin the service to one replica; the AWS
+    # observer instead disables it and uses its existing EventBridge rule.
+    if (
+        surface in {"combined", "internal", "observer"}
+        and settings.synthetic_scheduler_interval_seconds > 0
+    ):
 
         @app.on_event("startup")
         async def _start_synthetic_loop() -> None:  # pragma: no cover - thread wiring
@@ -220,8 +259,14 @@ def create_app(
 
     # The standing remediator (command-center Inc 3): detect -> decide ->
     # record on a fixed cadence, on every control plane, outside deploy
-    # windows. Observe mode by default; see synthetic/remediator.py.
-    if settings.remediator_mode != "off" and settings.remediator_in_process_enabled:
+    # windows. Observe mode by default; see synthetic/remediator.py. As with
+    # the synthetic loop, an observer deployment that retains this owner must
+    # be pinned to one replica.
+    if (
+        surface in {"combined", "internal", "observer"}
+        and settings.remediator_mode != "off"
+        and settings.remediator_in_process_enabled
+    ):
 
         @app.on_event("startup")
         async def _start_remediator_loop() -> None:  # pragma: no cover - thread wiring
@@ -331,24 +376,49 @@ def create_app(
         if transient_type not in conflict_types:
             app.add_exception_handler(transient_type, unavailable_exception_handler)
 
-    register_public_routes(app, settings)
-    register_bedrock_group_buy_routes(app, settings)
-    api = _make_api_router(settings)
-    register_oauth_routes(app, api)
-    register_console_routes(app)
-    register_provider_portal_routes(app)
-    register_mcp_routes(app, settings)
-    # /chat-proxy/v1/* — same-origin streaming pipe for the chat
-    # playground. Mounted on the FastAPI app directly (not on `api`) so
-    # it's not re-prefixed; the route declares its own /chat-proxy/v1
-    # prefix. Production inference is intentionally restricted to the
-    # attested gateway, but the browser-side playground needs a same-
-    # origin path because cross-origin fetch to the attested gateway
-    # fails CORS. The proxy pipes raw bytes — no body inspection or
-    # logging — preserving the privacy posture.
-    register_chat_proxy_routes(app)
+    if surface in {"combined", "public", "observer"}:
+        register_public_routes(app, settings)
+    if surface in {"combined", "public"}:
+        register_bedrock_group_buy_public_routes(app, settings)
+    if surface in {"combined", "actions"}:
+        register_public_action_routes(app, settings)
+    if surface in {"combined", "control"}:
+        register_bedrock_group_buy_control_routes(app, settings)
+    api = _make_api_router(settings, surface)
+    if surface in {"combined", "control"}:
+        register_oauth_routes(app, api)
+        register_console_routes(app)
+        register_provider_portal_routes(app)
+        register_mcp_routes(app, settings)
+        # Same-origin streaming pipe for the authenticated chat playground.
+        # It is deliberately absent from anonymous and billing processes.
+        register_chat_proxy_routes(app)
     app.include_router(api)
     app.include_router(api, prefix="/v1")
+    if surface in {"combined", "control"}:
+        versioned_compat = APIRouter()
+        register_versioned_compat_stub_routes(versioned_compat)
+        app.include_router(versioned_compat, prefix="/v1")
+    if surface == "public":
+        # The reference lives with the anonymous site, while account and API
+        # routes live on the protected control service. Load deterministic,
+        # pre-serialized bytes so a cold-start flood cannot make every public
+        # instance construct the protected route inventory or serialize a
+        # multi-megabyte schema per request.
+        payload = load_public_openapi_payload()
+
+        async def public_openapi(request: Request) -> Response:
+            return public_openapi_response(request, payload)
+
+        # Use a Starlette Route rather than an APIRoute: this transport endpoint
+        # serves the already-built contract and is not itself part of that
+        # contract or the application surface-ownership inventory.
+        app.add_route(
+            "/openapi.json",
+            public_openapi,
+            methods=["GET", "HEAD"],
+            include_in_schema=False,
+        )
     return app
 
 
@@ -374,7 +444,7 @@ def _is_public_html_request(request: Request) -> bool:
     )
 
 
-def _make_api_router(settings: Settings) -> APIRouter:
+def _make_api_router(settings: Settings, surface: str) -> APIRouter:
     router = APIRouter()
     inference_router = APIRouter()
 
@@ -384,6 +454,14 @@ def _make_api_router(settings: Settings) -> APIRouter:
 
     @router.get("/ready")
     def ready() -> Response:
+        if surface in {"public", "actions"}:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "ready",
+                    "checks": {"http_surface": "ready"},
+                },
+            )
         try:
             STORE.readiness_check()
         except Exception:
@@ -403,45 +481,73 @@ def _make_api_router(settings: Settings) -> APIRouter:
             },
         )
 
-    @router.get("/coverage/openrouter")
-    async def coverage() -> dict[str, Any]:
-        from trusted_router.openrouter_coverage import ROUTE_COVERAGE
+    if surface in {"combined", "public", "observer"}:
 
-        return {
-            "data": [
-                {"path": item.path, "method": item.method, "kind": item.kind, "note": item.note}
-                for item in ROUTE_COVERAGE
-            ]
-        }
+        @router.get("/coverage/openrouter")
+        async def coverage() -> dict[str, Any]:
+            from trusted_router.openrouter_coverage import ROUTE_COVERAGE
 
-    register_inference_routes(inference_router)
+            return {
+                "data": [
+                    {
+                        "path": item.path,
+                        "method": item.method,
+                        "kind": item.kind,
+                        "note": item.note,
+                    }
+                    for item in ROUTE_COVERAGE
+                ]
+            }
 
-    register_acquisition_routes(router)
-    register_catalog_routes(router)
-    register_auth_routes(router)
-    register_byok_routes(router)
-    register_billing_routes(router)
-    register_broadcast_routes(router)
-    register_custom_model_routes(router)
-    register_user_model_routes(router)
-    register_user_model_public_routes(router)
-    register_key_routes(router)
-    register_oauth_key_routes(router)
-    register_activity_routes(router)
-    register_client_events_routes(router)
-    register_workspace_routes(router)
+        register_acquisition_routes(router)
+        register_catalog_routes(router)
 
-    if _control_plane_inference_enabled(settings):
-        router.include_router(inference_router)
-    register_compat_stub_routes(router)
-    register_signup_routes(router)
-    register_email_verify_routes(router)
-    register_verification_status_routes(router)
-    register_identity_verify_routes(router)
-    register_notify_routes(router)
-    register_wallet_oauth_routes(router)
-    register_ses_notification_routes(router, settings)
-    register_internal_routes(router)
+    if surface in {"combined", "public"}:
+        register_notify_public_routes(router)
+
+    if surface in {"combined", "public"}:
+        # Regional observer deployments use Postgres, whose deliberately
+        # narrow observer projection does not implement the cross-tenant
+        # published-model listing. Keep these anonymous Store-backed reads on
+        # the dedicated public surface instead of turning observer traffic
+        # into 500s (or widening the observer database role).
+        register_user_model_public_routes(router)
+
+    if surface in {"combined", "control"}:
+        register_authenticated_catalog_routes(router)
+        register_auth_routes(router)
+        register_byok_routes(router)
+        register_billing_routes(router)
+        register_broadcast_routes(router)
+        register_custom_model_routes(router)
+        register_user_model_routes(router)
+        register_key_routes(router)
+        register_oauth_key_routes(router)
+        register_activity_routes(router)
+        register_client_events_routes(router)
+        register_workspace_routes(router)
+        if _control_plane_inference_enabled(settings):
+            register_inference_routes(inference_router)
+            router.include_router(inference_router)
+        register_compat_stub_routes(router)
+        register_signup_routes(router)
+        register_email_verify_routes(router)
+        register_verification_status_routes(router)
+        register_identity_verify_routes(router)
+        register_notify_routes(router)
+        register_wallet_oauth_routes(router)
+        register_ses_notification_routes(router, settings)
+
+    if surface == "combined":
+        register_internal_routes(router)
+    elif surface == "control":
+        register_external_webhook_routes(router)
+        register_control_internal_routes(router)
+    elif surface == "internal":
+        register_gateway_internal_routes(router)
+        register_observer_internal_routes(router)
+    elif surface == "observer":
+        register_observer_internal_routes(router)
     return router
 
 

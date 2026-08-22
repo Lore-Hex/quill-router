@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import datetime as dt
 import json
 import random
+import socket
 import threading
 import time
+from collections.abc import AsyncIterator
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -15,6 +18,7 @@ import httpx
 import pytest
 from fastapi import BackgroundTasks
 from fastapi.testclient import TestClient
+from trustedrouter import AsyncTrustedRouter
 
 from trusted_router.catalog import (
     CHEAP_MODEL_ID,
@@ -47,6 +51,7 @@ from trusted_router.storage_gcp_synthetic_rollups import (
 )
 from trusted_router.storage_models import ProviderBenchmarkSample, iso_now, utcnow
 from trusted_router.synthetic.components import sample_slo_class_ids
+from trusted_router.synthetic.inference_sdk import build_inference_sdk, close_inference_sdk
 from trusted_router.synthetic.probes import (
     IMAGE_GENERATION_MODEL,
     IMAGE_GENERATION_PROVIDER,
@@ -83,6 +88,35 @@ from trusted_router.synthetic.route_health import (
     report_route_health,
 )
 from trusted_router.synthetic.status import history_payload, status_snapshot
+
+
+def _closed_local_port() -> int:
+    """A localhost port nothing listens on: connections are refused at once."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+# The SDK sessions' beacon destination in these tests. A refused port keeps
+# the reporter's close-time flush instant and off the network.
+_NO_CONTROL_PLANE = f"http://127.0.0.1:{_closed_local_port()}"
+
+
+@contextlib.asynccontextmanager
+async def _monitor_sdk(
+    client: httpx.AsyncClient, target: SyntheticTarget
+) -> AsyncIterator[AsyncTrustedRouter]:
+    """The production SDK session around a fake-gateway client, closed after use."""
+    sdk = build_inference_sdk(
+        target.api_base_url,
+        api_key="sk-test",
+        http_client=client,
+        control_plane_base_url=_NO_CONTROL_PLANE,
+    )
+    try:
+        yield sdk
+    finally:
+        await close_inference_sdk(sdk)
 
 
 def test_catalog_exposes_free_cheap_and_monitor_meta_models() -> None:
@@ -1607,20 +1641,13 @@ async def test_synthetic_http_probes_parse_success_shapes() -> None:
     async with httpx.AsyncClient(transport=transport) as client:
         health = await tls_health_probe(client, target, monitor_region="us-central1")
         attestation = await attestation_nonce_probe(client, target, monitor_region="us-central1")
-        chat = await openai_chat_pong_probe(
-            client,
-            target,
-            monitor_region="us-central1",
-            api_key="sk-test",  # noqa: S106 - test placeholder.
-            model=MONITOR_MODEL_ID,
-        )
-        responses = await responses_pong_probe(
-            client,
-            target,
-            monitor_region="us-central1",
-            api_key="sk-test",  # noqa: S106 - test placeholder.
-            model=MONITOR_MODEL_ID,
-        )
+        async with _monitor_sdk(client, target) as sdk:
+            chat = await openai_chat_pong_probe(
+                sdk, target, monitor_region="us-central1", model=MONITOR_MODEL_ID
+            )
+            responses = await responses_pong_probe(
+                sdk, target, monitor_region="us-central1", model=MONITOR_MODEL_ID
+            )
 
     assert health.status == "up"
     assert attestation.status == "up"
@@ -1849,35 +1876,26 @@ async def test_pong_probe_accepts_reasoning_model_shapes() -> None:
 
     target = SyntheticTarget("canonical", "https://api.trustedrouter.com/v1", "us-central1")
     async with httpx.AsyncClient(transport=httpx.MockTransport(chat_handler)) as client:
-        chat = await openai_chat_pong_probe(
-            client,
-            target,
-            monitor_region="us-central1",
-            api_key="sk-test",  # noqa: S106 - test placeholder.
-            model=MONITOR_MODEL_ID,
-        )
+        async with _monitor_sdk(client, target) as sdk:
+            chat = await openai_chat_pong_probe(
+                sdk, target, monitor_region="us-central1", model=MONITOR_MODEL_ID
+            )
     assert chat.status == "up", chat.error_type
     assert chat.output_match is True
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(chat_list_handler)) as client:
-        chat_list = await openai_chat_pong_probe(
-            client,
-            target,
-            monitor_region="us-central1",
-            api_key="sk-test",  # noqa: S106 - test placeholder.
-            model=MONITOR_MODEL_ID,
-        )
+        async with _monitor_sdk(client, target) as sdk:
+            chat_list = await openai_chat_pong_probe(
+                sdk, target, monitor_region="us-central1", model=MONITOR_MODEL_ID
+            )
     assert chat_list.status == "up", chat_list.error_type
     assert chat_list.output_match is True
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(responses_handler)) as client:
-        responses = await responses_pong_probe(
-            client,
-            target,
-            monitor_region="us-central1",
-            api_key="sk-test",  # noqa: S106 - test placeholder.
-            model=MONITOR_MODEL_ID,
-        )
+        async with _monitor_sdk(client, target) as sdk:
+            responses = await responses_pong_probe(
+                sdk, target, monitor_region="us-central1", model=MONITOR_MODEL_ID
+            )
     assert responses.status == "up", responses.error_type
     assert responses.output_match is True
 
@@ -1901,13 +1919,10 @@ async def test_pong_probe_still_catches_real_mismatches() -> None:
 
     target = SyntheticTarget("canonical", "https://api.trustedrouter.com/v1", "us-central1")
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        chat = await openai_chat_pong_probe(
-            client,
-            target,
-            monitor_region="us-central1",
-            api_key="sk-test",  # noqa: S106 - test placeholder.
-            model=MONITOR_MODEL_ID,
-        )
+        async with _monitor_sdk(client, target) as sdk:
+            chat = await openai_chat_pong_probe(
+                sdk, target, monitor_region="us-central1", model=MONITOR_MODEL_ID
+            )
 
     assert chat.status == "down"
     assert chat.output_match is False
@@ -2775,7 +2790,8 @@ async def test_primary_synthetic_job_invokes_scheduled_remediator(
     seen_urls: list[str] = []
     remediator_started = asyncio.Event()
 
-    async def empty_pass(**_kwargs: Any) -> tuple[list[Any], list[Any]]:
+    async def empty_pass(**kwargs: Any) -> tuple[list[Any], list[Any]]:
+        assert kwargs["internal_token"] is None
         # A sequential implementation deadlocks here until the test timeout;
         # the remediator must begin while independent probes are in flight.
         await asyncio.wait_for(remediator_started.wait(), timeout=1.0)
@@ -2802,7 +2818,10 @@ async def test_primary_synthetic_job_invokes_scheduled_remediator(
             return None
 
         async def post(self, url: str, **kwargs: Any) -> _Response:
-            assert kwargs["headers"]["x-trustedrouter-internal-token"] == "internal"
+            assert (
+                kwargs["headers"]["x-trustedrouter-internal-token"]
+                == "observer-only"
+            )
             assert kwargs["timeout"].read == 75.0
             seen_urls.append(url)
             remediator_started.set()
@@ -2811,7 +2830,8 @@ async def test_primary_synthetic_job_invokes_scheduled_remediator(
     settings = Settings(
         environment="test",
         sentry_dsn=None,
-        internal_gateway_token="internal",  # noqa: S106 - test placeholder.
+        internal_gateway_token="billing-only",  # noqa: S106 - test placeholder.
+        observer_internal_token="observer-only",  # noqa: S106 - test placeholder.
     )
     monkeypatch.setattr(cli_module, "get_settings", lambda: settings)
     monkeypatch.setattr(cli_module, "_probe_and_rotation_pass", empty_pass)
@@ -2828,12 +2848,106 @@ async def test_primary_synthetic_job_invokes_scheduled_remediator(
     assert seen_urls == ["https://trustedrouter.com/v1/internal/synthetic/remediate"]
 
 
-def test_synthetic_deploy_targets_public_api_domain() -> None:
+def test_synthetic_credential_selection_never_falls_back_to_billing_gateway() -> None:
+    from trusted_router.synthetic.internal_auth import synthetic_observer_token
+
+    both = Settings(
+        environment="test",
+        internal_gateway_token="billing-only",  # noqa: S106 - test placeholder.
+        observer_internal_token="observer-only",  # noqa: S106 - test placeholder.
+    )
+    billing_only = Settings(
+        environment="test",
+        internal_gateway_token="billing-only",  # noqa: S106 - test placeholder.
+    )
+
+    assert synthetic_observer_token(both) == "observer-only"
+    assert synthetic_observer_token(billing_only) is None
+
+
+@pytest.mark.asyncio
+async def test_synthetic_job_ingests_with_observer_token_and_never_runs_ledger_probes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.synthetic import cli as cli_module
+
+    ingested: list[dict[str, Any]] = []
+
+    async def fake_run_synthetic_once(
+        *_args: Any, **_kwargs: Any
+    ) -> list[SyntheticProbeSample]:
+        return [_sample(id="tls", probe_type="tls_health", status="up")]
+
+    async def fake_canary(
+        _client: httpx.AsyncClient, **kwargs: Any
+    ) -> SyntheticProbeSample:
+        return _sample(
+            id="canary",
+            probe_type="client_telemetry_ingest",
+            status="up",
+            monitor_region=str(kwargs["monitor_region"]),
+        )
+
+    async def forbidden_ledger_probe(*_args: Any, **_kwargs: Any) -> list[Any]:
+        raise AssertionError("synthetic job attempted a billing gateway probe")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/internal/synthetic/samples"
+        assert request.headers["x-trustedrouter-internal-token"] == "observer-only"
+        ingested.append(json.loads(request.content))
+        return httpx.Response(200, json={"data": {"recorded": 2}})
+
+    settings = Settings(
+        environment="test",
+        service_surface="observer",
+        internal_gateway_token="billing-only",  # noqa: S106 - test placeholder.
+        observer_internal_token="observer-only",  # noqa: S106 - test placeholder.
+        synthetic_monitor_api_key="sk-tr-test",
+    )
+    real_async_client = httpx.AsyncClient
+    transport = httpx.MockTransport(handler)
+
+    def client_factory(**kwargs: Any) -> httpx.AsyncClient:
+        return real_async_client(transport=transport, **kwargs)
+
+    monkeypatch.setattr(cli_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(cli_module, "run_synthetic_once", fake_run_synthetic_once)
+    monkeypatch.setattr(cli_module, "client_telemetry_canary_probe", fake_canary)
+    monkeypatch.setattr(cli_module, "gateway_billing_probe", forbidden_ledger_probe)
+    monkeypatch.setattr(cli_module, "gateway_fallback_probe", forbidden_ledger_probe)
+    monkeypatch.setattr(cli_module.httpx, "AsyncClient", client_factory)
+    monkeypatch.setenv(
+        "TR_SYNTHETIC_INGEST_URL",
+        "https://trustedrouter.com/v1/internal/synthetic/samples",
+    )
+    monkeypatch.setenv("TR_SYNTHETIC_RUNS_PER_INVOCATION", "1")
+    monkeypatch.delenv("TR_SYNTHETIC_REMEDIATOR_URL", raising=False)
+    monkeypatch.delenv("TR_SYNTHETIC_ROTATION_ENABLED", raising=False)
+    monkeypatch.delenv("TR_SYNTHETIC_THROUGHPUT_ENABLED", raising=False)
+    monkeypatch.delenv("TR_SYNTHETIC_THROUGHPUT_ONLY", raising=False)
+
+    assert await cli_module.run() == 0
+    assert len(ingested) == 1
+    assert {sample["probe_type"] for sample in ingested[0]["samples"]} == {
+        "tls_health",
+        "client_telemetry_ingest",
+    }
+
+
+def test_synthetic_deploy_targets_public_api_and_private_internal_ingest() -> None:
     deploy_script = Path(__file__).resolve().parents[1] / "scripts/deploy/synthetic.sh"
     body = deploy_script.read_text()
 
     assert '"TR_ENVIRONMENT=worker"' in body
     assert '"TR_ENVIRONMENT=production"' not in body
+    assert '"TR_SERVICE_SURFACE=observer"' in body
+    assert '"TR_SERVICE_SURFACE=internal"' not in body
+    assert (
+        '"TR_OBSERVER_INTERNAL_TOKEN=trustedrouter-observer-internal-token:latest"'
+        in body
+    )
+    assert '"TR_INTERNAL_GATEWAY_TOKEN=' not in body
+    assert "TR_INTERNAL_GATEWAY_TOKEN=trustedrouter" not in body
     assert "TR_API_BASE_URL=https://api.trustedrouter.com/v1" in body
     assert "TR_API_BASE_URL=https://api.quillrouter.com/v1" not in body
     assert 'throughput_job_name="trusted-router-throughput-${throughput_region}"' in body
@@ -2856,9 +2970,15 @@ def test_synthetic_deploy_targets_public_api_domain() -> None:
     assert '"${throughput_job_name}-every-two-minutes"' in body
     assert 'image_job_name="trusted-router-image-generation-${image_region}"' in body
     assert (
-        'regional_ingest_base="https://${SERVICE}-${PROJECT_NUMBER}.${monitor_region}.run.app"'
+        'regional_ingest_base="https://${SYNTHETIC_INGEST_SERVICE}-${PROJECT_NUMBER}.'
+        '${monitor_region}.run.app"'
         in body
     )
+    assert (
+        'SYNTHETIC_INGEST_SERVICE="$TR_BILLING_SERVICE"'
+    ) in body
+    assert "TR_SYNTHETIC_INGEST_SERVICE" not in body
+    assert "TR_BILLING_SERVICE must be separate from legacy SERVICE" in body
     assert (
         '"TR_SYNTHETIC_INGEST_URL=${regional_ingest_base}/v1/internal/synthetic/samples"'
         in body
@@ -2923,6 +3043,10 @@ async def test_image_generation_job_runs_one_probe_and_ingests_metadata(
                 },
             )
         if request.url.path == "/v1/internal/synthetic/samples":
+            assert (
+                request.headers["x-trustedrouter-internal-token"]
+                == "observer-test"
+            )
             ingested.append(json.loads(request.content))
             return httpx.Response(200, json={"data": {"recorded": 1}})
         return httpx.Response(404)
@@ -2930,7 +3054,8 @@ async def test_image_generation_job_runs_one_probe_and_ingests_metadata(
     settings = Settings(
         environment="test",
         api_base_url="https://api.trustedrouter.com/v1",
-        internal_gateway_token="internal-test",  # noqa: S106 - test placeholder.
+        internal_gateway_token="billing-test",  # noqa: S106 - test placeholder.
+        observer_internal_token="observer-test",  # noqa: S106 - test placeholder.
         synthetic_monitor_api_key="sk-tr-test",
     )
     real_async_client = httpx.AsyncClient
@@ -2994,6 +3119,10 @@ async def test_image_generation_job_confirms_a_text_only_response(
                 },
             )
         if request.url.path == "/v1/internal/synthetic/samples":
+            assert (
+                request.headers["x-trustedrouter-internal-token"]
+                == "observer-test"
+            )
             ingested.append(json.loads(request.content))
             return httpx.Response(200, json={"data": {"recorded": 2}})
         return httpx.Response(404)
@@ -3001,7 +3130,8 @@ async def test_image_generation_job_confirms_a_text_only_response(
     settings = Settings(
         environment="test",
         api_base_url="https://api.trustedrouter.com/v1",
-        internal_gateway_token="internal-test",  # noqa: S106 - test placeholder.
+        internal_gateway_token="billing-test",  # noqa: S106 - test placeholder.
+        observer_internal_token="observer-test",  # noqa: S106 - test placeholder.
         synthetic_monitor_api_key="sk-tr-test",
     )
     real_async_client = httpx.AsyncClient
@@ -3705,7 +3835,8 @@ def _benchmark_ingest_settings() -> Settings:
     return Settings(
         environment="test",
         sentry_dsn=None,
-        internal_gateway_token="test-internal-secret",  # noqa: S106 - test fixture.
+        internal_gateway_token="test-billing-secret",  # noqa: S106 - test fixture.
+        observer_internal_token="test-observer-secret",  # noqa: S106 - test fixture.
         stripe_secret_key=None,
         stripe_webhook_secret=None,
         google_client_id=None,
@@ -3743,7 +3874,7 @@ def test_internal_benchmark_ingest_records_sample() -> None:
     }
     resp = client.post(
         "/v1/internal/synthetic/benchmark",
-        headers={"x-trustedrouter-internal-token": "test-internal-secret"},
+        headers={"x-trustedrouter-internal-token": "test-observer-secret"},
         json=payload,
     )
     assert resp.status_code == 200
@@ -4232,7 +4363,7 @@ def test_internal_route_health_reports_flags_and_requires_token(
     unauthorized = client.post("/v1/internal/synthetic/route-health")
     response = client.post(
         "/v1/internal/synthetic/route-health",
-        headers={"x-trustedrouter-internal-token": "test-internal-secret"},
+        headers={"x-trustedrouter-internal-token": "test-observer-secret"},
     )
 
     assert unauthorized.status_code in (401, 403)
@@ -4265,7 +4396,7 @@ def test_internal_remediator_runs_between_heartbeats_and_requires_token(
     unauthorized = client.post("/v1/internal/synthetic/remediate")
     response = client.post(
         "/v1/internal/synthetic/remediate",
-        headers={"x-trustedrouter-internal-token": "test-internal-secret"},
+        headers={"x-trustedrouter-internal-token": "test-observer-secret"},
     )
 
     assert unauthorized.status_code in (401, 403)

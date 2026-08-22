@@ -124,6 +124,7 @@ from trusted_router.provider_contract import (
     PROVIDER_CATALOG_V2_SCHEMA,
 )
 from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
+from trusted_router.request_limits import normalized_client_identity
 from trusted_router.serialization import user_model_public_shape
 from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.services.ops_chat import OpsChatSupportMessage, fanout_support_message
@@ -253,8 +254,10 @@ if not _leads_log.handlers:
 _INQUIRY_RATE_LOCK = threading.Lock()
 _INQUIRY_MAX_CLIENTS = 4096
 _INQUIRY_HITS: OrderedDict[str, list[float]] = OrderedDict()
+_INQUIRY_GLOBAL_HITS: list[float] = []
 _INQUIRY_WINDOW_SECONDS = 3600.0
 _INQUIRY_MAX_PER_WINDOW = 5
+_INQUIRY_GLOBAL_MAX_PER_WINDOW = 60
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _SUPPORT_CATEGORIES = {
     "api": "API and routing",
@@ -269,6 +272,9 @@ def _inquiry_rate_ok(client_ip: str, *, now: float | None = None) -> bool:
     now = time.time() if now is None else now
     cutoff = now - _INQUIRY_WINDOW_SECONDS
     with _INQUIRY_RATE_LOCK:
+        _INQUIRY_GLOBAL_HITS[:] = [hit for hit in _INQUIRY_GLOBAL_HITS if hit > cutoff]
+        if len(_INQUIRY_GLOBAL_HITS) >= _INQUIRY_GLOBAL_MAX_PER_WINDOW:
+            return False
         hits = [t for t in _INQUIRY_HITS.get(client_ip, ()) if t > cutoff]
         if len(hits) >= _INQUIRY_MAX_PER_WINDOW:
             _INQUIRY_HITS[client_ip] = hits
@@ -276,6 +282,7 @@ def _inquiry_rate_ok(client_ip: str, *, now: float | None = None) -> bool:
             _bound_inquiry_clients(cutoff)
             return False
         hits.append(now)
+        _INQUIRY_GLOBAL_HITS.append(now)
         _INQUIRY_HITS[client_ip] = hits
         _INQUIRY_HITS.move_to_end(client_ip)
         _bound_inquiry_clients(cutoff)
@@ -318,7 +325,7 @@ async def _handle_trustedos_inquiry(settings: Settings, request: Request) -> JSO
     if not name or not message or not _EMAIL_RE.match(email):
         return JSONResponse({"ok": False, "error": "missing_fields"}, status_code=422)
 
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = normalized_client_identity(request, settings)
     if not _inquiry_rate_ok(client_ip):
         return JSONResponse({"ok": False, "error": "rate_limited"}, status_code=429)
 
@@ -438,7 +445,7 @@ async def _handle_support_inquiry(settings: Settings, request: Request) -> JSONR
     ):
         return JSONResponse({"ok": False, "error": "missing_fields"}, status_code=422)
 
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = normalized_client_identity(request, settings)
     if not _inquiry_rate_ok(f"support:{client_ip}"):
         return JSONResponse({"ok": False, "error": "rate_limited"}, status_code=429)
 
@@ -526,6 +533,18 @@ async def _handle_support_inquiry(settings: Settings, request: Request) -> JSONR
     return JSONResponse({"ok": True})
 
 
+def register_public_action_routes(app: FastAPI, settings: Settings) -> None:
+    """Register the two anonymous actions on their credential-minimal bulkhead."""
+
+    @app.post("/trustedos/inquiry", include_in_schema=False)
+    async def trustedos_inquiry(request: Request) -> JSONResponse:
+        return await _handle_trustedos_inquiry(settings, request)
+
+    @app.post("/support/inquiry", include_in_schema=False)
+    async def support_inquiry(request: Request) -> JSONResponse:
+        return await _handle_support_inquiry(settings, request)
+
+
 def register_public_routes(app: FastAPI, settings: Settings) -> None:
     app.mount("/static", _CachedStaticFiles(directory=STATIC_DIR), name="static")
     trust_release_resolver = TrustReleaseResolver(settings)
@@ -610,13 +629,19 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         response_class=HTMLResponse,
         include_in_schema=False,
     )
-    async def api_reference() -> HTMLResponse:
+    async def api_reference() -> Response:
+        canonical_url = f"https://{settings.trusted_domain}/api/reference"
+        if settings.service_surface == "observer":
+            # Regional status/catalog observers intentionally expose no local
+            # schema. Send readers to the CDN-backed public documentation
+            # service instead of presenting a Swagger shell that fetches 404.
+            return RedirectResponse(url=canonical_url, status_code=307)
         response = get_swagger_ui_html(
             openapi_url=app.openapi_url or "/openapi.json",
             title=f"{app.title} API reference",
         )
         canonical = html.escape(
-            f"https://{settings.trusted_domain}/api/reference",
+            canonical_url,
             quote=True,
         )
         title = "TrustedRouter API Reference: Endpoints and Schemas"
@@ -840,10 +865,6 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/confidential-cowork")
     async def confidential_cowork() -> str:
         return public_page_html(settings, "confidential-cowork")
-
-    @app.post("/trustedos/inquiry", include_in_schema=False)
-    async def trustedos_inquiry(request: Request) -> JSONResponse:
-        return await _handle_trustedos_inquiry(settings, request)
 
     # ── SEO landing pages ────────────────────────────────────────────
     # Top-level slugs targeting high-intent buyer queries. Each is a
@@ -1199,10 +1220,6 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/support")
     async def support() -> str:
         return public_support_html(settings)
-
-    @app.post("/support/inquiry", include_in_schema=False)
-    async def support_inquiry(request: Request) -> JSONResponse:
-        return await _handle_support_inquiry(settings, request)
 
     @public_html_route("/legal/dpa")
     async def legal_dpa() -> str:

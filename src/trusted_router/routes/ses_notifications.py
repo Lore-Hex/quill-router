@@ -22,12 +22,14 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import threading
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
@@ -40,6 +42,8 @@ from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
 log = logging.getLogger(__name__)
+_SNS_CONFIRM_MAX_CONCURRENT = 2
+_SNS_CONFIRM_SLOTS = threading.BoundedSemaphore(_SNS_CONFIRM_MAX_CONCURRENT)
 
 
 def register_ses_notification_routes(router: APIRouter, settings: Settings) -> None:
@@ -54,7 +58,10 @@ def register_ses_notification_routes(router: APIRouter, settings: Settings) -> N
             raise api_error(400, "invalid JSON", ErrorType.BAD_REQUEST) from exc
 
         try:
-            verify_sns_message(envelope)
+            # Verification may fetch/cache an AWS signing certificate. It is
+            # synchronous cryptographic/network work and must not block the
+            # shared control-plane event loop.
+            await run_in_threadpool(verify_sns_message, envelope)
         except SnsVerificationError as exc:
             log.warning("ses_notification.signature_invalid reason=%s", exc)
             # TEMP(2026-07-05): mirror the failure to stderr so it reaches
@@ -80,20 +87,29 @@ def register_ses_notification_routes(router: APIRouter, settings: Settings) -> N
             subscribe_url = envelope.get("SubscribeURL")
             if not isinstance(subscribe_url, str):
                 raise api_error(400, "missing SubscribeURL", ErrorType.BAD_REQUEST)
+            if not _SNS_CONFIRM_SLOTS.acquire(blocking=False):
+                raise api_error(
+                    429,
+                    "SNS subscription confirmation is busy; retry",
+                    ErrorType.RATE_LIMITED,
+                    headers={"Retry-After": "1"},
+                )
             try:
-                response = httpx.get(subscribe_url, timeout=10.0)
-                response.raise_for_status()
+                try:
+                    await run_in_threadpool(_confirm_subscription, subscribe_url)
+                finally:
+                    _SNS_CONFIRM_SLOTS.release()
             except httpx.HTTPError as exc:
                 log.exception("ses_notification.subscribe_failed url=%s", subscribe_url)
                 raise api_error(502, "failed to confirm SNS subscription", ErrorType.INTERNAL_ERROR) from exc
             log.info("ses_notification.subscribed topic=%s", envelope.get("TopicArn"))
             if message_id:
-                STORE.record_sns_message_once(message_id)
+                await run_in_threadpool(STORE.record_sns_message_once, message_id)
             return JSONResponse({"data": {"confirmed": True, "topic_arn": envelope.get("TopicArn")}})
 
         if msg_type == "UnsubscribeConfirmation":
             if message_id:
-                STORE.record_sns_message_once(message_id)
+                await run_in_threadpool(STORE.record_sns_message_once, message_id)
             return JSONResponse({"data": {"unsubscribed": True}})
 
         # Notification path: parse the SES feedback envelope.
@@ -111,7 +127,11 @@ def register_ses_notification_routes(router: APIRouter, settings: Settings) -> N
         # suppression writes are idempotent, while duplicate SNS deliveries
         # must not inflate bounce/complaint counts.
         try:
-            blocked_count = _apply_feedback(
+            # Suppression sync and the replay check both talk to the Store;
+            # keep them off the event loop (the bounded-verification contract)
+            # while preserving the account-suppression failure mapping.
+            blocked_count = await run_in_threadpool(
+                _apply_feedback,
                 kind,
                 feedback,
                 account_suppression,
@@ -124,7 +144,10 @@ def register_ses_notification_routes(router: APIRouter, settings: Settings) -> N
                 "SES suppression synchronization failed",
                 ErrorType.INTERNAL_ERROR,
             ) from exc
-        replayed = bool(message_id and not STORE.record_sns_message_once(message_id))
+        replayed = bool(
+            message_id
+            and not await run_in_threadpool(STORE.record_sns_message_once, message_id)
+        )
         if replayed:
             blocked_count = 0
         else:
@@ -138,6 +161,11 @@ def register_ses_notification_routes(router: APIRouter, settings: Settings) -> N
                 }
             }
         )
+
+
+def _confirm_subscription(url: str) -> None:
+    response = httpx.get(url, timeout=10.0)
+    response.raise_for_status()
 
 
 def _apply_feedback(

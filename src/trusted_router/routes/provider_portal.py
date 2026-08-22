@@ -16,6 +16,7 @@ from trusted_router.provider_analytics import (
     MAX_PROVIDER_EXPORT_DAYS,
     ProviderAnalyticsClient,
 )
+from trusted_router.request_limits import enforce_authenticated_rate_limit
 from trusted_router.storage import STORE
 from trusted_router.storage_models import (
     AuthSession,
@@ -49,6 +50,13 @@ def require_provider_portal_context(request: Request) -> ProviderPortalContext:
             status_code=302,
             headers={"Location": "/?reason=signin&next=/provider"},
         )
+    settings: Settings = request.app.state.settings
+    enforce_authenticated_rate_limit(
+        request,
+        settings,
+        credential_kind="session",
+        stable_subject=session.lookup_hash,
+    )
     user = STORE.get_user(session.user_id)
     if user is None:
         raise HTTPException(status_code=302, headers={"Location": "/?reason=signin"})

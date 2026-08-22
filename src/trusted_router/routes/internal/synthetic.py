@@ -4,11 +4,12 @@ import asyncio
 import datetime as dt
 import logging
 import random
+import threading
 from dataclasses import asdict
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import SettingsDep
@@ -19,6 +20,7 @@ from trusted_router.routes.helpers import json_body
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.storage import STORE, ProviderBenchmarkSample, SyntheticProbeSample
 from trusted_router.storage_models import FUTURE_SAMPLE_SKEW_SECONDS, scrub_provider_error_message
+from trusted_router.storage_rate_limits import InMemoryRateLimits
 from trusted_router.synthetic.alerts import alert_on_failure_streak
 from trusted_router.synthetic.cli import rotation_pass
 from trusted_router.synthetic.client_watch import evaluate_client_watch, report_client_watch
@@ -41,93 +43,234 @@ from trusted_router.types import ErrorType
 
 log = logging.getLogger(__name__)
 
+_MAX_PROBE_SAMPLES_PER_REQUEST = 256
+_MAX_BENCHMARK_SAMPLES_PER_REQUEST = 128
+_OPERATION_LIMITS_PER_MINUTE = {
+    "health": 120,
+    "samples": 60,
+    "benchmark": 60,
+    "route_health": 6,
+    "remediate": 2,
+    "run": 2,
+}
+_OPERATION_RATE_LIMITS = InMemoryRateLimits(lock=threading.RLock(), max_buckets=32)
+_OPERATION_SLOTS = {
+    "health": threading.BoundedSemaphore(8),
+    "samples": threading.BoundedSemaphore(2),
+    "benchmark": threading.BoundedSemaphore(2),
+    "route_health": threading.BoundedSemaphore(1),
+    "remediate": threading.BoundedSemaphore(1),
+    "run": threading.BoundedSemaphore(1),
+}
+_BACKGROUND_RUNS: set[asyncio.Task[dict[str, Any]]] = set()
+
+
+def _admit_operation(name: str) -> threading.BoundedSemaphore:
+    slot = _OPERATION_SLOTS[name]
+    if not slot.acquire(blocking=False):
+        raise api_error(
+            429,
+            "Synthetic operation is already in progress",
+            ErrorType.RATE_LIMITED,
+            headers={"Retry-After": "1"},
+        )
+    hit = _OPERATION_RATE_LIMITS.hit(
+        namespace="synthetic_operation",
+        subject=name,
+        limit=_OPERATION_LIMITS_PER_MINUTE[name],
+        window_seconds=60,
+    )
+    if not hit.allowed:
+        slot.release()
+        raise api_error(
+            429,
+            "Synthetic operation rate limit exceeded",
+            ErrorType.RATE_LIMITED,
+            headers={"Retry-After": str(hit.retry_after_seconds)},
+        )
+    return slot
+
+
+async def _run_with_held_slot(
+    settings: Settings,
+    body: dict[str, Any],
+    slot: threading.BoundedSemaphore,
+) -> dict[str, Any]:
+    try:
+        return await _run_and_record(settings, body)
+    finally:
+        slot.release()
+
 
 async def _run_and_record(settings: Settings, body: dict[str, Any]) -> dict[str, Any]:
-    monitor_region = _optional_str(body.get("monitor_region"))
-    # Which control plane the billing probes (authorize+settle) hit.
-    # Precedence: request body > settings > canonical GCP plane. The
-    # settings tier exists because the hardcoded fallback is a
-    # wrong-cloud trap for standalone deployments: the EU service
-    # probing https://trustedrouter.com would record the US plane's
-    # health under an EU monitor region.
-    control_plane_base_url = str(
-        body.get("control_plane_base_url")
-        or settings.synthetic_control_plane_base_url
-        or "https://trustedrouter.com"
-    )
-    samples = await run_synthetic_once(settings, monitor_region=monitor_region)
-    if settings.synthetic_monitor_api_key:
-        timeout = httpx.Timeout(settings.synthetic_monitor_timeout_seconds)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            samples.append(
-                await client_telemetry_canary_probe(
-                    client,
-                    control_plane_base_url=control_plane_base_url,
-                    monitor_region=monitor_region
-                    or settings.synthetic_monitor_region
-                    or settings.primary_region,
-                    api_key=settings.synthetic_monitor_api_key,
-                )
-            )
-            if settings.internal_gateway_token:
-                samples.extend(
-                    await gateway_billing_probe(
-                        client,
-                        control_plane_base_url=control_plane_base_url,
-                        monitor_region=monitor_region
-                        or settings.synthetic_monitor_region
-                        or settings.primary_region,
-                        api_key=settings.synthetic_monitor_api_key,
-                        internal_token=settings.internal_gateway_token,
-                        model=settings.synthetic_monitor_model,
-                    )
-                )
-                samples.extend(
-                    await gateway_fallback_probe(
-                        client,
-                        control_plane_base_url=control_plane_base_url,
-                        monitor_region=monitor_region
-                        or settings.synthetic_monitor_region
-                        or settings.primary_region,
-                        api_key=settings.synthetic_monitor_api_key,
-                        internal_token=settings.internal_gateway_token,
-                        model=settings.synthetic_monitor_model,
-                    )
-                )
-    benchmark_recorded = 0
-    rotation_count = _rotation_count(body)
-    if rotation_count and settings.synthetic_monitor_api_key:
-        # Provider/model rotation through the gateway — REAL inference,
-        # same pool mechanics as the GCP monitor CLI. Exposed via this
-        # route because standalone deployments (EU) have no monitor
-        # pool: their once-a-minute cadence is an EventBridge rule
-        # whose Input JSON sets rotation_count (and optionally
-        # rotation_models to pin a family, e.g. the DSv4 ids).
-        benchmark_samples = await rotation_pass(
-            settings=settings,
-            monitor_region=monitor_region
-            or settings.synthetic_monitor_region
-            or settings.primary_region,
-            api_key=settings.synthetic_monitor_api_key,
-            timeout=httpx.Timeout(settings.synthetic_monitor_timeout_seconds),
-            count=rotation_count,
-            rng=random.Random(),  # noqa: S311 - picks which model to probe, not cryptographic
-            models=_rotation_models(body),
+    """Run an observer-triggered pass without any billing-gateway authority."""
+    if "control_plane_base_url" in body:
+        raise api_error(
+            400,
+            "control_plane_base_url is deployment configuration, not a request option",
+            ErrorType.BAD_REQUEST,
         )
-        await run_in_threadpool(_record_benchmark_samples, benchmark_samples)
-        benchmark_recorded = len(benchmark_samples)
-    await run_in_threadpool(_record_probe_samples, samples)
+    return await _run_and_record_impl(
+        settings,
+        body,
+        allow_gateway_probes=False,
+    )
+
+
+async def _run_high_authority_and_record(
+    settings: Settings,
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    """Run only from the private in-process owner that already holds billing authority."""
+    return await _run_and_record_impl(
+        settings,
+        body,
+        allow_gateway_probes=True,
+    )
+
+
+async def _run_and_record_impl(
+    settings: Settings,
+    body: dict[str, Any],
+    *,
+    allow_gateway_probes: bool,
+) -> dict[str, Any]:
+    # AWS's existing EventBridge rule is the single recurring owner for its
+    # observer plane. Run remediation beside (not inside every autoscaled web
+    # replica's startup loop) when that authenticated scheduler asks for it.
+    # The separate remediation semaphore still collapses an operator-triggered
+    # pass that happens to overlap this tick.
+    remediator_task = (
+        asyncio.create_task(_run_scheduled_remediator_pass(settings))
+        if _is_true(body.get("run_remediator"))
+        else None
+    )
+    monitor_region = _optional_str(body.get("monitor_region"))
+    # The observer credential controls cadence/options, never a destination.
+    # This exact HTTPS origin is validated when Settings is constructed. A
+    # request-body URL used to make the internal service send its monitor key
+    # and billing gateway token to an attacker-chosen host.
+    control_plane_base_url = str(
+        settings.synthetic_control_plane_base_url or "https://trustedrouter.com"
+    )
     try:
-        await run_in_threadpool(_client_watch_pass, settings, samples)
-    except Exception:
-        log.warning("client_watch.pass_failed", exc_info=True)
-    return {
-        "data": {
-            "recorded": len(samples),
-            "benchmark_recorded": benchmark_recorded,
-            "samples": [s.public_dict() for s in samples],
+        samples = await run_synthetic_once(settings, monitor_region=monitor_region)
+        if settings.synthetic_monitor_api_key:
+            timeout = httpx.Timeout(settings.synthetic_monitor_timeout_seconds)
+            # Keys never follow redirects. The configured value is validated
+            # as an exact HTTPS origin, and a 3xx response is a failed canary,
+            # not permission to forward credentials to another origin.
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                follow_redirects=False,
+            ) as client:
+                samples.append(
+                    await client_telemetry_canary_probe(
+                        client,
+                        control_plane_base_url=control_plane_base_url,
+                        monitor_region=monitor_region
+                        or settings.synthetic_monitor_region
+                        or settings.primary_region,
+                        api_key=settings.synthetic_monitor_api_key,
+                    )
+                )
+                if allow_gateway_probes and settings.internal_gateway_token:
+                    samples.extend(
+                        await gateway_billing_probe(
+                            client,
+                            control_plane_base_url=control_plane_base_url,
+                            monitor_region=monitor_region
+                            or settings.synthetic_monitor_region
+                            or settings.primary_region,
+                            api_key=settings.synthetic_monitor_api_key,
+                            internal_token=settings.internal_gateway_token,
+                            model=settings.synthetic_monitor_model,
+                        )
+                    )
+                    samples.extend(
+                        await gateway_fallback_probe(
+                            client,
+                            control_plane_base_url=control_plane_base_url,
+                            monitor_region=monitor_region
+                            or settings.synthetic_monitor_region
+                            or settings.primary_region,
+                            api_key=settings.synthetic_monitor_api_key,
+                            internal_token=settings.internal_gateway_token,
+                            model=settings.synthetic_monitor_model,
+                        )
+                    )
+        benchmark_recorded = 0
+        rotation_count = _rotation_count(body)
+        if rotation_count and settings.synthetic_monitor_api_key:
+            # Provider/model rotation through the gateway — REAL inference,
+            # same pool mechanics as the GCP monitor CLI. Exposed via this
+            # route because standalone deployments (EU) have no monitor
+            # pool: their EventBridge cadence owns provider rotation.
+            benchmark_samples = await rotation_pass(
+                settings=settings,
+                monitor_region=monitor_region
+                or settings.synthetic_monitor_region
+                or settings.primary_region,
+                api_key=settings.synthetic_monitor_api_key,
+                timeout=httpx.Timeout(settings.synthetic_monitor_timeout_seconds),
+                count=rotation_count,
+                rng=random.Random(),  # noqa: S311 - model selection, not cryptography
+                models=_rotation_models(body),
+            )
+            await run_in_threadpool(_record_benchmark_samples, benchmark_samples)
+            benchmark_recorded = len(benchmark_samples)
+        await run_in_threadpool(_record_probe_samples, samples)
+        try:
+            await run_in_threadpool(_client_watch_pass, settings, samples)
+        except Exception:
+            log.warning("client_watch.pass_failed", exc_info=True)
+        result: dict[str, Any] = {
+            "data": {
+                "recorded": len(samples),
+                "benchmark_recorded": benchmark_recorded,
+                "samples": [s.public_dict() for s in samples],
+            }
         }
-    }
+    finally:
+        remediator_decisions = (
+            await remediator_task if remediator_task is not None else None
+        )
+    if remediator_decisions is not None:
+        result["data"]["remediator_decisions"] = remediator_decisions
+    return result
+
+
+def _run_remediator_with_held_slot(
+    settings: Settings,
+    slot: threading.BoundedSemaphore,
+) -> int:
+    try:
+        record_heartbeat("scheduler:remediator", settings=settings)
+        decisions = run_remediator_pass(settings)
+        record_heartbeat("scheduler:remediator", settings=settings)
+        return len(decisions)
+    finally:
+        slot.release()
+
+
+async def _run_scheduled_remediator_pass(settings: Settings) -> int | None:
+    """Run the EventBridge-owned pass without sacrificing its synthetic tick."""
+    try:
+        slot = _admit_operation("remediate")
+    except HTTPException:
+        log.warning("scheduled remediator skipped because another pass owns the slot")
+        return None
+    try:
+        # Keep the bounded pass in one worker dispatch. A detached request may
+        # be cancelled while TestClient (or the server) tears down its event
+        # loop; separate threadpool awaits allowed that cancellation to land
+        # after the first heartbeat and before remediation was dispatched.
+        return await run_in_threadpool(_run_remediator_with_held_slot, settings, slot)
+    except Exception:
+        # A remediation read/decision failure must remain visible, but it must
+        # not discard the independent synthetic results from the same tick.
+        log.exception("scheduled remediator pass failed")
+        return None
 
 
 async def run_synthetic_pass(settings: Settings, *, rotation_count: int = 0) -> dict[str, Any]:
@@ -137,44 +280,67 @@ async def run_synthetic_pass(settings: Settings, *, rotation_count: int = 0) -> 
     scheduler still gets a monitor. Same code path as the route, so the two
     cannot drift into measuring different things.
     """
-    return await _run_and_record(
-        settings, {"rotation_count": rotation_count} if rotation_count else {}
-    )
+    slot = _OPERATION_SLOTS["run"]
+    if not slot.acquire(blocking=False):
+        log.info("synthetic.pass_skipped_already_running")
+        return {"data": {"scheduled": False, "reason": "already_running"}}
+    try:
+        return await _run_high_authority_and_record(
+            settings,
+            {"rotation_count": rotation_count} if rotation_count else {},
+        )
+    finally:
+        slot.release()
 
 
 def register(router: APIRouter) -> None:
     @router.get("/internal/synthetic/health")
     async def synthetic_health(request: Request, settings: SettingsDep) -> dict[str, Any]:
         require_internal_gateway(request, settings)
-        return {
-            "data": {
-                "status": "ok",
-                "monitor_region": settings.synthetic_monitor_region or settings.primary_region,
+        slot = _admit_operation("health")
+        try:
+            return {
+                "data": {
+                    "status": "ok",
+                    "monitor_region": settings.synthetic_monitor_region
+                    or settings.primary_region,
+                }
             }
-        }
+        finally:
+            slot.release()
 
     @router.post("/internal/synthetic/samples")
     async def synthetic_samples(request: Request, settings: SettingsDep) -> dict[str, Any]:
         require_internal_gateway(request, settings)
-        body = await json_body(request)
-        raw_samples = body.get("samples", [body])
-        if not isinstance(raw_samples, list):
-            raise api_error(400, "samples must be an array", ErrorType.BAD_REQUEST)
-        samples = [_sample_from_body(item) for item in raw_samples]
-        # Offload the blocking storage writes so a slow write never stalls the
-        # shared event loop; still awaited so `recorded` stays truthful.
-        await run_in_threadpool(_record_probe_samples, samples)
-        await run_in_threadpool(report_image_generation_failures, samples)
-        await run_in_threadpool(report_video_generation_failures, samples)
-        # The GCP monitor is a Cloud Run Job (synthetic.cli) that posts its
-        # samples here; it never runs _run_and_record. Evaluate the client
-        # watch on THIS side, where STORE and the ClickHouse reader live, so
-        # the invisible-outage / stale alerts fire on every cloud's pass.
+        slot = _admit_operation("samples")
         try:
-            await run_in_threadpool(_client_watch_pass, settings, samples)
-        except Exception:
-            log.warning("client_watch.pass_failed", exc_info=True)
-        return {"data": {"recorded": len(samples)}}
+            body = await json_body(request)
+            raw_samples = body.get("samples", [body])
+            if not isinstance(raw_samples, list):
+                raise api_error(400, "samples must be an array", ErrorType.BAD_REQUEST)
+            if len(raw_samples) > _MAX_PROBE_SAMPLES_PER_REQUEST:
+                raise api_error(
+                    400,
+                    f"samples may contain at most {_MAX_PROBE_SAMPLES_PER_REQUEST} items",
+                    ErrorType.BAD_REQUEST,
+                )
+            samples = [_sample_from_body(item) for item in raw_samples]
+            # Offload the blocking storage writes so a slow write never stalls the
+            # shared event loop; still awaited so `recorded` stays truthful.
+            await run_in_threadpool(_record_probe_samples, samples)
+            await run_in_threadpool(report_image_generation_failures, samples)
+            await run_in_threadpool(report_video_generation_failures, samples)
+            # The GCP monitor is a Cloud Run Job (synthetic.cli) that posts its
+            # samples here; it never runs _run_and_record. Evaluate the client
+            # watch on THIS side, where STORE and the ClickHouse reader live, so
+            # the invisible-outage / stale alerts fire on every cloud's pass.
+            try:
+                await run_in_threadpool(_client_watch_pass, settings, samples)
+            except Exception:
+                log.warning("client_watch.pass_failed", exc_info=True)
+            return {"data": {"recorded": len(samples)}}
+        finally:
+            slot.release()
 
     @router.post("/internal/synthetic/benchmark")
     async def synthetic_benchmark(request: Request, settings: SettingsDep) -> dict[str, Any]:
@@ -183,20 +349,35 @@ def register(router: APIRouter) -> None:
         # ProviderBenchmarkSamples that join the same per-provider/model
         # performance store as organic production traffic.
         require_internal_gateway(request, settings)
-        body = await json_body(request)
-        raw_samples = body.get("samples", [body])
-        if not isinstance(raw_samples, list):
-            raise api_error(400, "samples must be an array", ErrorType.BAD_REQUEST)
-        samples = [_benchmark_from_body(item) for item in raw_samples]
-        await run_in_threadpool(_record_benchmark_samples, samples)
-        return {"data": {"recorded": len(samples)}}
+        slot = _admit_operation("benchmark")
+        try:
+            body = await json_body(request)
+            raw_samples = body.get("samples", [body])
+            if not isinstance(raw_samples, list):
+                raise api_error(400, "samples must be an array", ErrorType.BAD_REQUEST)
+            if len(raw_samples) > _MAX_BENCHMARK_SAMPLES_PER_REQUEST:
+                raise api_error(
+                    400,
+                    "samples may contain at most "
+                    f"{_MAX_BENCHMARK_SAMPLES_PER_REQUEST} items",
+                    ErrorType.BAD_REQUEST,
+                )
+            samples = [_benchmark_from_body(item) for item in raw_samples]
+            await run_in_threadpool(_record_benchmark_samples, samples)
+            return {"data": {"recorded": len(samples)}}
+        finally:
+            slot.release()
 
     @router.post("/internal/synthetic/route-health")
     async def synthetic_route_health(request: Request, settings: SettingsDep) -> dict[str, Any]:
         require_internal_gateway(request, settings)
-        flags = await run_in_threadpool(evaluate_route_health, STORE)
-        await run_in_threadpool(report_route_health, flags)
-        return {"data": {"flagged": [asdict(flag) for flag in flags]}}
+        slot = _admit_operation("route_health")
+        try:
+            flags = await run_in_threadpool(evaluate_route_health, STORE)
+            await run_in_threadpool(report_route_health, flags)
+            return {"data": {"flagged": [asdict(flag) for flag in flags]}}
+        finally:
+            slot.release()
 
     @router.post("/internal/synthetic/remediate")
     async def synthetic_remediate(request: Request, settings: SettingsDep) -> dict[str, Any]:
@@ -207,25 +388,21 @@ def register(router: APIRouter) -> None:
         even while the durable analytics copy catches up.
         """
         require_internal_gateway(request, settings)
-        await run_in_threadpool(
-            record_heartbeat,
-            "scheduler:remediator",
-            settings=settings,
-        )
-        decisions = await run_in_threadpool(run_remediator_pass, settings)
-        await run_in_threadpool(
-            record_heartbeat,
-            "scheduler:remediator",
-            settings=settings,
-        )
-        return {"data": {"decisions": len(decisions)}}
+        slot = _admit_operation("remediate")
+        decisions = await run_in_threadpool(_run_remediator_with_held_slot, settings, slot)
+        return {"data": {"decisions": decisions}}
 
     @router.post("/internal/synthetic/run")
     async def synthetic_run(
         request: Request, settings: SettingsDep, response: Response
     ) -> dict[str, Any]:
         require_internal_gateway(request, settings)
-        body = await json_body(request)
+        slot = _admit_operation("run")
+        try:
+            body = await json_body(request)
+        except BaseException:
+            slot.release()
+            raise
         # Fire-and-forget mode for schedulers with a short response
         # deadline. EventBridge API destinations give up waiting after
         # ~5s; a full probe pass takes 10-17s (longer with rotation), so
@@ -239,10 +416,16 @@ def register(router: APIRouter) -> None:
         # the event loop. `recorded` is then unknowable at response time,
         # so we do not pretend: the body says scheduled, not recorded.
         if _is_true(body.get("detach")):
-            asyncio.create_task(_run_and_record(settings, body))  # noqa: RUF006 - fire-and-forget by design
+            try:
+                task = asyncio.create_task(_run_with_held_slot(settings, body, slot))
+            except Exception:
+                slot.release()
+                raise
+            _BACKGROUND_RUNS.add(task)
+            task.add_done_callback(_BACKGROUND_RUNS.discard)
             response.status_code = 202
             return {"data": {"scheduled": True}}
-        return await _run_and_record(settings, body)
+        return await _run_with_held_slot(settings, body, slot)
 
 
 def _record_probe_samples(samples: list[SyntheticProbeSample]) -> None:

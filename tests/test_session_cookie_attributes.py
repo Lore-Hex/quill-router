@@ -63,7 +63,8 @@ def _looks_like_date(piece: str) -> bool:
 def production_settings() -> Settings:
     return Settings(
         environment="production",
-        internal_gateway_token="prod-token",  # noqa: S106 - test fixture.
+        service_surface="control",
+        attribution_cookie_secret="attribution-cookie-secret-for-control-test",  # noqa: S106
         stripe_webhook_secret="whsec_test",  # noqa: S106 - test fixture.
         stripe_secret_key="sk_test",  # noqa: S106 - test fixture.
         sentry_dsn="https://example@example.ingest.sentry.io/1",
@@ -126,7 +127,8 @@ def test_session_cookie_is_httponly_secure_lax_in_production() -> None:
 
     settings = Settings(
         environment="production",
-        internal_gateway_token="t",  # noqa: S106 - test fixture.
+        service_surface="control",
+        attribution_cookie_secret="attribution-cookie-secret-for-control-test",  # noqa: S106
         stripe_webhook_secret="w",  # noqa: S106 - test fixture.
         stripe_secret_key="s",  # noqa: S106 - test fixture.
         sentry_dsn="https://example@example.ingest.sentry.io/1",
@@ -176,6 +178,24 @@ def test_session_cookie_drops_secure_in_local() -> None:
     assert cookie.get("secure") is False or cookie.get("secure") is None
 
 
+@pytest.mark.parametrize("environment", ["canary", "staging", "worker"])
+def test_session_cookie_is_secure_in_every_deployed_environment(environment: str) -> None:
+    from fastapi.responses import Response
+
+    from trusted_router.auth import set_session_cookie
+
+    # Bypass surface startup requirements so this unit test isolates the
+    # cookie helper's deployed-vs-development boundary.
+    settings = Settings(environment="test")
+    settings.environment = environment
+    response = Response()
+
+    set_session_cookie(response, "trsess-v1-deployed", settings)
+
+    cookie = _parse_cookies(response.headers.get("set-cookie", ""))["tr_session"]
+    assert cookie.get("secure") is True
+
+
 def test_set_session_cookie_also_sets_signed_in_hint_for_marketing_js() -> None:
     """When a session is established, the marketing chrome (which renders
     on cacheable public pages and can't branch on server-side auth) needs
@@ -194,7 +214,8 @@ def test_set_session_cookie_also_sets_signed_in_hint_for_marketing_js() -> None:
 
     settings = Settings(
         environment="production",
-        internal_gateway_token="t",  # noqa: S106 - test fixture.
+        service_surface="control",
+        attribution_cookie_secret="attribution-cookie-secret-for-control-test",  # noqa: S106
         stripe_webhook_secret="w",  # noqa: S106 - test fixture.
         stripe_secret_key="s",  # noqa: S106 - test fixture.
         sentry_dsn="https://example@example.ingest.sentry.io/1",
