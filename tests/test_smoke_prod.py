@@ -135,6 +135,7 @@ def test_api_catalog_and_regions_are_publicly_reachable(
         "mistral",
         "kimi",
         "zai",
+        "azure",
     }.issubset({item["id"] for item in providers.json()["data"]})
     assert "europe-west4" in {item["id"] for item in regions.json()["data"]}
 

@@ -194,6 +194,10 @@ ensure_secret_from_env_file "STREAMLAKE_API_KEY" "trustedrouter-streamlake-api-k
 ensure_secret_from_env_file "NEUROMETRIC_API_KEY" "trustedrouter-neurometric-api-key"
 ensure_secret_from_env_file "ENGY_API_KEY" "trustedrouter-engy-api-key"
 ensure_secret_from_env_file "PEARL_RESEARCH_API_KEY" "trustedrouter-pearl-api-key"
+ensure_secret_from_env_file \
+  "AZURE_API_KEY" \
+  "trustedrouter-azure-api-key" \
+  "AZURE_FOUNDRY_API_KEY"
 ensure_secret_from_env_file "ZERO_G_API_KEY" "trustedrouter-zero-g-api-key"
 # Dedicated read-only ClickHouse credential for the private provider portal.
 # It is intentionally distinct from trustedrouter-clickhouse-password, which

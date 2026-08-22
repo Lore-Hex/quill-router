@@ -189,8 +189,12 @@ jobs:
             echo "0G key not provisioned; private routes remain dark."
           fi
 
-      - name: Snapshot existing pricing file
-        run: cp src/trusted_router/data/openrouter_snapshot.json /tmp/before.json
+      - name: Snapshot existing pricing files
+        run: |
+          cp src/trusted_router/data/openrouter_snapshot.json /tmp/before.json
+          mkdir /tmp/before-provider-models
+          cp src/trusted_router/data/provider_models/*.json \
+            /tmp/before-provider-models/
 
       - name: Refresh provider-direct prices (with self-heal)
         # `set -o pipefail` so the script's exit code propagates through
@@ -207,6 +211,8 @@ jobs:
           set +e
           uv run python scripts/check_price_spike.py \
             /tmp/before.json src/trusted_router/data/openrouter_snapshot.json \
+            --before-provider-manifests /tmp/before-provider-models \
+            --after-provider-manifests src/trusted_router/data/provider_models \
             --summary | tee /tmp/spike-summary.txt
           rc=${PIPESTATUS[0]}
           # Surface the actual per-model deltas in the Actions run summary so

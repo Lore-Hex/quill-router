@@ -1615,8 +1615,7 @@
         "serverless"
       ],
       "input_modalities": [
-        "text",
-        "image"
+        "text"
       ],
       "output_modalities": [
         "text"
