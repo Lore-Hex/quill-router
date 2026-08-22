@@ -410,3 +410,13 @@ def test_wave3_pricing_fixtures_are_captured_from_first_party_sources() -> None:
     for filename, source_url in expected_sources.items():
         source = (FIXTURE_DIR / filename).read_text(encoding="utf-8")
         assert f"Captured from {source_url}" in source
+
+
+def test_wave3_secrets_do_not_join_the_all_or_nothing_refresh_block() -> None:
+    workflow = (
+        Path(__file__).parents[1] / ".github/workflows/refresh-prices.yml"
+    ).read_text(encoding="utf-8")
+    mandatory_step = workflow.split("- name: Pull PARASAIL_API_KEY", 1)[1]
+    mandatory_step = mandatory_step.split("- name:", 1)[0]
+    for module in MODULES:
+        assert f"trustedrouter-{module.SLUG}-api-key" not in mandatory_step
