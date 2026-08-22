@@ -51,6 +51,8 @@ from trusted_router.config import Settings
 from .deploy_script_harness import (
     SCRIPT_FIXTURES,
     DeployScriptHarness,
+    HarnessRun,
+    ScriptFixture,
     summarise,
 )
 
@@ -113,6 +115,135 @@ def _settings_kwargs_from_cloud_run_job(call: list[str]) -> dict[str, object]:
         secret_name = reference.partition(":")[0]
         kwargs[name.removeprefix("TR_").lower()] = f"harness-{secret_name}"
     return kwargs
+
+
+_REGIONAL_QUOTA_RECONCILER = "scripts/deploy/regional_quota_reconciler.sh"
+_RECONCILER_GCLOUD_STUB = r"""#!/usr/bin/env bash
+{ printf '%s' "${0##*/}"; for argument in "$@"; do
+    recorded="${argument//$'\n'/\\n}"
+    recorded="${recorded//$'\t'/\\t}"
+    printf '\t%s' "$recorded"
+  done
+  printf '\n'
+} >> "$HARNESS_ARGV_LOG"
+
+if [[ " $* " == *" scheduler jobs describe "* ]]; then
+  printf '%s' "${HARNESS_SCHEDULER_DESCRIBE_STDERR:-}" >&2
+  if [ -n "${HARNESS_SCHEDULER_STATE:-}" ]; then
+    printf '%s\n' "$HARNESS_SCHEDULER_STATE"
+  fi
+  exit "${HARNESS_SCHEDULER_DESCRIBE_RC:-0}"
+fi
+
+if [[ " $* " == *" projects describe "* ]]; then
+  printf '%s\n' '123456789'
+fi
+exit 0
+"""
+
+
+def _run_regional_quota_reconciler(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    state: str = "",
+    describe_rc: int = 0,
+    describe_stderr: str = "",
+) -> HarnessRun:
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        _REGIONAL_QUOTA_RECONCILER,
+        ScriptFixture(
+            env={
+                "HARNESS_SCHEDULER_STATE": state,
+                "HARNESS_SCHEDULER_DESCRIBE_RC": str(describe_rc),
+                "HARNESS_SCHEDULER_DESCRIBE_STDERR": describe_stderr,
+            }
+        ),
+    )
+    isolated = DeployScriptHarness(tmp_path / "regional-quota-reconciler")
+    gcloud = isolated.bin / "gcloud"
+    gcloud.write_text(_RECONCILER_GCLOUD_STUB)
+    gcloud.chmod(0o755)
+    return isolated.run(_REGIONAL_QUOTA_RECONCILER)
+
+
+def _gcloud_calls(run: HarnessRun, *command: str) -> list[list[str]]:
+    return [
+        call
+        for call in run.calls
+        if call[0] == "gcloud" and call[3 : 3 + len(command)] == list(command)
+    ]
+
+
+def test_regional_quota_reconciler_preserves_a_paused_scheduler(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _run_regional_quota_reconciler(tmp_path, monkeypatch, state="PAUSED")
+
+    assert run.returncode == 0, summarise(run)
+    assert not _gcloud_calls(run, "run", "jobs", "execute")
+    assert len(_gcloud_calls(run, "scheduler", "jobs", "update")) == 1
+    assert not _gcloud_calls(run, "scheduler", "jobs", "create")
+    assert not _gcloud_calls(run, "scheduler", "jobs", "resume")
+    assert "preserving intentional regional quota reconciler pause" in run.stderr
+
+
+def test_regional_quota_reconciler_verifies_updates_and_resumes_enabled_scheduler(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _run_regional_quota_reconciler(tmp_path, monkeypatch, state="ENABLED")
+
+    assert run.returncode == 0, summarise(run)
+    assert len(_gcloud_calls(run, "run", "jobs", "execute")) == 1
+    assert len(_gcloud_calls(run, "scheduler", "jobs", "update")) == 1
+    assert not _gcloud_calls(run, "scheduler", "jobs", "create")
+    assert len(_gcloud_calls(run, "scheduler", "jobs", "resume")) == 1
+
+
+def test_regional_quota_reconciler_creates_only_when_scheduler_is_not_found(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _run_regional_quota_reconciler(
+        tmp_path,
+        monkeypatch,
+        describe_rc=1,
+        describe_stderr=(
+            "ERROR: (gcloud.scheduler.jobs.describe) NOT_FOUND: Job not found.\n"
+        ),
+    )
+
+    assert run.returncode == 0, summarise(run)
+    assert len(_gcloud_calls(run, "scheduler", "jobs", "describe")) == 1
+    assert len(_gcloud_calls(run, "run", "jobs", "execute")) == 1
+    assert len(_gcloud_calls(run, "scheduler", "jobs", "create")) == 1
+    assert not _gcloud_calls(run, "scheduler", "jobs", "update")
+    assert not _gcloud_calls(run, "scheduler", "jobs", "resume")
+
+
+def test_regional_quota_reconciler_fails_closed_when_scheduler_state_read_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    error = "ERROR: (gcloud.scheduler.jobs.describe) UNAVAILABLE: credential blip\n"
+    run = _run_regional_quota_reconciler(
+        tmp_path,
+        monkeypatch,
+        describe_rc=1,
+        describe_stderr=error,
+    )
+
+    assert run.returncode != 0
+    assert "cannot determine state of Cloud Scheduler job" in run.stderr
+    assert error.strip() in run.stderr
+    assert len(_gcloud_calls(run, "scheduler", "jobs", "describe")) == 1
+    assert not _gcloud_calls(run, "run", "jobs", "execute")
+    assert not _gcloud_calls(run, "scheduler", "jobs", "create")
+    assert not _gcloud_calls(run, "scheduler", "jobs", "update")
+    assert not _gcloud_calls(run, "scheduler", "jobs", "resume")
 
 
 def test_every_deploy_script_parses_in_this_machine_s_shell() -> None:
