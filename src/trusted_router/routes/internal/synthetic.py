@@ -240,22 +240,14 @@ async def _run_and_record_impl(
     return result
 
 
-async def _run_remediator_with_held_slot(
+def _run_remediator_with_held_slot(
     settings: Settings,
     slot: threading.BoundedSemaphore,
 ) -> int:
     try:
-        await run_in_threadpool(
-            record_heartbeat,
-            "scheduler:remediator",
-            settings=settings,
-        )
-        decisions = await run_in_threadpool(run_remediator_pass, settings)
-        await run_in_threadpool(
-            record_heartbeat,
-            "scheduler:remediator",
-            settings=settings,
-        )
+        record_heartbeat("scheduler:remediator", settings=settings)
+        decisions = run_remediator_pass(settings)
+        record_heartbeat("scheduler:remediator", settings=settings)
         return len(decisions)
     finally:
         slot.release()
@@ -269,7 +261,11 @@ async def _run_scheduled_remediator_pass(settings: Settings) -> int | None:
         log.warning("scheduled remediator skipped because another pass owns the slot")
         return None
     try:
-        return await _run_remediator_with_held_slot(settings, slot)
+        # Keep the bounded pass in one worker dispatch. A detached request may
+        # be cancelled while TestClient (or the server) tears down its event
+        # loop; separate threadpool awaits allowed that cancellation to land
+        # after the first heartbeat and before remediation was dispatched.
+        return await run_in_threadpool(_run_remediator_with_held_slot, settings, slot)
     except Exception:
         # A remediation read/decision failure must remain visible, but it must
         # not discard the independent synthetic results from the same tick.
@@ -393,7 +389,7 @@ def register(router: APIRouter) -> None:
         """
         require_internal_gateway(request, settings)
         slot = _admit_operation("remediate")
-        decisions = await _run_remediator_with_held_slot(settings, slot)
+        decisions = await run_in_threadpool(_run_remediator_with_held_slot, settings, slot)
         return {"data": {"decisions": decisions}}
 
     @router.post("/internal/synthetic/run")
