@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -103,8 +104,46 @@ def test_control_reader_is_private_read_only_and_cannot_read_secrets() -> None:
     assert "GRANT SELECT ON tr.synthetic_probe_samples" in script
     assert "GRANT SELECT ON tr.synthetic_status_rollups" in script
     assert "GRANT SELECT ON tr.public_analytics_snapshots" in script
+    assert "GRANT SELECT ON tr.client_minute_counters" in script
+    assert "GRANT SELECT ON tr.client_request_events" in script
+    assert "GRANT SELECT ON tr.client_availability_rollups" in script
     assert "GRANT SELECT ON tr.tr_entities" not in script
     assert "GRANT ALL" not in script
+
+
+def test_control_reader_grants_cover_operational_queries_and_all_client_tables() -> None:
+    """Pin grants to control-plane reads plus all three tables introduced by 008."""
+
+    source = (ROOT / "src/trusted_router/operational_analytics.py").read_text()
+    script = (ROOT / "scripts/deploy/clickhouse_control_reader.sh").read_text()
+    # Every table source the reader issues is `FROM <table> FINAL`. A qualified,
+    # aliased, dynamic, or non-FINAL source must extend this discovery to pass.
+    sources = re.findall(r"\bFROM\s+[a-z_]", source)
+    queried = set(re.findall(r"\bFROM ([a-z_]+) FINAL", source))
+    assert len(sources) == len(re.findall(r"\bFROM ([a-z_]+) FINAL", source))
+    granted = set(re.findall(r"<query>GRANT SELECT ON tr\.(\w+)</query>", script))
+
+    client_tables = {
+        "client_minute_counters",
+        "client_request_events",
+        "client_availability_rollups",
+    }
+    assert client_tables <= granted
+    # The three provider rollups predate operational_analytics.py and remain
+    # intentionally available to the same private, read-only account.
+    legacy = {
+        "provider_analytics_hourly",
+        "provider_analytics_daily",
+        "provider_analytics_monthly",
+    }
+    assert granted == queried | legacy | {"client_minute_counters"}
+    assert "operational_outbox_quarantine" not in script
+    for table in sorted(client_tables):
+        assert f"SELECT count() FROM tr.{table} FINAL LIMIT 1" in script  # noqa: S608
+    # A failed self-check must survive the cleanup command and fail deployment.
+    assert (
+        r">/dev/null || status=\$?; rm -f /tmp/tr-control-reader.env; exit \$status" in script
+    )
 
 
 def test_rollout_preserves_dual_read_mode_and_uses_distinct_reader_secret() -> None:
