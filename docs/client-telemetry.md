@@ -71,7 +71,7 @@ s  = 0|1 streaming
 fo = 0|1 candidate index advanced at least once during this logical request
 ```
 - First attempt: `v=1;a=0;s=1`. Retry after a connect timeout on the apex that moved to an alias:
-  `v=1;a=1;po=transport_error;pc=connect_timeout;ph=apex;pm=10012;sm=10530;s=1;fo=1`.
+  `v=1;a=1;po=timeout;pc=connect_timeout;ph=apex;pm=10012;sm=10530;s=1;fo=1`.
 - Static identity (SDK name/version/runtime/OS) rides the existing `User-Agent`, not this header.
 - **Not sent to custom base URLs** (a self-hosted gateway is not TrustedRouter's to measure) and **not sent
   on control-plane calls**. Not sent when telemetry is opted out (§6.4).
@@ -89,7 +89,7 @@ settlement token and are not joinable in ClickHouse).
 ```json
 "gateway_request_id": "rlog_…",
 "client": {"v":1,"source":"tr","sdk":"tr-py","sdk_version":"0.6.0","lang":"python","runtime":"cpython/3.12.1",
-           "os":"macos","arch":"arm64","timeout_ms":120000,"attempt":1,"prev_outcome":"transport_error",
+           "os":"macos","arch":"arm64","timeout_ms":120000,"attempt":1,"prev_outcome":"timeout",
            "prev_error_class":"connect_timeout","prev_host":"apex","prev_elapsed_ms":10012,"since_first_ms":10530,
            "stream":true,"failover_used":true}
 ```
