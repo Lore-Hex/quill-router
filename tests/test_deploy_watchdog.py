@@ -146,6 +146,7 @@ def _run_staged_probe(
     *,
     console_code: str,
     session_code: str,
+    resolved_tag_revision: str = "new-rev",
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     stub_bin = tmp_path / "bin"
     stub_bin.mkdir()
@@ -156,7 +157,8 @@ def _run_staged_probe(
         """#!/usr/bin/env bash
 printf 'gcloud %s\\n' "$*" >>"$STAGED_CALL_LOG"
 case " $* " in
-  *" run services describe "*) printf '%s\\n' 'https://trusted-router-hash-uc.a.run.app' ;;
+  *"status.traffic"*) printf '%s\\n' "$STAGED_RESOLVED_TAG_REV" ;;
+  *"status.url"*) printf '%s\\n' 'https://trusted-router-hash-uc.a.run.app' ;;
 esac
 """
     )
@@ -190,6 +192,7 @@ printf '%s' "$code"
         "STAGED_CALL_LOG": str(call_log),
         "STAGED_CONSOLE_CODE": console_code,
         "STAGED_SESSION_CODE": session_code,
+        "STAGED_RESOLVED_TAG_REV": resolved_tag_revision,
         "TR_LEGACY_PROBE_RETRY_SECONDS": "0",
     }
     run = subprocess.run(  # noqa: S603 - fixed local script and stubbed PATH
@@ -206,7 +209,9 @@ printf '%s' "$code"
     ("console_code", "session_code", "expected_rc", "rolls_back"),
     (
         ("302", "401", 0, False),
-        ("200", "403", 0, False),
+        ("302", "200", 1, True),
+        ("200", "401", 1, True),
+        ("302", "403", 1, True),
         ("500", "401", 1, True),
         ("EMPTY", "401", 0, False),
         ("000", "401", 0, False),
@@ -248,3 +253,18 @@ def test_staged_legacy_probe_uses_regional_origin_and_classifies_results(
     assert bool(rollback_calls) is rolls_back
     if console_code in {"EMPTY", "000"}:
         assert "inconclusive after bounded retries; continuing without rollback" in run.stdout
+
+
+def test_staged_probe_reconciles_and_verifies_a_leftover_tag(tmp_path: Path) -> None:
+    run, calls = _run_staged_probe(
+        tmp_path,
+        console_code="302",
+        session_code="401",
+        resolved_tag_revision="old-rev",
+    )
+
+    assert run.returncode == 0, run.stderr
+    assert any("--update-tags=staged-probe=new-rev" in call for call in calls)
+    assert any("--remove-tags=staged-probe" in call for call in calls)
+    assert not any(call.startswith("curl ") for call in calls)
+    assert "probe tag does not resolve to new-rev" in run.stdout

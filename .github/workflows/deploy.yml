@@ -844,6 +844,10 @@ jobs:
     needs: [deploy]
     continue-on-error: false
     runs-on: ubuntu-latest
+    # Four sequential regional Cloud Run deploys normally finish in 12-20
+    # minutes. Thirty allows cold image pulls and bounded smoke retries without
+    # letting this T1 follow-on hold the workflow-wide production lock for hours.
+    timeout-minutes: 30
     env:
       PROJECT_ID: quill-cloud-proxy
       REGION: us-central1

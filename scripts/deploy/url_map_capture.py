@@ -132,25 +132,46 @@ def prepare(capture_path: Path, live_path: Path, candidate_path: Path, captured_
 
     if capture_path.is_file():
         try:
-            existing, _ = _load_capture(capture_path)
-        except (OSError, ValueError):
-            existing = {}
-        if (
-            existing.get("phase") == "ready"
-            and existing.get("url_map_name") == name
-            and existing.get("expected_live_fingerprint") == live_fingerprint
-            and existing.get("expected_live_content_sha256") == live_content_digest
-            and existing.get("expected_live_content_sha256")
-            == candidate_content_digest
-        ):
+            existing, existing_source = _load_capture(capture_path)
+        except (OSError, ValueError) as exc:
+            raise ValueError(
+                "existing rollback capture is invalid; refusing to overwrite it"
+            ) from exc
+        if existing.get("url_map_name") != name:
+            raise ValueError("existing rollback capture belongs to a different URL map")
+        existing_phase = existing.get("phase")
+        existing_source_document = _json_object(
+            existing_source, "captured URL map"
+        )
+        if existing_phase in {"armed", "ready"}:
+            if existing.get("source_fingerprint") != live_fingerprint:
+                raise ValueError(
+                    "existing armed rollback capture does not match the current live "
+                    "fingerprint; run rollback before another cutover"
+                )
+            if _content_digest(existing_source_document) != live_content_digest:
+                raise ValueError(
+                    "existing armed rollback capture fingerprint matches but content differs"
+                )
+            if existing.get("expected_live_content_sha256") != candidate_content_digest:
+                raise ValueError(
+                    "existing armed rollback capture targets a different candidate"
+                )
             print("preserved")
             return
+        if existing_phase != "restored":
+            raise ValueError("existing rollback capture has an unsupported phase")
+        if _content_digest(existing_source_document) != live_content_digest:
+            raise ValueError(
+                "restored rollback capture does not match the current live URL map"
+            )
 
     payload = {
         "captured_at": captured_at,
         "expected_live_content_sha256": candidate_content_digest,
-        "expected_live_fingerprint": None,
-        "phase": "prepared",
+        # Armed before import: from this atomic write onward the import may have
+        # applied, failed, or returned an ambiguous transport result.
+        "phase": "armed",
         "source_fingerprint": live_fingerprint,
         "source_json_base64": base64.b64encode(live_raw).decode("ascii"),
         "source_sha256": hashlib.sha256(live_raw).hexdigest(),
@@ -161,38 +182,54 @@ def prepare(capture_path: Path, live_path: Path, candidate_path: Path, captured_
     print("captured")
 
 
-def arm(capture_path: Path, live_path: Path) -> None:
+def verify_candidate(capture_path: Path, live_path: Path) -> None:
     capture, _ = _load_capture(capture_path)
     live, _ = _read_map(live_path, "post-import URL map")
     if live.get("name") != capture["url_map_name"]:
         raise ValueError("post-import URL-map name does not match the capture")
     if _content_digest(live) != capture["expected_live_content_sha256"]:
         raise ValueError("post-import URL map does not match the validated candidate")
-    capture["expected_live_fingerprint"] = _fingerprint(live, "post-import URL map")
-    capture["phase"] = "ready"
-    _write_atomic(capture_path, capture)
+    _fingerprint(live, "post-import URL map")
 
 
 def check_live(capture_path: Path, live_path: Path) -> None:
-    capture, _ = _load_capture(capture_path)
-    if capture.get("phase") != "ready":
-        raise ValueError("rollback capture was not armed by a verified cutover")
-    expected_fingerprint = capture.get("expected_live_fingerprint")
-    if not isinstance(expected_fingerprint, str) or not expected_fingerprint:
-        raise ValueError("rollback capture has no expected live fingerprint")
+    capture, source = _load_capture(capture_path)
+    if capture.get("phase") not in {"armed", "ready", "restored"}:
+        raise ValueError("rollback capture is not armed")
     live, _ = _read_map(live_path, "current live URL map")
     if live.get("name") != capture["url_map_name"]:
         raise ValueError("current URL-map name does not match the capture")
-    if _fingerprint(live, "current live URL map") != expected_fingerprint:
-        raise ValueError("current URL-map fingerprint changed after cutover")
-    if _content_digest(live) != capture["expected_live_content_sha256"]:
-        raise ValueError("current URL-map content changed after cutover")
+    _fingerprint(live, "current live URL map")
+    live_digest = _content_digest(live)
+    source_digest = _content_digest(_json_object(source, "captured URL map"))
+    if live_digest == source_digest:
+        print("source")
+        return
+    if live_digest == capture["expected_live_content_sha256"]:
+        print("candidate")
+        return
+    raise ValueError(
+        "current URL-map content matches neither the captured source nor candidate"
+    )
+
+
+def mark_restored(capture_path: Path, live_path: Path) -> None:
+    capture, source = _load_capture(capture_path)
+    live, _ = _read_map(live_path, "restored live URL map")
+    if live.get("name") != capture["url_map_name"]:
+        raise ValueError("restored URL-map name does not match the capture")
+    if _content_digest(live) != _content_digest(
+        _json_object(source, "captured URL map")
+    ):
+        raise ValueError("restored live URL map does not match the captured source")
+    capture["phase"] = "restored"
+    _write_atomic(capture_path, capture)
 
 
 def extract(capture_path: Path, output_path: Path) -> None:
     capture, source = _load_capture(capture_path)
-    if capture.get("phase") != "ready":
-        raise ValueError("rollback capture was not armed by a verified cutover")
+    if capture.get("phase") not in {"armed", "ready", "restored"}:
+        raise ValueError("rollback capture is not armed")
     descriptor, temporary_name = tempfile.mkstemp(
         dir=output_path.parent,
         prefix=f".{output_path.name}.",
@@ -220,13 +257,17 @@ def _parser() -> argparse.ArgumentParser:
     prepare_parser.add_argument("--candidate", type=Path, required=True)
     prepare_parser.add_argument("--captured-at", required=True)
 
-    arm_parser = subparsers.add_parser("arm")
-    arm_parser.add_argument("--capture", type=Path, required=True)
-    arm_parser.add_argument("--live-map", type=Path, required=True)
+    verify_parser = subparsers.add_parser("verify-candidate")
+    verify_parser.add_argument("--capture", type=Path, required=True)
+    verify_parser.add_argument("--live-map", type=Path, required=True)
 
     check_parser = subparsers.add_parser("check-live")
     check_parser.add_argument("--capture", type=Path, required=True)
     check_parser.add_argument("--live-map", type=Path, required=True)
+
+    restored_parser = subparsers.add_parser("mark-restored")
+    restored_parser.add_argument("--capture", type=Path, required=True)
+    restored_parser.add_argument("--live-map", type=Path, required=True)
 
     extract_parser = subparsers.add_parser("extract")
     extract_parser.add_argument("--capture", type=Path, required=True)
@@ -239,10 +280,12 @@ def main() -> None:
     try:
         if args.command == "prepare":
             prepare(args.capture, args.live_map, args.candidate, args.captured_at)
-        elif args.command == "arm":
-            arm(args.capture, args.live_map)
+        elif args.command == "verify-candidate":
+            verify_candidate(args.capture, args.live_map)
         elif args.command == "check-live":
             check_live(args.capture, args.live_map)
+        elif args.command == "mark-restored":
+            mark_restored(args.capture, args.live_map)
         elif args.command == "extract":
             extract(args.capture, args.output)
     except (OSError, ValueError) as exc:

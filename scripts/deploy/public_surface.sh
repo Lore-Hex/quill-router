@@ -20,6 +20,8 @@ esac
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
+# shellcheck source=scripts/deploy/_cloud_run_revision_probe.sh
+source "${SCRIPT_DIR}/_cloud_run_revision_probe.sh"
 # Reuse the active-traffic revision resolver and plain-env reader used by
 # rollout.sh.  Reading latest/template state here would copy a rejected
 # revision after rollback and let the two services silently diverge.
@@ -30,10 +32,31 @@ LEGACY_SERVICE="${TR_LEGACY_SERVICE:-trusted-router}"
 PUBLIC_SERVICE="${TR_PUBLIC_SERVICE:-trusted-router-public}"
 PUBLIC_RUNTIME_SA="${TR_PUBLIC_RUNTIME_SA:-tr-public@${PROJECT_ID}.iam.gserviceaccount.com}"
 PUBLIC_REGIONS="${TR_PUBLIC_REGIONS:-$TR_CONTROL_PLANE_REGIONS}"
+PUBLIC_PROBE_ATTEMPTS="${TR_PUBLIC_PROBE_ATTEMPTS:-3}"
+PUBLIC_PROBE_RETRY_SECONDS="${TR_PUBLIC_PROBE_RETRY_SECONDS:-2}"
+PUBLIC_PROBE_TAG="public-revision-probe"
+PUBLIC_PROBE_REGION=""
+PUBLIC_PROBE_TAG_CLEANUP_REQUIRED=0
+PROMOTED_REGIONS=()
+
+cleanup_public_probe_tag() {
+  [ "$PUBLIC_PROBE_TAG_CLEANUP_REQUIRED" -eq 1 ] || return 0
+  if ! cloud_run_probe_tag_remove \
+      "$PUBLIC_SERVICE" "$PUBLIC_PROBE_REGION" "$PROJECT_ID" "$PUBLIC_PROBE_TAG"; then
+    log "warning: could not remove ${PUBLIC_PROBE_TAG} in ${PUBLIC_PROBE_REGION}"
+  fi
+  PUBLIC_PROBE_TAG_CLEANUP_REQUIRED=0
+  PUBLIC_PROBE_REGION=""
+}
+
+trap cleanup_public_probe_tag EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # regional_quota_active_revision_json uses SERVICE by design. Point it at the
 # legacy service only while capturing the exact 100%-traffic revision.
-# shellcheck disable=SC2034 -- consumed by sourced regional_quota_rollout.sh
+# Consumed by sourced regional_quota_rollout.sh.
+# shellcheck disable=SC2034
 SERVICE="$LEGACY_SERVICE"
 if ! LEGACY_REVISION_JSON="$(
   regional_quota_active_revision_json "$TR_PRIMARY_REGION" false
@@ -216,25 +239,158 @@ for target in "${TARGET_REGIONS[@]}"; do
   }
 done
 
-for target in "${TARGET_REGIONS[@]}"; do
+ORIGINAL_REVISIONS=()
+if [ "$STAGE" = "routed" ]; then
+  # Resolve every serving revision before the first mutation. The existing
+  # helper rejects split or ambiguous traffic and describes the traffic-taking
+  # revision rather than trusting latestReady/latestCreated state.
+  SERVICE="$PUBLIC_SERVICE"
+  for target in "${TARGET_REGIONS[@]}"; do
+    if ! active_json="$(regional_quota_active_revision_json "$target" false)"; then
+      echo "ERROR: cannot capture the serving public revision in ${target}" >&2
+      exit 1
+    fi
+    if ! active_revision="$(python3 -c '
+import json
+import sys
+
+name = json.load(sys.stdin).get("metadata", {}).get("name")
+if not isinstance(name, str) or not name:
+    raise SystemExit("active revision has no metadata.name")
+print(name)
+' <<<"$active_json")"; then
+      echo "ERROR: cannot identify the serving public revision in ${target}" >&2
+      exit 1
+    fi
+    ORIGINAL_REVISIONS+=("$active_revision")
+  done
+fi
+
+PUBLIC_PROBE_CODE=""
+probe_public_path() {
+  local base_url="$1"
+  local path="$2"
+  local body_file="$3"
+  local attempt=1
+  local code
+  while [ "$attempt" -le "$PUBLIC_PROBE_ATTEMPTS" ]; do
+    : >"$body_file"
+    code="$(curl -sS --max-time 15 -o "$body_file" -w '%{http_code}' \
+      "${base_url}${path}" || true)"
+    PUBLIC_PROBE_CODE="$code"
+    case "$code" in
+      200)
+        [ -s "$body_file" ] && return 0
+        return 1
+        ;;
+      ""|000)
+        if [ "$attempt" -lt "$PUBLIC_PROBE_ATTEMPTS" ]; then
+          log "${PUBLIC_PROBE_REGION}${path} transport inconclusive; retry ${attempt}/${PUBLIC_PROBE_ATTEMPTS}"
+          sleep "$PUBLIC_PROBE_RETRY_SECONDS"
+        fi
+        ;;
+      *) return 1 ;;
+    esac
+    attempt=$((attempt + 1))
+  done
+  return 2
+}
+
+fail_routed_region() {
+  local region="$1"
+  local old_revision="$2"
+  local path="$3"
+  local reason="$4"
+  if ! gc run services update-traffic "$PUBLIC_SERVICE" \
+      --region "$region" \
+      --to-revisions="${old_revision}=100" \
+      --quiet >/dev/null; then
+    echo "CRITICAL: failed to restore ${PUBLIC_SERVICE}/${region} to ${old_revision}" >&2
+  fi
+  cleanup_public_probe_tag
+  local moved="none"
+  if [ "${#PROMOTED_REGIONS[@]}" -gt 0 ]; then
+    moved="${PROMOTED_REGIONS[*]}"
+  fi
+  echo "ERROR: routed public deploy failed in ${region} at ${path}: ${reason}; promoted regions: ${moved}" >&2
+  exit 1
+}
+
+for index in "${!TARGET_REGIONS[@]}"; do
+  target="${TARGET_REGIONS[$index]}"
   log "deploying ${PUBLIC_SERVICE} (${STAGE}) to ${target} from ${LEGACY_IMAGE}"
-  gc run deploy "$PUBLIC_SERVICE" \
-    --region "$target" \
-    --image "$LEGACY_IMAGE" \
-    --allow-unauthenticated \
-    --port 8080 \
-    --ingress "$INGRESS" \
-    --service-account "$PUBLIC_RUNTIME_SA" \
-    --concurrency 8 \
-    --cpu 1 \
-    --memory 2Gi \
-    --timeout 60 \
-    --max-instances 20 \
-    --min-instances 1 \
-    ${NETWORK_ARGS[@]+"${NETWORK_ARGS[@]}"} \
-    --set-env-vars "$SET_ENV_VARS" \
-    --set-secrets "$SET_SECRETS" \
-    --quiet
+  deploy_args=(
+    --region "$target"
+    --image "$LEGACY_IMAGE"
+    --allow-unauthenticated
+    --port 8080
+    --ingress "$INGRESS"
+    --service-account "$PUBLIC_RUNTIME_SA"
+    --concurrency 8
+    --cpu 1
+    --memory 2Gi
+    --timeout 60
+    --max-instances 20
+    --min-instances 1
+    "${NETWORK_ARGS[@]}"
+    --set-env-vars "$SET_ENV_VARS"
+    --set-secrets "$SET_SECRETS"
+  )
+  if [ "$STAGE" = "companion" ]; then
+    gc run deploy "$PUBLIC_SERVICE" "${deploy_args[@]}" --quiet
+    continue
+  fi
+
+  old_revision="${ORIGINAL_REVISIONS[$index]}"
+  if ! new_revision="$(gc run deploy "$PUBLIC_SERVICE" \
+      "${deploy_args[@]}" \
+      --no-traffic \
+      --format 'value(status.latestCreatedRevisionName)' \
+      --quiet)"; then
+    fail_routed_region "$target" "$old_revision" "<deploy>" "no-traffic deploy failed"
+  fi
+  case "$new_revision" in
+    "${PUBLIC_SERVICE}-"*) ;;
+    *) fail_routed_region "$target" "$old_revision" "<deploy>" "deploy returned no valid new revision" ;;
+  esac
+
+  PUBLIC_PROBE_REGION="$target"
+  PUBLIC_PROBE_TAG_CLEANUP_REQUIRED=1
+  if ! cloud_run_probe_tag_reconcile \
+      "$PUBLIC_SERVICE" "$target" "$PROJECT_ID" "$PUBLIC_PROBE_TAG" "$new_revision"; then
+    fail_routed_region "$target" "$old_revision" "<probe-tag>" "revision tag is inconclusive"
+  fi
+  if ! probe_base_url="$(cloud_run_probe_tagged_base_url \
+      "$PUBLIC_SERVICE" "$target" "$PROJECT_ID" "$PUBLIC_PROBE_TAG" "$new_revision")"; then
+    fail_routed_region "$target" "$old_revision" "<probe-tag>" "tagged regional URL is inconclusive"
+  fi
+
+  body_file="$(mktemp "${TMPDIR:-/tmp}/tr-public-probe-${target}-XXXXXX")"
+  for path in / /status.json /robots.txt; do
+    probe_status=0
+    probe_public_path "$probe_base_url" "$path" "$body_file" || probe_status=$?
+    if [ "$probe_status" -eq 0 ]; then
+      continue
+    fi
+    rm -f "$body_file"
+    if [ "$probe_status" -eq 2 ]; then
+      fail_routed_region "$target" "$old_revision" "$path" \
+        "transport inconclusive after bounded retries"
+    fi
+    fail_routed_region "$target" "$old_revision" "$path" \
+      "expected HTTP 200 with a non-empty body, got ${PUBLIC_PROBE_CODE:-transport-error}"
+  done
+  rm -f "$body_file"
+
+  if ! gc run services update-traffic "$PUBLIC_SERVICE" \
+      --region "$target" \
+      --to-revisions="${new_revision}=100" \
+      --quiet >/dev/null; then
+    fail_routed_region "$target" "$old_revision" "<promote>" "traffic promotion failed"
+  fi
+  cleanup_public_probe_tag
+  PROMOTED_REGIONS+=("$target")
+  log "promoted ${PUBLIC_SERVICE}/${target} to ${new_revision}; promoted regions: ${PROMOTED_REGIONS[*]}"
 done
 
 log "${PUBLIC_SERVICE} ${STAGE} deploy complete; no load-balancer route was changed"

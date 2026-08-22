@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -223,13 +222,8 @@ def test_corrupted_capture_digest_refuses_rollback(tmp_path: Path) -> None:
     assert not any("url-maps" in call and "import" in call for call in rollback.calls)
 
     recutover = harness.run(SCRIPT, args=("cutover",), extra_env=edge_env)
-    assert recutover.returncode == 0, summarise(recutover)
-    replacement = json.loads(capture_path.read_text())
-    replacement_source = _captured_source(capture_path)
-    assert replacement["phase"] == "ready"
-    assert replacement["source_sha256"] == hashlib.sha256(
-        replacement_source
-    ).hexdigest()
+    assert recutover.returncode != 0
+    assert "existing rollback capture is invalid" in recutover.stderr
 
 
 def test_stale_capture_refuses_to_clobber_a_changed_live_map(tmp_path: Path) -> None:
@@ -247,15 +241,14 @@ def test_stale_capture_refuses_to_clobber_a_changed_live_map(tmp_path: Path) -> 
 
     rollback = harness.run(SCRIPT, args=("rollback",), extra_env=edge_env)
     assert rollback.returncode != 0
-    assert "fingerprint changed after cutover" in rollback.stderr
+    assert "matches neither the captured source nor candidate" in rollback.stderr
     assert "stale or corrupt" in rollback.stderr
     assert not any("url-maps" in call and "import" in call for call in rollback.calls)
 
     recutover = harness.run(SCRIPT, args=("cutover",), extra_env=edge_env)
-    assert recutover.returncode == 0, summarise(recutover)
-    replacement_source = json.loads(_captured_source(_capture_path(state_dir)))
-    assert replacement_source["description"] == "unrelated operator change"
-    assert replacement_source["fingerprint"] == "changed-after-cutover"
+    assert recutover.returncode != 0
+    assert "existing armed rollback capture" in recutover.stderr
+    assert _captured_source(_capture_path(state_dir)) == LIVE_MAP_BYTES
 
 
 def test_import_transport_failure_after_apply_leaves_rollback_armed(
@@ -270,9 +263,9 @@ def test_import_transport_failure_after_apply_leaves_rollback_armed(
 
     cutover = harness.run(SCRIPT, args=("cutover",), extra_env=edge_env)
     assert cutover.returncode != 0
-    assert "candidate is live; rollback is armed" in cutover.stderr
+    assert "status is unknown; rollback remains armed" in cutover.stderr
     capture = json.loads(_capture_path(state_dir).read_text())
-    assert capture["phase"] == "ready"
+    assert capture["phase"] == "armed"
     assert _captured_source(_capture_path(state_dir)) == LIVE_MAP_BYTES
 
     rollback = harness.run(
@@ -282,6 +275,105 @@ def test_import_transport_failure_after_apply_leaves_rollback_armed(
     )
     assert rollback.returncode == 0, summarise(rollback)
     assert any("url-maps" in call and "import" in call for call in rollback.calls)
+
+
+def test_import_failure_before_apply_rollback_is_a_safe_noop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = SCRIPT_FIXTURES[SCRIPT]
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        SCRIPT,
+        replace(
+            original,
+            failures=(*original.failures, r"compute url-maps import"),
+        ),
+    )
+    harness = DeployScriptHarness(tmp_path / "failed-before-apply")
+    state_dir = tmp_path / "durable-state"
+    edge_env = {"TR_PUBLIC_EDGE_STATE_DIR": str(state_dir)}
+
+    cutover = harness.run(SCRIPT, args=("cutover",), extra_env=edge_env)
+    assert cutover.returncode != 0
+    assert json.loads(_capture_path(state_dir).read_text())["phase"] == "armed"
+
+    rollback = harness.run(SCRIPT, args=("rollback",), extra_env=edge_env)
+    assert rollback.returncode == 0, summarise(rollback)
+    assert "already live" in rollback.stderr
+    assert not any("url-maps" in call and "import" in call for call in rollback.calls)
+    assert json.loads(_capture_path(state_dir).read_text())["phase"] == "restored"
+
+
+def test_kill_after_import_keeps_the_pre_cutover_capture_rollbackable(
+    tmp_path: Path,
+) -> None:
+    harness = DeployScriptHarness(tmp_path / "killed-after-import")
+    state_dir = tmp_path / "durable-state"
+    edge_env = {
+        "TR_PUBLIC_EDGE_STATE_DIR": str(state_dir),
+        "HARNESS_URL_MAP_KILL_AFTER_APPLY": "1",
+    }
+
+    cutover = harness.run(SCRIPT, args=("cutover",), extra_env=edge_env)
+    assert cutover.returncode != 0
+    assert _captured_source(_capture_path(state_dir)) == LIVE_MAP_BYTES
+
+    rollback = harness.run(
+        SCRIPT,
+        args=("rollback",),
+        extra_env={"TR_PUBLIC_EDGE_STATE_DIR": str(state_dir)},
+    )
+    assert rollback.returncode == 0, summarise(rollback)
+
+
+def test_describe_failure_after_import_keeps_capture_rollbackable(tmp_path: Path) -> None:
+    harness = DeployScriptHarness(tmp_path / "describe-failed-after-import")
+    state_dir = tmp_path / "durable-state"
+    edge_env = {
+        "TR_PUBLIC_EDGE_STATE_DIR": str(state_dir),
+        "HARNESS_URL_MAP_POST_IMPORT_DESCRIBE_FAIL": "1",
+    }
+
+    cutover = harness.run(SCRIPT, args=("cutover",), extra_env=edge_env)
+    assert cutover.returncode != 0
+    assert _captured_source(_capture_path(state_dir)) == LIVE_MAP_BYTES
+
+    rollback = harness.run(
+        SCRIPT,
+        args=("rollback",),
+        extra_env={"TR_PUBLIC_EDGE_STATE_DIR": str(state_dir)},
+    )
+    assert rollback.returncode == 0, summarise(rollback)
+
+
+def test_recutover_refuses_to_destroy_the_original_armed_capture(tmp_path: Path) -> None:
+    harness = DeployScriptHarness(tmp_path / "recutover")
+    state_dir = tmp_path / "durable-state"
+    edge_env = {"TR_PUBLIC_EDGE_STATE_DIR": str(state_dir)}
+
+    first = harness.run(SCRIPT, args=("cutover",), extra_env=edge_env)
+    assert first.returncode == 0, summarise(first)
+    original_capture = _capture_path(state_dir).read_bytes()
+
+    second = harness.run(SCRIPT, args=("cutover",), extra_env=edge_env)
+    assert second.returncode != 0
+    assert "existing armed rollback capture" in second.stderr
+    assert _capture_path(state_dir).read_bytes() == original_capture
+
+
+def test_rollback_is_idempotent(tmp_path: Path) -> None:
+    harness = DeployScriptHarness(tmp_path / "rollback-twice")
+    state_dir = tmp_path / "durable-state"
+    edge_env = {"TR_PUBLIC_EDGE_STATE_DIR": str(state_dir)}
+    cutover = harness.run(SCRIPT, args=("cutover",), extra_env=edge_env)
+    assert cutover.returncode == 0, summarise(cutover)
+
+    first = harness.run(SCRIPT, args=("rollback",), extra_env=edge_env)
+    second = harness.run(SCRIPT, args=("rollback",), extra_env=edge_env)
+
+    assert first.returncode == 0, summarise(first)
+    assert second.returncode == 0, summarise(second)
 
 
 def test_harness_url_map_validation_rejects_a_malformed_candidate(

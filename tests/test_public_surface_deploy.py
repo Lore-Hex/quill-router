@@ -161,6 +161,13 @@ def test_public_deploy_pins_every_region_and_stage_contract(
         assert call[call.index("--ingress") + 1] == ingress
         assert call[call.index("--service-account") + 1] == PUBLIC_SA
         assert call[call.index("--image") + 1] == IMAGE
+        if stage == "routed":
+            assert "--no-traffic" in call
+            assert call[call.index("--format") + 1] == (
+                "value(status.latestCreatedRevisionName)"
+            )
+        else:
+            assert "--no-traffic" not in call
         for flag, value in (
             ("--concurrency", "8"),
             ("--cpu", "1"),
@@ -271,3 +278,78 @@ def test_bigtable_mode_omits_clickhouse_secret_env_and_vpc_flags(
         assert "--subnet" not in call
         assert "--vpc-egress" not in call
         assert Settings(**_settings_kwargs(call)).service_surface == "public"
+
+
+def _traffic_calls(run) -> list[list[str]]:
+    return [
+        call
+        for call in run.calls
+        if "run" in call and "services" in call and "update-traffic" in call
+    ]
+
+
+def _region_arg(call: list[str]) -> str:
+    if "--region" in call:
+        return call[call.index("--region") + 1]
+    return next(item.removeprefix("--region=") for item in call if item.startswith("--region="))
+
+
+def test_routed_healthy_smoke_promotes_each_region(tmp_path: Path) -> None:
+    isolated = DeployScriptHarness(tmp_path / "healthy-routed-public")
+
+    run = isolated.run(SCRIPT, args=("routed",))
+
+    assert run.returncode == 0, summarise(run)
+    promotes = [
+        call
+        for call in _traffic_calls(run)
+        if any(item.startswith("--to-revisions=") for item in call)
+    ]
+    assert len(promotes) == 4
+    assert {_region_arg(call) for call in promotes} == REGIONS
+    for call in promotes:
+        region = _region_arg(call)
+        assert f"--to-revisions=trusted-router-public-candidate-{region}=100" in call
+
+
+def test_routed_failing_region_does_not_promote_it(tmp_path: Path) -> None:
+    isolated = DeployScriptHarness(tmp_path / "failing-routed-public")
+
+    run = isolated.run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={
+            "HARNESS_PUBLIC_SMOKE_FAIL_REGION": "us-central1",
+            "HARNESS_PUBLIC_SMOKE_FAIL_PATH": "/robots.txt",
+        },
+    )
+
+    assert run.returncode != 0
+    assert "us-central1" in run.stderr
+    assert "/robots.txt" in run.stderr
+    traffic = _traffic_calls(run)
+    assert any("--to-revisions=trusted-router-public-active=100" in call for call in traffic)
+    assert not any("candidate-us-central1=100" in " ".join(call) for call in traffic)
+
+
+def test_routed_transport_failure_retries_and_fails_safe(tmp_path: Path) -> None:
+    isolated = DeployScriptHarness(tmp_path / "transport-routed-public")
+
+    run = isolated.run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={"HARNESS_PUBLIC_SMOKE_TRANSPORT_PATH": "/status.json"},
+    )
+
+    assert run.returncode != 0
+    status_curls = [
+        call
+        for call in run.calls
+        if call[0] == "curl" and call[-1].endswith("/status.json")
+    ]
+    assert len(status_curls) == 3
+    assert "inconclusive" in run.stderr
+    assert not any(
+        "candidate-us-central1=100" in " ".join(call)
+        for call in _traffic_calls(run)
+    )

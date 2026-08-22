@@ -149,6 +149,60 @@ _STUB = r"""#!/usr/bin/env bash
 # stub is not in a pipeline.
 cat >/dev/null 2>&1 || true
 joined="${0##*/} $*"
+
+if [ "${HARNESS_PUBLIC_SURFACE_SMOKE:-0}" = "1" ]; then
+  region=""
+  previous=""
+  output_file=""
+  for argument in "$@"; do
+    case "$argument" in
+      --region=*) region="${argument#--region=}" ;;
+      --region) previous="region"; continue ;;
+      -o) previous="output"; continue ;;
+    esac
+    case "$previous" in
+      region) region="$argument" ;;
+      output) output_file="$argument" ;;
+    esac
+    previous=""
+  done
+  if [[ " $* " == *" run deploy trusted-router-public "* ]] \
+      && [[ " $* " == *"status.latestCreatedRevisionName"* ]]; then
+    printf 'trusted-router-public-candidate-%s\n' "$region"
+    exit 0
+  fi
+  if [[ " $* " == *" run services describe trusted-router-public "* ]] \
+      && [[ " $* " == *"status.traffic"* ]]; then
+    printf 'trusted-router-public-candidate-%s\n' "$region"
+    exit 0
+  fi
+  if [[ " $* " == *" run services describe trusted-router-public "* ]] \
+      && [[ " $* " == *"status.url"* ]]; then
+    printf 'https://trusted-router-public-%s.a.run.app\n' "$region"
+    exit 0
+  fi
+  if [ "${0##*/}" = "curl" ]; then
+    url="${*: -1}"
+    path="/${url#*://*/}"
+    [ "$path" = "//" ] && path="/"
+    if [ "${HARNESS_PUBLIC_SMOKE_TRANSPORT_PATH:-}" = "$path" ]; then
+      printf '000'
+      exit 7
+    fi
+    code="200"
+    if [ -n "${HARNESS_PUBLIC_SMOKE_FAIL_REGION:-}" ] \
+        && [[ "$url" == *"${HARNESS_PUBLIC_SMOKE_FAIL_REGION}"* ]] \
+        && [ "${HARNESS_PUBLIC_SMOKE_FAIL_PATH:-}" = "$path" ]; then
+      code="500"
+    fi
+    if [ -n "$output_file" ]; then
+      printf 'harness response body\n' >"$output_file"
+    fi
+    printf '%s' "$code"
+    exit 0
+  fi
+fi
+
 if [ -n "${HARNESS_FAILURES:-}" ] && [ -f "$HARNESS_FAILURES" ]; then
   while IFS= read -r pattern; do
     [ -n "$pattern" ] || continue
@@ -239,11 +293,18 @@ PY
     if [ "${HARNESS_URL_MAP_IMPORT_FAIL_AFTER_APPLY:-0}" = "1" ]; then
       exit 1
     fi
+    if [ "${HARNESS_URL_MAP_KILL_AFTER_APPLY:-0}" = "1" ]; then
+      kill -KILL "$PPID"
+      exit 137
+    fi
     exit 0
   fi
   if [[ " $* " == *" compute url-maps describe "* ]] \
       && [[ " $* " == *" --format=json "* ]] \
       && [ -s "$HARNESS_URL_MAP_STATE" ]; then
+    if [ "${HARNESS_URL_MAP_POST_IMPORT_DESCRIBE_FAIL:-0}" = "1" ]; then
+      exit 1
+    fi
     cat "$HARNESS_URL_MAP_STATE"
     exit 0
   fi
@@ -331,6 +392,16 @@ _PUBLIC_SURFACE_LEGACY_SERVICE_JSON = json.dumps(
     },
     separators=(",", ":"),
 )
+_PUBLIC_SURFACE_PUBLIC_SERVICE_JSON = json.dumps(
+    {
+        "status": {
+            "traffic": [
+                {"percent": 100, "revisionName": "trusted-router-public-active"}
+            ]
+        }
+    },
+    separators=(",", ":"),
+)
 _PUBLIC_SURFACE_LEGACY_ENV = {
     "TR_RELEASE": "cb16dcc",
     "TR_TRUSTED_DOMAIN": "trustedrouter.com",
@@ -406,6 +477,10 @@ _PUBLIC_SURFACE_LEGACY_REVISION_JSON = json.dumps(
     },
     separators=(",", ":"),
 )
+_PUBLIC_SURFACE_PUBLIC_REVISION_JSON = json.dumps(
+    {"metadata": {"name": "trusted-router-public-active"}},
+    separators=(",", ":"),
+)
 _PUBLIC_EDGE_LIVE_MAP_JSON = json.dumps(
     {
         "name": "trusted-router-control-map",
@@ -468,6 +543,7 @@ class ScriptFixture:
 
 SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
     "scripts/deploy/public_surface.sh": ScriptFixture(
+        env={"HARNESS_PUBLIC_SURFACE_SMOKE": "1"},
         responses=(
             (r"projects describe.*projectNumber", "44325983244"),
             (
@@ -477,6 +553,14 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             (
                 r"run revisions describe trusted-router-active .*--format=json",
                 _PUBLIC_SURFACE_LEGACY_REVISION_JSON,
+            ),
+            (
+                r"run services describe trusted-router-public .*--format=json",
+                _PUBLIC_SURFACE_PUBLIC_SERVICE_JSON,
+            ),
+            (
+                r"run revisions describe trusted-router-public-active .*--format=json",
+                _PUBLIC_SURFACE_PUBLIC_REVISION_JSON,
             ),
         ),
     ),
