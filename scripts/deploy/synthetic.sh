@@ -4,6 +4,14 @@
 # samples to internal ingest endpoints. Short uptime probes must never wait on
 # the longer throughput benchmark.
 
+# Intentionally refuse before sourcing _lib.sh so this fail-fast path makes zero gcloud calls.
+if [ "${TR_ALLOW_DEPLOYED_COMBINED_SURFACE:-}" != "true" ]; then
+  [ -n "${TR_BILLING_SERVICE:-}" ] || {
+    echo "ERROR: TR_BILLING_SERVICE is required; refusing observer-token jobs against the legacy service" >&2
+    exit 1
+  }
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
@@ -15,36 +23,50 @@ source "${SCRIPT_DIR}/_private_run_ingress.sh"
 # would deploy successfully and then silently 401 every ingest. Require the
 # independently named internal service explicitly and re-check its live
 # contract immediately before every job deployment below.
-[ -n "${TR_BILLING_SERVICE:-}" ] || {
-  echo "ERROR: TR_BILLING_SERVICE is required; refusing observer-token jobs against the legacy service" >&2
-  exit 1
-}
-[ "$TR_BILLING_SERVICE" != "$SERVICE" ] || {
-  echo "ERROR: TR_BILLING_SERVICE must be separate from legacy SERVICE" >&2
-  exit 1
-}
-case "$TR_BILLING_SERVICE" in
-  *[!a-zA-Z0-9-]*|'')
-    echo "ERROR: invalid TR_BILLING_SERVICE" >&2
-    exit 2
-    ;;
-esac
-SYNTHETIC_INGEST_SERVICE="$TR_BILLING_SERVICE"
+if [ "${TR_ALLOW_DEPLOYED_COMBINED_SURFACE:-}" = "true" ]; then
+  DEPLOYED_COMBINED_BRIDGE=true
+  SYNTHETIC_INGEST_SERVICE="$SERVICE"
+else
+  DEPLOYED_COMBINED_BRIDGE=false
+  [ "$TR_BILLING_SERVICE" != "$SERVICE" ] || {
+    echo "ERROR: TR_BILLING_SERVICE must be separate from legacy SERVICE" >&2
+    exit 1
+  }
+  case "$TR_BILLING_SERVICE" in
+    *[!a-zA-Z0-9-]*|'')
+      echo "ERROR: invalid TR_BILLING_SERVICE" >&2
+      exit 2
+      ;;
+  esac
+  SYNTHETIC_INGEST_SERVICE="$TR_BILLING_SERVICE"
+fi
 
 if ! gc secrets describe trustedrouter-synthetic-monitor-api-key >/dev/null 2>&1; then
   log "synthetic monitor key secret is missing; skipping synthetic monitor deploy"
   exit 0
 fi
-if ! gc secrets describe trustedrouter-observer-internal-token >/dev/null 2>&1; then
-  echo "ERROR: trustedrouter-observer-internal-token is required for synthetic ingest" >&2
-  exit 1
-fi
 
-SECRET_ENVS=(
-  "TR_SENTRY_DSN=trustedrouter-sentry-dsn:latest"
-  "TR_OBSERVER_INTERNAL_TOKEN=trustedrouter-observer-internal-token:latest"
-  "TR_SYNTHETIC_MONITOR_API_KEY=trustedrouter-synthetic-monitor-api-key:latest"
-)
+if [ "$DEPLOYED_COMBINED_BRIDGE" = "true" ]; then
+  SECRET_ENVS=(
+    "TR_SENTRY_DSN=trustedrouter-sentry-dsn:latest"
+    "TR_STRIPE_SECRET_KEY=trustedrouter-stripe-secret-key:latest"
+    "TR_STRIPE_WEBHOOK_SECRET=trustedrouter-stripe-webhook-secret:latest"
+    "TR_INTERNAL_GATEWAY_TOKEN=trustedrouter-internal-gateway-token:latest"
+    "TR_SYNTHETIC_MONITOR_API_KEY=trustedrouter-synthetic-monitor-api-key:latest"
+  )
+  JOB_SECRET_FLAG="--update-secrets"
+else
+  if ! gc secrets describe trustedrouter-observer-internal-token >/dev/null 2>&1; then
+    echo "ERROR: trustedrouter-observer-internal-token is required for synthetic ingest" >&2
+    exit 1
+  fi
+  SECRET_ENVS=(
+    "TR_SENTRY_DSN=trustedrouter-sentry-dsn:latest"
+    "TR_OBSERVER_INTERNAL_TOKEN=trustedrouter-observer-internal-token:latest"
+    "TR_SYNTHETIC_MONITOR_API_KEY=trustedrouter-synthetic-monitor-api-key:latest"
+  )
+  JOB_SECRET_FLAG="--set-secrets"
+fi
 add_secret_env_if_exists() {
   local env_name="$1"
   local secret_name="$2"
@@ -60,9 +82,7 @@ add_secret_env_if_exists "DEEPSEEK_API_KEY" "trustedrouter-deepseek-api-key"
 add_secret_env_if_exists "MISTRAL_API_KEY" "trustedrouter-mistral-api-key"
 add_secret_env_if_exists "KIMI_API_KEY" "trustedrouter-kimi-api-key"
 add_secret_env_if_exists "ZAI_API_KEY" "trustedrouter-zai-api-key"
-# Complete allowlist: --set-secrets removes legacy gateway/payment bindings
-# from an existing job instead of preserving omitted secrets across updates.
-SET_SECRETS="$(IFS=,; echo "${SECRET_ENVS[*]}")"
+JOB_SECRETS="$(IFS=,; echo "${SECRET_ENVS[*]}")"
 
 BASE_ENV_VARS=(
   # These are one-shot workers, not the public control-plane process. Using
@@ -70,7 +90,17 @@ BASE_ENV_VARS=(
   # of the monitor containers while their actual storage and probe inputs
   # remain explicit below.
   "TR_ENVIRONMENT=worker"
-  "TR_SERVICE_SURFACE=observer"
+)
+if [ "$DEPLOYED_COMBINED_BRIDGE" = "true" ]; then
+  BASE_ENV_VARS+=(
+    "TR_SERVICE_SURFACE=combined"
+    "TR_ALLOW_DEPLOYED_COMBINED_SURFACE=true"
+    "TR_RATE_LIMIT_ENABLED=false"
+  )
+else
+  BASE_ENV_VARS+=("TR_SERVICE_SURFACE=observer")
+fi
+BASE_ENV_VARS+=(
   "TR_RELEASE=$(git rev-parse --short HEAD 2>/dev/null || echo local)"
   "TR_ENABLE_LIVE_PROVIDERS=false"
   "TR_API_BASE_URL=https://api.trustedrouter.com/v1"
@@ -81,6 +111,11 @@ BASE_ENV_VARS=(
   "TR_SPANNER_DATABASE_ID=${SPANNER_DATABASE_ID}"
   "TR_BIGTABLE_INSTANCE_ID=${BIGTABLE_INSTANCE_ID}"
   "TR_BIGTABLE_GENERATION_TABLE=${BIGTABLE_GENERATION_TABLE}"
+)
+if [ "$DEPLOYED_COMBINED_BRIDGE" = "true" ]; then
+  BASE_ENV_VARS+=("TR_BYOK_KMS_KEY_NAME=${BYOK_KMS_KEY_NAME}")
+fi
+BASE_ENV_VARS+=(
   "TR_REGIONS=${TR_REGIONS}"
   "TR_PRIMARY_REGION=${TR_PRIMARY_REGION}"
   "TR_SYNTHETIC_MONITOR_MODEL=trustedrouter/monitor"
@@ -156,6 +191,18 @@ if secret_name("TR_INTERNAL_GATEWAY_TOKEN") != expected_gateway_secret:
     echo "ERROR: internal synthetic ingest service contract failed in ${target_region}" >&2
     return 1
   fi
+}
+
+prepare_synthetic_ingest_target() {
+  local target_region="$1"
+
+  if [ "$DEPLOYED_COMBINED_BRIDGE" = "true" ]; then
+    # The combined service uses ingress=all in every region, matching the pre-#714
+    # jobs' public run.app path; VPC/private-ingress setup belongs to the split path.
+    return
+  fi
+  ensure_private_run_app_access "$target_region"
+  verify_synthetic_ingest_service_contract "$target_region"
 }
 
 if ! gc artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
@@ -240,8 +287,7 @@ for monitor_region in "${_REGION_LIST[@]}"; do
   fi
   set_env_vars="$(IFS='|'; echo "^|^${env_vars[*]}")"
 
-  ensure_private_run_app_access "$monitor_region"
-  verify_synthetic_ingest_service_contract "$monitor_region"
+  prepare_synthetic_ingest_target "$monitor_region"
   log "deploying synthetic Cloud Run job ${job_name} in ${monitor_region}"
   gc run jobs deploy "$job_name" \
     --region "$monitor_region" \
@@ -249,9 +295,9 @@ for monitor_region in "${_REGION_LIST[@]}"; do
     --command="/app/.venv/bin/python" \
     --args="-m,trusted_router.synthetic.cli" \
     --service-account "$RUN_SERVICE_ACCOUNT" \
-    "${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]}" \
+    "${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]+"${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]}"}" \
     --set-env-vars "$set_env_vars" \
-    --set-secrets "$SET_SECRETS" \
+    "$JOB_SECRET_FLAG" "$JOB_SECRETS" \
     --max-retries 0 \
     --task-timeout 300s \
     --cpu 2 \
@@ -314,8 +360,7 @@ throughput_env_vars=(
 )
 throughput_set_env_vars="$(IFS='|'; echo "^|^${throughput_env_vars[*]}")"
 
-ensure_private_run_app_access "$throughput_region"
-verify_synthetic_ingest_service_contract "$throughput_region"
+prepare_synthetic_ingest_target "$throughput_region"
 log "deploying isolated throughput Cloud Run job ${throughput_job_name}"
 gc run jobs deploy "$throughput_job_name" \
   --region "$throughput_region" \
@@ -323,9 +368,9 @@ gc run jobs deploy "$throughput_job_name" \
   --command="/app/.venv/bin/python" \
   --args="-m,trusted_router.synthetic.cli" \
   --service-account "$RUN_SERVICE_ACCOUNT" \
-  "${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]}" \
+  "${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]+"${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]}"}" \
   --set-env-vars "$throughput_set_env_vars" \
-  --set-secrets "$SET_SECRETS" \
+  "$JOB_SECRET_FLAG" "$JOB_SECRETS" \
   --max-retries 0 \
   --task-timeout 300s \
   --cpu 1 \
@@ -369,8 +414,7 @@ image_env_vars=(
 )
 image_set_env_vars="$(IFS='|'; echo "^|^${image_env_vars[*]}")"
 
-ensure_private_run_app_access "$image_region"
-verify_synthetic_ingest_service_contract "$image_region"
+prepare_synthetic_ingest_target "$image_region"
 log "deploying isolated image-generation Cloud Run job ${image_job_name}"
 gc run jobs deploy "$image_job_name" \
   --region "$image_region" \
@@ -378,9 +422,9 @@ gc run jobs deploy "$image_job_name" \
   --command="/app/.venv/bin/python" \
   --args="-m,trusted_router.synthetic.image_generation" \
   --service-account "$RUN_SERVICE_ACCOUNT" \
-  "${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]}" \
+  "${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]+"${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]}"}" \
   --set-env-vars "$image_set_env_vars" \
-  --set-secrets "$SET_SECRETS" \
+  "$JOB_SECRET_FLAG" "$JOB_SECRETS" \
   --max-retries 0 \
   --task-timeout 300s \
   --cpu 1 \
@@ -411,8 +455,7 @@ video_env_vars=(
 )
 video_set_env_vars="$(IFS='|'; echo "^|^${video_env_vars[*]}")"
 
-ensure_private_run_app_access "$video_region"
-verify_synthetic_ingest_service_contract "$video_region"
+prepare_synthetic_ingest_target "$video_region"
 log "deploying isolated daily video-generation Cloud Run job ${video_job_name}"
 gc run jobs deploy "$video_job_name" \
   --region "$video_region" \
@@ -420,9 +463,9 @@ gc run jobs deploy "$video_job_name" \
   --command="/app/.venv/bin/python" \
   --args="-m,trusted_router.synthetic.video_generation" \
   --service-account "$RUN_SERVICE_ACCOUNT" \
-  "${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]}" \
+  "${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]+"${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]}"}" \
   --set-env-vars "$video_set_env_vars" \
-  --set-secrets "$SET_SECRETS" \
+  "$JOB_SECRET_FLAG" "$JOB_SECRETS" \
   --max-retries 0 \
   --task-timeout 1200s \
   --cpu 1 \

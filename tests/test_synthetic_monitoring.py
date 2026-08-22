@@ -2953,8 +2953,10 @@ def test_synthetic_deploy_targets_public_api_and_private_internal_ingest() -> No
         '"TR_OBSERVER_INTERNAL_TOKEN=trustedrouter-observer-internal-token:latest"'
         in body
     )
-    assert '"TR_INTERNAL_GATEWAY_TOKEN=' not in body
-    assert "TR_INTERNAL_GATEWAY_TOKEN=trustedrouter" not in body
+    assert (
+        '"TR_INTERNAL_GATEWAY_TOKEN=trustedrouter-internal-gateway-token:latest"'
+        in body
+    )
     assert "TR_API_BASE_URL=https://api.trustedrouter.com/v1" in body
     assert "TR_API_BASE_URL=https://api.quillrouter.com/v1" not in body
     assert 'throughput_job_name="trusted-router-throughput-${throughput_region}"' in body
