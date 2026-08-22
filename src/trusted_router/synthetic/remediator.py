@@ -20,11 +20,18 @@ MODES (settings.remediator_mode):
 
 DECISIONS ARE SAMPLES. Each decision is recorded as a synthetic sample
 (probe_type="remediation", target="<playbook>:<subject>") — the same store,
-retention, and /fleet rendering path as every other ops signal, and one row
-per (playbook, subject, 30-minute bucket) so a persistent condition reads as
-a timeline, not a firehose. status="down" means "condition present" so the
-timeline semantics match every other probe. remediation rows are in
-OPS_PROBE_TYPES: never a component, never an SLO, never the freshness clock.
+retention, and /fleet rendering path as every other ops signal. A row records
+a condition OBSERVED AT ITS TIMESTAMP, not current state; a condition ending
+is recorded as the ABSENCE of later rows, never an explicit marker, so readers
+must check the underlying signal (for heartbeat-stale, that subject's heartbeat
+rows) before concluding it is still live. Deduplication is best effort: each
+control-plane instance TRIES to record at most one row per (target, 30-minute
+bucket), but the mark is checked and set without synchronisation, so the
+background loop and the internal endpoint can both write within one process,
+and every instance keeps its own marks. Duplicates are expected; readers must
+deduplicate by (target, bucket) rather than counting rows. status="down" means "condition present". remediation rows
+are in OPS_PROBE_TYPES: never a component, never an SLO, never the freshness
+clock.
 
 DETECTORS (v1, all T0 blast radius — detection and paging only):
   * stale heartbeats     — a scheduler this deployment expected to beat has
@@ -59,8 +66,8 @@ from trusted_router.synthetic.alerts import ops_alert
 logger = logging.getLogger(__name__)
 
 REMEDIATION_PROBE = "remediation"
-# One decision row per (playbook, subject, bucket): a condition that persists
-# for six hours should read as ~12 rows on a timeline, not 180.
+# Best effort: one decision row per (playbook, subject, bucket) per process.
+# The check and set are unsynchronised, so duplicates are possible.
 DECISION_BUCKET_SECONDS = 30 * 60
 _DECISION_MARKS: dict[str, int] = {}
 
@@ -210,6 +217,7 @@ def run_remediator_pass(settings: Settings) -> list[Decision]:
 def recent_decisions(limit: int = 20) -> list[dict[str, Any]]:
     """Latest decision rows for /fleet — the automation's visible memory."""
     from trusted_router.storage import STORE
+    from trusted_router.synthetic.fleet import _age_seconds
 
     samples = STORE.synthetic_probe_samples(probe_type=REMEDIATION_PROBE, limit=limit)
     rows = sorted(samples, key=lambda s: s.created_at, reverse=True)[:limit]
@@ -218,6 +226,8 @@ def recent_decisions(limit: int = 20) -> list[dict[str, Any]]:
             "at": row.created_at,
             "decision": row.target,
             "detail": row.error_type,
+            "observed_age_seconds": _age_seconds(row.created_at),
+            "point_in_time": True,
         }
         for row in rows
     ]
