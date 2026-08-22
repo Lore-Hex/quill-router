@@ -3,6 +3,25 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_rollout_artifact_paths_are_initialized_from_runner_temp() -> None:
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    deploy = workflow.index("\n  deploy:")
+    steps = workflow.index("    steps:", deploy)
+    capture = workflow.index("- name: Capture frontend attestation", deploy)
+    setup = workflow[deploy:capture]
+
+    assert "${{ runner.temp }}" not in workflow[deploy:steps]
+    assert (
+        'echo "TR_ROLLOUT_MANIFEST=${RUNNER_TEMP}/tr-rollout/manifest.json"'
+        in setup
+    )
+    assert (
+        'echo "TR_ROLLOUT_FRONTEND_ATTESTATION=${RUNNER_TEMP}/tr-rollout/'
+        'frontend-attestation.json"' in setup
+    )
+    assert setup.count('>> "$GITHUB_ENV"') == 2
+
+
 def test_every_load_balanced_control_plane_region_is_staged() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     start = workflow.index("- name: Roll secondary warm regions sequentially")

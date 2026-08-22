@@ -401,19 +401,22 @@ jobs:
       TR_WEBHOOKS_SERVICE: trusted-router-webhooks
       TR_INTERNAL_SERVICE: trusted-router-billing
       TR_BILLING_SERVICE: trusted-router-billing
-      TR_ROLLOUT_MANIFEST: ${{ runner.temp }}/tr-rollout/manifest.json
       # The frontend identities are a reviewed contract (like the service
       # inventory above): capture verifies the live LB against them and
       # rollout.sh refuses to run without the resulting artifact.
       TR_FORWARDING_RULE: trusted-router-control-https
       TR_HTTPS_PROXY: trusted-router-control-https-proxy
-      TR_ROLLOUT_FRONTEND_ATTESTATION: ${{ runner.temp }}/tr-rollout/frontend-attestation.json
       SHA: ${{ needs.build-image.outputs.sha }}
       IMAGE: ${{ needs.build-image.outputs.image }}
       # Keep the workflow value raw. rollout.sh normalizes preserve/false/true
       # only after reading the actual 100%-traffic primary revision.
       TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED: ${{ inputs.regional_quota_lease_issuance }}
     steps:
+      - name: Initialize rollout artifact paths
+        run: |
+          echo "TR_ROLLOUT_MANIFEST=${RUNNER_TEMP}/tr-rollout/manifest.json" >> "$GITHUB_ENV"
+          echo "TR_ROLLOUT_FRONTEND_ATTESTATION=${RUNNER_TEMP}/tr-rollout/frontend-attestation.json" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
