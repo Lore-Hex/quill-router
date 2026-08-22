@@ -251,3 +251,34 @@ def test_capacity_probe_is_disposable_and_uses_a_conservative_gate() -> None:
     assert "SYSTEM SYNC REPLICA" in script
     assert "throughput * 0.25" in script
     assert "add_shard_now" in script
+
+
+def test_workspace_directory_refresh_is_installed_and_scheduled_hourly() -> None:
+    deploy = (ROOT / "scripts/deploy/clickhouse_live_ingestion.sh").read_text()
+    service = (ROOT / "clickhouse/tr-clickhouse-workspace-directory.service").read_text()
+    timer = (ROOT / "clickhouse/tr-clickhouse-workspace-directory.timer").read_text()
+
+    assert "tr-clickhouse-workspace-directory.service" in deploy
+    assert "tr-clickhouse-workspace-directory.timer" in deploy
+    assert "010_workspace_directory.sql" in deploy
+    assert "systemctl enable --now tr-clickhouse-workspace-directory.timer" in deploy
+    assert "systemctl is-active tr-clickhouse-workspace-directory.timer" in deploy
+    assert "EnvironmentFile=/etc/tr-clickhouse-ingest.env" in service
+    assert "User=tr-clickhouse-ingest" in service
+    assert "WorkingDirectory=/opt/tr-clickhouse" in service
+    assert (
+        "ExecStart=/opt/tr-clickhouse/venv/bin/python "
+        "-m clickhouse.refresh_workspace_directory"
+    ) in service
+    for hardening in (
+        "NoNewPrivileges=true",
+        "PrivateTmp=true",
+        "ProtectHome=true",
+        "ProtectSystem=strict",
+    ):
+        assert hardening in service
+    assert "After=network-online.target clickhouse-server.service" in service
+    assert "Requires=clickhouse-server.service" in service
+    assert "OnCalendar=hourly" in timer
+    assert "RandomizedDelaySec=5min" in timer
+    assert "Persistent=true" in timer
