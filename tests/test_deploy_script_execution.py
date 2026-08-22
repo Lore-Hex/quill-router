@@ -103,8 +103,15 @@ def _settings_kwargs_from_cloud_run_job(call: list[str]) -> dict[str, object]:
         for name, value in _cloud_run_job_env(call).items()
         if name.startswith("TR_")
     }
-    # Cloud Run resolves this --update-secrets binding before process startup.
-    kwargs["internal_gateway_token"] = "harness-gateway-token"  # noqa: S105
+    secret_flag = next(
+        flag for flag in ("--update-secrets", "--set-secrets") if flag in call
+    )
+    for binding in call[call.index(secret_flag) + 1].split(","):
+        name, separator, reference = binding.partition("=")
+        if not separator or not name.startswith("TR_"):
+            continue
+        secret_name = reference.partition(":")[0]
+        kwargs[name.removeprefix("TR_").lower()] = f"harness-{secret_name}"
     return kwargs
 
 
@@ -1194,23 +1201,34 @@ def test_synthetic_combined_bridge_job_environment_constructs_settings(
     run = isolated.run(script, verifier_rc=0, omit_env=("TR_BILLING_SERVICE",))
 
     assert run.returncode == 0, summarise(run)
-    deploy = next(
+    deploys = [
         call
         for call in run.calls
         if call[:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
         and call[4:6] == ["jobs", "deploy"]
-    )
-    settings_kwargs = _settings_kwargs_from_cloud_run_job(deploy)
-    settings = Settings(**settings_kwargs)
-    assert settings.environment == "worker"
-    assert settings.service_surface == "combined"
+    ]
+    assert len(deploys) == 5
+    for deploy in deploys:
+        settings_kwargs = _settings_kwargs_from_cloud_run_job(deploy)
+        settings = Settings(**settings_kwargs)
+        assert settings.environment == "worker"
+        assert settings.service_surface == "combined"
 
-    settings_kwargs.pop("allow_deployed_combined_surface")
-    with pytest.raises(
-        ValidationError,
-        match="TR_ALLOW_DEPLOYED_COMBINED_SURFACE",
-    ):
-        Settings(**settings_kwargs)
+        without_combined_opt_in = dict(settings_kwargs)
+        without_combined_opt_in.pop("allow_deployed_combined_surface")
+        with pytest.raises(
+            ValidationError,
+            match="TR_ALLOW_DEPLOYED_COMBINED_SURFACE",
+        ):
+            Settings(**without_combined_opt_in)
+
+        without_gateway_token = dict(settings_kwargs)
+        without_gateway_token.pop("internal_gateway_token")
+        with pytest.raises(
+            ValidationError,
+            match="not fail-closed.*TR_INTERNAL_GATEWAY_TOKEN",
+        ):
+            Settings(**without_gateway_token)
 
 
 @pytest.mark.parametrize(
