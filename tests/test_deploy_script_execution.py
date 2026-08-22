@@ -43,6 +43,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from trusted_router import cloud_rollout_completeness as crc
 from trusted_router.config import Settings
@@ -85,6 +86,26 @@ def _settings_from_containerapp_mutation(call: list[str]) -> Settings:
     kwargs["attribution_cookie_secret"] = "a" * 64
     kwargs["postgres_dsn"] = "postgresql://canary.invalid/trustedrouter"
     return Settings(**kwargs)
+
+
+def _cloud_run_job_env(call: list[str]) -> dict[str, str]:
+    serialized = call[call.index("--set-env-vars") + 1]
+    assert serialized.startswith("^|^")
+    return {
+        assignment.partition("=")[0]: assignment.partition("=")[2]
+        for assignment in serialized.removeprefix("^|^").split("|")
+    }
+
+
+def _settings_kwargs_from_cloud_run_job(call: list[str]) -> dict[str, object]:
+    kwargs: dict[str, object] = {
+        name.removeprefix("TR_").lower(): value
+        for name, value in _cloud_run_job_env(call).items()
+        if name.startswith("TR_")
+    }
+    # Cloud Run resolves this --update-secrets binding before process startup.
+    kwargs["internal_gateway_token"] = "harness-gateway-token"  # noqa: S105
+    return kwargs
 
 
 def test_every_deploy_script_parses_in_this_machine_s_shell() -> None:
@@ -991,7 +1012,10 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
     for deploy_index, deploy in deploys:
         region = deploy[deploy.index("--region") + 1]
         deploy_text = " ".join(deploy)
-        assert "TR_SERVICE_SURFACE=observer" in deploy_text
+        deployed_env = _cloud_run_job_env(deploy)
+        assert deployed_env["TR_SERVICE_SURFACE"] == "observer"
+        assert "TR_ALLOW_DEPLOYED_COMBINED_SURFACE" not in deployed_env
+        assert "TR_RATE_LIMIT_ENABLED" not in deployed_env
         assert (
             "TR_OBSERVER_INTERNAL_TOKEN=trustedrouter-observer-internal-token:latest"
             in deploy_text
@@ -1124,6 +1148,7 @@ def test_synthetic_combined_bridge_restores_legacy_job_deploys(
     )
     for deploy in deploys:
         deploy_text = " ".join(deploy)
+        deployed_env = _cloud_run_job_env(deploy)
         region = deploy[deploy.index("--region") + 1]
         assert f"https://trusted-router-stub-output.{region}.run.app" in deploy_text
         assert (
@@ -1131,13 +1156,61 @@ def test_synthetic_combined_bridge_restores_legacy_job_deploys(
             in deploy_text
         )
         assert "TR_OBSERVER_INTERNAL_TOKEN" not in deploy_text
-        assert "TR_SERVICE_SURFACE=observer" not in deploy_text
+        assert deployed_env["TR_SERVICE_SURFACE"] == "combined"
+        assert deployed_env["TR_ALLOW_DEPLOYED_COMBINED_SURFACE"] == "true"
+        assert deployed_env["TR_RATE_LIMIT_ENABLED"] == "false"
         assert "TR_BYOK_KMS_KEY_NAME=" in deploy_text
         assert "--update-secrets" in deploy
         assert "--set-secrets" not in deploy
         assert "--network" not in deploy
         assert "--subnet" not in deploy
         assert "--vpc-egress" not in deploy
+        # The combined service keeps ingress=all and the pre-#714 jobs reached it over
+        # the public run.app URL with no VPC; bridge mode must not grow a private path
+        # before the split actually restricts ingress.
+        assert not any(
+            arg == flag or arg.startswith(f"{flag}=")
+            for arg in deploy
+            for flag in ("--network", "--subnet", "--vpc-egress", "--vpc-connector")
+        ), " ".join(deploy)
+
+
+def test_synthetic_combined_bridge_job_environment_constructs_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = "scripts/deploy/synthetic.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        script,
+        replace(
+            fixture,
+            env={**fixture.env, "TR_ALLOW_DEPLOYED_COMBINED_SURFACE": "true"},
+        ),
+    )
+    isolated = DeployScriptHarness(tmp_path / "synthetic-combined-settings")
+
+    run = isolated.run(script, verifier_rc=0, omit_env=("TR_BILLING_SERVICE",))
+
+    assert run.returncode == 0, summarise(run)
+    deploy = next(
+        call
+        for call in run.calls
+        if call[:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
+        and call[4:6] == ["jobs", "deploy"]
+    )
+    settings_kwargs = _settings_kwargs_from_cloud_run_job(deploy)
+    settings = Settings(**settings_kwargs)
+    assert settings.environment == "worker"
+    assert settings.service_surface == "combined"
+
+    settings_kwargs.pop("allow_deployed_combined_surface")
+    with pytest.raises(
+        ValidationError,
+        match="TR_ALLOW_DEPLOYED_COMBINED_SURFACE",
+    ):
+        Settings(**settings_kwargs)
 
 
 @pytest.mark.parametrize(

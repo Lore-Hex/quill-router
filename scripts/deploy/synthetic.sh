@@ -4,6 +4,7 @@
 # samples to internal ingest endpoints. Short uptime probes must never wait on
 # the longer throughput benchmark.
 
+# Intentionally refuse before sourcing _lib.sh so this fail-fast path makes zero gcloud calls.
 if [ "${TR_ALLOW_DEPLOYED_COMBINED_SURFACE:-}" != "true" ]; then
   [ -n "${TR_BILLING_SERVICE:-}" ] || {
     echo "ERROR: TR_BILLING_SERVICE is required; refusing observer-token jobs against the legacy service" >&2
@@ -90,7 +91,13 @@ BASE_ENV_VARS=(
   # remain explicit below.
   "TR_ENVIRONMENT=worker"
 )
-if [ "$DEPLOYED_COMBINED_BRIDGE" != "true" ]; then
+if [ "$DEPLOYED_COMBINED_BRIDGE" = "true" ]; then
+  BASE_ENV_VARS+=(
+    "TR_SERVICE_SURFACE=combined"
+    "TR_ALLOW_DEPLOYED_COMBINED_SURFACE=true"
+    "TR_RATE_LIMIT_ENABLED=false"
+  )
+else
   BASE_ENV_VARS+=("TR_SERVICE_SURFACE=observer")
 fi
 BASE_ENV_VARS+=(
@@ -190,6 +197,8 @@ prepare_synthetic_ingest_target() {
   local target_region="$1"
 
   if [ "$DEPLOYED_COMBINED_BRIDGE" = "true" ]; then
+    # The combined service uses ingress=all in every region, matching the pre-#714
+    # jobs' public run.app path; VPC/private-ingress setup belongs to the split path.
     return
   fi
   ensure_private_run_app_access "$target_region"
