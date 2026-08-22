@@ -76,7 +76,11 @@ echo __TR_STEP_OK__" --query "value[0].message" -o tsv 2>&1)" || {
   printf '%s' "$out" | grep -q "__TR_STEP_OK__" || {
     printf '%s\n' "$out" >&2; die "$label: the remote script failed"
   }
-  printf '%s' "$out" | grep -vE "^\s*$|__TR_STEP_OK__|Enable succeeded|^\[stdout\]|^\[stderr\]"
+  # `|| true` is load-bearing. grep -v exits 1 when it filters EVERYTHING out,
+  # which is exactly what happens for a step whose only output is the success
+  # marker -- and under `set -e` that killed the whole install silently, mid
+  # chunk loop, with no error printed anywhere. The step had succeeded.
+  printf '%s' "$out" | grep -vE "^\s*$|__TR_STEP_OK__|Enable succeeded|^\[stdout\]|^\[stderr\]" || true
 }
 
 # -- 1. preflight ------------------------------------------------------------
@@ -119,15 +123,27 @@ echo "  $(wc -c < "$WORK/drain.tgz") bytes, sha256 ${SHA:0:16}..., ${#CHUNKS[@]}
 
 # -- 3. ship -----------------------------------------------------------------
 say "shipping ${#CHUNKS[@]} chunks"
-run "staging: reset" "rm -rf ${REMOTE_ROOT}.staging /tmp/tr-drain.b64; mkdir -p ${REMOTE_ROOT}.staging"
+# A re-run after a failure in a later step should not re-ship 19 chunks, which
+# is fourteen minutes of round trips. The node records the sha of what it
+# extracted; if it matches, the tree on disk is already this payload.
+STAGED="$(run "staging: check" "cat ${REMOTE_ROOT}.staging/.payload-sha 2>/dev/null || true" | tr -d '[:space:]')"
+if [ "$STAGED" = "$SHA" ]; then
+  echo "  node already holds this payload (sha matches); skipping the ship"
+  SKIP_SHIP=1
+else
+  SKIP_SHIP=0
+  run "staging: reset" "rm -rf ${REMOTE_ROOT}.staging /tmp/tr-drain.b64; mkdir -p ${REMOTE_ROOT}.staging"
+fi
 i=0
 for chunk in "${CHUNKS[@]}"; do
+  [ "$SKIP_SHIP" = "1" ] && break
   i=$((i + 1))
   printf '  chunk %d/%d\r' "$i" "${#CHUNKS[@]}" >&2
   run "chunk ${i}" "printf %s '$(cat "$chunk")' >> /tmp/tr-drain.b64"
 done
 printf '\n' >&2
 
+if [ "$SKIP_SHIP" = "0" ]; then
 run "verify and extract" "
 base64 -d /tmp/tr-drain.b64 > /tmp/tr-drain.tgz
 got=\$(sha256sum /tmp/tr-drain.tgz | cut -d' ' -f1)
@@ -140,8 +156,10 @@ rmdir ${REMOTE_ROOT}.staging/src
 find ${REMOTE_ROOT}.staging -name '._*' -delete
 ! find ${REMOTE_ROOT}.staging -name '._*' | grep -q . || { echo 'AppleDouble sidecars survived'; exit 1; }
 rm -f /tmp/tr-drain.b64 /tmp/tr-drain.tgz
+printf %s '$SHA' > ${REMOTE_ROOT}.staging/.payload-sha
 echo 'extracted and checksummed'
 "
+fi
 
 # -- 4. service account, state dir, venv -------------------------------------
 say "service account, state directory, virtualenv"
@@ -156,11 +174,30 @@ install -d -o ${SVC_USER} -g ${SVC_USER} -m 0750 ${STATE_DIR}
 echo 'service account and state dir ready'
 "
 
+# PYTHON 3.12, EXPLICITLY. Ubuntu 22.04 ships 3.10, and the code needs 3.11+:
+# trusted_router uses datetime.UTC (and StrEnum elsewhere), so a 3.10 venv gets
+#   ImportError: cannot import name 'UTC' from 'datetime'
+# The AWS installer provisions 3.12 from deadsnakes for the same reason.
+run "python 3.12" "
+if ! command -v python3.12 >/dev/null 2>&1; then
+  apt-get update -qq
+  apt-get install -y --no-install-recommends software-properties-common >/dev/null
+  add-apt-repository -y ppa:deadsnakes/ppa >/dev/null
+  apt-get update -qq
+  apt-get install -y --no-install-recommends python3.12 python3.12-venv >/dev/null
+fi
+python3.12 --version
+"
+
 run "virtualenv" "
-apt-get install -y --no-install-recommends python3-venv >/dev/null 2>&1 || true
-python3 -m venv ${REMOTE_ROOT}.staging/venv
+# Replace, do not reuse. A skipped re-ship leaves the PREVIOUS venv in staging,
+# and that is how a 3.10 interpreter survives the fix that was supposed to
+# replace it with 3.12.
+rm -rf ${REMOTE_ROOT}.staging/venv
+python3.12 -m venv ${REMOTE_ROOT}.staging/venv
 ${REMOTE_ROOT}.staging/venv/bin/pip -q install --upgrade pip
 ${REMOTE_ROOT}.staging/venv/bin/pip -q install 'psycopg[binary]>=3.2.0' 'pydantic>=2' 'pydantic-settings>=2' 'structlog>=24' 'python-dateutil>=2.9'
+${REMOTE_ROOT}.staging/venv/bin/python --version
 echo 'venv built'
 "
 
@@ -191,7 +228,12 @@ CH_PW=\$(curl -fsS -H \"Authorization: Bearer \$TOKEN\" 'https://${VAULT}.vault.
 PG_PW=\$(curl -fsS -H \"Authorization: Bearer \$TOKEN\" 'https://${VAULT}.vault.azure.net/secrets/${PG_SECRET}?api-version=7.4' | jq -r .value)
 test -n \"\$CH_PW\" && test -n \"\$PG_PW\"
 {
-  printf 'TR_POSTGRES_DSN=host=%s port=5432 user=%s password=%s dbname=%s sslmode=require\n' '${PG_HOST}' '${PG_USER}' \"\$PG_PW\" '${PG_DB}'
+  # The password goes in PGPASSWORD, NOT in the DSN. The drain refuses a DSN
+  # that carries one -- 'DSN must not contain a password; set PGPASSWORD
+  # instead so the secret does not appear in argv' -- because the DSN is handed
+  # to libpq, where it can surface in a process listing.
+  printf 'TR_POSTGRES_DSN=host=%s port=5432 user=%s dbname=%s sslmode=require\n' '${PG_HOST}' '${PG_USER}' '${PG_DB}'
+  printf 'PGPASSWORD=%s\n' \"\$PG_PW\"
   printf 'TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER=%s\n' '${CH_USER}'
   printf 'TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE=%s\n' '${CH_DATABASE}'
   printf 'CH_PASSWORD=%s\n' \"\$CH_PW\"
@@ -200,7 +242,9 @@ chmod 600 ${ENV_FILE}
 # Prove the secrets landed as VALUES, not as unexpanded commands, and never
 # print them: length and shape only.
 awk -F= '/^CH_PASSWORD=/ {print \"CH_PASSWORD length=\" length(\$2)}' ${ENV_FILE}
-grep -q 'password=\$(' ${ENV_FILE} && { echo 'DSN carries a literal command; refusing'; exit 1; }
+awk -F= '/^PGPASSWORD=/ {print \"PGPASSWORD length=\" length(\$2)}' ${ENV_FILE}
+grep -q '^PGPASSWORD=\$(' ${ENV_FILE} && { echo 'PGPASSWORD is a literal command; refusing'; exit 1; }
+grep -q '^TR_POSTGRES_DSN=.*password=' ${ENV_FILE} && { echo 'the DSN carries a password; the drain refuses that'; exit 1; }
 grep -q '^CH_PASSWORD=\$(' ${ENV_FILE} && { echo 'CH_PASSWORD is a literal command; refusing'; exit 1; }
 cut -d= -f1 ${ENV_FILE}
 "

@@ -29,9 +29,28 @@ def test_secrets_are_fetched_on_the_node_not_passed_in() -> None:
 
     assert "identity/oauth2/token" in script
     assert "vault.azure.net/secrets/" in script
-    # And the installer refuses an env file that captured a command instead.
-    assert "carries a literal command; refusing" in script
-    assert "is a literal command; refusing" in script
+    # And the installer refuses an env file that captured a command instead --
+    # for BOTH secrets, since either one landing as an unexpanded $(...) is
+    # non-empty, passes every startup check, and then fails auth forever.
+    assert "CH_PASSWORD is a literal command; refusing" in script
+    assert "PGPASSWORD is a literal command; refusing" in script
+
+
+def test_the_postgres_password_is_not_put_in_the_dsn() -> None:
+    """The drain refuses a DSN carrying one, and says why:
+
+        DSN must not contain a password; set PGPASSWORD instead so the secret
+        does not appear in argv
+
+    The DSN is handed to libpq, where it can surface in a process listing. The
+    first version of this installer wrote it there and the drain rejected every
+    connection -- failed_shards=32 -- while looking perfectly healthy from the
+    outside: the unit was active and the outbox simply never drained.
+    """
+    script = _script()
+
+    assert "PGPASSWORD=%s" in script
+    assert "the DSN carries a password; the drain refuses that" in script
 
 
 def test_it_proves_the_secret_landed_without_printing_it() -> None:
