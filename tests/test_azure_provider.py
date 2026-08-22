@@ -1914,6 +1914,45 @@ def test_azure_sync_leaves_unchanged_manifest_byte_identical(
     assert manifest_path.read_bytes() == before
 
 
+def test_azure_price_refresh_preserves_discovery_and_pricing_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "azure.json"
+    raw = json.loads(azure.MANIFEST_PATH.read_text(encoding="utf-8"))
+    raw["pricing_source"] = "https://stale.example.test/prices"
+    manifest_path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+    monkeypatch.setattr(azure, "MANIFEST_PATH", manifest_path)
+
+    prices = {
+        row["id"]: azure.ModelPrice(
+            row["input_token_price_per_m"],
+            row["output_token_price_per_m"],
+            prompt_cached_micro_per_m=row.get("cached_input_token_price_per_m"),
+        )
+        for row in raw["models"]
+    }
+    result = azure.ProviderPricingResult(
+        slug="azure",
+        prices=prices,
+        source="api",
+        fetched_url=azure.URL,
+    )
+
+    azure.write_provider_manifest(result)
+    first = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert first["source"] == azure.DISCOVERY_URL
+    assert first["pricing_source"] == azure.URL
+
+    azure.write_provider_manifest(result)
+    second = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert second["source"] == azure.DISCOVERY_URL
+    assert second["pricing_source"] == azure.URL
+    first.pop("generated_at")
+    second.pop("generated_at")
+    assert second == first
+
+
 def test_azure_secret_uploader_is_managed() -> None:
     root = azure.MANIFEST_PATH.parents[4]
     secrets_script = (root / "scripts/deploy/secrets.sh").read_text(encoding="utf-8")

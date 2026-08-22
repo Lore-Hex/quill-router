@@ -36,6 +36,10 @@ URL = (
     "?$filter=serviceName%20eq%20%27Foundry%20Models%27"
     "%20and%20armRegionName%20eq%20%27eastus2%27"
 )
+DISCOVERY_URL = (
+    "https://management.azure.com/providers/Microsoft.CognitiveServices/"
+    "locations/eastus2/models"
+)
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src"
@@ -567,5 +571,6 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         result,
         manifest_path=MANIFEST_PATH,
         discovered_rows=discovered,
-        source_url=URL,
+        source_url=DISCOVERY_URL,
+        pricing_source_url=result.fetched_url or URL,
     )

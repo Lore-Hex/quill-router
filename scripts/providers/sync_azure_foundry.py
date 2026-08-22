@@ -34,6 +34,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.pricing.providers.azure import (  # noqa: E402, I001
+    DISCOVERY_URL,
     MANIFEST_PATH,
     URL as PRICING_URL,
     canonical_model_id,
@@ -960,10 +961,7 @@ def write_manifest(rows: list[dict[str, Any]]) -> bool:
             "and required image capability canaries."
         ),
         "provider": "azure",
-        "source": (
-            "https://management.azure.com/providers/Microsoft.CognitiveServices/"
-            "locations/eastus2/models"
-        ),
+        "source": DISCOVERY_URL,
         "pricing_source": PRICING_URL,
         "price_scale": "microdollars_per_million",
         "model_count": len(rows),
