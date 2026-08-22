@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Awaitable, Callable
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request, Response
 from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
@@ -11,16 +12,19 @@ from trusted_router.main import create_app
 from trusted_router.services.paypal_billing import verify_paypal_webhook_signature
 
 
-def _loop_thread_client(settings: Settings) -> tuple[TestClient, str]:
+def _loop_thread_client(settings: Settings) -> tuple[TestClient, list[str]]:
     app = create_app(settings, init_observability=False)
+    loop_threads: list[str] = []
 
-    @app.get("/__test/event-loop-thread", include_in_schema=False)
-    async def event_loop_thread() -> dict[str, int]:
-        return {"thread_id": threading.get_ident()}
+    @app.middleware("http")
+    async def record_loop_thread(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        loop_threads.append(str(threading.get_ident()))
+        return await call_next(request)
 
-    client = TestClient(app)
-    loop_thread = str(client.get("/__test/event-loop-thread").json()["thread_id"])
-    return client, loop_thread
+    return TestClient(app), loop_threads
 
 
 def test_deployed_paypal_webhook_fails_closed_without_webhook_id() -> None:
@@ -46,7 +50,7 @@ def test_paypal_webhook_verification_runs_off_the_event_loop(
         paypal_client_secret="paypal-secret",  # noqa: S106
         paypal_webhook_id="WEBHOOKID",
     )
-    client, loop_thread = _loop_thread_client(settings)
+    client, loop_threads = _loop_thread_client(settings)
     verification_threads: list[str] = []
 
     def verify(**_kwargs: object) -> None:
@@ -64,13 +68,14 @@ def test_paypal_webhook_verification_runs_off_the_event_loop(
 
     assert response.status_code == 200
     assert verification_threads
-    assert verification_threads[0] != loop_thread
+    assert loop_threads
+    assert verification_threads[0] != loop_threads[0]
 
 
 def test_sns_certificate_verification_runs_off_the_event_loop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client, loop_thread = _loop_thread_client(Settings(environment="test"))
+    client, loop_threads = _loop_thread_client(Settings(environment="test"))
     verification_threads: list[str] = []
 
     def verify(_envelope: dict[str, object]) -> None:
@@ -92,7 +97,8 @@ def test_sns_certificate_verification_runs_off_the_event_loop(
 
     assert response.status_code == 200
     assert verification_threads
-    assert verification_threads[0] != loop_thread
+    assert loop_threads
+    assert verification_threads[0] != loop_threads[0]
 
 
 @pytest.mark.parametrize(
@@ -276,7 +282,7 @@ def test_sns_subscription_confirmation_concurrency_refuses_before_outbound(
 ) -> None:
     import trusted_router.routes.ses_notifications as ses_notifications
 
-    client, _loop_thread = _loop_thread_client(Settings(environment="test"))
+    client, _loop_threads = _loop_thread_client(Settings(environment="test"))
     outbound_calls = 0
 
     def verified(_envelope: dict[str, object]) -> None:
