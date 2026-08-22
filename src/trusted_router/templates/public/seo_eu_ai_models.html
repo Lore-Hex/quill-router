@@ -4,7 +4,7 @@
   <div class="marketing-copy">
     <span class="eyebrow">European labs, European operators, and the gap between them</span>
     <h2>An EU-registered provider is not the same thing as EU data residency. This page keeps the two apart.</h2>
-    <p>Two facts get sold as one. The lab that trained a model has a country: {{ region.origin_model_count }} models in the catalog come from {{ region.lab_count }} lab{{ '' if region.lab_count == 1 else 's' }} registered in an EU member state. The company operating the endpoint a request reaches has its own country, and it is a different field: {{ region.provider_count }} of the {{ region.catalog_provider_count }} providers here are operated by a company registered in the EU.</p>
+    <p>Two facts get sold as one. The lab that trained a model has a country: {{ region.origin_model_count }} models in the catalog come from {{ region.lab_count }} lab{{ '' if region.lab_count == 1 else 's' }} based in an EU member state. The company operating the endpoint a request reaches has its own country, and it is a different field: {{ region.provider_count }} of the {{ region.catalog_provider_count }} providers here are operated by a company headquartered in the EU.</p>
     <p>Neither field is a residency guarantee. TrustedRouter records the operator's legal home, read from its own terms or filing. It does not record which datacentre answers a given request, so nothing on this page should be read as one. Where residency is contractual, it comes from an allowlist you pin and a contract you sign, not from a country code on a directory page.</p>
     <p><a class="btn primary" href="/eu">Read the EU routing guide</a> <a class="btn" href="/gdpr-compliant-llm-api">GDPR evidence</a></p>
   </div>
