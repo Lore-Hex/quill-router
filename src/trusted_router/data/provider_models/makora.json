@@ -3,7 +3,7 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-08-22T21:07:18Z",
+  "generated_at": "2026-08-22T22:31:24Z",
   "price_scale": "microdollars_per_million",
   "model_count": 12,
   "models": [
