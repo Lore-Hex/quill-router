@@ -89,6 +89,23 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
             Decimal("0.00000028"),
             Decimal("0.00000132"),
         ),
+        # Novita's authenticated catalog and current public pricing table both
+        # list the 0731 revision separately from the cheaper unversioned route:
+        # https://novita.ai/pricing
+        (
+            "deepseek/deepseek-v4-flash-0731 "
+            "[novita:novita:deepseek/deepseek-v4-flash-0731]",
+            "prompt",
+            Decimal("0.00000014"),
+            Decimal("0.00000044"),
+        ),
+        (
+            "deepseek/deepseek-v4-flash-0731 "
+            "[novita:novita:deepseek/deepseek-v4-flash-0731]",
+            "completion",
+            Decimal("0.00000028"),
+            Decimal("0.00000132"),
+        ),
         # Fireworks' announced 2026-08-22 price change for DeepSeek V4 Flash
         # 0731. The input increase remains below the generic 2x gate; pin the
         # completion transition exactly so a parser error still fails closed:
