@@ -4,7 +4,7 @@ import re
 from decimal import ROUND_CEILING, Decimal
 from pathlib import Path
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 from scripts.pricing.base import ModelPrice, fetch_html, fetch_json
 from scripts.pricing.providers._direct_openai import DirectOpenAIProvider, DirectOpenAIProviderSpec
@@ -55,9 +55,25 @@ def _max_microdollars_per_million_credits(payload: object) -> Decimal:
     return max(rates)
 
 
+def _credit_price(node: Tag, *, axis: str, display_name: str) -> str:
+    raw = node.get_text(" ", strip=True)
+    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)", raw)
+    if match is None:
+        raise RuntimeError(
+            f"mancer: malformed {axis} token credit price for {display_name}"
+        )
+    return match.group(1)
+
+
 def _parse_pricing(source: str, credit_packs: object) -> dict[str, ModelPrice]:
     micro_per_m_credits = _max_microdollars_per_million_credits(credit_packs)
     soup = BeautifulSoup(source, "html.parser")
+    price_headers = {
+        cell.get_text(" ", strip=True).casefold()
+        for cell in soup.select("table th")
+    }
+    if not any("price" in header and "credit" in header for header in price_headers):
+        raise RuntimeError("mancer: model table does not label prices in credits")
     prices: dict[str, ModelPrice] = {}
     for row in soup.select("table tr"):
         cells = row.find_all(["th", "td"])
@@ -70,8 +86,9 @@ def _parse_pricing(source: str, credit_packs: object) -> dict[str, ModelPrice]:
         )
         if display_name is None:
             continue
-        credit_prices = re.findall(r"[0-9]+(?:\.[0-9]+)?", cells[2].get_text(" ", strip=True))
-        if len(credit_prices) < 2:
+        prompt_node = cells[2].find("x-intag")
+        completion_node = cells[2].find("x-outtag")
+        if not isinstance(prompt_node, Tag) or not isinstance(completion_node, Tag):
             raise RuntimeError(f"mancer: malformed token credit prices for {display_name}")
 
         def converted(raw: str) -> int:
@@ -80,8 +97,12 @@ def _parse_pricing(source: str, credit_packs: object) -> dict[str, ModelPrice]:
             )
 
         prices[_DISPLAY_MODEL_MAP[display_name]] = ModelPrice(
-            converted(credit_prices[0]),
-            converted(credit_prices[1]),
+            converted(
+                _credit_price(prompt_node, axis="input", display_name=display_name)
+            ),
+            converted(
+                _credit_price(completion_node, axis="output", display_name=display_name)
+            ),
         )
     return prices
 
@@ -96,7 +117,6 @@ CATALOG = DirectOpenAIProvider(
         base_url=BASE_URL,
         api_key_env="MANCER_API_KEY",
         explicit_model_map=EXPLICIT_MODEL_MAP,
-        namespace_unqualified="mancer",
         price_loader=_load_prices,
         expected_models=("deepseek/deepseek-v4-flash-0731", "z-ai/glm-4.7"),
         pricing_source_url=PRICING_URL,

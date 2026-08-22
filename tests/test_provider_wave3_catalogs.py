@@ -9,6 +9,7 @@ import pytest
 from scripts.check_price_coverage import _DISCOVERABLE_MANIFEST_PROVIDERS
 from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import (
+    _direct_openai,
     aion_labs,
     akashml,
     arcee,
@@ -34,6 +35,8 @@ from trusted_router.catalog import (
     PROVIDERS,
 )
 from trusted_router.services.inference_errors import default_provider_secret_ref
+
+FIXTURE_DIR = Path(__file__).parent / "fixtures" / "provider_wave3"
 
 READY = {
     "upstage",
@@ -116,21 +119,8 @@ def test_failed_live_canaries_stay_dark() -> None:
 
 
 def test_upstage_parser_reads_all_three_first_party_price_axes() -> None:
-    cards = "".join(
-        f"""
-        <div class="pricing-card-v2"><h4>{name}</h4>
-          <div class="pricing-feature-v2">Input ${prompt} / 1M tokens</div>
-          <div class="pricing-feature-v2">Input(Cached) ${cached} / 1M tokens</div>
-          <div class="pricing-feature-v2">Output ${completion} / 1M tokens</div>
-        </div>
-        """
-        for name, prompt, cached, completion in (
-            ("Solar Pro 2", "0.15", "0.015", "0.60"),
-            ("Solar Pro 3", "0.15", "0.015", "0.60"),
-            ("Solar Pro 4", "0.30", "0.06", "1.20"),
-        )
-    )
-    assert upstage._parse_pricing(cards)["upstage/solar-pro4"] == ModelPrice(
+    source = (FIXTURE_DIR / "upstage.html").read_text(encoding="utf-8")
+    assert upstage._parse_pricing(source)["upstage/solar-pro4"] == ModelPrice(
         300_000,
         1_200_000,
         prompt_cached_micro_per_m=60_000,
@@ -163,38 +153,15 @@ def test_reka_loader_expands_only_the_explicit_version_alias(monkeypatch: pytest
 
 
 def test_reka_parser_reads_the_first_party_markdown_feed() -> None:
-    source = r"""
-    | Model | Input <br />Tokens <br />(per 1M) | Output <br />Tokens <br />(per 1M) |
-    | --- | --- | --- |
-    | <b>Reka Edge</b><br /><i>Compact</i> | \$0.10 | \$0.10 |
-    | <b>Reka Flash</b><br /><i>Fast</i> | \$0.80 | \$2.00 |
-    """
+    source = (FIXTURE_DIR / "reka.md").read_text(encoding="utf-8")
     prices = reka._parse_pricing(source)
     assert prices["reka/reka-edge"] == ModelPrice(100_000, 100_000)
     assert prices["reka/reka-flash"] == ModelPrice(800_000, 2_000_000)
 
 
 def test_sail_parser_uses_asap_not_discounted_completion_windows() -> None:
-    groups = "".join(
-        f"""
-        <tbody data-model="{native}">
-          <tr>
-            <td data-axis="Input" data-window="asap">${prompt}</td>
-            <td data-axis="Cached" data-window="asap">${cached}</td>
-            <td data-axis="Output" data-window="asap">${completion}</td>
-          </tr>
-        </tbody>
-        """
-        for native, prompt, cached, completion in (
-            ("zai-org/GLM-5.2-FP8", "0.80", "0.16", "3.00"),
-            ("deepseek/deepseek-v4-flash-0731", "0.09", "0.02", "0.18"),
-            ("moonshotai/Kimi-K2.6", "1.00", "0.20", "4.00"),
-            ("openai/gpt-oss-120b", "0.06", "0.03", "0.40"),
-            ("google/gemma-4-31B-it", "0.40", "0.20", "0.60"),
-            ("nvidia/Gemma-4-31B-IT-NVFP4", "0.14", "0.07", "0.40"),
-        )
-    )
-    prices = sail_research._parse_pricing(f"<table>{groups}</table>")
+    source = (FIXTURE_DIR / "sail-research.html").read_text(encoding="utf-8")
+    prices = sail_research._parse_pricing(source)
     assert prices["deepseek/deepseek-v4-flash-0731"] == ModelPrice(
         90_000,
         180_000,
@@ -203,23 +170,9 @@ def test_sail_parser_uses_asap_not_discounted_completion_windows() -> None:
 
 
 def test_mancer_parser_uses_live_token_credits_and_least_discounted_pack() -> None:
-    rows = "".join(
-        f"<tr><td>{name}</td><td>context</td><td>{prompt} {completion}</td></tr>"
-        for name, prompt, completion in (
-            ("DeepSeek V4 Flash 0731", "0.058", "0.180"),
-            ("DeepSeek V4 Flash", "0.056", "0.180"),
-            ("Gemma 4 31B Instruct", "0.080", "0.400"),
-            ("GLM 4.7", "0.240", "1.000"),
-            ("GPT OSS 120B", "0.034", "0.200"),
-            ("MythoMax", "0.160", "0.240"),
-            ("ReMM-SLerp", "0.180", "0.260"),
-        )
-    )
-    packs = [
-        {"can_purchase": True, "price": "4.99", "credits": 1_250_000},
-        {"can_purchase": True, "price": "19.99", "credits": 5_500_000},
-    ]
-    prices = mancer._parse_pricing(f"<table>{rows}</table>", packs)
+    source = (FIXTURE_DIR / "mancer.html").read_text(encoding="utf-8")
+    packs = json.loads((FIXTURE_DIR / "mancer-credit-packs.json").read_text())
+    prices = mancer._parse_pricing(source, packs)
     assert prices["deepseek/deepseek-v4-flash-0731"] == ModelPrice(
         231_536,
         718_560,
@@ -269,13 +222,46 @@ def test_direct_provider_drops_any_zero_direction_before_canary() -> None:
     ) == {"ok/model": ModelPrice(1, 2)}
 
 
+def test_direct_provider_catalog_fetch_uses_shared_retry_helper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_fetch_json(url: str, *, extra_headers: dict[str, str]) -> object:
+        seen["url"] = url
+        seen["headers"] = extra_headers
+        return {"data": [{"id": "vendor/model"}]}
+
+    monkeypatch.setenv("SHARED_FETCH_TEST_API_KEY", "test-secret")
+    monkeypatch.setattr(_direct_openai, "fetch_json", fake_fetch_json)
+    monkeypatch.setattr(_direct_openai, "models_requiring_canary", lambda *_args: set())
+    catalog = DirectOpenAIProvider(
+        DirectOpenAIProviderSpec(
+            slug="shared-fetch-test",
+            base_url="https://example.invalid/v1",
+            api_key_env="SHARED_FETCH_TEST_API_KEY",
+            explicit_model_map={"vendor/model": "vendor/model"},
+            static_prices={"vendor/model": ModelPrice(1, 2)},
+        ),
+        manifest_path=Path("unused.json"),
+    )
+
+    result = catalog.fetch()
+
+    assert result.prices == {"vendor/model": ModelPrice(1, 2)}
+    assert seen == {
+        "url": "https://example.invalid/v1/models",
+        "headers": {"Authorization": "Bearer test-secret"},
+    }
+
+
 def test_direct_provider_normalization_is_the_single_audit_policy() -> None:
     cases = {
         arcee: {
             "trinity-large-thinking": "arcee-ai/trinity-large-thinking",
             "deepseek/deepseek-v4-flash-latest": "deepseek/deepseek-v4-flash",
         },
-        mancer: {"future-model": "mancer/future-model"},
+        mancer: {"future-model": None},
         reka: {"reka-edge-2603": "reka/reka-edge-2603"},
         inception: {"mercury-2": "inception/mercury-2"},
     }
@@ -309,7 +295,12 @@ def test_price_parsers_survive_documented_model_retirement() -> None:
     assert set(sail_research._parse_pricing(sail_source)) == {"z-ai/glm-5.2"}
 
     mancer_source = """
-      <table><tr><td>GLM 4.7</td><td>context</td><td>0.240 1.000</td></tr></table>
+      <table>
+        <thead><tr><th>Model</th><th>Context</th><th>Price (credits)</th></tr></thead>
+        <tr><td>GLM 4.7</td><td>context</td><td>
+          <x-intag>0.240</x-intag><x-outtag>1.000</x-outtag>
+        </td></tr>
+      </table>
     """
     packs = [{"can_purchase": True, "price": "4.99", "credits": 1_250_000}]
     assert set(mancer._parse_pricing(mancer_source, packs)) == {"z-ai/glm-4.7"}
@@ -385,3 +376,37 @@ def test_wave3_hourly_discovery_and_provider_aliases_are_registered() -> None:
 def test_hyphenated_provider_secret_refs_use_valid_environment_names() -> None:
     assert default_provider_secret_ref("sail-research") == "env://SAIL_RESEARCH_API_KEY"
     assert default_provider_secret_ref("aion-labs") == "env://AION_LABS_API_KEY"
+    assert default_provider_secret_ref("io-net") == "env://IO_NET_API_KEY"
+
+
+def test_unqualified_unknown_models_are_not_guessed_for_aggregators() -> None:
+    assert arcee.CATALOG.model_id("future-model") is None
+    assert mancer.CATALOG.model_id("future-model") is None
+
+
+def test_perplexity_omits_an_undocumented_cache_rate() -> None:
+    rows = perplexity._normalize_rows(
+        [
+            {
+                "id": "perplexity/sonar",
+                "pricing": {
+                    "unit": "usd_per_1m_tokens",
+                    "input": "1.00",
+                    "output": "2.00",
+                },
+            }
+        ]
+    )
+    assert "input_cache_read" not in rows[0]["pricing"]
+
+
+def test_wave3_pricing_fixtures_are_captured_from_first_party_sources() -> None:
+    expected_sources = {
+        "upstage.html": "https://www.upstage.ai/pricing/api",
+        "reka.md": "https://docs.reka.ai/pricing.md",
+        "sail-research.html": "https://docs.sailresearch.com/pricing",
+        "mancer.html": "https://mancer.tech/models",
+    }
+    for filename, source_url in expected_sources.items():
+        source = (FIXTURE_DIR / filename).read_text(encoding="utf-8")
+        assert f"Captured from {source_url}" in source

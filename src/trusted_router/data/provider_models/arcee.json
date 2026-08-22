@@ -181,7 +181,7 @@
     }
   ],
   "source": "https://api.arcee.ai/api/v1/models",
-  "pricing_source": "https://www.arcee.ai/models",
+  "pricing_source": "https://api.arcee.ai/api/v1/models",
   "generated_at": "2026-08-22T22:30:44Z",
   "price_scale": "microdollars_per_million",
   "model_count": 8

@@ -25,15 +25,22 @@ def _normalize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         try:
             prompt = Decimal(str(pricing["input"])) / Decimal(1_000_000)
             completion = Decimal(str(pricing["output"])) / Decimal(1_000_000)
-            cached = Decimal(str(pricing.get("cache_read", 0))) / Decimal(1_000_000)
+            cached_raw = pricing.get("cache_read")
+            cached = (
+                Decimal(str(cached_raw)) / Decimal(1_000_000)
+                if cached_raw is not None
+                else None
+            )
         except (InvalidOperation, KeyError, TypeError, ValueError):
             continue
         row = dict(source)
-        row["pricing"] = {
+        normalized_pricing = {
             "prompt": str(prompt),
             "completion": str(completion),
-            "input_cache_read": str(cached),
         }
+        if cached is not None:
+            normalized_pricing["input_cache_read"] = str(cached)
+        row["pricing"] = normalized_pricing
         normalized.append(row)
     return normalized
 

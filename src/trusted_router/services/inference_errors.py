@@ -77,6 +77,7 @@ def default_provider_secret_ref(provider: str) -> str:
         "engy": "ENGY_API_KEY",
         "sail-research": "SAIL_RESEARCH_API_KEY",
         "aion-labs": "AION_LABS_API_KEY",
+        "io-net": "IO_NET_API_KEY",
         "databricks": "DATABRICKS_TOKEN",
         "zero-g": "ZERO_G_API_KEY",
         "vertex": "VERTEX_ACCESS_TOKEN",

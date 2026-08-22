@@ -8,14 +8,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import httpx
-
 from scripts.pricing.base import (
-    PROVIDER_FETCH_TIMEOUT,
-    PROVIDER_FETCH_TRANSPORT_RETRIES,
-    PROVIDER_FETCH_UA,
     ModelPrice,
     ProviderPricingResult,
+    fetch_json,
     validate,
 )
 from scripts.pricing.manifest import (
@@ -139,22 +135,11 @@ class DirectOpenAIProvider:
                 f"{self.spec.slug}: one of {self.api_key_envs!r} is required for discovery"
             )
         catalog_url = self.spec.catalog_url or f"{self.spec.base_url.rstrip('/')}/models"
-        transport = httpx.HTTPTransport(retries=PROVIDER_FETCH_TRANSPORT_RETRIES)
-        with httpx.Client(
-            timeout=PROVIDER_FETCH_TIMEOUT,
-            follow_redirects=True,
-            transport=transport,
-        ) as client:
-            response = client.get(
-                catalog_url,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Accept": "application/json",
-                    "User-Agent": PROVIDER_FETCH_UA,
-                },
-            )
-            response.raise_for_status()
-            rows = _catalog_rows(response.json(), slug=self.spec.slug)
+        payload = fetch_json(
+            catalog_url,
+            extra_headers={"Authorization": f"Bearer {api_key}"},
+        )
+        rows = _catalog_rows(payload, slug=self.spec.slug)
         if self.spec.normalize_rows is not None:
             rows = self.spec.normalize_rows(rows)
 
