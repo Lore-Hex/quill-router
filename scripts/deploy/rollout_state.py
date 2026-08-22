@@ -888,6 +888,17 @@ def _traffic_state(service: dict[str, Any]) -> list[dict[str, Any]]:
     )
 
 
+def _service_generation(service: dict[str, Any]) -> dict[str, Any]:
+    metadata = service.get("metadata") or {}
+    generation = metadata.get("generation")
+    resource_version = metadata.get("resourceVersion")
+    if isinstance(generation, bool) or not isinstance(generation, int) or generation <= 0:
+        raise ValueError("service metadata.generation must be a positive integer")
+    if not isinstance(resource_version, str) or not resource_version:
+        raise ValueError("service metadata.resourceVersion must be a non-empty string")
+    return {"generation": generation, "resourceVersion": resource_version}
+
+
 def _validate_captured_service_traffic(path: Path) -> None:
     service = _read_json(path)
     traffic = _traffic_state(service)
@@ -964,6 +975,9 @@ def _parser() -> argparse.ArgumentParser:
     traffic_state = subparsers.add_parser("traffic-state")
     traffic_state.add_argument("input", type=Path)
 
+    service_generation = subparsers.add_parser("service-generation")
+    service_generation.add_argument("input", type=Path)
+
     validate_traffic = subparsers.add_parser("validate-prior-traffic")
     validate_traffic.add_argument("input", type=Path)
 
@@ -1013,6 +1027,8 @@ def main() -> None:
         print(_sha256(_iam_policy_contract(_read_json(args.input))))
     elif args.command == "traffic-state":
         print(json.dumps(_traffic_state(_read_json(args.input)), sort_keys=True))
+    elif args.command == "service-generation":
+        print(json.dumps(_service_generation(_read_json(args.input)), sort_keys=True))
     elif args.command == "validate-prior-traffic":
         _validate_captured_service_traffic(args.input)
     elif args.command == "validate-manifest":

@@ -271,7 +271,12 @@ def _service_json(surface: str, region: str) -> tuple[dict[str, Any], str, str]:
         {"name": "TR_REMEDIATOR_IN_PROCESS_ENABLED", "value": "false"},
     ]
     data = {
-        "metadata": {"name": service, "generation": 7, "annotations": annotations},
+        "metadata": {
+            "name": service,
+            "generation": 7,
+            "resourceVersion": "service-version-7",
+            "annotations": annotations,
+        },
         "spec": {
             "traffic": [{"revisionName": prior, "percent": 100}],
             "template": {
@@ -687,6 +692,7 @@ def _fixture(
         "iam": _iam_fixture(),
         "fail_before": [],
         "fail_after": [],
+        "delayed_apply_fail": [],
         "forwarding_rule": {
             "name": "trusted-router-https",
             "selfLink": (
@@ -903,6 +909,10 @@ if args[:3] == ["compute", "url-maps", "import"]:
     finish(code=1 if matching("fail_after") else 0)
 if args[:3] == ["run", "services", "describe"]:
     key = f"{args[3]}|{option('--region')}"
+    pending = state.get("pending_traffic_mutations", {}).get(key)
+    if pending is not None and state.get("delayed_traffic_ready", False):
+        state["pending_traffic_mutations"].pop(key)
+        state["services"][key] = pending
     finish(state["services"][key])
 if args[:3] == ["run", "services", "list"]:
     inventory = []
@@ -945,7 +955,7 @@ if args[:3] == ["run", "services", "get-iam-policy"]:
     )
 if args[:3] == ["run", "services", "update-traffic"]:
     key = f"{args[3]}|{option('--region')}"
-    service = state["services"][key]
+    service = json.loads(json.dumps(state["services"][key]))
     if option("--to-revisions") is not None:
         traffic = []
         for assignment in option("--to-revisions").split(","):
@@ -969,6 +979,16 @@ if args[:3] == ["run", "services", "update-traffic"]:
     if "--clear-tags" in args:
         service["spec"]["traffic"] = [item for item in service["spec"].get("traffic", []) if not item.get("tag")]
         service["status"]["traffic"] = [item for item in service["status"].get("traffic", []) if not item.get("tag")]
+    service["metadata"]["generation"] += 1
+    service["metadata"]["resourceVersion"] = (
+        f"service-version-{service['metadata']['generation']}"
+    )
+    delayed_apply_failure = matching("delayed_apply_fail")
+    if not delayed_apply_failure:
+        service["status"]["observedGeneration"] = service["metadata"]["generation"]
+    if delayed_apply_failure:
+        state.setdefault("pending_traffic_mutations", {})[key] = service
+        finish(code=1)
     state["services"][key] = service
     finish(code=1 if matching("fail_after") else 0)
 if args[:3] == ["compute", "backend-services", "describe"]:
@@ -1193,6 +1213,20 @@ def _install_fake_gcloud(tmp_path: Path) -> Path:
     jq = binary.parent / "jq"
     jq.write_text(FAKE_JQ, encoding="utf-8")
     jq.chmod(0o755)
+    sleep = binary.parent / "sleep"
+    sleep.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        "if os.environ.get('FAKE_ROLLOUT_SETTLE_SLEEP') != 'true':\n"
+        " os.execv('/bin/sleep', ['/bin/sleep', *sys.argv[1:]])\n"
+        "path=Path(os.environ['FAKE_GCLOUD_STATE'])\n"
+        "state=json.loads(path.read_text(encoding='utf-8'))\n"
+        "state['delayed_traffic_ready']=True\n"
+        "path.write_text(json.dumps(state), encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    sleep.chmod(0o755)
     dig = binary.parent / "dig"
     dig.write_text(FAKE_DIG, encoding="utf-8")
     dig.chmod(0o755)
@@ -1332,6 +1366,8 @@ def _run_helper(
         "TR_REGIONS": ",".join(manifest_value["gateway_regions"]),
         "FAIL_SMOKE_PHASE": fail_smoke,
         "TR_ROLLOUT_REQUIRE_DURABLE_STATE": "false",
+        "TR_ROLLOUT_PROVIDER_SETTLE_SECONDS": "1",
+        "FAKE_ROLLOUT_SETTLE_SLEEP": "true",
     }
     if durable:
         env.update(
@@ -2248,6 +2284,64 @@ def test_nonzero_after_apply_is_accepted_only_after_postcondition(tmp_path: Path
     assert result.returncode == 0, result.stderr
     assert "inspecting provider state" in result.stderr
     assert _candidate_percents(state_path) == {100}
+
+
+def test_late_commit_after_nonzero_keeps_mutation_fence_open(tmp_path: Path) -> None:
+    manifest, state_path, events = _fixture(tmp_path, regions=["us-central1"])
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["delayed_apply_fail"] = [
+        "update-traffic trusted-router-public --region=us-central1 "
+        "--to-revisions=trusted-router-public-candidate=10"
+    ]
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    result = _run_helper(
+        tmp_path,
+        manifest,
+        state_path,
+        events,
+        "promote-step",
+        "primary",
+        "10",
+    )
+
+    # Advance the fake provider's deterministic settle clock. Under the old
+    # immediate-read behavior this makes the already-accepted asynchronous
+    # mutation visible only after automatic rollback reported success.
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["delayed_traffic_ready"] = True
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    fake_gcloud = tmp_path / "bin" / "gcloud"
+    describe = subprocess.run(  # noqa: S603
+        [
+            str(fake_gcloud),
+            "--project",
+            PROJECT,
+            "run",
+            "services",
+            "describe",
+            "trusted-router-public",
+            "--region=us-central1",
+            "--format=json",
+        ],
+        env={
+            **os.environ,
+            "FAKE_GCLOUD_STATE": str(state_path),
+            "ROLLOUT_EVENT_LOG": str(events),
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert describe.returncode == 0, describe.stderr
+
+    assert result.returncode != 0
+    assert "automatic rollback also failed" in result.stderr
+    assert "rollback restored the captured URL map" not in result.stderr
+    assert _candidate_percents(state_path) == {0, 10}
+    promotion = json.loads(
+        (tmp_path / "promotion-state.json").read_text(encoding="utf-8")
+    )
+    assert promotion["lease"]["mutation"]["operation"] == "traffic"
 
 
 def test_mid_cohort_failure_rolls_back_only_recorded_attempts_and_surfaces_failure(tmp_path: Path) -> None:

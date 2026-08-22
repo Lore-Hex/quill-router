@@ -75,6 +75,12 @@ LEASE_TAKEOVER="${TR_ROLLOUT_TAKEOVER_EXPIRED_LEASE:-false}"
 LEASE_HELD=0
 LEASE_OPERATION=""
 
+# Cloud Run's replaceService request is asynchronous on the server. gcloud
+# normally waits for it, so an ordinary client exit does not prove that the
+# server-side mutation stopped. Wait one full provider mutation deadline before
+# treating unchanged state as settled; the refreshed lease retains 15 seconds.
+PROVIDER_SETTLE_SECONDS="${TR_ROLLOUT_PROVIDER_SETTLE_SECONDS:-$PROVIDER_MUTATION_TIMEOUT_SECONDS}"
+
 artifact_sha256() {
   python3 - "$1" <<'PY'
 import hashlib
@@ -188,6 +194,12 @@ if ! [[ "$PROVIDER_MUTATION_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || \
    [ "$PROVIDER_MUTATION_TIMEOUT_SECONDS" -lt 5 ] || \
    [ "$PROVIDER_MUTATION_TIMEOUT_SECONDS" -ge $((LEASE_TTL_SECONDS - 15)) ]; then
   echo "ERROR: provider mutation timeout must be at least 5 seconds and end 15 seconds before lease expiry" >&2
+  exit 2
+fi
+if ! [[ "$PROVIDER_SETTLE_SECONDS" =~ ^[0-9]+$ ]] || \
+   [ "$PROVIDER_SETTLE_SECONDS" -lt 1 ] || \
+   [ "$PROVIDER_SETTLE_SECONDS" -gt "$PROVIDER_MUTATION_TIMEOUT_SECONDS" ]; then
+  echo "ERROR: provider settle window must be from 1 second through the provider mutation timeout" >&2
   exit 2
 fi
 if [ "$REQUIRE_DURABLE_STATE" = true ] && [ -z "$LEASE_OWNER" ] && \
@@ -1375,12 +1387,21 @@ verify_exact_prior_traffic() {
 
 verify_candidate_allocation() {
   local entry="$1" expected="$2"
-  local service region candidate current
+  local service region current
   service="$(jq -er '.name' <<<"$entry")" || return 1
   region="$(jq -er '.region' <<<"$entry")" || return 1
-  candidate="$(jq -er '.candidate_revision' <<<"$entry")" || return 1
   current="$(mktemp "${TMPDIR:-/tmp}/tr-allocation-current-XXXXXX")"
   service_json "$service" "$region" "$current" || return 1
+  verify_candidate_allocation_file "$entry" "$expected" "$current" || {
+    rm -f "$current"
+    return 1
+  }
+  rm -f "$current"
+  assert_candidate_contract "$entry" || return 1
+}
+
+verify_candidate_allocation_file() {
+  local entry="$1" expected="$2" current="$3"
   python3 - "$entry" "$expected" "$current" "$STATE_TOOL" <<'PY' || return 1
 from __future__ import annotations
 import json
@@ -1453,8 +1474,6 @@ expected_tags = sorted(
 if actual_tags != expected_tags:
     raise SystemExit(f"traffic tags drifted: {actual_tags!r} != {expected_tags!r}")
 PY
-  rm -f "$current"
-  assert_candidate_contract "$entry" || return 1
 }
 
 validate_step_transition() {
@@ -1584,12 +1603,15 @@ preflight_candidates() {
 
 update_entry_traffic() {
   local entry="$1" percent="$2"
-  local service region surface argument provider_status=0
+  local service region surface candidate argument provider_status=0
+  local precommand_service precommand_identity precommand_allocation precommand_percent
+  local settled_service settled_identity settled_allocation
   service="$(jq -er '.name' <<<"$entry")" || return 1
   region="$(jq -er '.region' <<<"$entry")" || return 1
   surface="$(jq -er '.surface' <<<"$entry")" || return 1
+  candidate="$(jq -er '.candidate_revision' <<<"$entry")" || return 1
   local actual
-  actual="$(candidate_percent "$service" "$region" "$(jq -er '.candidate_revision' <<<"$entry")")" || return 1
+  actual="$(candidate_percent "$service" "$region" "$candidate")" || return 1
   if [ "$actual" = "$percent" ]; then
     verify_candidate_allocation "$entry" "$percent" || return 1
     return
@@ -1602,6 +1624,22 @@ update_entry_traffic() {
   record_attempt "traffic" "$surface" "$service" "$region" "$percent" || return 1
   refresh_operation_lease || return 1
   begin_operation_mutation traffic || return 1
+  precommand_service="$(mktemp "${TMPDIR:-/tmp}/tr-traffic-precommand-XXXXXX")"
+  service_json "$service" "$region" "$precommand_service" || return 1
+  precommand_identity="$(python3 "$STATE_TOOL" service-generation "$precommand_service")" || return 1
+  precommand_allocation="$(python3 "$STATE_TOOL" traffic-state "$precommand_service")" || return 1
+  precommand_percent="$(python3 - "$candidate" "$precommand_allocation" <<'PY'
+import json
+import sys
+
+candidate = sys.argv[1]
+traffic = json.loads(sys.argv[2])
+print(sum(item["percent"] for item in traffic if item["resolved_revision"] == candidate))
+PY
+)" || return 1
+  verify_candidate_allocation_file \
+    "$entry" "$precommand_percent" "$precommand_service" || return 1
+  rm -f "$precommand_service"
   bounded_gc_mutation run services update-traffic "$service" \
       --region="$region" \
       --to-revisions="$argument" \
@@ -1609,7 +1647,32 @@ update_entry_traffic() {
   if [ "$provider_status" -eq 124 ]; then
     return 1
   elif [ "$provider_status" -ne 0 ]; then
-    log "traffic command exited non-zero; inspecting provider state"
+    log "traffic command exited non-zero; inspecting provider state after settle window"
+    refresh_operation_lease || return 1
+    sleep "$PROVIDER_SETTLE_SECONDS"
+    assert_operation_lease || return 1
+    settled_service="$(mktemp "${TMPDIR:-/tmp}/tr-traffic-settled-XXXXXX")"
+    service_json "$service" "$region" "$settled_service" || return 1
+    settled_identity="$(python3 "$STATE_TOOL" service-generation "$settled_service")" || return 1
+    settled_allocation="$(python3 "$STATE_TOOL" traffic-state "$settled_service")" || return 1
+    if verify_candidate_allocation_file "$entry" "$percent" "$settled_service"; then
+      rm -f "$settled_service"
+      assert_candidate_contract "$entry" || return 1
+      end_operation_mutation traffic || return 1
+      record_attempt "traffic-state" "$surface" "$service" "$region" "$percent" || return 1
+      return 0
+    fi
+    if [ "$settled_identity" = "$precommand_identity" ] && \
+       [ "$settled_allocation" = "$precommand_allocation" ] && \
+       verify_candidate_allocation_file \
+         "$entry" "$precommand_percent" "$settled_service"; then
+      rm -f "$settled_service"
+      assert_candidate_contract "$entry" || return 1
+      end_operation_mutation traffic || return 1
+      return 1
+    fi
+    rm -f "$settled_service"
+    return 1
   fi
   assert_operation_lease || return 1
   verify_candidate_allocation "$entry" "$percent" || return 1
