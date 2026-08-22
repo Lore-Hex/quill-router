@@ -393,14 +393,19 @@ jobs:
       - name: Capture pre-deploy revisions (for rollback)
         id: prev
         run: |
+          set -euo pipefail
           for region in us-central1 europe-west4 us-east4 southamerica-east1; do
-            rev=$(gcloud run services describe "${SERVICE}" \
+            service_json=$(gcloud run services describe "${SERVICE}" \
               --region="$region" --project="${PROJECT_ID}" \
-              --format='value(status.traffic[0].revisionName)' \
-              2>/dev/null || true)
+              --format=json)
+            if ! rev=$(python3 scripts/deploy/resolve_active_revision.py \
+                <<<"${service_json}"); then
+              echo "::error::${region} has no unambiguous 100%-traffic rollback revision"
+              exit 1
+            fi
             key="${region//-/_}_revision"
             echo "${key}=${rev}" >> "$GITHUB_OUTPUT"
-            echo "  pre-deploy ${region}: ${rev:-<none>}"
+            echo "  pre-deploy ${region}: ${rev}"
           done
 
       - name: Detect optional deploy surfaces
