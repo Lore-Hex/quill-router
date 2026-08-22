@@ -21,6 +21,9 @@ Removed models are noted in --summary output but do not fail.
 Usage:
     python scripts/check_price_spike.py BEFORE.json AFTER.json
     python scripts/check_price_spike.py BEFORE.json AFTER.json --summary
+    python scripts/check_price_spike.py BEFORE.json AFTER.json \
+        --before-provider-manifests BEFORE_DIR \
+        --after-provider-manifests AFTER_DIR
 """
 from __future__ import annotations
 
@@ -164,6 +167,200 @@ def _load_endpoints(path: Path) -> dict[str, dict[str, str]]:
     return out
 
 
+def _manifest_price(
+    value: object,
+    *,
+    scale: Decimal,
+    location: str,
+) -> str:
+    """Normalize a provider-manifest rate to snapshot dollars per token."""
+    if isinstance(value, bool):
+        raise ValueError(f"{location}: price must be a non-negative number")
+    try:
+        parsed = Decimal(str(value))
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"{location}: price must be a non-negative number") from exc
+    if not parsed.is_finite() or parsed < 0:
+        raise ValueError(f"{location}: price must be a non-negative number")
+
+    # Provider manifests store microdollars per million tokens. A few legacy
+    # manifests carry an explicit multiplier to reach that unit. Normalize to
+    # the OpenRouter snapshot's dollars-per-token representation so approved
+    # exact transitions and diagnostics remain comparable across both inputs.
+    return str((parsed * scale) / Decimal("1000000000000"))
+
+
+def _provider_manifest_paths(directory: Path) -> tuple[Path, ...]:
+    if not directory.is_dir():
+        raise ValueError(f"provider manifest directory is missing: {directory}")
+    paths = tuple(sorted(directory.glob("*.json")))
+    if not paths:
+        raise ValueError(f"provider manifest directory has no JSON files: {directory}")
+    return paths
+
+
+def _manifest_scale(raw: dict[str, object], path: Path) -> Decimal:
+    scale_value = raw.get(
+        "price_scale_to_microdollars_per_million_tokens",
+        1,
+    )
+    if isinstance(scale_value, bool):
+        raise ValueError(f"provider manifest has an invalid price scale: {path}")
+    try:
+        scale = Decimal(str(scale_value))
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"provider manifest has an invalid price scale: {path}") from exc
+    if not scale.is_finite() or scale <= 0:
+        raise ValueError(f"provider manifest has an invalid price scale: {path}")
+    return scale
+
+
+def _add_manifest_rate_pair(
+    out: dict[str, dict[str, str]],
+    *,
+    key: str,
+    pricing: dict[str, object],
+    scale: Decimal,
+    location: str,
+    required: bool,
+) -> None:
+    has_prompt = "input_token_price_per_m" in pricing
+    has_completion = "output_token_price_per_m" in pricing
+    if not has_prompt and not has_completion:
+        if required or "cached_input_token_price_per_m" in pricing:
+            raise ValueError(f"{location} must publish both input and output prices")
+        return
+    if not has_prompt or not has_completion:
+        raise ValueError(f"{location} must publish both input and output prices")
+    if key in out:
+        raise ValueError(f"duplicate provider-manifest rate: {key}")
+    out[key] = {
+        "prompt": _manifest_price(
+            pricing["input_token_price_per_m"],
+            scale=scale,
+            location=f"{location}.input_token_price_per_m",
+        ),
+        "completion": _manifest_price(
+            pricing["output_token_price_per_m"],
+            scale=scale,
+            location=f"{location}.output_token_price_per_m",
+        ),
+    }
+
+    if "cached_input_token_price_per_m" not in pricing:
+        return
+    cached_key = f"{key} cached-input"
+    if cached_key in out:
+        raise ValueError(f"duplicate provider-manifest rate: {cached_key}")
+    out[cached_key] = {
+        "prompt": _manifest_price(
+            pricing["cached_input_token_price_per_m"],
+            scale=scale,
+            location=f"{location}.cached_input_token_price_per_m",
+        ),
+        # Reuse check() without weakening its prompt-or-completion semantics.
+        # Cached input has one billable dimension, so the unused side is zero.
+        "completion": "0",
+    }
+
+
+def _manifest_tier_label(value: object, *, location: str) -> str:
+    if value is None:
+        return "uncapped"
+    if isinstance(value, bool):
+        raise ValueError(f"{location}: tier threshold must be a positive integer")
+    try:
+        threshold = Decimal(str(value))
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(
+            f"{location}: tier threshold must be a positive integer"
+        ) from exc
+    if (
+        not threshold.is_finite()
+        or threshold <= 0
+        or threshold != threshold.to_integral_value()
+    ):
+        raise ValueError(f"{location}: tier threshold must be a positive integer")
+    return f"max={int(threshold)}"
+
+
+def _load_provider_manifests(directory: Path) -> dict[str, dict[str, str]]:
+    """Return every explicit rate from all supplemental provider manifests.
+
+    The loader is intentionally strict: once the workflow opts into manifest
+    comparison, a missing directory, malformed JSON, partial price pair, or
+    duplicate stable route is an input failure rather than an empty successful
+    comparison. Unpriced discovery/tombstone rows are skipped because they do
+    not publish a token rate to compare.
+    """
+    out: dict[str, dict[str, str]] = {}
+    for path in _provider_manifest_paths(directory):
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"cannot read provider manifest {path}: {exc}") from exc
+        if not isinstance(raw, dict):
+            raise ValueError(f"provider manifest must be an object: {path}")
+        provider = raw.get("provider")
+        if not isinstance(provider, str) or not provider:
+            raise ValueError(f"provider manifest has no provider slug: {path}")
+        if provider != path.stem:
+            raise ValueError(
+                f"provider manifest slug {provider!r} does not match {path.name}"
+            )
+        rows = raw.get("models")
+        if not isinstance(rows, list):
+            raise ValueError(f"provider manifest has no models list: {path}")
+
+        scale = _manifest_scale(raw, path)
+
+        for index, row in enumerate(rows):
+            if not isinstance(row, dict):
+                raise ValueError(f"{path}: models[{index}] must be an object")
+            model_id = row.get("id")
+            if not isinstance(model_id, str) or not model_id:
+                raise ValueError(f"{path}: models[{index}] has no model id")
+            upstream_model = row.get("upstream_id") or model_id
+            if not isinstance(upstream_model, str) or not upstream_model:
+                raise ValueError(f"{path}: models[{index}] has no upstream id")
+            tag = row.get("tag") or provider
+            if not isinstance(tag, str) or not tag:
+                raise ValueError(f"{path}: models[{index}] has an invalid tag")
+            key = f"{model_id} [{provider}:{tag}:{upstream_model}]"
+            location = f"{path}: models[{index}]"
+            _add_manifest_rate_pair(
+                out,
+                key=key,
+                pricing=row,
+                scale=scale,
+                location=location,
+                required=False,
+            )
+
+            raw_tiers = row.get("price_tiers")
+            if raw_tiers is None:
+                continue
+            if not isinstance(raw_tiers, list) or not raw_tiers:
+                raise ValueError(f"{location}.price_tiers must be a non-empty list")
+            for tier_index, tier in enumerate(raw_tiers):
+                tier_location = f"{location}.price_tiers[{tier_index}]"
+                if not isinstance(tier, dict):
+                    raise ValueError(f"{tier_location} must be an object")
+                tier_label = _manifest_tier_label(
+                    tier.get("max_prompt_tokens"),
+                    location=tier_location,
+                )
+                _add_manifest_rate_pair(
+                    out,
+                    key=f"{key} tier[{tier_label}]",
+                    pricing=tier,
+                    scale=scale,
+                    location=tier_location,
+                    required=True,
+                )
+    return out
+
+
 def _to_decimal(value: str) -> Decimal:
     try:
         return Decimal(value)
@@ -262,7 +459,26 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_SPIKE_RATIO,
         help=f"fail when after/before >= this (default {DEFAULT_SPIKE_RATIO})",
     )
+    parser.add_argument(
+        "--before-provider-manifests",
+        type=Path,
+        help="directory of supplemental provider manifests before refresh",
+    )
+    parser.add_argument(
+        "--after-provider-manifests",
+        type=Path,
+        help="directory of supplemental provider manifests after refresh",
+    )
     args = parser.parse_args(argv)
+
+    if (args.before_provider_manifests is None) != (
+        args.after_provider_manifests is None
+    ):
+        print(
+            "PRICE SPIKE INPUT ERROR: both provider-manifest directories are required",
+            file=sys.stderr,
+        )
+        return 2
 
     before = _load(args.before)
     after = _load(args.after)
@@ -279,6 +495,40 @@ def main(argv: list[str] | None = None) -> int:
         # Keep the utility useful for compact fixtures and older snapshots that
         # predate endpoint pricing.
         failures = _headline_failures
+
+    if args.before_provider_manifests is not None:
+        try:
+            before_manifest_names = {
+                path.name
+                for path in _provider_manifest_paths(args.before_provider_manifests)
+            }
+            after_manifest_names = {
+                path.name
+                for path in _provider_manifest_paths(args.after_provider_manifests)
+            }
+            missing_manifests = sorted(before_manifest_names - after_manifest_names)
+            if missing_manifests:
+                raise ValueError(
+                    "provider manifests disappeared after refresh: "
+                    + ", ".join(missing_manifests)
+                )
+            before_provider_routes = _load_provider_manifests(
+                args.before_provider_manifests
+            )
+            after_provider_routes = _load_provider_manifests(
+                args.after_provider_manifests
+            )
+        except ValueError as exc:
+            print(f"PRICE SPIKE INPUT ERROR: {exc}", file=sys.stderr)
+            return 2
+        provider_failures, provider_changes, provider_removed = check(
+            before_provider_routes,
+            after_provider_routes,
+            args.spike_ratio,
+        )
+        failures.extend(provider_failures)
+        changes.extend(provider_changes)
+        removed.extend(provider_removed)
 
     if args.summary:
         print(_summary_line(changes, removed))
