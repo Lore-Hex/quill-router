@@ -297,7 +297,7 @@ def test_fleet_snapshot_merges_peers_and_ranks_overall() -> None:
     assert snapshot["fleet_overall_status"] == "unreachable"
 
 
-def test_fleet_routes_render_peer_without_client_observed(
+def test_fleet_routes_do_not_republish_client_observed_from_older_peer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = _settings(synthetic_fleet_peers="peer=https://peer.example")
@@ -307,8 +307,8 @@ def test_fleet_routes_render_peer_without_client_observed(
         "components": [{"id": "model_inference", "status": "up"}],
         "monitor_freshness": {"is_stale": False},
         "generated_at": iso_now(),
+        "client_observed": {"available": True, "windows": {"24h": {"requests": 100}}},
     }
-    assert "client_observed" not in peer_payload
     transport = _peer_transport({"peer.example": peer_payload})
 
     async def build_snapshot() -> dict[str, object]:
@@ -334,6 +334,9 @@ def test_fleet_routes_render_peer_without_client_observed(
     deployments = feed.json()["data"]["deployments"]
     assert deployments[0]["name"] == "peer"
     assert deployments[0]["reachable"] is True
+    assert "client_observed" not in deployments[0]
+    assert "client_observed" not in feed.text
+    assert "client_observed" not in page.text
 
 
 def test_fleet_routes_serve_json_and_html(client: TestClient) -> None:

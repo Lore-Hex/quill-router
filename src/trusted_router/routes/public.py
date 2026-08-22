@@ -1497,6 +1497,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             ttl_seconds=STATUS_RESPONSE_CACHE_SECONDS,
             stale_seconds=STATUS_RESPONSE_STALE_SECONDS,
             background_tasks=background_tasks,
+            cache_control_override=_status_cache_control(settings),
             build=lambda: _json_body(
                 {"data": _compact_status_json(_status_snapshot(settings), settings=settings)}
             ),
@@ -1822,6 +1823,7 @@ def _cached_status_page_response(
         ttl_seconds=STATUS_RESPONSE_CACHE_SECONDS,
         stale_seconds=STATUS_RESPONSE_STALE_SECONDS,
         background_tasks=background_tasks,
+        cache_control_override=_status_cache_control(settings),
         build=lambda: _status_page_html(settings, host=render_host).encode(),
     )
 
@@ -1859,8 +1861,11 @@ def _cached_public_response(
     stale_seconds: int,
     background_tasks: BackgroundTasks,
     build: Callable[[], bytes],
+    cache_control_override: str | None = None,
 ) -> Response:
-    cache_control = _public_cache_control(ttl_seconds=ttl_seconds, stale_seconds=stale_seconds)
+    cache_control = cache_control_override or _public_cache_control(
+        ttl_seconds=ttl_seconds, stale_seconds=stale_seconds
+    )
     if settings.environment == "test":
         return Response(
             content=build(),
@@ -1973,6 +1978,15 @@ def _public_cache_control(*, ttl_seconds: int, stale_seconds: int) -> str:
     return (
         f"public, max-age={browser_ttl}, s-maxage={ttl_seconds}, "
         f"stale-while-revalidate={stale_seconds}"
+    )
+
+
+def _status_cache_control(settings: Settings) -> str:
+    if settings.public_client_observed_enabled:
+        return "no-store"
+    return _public_cache_control(
+        ttl_seconds=STATUS_RESPONSE_CACHE_SECONDS,
+        stale_seconds=STATUS_RESPONSE_STALE_SECONDS,
     )
 
 

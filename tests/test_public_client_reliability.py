@@ -11,6 +11,10 @@ from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.routes import public as public_routes
 
+PUBLIC_STATUS_CACHE_CONTROL = (
+    "public, max-age=15, s-maxage=60, stale-while-revalidate=600"
+)
+
 
 @pytest.fixture
 def public_client_observed_client(test_settings: Settings) -> TestClient:
@@ -80,6 +84,27 @@ def test_status_json_passes_client_observed_through_at_top_level(
     assert response.status_code == 200
     assert response.json()["data"]["client_observed"] == section
     assert response.json()["data"]["client_observed"]["slo_id"] == "client_observed"
+
+
+@pytest.mark.parametrize(
+    ("path", "headers"),
+    [
+        ("/status", {}),
+        ("/", {"host": "status.trustedrouter.com"}),
+        ("/status.json", {}),
+    ],
+)
+def test_public_status_surfaces_are_not_shared_cacheable_with_client_observed_enabled(
+    public_client_observed_client: TestClient,
+    path: str,
+    headers: dict[str, str],
+) -> None:
+    response = public_client_observed_client.get(path, headers=headers)
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert "s-maxage" not in response.headers["cache-control"]
+    assert "stale-while-revalidate" not in response.headers["cache-control"]
 
 
 def test_status_html_contains_client_section_and_handles_no_data(
@@ -174,13 +199,20 @@ def test_public_status_surfaces_omit_client_observed_by_default(
     monkeypatch.setattr(public_routes, "_status_snapshot", lambda _settings: snapshot)
 
     page = client.get("/status")
+    status_host_page = client.get("/", headers={"host": "status.trustedrouter.com"})
     status_json = client.get("/status.json")
 
     assert page.status_code == 200
     assert 'id="client-observed"' not in page.text
     assert "Client-observed availability" not in page.text
+    assert page.headers["cache-control"] == PUBLIC_STATUS_CACHE_CONTROL
+    assert status_host_page.status_code == 200
+    assert 'id="client-observed"' not in status_host_page.text
+    assert "Client-observed availability" not in status_host_page.text
+    assert status_host_page.headers["cache-control"] == PUBLIC_STATUS_CACHE_CONTROL
     assert status_json.status_code == 200
     assert "client_observed" not in status_json.json()["data"]
+    assert status_json.headers["cache-control"] == PUBLIC_STATUS_CACHE_CONTROL
 
 
 def test_status_html_labels_the_all_traffic_calibration_view(
