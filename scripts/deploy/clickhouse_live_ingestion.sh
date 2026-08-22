@@ -32,7 +32,7 @@ fi
 
 archive=$(mktemp "${TMPDIR:-/tmp}/tr-clickhouse-live.XXXXXX.tar.gz")
 trap 'rm -f "$archive"' EXIT
-tar -C "$ROOT" -czf "$archive" clickhouse
+tar -C "$ROOT" -czf "$archive" clickhouse src/trusted_router
 
 ssh_node --command="sudo mkdir -p /opt/tr-clickhouse"
 ssh_node --command="sudo tar -xzf - -C /opt/tr-clickhouse" < "$archive"
@@ -65,6 +65,10 @@ ssh_node --command="sudo sh -c '
     /etc/systemd/system/tr-clickhouse-archive.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-archive.timer \
     /etc/systemd/system/tr-clickhouse-archive.timer
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-workspace-directory.service \
+    /etc/systemd/system/tr-clickhouse-workspace-directory.service
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-workspace-directory.timer \
+    /etc/systemd/system/tr-clickhouse-workspace-directory.timer
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-archive-restore.service \
     /etc/systemd/system/tr-clickhouse-archive-restore.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-archive-restore.timer \
@@ -84,17 +88,21 @@ ssh_node --command="sudo sh -c '
     --multiquery < /opt/tr-clickhouse/clickhouse/001_provider_benchmark_samples.sql
   clickhouse-client --user tr --password \"\$CH_PASSWORD\" --database tr \
     --multiquery < /opt/tr-clickhouse/clickhouse/002_provider_analytics_rollups.sql
+  clickhouse-client --user tr --password \"\$CH_PASSWORD\" --database tr \
+    --multiquery < /opt/tr-clickhouse/clickhouse/010_workspace_directory.sql
   systemctl daemon-reload
   systemctl enable tr-clickhouse-ingest.service
   systemctl restart tr-clickhouse-ingest.service
   systemctl enable --now tr-clickhouse-reconcile.timer
   systemctl enable --now tr-clickhouse-archive.timer
+  systemctl enable --now tr-clickhouse-workspace-directory.timer
   systemctl enable --now tr-clickhouse-archive-restore.timer
   systemctl enable --now tr-clickhouse-rollup-hourly.timer
   systemctl enable --now tr-clickhouse-rollup-daily.timer
   systemctl is-active tr-clickhouse-ingest.service
   systemctl is-active tr-clickhouse-reconcile.timer
   systemctl is-active tr-clickhouse-archive.timer
+  systemctl is-active tr-clickhouse-workspace-directory.timer
   systemctl is-active tr-clickhouse-archive-restore.timer
   systemctl is-active tr-clickhouse-rollup-hourly.timer
   systemctl is-active tr-clickhouse-rollup-daily.timer
