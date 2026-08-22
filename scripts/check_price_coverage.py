@@ -30,6 +30,18 @@ from scripts.pricing.model_ids import (
     canonicalize_native_model_id,
     canonicalize_unqualified_model_id,
 )
+from scripts.pricing.providers import (
+    aion_labs,
+    akashml,
+    arcee,
+    inception,
+    mancer,
+    nextbit,
+    reka,
+    sail_research,
+    sambanova,
+    upstage,
+)
 from scripts.pricing.video_sources import (
     VIDEO_PRICE_PROVIDER_SLUGS,
     audit_video_price_sources,
@@ -419,6 +431,26 @@ _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
         ("PEARL_RESEARCH_API_KEY",),
         _canonical_provider_model_id,
     ),
+) + tuple(
+    (
+        module.SLUG,
+        module.CATALOG.spec.catalog_url
+        or f"{module.CATALOG.spec.base_url.rstrip('/')}/models",
+        module.CATALOG.api_key_envs,
+        module.CATALOG.model_id,
+    )
+    for module in (
+        upstage,
+        sail_research,
+        reka,
+        nextbit,
+        akashml,
+        mancer,
+        aion_labs,
+        sambanova,
+        arcee,
+        inception,
+    )
 )
 
 _GLM_DISCOVERABLE_PROVIDER_APIS: tuple[tuple[str, str, tuple[str, ...]], ...] = (

@@ -1,0 +1,150 @@
+{
+  "provider": "mancer",
+  "models": [
+    {
+      "display_name": "DeepSeek V4 Flash",
+      "title": "deepseek-v4-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash",
+      "upstream_id": "deepseek-v4-flash",
+      "routable": true,
+      "input_token_price_per_m": 224000,
+      "output_token_price_per_m": 720000
+    },
+    {
+      "display_name": "DeepSeek V4 Flash 0731",
+      "title": "deepseek-v4-flash-0731",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "upstream_id": "deepseek-v4-flash-0731",
+      "routable": true,
+      "input_token_price_per_m": 232000,
+      "output_token_price_per_m": 720000
+    },
+    {
+      "display_name": "Gemma 4 31B Instruct",
+      "title": "gemma-4-31b-it",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-4-31b-it",
+      "upstream_id": "gemma-4-31b-it",
+      "routable": true,
+      "input_token_price_per_m": 320000,
+      "output_token_price_per_m": 1600000
+    },
+    {
+      "display_name": "MythoMax",
+      "title": "mythomax",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "gryphe/mythomax-l2-13b",
+      "upstream_id": "mythomax",
+      "routable": true,
+      "input_token_price_per_m": 640000,
+      "output_token_price_per_m": 960000
+    },
+    {
+      "display_name": "GPT OSS 120B",
+      "title": "gpt-oss-120b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-oss-120b",
+      "upstream_id": "gpt-oss-120b",
+      "routable": true,
+      "input_token_price_per_m": 136000,
+      "output_token_price_per_m": 800000
+    },
+    {
+      "display_name": "ReMM-SLerp",
+      "title": "remm-slerp",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "undi95/remm-slerp-l2-13b",
+      "upstream_id": "remm-slerp",
+      "routable": true,
+      "input_token_price_per_m": 720000,
+      "output_token_price_per_m": 1040000
+    },
+    {
+      "display_name": "GLM 4.7",
+      "title": "glm-4.7",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-4.7",
+      "upstream_id": "glm-4.7",
+      "routable": true,
+      "input_token_price_per_m": 960000,
+      "output_token_price_per_m": 4000000
+    }
+  ],
+  "source": "https://mancer.tech/oai/v1/models",
+  "pricing_source": "https://mancer.tech/models",
+  "generated_at": "2026-08-22T20:21:08Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 7
+}

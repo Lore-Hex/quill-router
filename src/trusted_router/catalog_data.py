@@ -109,6 +109,8 @@ PROVIDER_JURISDICTION_FR = "FR"
 
 PROVIDER_JURISDICTION_IL = "IL"
 
+PROVIDER_JURISDICTION_KR = "KR"
+
 PROVIDER_JURISDICTION_NL = "NL"
 
 PROVIDER_JURISDICTION_SE = "SE"
@@ -120,6 +122,34 @@ PROVIDER_JURISDICTION_SG = "SG"
 # starts where this one stopped instead of repeating it. Keys must be provider
 # slugs whose provider_headquarters_country is None.
 PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
+    **{
+        slug: (
+            "Checked the provider API and product documentation, but the "
+            "contracting API operator's incorporation country has not yet been "
+            "established from first-party legal terms. Jurisdiction filters "
+            "therefore exclude this route."
+        )
+        for slug in (
+            "aion-labs",
+            "akashml",
+            "arcee",
+            "byteplus",
+            "inception",
+            "io-net",
+            "krea",
+            "liquid",
+            "mancer",
+            "modal",
+            "nextbit",
+            "perceptron",
+            "perplexity",
+            "reka",
+            "riverflow",
+            "sail-research",
+            "sakana",
+            "sambanova",
+        )
+    },
     "openrouter-exclusive": (
         "Checked the Ox Alpha model page, endpoint metadata, and Stealth terms "
         "published by OpenRouter. The anonymous downstream operator's legal entity "
@@ -1386,6 +1416,238 @@ PROVIDERS: dict[str, Provider] = {
         # rather than from a published document.
         provider_headquarters_country=PROVIDER_JURISDICTION_CN,
     ),
+    "upstage": Provider(
+        slug="upstage",
+        name="Upstage",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's Upstage account. This route is Standard."
+        ),
+        provider_policy_url="https://console.upstage.ai/docs/getting-started/models",
+        provider_headquarters_country=PROVIDER_JURISDICTION_KR,
+    ),
+    "sail-research": Provider(
+        slug="sail-research",
+        name="Sail Research",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's Sail Research account. This route is "
+            "Standard."
+        ),
+        provider_policy_url="https://docs.sailresearch.com/",
+    ),
+    "perplexity": Provider(
+        slug="perplexity",
+        name="Perplexity",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's Perplexity account. The current model "
+            "catalog belongs to its Agent API and can add request/search charges, "
+            "so it remains non-routable until those costs settle exactly."
+        ),
+        provider_policy_url="https://docs.perplexity.ai/",
+    ),
+    "reka": Provider(
+        slug="reka",
+        name="Reka AI",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's Reka account. This route is Standard."
+        ),
+        provider_policy_url="https://docs.reka.ai/",
+    ),
+    "nextbit": Provider(
+        slug="nextbit",
+        name="NextBit",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's NextBit account. This route is Standard."
+        ),
+        provider_policy_url="https://nextbit256.com/",
+    ),
+    "akashml": Provider(
+        slug="akashml",
+        name="AkashML",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's AkashML account. This route is Standard."
+        ),
+        provider_policy_url="https://akashml.com/",
+    ),
+    "mancer": Provider(
+        slug="mancer",
+        name="Mancer",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's Mancer account. This route is Standard."
+        ),
+        provider_policy_url="https://mancer.tech/docs-api/",
+    ),
+    "aion-labs": Provider(
+        slug="aion-labs",
+        name="Aion Labs",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's Aion Labs account. This route is Standard."
+        ),
+        provider_policy_url="https://aionlabs.ai/",
+    ),
+    "sambanova": Provider(
+        slug="sambanova",
+        name="SambaNova",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's SambaNova account. This route is Standard."
+        ),
+        provider_policy_url="https://docs.sambanova.ai/",
+    ),
+    "arcee": Provider(
+        slug="arcee",
+        name="Arcee AI",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's Arcee account. This route is Standard."
+        ),
+        provider_policy_url="https://docs.arcee.ai/",
+    ),
+    "perceptron": Provider(
+        slug="perceptron",
+        name="Perceptron",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's Perceptron account. Its public catalog "
+            "is priced, but the configured inference credential did not authenticate "
+            "during the live canary, so routes remain dark."
+        ),
+        provider_policy_url="https://perceptron.cloud/docs/inference",
+    ),
+    "inception": Provider(
+        slug="inception",
+        name="Inception Labs",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's Inception account. This route is Standard."
+        ),
+        provider_policy_url="https://docs.inceptionlabs.ai/",
+    ),
+    "sakana": Provider(
+        slug="sakana",
+        name="Sakana AI",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's Sakana account. The authenticated model "
+            "catalog does not publish exact prices, so routes remain dark."
+        ),
+        provider_policy_url="https://api.sakana.ai/",
+    ),
+    # These providers are recorded so their public provider pages and compliance
+    # posture are explicit, but they are not admitted to the chat gateway. Their
+    # credentials either address an asynchronous media/deployment API or their
+    # account does not expose exact billable token prices yet.
+    "krea": Provider(
+        slug="krea",
+        name="Krea",
+        supports_chat=False,
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "Krea exposes an asynchronous media API, not a shared OpenAI-compatible "
+            "chat catalog. It remains non-routable until a media adapter and exact "
+            "billing contract are implemented."
+        ),
+        provider_policy_url="https://docs.krea.ai/",
+    ),
+    "modal": Provider(
+        slug="modal",
+        name="Modal",
+        supports_chat=False,
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "The configured Modal credentials deploy workloads; they do not identify "
+            "a shared model catalog. Modal remains non-routable until explicit "
+            "deployment endpoints and prices are configured."
+        ),
+        provider_policy_url="https://modal.com/docs",
+    ),
+    "byteplus": Provider(
+        slug="byteplus",
+        name="BytePlus ModelArk",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "BytePlus ModelArk requires region-specific activated model endpoint IDs. "
+            "The API key alone is insufficient to create safe routes, so this "
+            "provider remains non-routable pending endpoint configuration."
+        ),
+        provider_policy_url="https://docs.byteplus.com/en/docs/ModelArk",
+    ),
+    "riverflow": Provider(
+        slug="riverflow",
+        name="Riverflow",
+        supports_chat=False,
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "Riverflow is a media workflow API with partner and enterprise access, "
+            "not a shared token-priced chat endpoint. It remains non-routable until "
+            "a dedicated media adapter and billing contract are implemented."
+        ),
+        provider_policy_url=(
+            "https://www.riverflow.ai/research/introducing-sourceful-riverflow-1"
+        ),
+    ),
+    "io-net": Provider(
+        slug="io-net",
+        name="IO Intelligence",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "IO Intelligence exposes a model catalog, but exact account-billable "
+            "token prices were not available from that catalog. Routes remain dark "
+            "until an authoritative price feed is available."
+        ),
+        provider_policy_url="https://docs.io.net/docs/io-intelligence",
+    ),
+    "liquid": Provider(
+        slug="liquid",
+        name="Liquid AI",
+        supports_chat=False,
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "Liquid's configured developer credentials target model deployment and "
+            "bundling rather than a shared token-priced inference API. The provider "
+            "remains non-routable until a concrete hosted endpoint is configured."
+        ),
+        provider_policy_url="https://docs.liquid.ai/",
+    ),
     # Cohere — first-party embeddings (embed-v4.0, embed-*-v3.0) plus
     # Command chat models. Embeddings are Cohere's flagship retrieval
     # product; chat is registered but TR currently only catalogs Cohere
@@ -1501,6 +1763,16 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "decart",
         "databricks",
         "zero-g",
+        "upstage",
+        "sail-research",
+        "reka",
+        "nextbit",
+        "akashml",
+        "mancer",
+        "aion-labs",
+        "sambanova",
+        "arcee",
+        "inception",
         "nebius",
         "minimax",
         # Alibaba Cloud Model Studio — Frankfurt workspace. The production
@@ -2802,6 +3074,16 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
             "Lucy and Oasis models as an Israeli startup."
         ),
     ),
+    # --- South Korea ---
+    "upstage": ModelOrigin(
+        country=PROVIDER_JURISDICTION_KR,
+        lab_name="Upstage",
+        source_url="https://www.upstage.ai/privacy-policy/updated-jun-01-2026",
+        note=(
+            "Upstage's privacy policy gives its company address in Gangnam-gu, "
+            "Seoul, Republic of Korea."
+        ),
+    ),
     # --- China ---
     "qwen": _MODEL_ORIGIN_CN_ALIBABA,
     "Qwen": _MODEL_ORIGIN_CN_ALIBABA,
@@ -2890,6 +3172,25 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
     # --- No single creator country ---
     "sao10k": _MODEL_ORIGIN_INDEPENDENT_SAO10K,
     "Sao10K": _MODEL_ORIGIN_INDEPENDENT_SAO10K,
+    "aion-labs": ModelOrigin(
+        country=None,
+        lab_name="Aion Labs",
+        source_url="https://www.aionlabs.ai/docs/quickstart/",
+        note=(
+            "The official API documentation identifies Aion Labs as the model "
+            "publisher but does not name a legal entity or country. It is not "
+            "treated as the unrelated pharma venture studio at aionlabs.com."
+        ),
+    ),
+    "thedrummer": ModelOrigin(
+        country=None,
+        lab_name="TheDrummer",
+        source_url="https://huggingface.co/TheDrummer/models",
+        note=(
+            "The models are published by a pseudonymous Hugging Face account "
+            "that does not disclose a legal entity or country."
+        ),
+    ),
     "lightning-ai": ModelOrigin(
         country=None,
         lab_name="Lightning AI (serving namespace)",
