@@ -3,8 +3,12 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
+import subprocess
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 
 def _load_watchdog() -> Any:
@@ -137,12 +141,110 @@ def test_trust_degraded_ranks_with_down_in_severity() -> None:
     assert watchdog.SEVERITY["trust_degraded"] > watchdog.SEVERITY["degraded"]
 
 
-def test_staged_ramp_gates_the_legacy_console_and_auth_surface() -> None:
-    script = (
-        Path(__file__).resolve().parents[1] / "scripts" / "deploy" / "staged_traffic.sh"
-    ).read_text(encoding="utf-8")
-    assert '"${LEGACY_SURFACE_BASE_URL}/console"' in script
-    assert '"${LEGACY_SURFACE_BASE_URL}/auth/session"' in script
-    assert '[ "$console_code" != "302" ]' in script
-    assert '[ "$session_code" != "401" ]' in script
-    assert "probe_legacy_surface_or_rollback 100" in script
+def _run_staged_probe(
+    tmp_path: Path,
+    *,
+    console_code: str,
+    session_code: str,
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    stub_bin = tmp_path / "bin"
+    stub_bin.mkdir()
+    call_log = tmp_path / "calls.log"
+    call_log.write_text("")
+    gcloud = stub_bin / "gcloud"
+    gcloud.write_text(
+        """#!/usr/bin/env bash
+printf 'gcloud %s\\n' "$*" >>"$STAGED_CALL_LOG"
+case " $* " in
+  *" run services describe "*) printf '%s\\n' 'https://trusted-router-hash-uc.a.run.app' ;;
+esac
+"""
+    )
+    curl = stub_bin / "curl"
+    curl.write_text(
+        """#!/usr/bin/env bash
+url="${*: -1}"
+printf 'curl %s\\n' "$url" >>"$STAGED_CALL_LOG"
+case "$url" in
+  */console) code="$STAGED_CONSOLE_CODE" ;;
+  */auth/session) code="$STAGED_SESSION_CODE" ;;
+  *) exit 9 ;;
+esac
+if [ "$code" = "EMPTY" ]; then exit 7; fi
+printf '%s' "$code"
+[ "$code" != "000" ]
+"""
+    )
+    for name in ("python3", "sleep"):
+        stub = stub_bin / name
+        stub.write_text("#!/usr/bin/env bash\nexit 0\n")
+        stub.chmod(0o755)
+    gcloud.chmod(0o755)
+    curl.chmod(0o755)
+    script = Path(__file__).resolve().parents[1] / "scripts" / "deploy" / "staged_traffic.sh"
+    env = {
+        **os.environ,
+        "PATH": f"{stub_bin}:/bin:/usr/bin",
+        "PROJECT_ID": "test-project",
+        "SERVICE": "trusted-router",
+        "STAGED_CALL_LOG": str(call_log),
+        "STAGED_CONSOLE_CODE": console_code,
+        "STAGED_SESSION_CODE": session_code,
+        "TR_LEGACY_PROBE_RETRY_SECONDS": "0",
+    }
+    run = subprocess.run(  # noqa: S603 - fixed local script and stubbed PATH
+        ["/bin/bash", str(script), "us-central1", "new-rev", "old-rev"],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=20,
+    )
+    return run, call_log.read_text().splitlines()
+
+
+@pytest.mark.parametrize(
+    ("console_code", "session_code", "expected_rc", "rolls_back"),
+    (
+        ("302", "401", 0, False),
+        ("200", "403", 0, False),
+        ("500", "401", 1, True),
+        ("EMPTY", "401", 0, False),
+        ("000", "401", 0, False),
+    ),
+)
+def test_staged_legacy_probe_uses_regional_origin_and_classifies_results(
+    tmp_path: Path,
+    console_code: str,
+    session_code: str,
+    expected_rc: int,
+    rolls_back: bool,
+) -> None:
+    run, calls = _run_staged_probe(
+        tmp_path,
+        console_code=console_code,
+        session_code=session_code,
+    )
+
+    assert run.returncode == expected_rc, run.stderr
+    curl_calls = [call for call in calls if call.startswith("curl ")]
+    assert curl_calls
+    assert all(
+        call.startswith(
+            "curl https://staged-probe---trusted-router-hash-uc.a.run.app/"
+        )
+        for call in curl_calls
+    )
+    assert any(
+        "--update-tags=staged-probe=new-rev" in call
+        for call in calls
+        if call.startswith("gcloud run services update-traffic")
+    )
+    rollback_calls = [
+        call
+        for call in calls
+        if call.startswith("gcloud run services update-traffic")
+        and "--to-revisions=old-rev=100" in call
+    ]
+    assert bool(rollback_calls) is rolls_back
+    if console_code in {"EMPTY", "000"}:
+        assert "inconclusive after bounded retries; continuing without rollback" in run.stdout

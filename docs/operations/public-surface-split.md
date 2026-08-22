@@ -35,8 +35,18 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member="serviceAccount:${PUBLIC_SA}" \
   --role=roles/serviceusage.serviceUsageConsumer
+
+# Derive the public cookie key from the authoritative gateway token without
+# ever storing that token in a shell variable. The stored value is base64 of
+# HMAC-SHA256(gateway_token, b"trustedrouter-attribution-cookie-v1").
+gcloud secrets versions access latest \
+  --secret=trustedrouter-internal-gateway-token --project="${PROJECT_ID}" | \
+  python3 -c 'import base64, hashlib, hmac, sys; token = sys.stdin.buffer.read().rstrip(b"\n"); sys.stdout.write(base64.b64encode(hmac.new(token, b"trustedrouter-attribution-cookie-v1", hashlib.sha256).digest()).decode())' | \
+  gcloud secrets create trustedrouter-attribution-cookie-key \
+    --project="${PROJECT_ID}" --replication-policy=automatic --data-file=-
+
 for secret in \
-  trustedrouter-attribution-cookie-secret \
+  trustedrouter-attribution-cookie-key \
   trustedrouter-sentry-dsn \
   trustedrouter-clickhouse-control-read-password; do
   gcloud secrets add-iam-policy-binding "${secret}" --project="${PROJECT_ID}" \
@@ -47,7 +57,7 @@ done
 
 The ClickHouse secret grant is required only while
 `TR_ANALYTICS_READ_MODE != bigtable`. The public deploy's complete secret
-allowlist is the attribution-cookie secret, the deliberately T1-owned Sentry
+allowlist is the derived attribution-cookie key, the deliberately T1-owned Sentry
 DSN, and that conditional ClickHouse read password. It binds no gateway,
 payment, observer, SES, BYOK, or OAuth credentials.
 
@@ -139,9 +149,10 @@ bash scripts/deploy/public_surface_edge.sh prepare
 10% of request logs.
 
 Choose a durable local state directory for the byte-for-byte pre-cutover map.
-Cutover validates the rendered candidate, prints the paths that move, captures
-the old map and imports the candidate. Actions, control, internal, and `/v1/*`
-aliases all continue to use the legacy backend.
+Cutover validates the rendered candidate, prints the paths that move, atomically
+captures the old map bytes with their digest, source fingerprint, and timestamp,
+then imports the candidate. Actions, control, internal, and `/v1/*` aliases all
+continue to use the legacy backend.
 
 ```bash
 TR_PUBLIC_EDGE_STATE_DIR="$PWD/.operator-state/public-surface" \
@@ -181,8 +192,10 @@ inference load balancer and was not added to this URL map.
 
 ## One-command rollback
 
-Use the same state directory. Rollback verifies the capture's SHA-256 and
-imports that exact file; it never re-renders a map:
+Use the same state directory. Rollback verifies the embedded byte digest and
+refuses unless the live URL-map fingerprint still matches the successfully
+imported candidate recorded by cutover. It then extracts and imports the exact
+captured bytes; it never re-renders a map:
 
 ```bash
 TR_PUBLIC_EDGE_STATE_DIR="$PWD/.operator-state/public-surface" \
@@ -202,4 +215,8 @@ site. The public service can remain deployed as an unrouted companion.
   existing synthetic consumers. Public/console isolation is therefore at the
   production routing layer until that direct legacy origin is closed in a
   separate migration.
+- **Known gap:** after cutover, T1 deploys run a plain regional `gcloud run
+  deploy` without `--no-traffic`, a canary, or automatic rollback. The routed
+  smoke checks the global hostname once, so it can miss a bad revision in one
+  region.
 - T5 inference and every `api.*`/`chat.*` load balancer remain untouched.

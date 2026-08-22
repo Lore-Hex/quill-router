@@ -148,8 +148,108 @@ _STUB = r"""#!/usr/bin/env bash
 # have any. The run's stdin is /dev/null, so this returns immediately when the
 # stub is not in a pipeline.
 cat >/dev/null 2>&1 || true
+joined="${0##*/} $*"
+if [ -n "${HARNESS_FAILURES:-}" ] && [ -f "$HARNESS_FAILURES" ]; then
+  while IFS= read -r pattern; do
+    [ -n "$pattern" ] || continue
+    if printf '%s' "$joined" | grep -Eq -- "$pattern"; then
+      exit 1
+    fi
+  done < "$HARNESS_FAILURES"
+fi
+
+# URL-map validation is part of the safety gate under test. Do not let the
+# generic success fallback launder a malformed candidate.
+if [ "${0##*/}" = "gcloud" ] || [ "${0##*/}" = "gc" ]; then
+  source_path=""
+  for argument in "$@"; do
+    case "$argument" in
+      --source=*) source_path="${argument#--source=}" ;;
+    esac
+  done
+  if [[ " $* " == *" compute url-maps validate "* ]]; then
+    python3 - "$source_path" "${HARNESS_URL_MAP_NAME:-trusted-router-control-map}" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+expected_name = sys.argv[2]
+try:
+    candidate = json.loads(path.read_text())
+except (OSError, json.JSONDecodeError) as exc:
+    raise SystemExit(f"invalid URL-map candidate: {exc}")
+if not isinstance(candidate, dict) or candidate.get("name") != expected_name:
+    raise SystemExit("URL-map candidate has the wrong or missing name")
+
+services = []
+def collect(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in {"defaultService", "service"} and isinstance(item, str):
+                services.append(item)
+            collect(item)
+    elif isinstance(value, list):
+        for item in value:
+            collect(item)
+collect(candidate)
+if not services or any(
+    re.search(r"/global/backendServices/[^/]+$", service) is None
+    for service in services
+):
+    raise SystemExit("URL-map candidate references an invalid backend")
+
+if path.name.endswith(".public-candidate.json"):
+    backend_names = {service.rsplit("/", 1)[-1] for service in services}
+    expected = {
+        "trusted-router-control-backend",
+        "trusted-router-public-backend",
+    }
+    if not expected <= backend_names:
+        raise SystemExit("public candidate does not reference both expected backends")
+    matchers = candidate.get("pathMatchers") or []
+    if not any(
+        matcher.get("name") == "trusted-router-service-surfaces"
+        and matcher.get("pathRules")
+        for matcher in matchers
+    ):
+        raise SystemExit("public candidate has no service-surface path matcher")
+PY
+    exit $?
+  fi
+  if [[ " $* " == *" compute url-maps import "* ]]; then
+    python3 - "$source_path" "$HARNESS_URL_MAP_STATE" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1])
+state = pathlib.Path(sys.argv[2])
+document = json.loads(source.read_text())
+if not isinstance(document, dict) or not document.get("name"):
+    raise SystemExit("refusing malformed URL-map import")
+canonical = json.dumps(document, separators=(",", ":"), sort_keys=True).encode()
+document["fingerprint"] = "harness-" + hashlib.sha256(canonical).hexdigest()[:24]
+state.write_text(json.dumps(document, separators=(",", ":")) + "\n")
+PY
+    import_rc=$?
+    [ "$import_rc" -eq 0 ] || exit "$import_rc"
+    if [ "${HARNESS_URL_MAP_IMPORT_FAIL_AFTER_APPLY:-0}" = "1" ]; then
+      exit 1
+    fi
+    exit 0
+  fi
+  if [[ " $* " == *" compute url-maps describe "* ]] \
+      && [[ " $* " == *" --format=json "* ]] \
+      && [ -s "$HARNESS_URL_MAP_STATE" ]; then
+    cat "$HARNESS_URL_MAP_STATE"
+    exit 0
+  fi
+fi
+
 if [ -n "${HARNESS_FIXTURES:-}" ] && [ -f "$HARNESS_FIXTURES" ]; then
-  joined="${0##*/} $*"
   while IFS=$'\t' read -r pattern encoded_reply; do
     [ -n "$pattern" ] || continue
     if printf '%s' "$joined" | grep -Eq -- "$pattern"; then
@@ -158,15 +258,6 @@ if [ -n "${HARNESS_FIXTURES:-}" ] && [ -f "$HARNESS_FIXTURES" ]; then
       exit 0
     fi
   done < "$HARNESS_FIXTURES"
-fi
-if [ -n "${HARNESS_FAILURES:-}" ] && [ -f "$HARNESS_FAILURES" ]; then
-  joined="${0##*/} $*"
-  while IFS= read -r pattern; do
-    [ -n "$pattern" ] || continue
-    if printf '%s' "$joined" | grep -Eq -- "$pattern"; then
-      exit 1
-    fi
-  done < "$HARNESS_FAILURES"
 fi
 printf '%s\n' "stub-output"
 exit 0
@@ -318,6 +409,7 @@ _PUBLIC_SURFACE_LEGACY_REVISION_JSON = json.dumps(
 _PUBLIC_EDGE_LIVE_MAP_JSON = json.dumps(
     {
         "name": "trusted-router-control-map",
+        "fingerprint": "source-fingerprint",
         "defaultService": (
             "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/"
             "global/backendServices/trusted-router-control-backend"
@@ -709,6 +801,8 @@ class DeployScriptHarness:
             "HARNESS_ARGV_LOG": str(argv_log),
             "HARNESS_FIXTURES": str(fixtures_file),
             "HARNESS_FAILURES": str(failures_file),
+            "HARNESS_URL_MAP_STATE": str(self.root / "url-map-state.json"),
+            "HARNESS_URL_MAP_NAME": "trusted-router-control-map",
             "HARNESS_VERIFIER_RC": str(verifier_rc),
             **{k: v for k, v in fixture.env.items() if k not in omit_env},
             **(extra_env or {}),

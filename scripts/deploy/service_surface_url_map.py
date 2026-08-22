@@ -48,9 +48,11 @@ ACTIONS_PATH_PATTERNS = (
 )
 
 CONTROL_PATH_PATTERNS = (
+    "/v1",
     "/v1/*",
     "/models/user",
     "/v1/models/user",
+    "/bedrock-group-buy",
     "/bedrock-group-buy/*",
     "/google_oauth_callback",
     "/github_oauth_callback",
@@ -59,6 +61,7 @@ CONTROL_PATH_PATTERNS = (
     "/provider",
     "/provider/*",
     "/mcp",
+    "/chat-proxy",
     "/chat-proxy/*",
     "/auth",
     "/auth/*",
@@ -66,7 +69,9 @@ CONTROL_PATH_PATTERNS = (
     "/byok/*",
     "/credits",
     "/credits/*",
+    "/billing",
     "/billing/*",
+    "/broadcast",
     "/broadcast/*",
     "/custom-models",
     "/custom-models/*",
@@ -81,29 +86,38 @@ CONTROL_PATH_PATTERNS = (
     "/client-events",
     "/workspaces",
     "/workspaces/*",
+    "/organization",
     "/organization/*",
     "/chat/completions",
     "/messages",
     "/embeddings",
     "/responses",
+    "/audio",
     "/audio/*",
     "/rerank",
     "/videos",
     "/videos/*",
+    "/private",
     "/private/*",
     "/guardrails",
     "/guardrails/*",
+    "/analytics",
     "/analytics/*",
+    "/classifications",
     "/classifications/*",
+    "/datasets",
     "/datasets/*",
     "/files",
     "/files/*",
     "/images",
     "/images/*",
+    "/model",
     "/model/*",
+    "/observability",
     "/observability/*",
     "/presets",
     "/presets/*",
+    "/scim",
     "/scim/*",
     "/signup",
     "/notify",
@@ -123,7 +137,9 @@ CONTROL_PATH_PATTERNS = (
 )
 
 INTERNAL_PATH_PATTERNS = (
+    "/internal",
     "/internal/*",
+    "/v1/internal",
     "/v1/internal/*",
 )
 
@@ -146,11 +162,6 @@ _OUTPUT_ONLY_KEYS = {
 def _match_specificity(path: str, pattern: str) -> tuple[int, int] | None:
     if pattern.endswith("/*"):
         prefix = pattern[:-1]
-        bare_prefix = prefix[:-1]
-        if path == bare_prefix:
-            # The wildcard owns its bare prefix too, but an explicit exact rule
-            # at that path retains the existing exact-over-glob tie break.
-            return (len(bare_prefix), 0)
         if path.startswith(prefix):
             return (len(prefix), 0)
         return None

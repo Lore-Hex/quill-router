@@ -24,6 +24,47 @@ def _load_url_map_module() -> ModuleType:
 
 URL_MAP = _load_url_map_module()
 
+PUBLIC_BACKEND = "public-backend"
+LEGACY_BACKEND = "legacy-backend"
+
+
+def _emitted_map() -> dict[str, object]:
+    return URL_MAP.rewrite_url_map(
+        {"name": "trusted-router-control-map", "defaultService": LEGACY_BACKEND},
+        PUBLIC_BACKEND,
+        LEGACY_BACKEND,
+        LEGACY_BACKEND,
+        LEGACY_BACKEND,
+        ["trustedrouter.com"],
+    )
+
+
+def _emitted_backend(url_map: dict[str, object], path: str) -> str:
+    """Select a pathRule using Google URL-map matching, not the simulator."""
+    matchers = url_map["pathMatchers"]
+    assert isinstance(matchers, list)
+    matcher = next(
+        item
+        for item in matchers
+        if item["name"] == "trusted-router-service-surfaces"
+    )
+    exact: list[tuple[int, str]] = []
+    wildcard: list[tuple[int, str]] = []
+    for rule in matcher["pathRules"]:
+        service = rule["service"]
+        for pattern in rule["paths"]:
+            if pattern.endswith("/*"):
+                prefix = pattern.removesuffix("/*")
+                if path.startswith(f"{prefix}/"):
+                    wildcard.append((len(prefix), service))
+            elif path == pattern:
+                exact.append((len(pattern), service))
+    if exact:
+        return max(exact)[1]
+    if wildcard:
+        return max(wildcard)[1]
+    return matcher["defaultService"]
+
 
 def _concrete(path: str) -> str:
     return re.sub(r"\{[^}]+\}", "sample", path)
@@ -50,10 +91,11 @@ def test_every_combined_route_sent_to_public_is_mounted_by_public() -> None:
         init_observability=False,
     )
     public_paths = {route.path for route in public.routes}
+    emitted = _emitted_map()
     violations = {
         route.path
         for route in combined.routes
-        if URL_MAP.route_surface(_concrete(route.path)) == "public"
+        if _emitted_backend(emitted, _concrete(route.path)) == PUBLIC_BACKEND
         and route.path not in public_paths
     }
     assert violations == set()
@@ -141,15 +183,57 @@ def test_entire_group_buy_stays_on_the_t2_legacy_control_slot() -> None:
     assert URL_MAP.route_surface("/v1/bedrock-group-buy/pledge") == "control"
 
 
-def test_every_nonpublic_wildcard_also_owns_its_bare_prefix() -> None:
-    for patterns in (
-        URL_MAP.CONTROL_PATH_PATTERNS,
-        URL_MAP.ACTIONS_PATH_PATTERNS,
-        URL_MAP.INTERNAL_PATH_PATTERNS,
-    ):
-        for pattern in patterns:
-            if pattern.endswith("/*"):
-                assert URL_MAP.route_surface(pattern.removesuffix("/*")) != "public"
+def test_every_emitted_nonpublic_wildcard_has_an_exact_bare_twin() -> None:
+    emitted = _emitted_map()
+    matchers = emitted["pathMatchers"]
+    matcher = next(
+        item
+        for item in matchers
+        if item["name"] == "trusted-router-service-surfaces"
+    )
+    owners = {
+        pattern: rule["service"]
+        for rule in matcher["pathRules"]
+        for pattern in rule["paths"]
+    }
+    missing_or_wrong = {
+        pattern: owners.get(pattern.removesuffix("/*"))
+        for pattern, service in owners.items()
+        if pattern.endswith("/*")
+        and service != PUBLIC_BACKEND
+        and owners.get(pattern.removesuffix("/*")) != service
+    }
+    assert missing_or_wrong == {}
+
+
+@pytest.mark.parametrize(
+    ("path", "backend"),
+    (
+        ("/bedrock-group-buy", LEGACY_BACKEND),
+        ("/bedrock-group-buy/", LEGACY_BACKEND),
+        ("/bedrock-group-buy/manage", LEGACY_BACKEND),
+        ("/v1/bedrock-group-buy", LEGACY_BACKEND),
+        ("/console", LEGACY_BACKEND),
+        ("/auth/session", LEGACY_BACKEND),
+        ("/signup", LEGACY_BACKEND),
+        ("/internal/gateway/settle", LEGACY_BACKEND),
+        ("/v1/chat/completions", LEGACY_BACKEND),
+        ("/google_oauth_callback", LEGACY_BACKEND),
+        ("/internal/stripe/webhook", LEGACY_BACKEND),
+        ("/", PUBLIC_BACKEND),
+        ("/status.json", PUBLIC_BACKEND),
+        ("/static/app.css", PUBLIC_BACKEND),
+        ("/og.png", PUBLIC_BACKEND),
+        ("/robots.txt", PUBLIC_BACKEND),
+        ("/sitemap.xml", PUBLIC_BACKEND),
+        ("/leaderboard", PUBLIC_BACKEND),
+        ("/trust", PUBLIC_BACKEND),
+        ("/health", PUBLIC_BACKEND),
+        ("/v1/health", PUBLIC_BACKEND),
+    ),
+)
+def test_emitted_map_routes_representative_paths(path: str, backend: str) -> None:
+    assert _emitted_backend(_emitted_map(), path) == backend
 
 
 @pytest.mark.parametrize(

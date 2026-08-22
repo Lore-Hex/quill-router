@@ -26,8 +26,7 @@ URL_MAP="${TR_PUBLIC_URL_MAP:-trusted-router-control-map}"
 PUBLIC_REGIONS="${TR_PUBLIC_REGIONS:-$TR_CONTROL_PLANE_REGIONS}"
 PUBLIC_DOMAINS="${TR_PUBLIC_DOMAINS:-trustedrouter.com,allyrouter.com,uptimerouter.com}"
 STATE_DIR="${TR_PUBLIC_EDGE_STATE_DIR:-${HOME}/.local/state/trusted-router/public-surface}"
-ROLLBACK_MAP="${STATE_DIR}/${URL_MAP}.pre-public-cutover.json"
-ROLLBACK_DIGEST="${ROLLBACK_MAP}.sha256"
+ROLLBACK_CAPTURE="${STATE_DIR}/${URL_MAP}.pre-public-cutover.capture.json"
 
 print_policy_bootstrap() {
   cat >&2 <<EOF
@@ -241,21 +240,8 @@ cutover() {
   umask 077
   local live_map="${STATE_DIR}/${URL_MAP}.live.json"
   local candidate="${STATE_DIR}/${URL_MAP}.public-candidate.json"
+  local post_import_map="${STATE_DIR}/${URL_MAP}.post-import.json"
   gc compute url-maps describe "$URL_MAP" --global --format=json >"$live_map"
-  if [ ! -f "$ROLLBACK_MAP" ]; then
-    cp "$live_map" "$ROLLBACK_MAP"
-    python3 - "$ROLLBACK_MAP" >"$ROLLBACK_DIGEST" <<'PY'
-import hashlib
-import pathlib
-import sys
-
-path = pathlib.Path(sys.argv[1])
-print(hashlib.sha256(path.read_bytes()).hexdigest())
-PY
-    log "captured one-command rollback map at ${ROLLBACK_MAP}"
-  else
-    log "preserving existing pre-cutover rollback map at ${ROLLBACK_MAP}"
-  fi
 
   local public_link
   local legacy_link
@@ -275,6 +261,18 @@ PY
     --global \
     --load-balancing-scheme="$lb_scheme" >/dev/null
 
+  local capture_result
+  capture_result="$(python3 "${SCRIPT_DIR}/url_map_capture.py" prepare \
+    --capture "$ROLLBACK_CAPTURE" \
+    --live-map "$live_map" \
+    --candidate "$candidate" \
+    --captured-at "${TR_PUBLIC_EDGE_CAPTURED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}")"
+  if [ "$capture_result" = "preserved" ]; then
+    log "preserving current cutover rollback capture at ${ROLLBACK_CAPTURE}"
+  else
+    log "atomically captured one-command rollback state at ${ROLLBACK_CAPTURE}"
+  fi
+
   echo "Paths moving from ${LEGACY_BACKEND} to ${PUBLIC_BACKEND}:"
   python3 - "${SCRIPT_DIR}/service_surface_url_map.py" <<'PY'
 import importlib.util
@@ -292,39 +290,60 @@ print("  <all unmatched first-party paths>")
 PY
   echo "Candidate URL-map diff:"
   diff -u "$live_map" "$candidate" || true
-  gc compute url-maps import "$URL_MAP" \
-    --source="$candidate" \
-    --global \
-    --quiet
+  if ! gc compute url-maps import "$URL_MAP" \
+      --source="$candidate" \
+      --global \
+      --quiet; then
+    # The CLI may lose its response after the server commits. Arm rollback only
+    # if a fresh describe proves that the validated candidate is actually live.
+    if gc compute url-maps describe "$URL_MAP" --global --format=json \
+        >"$post_import_map" 2>/dev/null; then
+      if python3 "${SCRIPT_DIR}/url_map_capture.py" arm \
+          --capture "$ROLLBACK_CAPTURE" \
+          --live-map "$post_import_map" 2>/dev/null; then
+        log "URL-map import reported failure, but the candidate is live; rollback is armed"
+      fi
+    fi
+    echo "ERROR: URL-map import failed; cutover did not complete" >&2
+    return 1
+  fi
+  gc compute url-maps describe "$URL_MAP" --global --format=json >"$post_import_map"
+  python3 "${SCRIPT_DIR}/url_map_capture.py" arm \
+    --capture "$ROLLBACK_CAPTURE" \
+    --live-map "$post_import_map"
   log "cutover imported; rollback with: bash $0 rollback"
 }
 
 rollback() {
-  if [ ! -f "$ROLLBACK_MAP" ] || [ ! -f "$ROLLBACK_DIGEST" ]; then
+  if [ ! -f "$ROLLBACK_CAPTURE" ]; then
     echo "ERROR: rollback capture is missing from ${STATE_DIR}; refusing to re-render" >&2
     return 1
   fi
-  expected_digest="$(tr -d '[:space:]' <"$ROLLBACK_DIGEST")"
-  actual_digest="$(python3 - "$ROLLBACK_MAP" <<'PY'
-import hashlib
-import pathlib
-import sys
-
-print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())
-PY
-)"
-  if [ "$actual_digest" != "$expected_digest" ]; then
-    echo "ERROR: captured rollback URL map failed its byte-for-byte digest check" >&2
+  mkdir -p "$STATE_DIR"
+  umask 077
+  local current_map="${STATE_DIR}/${URL_MAP}.rollback-current.json"
+  local rollback_map="${STATE_DIR}/${URL_MAP}.rollback-source.json"
+  if ! gc compute url-maps describe "$URL_MAP" --global --format=json >"$current_map"; then
+    echo "ERROR: cannot inspect the current live URL map; refusing rollback" >&2
     return 1
   fi
+  if ! python3 "${SCRIPT_DIR}/url_map_capture.py" check-live \
+      --capture "$ROLLBACK_CAPTURE" \
+      --live-map "$current_map"; then
+    echo "ERROR: rollback capture is stale or corrupt; refusing to overwrite the live map" >&2
+    return 1
+  fi
+  python3 "${SCRIPT_DIR}/url_map_capture.py" extract \
+    --capture "$ROLLBACK_CAPTURE" \
+    --output "$rollback_map"
   gc compute url-maps validate \
-    --source="$ROLLBACK_MAP" \
+    --source="$rollback_map" \
     --global >/dev/null
   gc compute url-maps import "$URL_MAP" \
-    --source="$ROLLBACK_MAP" \
+    --source="$rollback_map" \
     --global \
     --quiet
-  log "restored the exact captured pre-cutover URL map from ${ROLLBACK_MAP}"
+  log "restored the exact captured pre-cutover URL map from ${ROLLBACK_CAPTURE}"
 }
 
 case "$COMMAND" in
