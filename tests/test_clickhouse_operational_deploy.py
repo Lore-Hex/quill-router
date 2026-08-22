@@ -72,6 +72,8 @@ def test_operational_deploy_backfills_before_starting_live_ingest() -> None:
     assert "008_client_events_replicated.sql" in script
     assert "tr-clickhouse-client-rollup.service" in script
     assert "tr-clickhouse-client-rollup.timer" in script
+    assert "tr-clickhouse-synthetic-reconcile.service" in script
+    assert "tr-clickhouse-synthetic-reconcile.timer" in script
     assert "systemctl enable" in script
     assert 'id_column="event_id"' in script
 
