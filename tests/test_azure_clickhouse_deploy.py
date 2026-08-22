@@ -154,7 +154,7 @@ def test_quota_is_checked_before_anything_is_created() -> None:
     half a deployment behind a confusing error. The family limit is one read."""
     script = _script()
 
-    quota_at = script.index("Standard DSv3 Family vCPUs")
+    quota_at = script.index("az vm list-usage")
     for created in ("az network nsg create", "az network vnet subnet create", "az vm create"):
         assert script.index(created) > quota_at, f"{created} runs before the quota check"
 
@@ -165,3 +165,39 @@ def test_it_does_not_recreate_an_existing_node() -> None:
     script = _script()
 
     assert "already exists — not recreating" in script
+
+
+def test_commands_are_not_yaml_parsed() -> None:
+    """A ": " inside an unquoted YAML scalar becomes a MAPPING.
+
+    The first version of this script put each command in a runcmd list, and one
+    of them contained `-H "Authorization: Bearer $TOKEN"`. YAML read that entry
+    as a dict, cloud-init refused to shellify a dict, and the ENTIRE runcmd
+    block died before a single command ran. The VM provisioned cleanly with no
+    ClickHouse and no schema, and nothing about "VM created" said otherwise.
+
+    So the bootstrap lives in a write_files BLOCK SCALAR -- literal, never
+    parsed -- and runcmd only executes it.
+    """
+    script = _script()
+
+    assert "path: /root/bootstrap.sh" in script
+    assert 'echo "  - /root/bootstrap.sh"' in script
+
+    # The Authorization header, the reason this bug existed, must not sit in a
+    # runcmd entry any more.
+    body = script[script.index('echo "runcmd:"') :]
+    assert "Authorization:" not in body
+
+
+def test_the_generated_cloud_init_is_validated_before_azure_sees_it() -> None:
+    """cloud-init reports a malformed config on the node, minutes later, in a
+    log nobody is watching. The shape is checkable here, in a second.
+
+    Shape, not just parseability: the broken file was valid YAML.
+    """
+    script = _script()
+
+    assert "generated cloud-init is not usable" in script
+    assert "runcmd is missing or not a list" in script
+    assert "not a string" in script

@@ -33,10 +33,11 @@
 #     169.254.169.254. The node fetches it at first boot with its own managed
 #     identity, exactly as the AWS node uses its instance profile.
 #
-#   * D2s_v3 (2 vCPU / 8 GiB), matching AWS's m5.large. Chosen because the DSv3
-#     family is one of the few with quota in uaenorth: the v5 families
-#     (Dv5/Ev5/Bsv2) are all limited to 0 there, while DSv3/DASv4/BS have 10
-#     vCPUs each against a regional cap of 18. Verified 2026-08-22.
+#   * SIZE IS CHOSEN BY WHAT ARM WILL ACTUALLY ACCEPT, not by what the quota
+#     and SKU listings say. In uaenorth those three disagree: D2s_v3 has 10
+#     vCPUs of quota and no listed restriction and is still refused for
+#     capacity, while the v5 families are offered but out of quota. See the
+#     VM_SIZE comment below. Verified 2026-08-22.
 #
 # PREREQUISITE THIS SCRIPT CHECKS BUT DOES NOT CREATE: a role assignment giving
 # the node's managed identity "Key Vault Secrets User" on the vault. Creating
@@ -53,7 +54,19 @@ SUBNET_PREFIX="${SUBNET_PREFIX:-10.61.3.0/24}"
 VNET_CIDR="${VNET_CIDR:-10.61.0.0/16}"
 NSG="${NSG:-tr-azure-clickhouse-nsg}"
 VM="${VM:-tr-azure-clickhouse-1}"
-VM_SIZE="${VM_SIZE:-Standard_D2s_v3}"
+# Standard_D2as_v7, and the road to it is worth recording because three
+# different things all had to be true and only the third is observable:
+#
+#   D2s_v3     10 vCPUs of quota, no list-skus restriction, and ARM preflight
+#              still refuses it: "Capacity Restrictions ... not available in
+#              location UAENorth"
+#   D2as_v5    offered and unrestricted, but the family's quota is exhausted
+#   B2as_v2    same
+#   D2as_v7    accepted
+#
+# Quota, SKU availability and CAPACITY are three separate gates in Azure, and
+# only a real ARM preflight tests the third.
+VM_SIZE="${VM_SIZE:-Standard_D2as_v7}"
 DISK_GB="${DISK_GB:-100}"
 IDENTITY="${IDENTITY:-tr-azure-clickhouse-identity}"
 VAULT="${VAULT:-trquillkv}"
@@ -73,24 +86,60 @@ az account show >/dev/null 2>&1 || die "not logged in to Azure"
 az network vnet show -g "$RG" -n "$VNET" >/dev/null 2>&1 \
   || die "VNet ${RG}/${VNET} not found — run scripts/deploy/azure_canary.sh first"
 
-# Quota, checked BEFORE anything is created. A VM create that fails on quota
-# after a subnet and an NSG exist leaves half a deployment and a confusing
-# error; the family limit is a single read.
+# QUOTA AND CAPACITY ARE DIFFERENT THINGS, and this script learned that the
+# expensive way: Standard_D2s_v3 has 10 vCPUs of quota in uaenorth and cannot be
+# deployed there at all --
+#
+#   (SkuNotAvailable) The requested VM size for resource 'Following SKUs have
+#   failed for Capacity Restrictions: Standard_D2s_v3' is currently not
+#   available in location 'UAENorth'.
+#
+# `az vm list-skus` did not report a restriction for it either. The only signal
+# that tells the truth is ARM's own preflight, so both are checked here: the
+# family limit (cheap, and the common failure) and then a real validation
+# deployment (authoritative, and the one that catches capacity).
+#
+# The family is derived from the SKU rather than hardcoded. A hardcoded family
+# name silently checks the wrong quota the moment VM_SIZE is overridden, which
+# is exactly the shape of check that reports success without measuring.
+say "preflight: quota"
+FAMILY="$(az vm list-skus -l "$LOCATION" --resource-type virtualMachines -o json 2>/dev/null |
+  python3 -c '
+import json, sys
+want = sys.argv[1]
+for s in json.load(sys.stdin):
+    if s["name"] == want:
+        print(s.get("family", ""))
+        break
+' "$VM_SIZE")"
+[ -n "$FAMILY" ] || die "${VM_SIZE} is not offered in ${LOCATION} at all"
+
+VCPUS="$(az vm list-sizes -l "$LOCATION" -o json 2>/dev/null | python3 -c '
+import json, sys
+want = sys.argv[1]
+for s in json.load(sys.stdin):
+    if s["name"] == want:
+        print(s["numberOfCores"])
+        break
+' "$VM_SIZE")"
+[ -n "$VCPUS" ] || die "could not read ${VM_SIZE}'s vCPU count"
+
 # No f-string with nested quotes: this source is carried through a shell
 # single-quoted -c argument, where escaping a quote inside an f-string
 # expression is a SyntaxError rather than an escape.
 family_used_limit="$(az vm list-usage -l "$LOCATION" -o json 2>/dev/null | python3 -c '
 import json, sys
+want = sys.argv[1].lower()
 for row in json.load(sys.stdin):
-    if row["localName"] == "Standard DSv3 Family vCPUs":
+    if row["name"]["value"].lower() == want:
         print(row["currentValue"], row["limit"])
         break
-')"
-[ -n "$family_used_limit" ] || die "could not read DSv3 quota in ${LOCATION}"
+' "$FAMILY")"
+[ -n "$family_used_limit" ] || die "could not read ${FAMILY} quota in ${LOCATION}"
 used="${family_used_limit% *}"; limit="${family_used_limit#* }"
-[ "$((limit - used))" -ge 2 ] \
-  || die "DSv3 quota in ${LOCATION} is ${used}/${limit}; ${VM_SIZE} needs 2 vCPUs"
-echo "  DSv3 quota ${used}/${limit} — room for ${VM_SIZE}"
+[ "$((limit - used))" -ge "$VCPUS" ] \
+  || die "${FAMILY} quota in ${LOCATION} is ${used}/${limit}; ${VM_SIZE} needs ${VCPUS} vCPUs"
+echo "  ${FAMILY} quota ${used}/${limit} — room for ${VM_SIZE} (${VCPUS} vCPU)"
 
 # -- password ----------------------------------------------------------------
 # Generated once and never echoed. Reused if it already exists, so re-running
@@ -181,6 +230,20 @@ cat "$REPO_ROOT/clickhouse/006_operational_analytics_single_node.sql" \
     "$REPO_ROOT/clickhouse/009_client_events_single_node.sql" > "$SCHEMA_FILE"
 
 CLOUD_INIT="$(mktemp)"
+# The bootstrap goes in a write_files BLOCK SCALAR, not in runcmd entries.
+#
+# runcmd entries are parsed as YAML, and any unquoted scalar containing ": "
+# becomes a MAPPING. The first attempt at this file had
+#
+#   - CH_PW=$(curl ... -H "Authorization: Bearer $TOKEN" ...)
+#
+# which YAML read as {'CH_PW=$(curl ... "Authorization': 'Bearer $TOKEN" ...'},
+# and cloud-init refused to shellify a dict -- killing the ENTIRE runcmd block
+# before a single command ran. The VM came up clean, with no ClickHouse and no
+# schema, and nothing about "VM created" said otherwise.
+#
+# A block scalar is literal: no colons, quotes or backslashes inside it are
+# interpreted, so the shell sees exactly what is written here.
 {
   echo "#cloud-config"
   echo "write_files:"
@@ -188,39 +251,80 @@ CLOUD_INIT="$(mktemp)"
   echo "    permissions: '0600'"
   echo "    content: |"
   sed 's/^/      /' "$SCHEMA_FILE"
-  cat <<EOF
-runcmd:
-  - set -eux
-  - export DEBIAN_FRONTEND=noninteractive
-  - curl -fsSL https://packages.clickhouse.com/rpm/lts/repodata/repomd.xml.key | gpg --dearmor -o /usr/share/keyrings/clickhouse-keyring.gpg
-  - echo "deb [signed-by=/usr/share/keyrings/clickhouse-keyring.gpg] https://packages.clickhouse.com/deb stable main" > /etc/apt/sources.list.d/clickhouse.list
-  - apt-get update
-  - apt-get install -y --no-install-recommends clickhouse-server clickhouse-client jq
-  # Bind to the private IP only. 0.0.0.0 plus one permissive rule is how an
-  # analytics store reaches the public internet.
-  - PRIVATE_IP=\$(curl -fsS -H Metadata:true "http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/privateIpAddress?api-version=2021-02-01&format=text")
-  - printf '<clickhouse><listen_host>%s</listen_host><listen_host>127.0.0.1</listen_host></clickhouse>' "\$PRIVATE_IP" > /etc/clickhouse-server/config.d/listen.xml
-  # Fetch the password with the VM's managed identity. Never through custom
-  # data: cloud-init user-data is readable from inside the VM via IMDS.
-  - TOKEN=\$(curl -fsS -H Metadata:true "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net&client_id=${IDENTITY_CLIENT}" | jq -r .access_token)
-  - CH_PW=\$(curl -fsS -H "Authorization: Bearer \$TOKEN" "https://${VAULT}.vault.azure.net/secrets/${CH_SECRET}?api-version=7.4" | jq -r .value)
-  - test -n "\$CH_PW"
-  # chown is load-bearing: a root-owned 0600 users.d file is unreadable after
-  # the server drops privileges, and it dies in UsersConfigAccessStorage::load
-  # without naming the permission.
-  - printf '<clickhouse><users><default><password>%s</password><networks><ip>%s</ip><ip>127.0.0.1</ip></networks></default></users></clickhouse>' "\$CH_PW" "${VNET_CIDR}" > /etc/clickhouse-server/users.d/default-password.xml
-  - chown clickhouse:clickhouse /etc/clickhouse-server/users.d/default-password.xml
-  - chmod 640 /etc/clickhouse-server/users.d/default-password.xml
-  - systemctl enable clickhouse-server
-  - systemctl restart clickhouse-server
-  # Wait for it to answer before applying the schema, then apply it. A node
-  # that is up with no tables is the "configured, healthy, and empty" shape.
-  - for i in \$(seq 1 60); do clickhouse-client --user default --password "\$CH_PW" --query "SELECT 1" >/dev/null 2>&1 && break; sleep 5; done
-  - clickhouse-client --user default --password "\$CH_PW" --database default --multiquery < /root/operational_schema.sql
-  - shred -u /root/operational_schema.sql || rm -f /root/operational_schema.sql
-  - touch /var/lib/clickhouse/.tr-schema-applied
-EOF
+  echo "  - path: /root/bootstrap.sh"
+  echo "    permissions: '0700'"
+  echo "    content: |"
+  sed 's/^/      /' <<BOOTSTRAP
+#!/bin/bash
+set -eux
+export DEBIAN_FRONTEND=noninteractive
+curl -fsSL https://packages.clickhouse.com/rpm/lts/repodata/repomd.xml.key | gpg --dearmor -o /usr/share/keyrings/clickhouse-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/clickhouse-keyring.gpg] https://packages.clickhouse.com/deb stable main" > /etc/apt/sources.list.d/clickhouse.list
+apt-get update
+apt-get install -y --no-install-recommends clickhouse-server clickhouse-client jq
+# Bind to the private IP only. 0.0.0.0 plus one permissive rule is how an
+# analytics store reaches the public internet.
+PRIVATE_IP=\$(curl -fsS -H Metadata:true "http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/privateIpAddress?api-version=2021-02-01&format=text")
+printf '<clickhouse><listen_host>%s</listen_host><listen_host>127.0.0.1</listen_host></clickhouse>' "\$PRIVATE_IP" > /etc/clickhouse-server/config.d/listen.xml
+# Fetch the password with the VM's managed identity. Never through custom data:
+# cloud-init user-data is readable from inside the VM via IMDS.
+TOKEN=\$(curl -fsS -H Metadata:true "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net&client_id=${IDENTITY_CLIENT}" | jq -r .access_token)
+CH_PW=\$(curl -fsS -H "Authorization: Bearer \$TOKEN" "https://${VAULT}.vault.azure.net/secrets/${CH_SECRET}?api-version=7.4" | jq -r .value)
+test -n "\$CH_PW"
+# chown is load-bearing: a root-owned 0600 users.d file is unreadable after the
+# server drops privileges, and it dies in UsersConfigAccessStorage::load
+# without naming the permission.
+printf '<clickhouse><users><default><password>%s</password><networks><ip>%s</ip><ip>127.0.0.1</ip></networks></default></users></clickhouse>' "\$CH_PW" "${VNET_CIDR}" > /etc/clickhouse-server/users.d/default-password.xml
+chown clickhouse:clickhouse /etc/clickhouse-server/users.d/default-password.xml
+chmod 640 /etc/clickhouse-server/users.d/default-password.xml
+systemctl enable clickhouse-server
+systemctl restart clickhouse-server
+# Wait for it to answer before applying the schema. A node that is up with no
+# tables is the "configured, healthy, and empty" shape.
+for i in \$(seq 1 60); do clickhouse-client --user default --password "\$CH_PW" --query "SELECT 1" >/dev/null 2>&1 && break; sleep 5; done
+clickhouse-client --user default --password "\$CH_PW" --database default --multiquery < /root/operational_schema.sql
+shred -u /root/operational_schema.sql || rm -f /root/operational_schema.sql
+touch /var/lib/clickhouse/.tr-schema-applied
+BOOTSTRAP
+  echo "runcmd:"
+  echo "  - /root/bootstrap.sh"
 } > "$CLOUD_INIT"
+
+# Validate the generated cloud-config BEFORE Azure ever sees it. The previous
+# version shipped a runcmd list whose eighth entry YAML had silently turned
+# into a dict; the VM provisioned cleanly and ran nothing. cloud-init discovers
+# that on the node, minutes later, in a log nobody is watching.
+#
+# Asserting the SHAPE, not just that it parses: "valid YAML" was already true
+# of the broken file.
+python3 - "$CLOUD_INIT" <<'VALIDATE' || die "generated cloud-init is not usable"
+import sys
+try:
+    import yaml
+except ImportError:
+    print("  pyyaml absent; skipping cloud-init validation", file=sys.stderr)
+    raise SystemExit(0)
+doc = yaml.safe_load(open(sys.argv[1]))
+if not isinstance(doc, dict):
+    raise SystemExit("cloud-config is not a mapping")
+run = doc.get("runcmd")
+if not isinstance(run, list) or not run:
+    raise SystemExit("runcmd is missing or not a list")
+for entry in run:
+    if not isinstance(entry, (str, list)):
+        raise SystemExit(
+            "runcmd entry parsed as %s, not a string: %r\n"
+            "  A ': ' inside an unquoted YAML scalar becomes a mapping, and "
+            "cloud-init refuses to shellify it -- killing the WHOLE block."
+            % (type(entry).__name__, entry)
+        )
+files = doc.get("write_files") or []
+paths = {f.get("path") for f in files if isinstance(f, dict)}
+for required in ("/root/bootstrap.sh", "/root/operational_schema.sql"):
+    if required not in paths:
+        raise SystemExit("write_files is missing %s" % required)
+print("  cloud-init validated: %d files, %d runcmd entries" % (len(files), len(run)))
+VALIDATE
 
 # -- the node ----------------------------------------------------------------
 say "VM ${VM} (${VM_SIZE}, no public IP)"
