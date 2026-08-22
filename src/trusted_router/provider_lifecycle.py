@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import sys
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 
 # Test-only clock override, e.g. TR_LIFECYCLE_CLOCK_OVERRIDE=2027-01-01T00:00:00Z.
 # Every effective-dated cutover below is a scheduled change of behaviour: a
@@ -41,6 +41,9 @@ CEREBRAS_GEMMA4_SHARED_RETIREMENT_AT = datetime(2026, 9, 3, 0, 0, tzinfo=UTC)
 NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
 ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
+DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT = datetime(
+    2026, 8, 22, 16, 0, tzinfo=UTC
+)
 FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT = datetime(
     2026, 8, 22, 12, 0, tzinfo=UTC
 )
@@ -52,6 +55,7 @@ DEEPSEEK_V4_PEAK_WINDOWS_UTC = (
     (1 * 60 * 60, 4 * 60 * 60),
     (6 * 60 * 60, 10 * 60 * 60),
 )
+_BEIJING_TIME = timezone(timedelta(hours=8), "Asia/Shanghai")
 
 
 @dataclass(frozen=True)
@@ -521,6 +525,13 @@ def _deepseek_v4_family(provider_slug: str, model_id: str) -> str | None:
 def _deepseek_v4_period(effective_at: datetime) -> str:
     if effective_at < DEEPSEEK_V4_PRICING_EFFECTIVE_AT:
         return "legacy"
+    # DeepSeek's published schedule applies the off-peak rate throughout
+    # Saturdays and Sundays in Beijing time from 2026-08-23 onward.
+    if (
+        effective_at >= DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT
+        and effective_at.astimezone(_BEIJING_TIME).weekday() >= 5
+    ):
+        return "off_peak"
     seconds_since_midnight = (
         effective_at.hour * 60 * 60 + effective_at.minute * 60 + effective_at.second
     )
@@ -577,6 +588,13 @@ def provider_pricing_schedule(
             {"start": clock(start), "end": clock(end)}
             for start, end in DEEPSEEK_V4_PEAK_WINDOWS_UTC
         ],
+        "weekend_off_peak": {
+            "effective_at": DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT.isoformat().replace(
+                "+00:00", "Z"
+            ),
+            "timezone": "Asia/Shanghai",
+            "days": ["Saturday", "Sunday"],
+        },
         # Authorization time, not settlement time, selects the period so a
         # long stream cannot change price midway through the request.
         "rate_locked_at": "authorization",
