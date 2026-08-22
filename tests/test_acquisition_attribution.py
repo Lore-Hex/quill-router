@@ -238,6 +238,33 @@ def test_paid_experiment_preserves_exact_landing_path(client: TestClient) -> Non
     assert context.last_touch["utm_content"] == "or_quickstart_v1"
 
 
+def test_multiarm_landing_redirect_attributes_the_selected_page(
+    client: TestClient,
+) -> None:
+    query = (
+        "utm_source=google&utm_medium=paid_search&"
+        "utm_campaign=openrouter_lp_multi_20260822&"
+        "utm_content=openrouter_exact_control&gclid=multiarm-click-123"
+    )
+    assigned = client.get(
+        f"/openrouter-alternative/experiment?{query}",
+        follow_redirects=False,
+    )
+    assert assigned.status_code == 307
+
+    landing = client.get(assigned.headers["location"])
+    assert landing.status_code == 200
+    context = decode_attribution_cookie(
+        client.cookies.get(ATTRIBUTION_COOKIE_NAME), client.app.state.settings
+    )
+    assert context is not None
+    assert context.last_touch["landing_path"] == assigned.headers["location"].split("?", 1)[0]
+    assert context.last_touch["utm_campaign"] == "openrouter_lp_multi_20260822"
+    assert context.last_touch["utm_content"] == "openrouter_exact_control"
+    assert context.last_touch["gclid_fingerprint"]
+    assert "gclid" not in context.last_touch
+
+
 @pytest.mark.parametrize("header", ["sec-gpc", "dnt"])
 def test_privacy_signals_suppress_attribution_cookie(client: TestClient, header: str) -> None:
     response = client.get(
