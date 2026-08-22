@@ -12,7 +12,7 @@ import datetime as dt
 import pytest
 
 from trusted_router.config import Settings
-from trusted_router.storage import STORE
+from trusted_router.storage import STORE, InMemoryStore
 from trusted_router.storage_models import SyntheticProbeSample, utcnow
 from trusted_router.synthetic import fleet, remediator
 from trusted_router.synthetic.remediator import (
@@ -51,6 +51,20 @@ def _old_iso(minutes: int) -> str:
 
 def _record(sample: SyntheticProbeSample) -> None:
     STORE.record_synthetic_probe_sample(sample)
+
+
+def _remediation_samples(target: str) -> list[SyntheticProbeSample]:
+    return sorted(
+        (
+            sample
+            for sample in STORE.synthetic_probe_samples(
+                probe_type=remediator.REMEDIATION_PROBE,
+                limit=100,
+            )
+            if sample.target == target
+        ),
+        key=lambda sample: sample.created_at,
+    )
 
 
 def test_stale_heartbeat_produces_paged_decision(sentry_events: list[str]) -> None:
@@ -144,6 +158,143 @@ def test_decision_rows_bucket_and_dedupe(sentry_events: list[str]) -> None:
     assert len(first) == len(second) == 1
 
 
+def test_persistent_condition_records_bucketed_onsets_without_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision = Decision("test-playbook", "persistent", "still present", page=False)
+
+    def detector(settings: Settings) -> list[Decision]:
+        return [decision]
+
+    now = [100.0]
+    monkeypatch.setattr(remediator, "DETECTORS", (detector,))
+    monkeypatch.setattr(remediator.time, "time", lambda: now[0])
+
+    run_remediator_pass(_settings())
+    now[0] += remediator.DECISION_BUCKET_SECONDS
+    run_remediator_pass(_settings())
+    now[0] += remediator.DECISION_BUCKET_SECONDS
+    run_remediator_pass(_settings())
+
+    samples = _remediation_samples("test-playbook:persistent")
+    assert [sample.status for sample in samples] == ["down", "down", "down"]
+    assert not any("cleared" in (sample.error_type or "") for sample in samples)
+
+
+def test_cleared_condition_records_exactly_one_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+    sentry_events: list[str],
+) -> None:
+    decisions = [Decision("test-playbook", "clears", "present", page=True)]
+
+    def detector(settings: Settings) -> list[Decision]:
+        return decisions
+
+    now = [100.0]
+    monkeypatch.setattr(remediator, "DETECTORS", (detector,))
+    monkeypatch.setattr(remediator.time, "time", lambda: now[0])
+    run_remediator_pass(_settings())
+
+    decisions.clear()
+    now[0] = 1334.0
+    run_remediator_pass(_settings())
+    now[0] = 1400.0
+    run_remediator_pass(_settings())
+
+    samples = _remediation_samples("test-playbook:clears")
+    assert [sample.status for sample in samples] == ["down", "up"]
+    assert samples[-1].error_type == "condition cleared after 1234s"
+    assert len([event for event in sentry_events if "test-playbook" in event]) == 1
+
+
+def test_recurrence_after_resolution_records_fresh_onset_in_same_bucket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision = Decision("test-playbook", "recurs", "present again", page=False)
+    decisions = [decision]
+
+    def detector(settings: Settings) -> list[Decision]:
+        return decisions
+
+    now = [100.0]
+    monkeypatch.setattr(remediator, "DETECTORS", (detector,))
+    monkeypatch.setattr(remediator.time, "time", lambda: now[0])
+    run_remediator_pass(_settings())
+
+    decisions.clear()
+    now[0] = 200.0
+    run_remediator_pass(_settings())
+    decisions.append(decision)
+    now[0] = 300.0
+    run_remediator_pass(_settings())
+
+    samples = _remediation_samples("test-playbook:recurs")
+    assert [sample.status for sample in samples] == ["down", "up", "down"]
+
+
+def test_fresh_process_does_not_resolve_absent_condition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def detector(settings: Settings) -> list[Decision]:
+        return []
+
+    monkeypatch.setattr(remediator, "DETECTORS", (detector,))
+    _record(
+        SyntheticProbeSample(
+            id="syn_rem_previous_process",
+            probe_type=remediator.REMEDIATION_PROBE,
+            target="test-playbook:never-seen",
+            target_url="",
+            monitor_region="test-1",
+            status="down",
+            error_type="recorded by a previous process",
+        )
+    )
+
+    assert run_remediator_pass(_settings()) == []
+    assert [sample.status for sample in _remediation_samples("test-playbook:never-seen")] == [
+        "down"
+    ]
+
+
+def test_resolution_recording_failure_does_not_break_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision = Decision("test-playbook", "record-fails", "present", page=False)
+    decisions = [decision]
+
+    def detector(settings: Settings) -> list[Decision]:
+        return decisions
+
+    original = InMemoryStore.record_synthetic_probe_sample
+    attempted_statuses: list[str] = []
+
+    def fail_resolution(
+        self: InMemoryStore,
+        sample: SyntheticProbeSample,
+    ) -> None:
+        attempted_statuses.append(sample.status)
+        if sample.status == "up":
+            raise RuntimeError("resolution store unavailable")
+        original(self, sample)
+
+    monkeypatch.setattr(remediator, "DETECTORS", (detector,))
+    monkeypatch.setattr(InMemoryStore, "record_synthetic_probe_sample", fail_resolution)
+    run_remediator_pass(_settings())
+
+    decisions.clear()
+    assert run_remediator_pass(_settings()) == []
+    assert run_remediator_pass(_settings()) == []
+
+    decisions.append(decision)
+    run_remediator_pass(_settings())
+    assert attempted_statuses == ["down", "up", "down"]
+    assert [sample.status for sample in _remediation_samples("test-playbook:record-fails")] == [
+        "down",
+        "down",
+    ]
+
+
 def test_broken_detector_never_kills_the_pass(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
 
@@ -159,7 +310,8 @@ def test_broken_detector_never_kills_the_pass(monkeypatch: pytest.MonkeyPatch) -
     assert calls == ["healthy"]
 
 
-def test_remediation_samples_stay_out_of_public_surfaces() -> None:
+@pytest.mark.parametrize("status", ["down", "up"])
+def test_remediation_samples_stay_out_of_public_surfaces(status: str) -> None:
     from trusted_router.synthetic.components import (
         OPS_PROBE_TYPES,
         sample_component_ids,
@@ -173,7 +325,7 @@ def test_remediation_samples_stay_out_of_public_surfaces() -> None:
         target="route-quarantine:x/y",
         target_url="",
         monitor_region="test-1",
-        status="down",
+        status=status,
     )
     assert sample_component_ids(sample) == []
     assert sample_slo_class_ids(sample) == []

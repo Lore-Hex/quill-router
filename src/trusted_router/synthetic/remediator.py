@@ -20,11 +20,14 @@ MODES (settings.remediator_mode):
 
 DECISIONS ARE SAMPLES. Each decision is recorded as a synthetic sample
 (probe_type="remediation", target="<playbook>:<subject>") — the same store,
-retention, and /fleet rendering path as every other ops signal, and one row
-per (playbook, subject, 30-minute bucket) so a persistent condition reads as
-a timeline, not a firehose. status="down" means "condition present" so the
-timeline semantics match every other probe. remediation rows are in
-OPS_PROBE_TYPES: never a component, never an SLO, never the freshness clock.
+retention, and /fleet rendering path as every other ops signal. Each process
+records at most one onset row per (playbook, subject, 30-minute bucket), so
+the store can receive one row per control-plane instance for the same bucket;
+readers counting conditions should deduplicate by (target, bucket). A process
+also records at most one resolution row for each onset it observed.
+status="down" means "condition present" and status="up" means that condition
+cleared. remediation rows are in OPS_PROBE_TYPES: never a component, never an
+SLO, never the freshness clock.
 
 DETECTORS (v1, all T0 blast radius — detection and paging only):
   * stale heartbeats     — a scheduler this deployment expected to beat has
@@ -49,6 +52,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -59,8 +63,10 @@ from trusted_router.synthetic.alerts import ops_alert
 logger = logging.getLogger(__name__)
 
 REMEDIATION_PROBE = "remediation"
-# One decision row per (playbook, subject, bucket): a condition that persists
-# for six hours should read as ~12 rows on a timeline, not 180.
+# At most one onset row per (playbook, subject, bucket) per process. A
+# persistent condition therefore produces about 12 rows per process over six
+# hours, and the store's row count scales with the control-plane instance
+# count. Readers counting conditions should deduplicate by (target, bucket).
 DECISION_BUCKET_SECONDS = 30 * 60
 _DECISION_MARKS: dict[str, int] = {}
 
@@ -71,6 +77,15 @@ class Decision:
     subject: str
     detail: str
     page: bool  # page-worthy conditions ops_alert in ANY mode; detection is not action
+
+
+@dataclass(frozen=True)
+class _ActiveCondition:
+    first_seen_at: float
+    detector: Callable[[Settings], list[Decision]]
+
+
+_ACTIVE_CONDITIONS: dict[str, _ActiveCondition] = {}
 
 
 def _record_decision(decision: Decision, *, settings: Settings) -> None:
@@ -102,6 +117,33 @@ def _record_decision(decision: Decision, *, settings: Settings) -> None:
             fingerprint=["remediator", decision.playbook, decision.subject],
             tags={"playbook": decision.playbook, "mode": settings.remediator_mode},
         )
+
+
+def _record_resolution(
+    mark_key: str,
+    *,
+    first_seen_at: float,
+    settings: Settings,
+) -> None:
+    now = time.time()
+    bucket = int(now // DECISION_BUCKET_SECONDS)
+    present_seconds = int(max(now - first_seen_at, 0))
+    try:
+        from trusted_router.storage import STORE
+
+        STORE.record_synthetic_probe_sample(
+            SyntheticProbeSample(
+                id=f"syn_rem_{uuid.uuid4().hex[:12]}_{bucket}",
+                probe_type=REMEDIATION_PROBE,
+                target=mark_key,
+                target_url="",
+                monitor_region=settings.synthetic_monitor_region or settings.primary_region,
+                status="up",  # condition cleared
+                error_type=f"condition cleared after {present_seconds}s",
+            )
+        )
+    except Exception:  # noqa: BLE001 - recording must never break the loop
+        logger.exception("remediator resolution record failed for %s", mark_key)
 
 
 def _detect_stale_heartbeats(settings: Settings) -> list[Decision]:
@@ -201,8 +243,30 @@ def run_remediator_pass(settings: Settings) -> list[Decision]:
         except Exception:  # noqa: BLE001 - one broken detector must not kill the rest
             logger.exception("remediator detector %s failed", detector.__name__)
             continue
+        present_keys = {f"{decision.playbook}:{decision.subject}" for decision in decisions}
         for decision in decisions:
+            mark_key = f"{decision.playbook}:{decision.subject}"
+            if mark_key not in _ACTIVE_CONDITIONS:
+                _ACTIVE_CONDITIONS[mark_key] = _ActiveCondition(
+                    first_seen_at=time.time(),
+                    detector=detector,
+                )
             _record_decision(decision, settings=settings)
+        resolved = [
+            (mark_key, active)
+            for mark_key, active in _ACTIVE_CONDITIONS.items()
+            if active.detector is detector and mark_key not in present_keys
+        ]
+        for mark_key, active in resolved:
+            _record_resolution(
+                mark_key,
+                first_seen_at=active.first_seen_at,
+                settings=settings,
+            )
+            # Forget even when storage fails: recording remains best-effort,
+            # and one clear observation must produce at most one attempt.
+            _ACTIVE_CONDITIONS.pop(mark_key, None)
+            _DECISION_MARKS.pop(mark_key, None)
         all_decisions.extend(decisions)
     return all_decisions
 
@@ -225,3 +289,4 @@ def recent_decisions(limit: int = 20) -> list[dict[str, Any]]:
 
 def reset_for_tests() -> None:
     _DECISION_MARKS.clear()
+    _ACTIVE_CONDITIONS.clear()
