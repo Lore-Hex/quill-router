@@ -4,10 +4,28 @@ import datetime as dt
 import json
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
+from trusted_router.main import create_app
 from trusted_router.routes import public as public_routes
+
+
+@pytest.fixture
+def public_client_observed_client(test_settings: Settings) -> TestClient:
+    settings = test_settings.model_copy(update={"public_client_observed_enabled": True})
+    return TestClient(create_app(settings, init_observability=False))
+
+
+def test_public_client_observed_flag_defaults_off_and_reads_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TR_PUBLIC_CLIENT_OBSERVED_ENABLED", raising=False)
+    assert Settings.model_fields["public_client_observed_enabled"].default is False
+
+    monkeypatch.setenv("TR_PUBLIC_CLIENT_OBSERVED_ENABLED", "true")
+    assert Settings().public_client_observed_enabled is True
 
 
 def test_status_snapshot_keeps_router_core_byte_identical(monkeypatch) -> None:
@@ -21,7 +39,7 @@ def test_status_snapshot_keeps_router_core_byte_identical(monkeypatch) -> None:
     monkeypatch.setattr(public_routes, "_precomputed_public_analytics_snapshot", snapshot)
     monkeypatch.setattr(public_routes, "_status_samples", lambda **_kwargs: [])
     monkeypatch.setattr(public_routes, "_status_rollups", lambda _window: [])
-    settings = Settings(environment="local")
+    settings = Settings(environment="local", public_client_observed_enabled=True)
 
     monkeypatch.setattr(public_routes, "_STATUS_CACHE", None)
     without_client = public_routes._status_snapshot(settings)
@@ -42,7 +60,7 @@ def test_status_snapshot_keeps_router_core_byte_identical(monkeypatch) -> None:
 
 
 def test_status_json_passes_client_observed_through_at_top_level(
-    client: TestClient,
+    public_client_observed_client: TestClient,
     monkeypatch,
 ) -> None:
     section = {
@@ -57,15 +75,17 @@ def test_status_json_passes_client_observed_through_at_top_level(
         lambda _settings: {"components": [], "client_observed": section},
     )
 
-    response = client.get("/status.json")
+    response = public_client_observed_client.get("/status.json")
 
     assert response.status_code == 200
     assert response.json()["data"]["client_observed"] == section
     assert response.json()["data"]["client_observed"]["slo_id"] == "client_observed"
 
 
-def test_status_html_contains_client_section_and_handles_no_data(client: TestClient) -> None:
-    response = client.get("/status")
+def test_status_html_contains_client_section_and_handles_no_data(
+    public_client_observed_client: TestClient,
+) -> None:
+    response = public_client_observed_client.get("/status")
 
     assert response.status_code == 200
     assert '<section class="status-section" id="client-observed">' in response.text
@@ -126,11 +146,45 @@ def _status_snapshot_with_client(monkeypatch, client_payload: dict[str, Any]) ->
     monkeypatch.setattr(public_routes, "_status_samples", lambda **_kwargs: [])
     monkeypatch.setattr(public_routes, "_status_rollups", lambda _window: [])
     monkeypatch.setattr(public_routes, "_STATUS_CACHE", None)
-    return public_routes._status_snapshot(Settings(environment="local"))
+    return public_routes._status_snapshot(
+        Settings(environment="local", public_client_observed_enabled=True)
+    )
+
+
+def test_public_status_surfaces_omit_client_observed_by_default(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    snapshot = _status_snapshot_with_client(
+        monkeypatch,
+        _client_snapshot(
+            all_traffic={
+                "windows": {
+                    "24h": {
+                        "requests": 3_406,
+                        "successes": 3_405,
+                        "tr_fault": 1,
+                        "availability_percent": 99.9706,
+                    }
+                }
+            }
+        ),
+    )
+    assert "client_observed" in snapshot
+    monkeypatch.setattr(public_routes, "_status_snapshot", lambda _settings: snapshot)
+
+    page = client.get("/status")
+    status_json = client.get("/status.json")
+
+    assert page.status_code == 200
+    assert 'id="client-observed"' not in page.text
+    assert "Client-observed availability" not in page.text
+    assert status_json.status_code == 200
+    assert "client_observed" not in status_json.json()["data"]
 
 
 def test_status_html_labels_the_all_traffic_calibration_view(
-    client: TestClient,
+    public_client_observed_client: TestClient,
     monkeypatch,
 ) -> None:
     all_traffic = {
@@ -163,7 +217,7 @@ def test_status_html_labels_the_all_traffic_calibration_view(
     assert snapshot["client_observed"]["all_traffic"]["windows"]["24h"]["requests"] == 8_956
     monkeypatch.setattr(public_routes, "_status_snapshot", lambda _settings: snapshot)
 
-    response = client.get("/status")
+    response = public_client_observed_client.get("/status")
 
     assert response.status_code == 200
     assert 'id="client-observed"' in response.text
@@ -180,7 +234,7 @@ def test_status_html_labels_the_all_traffic_calibration_view(
 
 
 def test_status_html_shows_only_calibration_without_gated_traffic(
-    client: TestClient,
+    public_client_observed_client: TestClient,
     monkeypatch,
 ) -> None:
     snapshot = _status_snapshot_with_client(
@@ -205,7 +259,7 @@ def test_status_html_shows_only_calibration_without_gated_traffic(
     assert snapshot["client_observed"]["gated_available"] is False
     monkeypatch.setattr(public_routes, "_status_snapshot", lambda _settings: snapshot)
 
-    response = client.get("/status")
+    response = public_client_observed_client.get("/status")
 
     assert response.status_code == 200
     assert 'id="client-observed"' in response.text
@@ -221,7 +275,7 @@ def test_status_html_shows_only_calibration_without_gated_traffic(
 
 
 def test_status_html_hides_client_section_without_real_traffic(
-    client: TestClient,
+    public_client_observed_client: TestClient,
     monkeypatch,
 ) -> None:
     snapshot = _status_snapshot_with_client(monkeypatch, _client_snapshot())
@@ -231,7 +285,7 @@ def test_status_html_hides_client_section_without_real_traffic(
     }
     monkeypatch.setattr(public_routes, "_status_snapshot", lambda _settings: snapshot)
 
-    response = client.get("/status")
+    response = public_client_observed_client.get("/status")
 
     assert response.status_code == 200
     assert CALIBRATION_LABEL not in response.text
@@ -242,7 +296,7 @@ def test_status_html_hides_client_section_without_real_traffic(
 
 
 def test_status_html_keeps_stale_client_warning(
-    client: TestClient,
+    public_client_observed_client: TestClient,
     monkeypatch,
 ) -> None:
     snapshot = _status_snapshot_with_client(
@@ -252,7 +306,7 @@ def test_status_html_keeps_stale_client_warning(
     assert snapshot["client_observed"] == {"available": False, "reason": "stale"}
     monkeypatch.setattr(public_routes, "_status_snapshot", lambda _settings: snapshot)
 
-    response = client.get("/status")
+    response = public_client_observed_client.get("/status")
 
     assert response.status_code == 200
     assert 'id="client-observed"' in response.text

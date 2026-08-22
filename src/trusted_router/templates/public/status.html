@@ -62,6 +62,7 @@
     {% endfor %}
   </section>
 
+  {% if snapshot.client_observed is defined %}
   {% set client_observed = snapshot.client_observed %}
   {% if client_observed.reason != 'insufficient_real_data' %}
   <section class="status-section" id="client-observed">
@@ -153,6 +154,7 @@
     </div>
     {% endif %}
   </section>
+  {% endif %}
   {% endif %}
 
   {% if snapshot.headline_metrics.latency_anatomy %}

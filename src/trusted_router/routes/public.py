@@ -1492,12 +1492,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def status_json(background_tasks: BackgroundTasks) -> Response:
         return _cached_public_response(
             settings,
-            key="status:json",
+            key=f"status:json:{int(settings.public_client_observed_enabled)}",
             media_type="application/json",
             ttl_seconds=STATUS_RESPONSE_CACHE_SECONDS,
             stale_seconds=STATUS_RESPONSE_STALE_SECONDS,
             background_tasks=background_tasks,
-            build=lambda: _json_body({"data": _compact_status_json(_status_snapshot(settings))}),
+            build=lambda: _json_body(
+                {"data": _compact_status_json(_status_snapshot(settings), settings=settings)}
+            ),
         )
 
     @app.get("/status/history")
@@ -1815,7 +1817,7 @@ def _cached_status_page_response(
     render_host = _status_render_host(settings, host)
     return _cached_public_response(
         settings,
-        key=f"status:page:{render_host}",
+        key=f"status:page:{render_host}:{int(settings.public_client_observed_enabled)}",
         media_type="text/html",
         ttl_seconds=STATUS_RESPONSE_CACHE_SECONDS,
         stale_seconds=STATUS_RESPONSE_STALE_SECONDS,
@@ -2201,17 +2203,30 @@ def _merge_client_observed_status(
     *,
     settings: Settings,
 ) -> dict[str, Any]:
+    result = _apply_public_client_observed_policy(payload, settings=settings)
+    if not settings.public_client_observed_enabled:
+        return result
     snapshot = None
     if settings.environment != "test":
         try:
             snapshot = _precomputed_public_analytics_snapshot("client_reliability")
         except Exception:
             log.exception("public_analytics_snapshot_read_failed name=client_reliability")
-    result = dict(payload)
     result["client_observed"] = client_observed_status_section(
         snapshot,
         now=dt.datetime.now(dt.UTC),
     )
+    return result
+
+
+def _apply_public_client_observed_policy(
+    payload: dict[str, Any],
+    *,
+    settings: Settings,
+) -> dict[str, Any]:
+    result = dict(payload)
+    if not settings.public_client_observed_enabled:
+        result.pop("client_observed", None)
     return result
 
 
@@ -2317,7 +2332,7 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
     if settings.environment != "test" and _STATUS_CACHE is not None:
         cached_at, payload = _STATUS_CACHE
         if now - cached_at < STATUS_SNAPSHOT_CACHE_SECONDS:
-            return payload
+            return _apply_public_client_observed_policy(payload, settings=settings)
     if settings.environment != "test":
         try:
             precomputed = _precomputed_public_analytics_snapshot("status_inputs")
@@ -2330,7 +2345,9 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
                 # last successful build happened to see. A stale lag is the one
                 # value here that is worse than no value: it is a plausible
                 # small number that ages into a lie while the outbox grows.
-                return _merge_analytics_status(_STATUS_CACHE[1])
+                return _apply_public_client_observed_policy(
+                    _merge_analytics_status(_STATUS_CACHE[1]), settings=settings
+                )
         else:
             if precomputed is not None:
                 try:
@@ -2365,7 +2382,9 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
             log.exception("status_live_fallback_failed_serving_stale")
             # Same rule as the precomputed path above: everything else may be
             # stale, the drain lag may not.
-            return _merge_analytics_status(_STATUS_CACHE[1])
+            return _apply_public_client_observed_policy(
+                _merge_analytics_status(_STATUS_CACHE[1]), settings=settings
+            )
         raise
     payload = _merge_client_observed_status(payload, settings=settings)
     payload = _merge_analytics_status(payload)
@@ -2503,9 +2522,13 @@ h1{{font-size:20px;margin:0 0 4px}} h2{{font-size:16px;color:#8a8f98;margin:28px
 </body></html>"""
 
 
-def _compact_status_json(snapshot: dict[str, Any]) -> dict[str, Any]:
+def _compact_status_json(
+    snapshot: dict[str, Any],
+    *,
+    settings: Settings,
+) -> dict[str, Any]:
     """Remove tooltip-only duplication from the machine-readable status feed."""
-    payload = dict(snapshot)
+    payload = _apply_public_client_observed_policy(snapshot, settings=settings)
     compact_components: list[dict[str, Any]] = []
     for component in snapshot.get("components", []):
         compact_component = dict(component)
@@ -2515,8 +2538,10 @@ def _compact_status_json(snapshot: dict[str, Any]) -> dict[str, Any]:
         ]
         compact_components.append(compact_component)
     payload["components"] = compact_components
-    if "client_observed" in snapshot:
+    if settings.public_client_observed_enabled and "client_observed" in snapshot:
         payload["client_observed"] = snapshot["client_observed"]
+    else:
+        payload.pop("client_observed", None)
     # Carried through explicitly. This function is what /status.json actually
     # serves, and the fleet freshness check fails a cloud whose payload has no
     # `analytics` key -- so dropping it here would look exactly like a cloud
@@ -2614,7 +2639,7 @@ def _status_page_html(settings: Settings, *, host: str) -> str:
         if is_status_hostname(settings, hostname)
         else f"https://{settings.trusted_domain}/status"
     )
-    snapshot = _status_snapshot(settings)
+    snapshot = _apply_public_client_observed_policy(_status_snapshot(settings), settings=settings)
     # Measured upstream-provider health from the rotation-probe / organic
     # benchmark samples. Informational provider watch — intentionally NOT part
     # of the router-core paging SLO above (a flaky upstream model must not page
