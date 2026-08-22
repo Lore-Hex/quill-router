@@ -15,6 +15,49 @@ from scripts.pricing.base import (
 )
 
 
+def guard_fixed_output_prices(
+    manifest_path: Path,
+    discovered_rows: dict[str, dict[str, Any]],
+) -> None:
+    """Reject provider price changes that require an enclave release.
+
+    Fixed media prices are enforced independently inside the enclave. The
+    hourly catalog refresh may verify those prices, but it must never publish
+    a new control-plane price before the matching enclave constants deploy.
+    """
+
+    if not manifest_path.exists():
+        return
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    rows = raw.get("models") if isinstance(raw, dict) else None
+    if not isinstance(rows, list):
+        raise RuntimeError(f"{manifest_path.name} has no models list")
+    old_by_id = {
+        str(row.get("id")): row
+        for row in rows
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
+    fixed_fields = (
+        "fixed_output_price_microdollars",
+        "fixed_output_price_per_second_microdollars",
+    )
+    changes: list[str] = []
+    for model_id, discovered in discovered_rows.items():
+        old = old_by_id.get(model_id)
+        if old is None:
+            continue
+        for field in fixed_fields:
+            if field not in discovered or field not in old:
+                continue
+            if discovered[field] != old[field]:
+                changes.append(f"{model_id}.{field}: {old[field]!r} -> {discovered[field]!r}")
+    if changes:
+        raise RuntimeError(
+            "fixed media price changed; update and deploy enclave billing first: "
+            + "; ".join(changes)
+        )
+
+
 def write_embedding_provider_manifest(
     result: ProviderPricingResult,
     *,
@@ -44,8 +87,7 @@ def write_embedding_provider_manifest(
             continue
         if len(price.tiers) != 1 or price.completion_micro_per_m != 0:
             raise RuntimeError(
-                f"{result.slug} embedding price for {model_id} must be "
-                "single-tier and input-only"
+                f"{result.slug} embedding price for {model_id} must be single-tier and input-only"
             )
         row["input_token_price_per_m"] = price.prompt_micro_per_m
         row["output_token_price_per_m"] = 0
@@ -54,9 +96,7 @@ def write_embedding_provider_manifest(
 
     missing = sorted(required_model_ids - set(updated))
     if missing:
-        raise RuntimeError(
-            f"{result.slug} manifest did not update required model(s): {missing}"
-        )
+        raise RuntimeError(f"{result.slug} manifest did not update required model(s): {missing}")
 
     if result.fetched_url:
         raw["pricing_source"] = result.fetched_url
@@ -103,9 +143,7 @@ def write_discovered_chat_manifest(
         raise RuntimeError(f"{result.slug} discovery returned no supported model rows")
 
     existing_by_id = {
-        row["id"]: row
-        for row in rows
-        if isinstance(row, dict) and isinstance(row.get("id"), str)
+        row["id"]: row for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)
     }
     present_rows: dict[str, dict[str, Any]] = {}
     updated: list[str] = []
@@ -172,9 +210,10 @@ def write_discovered_chat_manifest(
             row.pop("output_token_price_per_m", None)
             row.pop("cached_input_token_price_per_m", None)
             row.pop("price_tiers", None)
-            if row.get("routable") is not False or row.get(
-                "routable_reason"
-            ) == "price-unavailable":
+            if (
+                row.get("routable") is not False
+                or row.get("routable_reason") == "price-unavailable"
+            ):
                 row["routable"] = False
                 row["routable_reason"] = "price-unavailable"
         present_rows[model_id] = row
@@ -245,15 +284,12 @@ def models_requiring_canary(
     if not isinstance(rows, list):
         return frozenset(discovered_model_ids)
     existing = {
-        row["id"]: row
-        for row in rows
-        if isinstance(row, dict) and isinstance(row.get("id"), str)
+        row["id"]: row for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)
     }
     return frozenset(
         model_id
         for model_id in discovered_model_ids
-        if model_id not in existing
-        or existing[model_id].get("routable_reason") == failure_reason
+        if model_id not in existing or existing[model_id].get("routable_reason") == failure_reason
     )
 
 

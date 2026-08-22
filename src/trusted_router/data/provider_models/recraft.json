@@ -1,0 +1,218 @@
+{
+  "provider": "recraft",
+  "models": [
+    {
+      "display_name": "Recraft V2",
+      "title": "recraftv2",
+      "model_type": "image",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "id": "recraft/recraftv2",
+      "upstream_id": "recraftv2",
+      "supported_features": [
+        "image-generation"
+      ],
+      "fixed_output_price_microdollars": {
+        "1k": 22000
+      },
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Recraft V3",
+      "title": "recraftv3",
+      "model_type": "image",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "id": "recraft/recraftv3",
+      "upstream_id": "recraftv3",
+      "supported_features": [
+        "image-generation"
+      ],
+      "fixed_output_price_microdollars": {
+        "1k": 40000
+      },
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Recraft V4",
+      "title": "recraftv4",
+      "model_type": "image",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "id": "recraft/recraftv4",
+      "upstream_id": "recraftv4",
+      "supported_features": [
+        "image-generation"
+      ],
+      "fixed_output_price_microdollars": {
+        "1k": 40000
+      },
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Recraft V4.1",
+      "title": "recraftv4_1",
+      "model_type": "image",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "id": "recraft/recraftv4_1",
+      "upstream_id": "recraftv4_1",
+      "supported_features": [
+        "image-generation"
+      ],
+      "fixed_output_price_microdollars": {
+        "1k": 35000
+      },
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Recraft V4.1 Pro",
+      "title": "recraftv4_1_pro",
+      "model_type": "image",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "id": "recraft/recraftv4_1_pro",
+      "upstream_id": "recraftv4_1_pro",
+      "supported_features": [
+        "image-generation"
+      ],
+      "fixed_output_price_microdollars": {
+        "2k": 210000
+      },
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Recraft V4.1 Utility",
+      "title": "recraftv4_1_utility",
+      "model_type": "image",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "id": "recraft/recraftv4_1_utility",
+      "upstream_id": "recraftv4_1_utility",
+      "supported_features": [
+        "image-generation"
+      ],
+      "fixed_output_price_microdollars": {
+        "1k": 35000
+      },
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Recraft V4.1 Utility Pro",
+      "title": "recraftv4_1_utility_pro",
+      "model_type": "image",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "id": "recraft/recraftv4_1_utility_pro",
+      "upstream_id": "recraftv4_1_utility_pro",
+      "supported_features": [
+        "image-generation"
+      ],
+      "fixed_output_price_microdollars": {
+        "2k": 210000
+      },
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Recraft V4 Pro",
+      "title": "recraftv4_pro",
+      "model_type": "image",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "id": "recraft/recraftv4_pro",
+      "upstream_id": "recraftv4_pro",
+      "supported_features": [
+        "image-generation"
+      ],
+      "fixed_output_price_microdollars": {
+        "2k": 250000
+      },
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    }
+  ],
+  "source": "https://www.recraft.ai/docs/api-reference/pricing",
+  "pricing_source": "https://www.recraft.ai/docs/api-reference/pricing",
+  "generated_at": "2026-08-22T08:31:59Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 8
+}

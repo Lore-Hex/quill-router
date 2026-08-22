@@ -406,10 +406,10 @@ def _authorize_gateway_sync(
     )
     additional_cost_reservation = body.additional_cost_reservation_microdollars
     if additional_cost_reservation:
-        if body.route_type not in {"responses.web_search.planner", "videos"}:
+        if body.route_type not in {"responses.web_search.planner", "images", "videos"}:
             raise api_error(
                 400,
-                "additional cost reservations are only available for hosted search or video",
+                "additional cost reservations are only available for hosted search, image, or video",
                 ErrorType.BAD_REQUEST,
             )
         # Hosted tools and asynchronous media are operator-funded, so their
@@ -476,9 +476,9 @@ def _authorize_gateway_sync(
         endpoint=endpoint,
     )
     fingerprint_body = dict(body_dict)
-    if is_video_request:
+    if is_video_request or is_image_request:
         # Provider quotes can change between retries. The enclave supplies a
-        # keyed content fingerprint, so video idempotency binds to the logical
+        # keyed content fingerprint, so media idempotency binds to the logical
         # request without storing content or coupling replay to a fresh quote.
         fingerprint_body.pop("additional_cost_reservation_microdollars", None)
     # Preserve the pre-tagging router's distinction between an absent tags
@@ -1854,10 +1854,10 @@ def _settle_gateway_authorization(
             ErrorType.BAD_REQUEST,
         )
     if additional_cost:
-        if body.route_type not in {"responses.web_search.planner", "videos"}:
+        if body.route_type not in {"responses.web_search.planner", "images", "videos"}:
             raise api_error(
                 400,
-                "additional cost settlement is only available for hosted search or video",
+                "additional cost settlement is only available for hosted search, image, or video",
                 ErrorType.BAD_REQUEST,
             )
         if additional_cost > authorization.additional_cost_reservation_microdollars:

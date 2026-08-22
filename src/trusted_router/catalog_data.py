@@ -103,6 +103,8 @@ PROVIDER_JURISDICTION_CA = "CA"
 
 PROVIDER_JURISDICTION_CN = "CN"
 
+PROVIDER_JURISDICTION_DE = "DE"
+
 PROVIDER_JURISDICTION_FR = "FR"
 
 PROVIDER_JURISDICTION_IL = "IL"
@@ -137,6 +139,16 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
         "registered address, or governing-law clause appears on any of them. "
         "Third-party coverage ties Engy to a Bittensor subnet operated by a team "
         "called Hanlin AI, with no incorporation record located."
+    ),
+    "relace": (
+        "Checked relace.ai, docs.relace.ai, and the linked legal pages. The "
+        "public material does not identify the API operator's incorporation "
+        "country, so jurisdiction filters conservatively exclude this route."
+    ),
+    "recraft": (
+        "Checked recraft.ai legal terms and privacy pages. They publish a US "
+        "mailing address and New York governing law, but do not identify the "
+        "API operator's legal entity or incorporation country."
     ),
 }
 
@@ -1000,6 +1012,110 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://pearlresearch.ai/legal/privacy",
         provider_headquarters_country=PROVIDER_JURISDICTION_IL,
     ),
+    "stepfun": Provider(
+        slug="stepfun",
+        name="StepFun",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "StepFun's public privacy policy does not provide contractual "
+            "zero retention or confidential-compute guarantees for API "
+            "requests. TrustedRouter therefore classifies this route as "
+            "Standard."
+        ),
+        provider_policy_url="https://platform.stepfun.com/legal/privacy-policy.html",
+        provider_headquarters_country=PROVIDER_JURISDICTION_CN,
+    ),
+    "relace": Provider(
+        slug="relace",
+        name="Relace",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Relace's public API documentation does not publish contractual "
+            "zero retention, confidential compute, or end-to-end encryption "
+            "for hosted open-model requests. This route is Standard."
+        ),
+        provider_policy_url="https://docs.relace.ai/api-reference/introduction",
+    ),
+    "recraft": Provider(
+        slug="recraft",
+        name="Recraft",
+        supports_chat=False,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Recraft's developer terms say API inputs and outputs are not "
+            "used to train its models, but do not promise zero retention or "
+            "confidential compute. This route is Standard."
+        ),
+        provider_policy_url="https://www.recraft.ai/legal/terms",
+    ),
+    "bfl": Provider(
+        slug="bfl",
+        name="Black Forest Labs",
+        supports_chat=False,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Black Forest Labs does not publish contractual zero retention, "
+            "confidential compute, or end-to-end encryption for the hosted "
+            "FLUX API. This route is Standard."
+        ),
+        provider_policy_url="https://bfl.ai/legal/developer-terms-of-service",
+        # Black Forest Labs GmbH identifies Freiburg, Germany as its legal
+        # address. https://bfl.ai/imprint
+        provider_headquarters_country=PROVIDER_JURISDICTION_DE,
+    ),
+    "decart": Provider(
+        slug="decart",
+        name="Decart",
+        supports_chat=False,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Decart's public terms permit service-related use of submitted "
+            "content and do not promise zero retention or confidential "
+            "compute. This route is Standard."
+        ),
+        provider_policy_url="https://decart.ai/terms",
+        # Decart.AI, Inc. publishes a Wilmington, Delaware address in its
+        # terms. https://decart.ai/terms
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "nvidia-nim": Provider(
+        slug="nvidia-nim",
+        name="NVIDIA NIM",
+        supports_chat=False,
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "NVIDIA's hosted NIM API Catalog endpoints are preview services for "
+            "development and prototyping. NVIDIA requires an NVIDIA AI Enterprise "
+            "entitlement for production use, so TrustedRouter discovers the live "
+            "catalog but does not route customer traffic to this key."
+        ),
+        provider_policy_url="https://docs.api.nvidia.com/nim/docs/run-anywhere",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
     "databricks": Provider(
         slug="databricks",
         name="Databricks",
@@ -1018,8 +1134,7 @@ PROVIDERS: dict[str, Provider] = {
             "confidential compute, or end-to-end encrypted."
         ),
         provider_policy_url=(
-            "https://docs.databricks.com/aws/en/machine-learning/"
-            "foundation-model-apis/compliance"
+            "https://docs.databricks.com/aws/en/machine-learning/foundation-model-apis/compliance"
         ),
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
@@ -1211,8 +1326,7 @@ PROVIDERS: dict[str, Provider] = {
             "availability and pricing are synchronized directly from the account."
         ),
         provider_policy_url=(
-            "https://learn.microsoft.com/en-us/azure/ai-foundry/"
-            "responsible-ai/openai/data-privacy"
+            "https://learn.microsoft.com/en-us/azure/ai-foundry/responsible-ai/openai/data-privacy"
         ),
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
@@ -1380,6 +1494,11 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "neurometric",
         "engy",
         "pearl",
+        "stepfun",
+        "relace",
+        "recraft",
+        "bfl",
+        "decart",
         "databricks",
         "zero-g",
         "nebius",
@@ -2633,6 +2752,15 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
             "Redmond, Washington 98052, United States."
         ),
     ),
+    "recraft": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="Recraft",
+        source_url="https://www.recraft.ai/legal/terms",
+        note=(
+            "Recraft's terms name Recraft Inc. and give its notices address as "
+            "450 Townsend Street, San Francisco, California 94107."
+        ),
+    ),
     # --- Canada ---
     "cohere": ModelOrigin(
         country=PROVIDER_JURISDICTION_CA,
@@ -2654,6 +2782,26 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
             "Paris, RCS Paris 952 418 325."
         ),
     ),
+    # --- Germany ---
+    "black-forest-labs": ModelOrigin(
+        country=PROVIDER_JURISDICTION_DE,
+        lab_name="Black Forest Labs",
+        source_url="https://bfl.ai/legal/imprint",
+        note=(
+            "Black Forest Labs' imprint names BFL GmbH and gives its registered "
+            "address in Freiburg im Breisgau, Germany."
+        ),
+    ),
+    # --- Israel ---
+    "decart": ModelOrigin(
+        country=PROVIDER_JURISDICTION_IL,
+        lab_name="Decart",
+        source_url="https://www.decart.ai/articles/sequoia-backed-decart-raises-21m-in-seed-funding",
+        note=(
+            "Decart's own company article identifies the lab that built its "
+            "Lucy and Oasis models as an Israeli startup."
+        ),
+    ),
     # --- China ---
     "qwen": _MODEL_ORIGIN_CN_ALIBABA,
     "Qwen": _MODEL_ORIGIN_CN_ALIBABA,
@@ -2666,6 +2814,15 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
     "MiniMaxAI": _MODEL_ORIGIN_CN_MINIMAX,
     "xiaomi": _MODEL_ORIGIN_CN_XIAOMI,
     "xiaomimimo": _MODEL_ORIGIN_CN_XIAOMI,
+    "stepfun": ModelOrigin(
+        country=PROVIDER_JURISDICTION_CN,
+        lab_name="StepFun",
+        source_url="https://www.stepfun.com/legal/terms",
+        note=(
+            "StepFun's terms name Shanghai StepFun Intelligent Technology Co., "
+            "Ltd. as the company providing its models and services."
+        ),
+    ),
     "moonshotai": ModelOrigin(
         country=PROVIDER_JURISDICTION_CN,
         lab_name="Moonshot AI (Kimi)",

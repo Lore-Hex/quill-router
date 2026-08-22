@@ -123,6 +123,12 @@ PROVIDER_SLUGS = [
     "neurometric",
     "engy",
     "pearl",
+    "stepfun",
+    "relace",
+    "recraft",
+    "bfl",
+    "decart",
+    "nvidia_nim",
     "databricks",
     # 0G Private Computer publishes exact per-route prices and trust metadata
     # in its public marketplace hydration data. The adapter admits only
@@ -143,6 +149,7 @@ _PRICING_RESULT_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
     "cloudflare_workers_ai": ("cloudflare-workers-ai",),
     "atlas_cloud": ("atlas-cloud",),
     "zero_g": ("zero-g",),
+    "nvidia_nim": ("nvidia-nim",),
     "openrouter_exclusive": ("openrouter-exclusive",),
 }
 
@@ -435,6 +442,8 @@ def _index_provider_prices(
     out: dict[str, dict[str, ModelPrice]] = {}
     upstream_id_maps: dict[str, dict[str, str]] = {}
     for slug, result in results.items():
+        if not result.include_in_price_index:
+            continue
         provider_slugs = _PRICING_RESULT_PROVIDER_ALIASES.get(slug, (slug,))
         for model_id, price in result.prices.items():
             for provider_slug in provider_slugs:
@@ -601,6 +610,64 @@ def _apply_stale_fallbacks(
         snapshot,
         [slug for slug, _err in failures],
     )
+    for slug, _err in failures:
+        if slug in stale_results:
+            continue
+        module_name = f"scripts.pricing.providers.{slug}"
+        try:
+            module = _import_provider(slug)
+        except ModuleNotFoundError as exc:
+            if exc.name != module_name:
+                raise
+            continue
+        if not bool(getattr(module, "MANIFEST_STALE_FALLBACK", False)):
+            continue
+        manifest_value = getattr(module, "MANIFEST_PATH", None)
+        if manifest_value is None:
+            continue
+        manifest_path = Path(manifest_value)
+        try:
+            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError):
+            continue
+        rows = raw.get("models") if isinstance(raw, dict) else None
+        if not isinstance(rows, list) or not rows:
+            continue
+        prices: dict[str, ModelPrice] = {}
+        for row in rows:
+            if not isinstance(row, dict) or not row.get("routable", True):
+                continue
+            model_id = row.get("id")
+            if not isinstance(model_id, str) or not model_id:
+                continue
+            prompt = int(row.get("input_token_price_per_m") or 0)
+            completion = int(row.get("output_token_price_per_m") or 0)
+            cached_raw = row.get("cached_input_token_price_per_m")
+            cached = int(cached_raw) if cached_raw is not None else None
+            prices[model_id] = ModelPrice(
+                prompt_micro_per_m=prompt,
+                completion_micro_per_m=completion,
+                prompt_cached_micro_per_m=cached,
+            )
+        # Discovery-only manifests intentionally have no routable/token-priced
+        # rows. Keep a sentinel result so the failed live fetch is recovered
+        # without adding zero prices to the shared routing index.
+        if not prices and not bool(getattr(module, "INCLUDE_IN_PRICE_INDEX", True)):
+            prices = {
+                str(row["id"]): ModelPrice(0, 0)
+                for row in rows
+                if isinstance(row, dict) and isinstance(row.get("id"), str)
+            }
+        if not prices:
+            continue
+        stale_results[slug] = ProviderPricingResult(
+            slug=slug,
+            prices=prices,
+            source="stale_manifest",
+            fetched_url=str(manifest_path),
+            notes=["provider refresh failed; reused committed provider manifest"],
+            include_in_price_index=bool(getattr(module, "INCLUDE_IN_PRICE_INDEX", True)),
+        )
     results.update(stale_results)
     return [(slug, err) for slug, err in failures if slug not in stale_results]
 
@@ -980,7 +1047,7 @@ def _write_provider_manifests(results: dict[str, ProviderPricingResult]) -> list
         # A stale fallback represents the last known good catalog state. Do not
         # let provider-specific hooks rewrite that state without fresh discovery
         # data; destructive hooks may otherwise prune every currently live row.
-        if result.source == "stale_snapshot":
+        if result.source.startswith("stale_"):
             continue
         module = _import_provider(slug)
         hook = getattr(module, "write_provider_manifest", None)

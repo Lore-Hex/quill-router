@@ -44,6 +44,15 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "baseten"
   },
+  "bfl": {
+    "card_version": 2,
+    "model_count": 5,
+    "name": "Black Forest Labs",
+    "privacy": "Policy documented",
+    "route_count": 5,
+    "route_mode": "Prepaid",
+    "slug": "bfl"
+  },
   "cerebras": {
     "card_version": 2,
     "model_count": 4,
@@ -97,6 +106,15 @@
     "route_count": 11,
     "route_mode": "Prepaid",
     "slug": "databricks"
+  },
+  "decart": {
+    "card_version": 2,
+    "model_count": 4,
+    "name": "Decart",
+    "privacy": "Policy documented",
+    "route_count": 4,
+    "route_mode": "Prepaid",
+    "slug": "decart"
   },
   "deepinfra": {
     "card_version": 2,
@@ -305,6 +323,15 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
+  "nvidia-nim": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "NVIDIA NIM",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "nvidia-nim"
+  },
   "openai": {
     "card_version": 2,
     "model_count": 44,
@@ -350,6 +377,24 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "phala"
   },
+  "recraft": {
+    "card_version": 2,
+    "model_count": 8,
+    "name": "Recraft",
+    "privacy": "Policy documented",
+    "route_count": 8,
+    "route_mode": "Prepaid",
+    "slug": "recraft"
+  },
+  "relace": {
+    "card_version": 2,
+    "model_count": 2,
+    "name": "Relace",
+    "privacy": "Policy documented",
+    "route_count": 2,
+    "route_mode": "Prepaid",
+    "slug": "relace"
+  },
   "runway": {
     "card_version": 2,
     "model_count": 1,
@@ -367,6 +412,15 @@
     "route_count": 59,
     "route_mode": "Prepaid + BYOK",
     "slug": "siliconflow"
+  },
+  "stepfun": {
+    "card_version": 2,
+    "model_count": 3,
+    "name": "StepFun",
+    "privacy": "Policy documented",
+    "route_count": 3,
+    "route_mode": "Prepaid",
+    "slug": "stepfun"
   },
   "streamlake": {
     "card_version": 2,
