@@ -4,6 +4,7 @@ settings-driven values and renders the Jinja2 template."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
@@ -361,6 +362,32 @@ class PublicPage:
 
 
 @dataclass(frozen=True)
+class OpenRouterLandingVariant:
+    slug: str
+    title: str
+    description: str
+    kicker: str
+    headline: str
+    lead: str
+    cta: str
+    secondary_label: str
+    secondary_href: str
+    microcopy: str
+    terminal_label: str
+    model_id: str
+    proof_items: tuple[tuple[str, str], ...]
+    cards: tuple[tuple[str, str, str], ...]
+    left_eyebrow: str
+    left_headline: str
+    left_copy: str
+    right_eyebrow: str
+    right_headline: str
+    right_copy: str
+    final_headline: str
+    final_copy: str
+
+
+@dataclass(frozen=True)
 class BlogIndexPost:
     post: BlogPost
     image: str
@@ -379,6 +406,311 @@ OPENROUTER_ALTERNATIVE_ITEMS: tuple[tuple[str, str], ...] = (
     ("Google Vertex AI", "/compare/google-vertex-ai"),
     ("Direct provider APIs", "/providers"),
 )
+
+OPENROUTER_PAID_LANDING_VARIANTS: dict[str, OpenRouterLandingVariant] = {
+    "every-model": OpenRouterLandingVariant(
+        slug="every-model",
+        title="One API for Hundreds of AI Models",
+        description=(
+            "Keep one OpenAI-compatible interface while choosing among hundreds "
+            "of model routes, providers, prices, and privacy tiers."
+        ),
+        kicker="One API for the model market",
+        headline="One key for hundreds of AI models.",
+        lead=(
+            "Keep one OpenAI-compatible interface while models and providers "
+            "change underneath it. Pick an exact model or let TrustedRouter route."
+        ),
+        cta="Create my API key",
+        secondary_label="Browse models",
+        secondary_href="/models",
+        microcopy="Keep your SDK. Switch models with one string.",
+        terminal_label="One interface, any model",
+        model_id="trustedrouter/auto",
+        proof_items=(
+            ("Hundreds", "Model routes in one catalog."),
+            ("One", "OpenAI-compatible interface."),
+            ("Public", "Prices and provider routes."),
+            ("Flexible", "Exact models or router aliases."),
+        ),
+        cards=(
+            (
+                "Integrate once",
+                "Keep the client you already use.",
+                "Chat Completions, Responses, and streaming stay behind one base URL.",
+            ),
+            (
+                "Choose clearly",
+                "Compare the route before you call it.",
+                "Model pages publish providers, prices, context limits, and privacy posture.",
+            ),
+            (
+                "Change quickly",
+                "Try another model with one string.",
+                "Move from a frontier model to an open-weight route without opening another provider account.",
+            ),
+        ),
+        left_eyebrow="Model choice",
+        left_headline="The catalog stays current.",
+        left_copy=(
+            "Use exact model IDs when the model matters. Use trustedrouter/auto, "
+            "cheap, fast, zdr, or e2e when the routing objective matters more."
+        ),
+        right_eyebrow="Migration",
+        right_headline="Your application contract stays familiar.",
+        right_copy=(
+            "The OpenAI SDK, message shape, streaming contract, and base URL pattern "
+            "stay consistent while the selected route changes."
+        ),
+        final_headline="Try the model market through one key.",
+        final_copy="Create a key, run the sample, then change the model ID.",
+    ),
+    "provider-failover": OpenRouterLandingVariant(
+        slug="provider-failover",
+        title="Automatic LLM Provider Failover",
+        description=(
+            "Keep serving through provider errors and capacity limits with measured, "
+            "automatic fallback behind one OpenAI-compatible API."
+        ),
+        kicker="Reliability without retry trees",
+        headline="Keep serving through provider outages.",
+        lead=(
+            "TrustedRouter ranks eligible routes and moves to another provider when "
+            "a route fails. Your application keeps one API contract."
+        ),
+        cta="Test provider failover",
+        secondary_label="See live status",
+        secondary_href="/status",
+        microcopy="Start with trustedrouter/auto and keep your existing SDK.",
+        terminal_label="Automatic fallback",
+        model_id="trustedrouter/auto",
+        proof_items=(
+            ("Automatic", "Fallback across eligible routes."),
+            ("Measured", "Latency and availability data."),
+            ("Visible", "Public provider status."),
+            ("Consistent", "One client contract."),
+        ),
+        cards=(
+            (
+                "Route",
+                "Start with more than one candidate.",
+                "The gateway authorizes eligible routes before invoking the first provider.",
+            ),
+            (
+                "Recover",
+                "Move past retryable failures.",
+                "Rate limits, provider errors, and empty streams can advance to another authorized route.",
+            ),
+            (
+                "Measure",
+                "See how providers behave.",
+                "Public status and leaderboard pages publish metadata-only latency and success measurements.",
+            ),
+        ),
+        left_eyebrow="Application code",
+        left_headline="Keep one request path.",
+        left_copy=(
+            "The gateway owns candidate selection and provider rollover, so your app "
+            "does not need a separate retry tree for every vendor."
+        ),
+        right_eyebrow="Trust boundary",
+        right_headline="Every fallback remains attested.",
+        right_copy=(
+            "A provider failure can move traffic to another eligible route. It never "
+            "moves prompt traffic to a non-attested TrustedRouter gateway."
+        ),
+        final_headline="Run one request through the automatic route.",
+        final_copy="Create a key and test the same API contract your production code uses.",
+    ),
+    "privacy-with-proof": OpenRouterLandingVariant(
+        slug="privacy-with-proof",
+        title="Private LLM Routing With Live Attestation",
+        description=(
+            "Verify the open-source gateway handling your prompts, then restrict "
+            "downstream routing to documented zero-data-retention providers."
+        ),
+        kicker="Privacy with proof",
+        headline="Verify the prompt path before the first prompt.",
+        lead=(
+            "A fresh hardware attestation identifies the running gateway build. "
+            "Realtime inference never logs prompt or output content."
+        ),
+        cta="Create a private API key",
+        secondary_label="Verify the gateway",
+        secondary_href="https://trust.trustedrouter.com",
+        microcopy="Use trustedrouter/zdr to add a downstream retention requirement.",
+        terminal_label="Zero-retention route",
+        model_id="trustedrouter/zdr",
+        proof_items=(
+            ("Attested", "Live gateway evidence."),
+            ("Open", "Published prompt-path source."),
+            ("Realtime", "No prompt or output logs."),
+            ("ZDR", "Policy-filtered providers."),
+        ),
+        cards=(
+            (
+                "Challenge",
+                "Request fresh evidence.",
+                "Bind a nonce to the live gateway and inspect the signed attestation response.",
+            ),
+            (
+                "Compare",
+                "Match the build to published source.",
+                "The trust page links the release digest, source commit, and verification steps.",
+            ),
+            (
+                "Restrict",
+                "Choose the downstream posture.",
+                "The zdr and e2e routes apply distinct provider requirements and fail closed when no route qualifies.",
+            ),
+        ),
+        left_eyebrow="TrustedRouter gateway",
+        left_headline="Verify the code handling the request.",
+        left_copy=(
+            "Hardware attestation covers the running gateway build. The prompt path "
+            "is published and realtime inference does not retain prompt or output content."
+        ),
+        right_eyebrow="Downstream provider",
+        right_headline="Select the provider policy separately.",
+        right_copy=(
+            "Attestation of the router does not turn every model provider into a TEE. "
+            "Use route privacy filters and review the cited provider policy."
+        ),
+        final_headline="Verify first. Then make the request.",
+        final_copy="Create a key and call the ZDR route through the attested gateway.",
+    ),
+    "usage-pricing": OpenRouterLandingVariant(
+        slug="usage-pricing",
+        title="LLM Routing Without a Monthly Subscription",
+        description=(
+            "Pay the provider model cost plus 5.5% for prepaid text and embeddings, "
+            "with published per-model prices and no monthly router plan."
+        ),
+        kicker="Usage pricing",
+        headline="Spend your AI budget on tokens, not subscriptions.",
+        lead=(
+            "Prepaid text and embedding requests cost the provider price plus 5.5%. "
+            "Every model page publishes the rate before you call it."
+        ),
+        cta="Make a low-cost first call",
+        secondary_label="See pricing",
+        secondary_href="/pricing",
+        microcopy="No monthly router plan. Set a limit on each API key.",
+        terminal_label="Route by cost",
+        model_id="trustedrouter/cheap",
+        proof_items=(
+            ("5.5%", "Prepaid text and embedding markup."),
+            ("$0", "Monthly router subscription."),
+            ("Public", "Per-model customer prices."),
+            ("Bounded", "Per-key spend limits."),
+        ),
+        cards=(
+            (
+                "Choose",
+                "Route to the cheapest capable option.",
+                "Use trustedrouter/cheap or select an exact model with a published customer price.",
+            ),
+            (
+                "Limit",
+                "Put a ceiling on every key.",
+                "Create separate keys for applications and set their maximum spend before deployment.",
+            ),
+            (
+                "Inspect",
+                "See usage in microdollar precision.",
+                "Activity metadata records model, provider, token counts, latency, and integer cost.",
+            ),
+        ),
+        left_eyebrow="Cost control",
+        left_headline="Match the model to the job.",
+        left_copy=(
+            "Frontier models remain available when they earn their cost. Cheap and "
+            "fast aliases make lower-cost routes easy to test for the rest."
+        ),
+        right_eyebrow="Billing",
+        right_headline="Keep the ledger inspectable.",
+        right_copy=(
+            "Costs are computed as integer microdollars and displayed per request, "
+            "API key, and workspace instead of being hidden behind a seat plan."
+        ),
+        final_headline="Price one real request.",
+        final_copy="Create a key, call trustedrouter/cheap, and inspect the billed usage.",
+    ),
+    "production-controls": OpenRouterLandingVariant(
+        slug="production-controls",
+        title="Production LLM Gateway Controls",
+        description=(
+            "Ship scoped API keys, workspace budgets, provider policy, fallback, "
+            "and metadata-only activity through one model gateway."
+        ),
+        kicker="Production controls",
+        headline="Ship one model API your team can control.",
+        lead=(
+            "Separate keys by application, set spend limits, filter providers, and "
+            "review usage metadata without collecting prompt or output content."
+        ),
+        cta="Create a scoped API key",
+        secondary_label="Read the docs",
+        secondary_href="/docs",
+        microcopy="Start with one application key and one explicit spend limit.",
+        terminal_label="Production-ready request",
+        model_id="trustedrouter/auto",
+        proof_items=(
+            ("Scoped", "Keys by application."),
+            ("Limited", "Per-key spend ceilings."),
+            ("Filtered", "Provider and privacy policy."),
+            ("Measured", "Metadata-only activity."),
+        ),
+        cards=(
+            (
+                "Separate",
+                "Give each application its own key.",
+                "Disable, rotate, or limit one workload without touching every other integration.",
+            ),
+            (
+                "Constrain",
+                "Express routing policy in the request.",
+                "Choose providers, privacy tiers, regions, model candidates, and sorting objectives.",
+            ),
+            (
+                "Review",
+                "Keep operational evidence without content logs.",
+                "Activity rows include model, provider, status, tokens, latency, and cost rather than prompts or outputs.",
+            ),
+        ),
+        left_eyebrow="Developer workflow",
+        left_headline="Migration stays small.",
+        left_copy=(
+            "Keep the OpenAI client and request shape. Change the base URL, issue a "
+            "scoped key, and adopt routing controls incrementally."
+        ),
+        right_eyebrow="Operator workflow",
+        right_headline="Control the blast radius.",
+        right_copy=(
+            "Workspace and key boundaries make limits, revocation, provider policy, "
+            "and usage review explicit before production traffic grows."
+        ),
+        final_headline="Start with one bounded production key.",
+        final_copy="Create the key, set its limit, and make the first API call.",
+    ),
+}
+
+OPENROUTER_PAID_LANDING_PATHS: tuple[str, ...] = (
+    "/openrouter-alternative/quickstart",
+    *tuple(
+        f"/openrouter-alternative/lp/{slug}"
+        for slug in OPENROUTER_PAID_LANDING_VARIANTS
+    ),
+)
+
+
+def assigned_openrouter_landing_path(seed: str | None) -> str:
+    """Choose one stable experiment arm without retaining visitor identity."""
+    if not seed:
+        return OPENROUTER_PAID_LANDING_PATHS[0]
+    digest = hashlib.sha256(f"openrouter-lp-v1:{seed}".encode()).digest()
+    index = int.from_bytes(digest[:8], "big") % len(OPENROUTER_PAID_LANDING_PATHS)
+    return OPENROUTER_PAID_LANDING_PATHS[index]
 
 
 _NOT_FOUND_PAGE = PublicPage(
@@ -2097,6 +2429,28 @@ def public_page_html(
             else None
         ),
         robots_meta=robots_meta,
+    )
+
+
+def public_openrouter_experiment_html(settings: Settings, variant_slug: str) -> str:
+    variant = OPENROUTER_PAID_LANDING_VARIANTS[variant_slug]
+    path = f"/openrouter-alternative/lp/{variant.slug}"
+    page = PublicPage(
+        template="public/experiment_openrouter_variant.html",
+        title=variant.title,
+        description=variant.description,
+    )
+    return _render_public_page(
+        settings,
+        page,
+        path=path,
+        site_url=canonical_public_url(settings, path),
+        canonical_url_override=canonical_public_url(
+            settings,
+            "/openrouter-alternative",
+        ),
+        robots_meta="noindex,follow",
+        extra_context={"variant": variant},
     )
 
 

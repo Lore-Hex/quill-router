@@ -1497,6 +1497,60 @@ def _execute_sql(
     params: dict[str, Any],
 ) -> list[list[str]]:
     kind = params.get("kind", "")
+    if "/* nonclosed_regional_quota_leases_for_repair */" in sql:
+        workspace_id = str(params["ws"])
+        count = 0
+        for (row_kind, _entity_id), row in db.rows.items():
+            if row_kind != "regional_quota_lease":
+                continue
+            try:
+                body = json.loads(row.body)
+            except (TypeError, ValueError):
+                continue
+            if body.get("workspace_id") == workspace_id and body.get("state") != "closed":
+                count += 1
+        return [[count]]
+    if "/* open_regional_quota_escrow */" in sql:
+        _require_pred(
+            sql,
+            "open_index.kind='regional_quota_lease_open'",
+            "regional quota open-index kind",
+        )
+        _require_pred(
+            sql,
+            "lease_record.kind='regional_quota_lease'",
+            "regional quota canonical kind",
+        )
+        _require_pred(
+            sql,
+            "lease_record.id=JSON_VALUE(open_index.body, '$.lease_entity_id')",
+            "regional quota canonical pointer",
+        )
+        _require_pred(sql, "LEFT JOIN", "regional quota missing-target detection")
+        output: list[list[Any]] = []
+        for (row_kind, index_id), index_row in db.rows.items():
+            if row_kind != "regional_quota_lease_open":
+                continue
+            try:
+                open_body = json.loads(index_row.body)
+                lease_entity_id = open_body.get("lease_entity_id")
+            except (AttributeError, TypeError, ValueError):
+                lease_entity_id = None
+            lease_row = (
+                db.rows.get(("regional_quota_lease", lease_entity_id))
+                if isinstance(lease_entity_id, str)
+                else None
+            )
+            output.append(
+                [
+                    index_id,
+                    index_row.body,
+                    lease_entity_id if lease_row is not None else None,
+                    lease_row.body if lease_row is not None else None,
+                ]
+            )
+        output.sort(key=lambda row: str(row[0]))
+        return output
     if "/* console_api_keys */" in sql:
         _require_pred(
             sql,

@@ -9,6 +9,7 @@ from tests.fakes.spanner import make_fake_store
 from trusted_router.storage import Workspace
 from trusted_router.storage_gcp_counter_reconcile import repair_typed_reserved
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
+from trusted_router.storage_gcp_regional_quota import GlobalRegionalQuotaLease
 
 
 def _paused_ws(store, ws: str, *, paused: bool = True) -> None:
@@ -132,3 +133,34 @@ def test_repair_zero_holds_zeroes_reserved() -> None:
     result = repair_typed_reserved(store, ws, apply=True)
     assert result.ready and result.applied
     assert db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["reserved"] == 0
+
+
+def test_repair_refuses_open_regional_lease_even_without_open_index() -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_regional_escrow"
+    _paused_ws(store, ws)
+    db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
+        "workspace_id": ws,
+        "shard": 0,
+        "total_credits": 1_000_000,
+        "total_usage": 0,
+        "reserved": 625_000,
+    }
+    lease = GlobalRegionalQuotaLease(
+        lease_id="lease-with-missing-index",
+        workspace_id=ws,
+        region="us-central1",
+        fencing_token=1,
+        granted_microdollars=625_000,
+        credit_shard=0,
+        expires_at="2026-08-22T01:00:00Z",
+        state="active",
+    )
+    store._write_entity("regional_quota_lease", lease.entity_id, lease)
+
+    result = repair_typed_reserved(store, ws, apply=True)
+
+    assert not result.ready
+    assert not result.applied
+    assert any("regional quota leases are open" in reason for reason in result.reasons)
+    assert db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["reserved"] == 625_000

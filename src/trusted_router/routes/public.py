@@ -49,7 +49,9 @@ from trusted_router.client_reliability import client_observed_status_section
 from trusted_router.config import Settings
 from trusted_router.dashboard import (
     MODEL_SEO_SECTIONS,
+    OPENROUTER_PAID_LANDING_VARIANTS,
     STATIC_DIR,
+    assigned_openrouter_landing_path,
     canonical_model_comparison_path,
     dashboard_html,
     docs_llms_full_txt,
@@ -80,6 +82,7 @@ from trusted_router.dashboard import (
     public_model_section_html,
     public_models_html,
     public_not_found_html,
+    public_openrouter_experiment_html,
     public_page_html,
     public_privacy_html,
     public_provider_detail_html,
@@ -1011,6 +1014,34 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             canonical_path="/openrouter-alternative",
             robots_meta="noindex,follow",
         )
+
+    @public_html_route("/openrouter-alternative/experiment")
+    async def experiment_openrouter_landing_router(
+        request: Request,
+    ) -> RedirectResponse:
+        attribution = getattr(request.state, "acquisition_attribution", None)
+        seed = getattr(attribution, "anonymous_id", None)
+        selected_path = assigned_openrouter_landing_path(seed)
+        query = request.url.query
+        location = f"{selected_path}?{query}" if query else selected_path
+        return RedirectResponse(url=location, status_code=307)
+
+    @public_html_route(
+        "/openrouter-alternative/lp/{variant_slug}",
+        include_slash=False,
+    )
+    async def experiment_openrouter_landing_variant(
+        variant_slug: str,
+    ) -> Response:
+        if variant_slug not in OPENROUTER_PAID_LANDING_VARIANTS:
+            return HTMLResponse(
+                public_not_found_html(
+                    settings,
+                    f"/openrouter-alternative/lp/{variant_slug}",
+                ),
+                status_code=404,
+            )
+        return HTMLResponse(public_openrouter_experiment_html(settings, variant_slug))
 
     @public_html_route("/private-llm-api/quickstart")
     async def experiment_private_llm_quickstart() -> str:

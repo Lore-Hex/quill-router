@@ -4,11 +4,17 @@ import json
 import logging
 import re
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
 
-from trusted_router.dashboard import MODEL_COMPARE_PAGE_SIZE
+from trusted_router.dashboard import (
+    MODEL_COMPARE_PAGE_SIZE,
+    OPENROUTER_PAID_LANDING_PATHS,
+    OPENROUTER_PAID_LANDING_VARIANTS,
+    assigned_openrouter_landing_path,
+)
 from trusted_router.routes.public import INDEXNOW_KEY
 
 
@@ -207,6 +213,102 @@ def test_paid_landing_experiments_are_noindex_and_canonical(
     sitemap = client.get("/sitemap.xml")
     assert sitemap.status_code == 200
     assert f"https://trustedrouter.com{path}" not in sitemap.text
+
+
+def test_openrouter_paid_landing_variants_are_distinct_and_noindex(
+    client: TestClient,
+) -> None:
+    rendered_headlines: set[str] = set()
+    sitemap = client.get("/sitemap.xml")
+    assert sitemap.status_code == 200
+
+    for slug, variant in OPENROUTER_PAID_LANDING_VARIANTS.items():
+        path = f"/openrouter-alternative/lp/{slug}"
+        response = client.get(
+            f"{path}?utm_source=google&utm_campaign=openrouter_lp_multi_20260822"
+        )
+
+        assert response.status_code == 200
+        assert variant.headline in response.text
+        assert f'model="{variant.model_id}"' in response.text
+        assert variant.cta in response.text
+        assert '<meta name="robots" content="noindex,follow">' in response.text
+        assert response.text.count('rel="canonical"') == 1
+        assert (
+            '<link rel="canonical" '
+            'href="https://trustedrouter.com/openrouter-alternative">'
+            in response.text
+        )
+        assert f"https://trustedrouter.com{path}" not in sitemap.text
+        rendered_headlines.add(variant.headline)
+
+    assert len(rendered_headlines) == len(OPENROUTER_PAID_LANDING_VARIANTS)
+
+
+def test_openrouter_experiment_router_is_sticky_and_preserves_campaign_query(
+    client: TestClient,
+) -> None:
+    query = (
+        "utm_source=google&utm_medium=paid_search&"
+        "utm_campaign=openrouter_lp_multi_20260822&"
+        "utm_content=openrouter_exact_control&gclid=test-click-123"
+    )
+    first = client.get(
+        f"/openrouter-alternative/experiment?{query}",
+        follow_redirects=False,
+    )
+    second = client.get(
+        f"/openrouter-alternative/experiment?{query}",
+        follow_redirects=False,
+    )
+
+    assert first.status_code == 307
+    assert second.status_code == 307
+    assert first.headers["location"] == second.headers["location"]
+    destination = urlsplit(first.headers["location"])
+    assert destination.path in OPENROUTER_PAID_LANDING_PATHS
+    assert parse_qs(destination.query) == parse_qs(query)
+
+    rendered = client.get(first.headers["location"])
+    assert rendered.status_code == 200
+    assert '<meta name="robots" content="noindex,follow">' in rendered.text
+
+
+def test_openrouter_experiment_assignment_reaches_every_arm() -> None:
+    assigned = {
+        assigned_openrouter_landing_path(f"anonymous-{index}")
+        for index in range(600)
+    }
+
+    assert assigned == set(OPENROUTER_PAID_LANDING_PATHS)
+    assert assigned_openrouter_landing_path("stable-person") == (
+        assigned_openrouter_landing_path("stable-person")
+    )
+
+
+def test_openrouter_experiment_honors_global_privacy_control(
+    client: TestClient,
+) -> None:
+    response = client.get(
+        "/openrouter-alternative/experiment?utm_source=google",
+        headers={"sec-gpc": "1"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    assert response.headers["location"].startswith(
+        "/openrouter-alternative/quickstart?"
+    )
+    assert "tr_attribution=" not in response.headers.get("set-cookie", "")
+
+
+def test_unknown_openrouter_landing_variant_is_a_real_404(
+    client: TestClient,
+) -> None:
+    response = client.get("/openrouter-alternative/lp/unknown")
+
+    assert response.status_code == 404
+    assert "Page Not Found" in response.text
 
 
 def test_public_footer_links_to_canonical_trust_page(client: TestClient) -> None:
