@@ -254,6 +254,10 @@ class ProviderPricingResult:
     heal_diff: str | None = None  # unified diff of the rewritten parser
     fetched_url: str | None = None
     notes: list[str] = field(default_factory=list)
+    # Discovery-only and fixed-price media catalogs must not participate in
+    # the shared token-price index. Their ModelPrice(0, 0) values are schema
+    # placeholders, not free token routes.
+    include_in_price_index: bool = True
 
 
 def configure_runtime_required_models(

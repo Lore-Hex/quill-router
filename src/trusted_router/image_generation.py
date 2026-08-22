@@ -14,8 +14,46 @@ from typing import Final
 IMAGE_MODEL_IDS: Final[tuple[str, ...]] = (
     "google/gemini-3.1-flash-image",
     "google/gemini-3.1-flash-image-preview",
+    "recraft/recraftv4_1_pro",
+    "recraft/recraftv4_1_utility_pro",
+    "recraft/recraftv4_1",
+    "recraft/recraftv4_1_utility",
+    "recraft/recraftv4_pro",
+    "recraft/recraftv4",
+    "recraft/recraftv3",
+    "recraft/recraftv2",
+    "black-forest-labs/flux-2-klein-4b",
+    "black-forest-labs/flux-2-klein-9b",
+    "black-forest-labs/flux-2-pro",
+    "black-forest-labs/flux-2-max",
+    "black-forest-labs/flux-2-flex",
+    "decart/lucy-image-2",
 )
 IMAGE_MODEL_ID_SET: Final[frozenset[str]] = frozenset(IMAGE_MODEL_IDS)
+
+GEMINI_IMAGE_MODEL_IDS: Final[frozenset[str]] = frozenset(
+    {
+        "google/gemini-3.1-flash-image",
+        "google/gemini-3.1-flash-image-preview",
+    }
+)
+
+FIXED_IMAGE_PRICES_MICRODOLLARS: Final[dict[str, dict[str, int]]] = {
+    "recraft/recraftv4_1_pro": {"2k": 210_000},
+    "recraft/recraftv4_1_utility_pro": {"2k": 210_000},
+    "recraft/recraftv4_1": {"1k": 35_000},
+    "recraft/recraftv4_1_utility": {"1k": 35_000},
+    "recraft/recraftv4_pro": {"2k": 250_000},
+    "recraft/recraftv4": {"1k": 40_000},
+    "recraft/recraftv3": {"1k": 40_000},
+    "recraft/recraftv2": {"1k": 22_000},
+    "black-forest-labs/flux-2-klein-4b": {"1k": 14_000},
+    "black-forest-labs/flux-2-klein-9b": {"1k": 15_000},
+    "black-forest-labs/flux-2-pro": {"1k": 30_000},
+    "black-forest-labs/flux-2-max": {"1k": 70_000},
+    "black-forest-labs/flux-2-flex": {"1k": 50_000},
+    "decart/lucy-image-2": {"480p": 10_000, "720p": 20_000},
+}
 
 IMAGE_RESOLUTIONS: Final[tuple[str, ...]] = ("512", "1K", "2K", "4K")
 IMAGE_ASPECT_RATIOS: Final[tuple[str, ...]] = (
@@ -109,39 +147,96 @@ IMAGE_NATIVE_SIZES: Final[dict[str, tuple[str, str]]] = {
 }
 
 
-def image_supported_parameters() -> dict[str, dict[str, object]]:
+def image_supported_parameters(model_id: str) -> dict[str, dict[str, object]]:
     """OpenRouter-compatible machine-readable capability descriptors."""
 
-    return {
+    parameters: dict[str, dict[str, object]] = {
         "n": {"type": "range", "min": 1, "max": 1, "default": 1},
-        "resolution": {
-            "type": "enum",
-            "values": list(IMAGE_RESOLUTIONS),
-            "default": "1K",
-        },
-        "aspect_ratio": {
-            "type": "enum",
-            "values": list(IMAGE_ASPECT_RATIOS),
-            "default": "1:1",
-        },
-        "size": {
-            "type": "enum",
-            "values": list(IMAGE_NATIVE_SIZES),
-            "default": "1024x1024",
-        },
-        "input_references": {"type": "range", "min": 0, "max": 14},
     }
+    if model_id in GEMINI_IMAGE_MODEL_IDS:
+        parameters.update(
+            {
+                "resolution": {
+                    "type": "enum",
+                    "values": list(IMAGE_RESOLUTIONS),
+                    "default": "1K",
+                },
+                "aspect_ratio": {
+                    "type": "enum",
+                    "values": list(IMAGE_ASPECT_RATIOS),
+                    "default": "1:1",
+                },
+                "size": {
+                    "type": "enum",
+                    "values": list(IMAGE_NATIVE_SIZES),
+                    "default": "1024x1024",
+                },
+                "input_references": {"type": "range", "min": 0, "max": 14},
+            }
+        )
+    elif model_id == "decart/lucy-image-2":
+        parameters.update(
+            {
+                "resolution": {
+                    "type": "enum",
+                    "values": ["480p", "720p"],
+                    "default": "720p",
+                },
+                "input_references": {"type": "range", "min": 1, "max": 2},
+            }
+        )
+    else:
+        fixed_prices = FIXED_IMAGE_PRICES_MICRODOLLARS.get(model_id)
+        if not fixed_prices:
+            raise ValueError(f"missing fixed image pricing for {model_id}")
+        resolutions = [variant.upper() for variant in fixed_prices]
+        parameters.update(
+            {
+                "resolution": {
+                    "type": "enum",
+                    "values": resolutions,
+                    "default": resolutions[0],
+                },
+                "aspect_ratio": {
+                    "type": "enum",
+                    "values": ["1:1"],
+                    "default": "1:1",
+                },
+                "input_references": {"type": "range", "min": 0, "max": 0},
+            }
+        )
+    return parameters
+
+
+def image_input_modalities(model_id: str) -> list[str]:
+    if model_id == "decart/lucy-image-2" or model_id in GEMINI_IMAGE_MODEL_IDS:
+        return ["text", "image"]
+    return ["text"]
 
 
 def image_pricing_by_resolution(
+    model_id: str,
     prompt_price_microdollars_per_million_tokens: int,
     completion_price_microdollars_per_million_tokens: int,
 ) -> list[dict[str, object]]:
     """Return input-token and exact resolution-tier output prices."""
 
-    input_price_per_token = Decimal(
-        prompt_price_microdollars_per_million_tokens
-    ) / Decimal(1_000_000_000_000)
+    fixed = FIXED_IMAGE_PRICES_MICRODOLLARS.get(model_id)
+    if fixed is not None:
+        return [
+            {
+                "billable": "output_image",
+                "unit": "image",
+                "variant": variant,
+                # Exact prepaid markup: ceil(provider price * 1.055).
+                "cost_usd": ((cost * 211 + 199) // 200) / 1_000_000,
+            }
+            for variant, cost in fixed.items()
+        ]
+
+    input_price_per_token = Decimal(prompt_price_microdollars_per_million_tokens) / Decimal(
+        1_000_000_000_000
+    )
     price_per_token = Decimal(completion_price_microdollars_per_million_tokens) / Decimal(
         1_000_000_000_000
     )

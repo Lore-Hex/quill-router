@@ -35,6 +35,9 @@ VIDEO_MODELS = {
     "lightricks/ltx-2.3-fast",
     "minimax/hailuo-3",
     "x-ai/grok-imagine-video",
+    "decart/lucy-2.5",
+    "decart/lucy-vton-3.5",
+    "decart/lucy-restyle-2",
 }
 
 NATIVE_VIDEO_PROVIDERS = {
@@ -50,6 +53,16 @@ NATIVE_VIDEO_PROVIDERS = {
     "openai/sora-2-pro": ("openai",),
     "kling/v3-pro": ("kling",),
     "kling/o3-pro": ("kling",),
+    "decart/lucy-2.5": ("decart",),
+    "decart/lucy-vton-3.5": ("decart",),
+    "decart/lucy-restyle-2": ("decart",),
+}
+
+NATIVE_ONLY_VIDEO_MODELS = {
+    "x-ai/grok-imagine-video",
+    "decart/lucy-2.5",
+    "decart/lucy-vton-3.5",
+    "decart/lucy-restyle-2",
 }
 
 
@@ -88,7 +101,7 @@ def test_launch_video_catalog_is_explicit_and_credits_only() -> None:
         assert model.byok_available is False
         endpoints = endpoints_for_model(model_id)
         expected = list(NATIVE_VIDEO_PROVIDERS.get(model_id, ("venice",)))
-        if model_id in NATIVE_VIDEO_PROVIDERS and model_id != "x-ai/grok-imagine-video":
+        if model_id in NATIVE_VIDEO_PROVIDERS and model_id not in NATIVE_ONLY_VIDEO_MODELS:
             expected.append("venice")
         assert [endpoint.provider for endpoint in endpoints] == expected
         assert all(endpoint.usage_type == "Credits" for endpoint in endpoints)
