@@ -70,6 +70,7 @@ from trusted_router.partner_billing import (
 from trusted_router.pricing import resolve_request_rates
 from trusted_router.provider_compat import byok_storage_provider_candidates
 from trusted_router.provider_types import estimate_tokens_from_text
+from trusted_router.regional_quota_ledger import RegionalLeaseLedgerError
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.request_attribution import (
     InvalidAttribution,
@@ -100,6 +101,7 @@ from trusted_router.services.broadcast import (
     should_drain_inline,
 )
 from trusted_router.services.federation import FederationClient, FederationUnavailable
+from trusted_router.services.regional_quota_leases import LeaseSettlementError
 from trusted_router.services.settle_outbox_apply import normalized_prompt_accounting
 from trusted_router.services.settle_outbox_drain import (
     drain_settle_outbox,
@@ -2019,17 +2021,35 @@ def _settle_gateway_authorization(
             None,
         )
         if callable(result_method):
-            finalize_result = cast(
-                TypedFinalizeResult,
-                result_method(
+            try:
+                finalize_result = cast(
+                    TypedFinalizeResult,
+                    result_method(
+                        authorization.id,
+                        success=success,
+                        actual_microdollars=actual_cost,
+                        selected_usage_type=selected_usage_type,
+                        generation=generation,
+                        user_model_payout=user_model_payout,
+                    ),
+                )
+            except (RegionalLeaseLedgerError, LeaseSettlementError):
+                # The frozen outbox intent is already durable. Keep this
+                # retryable so the enclave or drain can finish settlement once
+                # the regional ledger is healthy.
+                logger.error(
+                    "regional quota settlement temporarily unavailable "
+                    "authorization_id=%s lease_id=%s",
                     authorization.id,
-                    success=success,
-                    actual_microdollars=actual_cost,
-                    selected_usage_type=selected_usage_type,
-                    generation=generation,
-                    user_model_payout=user_model_payout,
-                ),
-            )
+                    authorization.regional_lease_id,
+                    exc_info=True,
+                )
+                raise api_error(
+                    503,
+                    "Settlement is temporarily unavailable",
+                    ErrorType.SERVICE_UNAVAILABLE,
+                    headers={"Retry-After": "1"},
+                ) from None
         else:
             finalized_legacy_contract = _typed_store.typed_finalize_gateway_authorization(
                 authorization.id,

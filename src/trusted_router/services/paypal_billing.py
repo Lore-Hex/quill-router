@@ -251,10 +251,11 @@ def verify_paypal_webhook_signature(
             "cert_url": headers.get("paypal-cert-url"),
             "auth_algo": headers.get("paypal-auth-algo"),
             "transmission_sig": headers.get("paypal-transmission-sig"),
-            "webhook_id": settings.paypal_webhook_id,
-            "webhook_event": dict(event),
-        },
-    )
+                "webhook_id": settings.paypal_webhook_id,
+                "webhook_event": dict(event),
+            },
+            client_error_message="Invalid PayPal webhook",
+        )
     if verification.get("verification_status") != "SUCCESS":
         raise api_error(400, "Invalid PayPal webhook", ErrorType.BAD_REQUEST)
 
@@ -265,6 +266,7 @@ def _paypal_post(
     *,
     request_id: str,
     json_body: Mapping[str, Any],
+    client_error_message: str | None = None,
 ) -> dict[str, Any]:
     token = _access_token(settings)
     try:
@@ -281,6 +283,10 @@ def _paypal_post(
             )
             response.raise_for_status()
             data = response.json()
+    except httpx.HTTPStatusError as exc:
+        if client_error_message is not None and 400 <= exc.response.status_code < 500:
+            raise api_error(400, client_error_message, ErrorType.BAD_REQUEST) from exc
+        raise api_error(502, "PayPal request failed", ErrorType.INTERNAL_ERROR) from exc
     except (httpx.HTTPError, ValueError) as exc:
         raise api_error(502, "PayPal request failed", ErrorType.INTERNAL_ERROR) from exc
     if not isinstance(data, dict):

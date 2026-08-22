@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-from google.cloud.bigtable.row_filters import ValueRegexFilter
+from google.cloud.bigtable.row_filters import CellsColumnLimitFilter, ValueRegexFilter
 
 from trusted_router.regional_quota_ledger import (
     BigtableRegionalQuotaLedger,
@@ -136,6 +136,17 @@ def test_bigtable_health_check_fails_when_transactional_writes_fail() -> None:
 
     with pytest.raises(RegionalLeaseLedgerError, match="transactional health check"):
         ledger.health_check()
+
+
+def test_bigtable_cas_matches_only_the_latest_version_cell() -> None:
+    ledger = BigtableRegionalQuotaLedger({"us-central1": _FakeBigtableTable()})
+
+    predicate = ledger._version_equals_filter(b"stale-version")
+    filter_types = [type(filter_) for filter_ in predicate.filters]
+
+    assert filter_types.index(CellsColumnLimitFilter) < filter_types.index(
+        ValueRegexFilter
+    )
 
 
 @dataclass

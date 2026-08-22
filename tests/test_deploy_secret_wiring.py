@@ -125,7 +125,17 @@ def test_all_attested_control_plane_regions_remain_warm() -> None:
         'southamerica-east1}"'
         in library
     )
-    assert '--min-instances "$min_instances"' in rollout
+    assert (
+        'TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION="${TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION:-'
+        'us-central1=2,us-east4=8,europe-west4=2,southamerica-east1=2}"'
+        in library
+    )
+    assert 'TR_CLOUD_RUN_CONCURRENCY="${TR_CLOUD_RUN_CONCURRENCY:-8}"' in library
+    assert 'TR_SPANNER_POOL_SIZE="${TR_SPANNER_POOL_SIZE:-8}"' in library
+    assert '--concurrency "$TR_CLOUD_RUN_CONCURRENCY"' in rollout
+    assert '--min "$min_instances"' in rollout
+    assert '--min-instances default' in rollout
+    assert '"TR_SPANNER_POOL_SIZE=${TR_SPANNER_POOL_SIZE}"' in rollout
 
 
 def test_production_deploy_interlocks_regional_quota_issuance() -> None:
