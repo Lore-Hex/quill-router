@@ -150,7 +150,11 @@ def test_run_synthetic_once_gates_peer_probes_off_in_test_env(
     assert called == []
 
     # any non-test environment with peers configured: the branch runs.
-    canary = Settings(environment="canary")
+    canary = Settings(
+        environment="canary",
+        service_surface="observer",
+        observer_internal_token="canary-observer-" + "o" * 32,
+    )
     assert canary.synthetic_fleet_peers  # default-on config
     asyncio.run(run_synthetic_once(canary))
     assert called == ["fleet"]

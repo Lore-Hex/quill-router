@@ -299,6 +299,23 @@ def _bound_inquiry_clients(cutoff: float) -> None:
         _INQUIRY_HITS.popitem(last=False)
 
 
+def _inquiry_client_identity(request: Request, settings: Settings) -> str:
+    """Select the bounded form limiter's client identity.
+
+    The explicit combined bridge preserves the pre-#714 socket identity until
+    #712 moves these actions behind an edge that overwrites the dedicated
+    client-IP header. Split surfaces retain the fail-closed edge identity
+    contract and never trust forwarding headers or an arbitrary socket peer.
+    """
+
+    if (
+        settings.service_surface == "combined"
+        and settings.allow_deployed_combined_surface
+    ):
+        return request.client.host if request.client else "unknown"
+    return normalized_client_identity(request, settings)
+
+
 async def _handle_trustedos_inquiry(settings: Settings, request: Request) -> JSONResponse:
     """Receive a TrustedOS partner-inquiry submission and email it to the
     configured recipient. Returns an opaque {"ok": true} on accept so the
@@ -325,7 +342,7 @@ async def _handle_trustedos_inquiry(settings: Settings, request: Request) -> JSO
     if not name or not message or not _EMAIL_RE.match(email):
         return JSONResponse({"ok": False, "error": "missing_fields"}, status_code=422)
 
-    client_ip = normalized_client_identity(request, settings)
+    client_ip = _inquiry_client_identity(request, settings)
     if not _inquiry_rate_ok(client_ip):
         return JSONResponse({"ok": False, "error": "rate_limited"}, status_code=429)
 
@@ -445,7 +462,7 @@ async def _handle_support_inquiry(settings: Settings, request: Request) -> JSONR
     ):
         return JSONResponse({"ok": False, "error": "missing_fields"}, status_code=422)
 
-    client_ip = normalized_client_identity(request, settings)
+    client_ip = _inquiry_client_identity(request, settings)
     if not _inquiry_rate_ok(f"support:{client_ip}"):
         return JSONResponse({"ok": False, "error": "rate_limited"}, status_code=429)
 

@@ -4,6 +4,17 @@
 # trustedrouter.com routes to the nearest healthy region. Finally ensures the
 # HTTP -> HTTPS redirect on :80.
 
+# Temporary compatibility bridge for the legacy all-routes service.  Requiring
+# an explicit caller opt-in keeps a direct invocation fail-closed before it can
+# read or mutate cloud state; the guarded deploy workflow is the sole
+# production caller that supplies it.  Delete this block and both emitted env
+# vars when the six-service cutover in #712 lands.
+ALLOW_DEPLOYED_COMBINED_SURFACE="${TR_ALLOW_DEPLOYED_COMBINED_SURFACE:-false}"
+if [ "$ALLOW_DEPLOYED_COMBINED_SURFACE" != "true" ]; then
+  echo "refusing legacy combined rollout: set TR_ALLOW_DEPLOYED_COMBINED_SURFACE=true" >&2
+  exit 1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
@@ -428,6 +439,13 @@ fi
 
 ENV_VARS=(
   "TR_ENVIRONMENT=production"
+  "TR_SERVICE_SURFACE=combined"
+  "TR_ALLOW_DEPLOYED_COMBINED_SURFACE=${ALLOW_DEPLOYED_COMBINED_SURFACE}"
+  # The legacy backend does not yet receive a trusted, edge-overwritten client
+  # identity. The #714 process-local limiter would collapse all Internet users
+  # into one 240/min bucket. #712 removes this exception while installing each
+  # split service's edge identity and independent capacity policy.
+  "TR_RATE_LIMIT_ENABLED=false"
   "TR_RELEASE=$(git rev-parse --short HEAD 2>/dev/null || echo local)"
   # Request-based Cloud Run CPU can pause background coroutines. The scheduled
   # synthetic job invokes /internal/synthetic/remediate instead.

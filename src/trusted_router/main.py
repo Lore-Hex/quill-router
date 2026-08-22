@@ -99,10 +99,15 @@ def create_app(
 ) -> FastAPI:
     settings = settings or get_settings()
     surface = settings.service_surface
-    if surface == "combined" and settings.environment.lower() not in {"local", "test"}:
+    if (
+        surface == "combined"
+        and settings.environment.lower() not in {"local", "test"}
+        and not settings.allow_deployed_combined_surface
+    ):
         raise ValueError(
-            "TR_SERVICE_SURFACE=combined is restricted to local/test; deploy an explicit "
-            "public, actions, control, internal, or observer service surface"
+            "TR_SERVICE_SURFACE=combined is restricted to local/test unless the "
+            "temporary TR_ALLOW_DEPLOYED_COMBINED_SURFACE=true migration bridge is "
+            "explicitly enabled"
         )
     validate_auto_model_order(settings.auto_model_order)
     if configure_store_arg:

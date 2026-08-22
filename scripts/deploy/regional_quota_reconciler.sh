@@ -29,6 +29,11 @@ fi
 
 env_vars=(
   "TR_ENVIRONMENT=worker"
+  # The one-shot CLI initializes Sentry and reconciles account-ledger storage,
+  # but owns no gateway or observer token. control is the sole split surface
+  # compatible with that exact binding set; worker mode skips HTTP-only
+  # control credentials such as Stripe and the attribution-cookie secret.
+  "TR_SERVICE_SURFACE=control"
   "TR_RELEASE=${RELEASE}"
   "TR_STORAGE_BACKEND=spanner-bigtable"
   "TR_GCP_PROJECT_ID=${PROJECT_ID}"

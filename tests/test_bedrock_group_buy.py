@@ -17,6 +17,8 @@ from trusted_router.bedrock_group_buy import (
     pledge_from_mapping,
     public_snapshot,
 )
+from trusted_router.config import Settings
+from trusted_router.main import create_app
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
 from trusted_router.storage import STORE, InMemoryStore
 from trusted_router.storage_group_buy import bedrock_group_buy_shard
@@ -365,6 +367,53 @@ def test_post_commit_confirmation_prompts_sharing_and_deeper_group_discount(
     assert "Share on LinkedIn" in confirmation.text
     assert "Email a founder" in confirmation.text
     assert confirmation.headers["cache-control"] == "private, no-store"
+
+
+def test_combined_bridge_preserves_legacy_group_buy_page_and_return_urls(
+    test_settings: Settings,
+    user_headers: dict[str, str],
+) -> None:
+    bridge_settings = Settings(
+        **{
+            **test_settings.model_dump(),
+            "allow_deployed_combined_surface": True,
+        }
+    )
+    client = TestClient(create_app(bridge_settings, init_observability=False))
+
+    anonymous_signin = client.post(
+        "/bedrock-group-buy/pledge",
+        data=_payload(),
+        follow_redirects=False,
+    )
+    saved = client.post(
+        "/bedrock-group-buy/pledge",
+        headers=user_headers,
+        data=_payload(),
+        follow_redirects=False,
+    )
+    personalized = client.get(
+        "/bedrock-group-buy?saved=1",
+        headers=user_headers,
+    )
+    withdrawn = client.post(
+        "/bedrock-group-buy/withdraw",
+        headers=user_headers,
+        follow_redirects=False,
+    )
+
+    assert anonymous_signin.status_code == 303
+    assert anonymous_signin.headers["location"] == (
+        "/bedrock-group-buy?reason=signin&next=%2Fbedrock-group-buy"
+    )
+    assert saved.status_code == 303
+    assert saved.headers["location"] == "/bedrock-group-buy?saved=1#share"
+    assert personalized.status_code == 200
+    assert personalized.headers["cache-control"] == "private, no-store"
+    assert "Avery Private" in personalized.text
+    assert "You are in. Bring one more buyer." in personalized.text
+    assert withdrawn.status_code == 303
+    assert withdrawn.headers["location"] == "/bedrock-group-buy?withdrawn=1"
 
 
 def test_public_group_buy_page_never_reads_or_varies_on_session(

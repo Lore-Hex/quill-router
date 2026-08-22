@@ -95,10 +95,15 @@ def test_x402_disabled_returns_404_without_auth(client: TestClient) -> None:
 
 def test_x402_config_refuses_mock_or_missing_stripe_outside_local_test() -> None:
     with pytest.raises(ValueError, match="TR_X402_ALLOW_MOCK_PAYMENTS"):
-        Settings(environment="staging", x402_allow_mock_payments=True)
+        Settings(
+            environment="staging",
+            service_surface="control",
+            x402_allow_mock_payments=True,
+        )
     with pytest.raises(ValueError, match="TR_X402_ENABLED"):
         Settings(
             environment="staging",
+            service_surface="control",
             x402_enabled=True,
             stripe_secret_key=None,
             stripe_webhook_secret=None,

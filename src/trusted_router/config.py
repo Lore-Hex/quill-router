@@ -297,10 +297,10 @@ class Settings(BaseSettings):
     release: str = "local"
     service_name: str = "trusted-router"
     # One image serves several deliberately disjoint process roles. ``combined``
-    # preserves the local/test developer experience, but create_app refuses it
-    # in deployed environments so a missing env var cannot silently put the
-    # anonymous site, account control plane, and gateway billing authority back
-    # into one autoscaling/concurrency failure domain.
+    # preserves the local/test developer experience. Deployed use requires the
+    # separate, temporary migration opt-in below so a missing env var cannot
+    # silently put the anonymous site, account control plane, and gateway
+    # billing authority back into one autoscaling/concurrency failure domain.
     service_surface: Literal[
         "combined",
         "public",
@@ -309,6 +309,11 @@ class Settings(BaseSettings):
         "internal",
         "observer",
     ] = "combined"
+    # Temporary compatibility bridge for the pre-split GCP service.  This is
+    # deliberately separate from ``service_surface`` so a missing surface env
+    # var remains fail-closed.  Remove the flag and its sole production opt-in
+    # when the six-service rollout in #712 replaces the legacy service.
+    allow_deployed_combined_surface: bool = False
     api_base_url: str = "https://api.trustedrouter.com/v1"
     trusted_domain: str = "trustedrouter.com"
     # Additional first-party control-plane domains. They serve the same
@@ -1070,6 +1075,33 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def production_is_fail_closed(self) -> Settings:
         environment = self.environment.lower()
+        surface = self.service_surface
+        deployed_combined_bridge = (
+            surface == "combined"
+            and environment not in {"local", "test"}
+            and self.allow_deployed_combined_surface
+        )
+        if self.allow_deployed_combined_surface and surface != "combined":
+            raise ValueError(
+                "TR_ALLOW_DEPLOYED_COMBINED_SURFACE may only be set with "
+                "TR_SERVICE_SURFACE=combined"
+            )
+        if (
+            surface == "combined"
+            and environment not in {"local", "test"}
+            and not deployed_combined_bridge
+        ):
+            raise ValueError(
+                "TR_SERVICE_SURFACE=combined is restricted to local/test unless the "
+                "temporary TR_ALLOW_DEPLOYED_COMBINED_SURFACE=true migration bridge "
+                "is explicitly enabled"
+            )
+        if deployed_combined_bridge and self.rate_limit_enabled:
+            raise ValueError(
+                "the temporary deployed combined bridge requires "
+                "TR_RATE_LIMIT_ENABLED=false until #712 installs trusted per-client "
+                "edge identity"
+            )
         if self.synthetic_control_plane_base_url:
             parsed_control_plane = urlsplit(self.synthetic_control_plane_base_url)
             if (
@@ -1384,7 +1416,6 @@ class Settings(BaseSettings):
             return self
         production = environment == "production"
         missing = []
-        surface = self.service_surface
         if environment != "worker" and surface in {"control", "public"}:
             if not self.attribution_cookie_secret:
                 missing.append("TR_ATTRIBUTION_COOKIE_SECRET")
@@ -1448,18 +1479,20 @@ class Settings(BaseSettings):
                 "TR_SYNTHETIC_MONITOR_API_KEY"
             )
 
-        # ``combined`` is a local/test compatibility surface.  create_app()
-        # rejects it before any deployed server starts, so do not let missing
-        # credentials mask that clearer ownership error here.
+        # #712 removes the temporary combined bridge.  Until then it retains
+        # the legacy service's complete authority and therefore its complete
+        # pre-split startup requirements.
         gateway_surfaces = {"internal"}
         sentry_surfaces = {"combined", "control", "internal", "observer"}
         account_surfaces = {"combined", "control"}
         email_surfaces = {"combined", "control", "actions"}
-        if surface in gateway_surfaces and not self.internal_gateway_token:
+        if (surface in gateway_surfaces or deployed_combined_bridge) and not (
+            self.internal_gateway_token
+        ):
             missing.append("TR_INTERNAL_GATEWAY_TOKEN")
         if surface in {"internal", "observer"} and not self.observer_internal_token:
             missing.append("TR_OBSERVER_INTERNAL_TOKEN")
-        if surface == "control" and environment != "worker":
+        if (surface == "control" or deployed_combined_bridge) and environment != "worker":
             if not self.stripe_webhook_secret:
                 missing.append("TR_STRIPE_WEBHOOK_SECRET")
             if not self.stripe_secret_key:
@@ -1486,8 +1519,10 @@ class Settings(BaseSettings):
 
         for field_name, owners in SERVICE_SURFACE_SECRET_OWNERS.items():
             configured_value = getattr(self, field_name)
-            if surface not in owners and _sensitive_setting_is_configured(
-                field_name, configured_value
+            if (
+                not deployed_combined_bridge
+                and surface not in owners
+                and _sensitive_setting_is_configured(field_name, configured_value)
             ):
                 environment_name = f"TR_{field_name.upper()}"
                 missing.append(

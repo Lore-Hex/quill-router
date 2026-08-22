@@ -301,7 +301,7 @@ def test_config_fails_closed_when_enabled_without_destination_ids() -> None:
 
 def test_worker_config_requires_dedicated_kms_outside_local_test() -> None:
     with pytest.raises(ValueError, match="TR_GOOGLE_DATA_MANAGER_KMS_KEY_NAME"):
-        _settings(environment="worker")
+        _settings(environment="worker", service_surface="control")
 
 
 def test_metadata_identity_token_is_scoped_and_cached() -> None:

@@ -711,3 +711,107 @@ def test_public_inquiry_limiters_and_display_use_canonical_production_source(
     assert partner.status_code == 200, partner.text
     assert seen_rate_subjects == ["support:2001:db8::1", "2001:db8::1"]
     assert "IP:      2001:db8::1" in sent_messages[-1].text_body
+
+
+@pytest.mark.parametrize(
+    ("path", "payload", "subject_prefix"),
+    (
+        (
+            "/support/inquiry",
+            {
+                "name": "Ada",
+                "email": "ada@example.com",
+                "category": "api",
+                "subject": "Help",
+                "message": "Please help",
+                "website": "",
+            },
+            "support:",
+        ),
+        (
+            "/trustedos/inquiry",
+            {
+                "name": "Ada",
+                "email": "ada@example.com",
+                "company": "Analytical Engines",
+                "message": "Partnership request",
+                "website": "",
+            },
+            "",
+        ),
+    ),
+)
+def test_combined_bridge_forms_keep_legacy_client_identity_without_weakening_split(
+    path: str,
+    payload: dict[str, str],
+    subject_prefix: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_rate_subjects: list[str] = []
+
+    class FakeEmailService:
+        def send(self, _message: EmailMessage) -> bool:
+            return True
+
+    async def fake_fanout(*_args: object, **_kwargs: object) -> OpsChatFanoutResult:
+        return OpsChatFanoutResult(configured=0, accepted=0)
+
+    monkeypatch.setattr(
+        public_routes,
+        "_inquiry_rate_ok",
+        lambda subject: seen_rate_subjects.append(subject) or True,
+    )
+    monkeypatch.setattr(
+        public_routes,
+        "get_email_service",
+        lambda _settings: FakeEmailService(),
+    )
+    monkeypatch.setattr(public_routes, "fanout_support_message", fake_fanout)
+
+    bridged = Settings.model_construct(
+        environment="production",
+        service_surface="combined",
+        allow_deployed_combined_surface=True,
+        rate_limit_enabled=False,
+        partner_inquiry_email="leads@example.com",
+    )
+    bridge_app = create_app(
+        bridged,
+        configure_store_arg=False,
+        init_observability=False,
+    )
+    for address in ("198.51.100.10", "203.0.113.20"):
+        response = TestClient(bridge_app, client=(address, 50000)).post(
+            path,
+            json=payload,
+        )
+        assert response.status_code == 200, response.text
+    assert seen_rate_subjects == [
+        f"{subject_prefix}198.51.100.10",
+        f"{subject_prefix}203.0.113.20",
+    ]
+
+    seen_rate_subjects.clear()
+    split = Settings.model_construct(
+        environment="production",
+        service_surface="actions",
+        allow_deployed_combined_surface=False,
+        rate_limit_enabled=False,
+        rate_limit_client_ip_mode="untrusted",
+        partner_inquiry_email="leads@example.com",
+    )
+    split_app = create_app(
+        split,
+        configure_store_arg=False,
+        init_observability=False,
+    )
+    for address in ("198.51.100.10", "203.0.113.20"):
+        response = TestClient(split_app, client=(address, 50000)).post(
+            path,
+            json=payload,
+        )
+        assert response.status_code == 200, response.text
+    assert seen_rate_subjects == [
+        f"{subject_prefix}untrusted_lb",
+        f"{subject_prefix}untrusted_lb",
+    ]
