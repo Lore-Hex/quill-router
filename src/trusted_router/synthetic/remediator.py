@@ -24,10 +24,12 @@ retention, and /fleet rendering path as every other ops signal. A row records
 a condition OBSERVED AT ITS TIMESTAMP, not current state; a condition ending
 is recorded as the ABSENCE of later rows, never an explicit marker, so readers
 must check the underlying signal (for heartbeat-stale, that subject's heartbeat
-rows) before concluding it is still live. Deduplication is process-local: each
-control-plane instance records at most one row per (target, 30-minute bucket),
-so the store can receive one per instance and readers must deduplicate by
-(target, bucket). status="down" means "condition present". remediation rows
+rows) before concluding it is still live. Deduplication is best effort: each
+control-plane instance TRIES to record at most one row per (target, 30-minute
+bucket), but the mark is checked and set without synchronisation, so the
+background loop and the internal endpoint can both write within one process,
+and every instance keeps its own marks. Duplicates are expected; readers must
+deduplicate by (target, bucket) rather than counting rows. status="down" means "condition present". remediation rows
 are in OPS_PROBE_TYPES: never a component, never an SLO, never the freshness
 clock.
 
@@ -64,7 +66,8 @@ from trusted_router.synthetic.alerts import ops_alert
 logger = logging.getLogger(__name__)
 
 REMEDIATION_PROBE = "remediation"
-# At most one decision row per (playbook, subject, bucket) per process.
+# Best effort: one decision row per (playbook, subject, bucket) per process.
+# The check and set are unsynchronised, so duplicates are possible.
 DECISION_BUCKET_SECONDS = 30 * 60
 _DECISION_MARKS: dict[str, int] = {}
 
