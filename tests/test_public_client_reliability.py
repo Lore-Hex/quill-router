@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from clickhouse.check_client_telemetry_freshness import evaluate
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.routes import public as public_routes
@@ -162,7 +163,12 @@ def _client_snapshot(**updates: Any) -> dict[str, Any]:
     return value
 
 
-def _status_snapshot_with_client(monkeypatch, client_payload: dict[str, Any]) -> dict[str, Any]:
+def _status_snapshot_with_client(
+    monkeypatch,
+    client_payload: dict[str, Any],
+    *,
+    public_client_observed_enabled: bool = True,
+) -> dict[str, Any]:
     monkeypatch.setattr(
         public_routes,
         "_precomputed_public_analytics_snapshot",
@@ -172,17 +178,24 @@ def _status_snapshot_with_client(monkeypatch, client_payload: dict[str, Any]) ->
     monkeypatch.setattr(public_routes, "_status_rollups", lambda _window: [])
     monkeypatch.setattr(public_routes, "_STATUS_CACHE", None)
     return public_routes._status_snapshot(
-        Settings(environment="local", public_client_observed_enabled=True)
+        Settings(
+            environment="local",
+            public_client_observed_enabled=public_client_observed_enabled,
+        )
     )
 
 
-def test_public_status_surfaces_omit_client_observed_by_default(
+def test_public_status_surfaces_publish_only_client_liveness_by_default(
     client: TestClient,
     monkeypatch,
 ) -> None:
     snapshot = _status_snapshot_with_client(
         monkeypatch,
         _client_snapshot(
+            canary={
+                "last_seen_age_seconds": 45,
+                "last_24h_count": 1_400,
+            },
             all_traffic={
                 "windows": {
                     "24h": {
@@ -196,6 +209,14 @@ def test_public_status_surfaces_omit_client_observed_by_default(
         ),
     )
     assert "client_observed" in snapshot
+    snapshot["client_observed"].update(
+        {
+            "by_sdk_24h": {"tr-py": 8_956},
+            "watch": {"by_host_15m": {"apex": {"attempts": 10}}},
+            "future_statistic": 123,
+        }
+    )
+    snapshot["client_observed"]["canary"]["future_canary_statistic"] = 99.9
     monkeypatch.setattr(public_routes, "_status_snapshot", lambda _settings: snapshot)
 
     page = client.get("/status")
@@ -211,8 +232,89 @@ def test_public_status_surfaces_omit_client_observed_by_default(
     assert "Client-observed availability" not in status_host_page.text
     assert status_host_page.headers["cache-control"] == PUBLIC_STATUS_CACHE_CONTROL
     assert status_json.status_code == 200
-    assert "client_observed" not in status_json.json()["data"]
+    liveness = status_json.json()["data"]["client_observed"]
+    assert set(liveness) == {"available", "generated_at", "canary"}
+    assert liveness == {
+        "available": True,
+        "generated_at": snapshot["client_observed"]["generated_at"],
+        "canary": {
+            "last_seen_age_seconds": 45,
+            "last_24h_count": 1_400,
+        },
+    }
+    assert set(liveness["canary"]) == {
+        "last_seen_age_seconds",
+        "last_24h_count",
+    }
+    statistic_keys = {
+        "windows",
+        "all_traffic",
+        "by_host_24h",
+        "by_sdk_24h",
+        "watch",
+        "state",
+        "gated_available",
+        "slo_id",
+        "methodology_version",
+        "future_statistic",
+    }
+    assert statistic_keys.isdisjoint(liveness)
+    assert "future_canary_statistic" not in liveness["canary"]
     assert status_json.headers["cache-control"] == PUBLIC_STATUS_CACHE_CONTROL
+
+
+def test_flag_off_status_json_keeps_freshness_checker_working(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = dt.datetime.now(dt.UTC)
+    fresh_snapshot = _status_snapshot_with_client(
+        monkeypatch,
+        _client_snapshot(
+            generated_at=(now - dt.timedelta(seconds=30)).isoformat(),
+            canary={"last_seen_age_seconds": 45, "last_24h_count": 1_400},
+            all_traffic={"windows": {"24h": {"requests": 8_956}}},
+        ),
+        public_client_observed_enabled=False,
+    )
+    stale_snapshot = _status_snapshot_with_client(
+        monkeypatch,
+        _client_snapshot(
+            generated_at=(now - dt.timedelta(hours=2)).isoformat(),
+            freshness={"age_seconds": 7_200},
+            canary={"last_seen_age_seconds": 45, "last_24h_count": 1_400},
+            all_traffic={"windows": {"24h": {"requests": 8_956}}},
+        ),
+        public_client_observed_enabled=False,
+    )
+
+    monkeypatch.setattr(
+        public_routes,
+        "_status_snapshot",
+        lambda _settings: fresh_snapshot,
+    )
+    fresh_payload = client.get("/status.json").json()["data"]
+    assert evaluate(
+        fresh_payload,
+        now=now,
+        max_age_seconds=3_600,
+        max_canary_age_seconds=3_600,
+        min_canary_24h=200,
+    ) == []
+
+    monkeypatch.setattr(
+        public_routes,
+        "_status_snapshot",
+        lambda _settings: stale_snapshot,
+    )
+    stale_payload = client.get("/status.json").json()["data"]
+    assert evaluate(
+        stale_payload,
+        now=now,
+        max_age_seconds=3_600,
+        max_canary_age_seconds=3_600,
+        min_canary_24h=200,
+    ) == ["client_observed unavailable: reason='stale'"]
 
 
 def test_status_html_labels_the_all_traffic_calibration_view(

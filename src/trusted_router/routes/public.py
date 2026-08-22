@@ -2217,9 +2217,7 @@ def _merge_client_observed_status(
     *,
     settings: Settings,
 ) -> dict[str, Any]:
-    result = _apply_public_client_observed_policy(payload, settings=settings)
-    if not settings.public_client_observed_enabled:
-        return result
+    result = dict(payload)
     snapshot = None
     if settings.environment != "test":
         try:
@@ -2230,6 +2228,27 @@ def _merge_client_observed_status(
         snapshot,
         now=dt.datetime.now(dt.UTC),
     )
+    return _apply_public_client_observed_policy(result, settings=settings)
+
+
+def _client_observed_liveness(section: Any) -> dict[str, Any]:
+    source = section if isinstance(section, Mapping) else {}
+    raw_canary = source.get("canary")
+    canary = raw_canary if isinstance(raw_canary, Mapping) else {}
+    # Liveness may be public; reliability statistics may not. Keep this an
+    # explicit allowlist so every future snapshot field stays private by default.
+    result = {
+        "available": source.get("available", False),
+        "generated_at": source.get("generated_at"),
+        "canary": {
+            "last_seen_age_seconds": canary.get("last_seen_age_seconds"),
+            "last_24h_count": canary.get("last_24h_count"),
+        },
+    }
+    if "reason" in source:
+        result["reason"] = source["reason"]
+    elif not source:
+        result["reason"] = "no_data"
     return result
 
 
@@ -2240,7 +2259,9 @@ def _apply_public_client_observed_policy(
 ) -> dict[str, Any]:
     result = dict(payload)
     if not settings.public_client_observed_enabled:
-        result.pop("client_observed", None)
+        result["client_observed"] = _client_observed_liveness(
+            result.get("client_observed")
+        )
     return result
 
 
@@ -2552,10 +2573,6 @@ def _compact_status_json(
         ]
         compact_components.append(compact_component)
     payload["components"] = compact_components
-    if settings.public_client_observed_enabled and "client_observed" in snapshot:
-        payload["client_observed"] = snapshot["client_observed"]
-    else:
-        payload.pop("client_observed", None)
     # Carried through explicitly. This function is what /status.json actually
     # serves, and the fleet freshness check fails a cloud whose payload has no
     # `analytics` key -- so dropping it here would look exactly like a cloud
@@ -2691,6 +2708,7 @@ def _status_page_html(settings: Settings, *, host: str) -> str:
         github_enabled=settings.github_oauth_enabled,
         static_version=settings.release,
         snapshot=snapshot,
+        public_client_observed_enabled=settings.public_client_observed_enabled,
         provider_health=provider_health,
         provider_health_window=leaderboard.get("window_label"),
     )
