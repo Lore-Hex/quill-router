@@ -72,6 +72,9 @@ PROVIDER_SLUGS = [
     # Meta Muse is served through OpenRouter, so OpenRouter is the provider API
     # and billing source for this one explicitly labelled downstream route.
     "meta",
+    # Ox Alpha is an explicit one-model OpenRouter exception. The module name
+    # uses an underscore; its result is mapped to the hyphenated runtime slug.
+    "openrouter_exclusive",
     "anthropic",
     "openai",
     "gemini",
@@ -139,6 +142,7 @@ _PRICING_RESULT_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
     "cloudflare_workers_ai": ("cloudflare-workers-ai",),
     "atlas_cloud": ("atlas-cloud",),
     "zero_g": ("zero-g",),
+    "openrouter_exclusive": ("openrouter-exclusive",),
 }
 
 # These providers run a pricing-page parser (Kimi has a custom multi-page
@@ -195,7 +199,7 @@ CROSS_CHECK_DISAGREE_THRESHOLD = 0.02  # 2%
 # OpenRouter is the actual serving and billing API for this deliberately
 # labelled downstream provider. Keep its provenance distinct from both direct
 # provider prices and emergency OpenRouter fallback prices.
-_OPENROUTER_BACKED_PROVIDER_SLUGS = frozenset({"meta"})
+_OPENROUTER_BACKED_PROVIDER_SLUGS = frozenset({"meta", "openrouter-exclusive"})
 
 
 def _endpoint_pricing_source(slug: str, healed_slugs: set[str]) -> str:

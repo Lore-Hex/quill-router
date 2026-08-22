@@ -695,6 +695,7 @@ def validate(
     expected_models: list[str],
     *,
     required_models: list[str] | tuple[str, ...] | frozenset[str] = (),
+    allow_all_zero: bool = False,
 ) -> list[str]:
     """Return a list of validation errors. Empty list = pass.
 
@@ -704,7 +705,8 @@ def validate(
       - warn when a model in `expected_models` is absent (retirement detector)
       - fail when a newly discovered model in `required_models` is absent
       - units sanity: at least one tier across all models has nonzero
-        price (otherwise the parser likely missed the price column)
+        price (otherwise the parser likely missed the price column), unless
+        the provider adapter explicitly qualifies a genuine free endpoint
     """
     errors: list[str] = []
     if not prices:
@@ -743,7 +745,7 @@ def validate(
         for row in prices.values()
         for tier in row.tiers
     )
-    if not has_nonzero:
+    if not has_nonzero and not allow_all_zero:
         errors.append(
             "all prices are zero — parser likely missed the price column (units mismatch?)"
         )

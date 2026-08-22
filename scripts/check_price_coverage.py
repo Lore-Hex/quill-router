@@ -48,6 +48,7 @@ _ZAI_MODEL_RE = re.compile(r"\bglm-\d+(?:\.\d+)?(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?(?
 _SHARED_LIVE_SCRAPER_OWNERS = {
     "google-ai-studio": "gemini",
     "google-vertex": "gemini",
+    "openrouter-exclusive": "openrouter_exclusive",
 }
 
 
