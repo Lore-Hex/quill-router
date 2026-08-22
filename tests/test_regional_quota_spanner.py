@@ -7,7 +7,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from tests.fakes.spanner import make_fake_store
-from trusted_router.regional_quota_ledger import InMemoryRegionalQuotaLedger
+from trusted_router.regional_quota_ledger import (
+    InMemoryRegionalQuotaLedger,
+    RegionalLeaseLedgerError,
+)
 from trusted_router.services.settle_outbox_apply import ApplyOutcome, apply_frozen_settle
 from trusted_router.storage import configure_store
 from trusted_router.storage_gcp_authorize import settle_atomic
@@ -361,6 +364,34 @@ def test_store_regional_authorize_settle_replay_and_reconcile_end_to_end() -> No
         7_500,
         0,
     )
+
+
+def test_missing_regional_ledger_is_a_retryable_settlement_error() -> None:
+    store, _database, _ = make_fake_store(request_record_write_mode="typed")
+    authorization = GatewayAuthorization(
+        id="gwa-missing-regional-ledger",
+        workspace_id="ws-regional-ledger",
+        key_hash="key-hash",
+        model_id="model",
+        provider="provider",
+        usage_type=UsageType.CREDITS,
+        estimated_microdollars=10_000,
+        settlement="regional_lease",
+        regional_lease_id="lease-1",
+        regional_fencing_token=1,
+        regional_hold_id="gwa-missing-regional-ledger",
+        region="us-central1",
+    )
+
+    with pytest.raises(
+        RegionalLeaseLedgerError,
+        match="regional quota ledger is unavailable",
+    ):
+        store._finalize_regional_quota_hold(
+            authorization,
+            success=True,
+            actual_microdollars=7_500,
+        )
 
 
 def test_regional_authorize_does_not_escrow_for_unconfigured_region() -> None:
