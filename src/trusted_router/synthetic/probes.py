@@ -1183,7 +1183,6 @@ async def openai_chat_pong_probe(
         "max_tokens": 128,
         "temperature": 0,
         "metadata": {"trustedrouter_synthetic": "true"},
-        "app": "TrustedRouter Synthetic",
     }
     started = time.perf_counter()
     try:
@@ -1232,7 +1231,6 @@ async def responses_pong_probe(
         "max_output_tokens": 128,
         "temperature": 0,
         "metadata": {"trustedrouter_synthetic": "true"},
-        "app": "TrustedRouter Synthetic",
     }
     started = time.perf_counter()
     try:

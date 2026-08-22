@@ -26,8 +26,9 @@ The session is configured to preserve what the probe measures:
   ``DO_NOT_TRACK``) must not silence it; an explicit ``telemetry=True`` wins
   over both.
 
-Synthetic marking keeps both server-recognized forms: the request body carries
-``metadata.trustedrouter_synthetic`` and ``app="TrustedRouter Synthetic"``.
+The request bodies are byte-for-byte what the raw-httpx probes sent: the
+gateway's Responses validator rejects unknown top-level keys with HTTP 501.
+Synthetic marking in the body uses ``metadata.trustedrouter_synthetic``.
 The beacon is sent with the monitor key, which ``/v1/client-events`` identifies
 server-side as synthetic regardless of the batch's client-supplied bit. No
 client honesty is required on either channel.
