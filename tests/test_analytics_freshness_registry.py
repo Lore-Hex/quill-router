@@ -559,60 +559,120 @@ def test_a_cloud_with_a_reason_is_reported_as_unchecked_and_does_not_fail() -> N
     assert result.unchecked[0].startswith("aws: NOT CHECKED")
 
 
-def test_a_cloud_declared_outbox_free_is_unchecked_rather_than_failing() -> None:
-    """Azure today: no TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED, so no outbox.
+#: A registry with an outbox-free entry, written out instead of borrowed.
+#:
+#: These three tests used to read `expects_outbox=False` off the live registry,
+#: where Azure was its only user. Azure now runs a real pipeline
+#: (scripts/deploy/azure_clickhouse.sh + azure_clickhouse_drain_install.sh) and
+#: its entry says `expects_outbox=True`, so OUTBOX_FREE_CLOUDS is empty and
+#: every one of these tests would have quietly become a loop over nothing --
+#: passing, collecting zero cases, and testing the mechanism not at all. That is
+#: the precise shape this file exists to prevent one level up, so the mechanism
+#: keeps its coverage and gets its own fixture.
+_OUTBOX_FREE_REGISTRY = (
+    FleetAnalyticsEndpoint(
+        cloud="gcp",
+        status_url="https://trustedrouter.com/status.json",
+        expected_backend=BACKEND_SPANNER,
+    ),
+    FleetAnalyticsEndpoint(
+        cloud="aws",
+        status_url="https://tr-eu.example.com/status.json",
+        expected_backend=BACKEND_POSTGRES,
+        expects_outbox=False,
+        note="a deployment declared to have no operational-analytics outbox at all",
+    ),
+)
+_OUTBOX_FREE_CLOUD = "aws"
+_OUTBOX_FREE_DEPLOYED = ["aws", "gcp"]
 
-    It would publish `not_configured` forever. Failing on it daily is the
-    cry-wolf shape the repo already fixed once, in the client-telemetry
-    freshness check's `CANARY_COUNT_GATE_FROM` ramp-up guard.
+
+def _outbox_free_payloads() -> dict[str, dict[str, object] | None]:
+    """Every entry answering exactly what `_OUTBOX_FREE_REGISTRY` declares."""
+    return {
+        "gcp": _healthy("gcp"),
+        _OUTBOX_FREE_CLOUD: {
+            ANALYTICS_STATUS_KEY: analytics_status_unavailable(REASON_NOT_CONFIGURED)
+        },
+    }
+
+
+def test_a_cloud_declared_outbox_free_is_unchecked_rather_than_failing() -> None:
+    """A cloud with no outbox publishes `not_configured` forever.
+
+    Failing on it daily is the cry-wolf shape the repo already fixed once, in
+    the client-telemetry freshness check's `CANARY_COUNT_GATE_FROM` ramp-up
+    guard. So it is reported as UNCHECKED: printed, counted, never silent, and
+    never a daily red.
     """
-    result = evaluate_fleet(_as_declared(), now=NOW)
+    assert registry_defects(_OUTBOX_FREE_DEPLOYED, registry=_OUTBOX_FREE_REGISTRY) == []
+
+    result = evaluate_fleet(
+        _outbox_free_payloads(),
+        now=NOW,
+        registry=_OUTBOX_FREE_REGISTRY,
+        deployed=_OUTBOX_FREE_DEPLOYED,
+    )
 
     assert result.problems == []
-    for cloud in OUTBOX_FREE_CLOUDS:
-        assert any(note.startswith(f"{cloud}: NOT CHECKED") for note in result.unchecked)
+    assert any(
+        note.startswith(f"{_OUTBOX_FREE_CLOUD}: NOT CHECKED") for note in result.unchecked
+    )
     assert any("expects_outbox=False" in note for note in result.unchecked)
 
 
-def test_the_azure_entry_is_the_one_declared_outbox_free() -> None:
-    """Read off the deploy script, and pinned so a silent flip is visible.
+def test_every_live_entry_now_expects_an_outbox() -> None:
+    """The state this commit puts the fleet in, pinned so a silent flip is loud.
 
-    `scripts/deploy/azure_control_plane.sh` sets no
-    TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED at all, and the setting defaults to
-    False, so PostgresStore builds no outbox there.
+    This test used to assert the opposite about Azure, and read the reason off
+    `azure_control_plane.sh` setting no outbox variable at all. It sets one now,
+    computed from whether a ClickHouse node and its Key Vault secret exist, and
+    Azure owns two nodes and a drain. So all three clouds are MEASURED, and a
+    cloud that stops publishing a live lag is a failure rather than an expected
+    absence -- including Azure, from the moment this lands and before the
+    flag-flipping deploy has run. That failure is information, not noise.
     """
-    azure = fleet_endpoint("azure")
-    assert azure is not None and azure.expects_outbox is False
-
-    for cloud in ("aws", "gcp"):
+    for cloud in ("aws", "azure", "gcp"):
         entry = fleet_endpoint(cloud)
-        assert entry is not None and entry.expects_outbox is True
+        assert entry is not None and entry.expects_outbox is True, cloud
+    assert OUTBOX_FREE_CLOUDS == []
 
 
 def test_a_cloud_declared_outbox_free_that_grows_one_FAILS() -> None:
-    """The trapdoor this closes, and the reason it is not just `reason=`.
+    """The trapdoor, and the reason `expects_outbox=False` is not just `reason=`.
 
-    Retiring Azure behind a bare reason would also retire the ability to notice
-    the day it gets a pipeline -- which would then be unwatched for exactly the
-    reason AWS-EU's was.
+    Retiring such a cloud behind a bare reason would also retire the ability to
+    notice the day it gets a pipeline -- which would then be unwatched for
+    exactly the reason AWS-EU's was. Asserting the ABSENCE means the day it
+    stops being absent, somebody is told to come back and start watching.
     """
-    payloads = _all_healthy()
+    payloads = _outbox_free_payloads()
+    payloads[_OUTBOX_FREE_CLOUD] = _healthy("aws")
 
-    result = evaluate_fleet(payloads, now=NOW)
+    result = evaluate_fleet(
+        payloads, now=NOW, registry=_OUTBOX_FREE_REGISTRY, deployed=_OUTBOX_FREE_DEPLOYED
+    )
 
-    assert [problem for problem in result.problems if problem.startswith("azure:")]
+    assert [
+        problem for problem in result.problems if problem.startswith(f"{_OUTBOX_FREE_CLOUD}:")
+    ]
     assert any("expects_outbox=True" in problem for problem in result.problems)
 
 
-@pytest.mark.parametrize("cloud", OUTBOX_FREE_CLOUDS)
-def test_a_cloud_declared_outbox_free_still_fails_when_its_database_is_broken(cloud: str) -> None:
+def test_a_cloud_declared_outbox_free_still_fails_when_its_database_is_broken() -> None:
     """`expects_outbox=False` excuses `not_configured`, and nothing else."""
-    payloads = _as_declared()
-    payloads[cloud] = {ANALYTICS_STATUS_KEY: analytics_status_unavailable(REASON_UNREACHABLE)}
+    payloads = _outbox_free_payloads()
+    payloads[_OUTBOX_FREE_CLOUD] = {
+        ANALYTICS_STATUS_KEY: analytics_status_unavailable(REASON_UNREACHABLE)
+    }
 
-    result = evaluate_fleet(payloads, now=NOW)
+    result = evaluate_fleet(
+        payloads, now=NOW, registry=_OUTBOX_FREE_REGISTRY, deployed=_OUTBOX_FREE_DEPLOYED
+    )
 
-    assert [problem for problem in result.problems if problem.startswith(f"{cloud}:")]
+    assert [
+        problem for problem in result.problems if problem.startswith(f"{_OUTBOX_FREE_CLOUD}:")
+    ]
 
 
 def test_unavailable_explanations_differ_per_reason() -> None:

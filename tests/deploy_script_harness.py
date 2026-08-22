@@ -238,6 +238,13 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             (r"--query .?loginServer", "trazureuaenorthacr.azurecr.io"),
             (r"--query .?fullyQualifiedDomainName", "tr-azure-pg.postgres.database.azure.com"),
             (r"--query .?properties\.configuration\.ingress\.fqdn", "tr-azure.example.net"),
+            # The analytics conditional: with a ClickHouse node and a vault
+            # secret present, this script turns the outbox ON and points the
+            # plane at the node's PRIVATE address. Answering with a plausible
+            # address keeps the URL it builds readable in the run log; the
+            # branch is taken either way, because the fixture's default answer
+            # is also non-empty.
+            (r"privateIpAddresses", "10.61.3.4"),
             # It asserts the COUNT of tr_* tables, not psql's exit code.
             (r"information_schema\.tables", "9"),
         ),
@@ -245,6 +252,42 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
         # armed to remove the temporary Postgres firewall rule it opened to
         # apply the schema. Cleanup, not provisioning.
         cleanup_after_gate=(r"firewall-rule delete",),
+    ),
+    "scripts/deploy/azure_clickhouse.sh": ScriptFixture(
+        responses=(
+            # It refuses a subnet that is not inside the VNet, and one that
+            # overlaps an existing subnet — in real ipaddress arithmetic, over
+            # the ranges it read back. Answering these two with the measured
+            # values is what makes that check run rather than skip.
+            (r"addressSpace\.addressPrefixes", "10.61.0.0/16"),
+            (r"\[\]\.addressPrefix", "10.61.0.0/23 10.61.2.0/24"),
+            (r"privateIpAddresses", "10.61.3.4"),
+            # `az vm run-command invoke` exits 0 whether the remote script
+            # succeeded or failed, so the script's only signal is the marker the
+            # remote body echoes. This fixture supplies it, and what that means
+            # is exactly what the module header says: a fixture cannot make a
+            # missing gate call appear or a swallowed exit status non-zero, but
+            # it does mean the SCHEMA step here asserts against this stub rather
+            # than against a node. The row-count evidence is in-cloud.
+            # One LINE, because the fixture table is tab-separated and
+            # newline-delimited: a reply containing a newline silently becomes
+            # a second, malformed row.
+            (r"vm run-command invoke", "tables the drain writes: 8 ... TR_RUNCMD_OK"),
+        ),
+    ),
+    "scripts/deploy/azure_clickhouse_drain_install.sh": ScriptFixture(
+        responses=(
+            (r"fullyQualifiedDomainName", "tr-azure-pg.postgres.database.azure.com"),
+            # The private-DNS preflight: a zone that exists, linked to vnet-prod.
+            # Without both the drain resolves the PUBLIC address of a server with
+            # zero firewall rules and times out every connection while the unit
+            # reports itself active.
+            (r"private-dns zone list", "tr-azure"),
+            (r"private-dns link vnet list", "vnet-prod-link"),
+            (r"privateIpAddresses", "10.62.1.4"),
+            (r"identity show", "11111111-2222-3333-4444-555555555555"),
+            (r"vm run-command invoke", "TR_RUNCMD_OK"),
+        ),
     ),
 }
 

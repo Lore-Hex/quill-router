@@ -285,10 +285,11 @@ header spells out.
 
 Two states are neither pass nor fail, and are printed as `(unchecked)` on every
 run rather than skipped: a cloud with no public status page (`reason=`), and a
-cloud that legitimately runs no outbox (`expects_outbox=False` — Azure today,
-whose deploy script sets no `TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED`). The
-second one becomes a **failure** the day that cloud publishes a real lag, which
-is the day it needs watching.
+cloud that legitimately runs no outbox (`expects_outbox=False`). The second one
+becomes a **failure** the day that cloud publishes a real lag, which is the day
+it needs watching. Azure was its only user until 2026-08-18 and is not any more:
+it now has two ClickHouse nodes, a drain, and a control-plane script that states
+the flag, so all three clouds are measured and none is excused.
 
 To ask about one cloud during an incident:
 

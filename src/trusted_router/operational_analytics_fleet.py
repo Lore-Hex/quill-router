@@ -49,17 +49,26 @@ WHY A ``reason`` FIELD AND NOT AN OMISSION
     can fix is a check people learn to ignore.
 
 WHY ``expects_outbox`` AND NOT A SECOND ``reason``
-    Azure is reachable, publishes a status page, and has no operational-analytics
-    outbox at all: ``scripts/deploy/azure_control_plane.sh`` never sets
-    ``TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED``, so the flag defaults off and
-    ``PostgresStore`` holds no outbox to read. Its section says
-    ``not_configured`` and would say so forever. Retiring it behind ``reason=``
-    would work, and would also throw away the ability to notice the day it
-    changes: an outbox that gets enabled on Azure would go unwatched exactly as
-    AWS-EU's was. ``expects_outbox=False`` instead keeps fetching the page and
-    asserts the ABSENCE -- unchecked while it publishes ``not_configured``, a
-    FAILURE the moment it publishes a real lag, which is the moment somebody
-    needs to come back here and start watching it.
+    Azure was this field's only user, and is not any more -- which is the field
+    working rather than the field becoming redundant. It was reachable,
+    publishing a status page, and running no operational-analytics outbox at
+    all, because ``scripts/deploy/azure_control_plane.sh`` never set
+    ``TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED`` and the flag defaults off. Its
+    section said ``not_configured`` and would have said so forever. Retiring it
+    behind ``reason=`` would have worked, and would also have thrown away the
+    ability to notice the day it changed: an outbox enabled on Azure would then
+    have gone unwatched for exactly the reason AWS-EU's was.
+    ``expects_outbox=False`` asserted the ABSENCE instead -- unchecked while
+    ``not_configured``, a FAILURE the moment a real lag appeared, which is the
+    moment somebody had to come back here and start watching it.
+
+    That day was 2026-08-18: Azure got two ClickHouse nodes, a drain that
+    writes both before deleting, and a control plane that STATES the flag. So
+    its entry is now ``expects_outbox=True`` and the cloud is measured like any
+    other. No live entry sets the field False today; the mechanism keeps its
+    tests (``tests/test_analytics_freshness_registry.py`` builds its own
+    registry for them) so that the next cloud declared outbox-free lands on
+    tested code rather than on a trapdoor nobody has opened in a year.
 
 NOTHING HERE DOES IO. :mod:`clickhouse.check_fleet_analytics_freshness` fetches.
 """
@@ -164,20 +173,33 @@ ANALYTICS_FRESHNESS_FLEET: tuple[FleetAnalyticsEndpoint, ...] = (
         cloud="azure",
         status_url="https://azure.trustedrouter.com/status.json",
         expected_backend=BACKEND_POSTGRES,
-        expects_outbox=False,
+        # TRUE as of the commit that built the pipeline, and only that commit.
+        # It was False for a reason that has now stopped being true: Azure had
+        # no outbox at all, so the honest assertion was the ABSENCE of one --
+        # `not_configured` reported as explicitly unchecked, a live lag reported
+        # as a FAILURE saying somebody should come back here and start watching.
+        # This is that somebody. Azure now owns two ClickHouse nodes
+        # (scripts/deploy/azure_clickhouse.sh), a drain that writes both before
+        # deleting (scripts/deploy/azure_clickhouse_drain_install.sh), and a
+        # control plane whose analytics flag is STATED rather than defaulted.
+        # So the assertion flips with the thing it asserts about: from here on a
+        # missing lag is a failure, which is the whole point of publishing one.
+        expects_outbox=True,
         note=(
             "The Azure control plane's own hostname, set as STATUS_HOST by "
             "scripts/deploy/azure_control_plane.sh and pointed at the container app "
-            "by that script's Cloud DNS step. It runs PostgresStore, so it COULD "
-            "hold the same outbox shape as AWS -- but that deploy script sets no "
-            "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED at all, the setting defaults "
-            "to False (config.py), and PostgresStore therefore builds no outbox. "
-            "That is read off the deploy script and the default, not off the "
-            "wire -- Azure published no `analytics` section when this was "
-            "written, and the current answer is one command away: "
-            "curl -s https://azure.trustedrouter.com/status.json | jq .data.analytics . "
-            "There is no drain here to be missing; expects_outbox=False "
-            "asserts that absence and fails the day it stops being true."
+            "by that script's Cloud DNS step. It runs PostgresStore and now holds "
+            "the same outbox shape as AWS: that deploy script sets "
+            "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED from whether a ClickHouse node "
+            "and its Key Vault secret exist, and the drain runs on the uaenorth "
+            "node writing a second copy in southeastasia before it deletes "
+            "anything. Two regions here is DURABILITY, not residency: both nodes "
+            "hold the same rows, and no row leaves Azure. Until the flag-flipping "
+            "deploy has actually run, this entry FAILS -- deliberately, and it is "
+            "the correct reading of a cloud whose pipeline exists in the "
+            "repository and not yet on the wire. The current answer is one command "
+            "away: "
+            "curl -s https://azure.trustedrouter.com/status.json | jq .data.analytics"
         ),
     ),
     FleetAnalyticsEndpoint(

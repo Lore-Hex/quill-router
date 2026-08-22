@@ -485,19 +485,26 @@ def test_the_limit_of_a_passing_lag_is_printed_on_every_passing_run(tmp_path: Pa
 # ---------------------------------------------------------------------------
 
 
-def test_azure_fails_because_it_has_no_outbox_at_all() -> None:
-    """Pins the state found on 2026-08-17, and the reason it is not benign.
+def test_azure_now_declares_the_outbox_and_says_it_is_computed() -> None:
+    """This test used to assert the opposite, and the flip is the change.
 
-    Azure's control-plane deploy script sets no outbox variable, so settle
-    enqueues nothing. Every published freshness signal for such a cloud is
-    vacuously green. This test flips to the other branch when the outbox is
-    added, which is the point at which it should.
+    Until 2026-08-18 `azure_control_plane.sh` set no outbox variable at all, so
+    settle enqueued nothing and every published freshness signal for the cloud
+    was vacuously green. The previous version of this test pinned that state and
+    said in its own docstring that it should flip when the outbox was added.
+    This is the other branch.
+
+    What it asserts is deliberately narrow, and stage (e) says the same thing in
+    its note: the script can now ENABLE the outbox, computing the value at
+    deploy time from whether a ClickHouse node and its Key Vault secret exist.
+    It does not assert that any deployed Azure revision has it on — nothing
+    readable from a checkout can, which is why stages (b)-(d) exist and why they
+    are still 5 for this cloud until the flag-flipping deploy has run.
     """
-    assert crc.declared_outbox_value("azure") is None
-    blockers = crc.outbox_enabled_blockers("azure")
-    assert blockers
-    assert "never sets TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED" in blockers[0]
-    assert "looks perfectly healthy" in blockers[0]
+    assert crc.declared_outbox_value("azure") == "${OUTBOX_ENABLED}"
+    assert crc.outbox_enabled_blockers("azure") == []
+    note = crc.outbox_note("azure")
+    assert note is not None and "computed at deploy time" in note
 
 
 def test_gcp_and_aws_declare_the_outbox() -> None:
@@ -593,10 +600,15 @@ def test_the_form_the_failure_message_prescribes_is_accepted(tmp_path: Path) -> 
     characters.
     """
     prescription = f"{crc.OUTBOX_ENABLED_ENV}=true"
-    assert prescription in crc.outbox_enabled_blockers("azure")[0]
-
+    # Read off a cloud that is actually failing the stage. This used to read the
+    # real Azure blocker, and Azure now declares the variable — so the assertion
+    # was silently about to become an IndexError on a passing cloud rather than
+    # a statement about the message.
     script_dir = tmp_path / "scripts" / "deploy"
     script_dir.mkdir(parents=True)
+    (script_dir / "azure_control_plane.sh").write_text("#!/usr/bin/env bash\necho hello\n")
+    assert prescription in crc.outbox_enabled_blockers("azure", root=tmp_path)[0]
+
     (script_dir / "azure_control_plane.sh").write_text(
         "#!/usr/bin/env bash\n"
         f"# {prescription}   <- a comment is still not a setting\n"
