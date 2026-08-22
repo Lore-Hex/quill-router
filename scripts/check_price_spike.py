@@ -91,8 +91,9 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
         ),
         # Novita's authenticated catalog and current public pricing table both
         # list the 0731 revision separately from the cheaper unversioned route.
-        # Its API has emitted the same SKU with both plain and FP8 endpoint tags,
-        # so pin the exact transition under each canonical identity:
+        # The provider manifest uses the default Novita tag while the public
+        # snapshot retains its FP8 route tag. Pin the same exact transition
+        # under both source-specific identities:
         # https://novita.ai/pricing
         (
             "deepseek/deepseek-v4-flash-0731 "
