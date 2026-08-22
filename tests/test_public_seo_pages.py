@@ -274,6 +274,42 @@ def test_openrouter_experiment_router_is_sticky_and_preserves_campaign_query(
     assert '<meta name="robots" content="noindex,follow">' in rendered.text
 
 
+@pytest.mark.parametrize(
+    "campaign",
+    ["openrouter_alternative_exact", "openrouter_lp_multi_20260822"],
+)
+def test_openrouter_paid_campaign_enters_landing_experiment_without_ad_edit(
+    client: TestClient,
+    campaign: str,
+) -> None:
+    query = (
+        "utm_source=google&utm_medium=cpc&"
+        f"utm_campaign={campaign}&utm_term=openrouter+alternative&"
+        "utm_content=search&gclid=paid-click-123"
+    )
+
+    response = client.get(
+        f"/openrouter-alternative?{query}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    destination = urlsplit(response.headers["location"])
+    assert destination.path in OPENROUTER_PAID_LANDING_PATHS
+    assert parse_qs(destination.query) == parse_qs(query)
+
+
+def test_openrouter_non_experiment_campaign_keeps_canonical_page(
+    client: TestClient,
+) -> None:
+    response = client.get(
+        "/openrouter-alternative?utm_source=google&utm_campaign=seo_baseline"
+    )
+
+    assert response.status_code == 200
+    assert "OpenRouter Alternatives: 10 AI Gateways Compared (2026)" in response.text
+
+
 def test_openrouter_experiment_assignment_reaches_every_arm() -> None:
     assigned = {
         assigned_openrouter_landing_path(f"anonymous-{index}")
