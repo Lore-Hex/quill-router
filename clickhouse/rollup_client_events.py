@@ -267,10 +267,14 @@ def _merge_accumulator(target: dict[str, Any], source: Mapping[str, Any]) -> Non
         _merge_histogram(target[field], source.get(field))
 
 
-def _coverage_by_tenant(rows: Iterable[Mapping[str, Any]]) -> dict[str, int]:
+def _coverage_by_tenant(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    include_synthetic: bool = False,
+) -> dict[str, int]:
     result: dict[str, int] = {}
     for row in rows:
-        if bool(row.get("synthetic")):
+        if not include_synthetic and bool(row.get("synthetic")):
             continue
         tenant = str(row.get("tenant_id") or "")
         result[tenant] = result.get(tenant, 0) + int(row.get("requests") or 0)
@@ -325,7 +329,13 @@ def aggregate_client_rollups(
     period_start: dt.datetime,
     computed_at: dt.datetime,
 ) -> list[dict[str, Any]]:
-    """Aggregate one period for tenant and capped, non-synthetic fleet scopes."""
+    """Aggregate one period for the tenant, fleet, and fleet_all scopes.
+
+    ``fleet`` is the published methodology: synthetic traffic excluded, each
+    tenant capped at 25 % of the window. ``fleet_all`` is the calibration
+    view: every counter row including synthetic canary traffic, no cap, no
+    scaling. Adding it changes nothing about the tenant or fleet rows.
+    """
 
     period_start = _floor(period_start, period)
     period_end = period_start + _period_delta(period)
@@ -394,6 +404,37 @@ def aggregate_client_rollups(
                 distinct_tenants=contributors,
                 capped_requests=(total_capped if facet == ("", "", "") else facet_capped),
                 coverage_requests=sum(coverage_tenants.values()),
+                computed_at=computed_at,
+            )
+        )
+
+    # Calibration scope: the tenant accumulators already hold every counter
+    # row, synthetic included, so the all-traffic view is their plain sum.
+    # No per-tenant cap and no scaling, so capped_requests is 0 by
+    # construction, and coverage counts synthetic generations too.
+    all_traffic_coverage = sum(_coverage_by_tenant(coverage, include_synthetic=True).values())
+    all_traffic_facets = {facet for facets in tenant_groups.values() for facet in facets}
+    for facet in sorted(all_traffic_facets):
+        accumulator = _new_accumulator()
+        contributors = 0
+        for facets in tenant_groups.values():
+            source = facets.get(facet)
+            if source is None:
+                continue
+            _merge_accumulator(accumulator, source)
+            if int(source.get("requests") or 0):
+                contributors += 1
+        result.append(
+            _render_rollup(
+                accumulator,
+                period=period,
+                period_start=period_start,
+                scope="fleet_all",
+                tenant_id="",
+                facet=facet,
+                distinct_tenants=contributors,
+                capped_requests=0,
+                coverage_requests=all_traffic_coverage,
                 computed_at=computed_at,
             )
         )

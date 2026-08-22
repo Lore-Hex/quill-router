@@ -30,6 +30,9 @@ STATUS_LIVE_SAMPLE_LIMIT = 500
 STATUS_HOUR_ROLLUP_LIMIT = 5_000
 VIDEO_SAMPLE_LIMIT = 5_000
 CLIENT_ROLLUP_LIMIT = 100_000
+# Published rows and calibration rows are fetched by separate queries, each
+# with its own CLIENT_ROLLUP_LIMIT, so neither scope can truncate the other.
+CLIENT_ROLLUP_SCOPES = ("fleet", "fleet_all")
 
 
 def _query(
@@ -170,7 +173,14 @@ FORMAT JSONEachRow
     return samples, rollups
 
 
-def _client_reliability_rows(password: str, *, now: dt.datetime) -> list[dict[str, Any]]:
+def _client_reliability_rows(
+    password: str,
+    *,
+    now: dt.datetime,
+    scope: str = "fleet",
+) -> list[dict[str, Any]]:
+    if scope not in CLIENT_ROLLUP_SCOPES:
+        raise ValueError(f"unsupported client rollup scope: {scope}")
     cutoff_48h = (now - dt.timedelta(hours=48)).strftime("%Y-%m-%d %H:%M:%S")
     cutoff_7d = (now - dt.timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
     cutoff_30d = (now - dt.timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
@@ -179,7 +189,7 @@ def _client_reliability_rows(password: str, *, now: dt.datetime) -> list[dict[st
         f"""
 SELECT * EXCEPT computed_at
 FROM client_availability_rollups FINAL
-WHERE scope = 'fleet'
+WHERE scope = '{scope}'
   AND (
     (period = '5m' AND period_start >= toDateTime('{cutoff_48h}', 'UTC'))
     OR (period = 'hour' AND period_start >= toDateTime('{cutoff_7d}', 'UTC'))
@@ -250,6 +260,7 @@ def build_snapshots(
     status_rollups: list[SyntheticRollup] | None = None,
     client_reliability_rows: list[dict[str, Any]] | None = None,
     client_reliability_signals: dict[str, Any] | None = None,
+    client_reliability_all_traffic_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     leaderboard = aggregate_leaderboard(
         samples,
@@ -306,6 +317,11 @@ def build_snapshots(
         _client_rows_by_window(client_reliability_rows or [], now=snapshot_now),
         snapshot_now,
         signals=client_reliability_signals,
+        all_traffic_rows_by_window=(
+            _client_rows_by_window(client_reliability_all_traffic_rows, now=snapshot_now)
+            if client_reliability_all_traffic_rows is not None
+            else None
+        ),
     )
     return {
         "leaderboard": leaderboard,
@@ -331,6 +347,9 @@ def main() -> int:
         status_rollups=status_rollups,
         client_reliability_rows=_client_reliability_rows(password, now=now),
         client_reliability_signals=_client_reliability_signals(password, now=now),
+        client_reliability_all_traffic_rows=_client_reliability_rows(
+            password, now=now, scope="fleet_all"
+        ),
     )
     rows = [
         {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from typing import Any
 
 from fastapi.testclient import TestClient
 
@@ -96,3 +97,81 @@ def test_telemetry_contract_is_public_and_registered_everywhere(client: TestClie
     assert 'href="/docs/telemetry"' in docs.text
     assert "https://trustedrouter.com/docs/telemetry" in sitemap.text
     assert "/docs/telemetry" in llms.text
+
+
+CALIBRATION_LABEL = (
+    "calibration view — includes synthetic canary traffic; not the published number"
+)
+
+
+def _client_snapshot(**updates: Any) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "generated_at": dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z"),
+        "methodology_version": 1,
+        "published": False,
+        "freshness": {"age_seconds": 0},
+        "windows": {"24h": {"requests": 0, "successes": 0, "tr_fault": 0, "distinct_tenants": 0}},
+    }
+    value.update(updates)
+    return value
+
+
+def _status_snapshot_with_client(monkeypatch, client_payload: dict[str, Any]) -> dict[str, Any]:
+    monkeypatch.setattr(
+        public_routes,
+        "_precomputed_public_analytics_snapshot",
+        lambda name: client_payload if name == "client_reliability" else None,
+    )
+    monkeypatch.setattr(public_routes, "_status_samples", lambda **_kwargs: [])
+    monkeypatch.setattr(public_routes, "_status_rollups", lambda _window: [])
+    monkeypatch.setattr(public_routes, "_STATUS_CACHE", None)
+    return public_routes._status_snapshot(Settings(environment="local"))
+
+
+def test_status_html_labels_the_all_traffic_calibration_view(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    all_traffic = {
+        "windows": {
+            "24h": {
+                "requests": 8_956,
+                "successes": 8_956,
+                "tr_fault": 0,
+                "distinct_tenants": 1,
+                "availability_percent": 100.0,
+                "p50_total_ms": 800,
+                "p95_total_ms": 1_600,
+            }
+        }
+    }
+    snapshot = _status_snapshot_with_client(monkeypatch, _client_snapshot(all_traffic=all_traffic))
+    assert snapshot["client_observed"]["all_traffic"]["windows"]["24h"]["requests"] == 8_956
+    monkeypatch.setattr(public_routes, "_status_snapshot", lambda _settings: snapshot)
+
+    response = client.get("/status")
+
+    assert response.status_code == 200
+    assert CALIBRATION_LABEL in response.text
+    assert "100.0000%" in response.text
+    assert "<strong>8956</strong>" in response.text
+    assert "800 ms" in response.text
+    assert "1600 ms" in response.text
+    # The published window on the same page is still gated.
+    assert "insufficient data — 0 requests from 0 tenants" in response.text
+
+
+def test_status_html_tolerates_a_client_snapshot_without_all_traffic(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    snapshot = _status_snapshot_with_client(monkeypatch, _client_snapshot())
+    assert snapshot["client_observed"]["all_traffic"] is None
+    monkeypatch.setattr(public_routes, "_status_snapshot", lambda _settings: snapshot)
+
+    response = client.get("/status")
+
+    assert response.status_code == 200
+    assert CALIBRATION_LABEL not in response.text
+    assert "<h2>Client-observed availability</h2>" in response.text
+    assert "insufficient data — 0 requests from 0 tenants" in response.text
