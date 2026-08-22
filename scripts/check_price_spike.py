@@ -90,18 +90,18 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
             Decimal("0.00000132"),
         ),
         # Novita's authenticated catalog and current public pricing table both
-        # list the 0731 revision separately from the cheaper unversioned route:
+        # list the 0731 FP8 revision separately from the cheaper unversioned route:
         # https://novita.ai/pricing
         (
             "deepseek/deepseek-v4-flash-0731 "
-            "[novita:novita:deepseek/deepseek-v4-flash-0731]",
+            "[novita:novita/fp8:deepseek/deepseek-v4-flash-0731]",
             "prompt",
             Decimal("0.00000014"),
             Decimal("0.00000044"),
         ),
         (
             "deepseek/deepseek-v4-flash-0731 "
-            "[novita:novita:deepseek/deepseek-v4-flash-0731]",
+            "[novita:novita/fp8:deepseek/deepseek-v4-flash-0731]",
             "completion",
             Decimal("0.00000028"),
             Decimal("0.00000132"),
