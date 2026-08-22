@@ -53,6 +53,9 @@ sed "s/__PASSWORD_SHA256__/${reader_hash}/g" >"$config" <<'XML'
         <query>GRANT SELECT ON tr.synthetic_probe_samples</query>
         <query>GRANT SELECT ON tr.synthetic_status_rollups</query>
         <query>GRANT SELECT ON tr.public_analytics_snapshots</query>
+        <query>GRANT SELECT ON tr.client_minute_counters</query>
+        <query>GRANT SELECT ON tr.client_request_events</query>
+        <query>GRANT SELECT ON tr.client_availability_rollups</query>
       </grants>
     </tr_control_read>
   </users>
@@ -77,7 +80,7 @@ printf 'CH_CONTROL_READ_PASSWORD=%s\n' "$reader_password" |
     --zone="$ZONE" \
     --tunnel-through-iap \
     --quiet \
-    --command="sudo sh -c 'umask 077; cat > /tmp/tr-control-reader.env; set -a; . /tmp/tr-control-reader.env; set +a; /usr/bin/clickhouse-client --user tr_control_read --password \"\$CH_CONTROL_READ_PASSWORD\" --multiquery --query \"SELECT count() FROM tr.activity_generations FINAL LIMIT 1; SELECT count() FROM tr.public_analytics_snapshots FINAL LIMIT 1\" >/dev/null; rm -f /tmp/tr-control-reader.env'"
+    --command="sudo sh -c 'umask 077; cat > /tmp/tr-control-reader.env; set -a; . /tmp/tr-control-reader.env; set +a; status=0; /usr/bin/clickhouse-client --user tr_control_read --password \"\$CH_CONTROL_READ_PASSWORD\" --multiquery --query \"SELECT count() FROM tr.activity_generations FINAL LIMIT 1; SELECT count() FROM tr.public_analytics_snapshots FINAL LIMIT 1; SELECT count() FROM tr.client_minute_counters FINAL LIMIT 1; SELECT count() FROM tr.client_request_events FINAL LIMIT 1; SELECT count() FROM tr.client_availability_rollups FINAL LIMIT 1\" >/dev/null || status=\$?; rm -f /tmp/tr-control-reader.env; exit \$status'"
 unset reader_password
 
 echo "configured private read-only ClickHouse control-plane account"
