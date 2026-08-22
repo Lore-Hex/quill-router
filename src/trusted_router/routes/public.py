@@ -1010,7 +1010,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         selected_path = assigned_openrouter_landing_path(seed)
         query = request.url.query
         location = f"{selected_path}?{query}" if query else selected_path
-        return RedirectResponse(url=location, status_code=307)
+        return RedirectResponse(
+            url=location,
+            status_code=307,
+            headers={
+                "cache-control": "private, no-store",
+                "vary": "cookie",
+            },
+        )
 
     @public_html_route("/openrouter-alternative")
     async def seo_openrouter_alternative(

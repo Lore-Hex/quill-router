@@ -265,6 +265,8 @@ def test_openrouter_experiment_router_is_sticky_and_preserves_campaign_query(
     assert first.status_code == 307
     assert second.status_code == 307
     assert first.headers["location"] == second.headers["location"]
+    assert first.headers["cache-control"] == "private, no-store"
+    assert first.headers["vary"] == "cookie"
     destination = urlsplit(first.headers["location"])
     assert destination.path in OPENROUTER_PAID_LANDING_PATHS
     assert parse_qs(destination.query) == parse_qs(query)
@@ -294,6 +296,8 @@ def test_openrouter_paid_campaign_enters_landing_experiment_without_ad_edit(
     )
 
     assert response.status_code == 307
+    assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["vary"] == "cookie"
     destination = urlsplit(response.headers["location"])
     assert destination.path in OPENROUTER_PAID_LANDING_PATHS
     assert parse_qs(destination.query) == parse_qs(query)

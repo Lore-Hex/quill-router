@@ -62,20 +62,24 @@ canonicalized to the permanent OpenRouter page.
 ## Experiment 1B: Multi-Arm OpenRouter Landing Test
 
 The first directional results favored action-led pages, but did not identify
-which product promise drives the first successful API call. Send one unchanged
-ad to the first-party experiment router:
+which product promise drives the first successful API call. The existing exact
+intent ad keeps its approved destination and assets unchanged:
 
 ```text
-https://trustedrouter.com/openrouter-alternative/experiment
+https://trustedrouter.com/openrouter-alternative
   ?utm_source=google
-  &utm_medium=paid_search
-  &utm_campaign=openrouter_lp_multi_20260822
-  &utm_content=<unchanged-ad-creative-id>
+  &utm_medium=cpc
+  &utm_campaign=openrouter_alternative_exact
+  &utm_term={keyword}
+  &utm_content=search
 ```
 
-The router assigns a visitor consistently to one of six pages. It preserves the
-complete query string, so the ad creative remains measurable while the landing
-path identifies the page arm.
+TrustedRouter recognizes that paid campaign and assigns a visitor consistently
+to one of six pages. The direct `/openrouter-alternative/experiment` entry point
+remains available for future campaigns. Both paths preserve the complete query
+string, so the campaign and ad creative remain measurable while the landing
+path identifies the page arm. Assignment redirects are private and `no-store`,
+which prevents a CDN from serving one visitor's arm to another visitor.
 
 | Arm | Landing path | Promise |
 |---|---|---|
