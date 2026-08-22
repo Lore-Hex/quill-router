@@ -500,6 +500,22 @@ gcloud spanner databases execute-sql trusted-router \
 Spot-check settle latency is unchanged in `httpRequest.latency` for
 `/internal/gateway/settle`.
 
+Do not locate a canary authorization by scanning `tr_gateway_authorization.payload`.
+The payload JSON is intentionally not indexed; a production scan can consume millions
+of row reads and compete with customer billing traffic. Use the bounded verifier, which
+resolves the existing idempotency index and then uses primary-key reads:
+
+```bash
+uv run python scripts/verify_gateway_authorization.py \
+  --workspace-id <workspace-id> \
+  --key-hash <key-hash> \
+  --idempotency-key <canary-idempotency-key>
+```
+
+When the authorization ID is already available, prefer
+`--authorization-id <gwa-id>`; that path is primary-key-only. The verifier emits only
+billing and routing metadata. It never emits prompt or response content.
+
 Resume the drain after the flip. The job already exists and is paused:
 
 ```bash
