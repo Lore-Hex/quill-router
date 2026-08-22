@@ -14,6 +14,9 @@ ALL_TRAFFIC_NOTE = (
     "Calibration view; includes synthetic canary traffic; uncapped; ungated; "
     "not the published methodology."
 )
+#: Gated windows exclude synthetic traffic, so one 24h request is enough to
+#: distinguish real client use from an empty calibration-only snapshot.
+MIN_REAL_REQUESTS_24H = 1
 
 HOSTS = (
     "apex",
@@ -554,10 +557,18 @@ def client_observed_status_section(
     published = snapshot.get("published") is True
     raw_windows = snapshot.get("windows")
     windows = raw_windows if isinstance(raw_windows, Mapping) else {}
+    raw_24h = windows.get("24h")
+    window_24h = raw_24h if isinstance(raw_24h, Mapping) else {}
+    gated_available = _int(window_24h, "requests") >= MIN_REAL_REQUESTS_24H
+    all_traffic = _status_all_traffic(snapshot.get("all_traffic"))
+    all_traffic_24h = all_traffic["windows"]["24h"] if all_traffic is not None else {}
+    if not gated_available and _int(all_traffic_24h, "requests") < 1:
+        return {"available": False, "reason": "insufficient_real_data"}
     generated_at = snapshot.get("generated_at")
     return {
         "available": True,
-        "state": "published" if published else "calibrating",
+        "state": "published" if published and gated_available else "calibrating",
+        "gated_available": gated_available,
         "slo_id": "client_observed",
         "methodology_version": _optional_int(snapshot.get("methodology_version")),
         "windows": {
@@ -568,7 +579,7 @@ def client_observed_status_section(
         "canary": _status_canary(snapshot.get("canary")),
         # Tolerates a snapshot built by a worker that predates the calibration
         # view: the control plane deploys before the ClickHouse node does.
-        "all_traffic": _status_all_traffic(snapshot.get("all_traffic")),
+        "all_traffic": all_traffic,
         "generated_at": generated_at if isinstance(generated_at, str) else None,
     }
 

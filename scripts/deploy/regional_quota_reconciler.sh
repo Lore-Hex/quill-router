@@ -16,11 +16,34 @@ RELEASE="$(git rev-parse --short HEAD 2>/dev/null || echo local)"
 JOB_PREFIX="${TR_REGIONAL_QUOTA_RECONCILER_JOB_PREFIX:-trusted-router-regional-quota-reconciler}"
 JOB_NAME="${TR_REGIONAL_QUOTA_RECONCILER_JOB:-${JOB_PREFIX}-${RELEASE}}"
 RECONCILE_LIMIT="${TR_REGIONAL_QUOTA_RECONCILE_LIMIT:-25}"
-scheduler_state="$(
+scheduler_state=""
+scheduler_exists=false
+scheduler_describe_stderr="$(mktemp "${TMPDIR:-/tmp}/regional-quota-scheduler-describe.XXXXXX")"
+if scheduler_state="$(
   gc scheduler jobs describe "$SCHEDULER_NAME" \
     --location="$SCHEDULER_REGION" \
-    --format='value(state)' 2>/dev/null || true
-)"
+    --format='value(state)' 2>"$scheduler_describe_stderr"
+)"; then
+  scheduler_describe_status=0
+else
+  scheduler_describe_status=$?
+fi
+scheduler_describe_error="$(<"$scheduler_describe_stderr")"
+rm -f "$scheduler_describe_stderr"
+
+if [ "$scheduler_describe_status" -eq 0 ]; then
+  if [ -z "$scheduler_state" ]; then
+    log "ERROR: cannot determine state of Cloud Scheduler job ${SCHEDULER_NAME}: describe succeeded but returned an empty state"
+    exit 1
+  fi
+  scheduler_exists=true
+elif printf '%s\n' "$scheduler_describe_error" \
+    | grep -qE '(^|[[:space:]])NOT_FOUND([[:space:]:]|$)'; then
+  scheduler_exists=false
+else
+  log "ERROR: cannot determine state of Cloud Scheduler job ${SCHEDULER_NAME}: gcloud scheduler jobs describe failed (exit ${scheduler_describe_status}): ${scheduler_describe_error:-no stderr}"
+  exit "$scheduler_describe_status"
+fi
 
 if ! gc artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
   log "refusing regional quota reconciler deploy: image ${IMAGE} does not exist"
@@ -104,7 +127,7 @@ common_args=(
   --quiet
 )
 
-if [ -n "$scheduler_state" ]; then
+if [ "$scheduler_exists" = true ]; then
   log "updating regional quota reconciler schedule"
   # The legacy HTTP scheduler stored the internal gateway token in a custom
   # header. Clear every legacy header while moving to Google OAuth so that
@@ -120,7 +143,7 @@ fi
 # across releases instead of silently re-enabling a worker during an incident.
 if [ "$scheduler_state" = "PAUSED" ]; then
   log "preserving intentional regional quota reconciler pause"
-else
+elif [ "$scheduler_exists" = true ]; then
   gc scheduler jobs resume "$SCHEDULER_NAME" \
     --location="$SCHEDULER_REGION" --quiet >/dev/null 2>&1 || true
 fi

@@ -137,6 +137,12 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "wafer",
         "engy",
         "pearl",
+        "stepfun",
+        "relace",
+        "recraft",
+        "bfl",
+        "decart",
+        "nvidia-nim",
         "databricks",
         "zero-g",
         "openrouter-exclusive",
@@ -148,9 +154,10 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
 def _authoritative_provider_model_ids(provider_slug: str) -> frozenset[str]:
     """Return fail-closed route model IDs for an authoritative manifest.
 
-    Explicit embedding specs remain eligible because provider manifests are
-    chat-only. A missing or malformed manifest therefore disables dynamic chat
-    routes without accidentally disabling a separately verified embedding.
+    Explicit embedding specs remain eligible because provider manifests do not
+    synthesize embedding routes. A missing or malformed manifest therefore
+    disables dynamic chat and image routes without accidentally disabling a
+    separately verified embedding.
     """
     allowed = {
         str(spec["id"]) for spec in _EMBEDDING_SPECS if spec.get("provider") == provider_slug
@@ -166,10 +173,10 @@ def _authoritative_provider_model_ids(provider_slug: str) -> frozenset[str]:
     for row in raw_models:
         if not isinstance(row, dict) or row.get("routable") is False:
             continue
-        if row.get("model_type") not in (None, "chat"):
+        if row.get("model_type") not in (None, "chat", "image", "video"):
             continue
         endpoint_types = {str(item) for item in (row.get("endpoints") or [])}
-        if not endpoint_types.intersection({"chat/completions", "images"}):
+        if not endpoint_types.intersection({"chat/completions", "images", "videos"}):
             continue
         model_id = row.get("id")
         if not isinstance(model_id, str) or not model_id:
@@ -756,6 +763,12 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "neurometric",
         "engy",
         "pearl",
+        "stepfun",
+        "relace",
+        "recraft",
+        "bfl",
+        "decart",
+        "nvidia-nim",
         "databricks",
         "zero-g",
         "kimi",
@@ -790,7 +803,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                 upstream_id = model_id
             if _is_provider_deprecated_model(provider_slug, model_id, upstream_id):
                 continue
-            if raw_model.get("model_type") not in (None, "chat"):
+            if raw_model.get("model_type") not in (None, "chat", "image"):
                 continue
             endpoint_types = {
                 str(item) for item in (raw_model.get("endpoints") or [])
@@ -810,16 +823,25 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                 raw_model.get("cached_input_token_price_per_m"),
                 price_scale=price_scale,
             )
-            prompt_price = _customer_price(prompt_cost)
-            completion_price = _customer_price(completion_cost)
-            cached_price = _customer_price(cached_cost) if cached_cost > 0 else None
-            tiers = _provider_manifest_price_tiers(
-                raw_model,
-                prompt_price,
-                completion_price,
-                cached_price,
-                price_scale=price_scale,
-            )
+            if raw_model.get("model_type") == "image":
+                # These providers bill per generated image. The enclave sends
+                # an exact fixed-price hold; applying the global token-price
+                # floor here would add a second, prompt-length-dependent charge.
+                prompt_price = 0
+                completion_price = 0
+                cached_price = None
+                tiers = _flat_tier(0, 0)
+            else:
+                prompt_price = _customer_price(prompt_cost)
+                completion_price = _customer_price(completion_cost)
+                cached_price = _customer_price(cached_cost) if cached_cost > 0 else None
+                tiers = _provider_manifest_price_tiers(
+                    raw_model,
+                    prompt_price,
+                    completion_price,
+                    cached_price,
+                    price_scale=price_scale,
+                )
             publisher = (
                 _author_provider(model_id, [{"tr_provider_slug": provider_slug}]) or provider_slug
             )

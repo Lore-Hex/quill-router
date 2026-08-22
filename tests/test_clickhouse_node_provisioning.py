@@ -84,12 +84,12 @@ def test_operational_deploy_moves_benchmark_code_schema_and_replay_together() ->
     upload = script.index("sudo tar -xzf - -C /opt/tr-clickhouse")
     stop = script.index("systemctl stop tr-clickhouse-operational-ingest.service")
     migration = script.index('log "adding workspace attribution to benchmark samples"')
-    replay = script.index("clickhouse.backfill_benchmark_samples")
     restart = script.index(
-        "systemctl start tr-clickhouse-operational-ingest.service", replay
+        "systemctl start tr-clickhouse-operational-ingest.service", migration
     )
+    replay = script.index("clickhouse.backfill_benchmark_samples")
 
-    assert upload < stop < migration < replay < restart
+    assert upload < stop < migration < restart < replay
     assert "007_benchmark_samples_workspace_id.sql" in script
     assert "TR_CLICKHOUSE_BENCHMARK_WORKSPACE_BACKFILL_LIMIT" in script
 

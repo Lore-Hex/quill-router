@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.routes import public as public_routes
 from trusted_router.storage import STORE
 from trusted_router.storage_models import iso_now, utcnow
 from trusted_router.synthetic import fleet
@@ -294,6 +295,48 @@ def test_fleet_snapshot_merges_peers_and_ranks_overall() -> None:
     # One unreachable deployment pulls the fleet banner all the way down:
     # a cloud you cannot see is a cloud you cannot vouch for.
     assert snapshot["fleet_overall_status"] == "unreachable"
+
+
+def test_fleet_routes_do_not_republish_client_observed_from_older_peer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings(synthetic_fleet_peers="peer=https://peer.example")
+    peer_payload = {
+        "overall_status": "up",
+        "summary": {"headline": "All Systems Operational"},
+        "components": [{"id": "model_inference", "status": "up"}],
+        "monitor_freshness": {"is_stale": False},
+        "generated_at": iso_now(),
+        "client_observed": {"available": True, "windows": {"24h": {"requests": 100}}},
+    }
+    transport = _peer_transport({"peer.example": peer_payload})
+
+    async def build_snapshot() -> dict[str, object]:
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            return await fleet_snapshot(settings, client=http_client)
+
+    snapshot = asyncio.run(build_snapshot())
+
+    async def cached_snapshot(_settings: Settings) -> dict[str, object]:
+        return snapshot
+
+    monkeypatch.setattr(public_routes, "fleet_snapshot", cached_snapshot)
+    app = create_app(settings, init_observability=False)
+
+    with TestClient(app) as client:
+        page = client.get("/fleet")
+        feed = client.get("/fleet.json")
+
+    assert page.status_code == 200
+    assert "peer" in page.text
+    assert "All Systems Operational" in page.text
+    assert feed.status_code == 200
+    deployments = feed.json()["data"]["deployments"]
+    assert deployments[0]["name"] == "peer"
+    assert deployments[0]["reachable"] is True
+    assert "client_observed" not in deployments[0]
+    assert "client_observed" not in feed.text
+    assert "client_observed" not in page.text
 
 
 def test_fleet_routes_serve_json_and_html(client: TestClient) -> None:

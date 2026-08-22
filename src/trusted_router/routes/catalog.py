@@ -33,6 +33,7 @@ from trusted_router.catalog import (
 )
 from trusted_router.image_generation import (
     IMAGE_MODEL_ID_SET,
+    image_input_modalities,
     image_pricing_by_resolution,
     image_supported_parameters,
 )
@@ -45,9 +46,7 @@ from trusted_router.provider_lifecycle import provider_pricing_schedule
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.routing import catalog_endpoint_candidates, provider_route_preferences
 
-_PUBLIC_CATALOG_CACHE_CONTROL = (
-    "public, max-age=300, s-maxage=300, stale-while-revalidate=60"
-)
+_PUBLIC_CATALOG_CACHE_CONTROL = "public, max-age=300, s-maxage=300, stale-while-revalidate=60"
 
 
 @dataclass(frozen=True)
@@ -121,9 +120,7 @@ def _public_catalog_payload() -> _PublicCatalogPayload:
         shapes.append(shape)
     frozen_shapes = tuple(shapes)
     body = _json_bytes({"data": frozen_shapes})
-    picker_body = _json_bytes(
-        {"data": [_picker_model_shape(shape) for shape in frozen_shapes]}
-    )
+    picker_body = _json_bytes({"data": [_picker_model_shape(shape) for shape in frozen_shapes]})
     gzip_body = gzip.compress(body, compresslevel=6, mtime=0)
     picker_gzip_body = gzip.compress(picker_body, compresslevel=6, mtime=0)
     return _PublicCatalogPayload(
@@ -163,9 +160,7 @@ def _cached_json_response(
                     quality = 0.0
         accepted_encodings[token.strip().lower()] = quality
     explicit_gzip_qualities = [
-        accepted_encodings[coding]
-        for coding in ("gzip", "x-gzip")
-        if coding in accepted_encodings
+        accepted_encodings[coding] for coding in ("gzip", "x-gzip") if coding in accepted_encodings
     ]
     gzip_quality = (
         max(explicit_gzip_qualities)
@@ -190,8 +185,7 @@ def _cached_json_response(
         # bytes after we have assigned their strong ETag.
         headers["Content-Encoding"] = "identity"
     validators = {
-        _weak_etag_value(token)
-        for token in request.headers.get("if-none-match", "").split(",")
+        _weak_etag_value(token) for token in request.headers.get("if-none-match", "").split(",")
     }
     not_modified = "*" in validators or _weak_etag_value(etag) in validators
     if serve_gzip or "Content-Encoding" in headers or not_modified:
@@ -251,9 +245,7 @@ def _endpoint_supported_parameters(provider: str) -> list[str]:
     return parameters
 
 
-def _openai_service_tier_metadata(
-    provider: str, model_id: str
-) -> dict[str, Any]:
+def _openai_service_tier_metadata(provider: str, model_id: str) -> dict[str, Any]:
     if provider != "openai":
         return {}
     if pricing := openai_priority_pricing(model_id):
@@ -274,13 +266,9 @@ def _endpoint_pricing_payload(endpoint: ModelEndpoint) -> dict[str, str]:
         ),
     }
     tiers = getattr(endpoint, "price_tiers", ()) or ()
-    cached_price = (
-        tiers[0].prompt_cached_price_microdollars_per_million_tokens if tiers else None
-    )
+    cached_price = tiers[0].prompt_cached_price_microdollars_per_million_tokens if tiers else None
     if cached_price is not None:
-        payload["input_cache_read"] = microdollars_per_million_tokens_to_token_decimal(
-            cached_price
-        )
+        payload["input_cache_read"] = microdollars_per_million_tokens_to_token_decimal(cached_price)
     return payload
 
 
@@ -326,9 +314,7 @@ def _public_model_matches_filters(shape: dict[str, Any], request: Request) -> bo
     if requested_output_modalities:
         architecture = shape.get("architecture")
         output_modalities = (
-            architecture.get("output_modalities", [])
-            if isinstance(architecture, dict)
-            else []
+            architecture.get("output_modalities", []) if isinstance(architecture, dict) else []
         )
         if not requested_output_modalities.issubset(
             {str(modality).lower() for modality in output_modalities}
@@ -356,16 +342,17 @@ def _image_model_shape(model: Any) -> dict[str, Any]:
     shape = model_to_openrouter_shape(model)
     raw_architecture = shape.get("architecture")
     architecture = dict(raw_architecture) if isinstance(raw_architecture, dict) else {}
-    architecture["input_modalities"] = ["text", "image"]
+    architecture["input_modalities"] = image_input_modalities(model.id)
     architecture["output_modalities"] = ["image"]
-    architecture["modality"] = "text+image->image"
+    architecture["modality"] = f"{'+'.join(architecture['input_modalities'])}->image"
     return {
         "id": shape["id"],
         "name": shape["name"],
         "description": shape["description"],
         "created": shape["created"],
         "architecture": architecture,
-        "supported_parameters": image_supported_parameters(),
+        "pricing": shape["pricing"],
+        "supported_parameters": image_supported_parameters(model.id),
         "supports_streaming": False,
         "endpoints": f"/v1/images/models/{model.id}/endpoints",
         "trustedrouter": shape["trustedrouter"],
@@ -378,12 +365,13 @@ def _image_endpoint_shape(model: Any, endpoint: ModelEndpoint) -> dict[str, Any]
         "provider_name": provider.name,
         "provider_slug": endpoint.provider,
         "provider_tag": endpoint.provider,
-        "supported_parameters": image_supported_parameters(),
+        "supported_parameters": image_supported_parameters(model.id),
         "allowed_passthrough_parameters": [],
         "supports_streaming": False,
         "pricing": image_pricing_by_resolution(
+            model.id,
             endpoint.prompt_price_microdollars_per_million_tokens,
-            endpoint.completion_price_microdollars_per_million_tokens
+            endpoint.completion_price_microdollars_per_million_tokens,
         ),
         "trustedrouter": {
             "attested_gateway": provider.attested_gateway,
@@ -520,9 +508,7 @@ def register_catalog_routes(router: APIRouter) -> None:
                     "completion_price_microdollars_per_million_tokens": (
                         endpoint.completion_price_microdollars_per_million_tokens
                     ),
-                    "supported_parameters": _endpoint_supported_parameters(
-                        endpoint.provider
-                    ),
+                    "supported_parameters": _endpoint_supported_parameters(endpoint.provider),
                     "trustedrouter": {
                         "attested_gateway": PROVIDERS[endpoint.provider].attested_gateway,
                         "stores_content": endpoint_stores_content(endpoint),

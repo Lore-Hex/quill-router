@@ -226,7 +226,7 @@ TRUSTEDROUTER_TELEMETRY_DEBUG=1</code></pre>
       <div class="component-main"><div><h3>Disclosed exclusions</h3><p>Caller aborts, HTTP 4xx and 429, pool and proxy errors, custom hosts, timeouts below the floor, total-phase timeouts, and provider 5xx responses for provider-pinned requests are counted separately and excluded from the denominator.</p></div></div>
     </div>
     <div class="component-row">
-      <div class="component-main"><div><h3>Publication gate</h3><p>Availability is successes ÷ (successes + TrustedRouter faults). Fleet percentages require at least 1,000 requests from at least three distinct tenants. Coverage is always shown. A 14-day clean calibration period must complete before percentages are published; until then, surfaces show honest request, success, fault, exclusion, and tenant counts.</p></div></div>
+      <div class="component-main"><div><h3>Publication gate</h3><p>Availability is successes ÷ (successes + TrustedRouter faults). Fleet percentages require at least 1,000 requests from at least three distinct tenants and a 14-day clean calibration period. Live figures remain internal by default because they include upstream provider-caused failures; public disclosure can be explicitly enabled after per-provider attribution makes the number fair.</p></div></div>
     </div>
   </div>
 </section>
@@ -238,7 +238,7 @@ TRUSTEDROUTER_TELEMETRY_DEBUG=1</code></pre>
   </div>
   <div>
     <p>TrustedRouter Python SDK 0.6.0 is the first release with default-on beacons for known TrustedRouter hosts. JavaScript, Go, Rust, Java, and Swift SDKs remain header-only until their release notes explicitly say they implement the beacon contract.</p>
-    <p><a class="btn" href="/status#client-observed">View client-observed status</a></p>
+    <p><a class="btn" href="/status">View public service status</a></p>
   </div>
 </section>
 

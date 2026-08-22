@@ -169,6 +169,7 @@ from trusted_router.catalog_registry import (  # noqa: F401 - built there, re-ex
     MODEL_ENDPOINTS,
     MODELS,
 )
+from trusted_router.image_generation import FIXED_IMAGE_PRICES_MICRODOLLARS
 from trusted_router.money import (
     microdollars_per_million_tokens_to_token_decimal,
     microdollars_to_decimal,
@@ -574,6 +575,14 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "prompt": microdollars_per_million_tokens_to_token_decimal(prompt_min),
         "completion": microdollars_per_million_tokens_to_token_decimal(completion_min),
     }
+    fixed_image_prices = FIXED_IMAGE_PRICES_MICRODOLLARS.get(model.id)
+    if fixed_image_prices:
+        customer_prices = [
+            (microdollars * 211 + 199) // 200 for microdollars in fixed_image_prices.values()
+        ]
+        pricing["image"] = microdollars_to_decimal(min(customer_prices))
+        if max(customer_prices) != min(customer_prices):
+            pricing["image_max"] = microdollars_to_decimal(max(customer_prices))
     if model.minimum_charge_microdollars:
         pricing["minimum"] = microdollars_to_decimal(model.minimum_charge_microdollars)
     if is_meta and (prompt_max != prompt_min or completion_max != completion_min):

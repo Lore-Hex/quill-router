@@ -397,6 +397,10 @@ class Settings(BaseSettings):
     # Durable tenant-activity and synthetic-status stream. Kept independent
     # from provider analytics so its privacy and cutover can be controlled.
     operational_analytics_outbox_enabled: bool = False
+    # Client-observed figures include upstream provider-caused failures and can
+    # understate a healthy gateway. Keep them off public surfaces until
+    # per-provider attribution makes the number fair to publish.
+    public_client_observed_enabled: bool = False
     # Client-observed reliability beacons remain off until the ClickHouse node
     # runbook has been completed. Every setting is available as TR_CLIENT_EVENTS_*.
     client_events_enabled: bool = False

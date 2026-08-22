@@ -1,0 +1,121 @@
+{
+  "provider": "decart",
+  "models": [
+    {
+      "display_name": "Lucy Image 2",
+      "title": "lucy-image-2",
+      "model_type": "image",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "id": "decart/lucy-image-2",
+      "upstream_id": "lucy-image-2",
+      "supported_features": [
+        "image-editing"
+      ],
+      "fixed_output_price_microdollars": {
+        "480p": 10000,
+        "720p": 20000
+      },
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Lucy 2.5",
+      "title": "lucy-2.5",
+      "model_type": "video",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "video"
+      ],
+      "endpoints": [
+        "videos"
+      ],
+      "status": 1,
+      "id": "decart/lucy-2.5",
+      "upstream_id": "lucy-2.5",
+      "supported_features": [
+        "video-editing",
+        "reference-images"
+      ],
+      "fixed_output_price_per_second_microdollars": 40000,
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Lucy Restyle 2",
+      "title": "lucy-restyle-2",
+      "model_type": "video",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "video"
+      ],
+      "endpoints": [
+        "videos"
+      ],
+      "status": 1,
+      "id": "decart/lucy-restyle-2",
+      "upstream_id": "lucy-restyle-2",
+      "supported_features": [
+        "video-editing",
+        "video-restyling",
+        "reference-images"
+      ],
+      "fixed_output_price_per_second_microdollars": 10000,
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Lucy VTON 3.5",
+      "title": "lucy-vton-3.5",
+      "model_type": "video",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "video"
+      ],
+      "endpoints": [
+        "videos"
+      ],
+      "status": 1,
+      "id": "decart/lucy-vton-3.5",
+      "upstream_id": "lucy-vton-3.5",
+      "supported_features": [
+        "video-editing",
+        "virtual-try-on",
+        "reference-images"
+      ],
+      "fixed_output_price_per_second_microdollars": 40000,
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    }
+  ],
+  "source": "https://api.decart.ai/v1/models/resolve",
+  "pricing_source": "https://docs.platform.decart.ai/getting-started/pricing",
+  "generated_at": "2026-08-22T09:13:55Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 4
+}

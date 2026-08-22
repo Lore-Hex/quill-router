@@ -62,17 +62,24 @@
     {% endfor %}
   </section>
 
+  {% if public_client_observed_enabled and snapshot.client_observed is defined %}
+  {% set client_observed = snapshot.client_observed %}
+  {% if client_observed.reason != 'insufficient_real_data' %}
   <section class="status-section" id="client-observed">
-    {% set client_observed = snapshot.client_observed %}
     {% if client_observed.available %}
     <div class="status-section-head">
       <div>
         <h2>Client-observed availability</h2>
+        {% if client_observed.gated_available %}
         <p>Logical requests reported from inside customer processes.</p>
+        {% else %}
+        <p>Calibration only; no customer traffic has been measured yet.</p>
+        {% endif %}
       </div>
       <span class="component-status status-{{ 'up' if client_observed.state == 'published' else 'degraded' }}">{{ client_observed.state }}</span>
     </div>
     <div class="component-list">
+      {% if client_observed.gated_available %}
       <div class="component-row">
         <div class="slo-grid" aria-label="Client-observed availability windows">
           {% for name in ["5m", "1h", "24h", "7d", "30d"] %}
@@ -96,6 +103,7 @@
           {% endfor %}
         </div>
       </div>
+      {% endif %}
       {% if client_observed.all_traffic %}
       {% set all_traffic_24h = client_observed.all_traffic.windows["24h"] %}
       <div class="component-row" data-calibration-view>
@@ -146,6 +154,8 @@
     </div>
     {% endif %}
   </section>
+  {% endif %}
+  {% endif %}
 
   {% if snapshot.headline_metrics.latency_anatomy %}
   <section class="status-section">
