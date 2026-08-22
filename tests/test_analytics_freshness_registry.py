@@ -56,6 +56,19 @@ WORKFLOW = ROOT / ".github/workflows/check-analytics-freshness.yml"
 
 NOW = dt.datetime(2026, 8, 17, 12, 0, tzinfo=dt.UTC)
 
+# A cloud that declares it runs no outbox, for the tests that exercise that
+# path. Synthetic rather than whichever real cloud currently has
+# expects_outbox=False: Azure was that cloud until 2026-08-22, and pinning
+# these tests to it meant the guard stopped being exercised the moment Azure
+# grew a pipeline -- the one moment it mattered most.
+_OUTBOX_FREE_ENDPOINT = FleetAnalyticsEndpoint(
+    cloud="synthetic",
+    status_url="https://synthetic.example.invalid/status.json",
+    expected_backend=BACKEND_POSTGRES,
+    expects_outbox=False,
+    note="Test-only: exercises the outbox-free path independently of the real fleet.",
+)
+
 #: Which clouds the parametrised fleet tests run over, DERIVED from the
 #: registry and split by property rather than by name. A hardcoded
 #: ["aws", "gcp"] would give a fourth registry entry strictly less coverage
@@ -566,27 +579,39 @@ def test_a_cloud_declared_outbox_free_is_unchecked_rather_than_failing() -> None
     cry-wolf shape the repo already fixed once, in the client-telemetry
     freshness check's `CANARY_COUNT_GATE_FROM` ramp-up guard.
     """
-    result = evaluate_fleet(_as_declared(), now=NOW)
+    result = evaluate_fleet(
+        {"synthetic": {ANALYTICS_STATUS_KEY: analytics_status_unavailable(REASON_NOT_CONFIGURED)}},
+        now=NOW,
+        registry=[_OUTBOX_FREE_ENDPOINT],
+        # Scope the deployed set too, or the registry-completeness check reports
+        # every REAL cloud as missing from this one-entry test registry.
+        deployed=["synthetic"],
+        minimum_measured=0,
+    )
 
     assert result.problems == []
-    for cloud in OUTBOX_FREE_CLOUDS:
-        assert any(note.startswith(f"{cloud}: NOT CHECKED") for note in result.unchecked)
+    assert any(note.startswith("synthetic: NOT CHECKED") for note in result.unchecked)
     assert any("expects_outbox=False" in note for note in result.unchecked)
 
 
-def test_the_azure_entry_is_the_one_declared_outbox_free() -> None:
-    """Read off the deploy script, and pinned so a silent flip is visible.
+def test_every_cloud_now_expects_an_outbox() -> None:
+    """Azure was the one declared outbox-free. It is not any more.
 
-    `scripts/deploy/azure_control_plane.sh` sets no
-    TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED at all, and the setting defaults to
-    False, so PostgresStore builds no outbox there.
+    It carried expects_outbox=False for as long as that was true, and the flip
+    on 2026-08-22 is the whole point of having written it that way rather than
+    retiring the entry behind a bare `reason=`: the assertion was "there is no
+    drain here to be missing", and it stopped describing Azure honestly the
+    moment the plane published a real lag.
+
+    The mechanism that makes an outbox-free entry safe is still tested, on a
+    SYNTHETIC endpoint -- deliberately not on whichever real cloud happens to be
+    in that state, because that made the guard evaporate exactly when the last
+    such cloud grew a pipeline.
     """
-    azure = fleet_endpoint("azure")
-    assert azure is not None and azure.expects_outbox is False
-
-    for cloud in ("aws", "gcp"):
+    for cloud in ("aws", "azure", "gcp"):
         entry = fleet_endpoint(cloud)
-        assert entry is not None and entry.expects_outbox is True
+        assert entry is not None, cloud
+        assert entry.expects_outbox is True, cloud
 
 
 def test_a_cloud_declared_outbox_free_that_grows_one_FAILS() -> None:
@@ -596,23 +621,39 @@ def test_a_cloud_declared_outbox_free_that_grows_one_FAILS() -> None:
     the day it gets a pipeline -- which would then be unwatched for exactly the
     reason AWS-EU's was.
     """
-    payloads = _all_healthy()
+    result = evaluate_fleet(
+        {"synthetic": _healthy("synthetic")},
+        now=NOW,
+        registry=[_OUTBOX_FREE_ENDPOINT],
+        # Scope the deployed set too, or the registry-completeness check reports
+        # every REAL cloud as missing from this one-entry test registry.
+        deployed=["synthetic"],
+        minimum_measured=0,
+    )
 
-    result = evaluate_fleet(payloads, now=NOW)
-
-    assert [problem for problem in result.problems if problem.startswith("azure:")]
+    assert [problem for problem in result.problems if problem.startswith("synthetic:")]
     assert any("expects_outbox=True" in problem for problem in result.problems)
 
 
-@pytest.mark.parametrize("cloud", OUTBOX_FREE_CLOUDS)
-def test_a_cloud_declared_outbox_free_still_fails_when_its_database_is_broken(cloud: str) -> None:
-    """`expects_outbox=False` excuses `not_configured`, and nothing else."""
-    payloads = _as_declared()
-    payloads[cloud] = {ANALYTICS_STATUS_KEY: analytics_status_unavailable(REASON_UNREACHABLE)}
+def test_a_cloud_declared_outbox_free_still_fails_when_its_database_is_broken() -> None:
+    """`expects_outbox=False` excuses `not_configured`, and nothing else.
 
-    result = evaluate_fleet(payloads, now=NOW)
+    Not parametrized over OUTBOX_FREE_CLOUDS any more: that list is empty now
+    that Azure has a pipeline, and an empty parameter set does not run zero
+    assertions quietly -- it is a collection ERROR. Either way the coverage
+    would be gone at exactly the moment the fleet had no live example left.
+    """
+    result = evaluate_fleet(
+        {"synthetic": {ANALYTICS_STATUS_KEY: analytics_status_unavailable(REASON_UNREACHABLE)}},
+        now=NOW,
+        registry=[_OUTBOX_FREE_ENDPOINT],
+        # Scope the deployed set too, or the registry-completeness check reports
+        # every REAL cloud as missing from this one-entry test registry.
+        deployed=["synthetic"],
+        minimum_measured=0,
+    )
 
-    assert [problem for problem in result.problems if problem.startswith(f"{cloud}:")]
+    assert [problem for problem in result.problems if problem.startswith("synthetic:")]
 
 
 def test_unavailable_explanations_differ_per_reason() -> None:
