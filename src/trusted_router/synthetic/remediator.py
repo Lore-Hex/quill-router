@@ -50,10 +50,11 @@ remediator's own liveness.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from trusted_router.config import Settings
@@ -80,12 +81,23 @@ class Decision:
 
 
 @dataclass(frozen=True)
+class DetectionResult:
+    decisions: tuple[Decision, ...]
+    authoritative: bool
+
+
+Detector = Callable[[Settings], DetectionResult]
+_ActiveKey = tuple[Detector, str]
+
+
+@dataclass(frozen=True)
 class _ActiveCondition:
     first_seen_at: float
-    detector: Callable[[Settings], list[Decision]]
+    pending_resolution: SyntheticProbeSample | None = None
 
 
-_ACTIVE_CONDITIONS: dict[str, _ActiveCondition] = {}
+_ACTIVE_CONDITIONS: dict[_ActiveKey, _ActiveCondition] = {}
+_ACTIVE_LOCK = threading.Lock()
 
 
 def _record_decision(decision: Decision, *, settings: Settings) -> None:
@@ -120,33 +132,44 @@ def _record_decision(decision: Decision, *, settings: Settings) -> None:
 
 
 def _record_resolution(
+    sample: SyntheticProbeSample,
+) -> bool:
+    try:
+        from trusted_router.storage import STORE
+
+        STORE.record_synthetic_probe_sample(sample)
+    except Exception:  # noqa: BLE001 - recording must never break the loop
+        logger.exception("remediator resolution record failed for %s", sample.target)
+        return False
+    return True
+
+
+def _resolution_sample(
     mark_key: str,
     *,
     first_seen_at: float,
     settings: Settings,
-) -> None:
+) -> SyntheticProbeSample:
     now = time.time()
-    bucket = int(now // DECISION_BUCKET_SECONDS)
     present_seconds = int(max(now - first_seen_at, 0))
-    try:
-        from trusted_router.storage import STORE
+    # The same onset always produces the same id. If a backend commits and then
+    # reports failure, retrying cannot create a second logical resolution row.
+    resolution_id = uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        f"trusted-router:remediation:{mark_key}:{first_seen_at.hex()}",
+    )
+    return SyntheticProbeSample(
+        id=f"syn_rem_res_{resolution_id.hex}",
+        probe_type=REMEDIATION_PROBE,
+        target=mark_key,
+        target_url="",
+        monitor_region=settings.synthetic_monitor_region or settings.primary_region,
+        status="up",  # condition cleared
+        error_type=f"condition cleared after {present_seconds}s",
+    )
 
-        STORE.record_synthetic_probe_sample(
-            SyntheticProbeSample(
-                id=f"syn_rem_{uuid.uuid4().hex[:12]}_{bucket}",
-                probe_type=REMEDIATION_PROBE,
-                target=mark_key,
-                target_url="",
-                monitor_region=settings.synthetic_monitor_region or settings.primary_region,
-                status="up",  # condition cleared
-                error_type=f"condition cleared after {present_seconds}s",
-            )
-        )
-    except Exception:  # noqa: BLE001 - recording must never break the loop
-        logger.exception("remediator resolution record failed for %s", mark_key)
 
-
-def _detect_stale_heartbeats(settings: Settings) -> list[Decision]:
+def _detect_stale_heartbeats(settings: Settings) -> DetectionResult:
     from trusted_router.synthetic.fleet import _heartbeat_rows
 
     decisions = []
@@ -164,10 +187,10 @@ def _detect_stale_heartbeats(settings: Settings) -> list[Decision]:
                     page=True,
                 )
             )
-    return decisions
+    return DetectionResult(tuple(decisions), authoritative=True)
 
 
-def _detect_route_quarantine(settings: Settings) -> list[Decision]:
+def _detect_route_quarantine(settings: Settings) -> DetectionResult:
     from trusted_router.storage import STORE
     from trusted_router.synthetic.route_health import evaluate_route_health
 
@@ -189,10 +212,10 @@ def _detect_route_quarantine(settings: Settings) -> list[Decision]:
                 page=False,
             )
         )
-    return decisions
+    return DetectionResult(tuple(decisions), authoritative=True)
 
 
-def _detect_monitor_stale(settings: Settings) -> list[Decision]:
+def _detect_monitor_stale(settings: Settings) -> DetectionResult:
     import datetime as dt
 
     from trusted_router.storage import STORE
@@ -203,30 +226,40 @@ def _detect_monitor_stale(settings: Settings) -> list[Decision]:
     samples = STORE.synthetic_probe_samples(limit=50)
     probe_samples = [s for s in samples if s.probe_type not in OPS_PROBE_TYPES]
     if not probe_samples:
-        return []  # nothing ever recorded: provisioning, not an outage
+        # The store API can select one exact probe type but cannot exclude all
+        # ops types. An empty filtered window can therefore mean provisioning
+        # OR that fresh ops rows crowded a dead probe fleet out of the read.
+        return DetectionResult((), authoritative=False)
     newest = max(probe_samples, key=lambda s: s.created_at)
     try:
         created = dt.datetime.fromisoformat(newest.created_at.replace("Z", "+00:00"))
     except ValueError:
-        return []
+        return DetectionResult((), authoritative=False)
     age = (utcnow() - created).total_seconds()
     if age <= CURRENT_SAMPLE_TTL_SECONDS:
-        return []
-    return [
-        Decision(
-            playbook="monitor-stale",
-            subject="probe-fleet",
-            detail=(
-                f"newest real probe sample is {int(age)}s old "
-                f"(freshness contract {CURRENT_SAMPLE_TTL_SECONDS}s); this "
-                "deployment is serving blind"
+        return DetectionResult((), authoritative=True)
+    return DetectionResult(
+        (
+            Decision(
+                playbook="monitor-stale",
+                subject="probe-fleet",
+                detail=(
+                    f"newest real probe sample is {int(age)}s old "
+                    f"(freshness contract {CURRENT_SAMPLE_TTL_SECONDS}s); this "
+                    "deployment is serving blind"
+                ),
+                page=True,
             ),
-            page=True,
-        )
-    ]
+        ),
+        authoritative=True,
+    )
 
 
-DETECTORS = (
+# This is deliberately a module constant. Detectors are not added, removed, or
+# replaced while a process is running, so an active key cannot be orphaned by a
+# live registry mutation. Including the detector in each active-map key keeps
+# two detectors that emit the same durable target from overwriting each other.
+DETECTORS: tuple[Detector, ...] = (
     _detect_stale_heartbeats,
     _detect_route_quarantine,
     _detect_monitor_stale,
@@ -239,34 +272,59 @@ def run_remediator_pass(settings: Settings) -> list[Decision]:
     all_decisions: list[Decision] = []
     for detector in DETECTORS:
         try:
-            decisions = detector(settings)
+            result = detector(settings)
         except Exception:  # noqa: BLE001 - one broken detector must not kill the rest
             logger.exception("remediator detector %s failed", detector.__name__)
             continue
+        decisions = result.decisions
         present_keys = {f"{decision.playbook}:{decision.subject}" for decision in decisions}
+        with _ACTIVE_LOCK:
+            for mark_key in present_keys:
+                active_key = (detector, mark_key)
+                if active_key not in _ACTIVE_CONDITIONS:
+                    _ACTIVE_CONDITIONS[active_key] = _ActiveCondition(
+                        first_seen_at=time.time(),
+                    )
+            resolved: list[tuple[_ActiveKey, _ActiveCondition]] = []
+            if result.authoritative:
+                owned_clears = [
+                    (active_key, active)
+                    for active_key, active in _ACTIVE_CONDITIONS.items()
+                    if active_key[0] is detector and active_key[1] not in present_keys
+                ]
+                for active_key, active in owned_clears:
+                    _ACTIVE_CONDITIONS.pop(active_key)
+                    mark_key = active_key[1]
+                    if any(key[1] == mark_key for key in _ACTIVE_CONDITIONS):
+                        continue
+                    if active.pending_resolution is None:
+                        active = replace(
+                            active,
+                            pending_resolution=_resolution_sample(
+                                mark_key,
+                                first_seen_at=active.first_seen_at,
+                                settings=settings,
+                            ),
+                        )
+                    resolved.append((active_key, active))
+
         for decision in decisions:
-            mark_key = f"{decision.playbook}:{decision.subject}"
-            if mark_key not in _ACTIVE_CONDITIONS:
-                _ACTIVE_CONDITIONS[mark_key] = _ActiveCondition(
-                    first_seen_at=time.time(),
-                    detector=detector,
-                )
             _record_decision(decision, settings=settings)
-        resolved = [
-            (mark_key, active)
-            for mark_key, active in _ACTIVE_CONDITIONS.items()
-            if active.detector is detector and mark_key not in present_keys
-        ]
-        for mark_key, active in resolved:
-            _record_resolution(
-                mark_key,
-                first_seen_at=active.first_seen_at,
-                settings=settings,
-            )
-            # Forget even when storage fails: recording remains best-effort,
-            # and one clear observation must produce at most one attempt.
-            _ACTIVE_CONDITIONS.pop(mark_key, None)
-            _DECISION_MARKS.pop(mark_key, None)
+        for active_key, active in resolved:
+            resolution = active.pending_resolution
+            assert resolution is not None
+            if _record_resolution(resolution):
+                with _ACTIVE_LOCK:
+                    if not any(
+                        key[1] == active_key[1] for key in _ACTIVE_CONDITIONS
+                    ):
+                        _DECISION_MARKS.pop(active_key[1], None)
+            else:
+                # The pop happens before slow storage I/O so overlapping passes
+                # cannot both write. Restore failed work for the next pass;
+                # setdefault preserves a newer recurrence observed meanwhile.
+                with _ACTIVE_LOCK:
+                    _ACTIVE_CONDITIONS.setdefault(active_key, active)
         all_decisions.extend(decisions)
     return all_decisions
 
@@ -288,5 +346,6 @@ def recent_decisions(limit: int = 20) -> list[dict[str, Any]]:
 
 
 def reset_for_tests() -> None:
-    _DECISION_MARKS.clear()
-    _ACTIVE_CONDITIONS.clear()
+    with _ACTIVE_LOCK:
+        _DECISION_MARKS.clear()
+        _ACTIVE_CONDITIONS.clear()

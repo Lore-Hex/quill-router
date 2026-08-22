@@ -8,6 +8,7 @@ detector loses its own signal, never the pass.
 from __future__ import annotations
 
 import datetime as dt
+import threading
 
 import pytest
 
@@ -17,6 +18,7 @@ from trusted_router.storage_models import SyntheticProbeSample, utcnow
 from trusted_router.synthetic import fleet, remediator
 from trusted_router.synthetic.remediator import (
     Decision,
+    DetectionResult,
     recent_decisions,
     run_remediator_pass,
 )
@@ -121,6 +123,46 @@ def test_monitor_stale_pages_when_probe_fleet_dies(sentry_events: list[str]) -> 
     assert any("monitor-stale" in e for e in sentry_events)
 
 
+def test_ops_rows_crowding_probe_window_do_not_resolve_dead_fleet(
+    sentry_events: list[str],
+) -> None:
+    target = "monitor-stale:probe-fleet"
+    _record(
+        SyntheticProbeSample(
+            id="syn_tls_old_crowded_rem",
+            probe_type="tls_health",
+            target="canonical",
+            target_url="https://api.trustedrouter.com/v1",
+            monitor_region="test-1",
+            status="up",
+            created_at=_old_iso(30),
+        )
+    )
+    run_remediator_pass(_settings())
+    assert [sample.status for sample in _remediation_samples(target)] == ["down"]
+
+    # The store cannot express probe_type NOT IN OPS_PROBE_TYPES. Fill its
+    # newest-50 mixed window with fresh operational rows while the only real
+    # probe remains stale and outside the window.
+    for index in range(50):
+        _record(
+            SyntheticProbeSample(
+                id=f"syn_ops_crowd_{index}",
+                probe_type="heartbeat",
+                target=f"scheduler:crowd-{index}",
+                target_url="",
+                monitor_region="test-1",
+                status="up",
+            )
+        )
+
+    assert not any(
+        decision.playbook == "monitor-stale"
+        for decision in run_remediator_pass(_settings())
+    )
+    assert [sample.status for sample in _remediation_samples(target)] == ["down"]
+
+
 def test_fresh_probes_produce_no_monitor_decision(sentry_events: list[str]) -> None:
     _record(
         SyntheticProbeSample(
@@ -163,8 +205,8 @@ def test_persistent_condition_records_bucketed_onsets_without_resolution(
 ) -> None:
     decision = Decision("test-playbook", "persistent", "still present", page=False)
 
-    def detector(settings: Settings) -> list[Decision]:
-        return [decision]
+    def detector(settings: Settings) -> DetectionResult:
+        return DetectionResult((decision,), authoritative=True)
 
     now = [100.0]
     monkeypatch.setattr(remediator, "DETECTORS", (detector,))
@@ -187,8 +229,8 @@ def test_cleared_condition_records_exactly_one_resolution(
 ) -> None:
     decisions = [Decision("test-playbook", "clears", "present", page=True)]
 
-    def detector(settings: Settings) -> list[Decision]:
-        return decisions
+    def detector(settings: Settings) -> DetectionResult:
+        return DetectionResult(tuple(decisions), authoritative=True)
 
     now = [100.0]
     monkeypatch.setattr(remediator, "DETECTORS", (detector,))
@@ -213,8 +255,8 @@ def test_recurrence_after_resolution_records_fresh_onset_in_same_bucket(
     decision = Decision("test-playbook", "recurs", "present again", page=False)
     decisions = [decision]
 
-    def detector(settings: Settings) -> list[Decision]:
-        return decisions
+    def detector(settings: Settings) -> DetectionResult:
+        return DetectionResult(tuple(decisions), authoritative=True)
 
     now = [100.0]
     monkeypatch.setattr(remediator, "DETECTORS", (detector,))
@@ -235,8 +277,8 @@ def test_recurrence_after_resolution_records_fresh_onset_in_same_bucket(
 def test_fresh_process_does_not_resolve_absent_condition(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def detector(settings: Settings) -> list[Decision]:
-        return []
+    def detector(settings: Settings) -> DetectionResult:
+        return DetectionResult((), authoritative=True)
 
     monkeypatch.setattr(remediator, "DETECTORS", (detector,))
     _record(
@@ -257,17 +299,149 @@ def test_fresh_process_does_not_resolve_absent_condition(
     ]
 
 
-def test_resolution_recording_failure_does_not_break_pass(
+def test_inconclusive_detector_does_not_resolve_active_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision = Decision("test-playbook", "unknown", "present", page=False)
+    result = [DetectionResult((decision,), authoritative=True)]
+
+    def detector(settings: Settings) -> DetectionResult:
+        return result[0]
+
+    monkeypatch.setattr(remediator, "DETECTORS", (detector,))
+    run_remediator_pass(_settings())
+
+    result[0] = DetectionResult((), authoritative=False)
+    run_remediator_pass(_settings())
+    assert [sample.status for sample in _remediation_samples("test-playbook:unknown")] == [
+        "down"
+    ]
+
+    result[0] = DetectionResult((), authoritative=True)
+    run_remediator_pass(_settings())
+    assert [sample.status for sample in _remediation_samples("test-playbook:unknown")] == [
+        "down",
+        "up",
+    ]
+
+
+def test_detector_exception_does_not_resolve_or_forget_active_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision = Decision("test-playbook", "raises", "present", page=False)
+    mode = ["present"]
+
+    def detector(settings: Settings) -> DetectionResult:
+        if mode[0] == "raises":
+            raise RuntimeError("detector exploded")
+        return DetectionResult(
+            (decision,) if mode[0] == "present" else (),
+            authoritative=True,
+        )
+
+    monkeypatch.setattr(remediator, "DETECTORS", (detector,))
+    run_remediator_pass(_settings())
+
+    mode[0] = "raises"
+    run_remediator_pass(_settings())
+    assert [sample.status for sample in _remediation_samples("test-playbook:raises")] == [
+        "down"
+    ]
+
+    mode[0] = "clear"
+    run_remediator_pass(_settings())
+    assert [sample.status for sample in _remediation_samples("test-playbook:raises")] == [
+        "down",
+        "up",
+    ]
+
+
+def test_detectors_with_same_target_do_not_resolve_while_one_still_reports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision = Decision("test-playbook", "shared", "present", page=False)
+    first_present = [True]
+    second_present = [True]
+
+    def first(settings: Settings) -> DetectionResult:
+        return DetectionResult(
+            (decision,) if first_present[0] else (), authoritative=True
+        )
+
+    def second(settings: Settings) -> DetectionResult:
+        return DetectionResult(
+            (decision,) if second_present[0] else (), authoritative=True
+        )
+
+    monkeypatch.setattr(remediator, "DETECTORS", (first, second))
+    run_remediator_pass(_settings())
+
+    first_present[0] = False
+    run_remediator_pass(_settings())
+    assert [sample.status for sample in _remediation_samples("test-playbook:shared")] == [
+        "down"
+    ]
+
+    second_present[0] = False
+    run_remediator_pass(_settings())
+    assert [sample.status for sample in _remediation_samples("test-playbook:shared")] == [
+        "down",
+        "up",
+    ]
+
+
+def test_overlapping_passes_record_exactly_one_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision = Decision("test-playbook", "overlap", "present", page=False)
+    present = [True]
+    clear_barrier: list[threading.Barrier] = []
+
+    def detector(settings: Settings) -> DetectionResult:
+        if clear_barrier:
+            clear_barrier[0].wait(timeout=5)
+        return DetectionResult((decision,) if present[0] else (), authoritative=True)
+
+    monkeypatch.setattr(remediator, "DETECTORS", (detector,))
+    run_remediator_pass(_settings())
+
+    present[0] = False
+    clear_barrier.append(threading.Barrier(2))
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            run_remediator_pass(_settings())
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert not any(thread.is_alive() for thread in threads)
+    assert errors == []
+    assert [sample.status for sample in _remediation_samples("test-playbook:overlap")] == [
+        "down",
+        "up",
+    ]
+
+
+def test_resolution_recording_failure_retries_exactly_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     decision = Decision("test-playbook", "record-fails", "present", page=False)
     decisions = [decision]
 
-    def detector(settings: Settings) -> list[Decision]:
-        return decisions
+    def detector(settings: Settings) -> DetectionResult:
+        return DetectionResult(tuple(decisions), authoritative=True)
 
     original = InMemoryStore.record_synthetic_probe_sample
     attempted_statuses: list[str] = []
+    attempted_resolution_ids: list[str] = []
+    fail_next_resolution = [True]
 
     def fail_resolution(
         self: InMemoryStore,
@@ -275,6 +449,9 @@ def test_resolution_recording_failure_does_not_break_pass(
     ) -> None:
         attempted_statuses.append(sample.status)
         if sample.status == "up":
+            attempted_resolution_ids.append(sample.id)
+        if sample.status == "up" and fail_next_resolution[0]:
+            fail_next_resolution[0] = False
             raise RuntimeError("resolution store unavailable")
         original(self, sample)
 
@@ -285,25 +462,24 @@ def test_resolution_recording_failure_does_not_break_pass(
     decisions.clear()
     assert run_remediator_pass(_settings()) == []
     assert run_remediator_pass(_settings()) == []
-
-    decisions.append(decision)
-    run_remediator_pass(_settings())
-    assert attempted_statuses == ["down", "up", "down"]
+    assert attempted_statuses == ["down", "up", "up"]
+    assert len(attempted_resolution_ids) == 2
+    assert len(set(attempted_resolution_ids)) == 1
     assert [sample.status for sample in _remediation_samples("test-playbook:record-fails")] == [
         "down",
-        "down",
+        "up",
     ]
 
 
 def test_broken_detector_never_kills_the_pass(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
 
-    def broken(settings: Settings) -> list[Decision]:
+    def broken(settings: Settings) -> DetectionResult:
         raise RuntimeError("detector exploded")
 
-    def healthy(settings: Settings) -> list[Decision]:
+    def healthy(settings: Settings) -> DetectionResult:
         calls.append("healthy")
-        return []
+        return DetectionResult((), authoritative=True)
 
     monkeypatch.setattr(remediator, "DETECTORS", (broken, healthy))
     assert run_remediator_pass(_settings()) == []
