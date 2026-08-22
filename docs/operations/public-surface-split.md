@@ -143,12 +143,16 @@ bash scripts/deploy/public_surface.sh routed
 bash scripts/deploy/public_surface_edge.sh prepare
 ```
 
-`routed` uses `ingress=internal-and-cloud-load-balancing` and only then enables
-`TR_RATE_LIMIT_CLIENT_IP_MODE=edge_header`. The edge backend overwrites
+`routed` deploys each candidate with no traffic while that region still has
+direct ingress, smokes the revision-tagged regional URL, promotes it, and then
+sets the service to `ingress=internal-and-cloud-load-balancing` before starting
+the next region. The direct-access window is bounded to that regional sequence;
+the tagged candidate receives no user traffic before its smoke passes. Routed
+revisions enable `TR_RATE_LIMIT_CLIENT_IP_MODE=edge_header`. The edge backend overwrites
 `X-TrustedRouter-Client-IP` with `{client_ip_address}`, enables CDN, and samples
 10% of request logs.
 
-Choose a durable local state directory for the byte-for-byte pre-cutover map.
+Choose a durable local state directory for the importable pre-cutover map.
 Cutover validates the rendered candidate, prints the paths that move, atomically
 captures the old map bytes with their digest, source fingerprint, and timestamp,
 then imports the candidate. Actions, control, internal, and `/v1/*` aliases all
@@ -215,8 +219,8 @@ site. The public service can remain deployed as an unrouted companion.
   existing synthetic consumers. Public/console isolation is therefore at the
   production routing layer until that direct legacy origin is closed in a
   separate migration.
-- **Known gap:** after cutover, T1 deploys run a plain regional `gcloud run
-  deploy` without `--no-traffic`, a canary, or automatic rollback. The routed
-  smoke checks the global hostname once, so it can miss a bad revision in one
-  region.
+- Routed T1 deploys use `--no-traffic`, smoke each revision-tagged regional
+  origin before promotion, restore the recorded old revision on a failed smoke
+  or interrupted promotion, and restrict that region's ingress before moving
+  to the next region.
 - T5 inference and every `api.*`/`chat.*` load balancer remain untouched.

@@ -147,17 +147,34 @@ def _run_staged_probe(
     console_code: str,
     session_code: str,
     resolved_tag_revision: str = "new-rev",
+    remove_failures: int = 0,
+    remove_always_fails: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     stub_bin = tmp_path / "bin"
     stub_bin.mkdir()
     call_log = tmp_path / "calls.log"
     call_log.write_text("")
+    tag_state = tmp_path / "tag-state"
+    tag_state.write_text("")
+    remove_failures_state = tmp_path / "remove-failures"
+    remove_failures_state.write_text(f"{remove_failures}\n")
     gcloud = stub_bin / "gcloud"
     gcloud.write_text(
         """#!/usr/bin/env bash
 printf 'gcloud %s\\n' "$*" >>"$STAGED_CALL_LOG"
 case " $* " in
-  *"status.traffic"*) printf '%s\\n' "$STAGED_RESOLVED_TAG_REV" ;;
+  *" --update-tags="*) printf '%s\\n' "$STAGED_RESOLVED_TAG_REV" >"$STAGED_TAG_STATE" ;;
+  *" --remove-tags="*)
+    remaining="$(cat "$STAGED_REMOVE_FAILURES_STATE")"
+    if [ "$STAGED_REMOVE_ALWAYS_FAILS" = "1" ] || [ "$remaining" -gt 0 ]; then
+      if [ "$remaining" -gt 0 ]; then
+        printf '%s\\n' "$((remaining - 1))" >"$STAGED_REMOVE_FAILURES_STATE"
+      fi
+      exit 1
+    fi
+    : >"$STAGED_TAG_STATE"
+    ;;
+  *"status.traffic"*) cat "$STAGED_TAG_STATE" ;;
   *"status.url"*) printf '%s\\n' 'https://trusted-router-hash-uc.a.run.app' ;;
 esac
 """
@@ -193,7 +210,11 @@ printf '%s' "$code"
         "STAGED_CONSOLE_CODE": console_code,
         "STAGED_SESSION_CODE": session_code,
         "STAGED_RESOLVED_TAG_REV": resolved_tag_revision,
+        "STAGED_TAG_STATE": str(tag_state),
+        "STAGED_REMOVE_FAILURES_STATE": str(remove_failures_state),
+        "STAGED_REMOVE_ALWAYS_FAILS": "1" if remove_always_fails else "0",
         "TR_LEGACY_PROBE_RETRY_SECONDS": "0",
+        "TR_PROBE_TAG_REMOVE_RETRY_SECONDS": "0",
     }
     run = subprocess.run(  # noqa: S603 - fixed local script and stubbed PATH
         ["/bin/bash", str(script), "us-central1", "new-rev", "old-rev"],
@@ -268,3 +289,32 @@ def test_staged_probe_reconciles_and_verifies_a_leftover_tag(tmp_path: Path) -> 
     assert any("--remove-tags=staged-probe" in call for call in calls)
     assert not any(call.startswith("curl ") for call in calls)
     assert "probe tag does not resolve to new-rev" in run.stdout
+
+
+def test_staged_probe_tag_cleanup_retries_a_transient_failure(tmp_path: Path) -> None:
+    run, calls = _run_staged_probe(
+        tmp_path,
+        console_code="302",
+        session_code="401",
+        remove_failures=1,
+    )
+
+    assert run.returncode == 0, run.stderr
+    assert sum("--remove-tags=staged-probe" in call for call in calls) == 2
+
+
+def test_staged_probe_tag_cleanup_permanent_failure_is_nonzero(tmp_path: Path) -> None:
+    run, calls = _run_staged_probe(
+        tmp_path,
+        console_code="302",
+        session_code="401",
+        remove_always_fails=True,
+    )
+
+    assert run.returncode != 0
+    assert "probe tag staged-probe may still be addressable" in run.stderr
+    assert (
+        "gcloud run services update-traffic trusted-router --region=us-central1 "
+        "--project=test-project --remove-tags=staged-probe --quiet"
+    ) in run.stderr
+    assert sum("--remove-tags=staged-probe" in call for call in calls) == 6

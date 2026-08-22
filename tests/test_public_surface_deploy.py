@@ -135,7 +135,7 @@ def _settings_kwargs(call: list[str]) -> dict[str, object]:
     ("stage", "ingress", "client_ip_mode"),
     [
         ("companion", "all", "untrusted"),
-        ("routed", "internal-and-cloud-load-balancing", "edge_header"),
+        ("routed", "all", "edge_header"),
     ],
 )
 def test_public_deploy_pins_every_region_and_stage_contract(
@@ -310,6 +310,124 @@ def test_routed_healthy_smoke_promotes_each_region(tmp_path: Path) -> None:
     for call in promotes:
         region = _region_arg(call)
         assert f"--to-revisions=trusted-router-public-candidate-{region}=100" in call
+    assert run.public_ingress_state == {
+        region: "internal-and-cloud-load-balancing" for region in REGIONS
+    }
+
+
+def test_routed_smoke_is_reachable_before_each_region_restricts_ingress(
+    tmp_path: Path,
+) -> None:
+    isolated = DeployScriptHarness(tmp_path / "ingress-aware-routed-public")
+
+    run = isolated.run(SCRIPT, args=("routed",))
+
+    assert run.returncode == 0, summarise(run)
+    for region in REGIONS:
+        deploy_index = next(
+            index
+            for index, call in enumerate(run.calls)
+            if call[0] == "gcloud"
+            and "deploy" in call
+            and _region_arg(call) == region
+        )
+        curl_indexes = [
+            index
+            for index, call in enumerate(run.calls)
+            if call[0] == "curl" and region in call[-1]
+        ]
+        restrict_index = next(
+            index
+            for index, call in enumerate(run.calls)
+            if call[0] == "gcloud"
+            and "update" in call
+            and "trusted-router-public" in call
+            and _region_arg(call) == region
+            and "internal-and-cloud-load-balancing" in call
+        )
+        assert curl_indexes
+        assert deploy_index < min(curl_indexes) < max(curl_indexes) < restrict_index
+    assert run.public_ingress_state == {
+        region: "internal-and-cloud-load-balancing" for region in REGIONS
+    }
+
+
+def test_term_during_promotion_reports_and_restores_the_in_flight_region(
+    tmp_path: Path,
+) -> None:
+    isolated = DeployScriptHarness(tmp_path / "interrupted-promotion")
+
+    run = isolated.run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={
+            "HARNESS_PUBLIC_INITIAL_INGRESS": "internal-and-cloud-load-balancing",
+            "HARNESS_PUBLIC_TERM_DURING_PROMOTE_REGION": "us-central1",
+        },
+    )
+
+    assert run.returncode == 143
+    assert "interrupted during promotion" in run.stderr
+    assert "us-central1" in run.stderr
+    assert "trusted-router-public-active" in run.stderr
+    assert "trusted-router-public-candidate-us-central1" in run.stderr
+    assert any(
+        "--to-revisions=trusted-router-public-active=100" in call
+        for call in _traffic_calls(run)
+    )
+    assert run.public_ingress_state["us-central1"] == (
+        "internal-and-cloud-load-balancing"
+    )
+
+
+def test_probe_tag_cleanup_retries_a_transient_failure(tmp_path: Path) -> None:
+    isolated = DeployScriptHarness(tmp_path / "transient-tag-cleanup")
+
+    run = isolated.run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={
+            "HARNESS_PROBE_TAG_REMOVE_FAILURES": "1",
+            "TR_PROBE_TAG_REMOVE_RETRY_SECONDS": "0",
+        },
+    )
+
+    assert run.returncode == 0, summarise(run)
+    remove_calls = [
+        call
+        for call in _traffic_calls(run)
+        if "--remove-tags=public-revision-probe" in call
+    ]
+    assert len(remove_calls) == 5
+
+
+def test_probe_tag_cleanup_permanent_failure_is_loud_and_nonzero(
+    tmp_path: Path,
+) -> None:
+    isolated = DeployScriptHarness(tmp_path / "permanent-tag-cleanup")
+
+    run = isolated.run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={
+            "HARNESS_PROBE_TAG_REMOVE_ALWAYS_FAIL": "1",
+            "TR_PROBE_TAG_REMOVE_RETRY_SECONDS": "0",
+        },
+    )
+
+    assert run.returncode != 0
+    assert "probe tag public-revision-probe may still be addressable" in run.stderr
+    assert (
+        "gcloud run services update-traffic trusted-router-public "
+        "--region=us-central1 --project=quill-cloud-proxy "
+        "--remove-tags=public-revision-probe --quiet"
+    ) in run.stderr
+    remove_calls = [
+        call
+        for call in _traffic_calls(run)
+        if "--remove-tags=public-revision-probe" in call
+    ]
+    assert len(remove_calls) == 6
 
 
 def test_routed_failing_region_does_not_promote_it(tmp_path: Path) -> None:

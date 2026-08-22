@@ -152,7 +152,6 @@ _PATTERNS: dict[Surface, tuple[str, ...]] = {
 _MATCHER_NAME = "trusted-router-service-surfaces"
 _OUTPUT_ONLY_KEYS = {
     "creationTimestamp",
-    "fingerprint",
     "id",
     "kind",
     "selfLink",

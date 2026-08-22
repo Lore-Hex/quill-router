@@ -12,13 +12,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-_OUTPUT_ONLY_KEYS = {
-    "creationTimestamp",
-    "fingerprint",
-    "id",
-    "kind",
-    "selfLink",
-}
+from service_surface_url_map import _strip_output_only
 
 
 def _json_object(raw: bytes, label: str) -> dict[str, Any]:
@@ -31,21 +25,21 @@ def _json_object(raw: bytes, label: str) -> dict[str, Any]:
     return value
 
 
-def _strip_output_only(value: Any) -> Any:
+def _strip_volatile(value: Any) -> Any:
     if isinstance(value, dict):
         return {
-            key: _strip_output_only(item)
+            key: _strip_volatile(item)
             for key, item in value.items()
-            if key not in _OUTPUT_ONLY_KEYS
+            if key != "fingerprint"
         }
     if isinstance(value, list):
-        return [_strip_output_only(item) for item in value]
+        return [_strip_volatile(item) for item in value]
     return value
 
 
 def _content_digest(document: dict[str, Any]) -> str:
     canonical = json.dumps(
-        _strip_output_only(document),
+        _strip_volatile(_strip_output_only(document)),
         separators=(",", ":"),
         sort_keys=True,
     ).encode()
@@ -119,7 +113,7 @@ def _read_map(path: Path, label: str) -> tuple[dict[str, Any], bytes]:
 
 
 def prepare(capture_path: Path, live_path: Path, candidate_path: Path, captured_at: str) -> None:
-    live, live_raw = _read_map(live_path, "live URL map")
+    live, _ = _read_map(live_path, "live URL map")
     candidate, _ = _read_map(candidate_path, "candidate URL map")
     name = live.get("name")
     if not isinstance(name, str) or not name:
@@ -127,6 +121,10 @@ def prepare(capture_path: Path, live_path: Path, candidate_path: Path, captured_
     if candidate.get("name") != name:
         raise ValueError("candidate URL-map name does not match the live map")
     live_fingerprint = _fingerprint(live, "live URL map")
+    importable_live = _strip_output_only(live)
+    live_raw = (
+        json.dumps(importable_live, separators=(",", ":")) + "\n"
+    ).encode()
     live_content_digest = _content_digest(live)
     candidate_content_digest = _content_digest(candidate)
 
@@ -230,6 +228,14 @@ def extract(capture_path: Path, output_path: Path) -> None:
     capture, source = _load_capture(capture_path)
     if capture.get("phase") not in {"armed", "ready", "restored"}:
         raise ValueError("rollback capture is not armed")
+    # Normalize again so captures produced by the blocked describe-based
+    # implementation remain recoverable after this fix is deployed.
+    importable_source = _strip_output_only(
+        _json_object(source, "captured URL map")
+    )
+    source = (
+        json.dumps(importable_source, separators=(",", ":")) + "\n"
+    ).encode()
     descriptor, temporary_name = tempfile.mkstemp(
         dir=output_path.parent,
         prefix=f".{output_path.name}.",

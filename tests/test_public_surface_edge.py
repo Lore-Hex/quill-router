@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -14,7 +15,7 @@ from .deploy_script_harness import (
 )
 
 SCRIPT = "scripts/deploy/public_surface_edge.sh"
-LIVE_MAP_BYTES = (
+IMPORTABLE_LIVE_MAP_BYTES = (
     json.dumps(
         {
             "name": "trusted-router-control-map",
@@ -140,7 +141,9 @@ def test_cutover_refuses_companion_ingress_before_url_map_mutation(
     assert not any("url-maps" in call and "import" in call for call in run.calls)
 
 
-def test_cutover_then_rollback_imports_captured_map_byte_for_byte(tmp_path: Path) -> None:
+def test_cutover_then_rollback_imports_captured_importable_map_byte_for_byte(
+    tmp_path: Path,
+) -> None:
     harness = DeployScriptHarness(tmp_path / "edge-rollback")
     state_dir = tmp_path / "durable-state"
     edge_env = {
@@ -151,7 +154,7 @@ def test_cutover_then_rollback_imports_captured_map_byte_for_byte(tmp_path: Path
     cutover = harness.run(SCRIPT, args=("cutover",), extra_env=edge_env)
     assert cutover.returncode == 0, summarise(cutover)
     captured = _capture_path(state_dir)
-    assert _captured_source(captured) == LIVE_MAP_BYTES
+    assert _captured_source(captured) == IMPORTABLE_LIVE_MAP_BYTES
     capture_manifest = json.loads(captured.read_text())
     assert capture_manifest["captured_at"] == "2026-08-22T12:34:56Z"
     assert capture_manifest["source_fingerprint"] == "source-fingerprint"
@@ -173,7 +176,59 @@ def test_cutover_then_rollback_imports_captured_map_byte_for_byte(tmp_path: Path
         if item.startswith("--source=")
     )
     assert Path(rollback_source).name == "trusted-router-control-map.rollback-source.json"
-    assert Path(rollback_source).read_bytes() == LIVE_MAP_BYTES
+    assert Path(rollback_source).read_bytes() == IMPORTABLE_LIVE_MAP_BYTES
+
+
+def test_captured_map_passes_the_real_import_schema_contract(tmp_path: Path) -> None:
+    harness = DeployScriptHarness(tmp_path / "importable-capture")
+    state_dir = tmp_path / "durable-state"
+    edge_env = {"TR_PUBLIC_EDGE_STATE_DIR": str(state_dir)}
+
+    cutover = harness.run(SCRIPT, args=("cutover",), extra_env=edge_env)
+
+    assert cutover.returncode == 0, summarise(cutover)
+    captured_source = json.loads(_captured_source(_capture_path(state_dir)))
+    assert set(captured_source) == {"defaultService", "fingerprint", "name"}
+    assert any(
+        "url-maps" in call
+        and "validate" in call
+        and any("rollback-validation.json" in item for item in call)
+        for call in cutover.calls
+    )
+    rollback = harness.run(SCRIPT, args=("rollback",), extra_env=edge_env)
+    assert rollback.returncode == 0, summarise(rollback)
+    assert any(
+        "url-maps" in call and "validate" in call for call in rollback.calls
+    )
+
+
+def test_extract_normalizes_a_capture_from_the_blocked_describe_implementation(
+    tmp_path: Path,
+) -> None:
+    harness = DeployScriptHarness(tmp_path / "legacy-describe-capture")
+    state_dir = tmp_path / "durable-state"
+    edge_env = {"TR_PUBLIC_EDGE_STATE_DIR": str(state_dir)}
+    cutover = harness.run(SCRIPT, args=("cutover",), extra_env=edge_env)
+    assert cutover.returncode == 0, summarise(cutover)
+
+    capture_path = _capture_path(state_dir)
+    capture = json.loads(capture_path.read_text())
+    legacy_source = json.loads(_captured_source(capture_path))
+    legacy_source.update(
+        {
+            "creationTimestamp": "2026-08-22T12:00:00.000-07:00",
+            "id": "1234567890123456789",
+            "kind": "compute#urlMap",
+            "selfLink": "https://example.invalid/output-only",
+        }
+    )
+    legacy_bytes = (json.dumps(legacy_source, separators=(",", ":")) + "\n").encode()
+    capture["source_json_base64"] = base64.b64encode(legacy_bytes).decode("ascii")
+    capture["source_sha256"] = hashlib.sha256(legacy_bytes).hexdigest()
+    capture_path.write_text(json.dumps(capture))
+
+    rollback = harness.run(SCRIPT, args=("rollback",), extra_env=edge_env)
+    assert rollback.returncode == 0, summarise(rollback)
 
 
 def test_cutover_recaptures_after_interrupted_capture_missing_digest(
@@ -201,7 +256,7 @@ def test_cutover_recaptures_after_interrupted_capture_missing_digest(
         for item in rollback_import
         if item.startswith("--source=")
     )
-    assert Path(rollback_source).read_bytes() == LIVE_MAP_BYTES
+    assert Path(rollback_source).read_bytes() == IMPORTABLE_LIVE_MAP_BYTES
 
 
 def test_corrupted_capture_digest_refuses_rollback(tmp_path: Path) -> None:
@@ -248,7 +303,7 @@ def test_stale_capture_refuses_to_clobber_a_changed_live_map(tmp_path: Path) -> 
     recutover = harness.run(SCRIPT, args=("cutover",), extra_env=edge_env)
     assert recutover.returncode != 0
     assert "existing armed rollback capture" in recutover.stderr
-    assert _captured_source(_capture_path(state_dir)) == LIVE_MAP_BYTES
+    assert _captured_source(_capture_path(state_dir)) == IMPORTABLE_LIVE_MAP_BYTES
 
 
 def test_import_transport_failure_after_apply_leaves_rollback_armed(
@@ -266,7 +321,7 @@ def test_import_transport_failure_after_apply_leaves_rollback_armed(
     assert "status is unknown; rollback remains armed" in cutover.stderr
     capture = json.loads(_capture_path(state_dir).read_text())
     assert capture["phase"] == "armed"
-    assert _captured_source(_capture_path(state_dir)) == LIVE_MAP_BYTES
+    assert _captured_source(_capture_path(state_dir)) == IMPORTABLE_LIVE_MAP_BYTES
 
     rollback = harness.run(
         SCRIPT,
@@ -317,7 +372,7 @@ def test_kill_after_import_keeps_the_pre_cutover_capture_rollbackable(
 
     cutover = harness.run(SCRIPT, args=("cutover",), extra_env=edge_env)
     assert cutover.returncode != 0
-    assert _captured_source(_capture_path(state_dir)) == LIVE_MAP_BYTES
+    assert _captured_source(_capture_path(state_dir)) == IMPORTABLE_LIVE_MAP_BYTES
 
     rollback = harness.run(
         SCRIPT,
@@ -337,7 +392,7 @@ def test_describe_failure_after_import_keeps_capture_rollbackable(tmp_path: Path
 
     cutover = harness.run(SCRIPT, args=("cutover",), extra_env=edge_env)
     assert cutover.returncode != 0
-    assert _captured_source(_capture_path(state_dir)) == LIVE_MAP_BYTES
+    assert _captured_source(_capture_path(state_dir)) == IMPORTABLE_LIVE_MAP_BYTES
 
     rollback = harness.run(
         SCRIPT,

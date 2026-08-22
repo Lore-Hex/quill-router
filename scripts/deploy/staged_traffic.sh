@@ -47,12 +47,14 @@ configure_probe_tag() {
 
 cleanup_probe_tag() {
   [ "$LEGACY_PROBE_TAG_CLEANUP_REQUIRED" -eq 1 ] || return 0
-  if ! cloud_run_probe_tag_remove \
+  if cloud_run_probe_tag_remove \
       "$SERVICE" "$REGION" "$PROJECT_ID" "$LEGACY_PROBE_TAG"; then
-    log "warning: could not remove revision probe tag ${LEGACY_PROBE_TAG}"
+    LEGACY_PROBE_TAG_READY=0
+    LEGACY_PROBE_TAG_CLEANUP_REQUIRED=0
+    return 0
   fi
-  LEGACY_PROBE_TAG_READY=0
-  LEGACY_PROBE_TAG_CLEANUP_REQUIRED=0
+  log "CRITICAL: revision probe tag ${LEGACY_PROBE_TAG} cleanup remains required"
+  return 1
 }
 
 trap cleanup_probe_tag EXIT
@@ -197,5 +199,7 @@ watch_or_rollback 50
 # Final cut over
 shift_traffic 100
 probe_legacy_surface_or_rollback 100
-cleanup_probe_tag
+if ! cleanup_probe_tag; then
+  exit 1
+fi
 log "${REGION} traffic fully on ${NEW_REV}"

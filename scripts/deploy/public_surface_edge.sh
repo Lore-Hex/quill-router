@@ -241,6 +241,7 @@ cutover() {
   local live_map="${STATE_DIR}/${URL_MAP}.live.json"
   local candidate="${STATE_DIR}/${URL_MAP}.public-candidate.json"
   local post_import_map="${STATE_DIR}/${URL_MAP}.post-import.json"
+  local rollback_validation="${STATE_DIR}/${URL_MAP}.rollback-validation.json"
   gc compute url-maps describe "$URL_MAP" --global --format=json >"$live_map"
 
   local public_link
@@ -272,6 +273,17 @@ cutover() {
   else
     log "atomically armed one-command rollback state at ${ROLLBACK_CAPTURE} before import"
   fi
+  python3 "${SCRIPT_DIR}/url_map_capture.py" extract \
+    --capture "$ROLLBACK_CAPTURE" \
+    --output "$rollback_validation"
+  if ! gc compute url-maps validate \
+      --source="$rollback_validation" \
+      --global >/dev/null; then
+    rm -f "$rollback_validation"
+    echo "ERROR: captured rollback URL map is not importable; refusing cutover" >&2
+    return 1
+  fi
+  rm -f "$rollback_validation"
 
   echo "Paths moving from ${LEGACY_BACKEND} to ${PUBLIC_BACKEND}:"
   python3 - "${SCRIPT_DIR}/service_surface_url_map.py" <<'PY'

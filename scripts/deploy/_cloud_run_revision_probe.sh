@@ -29,11 +29,43 @@ cloud_run_probe_tag_remove() {
   local region="$2"
   local project="$3"
   local tag="$4"
-  gcloud run services update-traffic "$service" \
-    --region="$region" \
-    --project="$project" \
-    --remove-tags="$tag" \
-    --quiet
+  local attempts="${TR_PROBE_TAG_REMOVE_ATTEMPTS:-3}"
+  local retry_seconds="${TR_PROBE_TAG_REMOVE_RETRY_SECONDS:-2}"
+  local attempt=1
+  local resolved
+  case "$attempts" in
+    ''|*[!0-9]*|0)
+      echo "ERROR: TR_PROBE_TAG_REMOVE_ATTEMPTS must be a positive integer" >&2
+      return 1
+      ;;
+  esac
+  while [ "$attempt" -le "$attempts" ]; do
+    if gcloud run services update-traffic "$service" \
+        --region="$region" \
+        --project="$project" \
+        --remove-tags="$tag" \
+        --quiet; then
+      if resolved="$(gcloud run services describe "$service" \
+          --region="$region" \
+          --project="$project" \
+          --format="value(status.traffic[?tag='${tag}'].revisionName)")"; then
+        if [ -z "$resolved" ]; then
+          return 0
+        fi
+        echo "WARNING: probe tag ${tag} still resolves to ${resolved} after removal attempt ${attempt}/${attempts}" >&2
+      else
+        echo "WARNING: could not verify probe tag ${tag} removal in ${region} on attempt ${attempt}/${attempts}" >&2
+      fi
+    else
+      echo "WARNING: could not remove probe tag ${tag} in ${region} on attempt ${attempt}/${attempts}" >&2
+    fi
+    if [ "$attempt" -lt "$attempts" ]; then
+      sleep "$retry_seconds"
+    fi
+    attempt=$((attempt + 1))
+  done
+  echo "CRITICAL: probe tag ${tag} may still be addressable. Run exactly: gcloud run services update-traffic ${service} --region=${region} --project=${project} --remove-tags=${tag} --quiet" >&2
+  return 1
 }
 
 cloud_run_probe_tagged_base_url() {

@@ -38,20 +38,97 @@ PUBLIC_PROBE_TAG="public-revision-probe"
 PUBLIC_PROBE_REGION=""
 PUBLIC_PROBE_TAG_CLEANUP_REQUIRED=0
 PROMOTED_REGIONS=()
+PUBLIC_DEPLOY_STATE_DIR="${TR_PUBLIC_DEPLOY_STATE_DIR:-${HOME}/.local/state/trusted-router/public-surface}"
+PROMOTION_MARKER="${PUBLIC_DEPLOY_STATE_DIR}/${PUBLIC_SERVICE}.promotion-in-flight"
 
 cleanup_public_probe_tag() {
   [ "$PUBLIC_PROBE_TAG_CLEANUP_REQUIRED" -eq 1 ] || return 0
-  if ! cloud_run_probe_tag_remove \
+  if cloud_run_probe_tag_remove \
       "$PUBLIC_SERVICE" "$PUBLIC_PROBE_REGION" "$PROJECT_ID" "$PUBLIC_PROBE_TAG"; then
-    log "warning: could not remove ${PUBLIC_PROBE_TAG} in ${PUBLIC_PROBE_REGION}"
+    PUBLIC_PROBE_TAG_CLEANUP_REQUIRED=0
+    PUBLIC_PROBE_REGION=""
+    return 0
   fi
-  PUBLIC_PROBE_TAG_CLEANUP_REQUIRED=0
-  PUBLIC_PROBE_REGION=""
+  log "CRITICAL: ${PUBLIC_PROBE_TAG} cleanup remains required in ${PUBLIC_PROBE_REGION}"
+  return 1
+}
+
+read_promotion_marker() {
+  [ -s "$PROMOTION_MARKER" ] || return 1
+  IFS=$'\t' read -r IN_FLIGHT_REGION IN_FLIGHT_OLD_REVISION \
+    IN_FLIGHT_NEW_REVISION IN_FLIGHT_OLD_INGRESS <"$PROMOTION_MARKER"
+  [ -n "$IN_FLIGHT_REGION" ] && \
+    [ -n "$IN_FLIGHT_OLD_REVISION" ] && \
+    [ -n "$IN_FLIGHT_NEW_REVISION" ] && \
+    [ -n "$IN_FLIGHT_OLD_INGRESS" ]
+}
+
+arm_promotion() {
+  local region="$1"
+  local old_revision="$2"
+  local new_revision="$3"
+  local old_ingress="$4"
+  local temporary
+  mkdir -p "$PUBLIC_DEPLOY_STATE_DIR"
+  umask 077
+  temporary="${PROMOTION_MARKER}.tmp.$$"
+  printf '%s\t%s\t%s\t%s\n' \
+    "$region" "$old_revision" "$new_revision" "$old_ingress" >"$temporary"
+  mv "$temporary" "$PROMOTION_MARKER"
+  if ! read_promotion_marker; then
+    echo "ERROR: could not read back durable promotion marker ${PROMOTION_MARKER}" >&2
+    return 1
+  fi
+  PROMOTED_REGIONS+=("$IN_FLIGHT_REGION")
+  log "armed promotion recovery for ${PUBLIC_SERVICE}/${IN_FLIGHT_REGION}: ${IN_FLIGHT_OLD_REVISION} -> ${IN_FLIGHT_NEW_REVISION}"
+}
+
+clear_promotion_marker() {
+  rm -f "$PROMOTION_MARKER"
+}
+
+restore_in_flight_promotion() {
+  if ! read_promotion_marker; then
+    return 0
+  fi
+  echo "CRITICAL: interrupted during promotion of ${PUBLIC_SERVICE}/${IN_FLIGHT_REGION} from ${IN_FLIGHT_OLD_REVISION} to ${IN_FLIGHT_NEW_REVISION}" >&2
+  local restore_failed=0
+  if gc run services update-traffic "$PUBLIC_SERVICE" \
+      --region "$IN_FLIGHT_REGION" \
+      --to-revisions="${IN_FLIGHT_OLD_REVISION}=100" \
+      --quiet >/dev/null; then
+    echo "CRITICAL: restored interrupted region ${IN_FLIGHT_REGION} to ${IN_FLIGHT_OLD_REVISION}" >&2
+  else
+    echo "CRITICAL: automatic traffic restore failed. Run exactly: gcloud --project ${PROJECT_ID} run services update-traffic ${PUBLIC_SERVICE} --region ${IN_FLIGHT_REGION} --to-revisions=${IN_FLIGHT_OLD_REVISION}=100 --quiet" >&2
+    restore_failed=1
+  fi
+  if ! gc run services update "$PUBLIC_SERVICE" \
+      --region "$IN_FLIGHT_REGION" \
+      --ingress "$IN_FLIGHT_OLD_INGRESS" \
+      --quiet >/dev/null; then
+    echo "CRITICAL: automatic ingress restore failed. Run exactly: gcloud --project ${PROJECT_ID} run services update ${PUBLIC_SERVICE} --region ${IN_FLIGHT_REGION} --ingress ${IN_FLIGHT_OLD_INGRESS} --quiet" >&2
+    restore_failed=1
+  fi
+  if [ "$restore_failed" -eq 0 ]; then
+    clear_promotion_marker
+    return 0
+  fi
+  return 1
+}
+
+handle_public_signal() {
+  local status="$1"
+  trap - INT TERM
+  if [ "$STAGE" = "routed" ]; then
+    restore_in_flight_promotion || true
+  fi
+  cleanup_public_probe_tag || true
+  exit "$status"
 }
 
 trap cleanup_public_probe_tag EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'handle_public_signal 130' INT
+trap 'handle_public_signal 143' TERM
 
 # regional_quota_active_revision_json uses SERVICE by design. Point it at the
 # legacy service only while capturing the exact 100%-traffic revision.
@@ -131,7 +208,10 @@ if [ "$STAGE" = "companion" ]; then
   INGRESS=all
   RATE_LIMIT_CLIENT_IP_MODE=untrusted
 else
-  INGRESS=internal-and-cloud-load-balancing
+  # A GitHub-hosted runner cannot directly smoke a run.app revision after the
+  # service is LB-only. Keep direct ingress only through the no-traffic smoke
+  # and promotion, then restrict the regional service before moving on.
+  INGRESS=all
   RATE_LIMIT_CLIENT_IP_MODE=edge_header
 fi
 
@@ -240,10 +320,12 @@ for target in "${TARGET_REGIONS[@]}"; do
 done
 
 ORIGINAL_REVISIONS=()
+ORIGINAL_INGRESSES=()
 if [ "$STAGE" = "routed" ]; then
   # Resolve every serving revision before the first mutation. The existing
   # helper rejects split or ambiguous traffic and describes the traffic-taking
   # revision rather than trusting latestReady/latestCreated state.
+  # shellcheck disable=SC2034  # consumed by regional_quota_active_revision_json
   SERVICE="$PUBLIC_SERVICE"
   for target in "${TARGET_REGIONS[@]}"; do
     if ! active_json="$(regional_quota_active_revision_json "$target" false)"; then
@@ -263,7 +345,32 @@ print(name)
       exit 1
     fi
     ORIGINAL_REVISIONS+=("$active_revision")
+    if ! service_json="$(gc run services describe "$PUBLIC_SERVICE" \
+        --region "$target" --format=json)"; then
+      echo "ERROR: cannot capture public ingress in ${target}" >&2
+      exit 1
+    fi
+    if ! active_ingress="$(python3 -c '
+import json
+import sys
+
+ingress = json.load(sys.stdin).get("metadata", {}).get("annotations", {}).get(
+    "run.googleapis.com/ingress"
+)
+if ingress not in {"all", "internal-and-cloud-load-balancing"}:
+    raise SystemExit(f"unsupported public ingress {ingress!r}")
+print(ingress)
+' <<<"$service_json")"; then
+      echo "ERROR: cannot identify public ingress in ${target}" >&2
+      exit 1
+    fi
+    ORIGINAL_INGRESSES+=("$active_ingress")
   done
+  if read_promotion_marker; then
+    echo "ERROR: unresolved promotion marker for ${PUBLIC_SERVICE}/${IN_FLIGHT_REGION}: ${IN_FLIGHT_OLD_REVISION} -> ${IN_FLIGHT_NEW_REVISION}; original ingress=${IN_FLIGHT_OLD_INGRESS}" >&2
+    echo "Restore before retrying: gcloud --project ${PROJECT_ID} run services update-traffic ${PUBLIC_SERVICE} --region ${IN_FLIGHT_REGION} --to-revisions=${IN_FLIGHT_OLD_REVISION}=100 --quiet" >&2
+    exit 1
+  fi
 fi
 
 PUBLIC_PROBE_CODE=""
@@ -299,20 +406,38 @@ probe_public_path() {
 fail_routed_region() {
   local region="$1"
   local old_revision="$2"
-  local path="$3"
-  local reason="$4"
-  if ! gc run services update-traffic "$PUBLIC_SERVICE" \
+  local old_ingress="$3"
+  local path="$4"
+  local reason="$5"
+  local restore_failed=0
+  if gc run services update-traffic "$PUBLIC_SERVICE" \
       --region "$region" \
       --to-revisions="${old_revision}=100" \
       --quiet >/dev/null; then
+    :
+  else
     echo "CRITICAL: failed to restore ${PUBLIC_SERVICE}/${region} to ${old_revision}" >&2
+    echo "CRITICAL: run exactly: gcloud --project ${PROJECT_ID} run services update-traffic ${PUBLIC_SERVICE} --region ${region} --to-revisions=${old_revision}=100 --quiet" >&2
+    restore_failed=1
   fi
-  cleanup_public_probe_tag
+  if ! gc run services update "$PUBLIC_SERVICE" \
+      --region "$region" \
+      --ingress "$old_ingress" \
+      --quiet >/dev/null; then
+    echo "CRITICAL: failed to restore ${PUBLIC_SERVICE}/${region} ingress to ${old_ingress}" >&2
+    echo "CRITICAL: run exactly: gcloud --project ${PROJECT_ID} run services update ${PUBLIC_SERVICE} --region ${region} --ingress ${old_ingress} --quiet" >&2
+    restore_failed=1
+  fi
+  if [ "$restore_failed" -eq 0 ] && \
+      read_promotion_marker && [ "$IN_FLIGHT_REGION" = "$region" ]; then
+    clear_promotion_marker
+  fi
+  cleanup_public_probe_tag || true
   local moved="none"
   if [ "${#PROMOTED_REGIONS[@]}" -gt 0 ]; then
     moved="${PROMOTED_REGIONS[*]}"
   fi
-  echo "ERROR: routed public deploy failed in ${region} at ${path}: ${reason}; promoted regions: ${moved}" >&2
+  echo "ERROR: routed public deploy failed in ${region} at ${path}: ${reason}; promotion-attempted or previously promoted regions: ${moved}" >&2
   exit 1
 }
 
@@ -342,27 +467,28 @@ for index in "${!TARGET_REGIONS[@]}"; do
   fi
 
   old_revision="${ORIGINAL_REVISIONS[$index]}"
+  old_ingress="${ORIGINAL_INGRESSES[$index]}"
   if ! new_revision="$(gc run deploy "$PUBLIC_SERVICE" \
       "${deploy_args[@]}" \
       --no-traffic \
       --format 'value(status.latestCreatedRevisionName)' \
       --quiet)"; then
-    fail_routed_region "$target" "$old_revision" "<deploy>" "no-traffic deploy failed"
+    fail_routed_region "$target" "$old_revision" "$old_ingress" "<deploy>" "no-traffic deploy failed"
   fi
   case "$new_revision" in
     "${PUBLIC_SERVICE}-"*) ;;
-    *) fail_routed_region "$target" "$old_revision" "<deploy>" "deploy returned no valid new revision" ;;
+    *) fail_routed_region "$target" "$old_revision" "$old_ingress" "<deploy>" "deploy returned no valid new revision" ;;
   esac
 
   PUBLIC_PROBE_REGION="$target"
   PUBLIC_PROBE_TAG_CLEANUP_REQUIRED=1
   if ! cloud_run_probe_tag_reconcile \
       "$PUBLIC_SERVICE" "$target" "$PROJECT_ID" "$PUBLIC_PROBE_TAG" "$new_revision"; then
-    fail_routed_region "$target" "$old_revision" "<probe-tag>" "revision tag is inconclusive"
+    fail_routed_region "$target" "$old_revision" "$old_ingress" "<probe-tag>" "revision tag is inconclusive"
   fi
   if ! probe_base_url="$(cloud_run_probe_tagged_base_url \
       "$PUBLIC_SERVICE" "$target" "$PROJECT_ID" "$PUBLIC_PROBE_TAG" "$new_revision")"; then
-    fail_routed_region "$target" "$old_revision" "<probe-tag>" "tagged regional URL is inconclusive"
+    fail_routed_region "$target" "$old_revision" "$old_ingress" "<probe-tag>" "tagged regional URL is inconclusive"
   fi
 
   body_file="$(mktemp "${TMPDIR:-/tmp}/tr-public-probe-${target}-XXXXXX")"
@@ -374,22 +500,35 @@ for index in "${!TARGET_REGIONS[@]}"; do
     fi
     rm -f "$body_file"
     if [ "$probe_status" -eq 2 ]; then
-      fail_routed_region "$target" "$old_revision" "$path" \
+      fail_routed_region "$target" "$old_revision" "$old_ingress" "$path" \
         "transport inconclusive after bounded retries"
     fi
-    fail_routed_region "$target" "$old_revision" "$path" \
+    fail_routed_region "$target" "$old_revision" "$old_ingress" "$path" \
       "expected HTTP 200 with a non-empty body, got ${PUBLIC_PROBE_CODE:-transport-error}"
   done
   rm -f "$body_file"
 
+  if ! arm_promotion "$target" "$old_revision" "$new_revision" "$old_ingress"; then
+    fail_routed_region "$target" "$old_revision" "$old_ingress" \
+      "<promotion-marker>" "could not durably record promotion intent"
+  fi
   if ! gc run services update-traffic "$PUBLIC_SERVICE" \
       --region "$target" \
       --to-revisions="${new_revision}=100" \
       --quiet >/dev/null; then
-    fail_routed_region "$target" "$old_revision" "<promote>" "traffic promotion failed"
+    fail_routed_region "$target" "$old_revision" "$old_ingress" "<promote>" "traffic promotion failed"
   fi
-  cleanup_public_probe_tag
-  PROMOTED_REGIONS+=("$target")
+  if ! gc run services update "$PUBLIC_SERVICE" \
+      --region "$target" \
+      --ingress internal-and-cloud-load-balancing \
+      --quiet >/dev/null; then
+    fail_routed_region "$target" "$old_revision" "$old_ingress" "<ingress>" \
+      "failed to restrict ingress after promotion"
+  fi
+  clear_promotion_marker
+  if ! cleanup_public_probe_tag; then
+    exit 1
+  fi
   log "promoted ${PUBLIC_SERVICE}/${target} to ${new_revision}; promoted regions: ${PROMOTED_REGIONS[*]}"
 done
 
