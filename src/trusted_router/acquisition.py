@@ -739,10 +739,11 @@ def _safe_text(value: str | None, limit: int) -> str:
 
 
 def _cookie_signing_key(settings: Settings) -> bytes:
-    # Public and control share only this narrow-purpose root. The gateway token
-    # remains a local/legacy fallback so existing development and combined-mode
-    # cookies keep working, but split production surfaces require the dedicated
-    # secret at Settings validation time.
+    # The split public surface receives only the already-derived key, preserving
+    # legacy cookie compatibility without receiving the root gateway credential.
+    # Dedicated-root and local/legacy behavior below remains unchanged.
+    if settings.attribution_cookie_key:
+        return base64.b64decode(settings.attribution_cookie_key, validate=True)
     root = (
         settings.attribution_cookie_secret
         or settings.internal_gateway_token

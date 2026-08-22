@@ -51,7 +51,6 @@ CONTROL_PATH_PATTERNS = (
     "/v1/*",
     "/models/user",
     "/v1/models/user",
-    "/bedrock-group-buy",
     "/bedrock-group-buy/*",
     "/google_oauth_callback",
     "/github_oauth_callback",
@@ -147,6 +146,11 @@ _OUTPUT_ONLY_KEYS = {
 def _match_specificity(path: str, pattern: str) -> tuple[int, int] | None:
     if pattern.endswith("/*"):
         prefix = pattern[:-1]
+        bare_prefix = prefix[:-1]
+        if path == bare_prefix:
+            # The wildcard owns its bare prefix too, but an explicit exact rule
+            # at that path retains the existing exact-over-glob tie break.
+            return (len(bare_prefix), 0)
         if path.startswith(prefix):
             return (len(prefix), 0)
         return None

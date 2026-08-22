@@ -70,13 +70,14 @@ BASE_ENV = {
     "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE": "tr",
 }
 EXPECTED_SECRETS = {
-    "TR_ATTRIBUTION_COOKIE_SECRET": (
-        "trustedrouter-attribution-cookie-secret:latest"
-    ),
+    "TR_ATTRIBUTION_COOKIE_KEY": "trustedrouter-attribution-cookie-key:latest",
     "TR_SENTRY_DSN": "trustedrouter-sentry-dsn:latest",
     "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD": (
         "trustedrouter-clickhouse-control-read-password:latest"
     ),
+}
+HARNESS_SECRET_VALUES = {
+    "TR_ATTRIBUTION_COOKIE_KEY": "aDMnBV9nDwwAD1tr4MpooFMj7i8Kv6lB5Q9LTmrjTfc=",
 }
 FORBIDDEN_SECRET_FRAGMENTS = {
     "gateway",
@@ -123,7 +124,10 @@ def _settings_kwargs(call: list[str]) -> dict[str, object]:
     }
     for name, reference in _serialized_mapping(call, "--set-secrets", ",").items():
         secret_name = reference.partition(":")[0]
-        kwargs[name.removeprefix("TR_").lower()] = f"harness-{secret_name}"
+        kwargs[name.removeprefix("TR_").lower()] = HARNESS_SECRET_VALUES.get(
+            name,
+            f"harness-{secret_name}",
+        )
     return kwargs
 
 
@@ -185,6 +189,7 @@ def test_exact_emitted_public_settings_validate_and_reject_control_secrets(
         for forbidden_name, forbidden_value in (
             ("internal_gateway_token", "gateway-" + "g" * 32),
             ("stripe_secret_key", "sk_live_forbidden"),
+            ("observer_internal_token", "observer-" + "o" * 32),
         ):
             with pytest.raises(
                 ValidationError,
@@ -257,8 +262,8 @@ def test_bigtable_mode_omits_clickhouse_secret_env_and_vpc_flags(
         assert env["TR_ANALYTICS_READ_MODE"] == "bigtable"
         assert not any("CLICKHOUSE" in name for name in env)
         assert _serialized_mapping(call, "--set-secrets", ",") == {
-            "TR_ATTRIBUTION_COOKIE_SECRET": (
-                "trustedrouter-attribution-cookie-secret:latest"
+            "TR_ATTRIBUTION_COOKIE_KEY": (
+                "trustedrouter-attribution-cookie-key:latest"
             ),
             "TR_SENTRY_DSN": "trustedrouter-sentry-dsn:latest",
         }

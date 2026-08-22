@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import datetime as dt
 
 import pytest
@@ -14,6 +15,7 @@ from trusted_router.config import SERVICE_SURFACE_SECRET_OWNERS, Settings
 from trusted_router.main import create_app
 
 _ATTRIBUTION_SECRET = "attribution-only-" + "a" * 32
+_ATTRIBUTION_KEY = "aDMnBV9nDwwAD1tr4MpooFMj7i8Kv6lB5Q9LTmrjTfc="
 _GATEWAY_SECRET = "gateway-only-" + "g" * 32
 _PRODUCTION_STORAGE = {
     "environment": "production",
@@ -144,6 +146,7 @@ _SENSITIVE_TEST_VALUES: dict[str, object] = {
     "sentry_dsn": "https://example@example.ingest.sentry.io/1",
     "google_data_manager_enabled": True,
     "google_data_manager_kms_key_name": "projects/test/locations/global/keyRings/gdm/keys/k",
+    "attribution_cookie_key": _ATTRIBUTION_KEY,
     "attribution_cookie_secret": _ATTRIBUTION_SECRET,
     "internal_gateway_token": _GATEWAY_SECRET,
     "observer_internal_token": "observer-only-" + "o" * 32,
@@ -240,7 +243,10 @@ _EXPECTED_OWNER_GROUPS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
         ),
     ),
     (frozenset({"public", "control", "internal", "observer"}), ("sentry_dsn",)),
-    (frozenset({"public", "control"}), ("attribution_cookie_secret",)),
+    (
+        frozenset({"public", "control"}),
+        ("attribution_cookie_key", "attribution_cookie_secret"),
+    ),
     (
         frozenset({"internal"}),
         ("internal_gateway_token",),
@@ -294,6 +300,9 @@ def _full_combined_bridge_production() -> dict[str, object]:
     return {
         **_PRODUCTION_STORAGE,
         **_SENSITIVE_TEST_VALUES,
+        # The legacy bridge uses the original root. The newer mutual-exclusion
+        # contract is asserted by test_cookie_key_and_secret_are_ambiguous.
+        "attribution_cookie_key": None,
         "service_surface": "combined",
         "allow_deployed_combined_surface": True,
         "rate_limit_enabled": False,
@@ -393,6 +402,8 @@ def test_combined_bridge_accepts_full_legacy_bindings_and_mounts_all_routes() ->
     settings = Settings(**_full_combined_bridge_production())
 
     for field_name, expected in _SENSITIVE_TEST_VALUES.items():
+        if field_name == "attribution_cookie_key":
+            expected = None
         assert getattr(settings, field_name) == expected
     app = create_app(
         settings,
@@ -469,14 +480,16 @@ def test_every_sensitive_setting_rejects_an_unauthorized_deployed_surface(
 def test_public_production_accepts_only_t1_owned_secrets_and_login_flags() -> None:
     settings = _production(
         "public",
-        attribution_cookie_secret=_ATTRIBUTION_SECRET,
+        attribution_cookie_key=_ATTRIBUTION_KEY,
         sentry_dsn="https://example@example.ingest.sentry.io/1",
         google_oauth_login_available=True,
         github_oauth_login_available=False,
     )
 
-    assert settings.attribution_cookie_secret == _ATTRIBUTION_SECRET
+    assert settings.attribution_cookie_key == _ATTRIBUTION_KEY
+    assert settings.attribution_cookie_secret is None
     assert settings.internal_gateway_token is None
+    assert settings.observer_internal_token is None
     assert settings.stripe_secret_key is None
     assert settings.sentry_dsn == "https://example@example.ingest.sentry.io/1"
     assert settings.aws_access_key_id is None
@@ -624,6 +637,7 @@ def test_actions_production_rejects_other_surface_secrets(name: str, value: str)
     ("name", "value"),
     (
         ("internal_gateway_token", _GATEWAY_SECRET),
+        ("observer_internal_token", "observer-only-" + "o" * 32),
         ("stripe_webhook_secret", "whsec-test"),
         ("stripe_secret_key", "sk-test"),
         # Sentry is intentionally absent: the newer T1 error-reporting
@@ -691,13 +705,80 @@ def test_non_account_surfaces_reject_account_secrets(
         )
 
 
-def test_control_requires_dedicated_attribution_secret() -> None:
-    with pytest.raises(ValidationError, match="TR_ATTRIBUTION_COOKIE_SECRET"):
-        _production("control", **{k: v for k, v in _CONTROL_SECRETS.items() if k != "attribution_cookie_secret"})
+def test_control_requires_exactly_one_attribution_key_source() -> None:
+    without_attribution = {
+        key: value
+        for key, value in _CONTROL_SECRETS.items()
+        if key != "attribution_cookie_secret"
+    }
+    with pytest.raises(
+        ValidationError,
+        match="TR_ATTRIBUTION_COOKIE_KEY or TR_ATTRIBUTION_COOKIE_SECRET",
+    ):
+        _production("control", **without_attribution)
 
-    settings = _production("control", **_CONTROL_SECRETS)
-    assert settings.attribution_cookie_secret == _ATTRIBUTION_SECRET
-    assert settings.internal_gateway_token is None
+    secret_settings = _production("control", **_CONTROL_SECRETS)
+    assert secret_settings.attribution_cookie_secret == _ATTRIBUTION_SECRET
+    assert secret_settings.attribution_cookie_key is None
+    assert secret_settings.internal_gateway_token is None
+
+    key_settings = _production(
+        "control",
+        **without_attribution,
+        attribution_cookie_key=_ATTRIBUTION_KEY,
+    )
+    assert key_settings.attribution_cookie_key == _ATTRIBUTION_KEY
+    assert key_settings.attribution_cookie_secret is None
+
+
+def test_cookie_key_must_decode_to_exactly_32_bytes() -> None:
+    short_key = base64.b64encode(b"too short").decode("ascii")
+
+    with pytest.raises(
+        ValidationError,
+        match="TR_ATTRIBUTION_COOKIE_KEY must decode to exactly 32 bytes",
+    ):
+        Settings(attribution_cookie_key=short_key)
+
+
+def test_cookie_key_must_be_valid_base64() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="TR_ATTRIBUTION_COOKIE_KEY must be valid base64",
+    ):
+        Settings(attribution_cookie_key="not+valid/base64===garbage")
+
+
+def test_cookie_key_and_secret_are_ambiguous() -> None:
+    with pytest.raises(
+        ValidationError,
+        match=(
+            "TR_ATTRIBUTION_COOKIE_KEY and TR_ATTRIBUTION_COOKIE_SECRET "
+            "must not both be set"
+        ),
+    ):
+        Settings(
+            attribution_cookie_key=_ATTRIBUTION_KEY,
+            attribution_cookie_secret=_ATTRIBUTION_SECRET,
+        )
+
+
+def test_cookie_key_cannot_equal_raw_gateway_token_bytes() -> None:
+    gateway_token = "g" * 32
+    encoded_gateway_token = base64.b64encode(gateway_token.encode()).decode("ascii")
+
+    with pytest.raises(
+        ValidationError,
+        match="TR_ATTRIBUTION_COOKIE_KEY must differ from TR_INTERNAL_GATEWAY_TOKEN",
+    ):
+        Settings(
+            environment="canary",
+            service_surface="public",
+            attribution_cookie_key=encoded_gateway_token,
+            internal_gateway_token=gateway_token,
+            google_oauth_login_available=False,
+            github_oauth_login_available=False,
+        )
 
 
 def test_control_rejects_the_internal_gateway_credential() -> None:

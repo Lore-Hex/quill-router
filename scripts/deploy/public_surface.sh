@@ -145,7 +145,7 @@ ENV_VARS=(
 )
 
 SECRET_ENVS=(
-  "TR_ATTRIBUTION_COOKIE_SECRET=trustedrouter-attribution-cookie-secret:latest"
+  "TR_ATTRIBUTION_COOKIE_KEY=trustedrouter-attribution-cookie-key:latest"
   "TR_SENTRY_DSN=trustedrouter-sentry-dsn:latest"
 )
 NETWORK_ARGS=()
@@ -175,7 +175,7 @@ Owner action required (do not grant these to the deploy identity):
   gcloud spanner databases add-iam-policy-binding $(legacy_env_required TR_SPANNER_DATABASE_ID) --instance=$(legacy_env_required TR_SPANNER_INSTANCE_ID) --project=${PROJECT_ID} --member=serviceAccount:${PUBLIC_RUNTIME_SA} --role=roles/spanner.databaseReader
   gcloud projects add-iam-policy-binding ${PROJECT_ID} --member=serviceAccount:${PUBLIC_RUNTIME_SA} --role=roles/bigtable.reader
   gcloud projects add-iam-policy-binding ${PROJECT_ID} --member=serviceAccount:${PUBLIC_RUNTIME_SA} --role=roles/serviceusage.serviceUsageConsumer
-  gcloud secrets add-iam-policy-binding trustedrouter-attribution-cookie-secret --project=${PROJECT_ID} --member=serviceAccount:${PUBLIC_RUNTIME_SA} --role=roles/secretmanager.secretAccessor
+  gcloud secrets add-iam-policy-binding trustedrouter-attribution-cookie-key --project=${PROJECT_ID} --member=serviceAccount:${PUBLIC_RUNTIME_SA} --role=roles/secretmanager.secretAccessor
   gcloud secrets add-iam-policy-binding trustedrouter-sentry-dsn --project=${PROJECT_ID} --member=serviceAccount:${PUBLIC_RUNTIME_SA} --role=roles/secretmanager.secretAccessor
 EOF
   if [ "$ANALYTICS_READ_MODE" != "bigtable" ]; then

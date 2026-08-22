@@ -141,6 +141,40 @@ def test_entire_group_buy_stays_on_the_t2_legacy_control_slot() -> None:
     assert URL_MAP.route_surface("/v1/bedrock-group-buy/pledge") == "control"
 
 
+def test_every_nonpublic_wildcard_also_owns_its_bare_prefix() -> None:
+    for patterns in (
+        URL_MAP.CONTROL_PATH_PATTERNS,
+        URL_MAP.ACTIONS_PATH_PATTERNS,
+        URL_MAP.INTERNAL_PATH_PATTERNS,
+    ):
+        for pattern in patterns:
+            if pattern.endswith("/*"):
+                assert URL_MAP.route_surface(pattern.removesuffix("/*")) != "public"
+
+
+@pytest.mark.parametrize(
+    ("path", "surface"),
+    (
+        ("/", "public"),
+        ("/status.json", "public"),
+        ("/static/a.css", "public"),
+        ("/console", "control"),
+        ("/signup", "control"),
+        ("/internal/gateway/settle", "internal"),
+        ("/v1/chat/completions", "control"),
+        ("/bedrock-group-buy", "control"),
+        ("/bedrock-group-buy/manage", "control"),
+        ("/google_oauth_callback", "control"),
+        ("/internal/stripe/webhook", "control"),
+    ),
+)
+def test_representative_concrete_path_ownership_is_unchanged(
+    path: str,
+    surface: str,
+) -> None:
+    assert URL_MAP.route_surface(path) == surface
+
+
 @pytest.mark.parametrize("prefix", ["", "/v1"])
 def test_carrier_texml_is_public_but_notification_mutations_are_control(prefix: str) -> None:
     assert URL_MAP.route_surface(f"{prefix}/notify/texml") == "public"
