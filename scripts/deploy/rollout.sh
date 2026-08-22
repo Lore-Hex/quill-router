@@ -488,6 +488,7 @@ ENV_VARS=(
   "TR_GOOGLE_DATA_MANAGER_KMS_KEY_NAME=${GOOGLE_ADS_KMS_KEY_NAME}"
   "TR_REGIONS=${TR_REGIONS}"
   "TR_PRIMARY_REGION=${TR_PRIMARY_REGION}"
+  "TR_SPANNER_POOL_SIZE=${TR_SPANNER_POOL_SIZE}"
   "VERTEX_PROJECT_ID=${PROJECT_ID}"
   "VERTEX_LOCATION=${REGION}"
   "TR_TRUST_GCP_SOURCE_COMMIT=${TRUST_SOURCE_COMMIT}"
@@ -648,6 +649,28 @@ is_warm_region() {
   esac
 }
 
+cloud_run_min_instances_for_region() {
+  local target="$1"
+  local entry
+  local region
+  local count
+  local entries=()
+  IFS=',' read -ra entries <<<"$TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION"
+  for entry in "${entries[@]}"; do
+    region="${entry%%=*}"
+    count="${entry#*=}"
+    if [ "$region" = "$target" ] && [[ "$count" =~ ^[0-9]+$ ]]; then
+      printf '%s\n' "$count"
+      return 0
+    fi
+  done
+  if is_warm_region "$target"; then
+    printf '1\n'
+  else
+    printf '0\n'
+  fi
+}
+
 deploy_one_region() {
   local target="$1"
   local logfile="${2:-/dev/null}"
@@ -665,17 +688,13 @@ deploy_one_region() {
     log "deploying Cloud Run service ${SERVICE} to ${target}"
   fi
   prune_failed_revisions "$target" >>"$logfile" 2>&1 || true
-  # Cold regions (not in TR_WARM_REGIONS) scale to zero. The first request
-  # pays a ~5-10s cold-start tax; subsequent requests within the
-  # keep-warm window are fast. Explicit override via
-  # TR_CLOUD_RUN_MIN_INSTANCES wins for either kind.
+  # A global override wins. Otherwise use the per-region service minimum;
+  # unknown warm regions retain one instance and unknown cold regions scale to
+  # zero. Service-level minimums remain allocated while staged revisions split
+  # traffic, unlike revision-level minimums which can double or disappear.
   local min_instances="${TR_CLOUD_RUN_MIN_INSTANCES:-}"
   if [ -z "$min_instances" ]; then
-    if is_warm_region "$target"; then
-      min_instances=1
-    else
-      min_instances=0
-    fi
+    min_instances="$(cloud_run_min_instances_for_region "$target")"
   fi
   # /chat and /synth stream through /chat-proxy/v1 for browser CORS.
   # Synth can legitimately take several model calls before final output, so
@@ -686,8 +705,9 @@ deploy_one_region() {
       --allow-unauthenticated \
       --port 8080 \
       --memory "${TR_CLOUD_RUN_MEMORY:-1Gi}" \
-      --concurrency "${TR_CLOUD_RUN_CONCURRENCY:-2}" \
-      --min-instances "$min_instances" \
+      --concurrency "$TR_CLOUD_RUN_CONCURRENCY" \
+      --min "$min_instances" \
+      --min-instances default \
       --timeout "${TR_CLOUD_RUN_TIMEOUT_SECONDS:-300}" \
       --network "${TR_CLOUD_RUN_NETWORK:-default}" \
       --subnet "${TR_CLOUD_RUN_SUBNET:-default}" \

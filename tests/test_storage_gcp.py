@@ -100,9 +100,10 @@ def test_gcp_list_keys_uses_workspace_index() -> None:
 
 
 def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
-    from google.cloud import bigtable, spanner
+    from google.cloud import bigtable, spanner, spanner_v1
 
     spanner_calls: list[dict[str, Any]] = []
+    pool_sizes: list[int] = []
     monkeypatch.setattr(
         "trusted_router.storage_gcp.configure_spanner_rpc_deadlines",
         lambda _database: None,
@@ -120,6 +121,10 @@ def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
             # bound resident memory; accept-and-ignore here.
             return object()
 
+    class FakePool:
+        def __init__(self, *, size: int) -> None:
+            pool_sizes.append(size)
+
     class FakeBigtableClient:
         def __init__(self, **_kwargs: Any) -> None:
             pass
@@ -131,7 +136,9 @@ def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
             return object()
 
     monkeypatch.setattr(spanner, "Client", FakeSpannerClient)
+    monkeypatch.setattr(spanner_v1, "FixedSizePool", FakePool)
     monkeypatch.setattr(bigtable, "Client", FakeBigtableClient)
+    monkeypatch.delenv("TR_SPANNER_POOL_SIZE", raising=False)
 
     SpannerBigtableStore(
         project_id="project",
@@ -152,6 +159,7 @@ def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
             "disable_builtin_metrics": True,
         }
     ]
+    assert pool_sizes == [8]
 
 
 def test_gcp_store_opens_regional_ledger_when_local_issuance_is_disabled(

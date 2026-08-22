@@ -365,11 +365,12 @@ class SpannerBigtableStore:
         # Bounded session pool. The SDK default is FixedSizePool(size=10),
         # which preallocates ten gRPC sessions on first use — ~5-8 MB each
         # = 50-80 MB of resident memory per Cloud Run instance. Our
-        # workload is single-shot reads/writes per HTTP request with
-        # `--concurrency=2` (rollout.sh), so we'll never need more than
-        # 2-3 sessions in flight; size=4 gives a 2x headroom over the
-        # in-flight ceiling. Saves ~30 MB per instance.
-        pool_size = int(os.environ.get("TR_SPANNER_POOL_SIZE", "4"))
+        # The production service admits eight small billing calls per instance.
+        # Match that ceiling so a burst queues on Spanner itself only when the
+        # database is saturated, not because this process preallocated too few
+        # sessions. Deploys pin the value explicitly; eight remains a safe
+        # standalone default under the 2 GiB container limit.
+        pool_size = int(os.environ.get("TR_SPANNER_POOL_SIZE", "8"))
         self._database = (
             spanner.Client(
                 project=project_id,

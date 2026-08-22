@@ -478,12 +478,15 @@ class BigtableRegionalQuotaLedger:
         )
 
     def _version_equals_filter(self, version: bytes) -> Any:
+        # Filter order is the CAS invariant. Bigtable GC is asynchronous, so a
+        # historical version cell can remain readable after maxversions=1.
+        # Select the newest version first; only that cell may satisfy the token.
         return self._chain_filter(
             [
                 self._family_filter(f"^{_FAMILY}$"),
                 self._column_filter(b"^version$"),
-                self._value_filter(b"^" + re.escape(version) + b"$"),
                 self._cells_limit_filter(1),
+                self._value_filter(b"^" + re.escape(version) + b"$"),
             ]
         )
 
