@@ -349,15 +349,52 @@ rollback() {
   gc compute url-maps validate \
     --source="$rollback_map" \
     --global >/dev/null
-  gc compute url-maps import "$URL_MAP" \
-    --source="$rollback_map" \
-    --global \
-    --quiet
-  gc compute url-maps describe "$URL_MAP" --global --format=json >"$current_map"
-  python3 "${SCRIPT_DIR}/url_map_capture.py" mark-restored \
-    --capture "$ROLLBACK_CAPTURE" \
-    --live-map "$current_map"
-  log "restored the exact captured pre-cutover URL map from ${ROLLBACK_CAPTURE}"
+  local import_result="success"
+  if ! gc compute url-maps import "$URL_MAP" \
+      --source="$rollback_map" \
+      --global \
+      --quiet; then
+    import_result="failure-or-unknown"
+    echo "WARNING: rollback import result is failure or unknown; confirming live URL-map state" >&2
+  fi
+
+  local attempts="${TR_PUBLIC_EDGE_ROLLBACK_CONFIRM_ATTEMPTS:-4}"
+  local retry_seconds="${TR_PUBLIC_EDGE_ROLLBACK_CONFIRM_SECONDS:-2}"
+  case "$attempts" in
+    ''|*[!0-9]*|0)
+      echo "ERROR: TR_PUBLIC_EDGE_ROLLBACK_CONFIRM_ATTEMPTS must be a positive integer" >&2
+      return 1
+      ;;
+  esac
+  local attempt=1
+  local confirmed_state="unreadable"
+  while [ "$attempt" -le "$attempts" ]; do
+    if gc compute url-maps describe "$URL_MAP" \
+        --global --format=json >"$current_map"; then
+      if confirmed_state="$(python3 "${SCRIPT_DIR}/url_map_capture.py" check-live \
+          --capture "$ROLLBACK_CAPTURE" \
+          --live-map "$current_map")"; then
+        if [ "$confirmed_state" = "source" ]; then
+          python3 "${SCRIPT_DIR}/url_map_capture.py" mark-restored \
+            --capture "$ROLLBACK_CAPTURE" \
+            --live-map "$current_map"
+          log "restored the exact captured pre-cutover URL map from ${ROLLBACK_CAPTURE}; live state confirmed after import result=${import_result}"
+          return 0
+        fi
+      else
+        confirmed_state="unexpected"
+      fi
+    else
+      confirmed_state="unreadable"
+    fi
+    if [ "$attempt" -lt "$attempts" ]; then
+      sleep "$retry_seconds"
+    fi
+    attempt=$((attempt + 1))
+  done
+  echo "ERROR: rollback confirmation exhausted after ${attempts} reads; exact live URL-map state=${confirmed_state}; import result=${import_result}" >&2
+  echo "ERROR: retry exactly: gcloud --project ${PROJECT_ID} compute url-maps import ${URL_MAP} --source=${rollback_map} --global --quiet" >&2
+  return 1
 }
 
 case "$COMMAND" in

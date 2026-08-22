@@ -380,6 +380,63 @@ def test_term_during_promotion_reports_and_restores_the_in_flight_region(
     )
 
 
+def test_term_during_no_traffic_smoke_restores_the_original_ingress(
+    tmp_path: Path,
+) -> None:
+    isolated = DeployScriptHarness(tmp_path / "interrupted-smoke")
+
+    run = isolated.run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={
+            "HARNESS_PUBLIC_INITIAL_INGRESS": (
+                "internal-and-cloud-load-balancing"
+            ),
+            "HARNESS_PUBLIC_TERM_DURING_PROBE_TAG_REGION": "us-central1",
+        },
+    )
+
+    assert run.returncode == 143
+    assert "interrupted before traffic promotion" in run.stderr
+    assert run.public_ingress_state["us-central1"] == (
+        "internal-and-cloud-load-balancing"
+    )
+    assert not any(
+        "--to-revisions=trusted-router-public-active=100" in call
+        for call in _traffic_calls(run)
+    )
+
+
+def test_cloud_only_mid_promotion_state_is_reported_without_a_local_marker(
+    tmp_path: Path,
+) -> None:
+    isolated = DeployScriptHarness(tmp_path / "cloud-only-mid-promotion")
+    state_dir = tmp_path / "empty-local-state"
+
+    run = isolated.run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={
+            "TR_PUBLIC_DEPLOY_STATE_DIR": str(state_dir),
+            "HARNESS_PUBLIC_INITIAL_INGRESS": "all",
+            "HARNESS_PUBLIC_INITIAL_PROBE_TAG_REGION": "us-central1",
+        },
+    )
+
+    assert not (state_dir / "trusted-router-public.promotion-in-flight").exists()
+    assert run.returncode != 0
+    assert "cloud recovery state detected" in run.stderr
+    assert "serving=trusted-router-public-active" in run.stderr
+    assert "ingress=all" in run.stderr
+    assert (
+        "probe tag public-revision-probe="
+        "trusted-router-public-candidate-us-central1"
+    ) in run.stderr
+    assert "--remove-tags=public-revision-probe" in run.stderr
+    assert "--ingress internal-and-cloud-load-balancing" in run.stderr
+    assert not _deploy_calls(run)
+
+
 def test_probe_tag_cleanup_retries_a_transient_failure(tmp_path: Path) -> None:
     isolated = DeployScriptHarness(tmp_path / "transient-tag-cleanup")
 

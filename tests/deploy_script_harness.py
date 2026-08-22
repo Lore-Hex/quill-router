@@ -206,6 +206,10 @@ PY
       case "$argument" in --update-tags=*) tag_assignment="${argument#--update-tags=}" ;; esac
     done
     printf '%s\n' "${tag_assignment#*=}" >"${HARNESS_PROBE_TAG_STATE_DIR}/${region}"
+    if [ "${HARNESS_PUBLIC_TERM_DURING_PROBE_TAG_REGION:-}" = "$region" ]; then
+      kill -TERM "$PPID"
+      exit 143
+    fi
     exit 0
   fi
   if [[ " $* " == *" run services update-traffic trusted-router-public "* ]] \
@@ -228,26 +232,35 @@ PY
   fi
   if [[ " $* " == *" run services describe trusted-router-public "* ]] \
       && [[ " $* " == *" --format=json "* ]]; then
-    python3 - "$HARNESS_PUBLIC_INGRESS_STATE" "$region" <<'PY'
+    python3 - "$HARNESS_PUBLIC_INGRESS_STATE" "$HARNESS_PROBE_TAG_STATE_DIR" "$region" <<'PY'
 import json
 import pathlib
 import sys
 
-ingress = json.loads(pathlib.Path(sys.argv[1]).read_text())[sys.argv[2]]
+tag_path = pathlib.Path(sys.argv[2]) / sys.argv[3]
+region = sys.argv[3]
+ingress = json.loads(pathlib.Path(sys.argv[1]).read_text())[region]
+traffic = [
+    {
+        "percent": 100,
+        "revisionName": "trusted-router-public-active",
+    }
+]
+if tag_path.is_file():
+    traffic.append(
+        {
+            "percent": 0,
+            "revisionName": tag_path.read_text().strip(),
+            "tag": "public-revision-probe",
+        }
+    )
 print(
     json.dumps(
         {
             "metadata": {
                 "annotations": {"run.googleapis.com/ingress": ingress}
             },
-            "status": {
-                "traffic": [
-                    {
-                        "percent": 100,
-                        "revisionName": "trusted-router-public-active",
-                    }
-                ]
-            },
+            "status": {"traffic": traffic},
         },
         separators=(",", ":"),
     )
@@ -385,7 +398,14 @@ PY
     exit $?
   fi
   if [[ " $* " == *" compute url-maps import "* ]]; then
-    python3 - "$source_path" "$HARNESS_URL_MAP_STATE" <<'PY'
+    import_state="$HARNESS_URL_MAP_STATE"
+    delayed_rollback=0
+    if [[ "$source_path" == *".rollback-source.json" ]] \
+        && [ "${HARNESS_URL_MAP_ROLLBACK_PENDING_READS:-0}" -gt 0 ]; then
+      import_state="$HARNESS_URL_MAP_PENDING_STATE"
+      delayed_rollback=1
+    fi
+    python3 - "$source_path" "$import_state" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -425,6 +445,11 @@ state.write_text(json.dumps(document, separators=(",", ":")) + "\n")
 PY
     import_rc=$?
     [ "$import_rc" -eq 0 ] || exit "$import_rc"
+    if [ "$delayed_rollback" -eq 1 ]; then
+      printf '%s\n' "$HARNESS_URL_MAP_ROLLBACK_PENDING_READS" \
+        >"$HARNESS_URL_MAP_PENDING_READS_STATE"
+      exit 1
+    fi
     if [ "${HARNESS_URL_MAP_IMPORT_FAIL_AFTER_APPLY:-0}" = "1" ]; then
       exit 1
     fi
@@ -439,6 +464,15 @@ PY
       && [ -s "$HARNESS_URL_MAP_STATE" ]; then
     if [ "${HARNESS_URL_MAP_POST_IMPORT_DESCRIBE_FAIL:-0}" = "1" ]; then
       exit 1
+    fi
+    if [ -s "$HARNESS_URL_MAP_PENDING_STATE" ]; then
+      pending_reads="$(cat "$HARNESS_URL_MAP_PENDING_READS_STATE")"
+      if [ "$pending_reads" -le 0 ]; then
+        mv "$HARNESS_URL_MAP_PENDING_STATE" "$HARNESS_URL_MAP_STATE"
+      else
+        printf '%s\n' "$((pending_reads - 1))" \
+          >"$HARNESS_URL_MAP_PENDING_READS_STATE"
+      fi
     fi
     cat "$HARNESS_URL_MAP_STATE"
     exit 0
@@ -1024,7 +1058,7 @@ class DeployScriptHarness:
         failures_file.write_text("".join(f"{pattern}\n" for pattern in fixture.failures))
         public_ingress_state = run_dir / "public-ingress.json"
         initial_public_ingress = (extra_env or {}).get(
-            "HARNESS_PUBLIC_INITIAL_INGRESS", "all"
+            "HARNESS_PUBLIC_INITIAL_INGRESS", "internal-and-cloud-load-balancing"
         )
         public_ingress_state.write_text(
             json.dumps(
@@ -1043,6 +1077,13 @@ class DeployScriptHarness:
         )
         probe_tag_state_dir = run_dir / "probe-tags"
         probe_tag_state_dir.mkdir()
+        initial_probe_region = (extra_env or {}).get(
+            "HARNESS_PUBLIC_INITIAL_PROBE_TAG_REGION"
+        )
+        if initial_probe_region:
+            (probe_tag_state_dir / initial_probe_region).write_text(
+                "trusted-router-public-candidate-" + initial_probe_region + "\n"
+            )
         probe_tag_remove_failures = run_dir / "probe-tag-remove-failures"
         probe_tag_remove_failures.write_text(
             f"{(extra_env or {}).get('HARNESS_PROBE_TAG_REMOVE_FAILURES', '0')}\n"
@@ -1057,6 +1098,12 @@ class DeployScriptHarness:
             "HARNESS_FIXTURES": str(fixtures_file),
             "HARNESS_FAILURES": str(failures_file),
             "HARNESS_URL_MAP_STATE": str(self.root / "url-map-state.json"),
+            "HARNESS_URL_MAP_PENDING_STATE": str(
+                self.root / "url-map-pending-state.json"
+            ),
+            "HARNESS_URL_MAP_PENDING_READS_STATE": str(
+                self.root / "url-map-pending-reads.txt"
+            ),
             "HARNESS_URL_MAP_NAME": "trusted-router-control-map",
             "HARNESS_PUBLIC_INGRESS_STATE": str(public_ingress_state),
             "HARNESS_PROBE_TAG_STATE_DIR": str(probe_tag_state_dir),

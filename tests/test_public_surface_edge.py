@@ -332,6 +332,36 @@ def test_import_transport_failure_after_apply_leaves_rollback_armed(
     assert any("url-maps" in call and "import" in call for call in rollback.calls)
 
 
+def test_rollback_waits_for_an_accepted_pending_restore_import(
+    tmp_path: Path,
+) -> None:
+    harness = DeployScriptHarness(tmp_path / "pending-rollback-import")
+    state_dir = tmp_path / "durable-state"
+    edge_env = {"TR_PUBLIC_EDGE_STATE_DIR": str(state_dir)}
+    cutover = harness.run(SCRIPT, args=("cutover",), extra_env=edge_env)
+    assert cutover.returncode == 0, summarise(cutover)
+
+    rollback = harness.run(
+        SCRIPT,
+        args=("rollback",),
+        extra_env={
+            **edge_env,
+            "HARNESS_URL_MAP_ROLLBACK_PENDING_READS": "1",
+            "TR_PUBLIC_EDGE_ROLLBACK_CONFIRM_SECONDS": "0",
+        },
+    )
+
+    assert rollback.returncode == 0, summarise(rollback)
+    assert "rollback import result is failure or unknown" in rollback.stderr
+    rollback_describes = [
+        call
+        for call in rollback.calls
+        if "url-maps" in call and "describe" in call and "--format=json" in call
+    ]
+    assert len(rollback_describes) >= 3
+    assert json.loads(_capture_path(state_dir).read_text())["phase"] == "restored"
+
+
 def test_import_failure_before_apply_rollback_is_a_safe_noop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

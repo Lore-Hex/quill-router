@@ -40,6 +40,11 @@ PUBLIC_PROBE_TAG_CLEANUP_REQUIRED=0
 PROMOTED_REGIONS=()
 PUBLIC_DEPLOY_STATE_DIR="${TR_PUBLIC_DEPLOY_STATE_DIR:-${HOME}/.local/state/trusted-router/public-surface}"
 PROMOTION_MARKER="${PUBLIC_DEPLOY_STATE_DIR}/${PUBLIC_SERVICE}.promotion-in-flight"
+IN_FLIGHT_REGION=""
+IN_FLIGHT_OLD_REVISION=""
+IN_FLIGHT_NEW_REVISION=""
+IN_FLIGHT_OLD_INGRESS=""
+IN_FLIGHT_PHASE=""
 
 cleanup_public_probe_tag() {
   [ "$PUBLIC_PROBE_TAG_CLEANUP_REQUIRED" -eq 1 ] || return 0
@@ -54,13 +59,84 @@ cleanup_public_probe_tag() {
 }
 
 read_promotion_marker() {
-  [ -s "$PROMOTION_MARKER" ] || return 1
+  if [ ! -e "$PROMOTION_MARKER" ]; then
+    return 1
+  fi
+  if [ ! -s "$PROMOTION_MARKER" ]; then
+    echo "ERROR: promotion marker ${PROMOTION_MARKER} is empty; operator attention is required" >&2
+    return 2
+  fi
+  local extra=""
   IFS=$'\t' read -r IN_FLIGHT_REGION IN_FLIGHT_OLD_REVISION \
-    IN_FLIGHT_NEW_REVISION IN_FLIGHT_OLD_INGRESS <"$PROMOTION_MARKER"
-  [ -n "$IN_FLIGHT_REGION" ] && \
-    [ -n "$IN_FLIGHT_OLD_REVISION" ] && \
-    [ -n "$IN_FLIGHT_NEW_REVISION" ] && \
-    [ -n "$IN_FLIGHT_OLD_INGRESS" ]
+    IN_FLIGHT_NEW_REVISION IN_FLIGHT_OLD_INGRESS IN_FLIGHT_PHASE extra \
+    <"$PROMOTION_MARKER" || true
+  if [ -n "$extra" ] || [ "$(wc -l <"$PROMOTION_MARKER")" -ne 1 ] || \
+     [ -z "$IN_FLIGHT_REGION" ] || \
+     [[ "$IN_FLIGHT_OLD_REVISION" != "${PUBLIC_SERVICE}-"* ]] || \
+     { [ "$IN_FLIGHT_NEW_REVISION" != "none" ] && \
+       [[ "$IN_FLIGHT_NEW_REVISION" != "${PUBLIC_SERVICE}-"* ]]; } || \
+     { [ "$IN_FLIGHT_OLD_INGRESS" != "all" ] && \
+       [ "$IN_FLIGHT_OLD_INGRESS" != "internal-and-cloud-load-balancing" ]; } || \
+     { [ "$IN_FLIGHT_PHASE" != "ingress-armed" ] && \
+       [ "$IN_FLIGHT_PHASE" != "promotion-armed" ]; } || \
+     { [ "$IN_FLIGHT_PHASE" = "ingress-armed" ] && \
+       [ "$IN_FLIGHT_NEW_REVISION" != "none" ]; } || \
+     { [ "$IN_FLIGHT_PHASE" = "promotion-armed" ] && \
+       [ "$IN_FLIGHT_NEW_REVISION" = "none" ]; }; then
+    echo "ERROR: promotion marker ${PROMOTION_MARKER} is malformed; operator attention is required" >&2
+    return 2
+  fi
+  return 0
+}
+
+write_promotion_marker() {
+  local region="$1"
+  local old_revision="$2"
+  local new_revision="$3"
+  local old_ingress="$4"
+  local phase="$5"
+  python3 - "$PROMOTION_MARKER" "$region" "$old_revision" "$new_revision" \
+      "$old_ingress" "$phase" <<'PY'
+import os
+import pathlib
+import tempfile
+import sys
+
+path = pathlib.Path(sys.argv[1])
+path.parent.mkdir(parents=True, exist_ok=True)
+payload = "\t".join(sys.argv[2:]) + "\n"
+descriptor, temporary_name = tempfile.mkstemp(
+    dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+)
+temporary = pathlib.Path(temporary_name)
+try:
+    with os.fdopen(descriptor, "w") as handle:
+        os.fchmod(handle.fileno(), 0o600)
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+    directory_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+finally:
+    temporary.unlink(missing_ok=True)
+PY
+}
+
+arm_ingress_recovery() {
+  local region="$1"
+  local old_revision="$2"
+  local old_ingress="$3"
+  if ! write_promotion_marker \
+      "$region" "$old_revision" none "$old_ingress" ingress-armed || \
+     ! read_promotion_marker; then
+    echo "ERROR: could not read back durable ingress recovery marker ${PROMOTION_MARKER}" >&2
+    return 1
+  fi
+  log "armed ingress recovery for ${PUBLIC_SERVICE}/${IN_FLIGHT_REGION}; original ingress=${IN_FLIGHT_OLD_INGRESS}"
 }
 
 arm_promotion() {
@@ -68,15 +144,15 @@ arm_promotion() {
   local old_revision="$2"
   local new_revision="$3"
   local old_ingress="$4"
-  local temporary
-  mkdir -p "$PUBLIC_DEPLOY_STATE_DIR"
-  umask 077
-  temporary="${PROMOTION_MARKER}.tmp.$$"
-  printf '%s\t%s\t%s\t%s\n' \
-    "$region" "$old_revision" "$new_revision" "$old_ingress" >"$temporary"
-  mv "$temporary" "$PROMOTION_MARKER"
-  if ! read_promotion_marker; then
-    echo "ERROR: could not read back durable promotion marker ${PROMOTION_MARKER}" >&2
+  if ! read_promotion_marker || \
+     [ "$IN_FLIGHT_PHASE" != "ingress-armed" ] || \
+     [ "$IN_FLIGHT_REGION" != "$region" ] || \
+     [ "$IN_FLIGHT_OLD_REVISION" != "$old_revision" ] || \
+     [ "$IN_FLIGHT_OLD_INGRESS" != "$old_ingress" ] || \
+     ! write_promotion_marker \
+       "$region" "$old_revision" "$new_revision" "$old_ingress" promotion-armed || \
+     ! read_promotion_marker; then
+    echo "ERROR: could not durably record promotion intent in ${PROMOTION_MARKER}" >&2
     return 1
   fi
   PROMOTED_REGIONS+=("$IN_FLIGHT_REGION")
@@ -88,19 +164,27 @@ clear_promotion_marker() {
 }
 
 restore_in_flight_promotion() {
-  if ! read_promotion_marker; then
-    return 0
-  fi
-  echo "CRITICAL: interrupted during promotion of ${PUBLIC_SERVICE}/${IN_FLIGHT_REGION} from ${IN_FLIGHT_OLD_REVISION} to ${IN_FLIGHT_NEW_REVISION}" >&2
+  local marker_status=0
+  read_promotion_marker || marker_status=$?
+  case "$marker_status" in
+    0) ;;
+    1) return 0 ;;
+    *) return 1 ;;
+  esac
   local restore_failed=0
-  if gc run services update-traffic "$PUBLIC_SERVICE" \
-      --region "$IN_FLIGHT_REGION" \
-      --to-revisions="${IN_FLIGHT_OLD_REVISION}=100" \
-      --quiet >/dev/null; then
-    echo "CRITICAL: restored interrupted region ${IN_FLIGHT_REGION} to ${IN_FLIGHT_OLD_REVISION}" >&2
+  if [ "$IN_FLIGHT_PHASE" = "promotion-armed" ]; then
+    echo "CRITICAL: interrupted during promotion of ${PUBLIC_SERVICE}/${IN_FLIGHT_REGION} from ${IN_FLIGHT_OLD_REVISION} to ${IN_FLIGHT_NEW_REVISION}" >&2
+    if gc run services update-traffic "$PUBLIC_SERVICE" \
+        --region "$IN_FLIGHT_REGION" \
+        --to-revisions="${IN_FLIGHT_OLD_REVISION}=100" \
+        --quiet >/dev/null; then
+      echo "CRITICAL: restored interrupted region ${IN_FLIGHT_REGION} to ${IN_FLIGHT_OLD_REVISION}" >&2
+    else
+      echo "CRITICAL: automatic traffic restore failed. Run exactly: gcloud --project ${PROJECT_ID} run services update-traffic ${PUBLIC_SERVICE} --region ${IN_FLIGHT_REGION} --to-revisions=${IN_FLIGHT_OLD_REVISION}=100 --quiet" >&2
+      restore_failed=1
+    fi
   else
-    echo "CRITICAL: automatic traffic restore failed. Run exactly: gcloud --project ${PROJECT_ID} run services update-traffic ${PUBLIC_SERVICE} --region ${IN_FLIGHT_REGION} --to-revisions=${IN_FLIGHT_OLD_REVISION}=100 --quiet" >&2
-    restore_failed=1
+    echo "CRITICAL: interrupted before traffic promotion of ${PUBLIC_SERVICE}/${IN_FLIGHT_REGION}; restoring ingress only" >&2
   fi
   if ! gc run services update "$PUBLIC_SERVICE" \
       --region "$IN_FLIGHT_REGION" \
@@ -321,6 +405,7 @@ done
 
 ORIGINAL_REVISIONS=()
 ORIGINAL_INGRESSES=()
+ORIGINAL_PROBE_REVISIONS=()
 if [ "$STAGE" = "routed" ]; then
   # Resolve every serving revision before the first mutation. The existing
   # helper rejects split or ambiguous traffic and describes the traffic-taking
@@ -350,25 +435,67 @@ print(name)
       echo "ERROR: cannot capture public ingress in ${target}" >&2
       exit 1
     fi
-    if ! active_ingress="$(python3 -c '
+    if ! service_recovery_state="$(python3 -c '
 import json
 import sys
 
-ingress = json.load(sys.stdin).get("metadata", {}).get("annotations", {}).get(
+service = json.load(sys.stdin)
+ingress = service.get("metadata", {}).get("annotations", {}).get(
     "run.googleapis.com/ingress"
 )
 if ingress not in {"all", "internal-and-cloud-load-balancing"}:
     raise SystemExit(f"unsupported public ingress {ingress!r}")
-print(ingress)
+tagged = [
+    item.get("revisionName")
+    for item in service.get("status", {}).get("traffic", [])
+    if item.get("tag") == "public-revision-probe"
+]
+if len(tagged) > 1 or (tagged and not tagged[0]):
+    raise SystemExit("public revision probe tag is ambiguous")
+probe_revision = tagged[0] if tagged else "none"
+print(f"{ingress}\t{probe_revision}")
 ' <<<"$service_json")"; then
-      echo "ERROR: cannot identify public ingress in ${target}" >&2
+      echo "ERROR: cannot identify public ingress and probe state in ${target}" >&2
       exit 1
     fi
+    IFS=$'\t' read -r active_ingress active_probe_revision \
+      <<<"$service_recovery_state"
     ORIGINAL_INGRESSES+=("$active_ingress")
+    ORIGINAL_PROBE_REVISIONS+=("$active_probe_revision")
   done
-  if read_promotion_marker; then
+  marker_status=0
+  read_promotion_marker || marker_status=$?
+  if [ "$marker_status" -eq 0 ]; then
     echo "ERROR: unresolved promotion marker for ${PUBLIC_SERVICE}/${IN_FLIGHT_REGION}: ${IN_FLIGHT_OLD_REVISION} -> ${IN_FLIGHT_NEW_REVISION}; original ingress=${IN_FLIGHT_OLD_INGRESS}" >&2
-    echo "Restore before retrying: gcloud --project ${PROJECT_ID} run services update-traffic ${PUBLIC_SERVICE} --region ${IN_FLIGHT_REGION} --to-revisions=${IN_FLIGHT_OLD_REVISION}=100 --quiet" >&2
+    if [ "$IN_FLIGHT_PHASE" = "promotion-armed" ]; then
+      echo "Restore before retrying: gcloud --project ${PROJECT_ID} run services update-traffic ${PUBLIC_SERVICE} --region ${IN_FLIGHT_REGION} --to-revisions=${IN_FLIGHT_OLD_REVISION}=100 --quiet" >&2
+    fi
+    echo "Restore before retrying: gcloud --project ${PROJECT_ID} run services update ${PUBLIC_SERVICE} --region ${IN_FLIGHT_REGION} --ingress ${IN_FLIGHT_OLD_INGRESS} --quiet" >&2
+    exit 1
+  fi
+  if [ "$marker_status" -ne 1 ]; then
+    exit 1
+  fi
+
+  cloud_recovery_detected=0
+  for index in "${!TARGET_REGIONS[@]}"; do
+    target="${TARGET_REGIONS[$index]}"
+    active_ingress="${ORIGINAL_INGRESSES[$index]}"
+    active_probe_revision="${ORIGINAL_PROBE_REVISIONS[$index]}"
+    if [ "$active_ingress" = "internal-and-cloud-load-balancing" ] && \
+       [ "$active_probe_revision" = "none" ]; then
+      continue
+    fi
+    cloud_recovery_detected=1
+    echo "ERROR: cloud recovery state detected for ${PUBLIC_SERVICE}/${target}: serving=${ORIGINAL_REVISIONS[$index]}; ingress=${active_ingress}; probe tag ${PUBLIC_PROBE_TAG}=${active_probe_revision}" >&2
+    if [ "$active_probe_revision" != "none" ]; then
+      echo "Restore before retrying: gcloud --project ${PROJECT_ID} run services update-traffic ${PUBLIC_SERVICE} --region ${target} --remove-tags=${PUBLIC_PROBE_TAG} --quiet" >&2
+    fi
+    if [ "$active_ingress" != "internal-and-cloud-load-balancing" ]; then
+      echo "Restore before retrying: gcloud --project ${PROJECT_ID} run services update ${PUBLIC_SERVICE} --region ${target} --ingress internal-and-cloud-load-balancing --quiet" >&2
+    fi
+  done
+  if [ "$cloud_recovery_detected" -eq 1 ]; then
     exit 1
   fi
 fi
@@ -468,6 +595,10 @@ for index in "${!TARGET_REGIONS[@]}"; do
 
   old_revision="${ORIGINAL_REVISIONS[$index]}"
   old_ingress="${ORIGINAL_INGRESSES[$index]}"
+  if ! arm_ingress_recovery "$target" "$old_revision" "$old_ingress"; then
+    echo "ERROR: refusing to widen ingress without durable recovery state for ${PUBLIC_SERVICE}/${target}" >&2
+    exit 1
+  fi
   if ! new_revision="$(gc run deploy "$PUBLIC_SERVICE" \
       "${deploy_args[@]}" \
       --no-traffic \
