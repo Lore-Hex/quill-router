@@ -193,6 +193,12 @@ CHOOSE_CATALOG_STALE_SECONDS = 86_400
 MODEL_REGION_PAGE_CACHE_SECONDS = 300
 MODEL_REGION_PAGE_STALE_SECONDS = 86_400
 INDEXNOW_KEY = "360a02e48445d297f9612a4c3fef878b"
+OPENROUTER_LANDING_EXPERIMENT_CAMPAIGNS = frozenset(
+    {
+        "openrouter_alternative_exact",
+        "openrouter_lp_multi_20260822",
+    }
+)
 _STATUS_CACHE: tuple[float, dict[str, Any]] | None = None
 # /fleet fans out to every peer's status.json, so its cache TTL is what keeps
 # a page-refresh storm from turning into a cross-cloud fetch storm.
@@ -998,9 +1004,24 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def seo_x402_llm_api() -> str:
         return public_page_html(settings, "x402-llm-api")
 
+    def openrouter_landing_experiment_redirect(request: Request) -> RedirectResponse:
+        attribution = getattr(request.state, "acquisition_attribution", None)
+        seed = getattr(attribution, "anonymous_id", None)
+        selected_path = assigned_openrouter_landing_path(seed)
+        query = request.url.query
+        location = f"{selected_path}?{query}" if query else selected_path
+        return RedirectResponse(url=location, status_code=307)
+
     @public_html_route("/openrouter-alternative")
-    async def seo_openrouter_alternative() -> str:
-        return public_page_html(settings, "openrouter-alternative")
+    async def seo_openrouter_alternative(
+        request: Request,
+    ) -> Response:
+        if (
+            request.query_params.get("utm_campaign")
+            in OPENROUTER_LANDING_EXPERIMENT_CAMPAIGNS
+        ):
+            return openrouter_landing_experiment_redirect(request)
+        return HTMLResponse(public_page_html(settings, "openrouter-alternative"))
 
     @public_html_route("/private-llm-api")
     async def seo_private_llm_api() -> str:
@@ -1019,12 +1040,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def experiment_openrouter_landing_router(
         request: Request,
     ) -> RedirectResponse:
-        attribution = getattr(request.state, "acquisition_attribution", None)
-        seed = getattr(attribution, "anonymous_id", None)
-        selected_path = assigned_openrouter_landing_path(seed)
-        query = request.url.query
-        location = f"{selected_path}?{query}" if query else selected_path
-        return RedirectResponse(url=location, status_code=307)
+        return openrouter_landing_experiment_redirect(request)
 
     @public_html_route(
         "/openrouter-alternative/lp/{variant_slug}",
