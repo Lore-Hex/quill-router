@@ -122,6 +122,20 @@ def test_superseded_push_stops_before_production_mutation() -> None:
     assert "if: ${{ needs.confirm-current-main.outputs.proceed == 'true' }}" in workflow
 
 
+def test_rollback_capture_uses_the_sole_serving_revision() -> None:
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    start = workflow.index("- name: Capture pre-deploy revisions")
+    end = workflow.index("- name: Detect optional deploy surfaces", start)
+    capture = workflow[start:end]
+
+    assert "set -euo pipefail" in capture
+    assert "--format=json" in capture
+    assert "scripts/deploy/resolve_active_revision.py" in capture
+    assert "status.traffic[0]" not in capture
+    assert "|| true" not in capture
+    assert "has no unambiguous 100%-traffic rollback revision" in capture
+
+
 def test_runtime_secret_validation_is_parallel_and_does_not_restore_stale_ses_keys() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     sync = workflow.index("sync-runtime-secrets:")
