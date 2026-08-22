@@ -22,6 +22,7 @@ import cbor2
 import httpx
 from cryptography import x509
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from trustedrouter import AsyncTrustedRouter
 
 from trusted_router.config import Settings, parse_gateway_region_targets
 from trusted_router.provider_reliability import model_deadlines
@@ -33,6 +34,12 @@ from trusted_router.storage_models import (
     scrub_provider_error_message,
 )
 from trusted_router.synthetic.components import is_router_origin_error
+from trusted_router.synthetic.inference_sdk import (
+    DEFAULT_CONTROL_PLANE_BASE_URL,
+    build_inference_sdk,
+    classify_sdk_failure,
+    close_inference_sdk,
+)
 from trusted_router.types import UsageType
 
 DEFAULT_SYNTHETIC_BILLING_CONCURRENCY = 2
@@ -284,9 +291,20 @@ async def run_synthetic_once(
     monitor_region: str | None = None,
     api_key: str | None = None,
     billing_semaphore: asyncio.Semaphore | None = None,
+    control_plane_base_url: str | None = None,
 ) -> list[SyntheticProbeSample]:
     region = monitor_region or settings.synthetic_monitor_region or choose_region(settings)
     key = api_key or settings.synthetic_monitor_api_key
+    # Where the inference probes' SDK sessions beacon their client telemetry.
+    # Same precedence as /internal/synthetic/run: the caller's explicit value
+    # (the monitor CLI's TR_SYNTHETIC_CONTROL_PLANE_URL), then this
+    # deployment's own plane, then the canonical GCP plane. A standalone cloud
+    # must report to its own control plane, not another cloud's.
+    control_plane = (
+        control_plane_base_url
+        or settings.synthetic_control_plane_base_url
+        or DEFAULT_CONTROL_PLANE_BASE_URL
+    )
     timeout = httpx.Timeout(settings.synthetic_monitor_timeout_seconds)
     limiter = billing_semaphore or asyncio.Semaphore(DEFAULT_SYNTHETIC_BILLING_CONCURRENCY)
     samples: list[SyntheticProbeSample] = []
@@ -311,6 +329,7 @@ async def run_synthetic_once(
                     api_key=key,
                     model=settings.synthetic_monitor_model,
                     billing_semaphore=limiter,
+                    control_plane_base_url=control_plane,
                 )
             )
         # Peer policing rides the same pass: every deployment fetches every
@@ -339,6 +358,7 @@ async def _run_target_synthetic_probes(
     api_key: str | None,
     model: str,
     billing_semaphore: asyncio.Semaphore,
+    control_plane_base_url: str = DEFAULT_CONTROL_PLANE_BASE_URL,
 ) -> list[SyntheticProbeSample]:
     probes = [
         tls_health_probe(client, target, monitor_region=monitor_region),
@@ -361,27 +381,16 @@ async def _run_target_synthetic_probes(
     # can influence that env var, would otherwise harvest a billable key
     # once a minute with no certificate check standing in the way.
     if api_key and target.paid_probes and not target.connect_host:
-        probes.extend(
-            [
-                _run_billing_probe(
-                    billing_semaphore,
-                    openai_chat_pong_probe,
-                    client,
-                    target,
-                    monitor_region=monitor_region,
-                    api_key=api_key,
-                    model=model,
-                ),
-                _run_billing_probe(
-                    billing_semaphore,
-                    responses_pong_probe,
-                    client,
-                    target,
-                    monitor_region=monitor_region,
-                    api_key=api_key,
-                    model=model,
-                ),
-            ]
+        probes.append(
+            _run_inference_sdk_probes(
+                client,
+                target,
+                monitor_region=monitor_region,
+                api_key=api_key,
+                model=model,
+                billing_semaphore=billing_semaphore,
+                control_plane_base_url=control_plane_base_url,
+            )
         )
     results = await asyncio.gather(*probes)
     samples: list[SyntheticProbeSample] = []
@@ -393,6 +402,49 @@ async def _run_target_synthetic_probes(
         else:
             raise TypeError(f"unexpected synthetic probe result: {type(result).__name__}")
     return samples
+
+
+async def _run_inference_sdk_probes(
+    client: httpx.AsyncClient,
+    target: SyntheticTarget,
+    *,
+    monitor_region: str,
+    api_key: str,
+    model: str,
+    billing_semaphore: asyncio.Semaphore,
+    control_plane_base_url: str,
+) -> list[SyntheticProbeSample]:
+    """Run this target's inference pair and flush its SDK beacon before returning."""
+    sdk = build_inference_sdk(
+        target.api_base_url,
+        api_key=api_key,
+        http_client=client,
+        control_plane_base_url=control_plane_base_url,
+    )
+    try:
+        results = await asyncio.gather(
+            _run_billing_probe(
+                billing_semaphore,
+                openai_chat_pong_probe,
+                sdk,
+                target,
+                monitor_region=monitor_region,
+                model=model,
+            ),
+            _run_billing_probe(
+                billing_semaphore,
+                responses_pong_probe,
+                sdk,
+                target,
+                monitor_region=monitor_region,
+                model=model,
+            ),
+        )
+        return list(results)
+    finally:
+        # Telemetry is best-effort and close_inference_sdk swallows reporter
+        # failures, so a broken beacon can never rewrite either probe sample.
+        await close_inference_sdk(sdk)
 
 
 async def _run_billing_probe(
@@ -1107,13 +1159,20 @@ def _response_peer_cert_der(response: httpx.Response) -> bytes | None:
 
 
 async def openai_chat_pong_probe(
-    client: httpx.AsyncClient,
+    sdk: AsyncTrustedRouter,
     target: SyntheticTarget,
     *,
     monitor_region: str,
-    api_key: str,
     model: str,
 ) -> SyntheticProbeSample:
+    """A real chat completion through the official Python SDK.
+
+    ``sdk`` is the target's session from ``inference_sdk.build_inference_sdk``:
+    the monitor's own client underneath, one attempt, telemetry on. The
+    buffered ``request`` path keeps the request non-streaming and adds the
+    SDK's user-agent and per-attempt ``x-tr-client`` header; the timing stays
+    the monitor's own, measured around the call.
+    """
     url = _api_url(target.api_base_url, "/chat/completions")
     body = {
         "model": model,
@@ -1124,54 +1183,43 @@ async def openai_chat_pong_probe(
         "max_tokens": 128,
         "temperature": 0,
         "metadata": {"trustedrouter_synthetic": "true"},
+        "app": "TrustedRouter Synthetic",
     }
-    request_url, connect_headers, extensions = _connect_host_request(target, url)
     started = time.perf_counter()
     try:
-        response = await client.post(
-            request_url,
-            json=body,
-            headers={**_auth_headers(api_key), **connect_headers},
-            extensions=extensions,
-        )
-        latency_ms = _elapsed_ms(started)
-        text = _chat_text(response)
-        ok = response.status_code == 200 and _pong_matches(text)
-        return _sample(
-            "openai_sdk_pong",
-            target,
-            monitor_region,
-            url,
-            status="up" if ok else "down",
-            latency_milliseconds=latency_ms,
-            ttfb_milliseconds=latency_ms,
-            http_status=response.status_code,
-            error_type=None if ok else "pong_mismatch",
-            model=model,
-            output_match=ok,
-        )
-    except httpx.HTTPError as exc:
-        return _sample(
-            "openai_sdk_pong",
-            target,
-            monitor_region,
-            url,
-            status="down",
-            latency_milliseconds=_elapsed_ms(started),
-            error_type=exc.__class__.__name__,
-            model=model,
-            output_match=False,
-        )
+        payload = await sdk.request("POST", "/chat/completions", json=body)
+    except Exception as exc:  # noqa: BLE001 - every SDK failure is a classified sample
+        return _sdk_failure_sample("openai_sdk_pong", target, monitor_region, url, exc, started, model)
+    latency_ms = _elapsed_ms(started)
+    ok = _pong_matches(_chat_text(httpx.Response(200, json=payload)))
+    return _sample(
+        "openai_sdk_pong",
+        target,
+        monitor_region,
+        url,
+        status="up" if ok else "down",
+        latency_milliseconds=latency_ms,
+        ttfb_milliseconds=latency_ms,
+        # The SDK only returns a payload for a non-error status, and the
+        # gateway's success status on this route is 200.
+        http_status=200,
+        error_type=None if ok else "pong_mismatch",
+        model=model,
+        output_match=ok,
+    )
 
 
 async def responses_pong_probe(
-    client: httpx.AsyncClient,
+    sdk: AsyncTrustedRouter,
     target: SyntheticTarget,
     *,
     monitor_region: str,
-    api_key: str,
     model: str,
 ) -> SyntheticProbeSample:
+    """A real Responses round-trip through the official Python SDK.
+
+    Same session and same contract as ``openai_chat_pong_probe``.
+    """
     url = _api_url(target.api_base_url, "/responses")
     body = {
         "model": model,
@@ -1184,44 +1232,61 @@ async def responses_pong_probe(
         "max_output_tokens": 128,
         "temperature": 0,
         "metadata": {"trustedrouter_synthetic": "true"},
+        "app": "TrustedRouter Synthetic",
     }
-    request_url, connect_headers, extensions = _connect_host_request(target, url)
     started = time.perf_counter()
     try:
-        response = await client.post(
-            request_url,
-            json=body,
-            headers={**_auth_headers(api_key), **connect_headers},
-            extensions=extensions,
-        )
-        latency_ms = _elapsed_ms(started)
-        text = _responses_text(response)
-        ok = response.status_code == 200 and _pong_matches(text)
-        return _sample(
-            "responses_pong",
-            target,
-            monitor_region,
-            url,
-            status="up" if ok else "down",
-            latency_milliseconds=latency_ms,
-            ttfb_milliseconds=latency_ms,
-            http_status=response.status_code,
-            error_type=None if ok else "pong_mismatch",
-            model=model,
-            output_match=ok,
-        )
-    except httpx.HTTPError as exc:
-        return _sample(
-            "responses_pong",
-            target,
-            monitor_region,
-            url,
-            status="down",
-            latency_milliseconds=_elapsed_ms(started),
-            error_type=exc.__class__.__name__,
-            model=model,
-            output_match=False,
-        )
+        payload = await sdk.request("POST", "/responses", json=body)
+    except Exception as exc:  # noqa: BLE001 - every SDK failure is a classified sample
+        return _sdk_failure_sample("responses_pong", target, monitor_region, url, exc, started, model)
+    latency_ms = _elapsed_ms(started)
+    ok = _pong_matches(_responses_text(httpx.Response(200, json=payload)))
+    return _sample(
+        "responses_pong",
+        target,
+        monitor_region,
+        url,
+        status="up" if ok else "down",
+        latency_milliseconds=latency_ms,
+        ttfb_milliseconds=latency_ms,
+        # See openai_chat_pong_probe: a returned payload means a 200.
+        http_status=200,
+        error_type=None if ok else "pong_mismatch",
+        model=model,
+        output_match=ok,
+    )
+
+
+def _sdk_failure_sample(
+    probe_type: str,
+    target: SyntheticTarget,
+    monitor_region: str,
+    url: str,
+    exc: BaseException,
+    started: float,
+    model: str,
+) -> SyntheticProbeSample:
+    """The down sample for an SDK exception, in the pre-SDK taxonomy.
+
+    ``classify_sdk_failure`` owns the mapping; this keeps the sample fields
+    exactly as the raw-httpx probes set them: a latency always, a
+    time-to-first-byte only when a response was received.
+    """
+    latency_ms = _elapsed_ms(started)
+    failure = classify_sdk_failure(exc)
+    return _sample(
+        probe_type,
+        target,
+        monitor_region,
+        url,
+        status="down",
+        latency_milliseconds=latency_ms,
+        ttfb_milliseconds=latency_ms if failure.response_received else None,
+        http_status=failure.http_status,
+        error_type=failure.error_type,
+        model=model,
+        output_match=False,
+    )
 
 
 async def image_generation_probe(

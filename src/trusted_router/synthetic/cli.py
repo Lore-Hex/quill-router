@@ -77,6 +77,8 @@ async def _one_probe_pass(
             monitor_region=monitor_region,
             api_key=api_key,
             billing_semaphore=limiter,
+            # The inference probes' SDK sessions beacon to this plane.
+            control_plane_base_url=control_plane,
         )
     )
     if not api_key:

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import datetime as dt
 import json
 import random
+import socket
 import threading
 import time
+from collections.abc import AsyncIterator
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -15,6 +18,7 @@ import httpx
 import pytest
 from fastapi import BackgroundTasks
 from fastapi.testclient import TestClient
+from trustedrouter import AsyncTrustedRouter
 
 from trusted_router.catalog import (
     CHEAP_MODEL_ID,
@@ -47,6 +51,7 @@ from trusted_router.storage_gcp_synthetic_rollups import (
 )
 from trusted_router.storage_models import ProviderBenchmarkSample, iso_now, utcnow
 from trusted_router.synthetic.components import sample_slo_class_ids
+from trusted_router.synthetic.inference_sdk import build_inference_sdk, close_inference_sdk
 from trusted_router.synthetic.probes import (
     IMAGE_GENERATION_MODEL,
     IMAGE_GENERATION_PROVIDER,
@@ -83,6 +88,35 @@ from trusted_router.synthetic.route_health import (
     report_route_health,
 )
 from trusted_router.synthetic.status import history_payload, status_snapshot
+
+
+def _closed_local_port() -> int:
+    """A localhost port nothing listens on: connections are refused at once."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+# The SDK sessions' beacon destination in these tests. A refused port keeps
+# the reporter's close-time flush instant and off the network.
+_NO_CONTROL_PLANE = f"http://127.0.0.1:{_closed_local_port()}"
+
+
+@contextlib.asynccontextmanager
+async def _monitor_sdk(
+    client: httpx.AsyncClient, target: SyntheticTarget
+) -> AsyncIterator[AsyncTrustedRouter]:
+    """The production SDK session around a fake-gateway client, closed after use."""
+    sdk = build_inference_sdk(
+        target.api_base_url,
+        api_key="sk-test",
+        http_client=client,
+        control_plane_base_url=_NO_CONTROL_PLANE,
+    )
+    try:
+        yield sdk
+    finally:
+        await close_inference_sdk(sdk)
 
 
 def test_catalog_exposes_free_cheap_and_monitor_meta_models() -> None:
@@ -1607,20 +1641,13 @@ async def test_synthetic_http_probes_parse_success_shapes() -> None:
     async with httpx.AsyncClient(transport=transport) as client:
         health = await tls_health_probe(client, target, monitor_region="us-central1")
         attestation = await attestation_nonce_probe(client, target, monitor_region="us-central1")
-        chat = await openai_chat_pong_probe(
-            client,
-            target,
-            monitor_region="us-central1",
-            api_key="sk-test",  # noqa: S106 - test placeholder.
-            model=MONITOR_MODEL_ID,
-        )
-        responses = await responses_pong_probe(
-            client,
-            target,
-            monitor_region="us-central1",
-            api_key="sk-test",  # noqa: S106 - test placeholder.
-            model=MONITOR_MODEL_ID,
-        )
+        async with _monitor_sdk(client, target) as sdk:
+            chat = await openai_chat_pong_probe(
+                sdk, target, monitor_region="us-central1", model=MONITOR_MODEL_ID
+            )
+            responses = await responses_pong_probe(
+                sdk, target, monitor_region="us-central1", model=MONITOR_MODEL_ID
+            )
 
     assert health.status == "up"
     assert attestation.status == "up"
@@ -1849,35 +1876,26 @@ async def test_pong_probe_accepts_reasoning_model_shapes() -> None:
 
     target = SyntheticTarget("canonical", "https://api.trustedrouter.com/v1", "us-central1")
     async with httpx.AsyncClient(transport=httpx.MockTransport(chat_handler)) as client:
-        chat = await openai_chat_pong_probe(
-            client,
-            target,
-            monitor_region="us-central1",
-            api_key="sk-test",  # noqa: S106 - test placeholder.
-            model=MONITOR_MODEL_ID,
-        )
+        async with _monitor_sdk(client, target) as sdk:
+            chat = await openai_chat_pong_probe(
+                sdk, target, monitor_region="us-central1", model=MONITOR_MODEL_ID
+            )
     assert chat.status == "up", chat.error_type
     assert chat.output_match is True
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(chat_list_handler)) as client:
-        chat_list = await openai_chat_pong_probe(
-            client,
-            target,
-            monitor_region="us-central1",
-            api_key="sk-test",  # noqa: S106 - test placeholder.
-            model=MONITOR_MODEL_ID,
-        )
+        async with _monitor_sdk(client, target) as sdk:
+            chat_list = await openai_chat_pong_probe(
+                sdk, target, monitor_region="us-central1", model=MONITOR_MODEL_ID
+            )
     assert chat_list.status == "up", chat_list.error_type
     assert chat_list.output_match is True
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(responses_handler)) as client:
-        responses = await responses_pong_probe(
-            client,
-            target,
-            monitor_region="us-central1",
-            api_key="sk-test",  # noqa: S106 - test placeholder.
-            model=MONITOR_MODEL_ID,
-        )
+        async with _monitor_sdk(client, target) as sdk:
+            responses = await responses_pong_probe(
+                sdk, target, monitor_region="us-central1", model=MONITOR_MODEL_ID
+            )
     assert responses.status == "up", responses.error_type
     assert responses.output_match is True
 
@@ -1901,13 +1919,10 @@ async def test_pong_probe_still_catches_real_mismatches() -> None:
 
     target = SyntheticTarget("canonical", "https://api.trustedrouter.com/v1", "us-central1")
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        chat = await openai_chat_pong_probe(
-            client,
-            target,
-            monitor_region="us-central1",
-            api_key="sk-test",  # noqa: S106 - test placeholder.
-            model=MONITOR_MODEL_ID,
-        )
+        async with _monitor_sdk(client, target) as sdk:
+            chat = await openai_chat_pong_probe(
+                sdk, target, monitor_region="us-central1", model=MONITOR_MODEL_ID
+            )
 
     assert chat.status == "down"
     assert chat.output_match is False
