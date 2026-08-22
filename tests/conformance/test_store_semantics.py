@@ -560,6 +560,98 @@ def test_wallet_challenge_is_single_use(store: Store) -> None:
     assert store.consume_wallet_challenge(raw_nonce) is None
 
 
+def test_reissuing_active_wallet_challenge_reuses_same_nonce(
+    store: Store,
+    unique: str,
+) -> None:
+    """Reissuing for a known wallet cannot invalidate its displayed prompt.
+
+    Challenge issuance is unauthenticated, so replacement-on-request lets an
+    attacker race a legitimate wallet forever. The same address/domain slot
+    must instead return its still-live nonce without another durable record.
+    """
+    address = f"wallet-{unique}"
+    first_raw = f"old-{unique}"
+    first_message = (
+        "trusted.example wants you to sign in with your Ethereum account:\n"
+        f"{address}\n\nNonce: {first_raw}"
+    )
+    first_nonce, first = store.create_wallet_challenge(
+        address=address,
+        message=first_message,
+        ttl_seconds=300,
+        raw_nonce=first_raw,
+    )
+    proposed_raw = f"new-{unique}"
+    proposed_message = (
+        "trusted.example wants you to sign in with your Ethereum account:\n"
+        f"{address}\n\nNonce: {proposed_raw}"
+    )
+    returned_nonce, returned = store.create_wallet_challenge(
+        address=f"  {address.upper()}  ",
+        message=proposed_message,
+        ttl_seconds=300,
+        raw_nonce=proposed_raw,
+    )
+
+    assert first_nonce == first_raw
+    assert returned_nonce == first_raw
+    assert returned.hash == first.hash
+    assert returned.message == first_message
+    assert store.consume_wallet_challenge(proposed_raw) is None
+    consumed = store.consume_wallet_challenge(first_nonce)
+    assert consumed is not None
+    assert consumed.hash == first.hash
+    assert consumed.address == address
+
+    fresh_raw = f"after-consume-{unique}"
+    fresh_nonce, fresh = store.create_wallet_challenge(
+        address=address,
+        message=(
+            "trusted.example wants you to sign in with your Ethereum account:\n"
+            f"{address}\n\nNonce: {fresh_raw}"
+        ),
+        ttl_seconds=300,
+        raw_nonce=fresh_raw,
+    )
+    assert fresh_nonce == fresh_raw
+    assert fresh.hash != first.hash
+    assert store.consume_wallet_challenge(fresh_nonce) is not None
+
+
+def test_wallet_challenge_scope_isolated_by_siwe_domain(
+    store: Store,
+    unique: str,
+) -> None:
+    address = f"wallet-domain-{unique}"
+    first_nonce = f"first-domain-{unique}"
+    second_nonce = f"second-domain-{unique}"
+    first_returned, first = store.create_wallet_challenge(
+        address=address,
+        message=(
+            "trusted.example wants you to sign in with your Ethereum account:\n"
+            f"{address}\n\nNonce: {first_nonce}"
+        ),
+        ttl_seconds=300,
+        raw_nonce=first_nonce,
+    )
+    second_returned, second = store.create_wallet_challenge(
+        address=address,
+        message=(
+            "ally.example wants you to sign in with your Ethereum account:\n"
+            f"{address}\n\nNonce: {second_nonce}"
+        ),
+        ttl_seconds=300,
+        raw_nonce=second_nonce,
+    )
+
+    assert first_returned == first_nonce
+    assert second_returned == second_nonce
+    assert first.hash != second.hash
+    assert store.consume_wallet_challenge(first_nonce) is not None
+    assert store.consume_wallet_challenge(second_nonce) is not None
+
+
 def test_unknown_wallet_challenge_returns_none(store: Store, unique: str) -> None:
     """An unissued nonce must not authenticate anything."""
     assert store.consume_wallet_challenge(f"never-issued-{unique}") is None

@@ -80,6 +80,43 @@ def test_concurrent_stripe_credit_is_idempotent_under_retries() -> None:
     assert db.aborts >= n - 1, f"expected >= {n - 1} aborts, got {db.aborts}"
 
 
+def test_concurrent_wallet_challenge_issuance_keeps_only_one_active_nonce() -> None:
+    address = "0x" + "a" * 40
+    n = 16
+    barrier = threading.Barrier(n + 1)
+    store, db, _ = make_fake_store(ready_barrier=barrier)
+    nonces: list[str] = []
+    results_lock = threading.Lock()
+
+    def issue(index: int) -> None:
+        proposed_nonce = f"wallet-concurrent-{index}"
+        nonce, _ = store.create_wallet_challenge(
+            address=address,
+            message=(
+                "trusted.example wants you to sign in with your Ethereum account:\n"
+                f"{address}\n\nNonce: {proposed_nonce}"
+            ),
+            ttl_seconds=300,
+            raw_nonce=proposed_nonce,
+        )
+        with results_lock:
+            nonces.append(nonce)
+
+    _run_workers(
+        [threading.Thread(target=issue, args=(index,), daemon=True) for index in range(n)],
+        barrier,
+    )
+    db._ready_barrier = None
+
+    assert len([key for key in db.rows if key[0] == "wallet_challenge"]) == 1
+    assert len([key for key in db.rows if key[0] == "wallet_challenge_lookup"]) == 1
+    assert len([key for key in db.rows if key[0] == "wallet_challenge_by_scope"]) == 1
+    assert len(set(nonces)) == 1
+    assert store.consume_wallet_challenge(nonces[0]) is not None
+    assert store.consume_wallet_challenge(nonces[0]) is None
+    assert db.aborts >= n - 1, f"expected >= {n - 1} aborts, got {db.aborts}"
+
+
 def test_concurrent_key_limit_reservations_do_not_overspend() -> None:
     workspace_id = "ws_key_limit"
     n = 6

@@ -1793,7 +1793,7 @@ def dashboard_html(
     page_title = f"{brand_name} | Every model. Privacy with proof." if alternate_brand else OG_TITLE
     tr_config = {
         "environment": environment,
-        "defaultDevUser": "" if environment == "production" else DEV_USER_FALLBACK,
+        "defaultDevUser": "" if environment not in {"local", "test"} else DEV_USER_FALLBACK,
         "apiBaseUrl": resolved_api_base_url,
         "stablecoinCheckoutEnabled": settings.stablecoin_checkout_enabled,
         "paypalEnabled": settings.paypal_enabled,

@@ -370,6 +370,37 @@ def test_gcp_wallet_challenge_is_one_time_and_hash_only() -> None:
     assert raw not in "\n".join(row.body for row in db.rows.values())
 
 
+def test_gcp_wallet_challenge_reuse_is_bounded_per_normalized_scope() -> None:
+    store, db, _ = make_fake_store()
+    address = "0x" + "a" * 40
+    nonces: list[str] = []
+    challenge_ids: list[str] = []
+
+    for index in range(128):
+        proposed_nonce = f"bounded-wallet-nonce-{index}"
+        nonce, challenge = store.create_wallet_challenge(
+            address=address.upper() if index % 2 else f"  {address}  ",
+            message=(
+                "trusted.example wants you to sign in with your Ethereum account:\n"
+                f"{address}\n\nNonce: {proposed_nonce}"
+            ),
+            ttl_seconds=60,
+            raw_nonce=proposed_nonce,
+        )
+        nonces.append(nonce)
+        challenge_ids.append(challenge.hash)
+
+    assert len([key for key in db.rows if key[0] == "wallet_challenge"]) == 1
+    assert len([key for key in db.rows if key[0] == "wallet_challenge_lookup"]) == 1
+    assert len([key for key in db.rows if key[0] == "wallet_challenge_by_scope"]) == 1
+    assert set(nonces) == {"bounded-wallet-nonce-0"}
+    assert len(set(challenge_ids)) == 1
+    assert store.consume_wallet_challenge("bounded-wallet-nonce-127") is None
+    active = store.consume_wallet_challenge(nonces[0])
+    assert active is not None
+    assert "Nonce: bounded-wallet-nonce-0" in active.message
+
+
 def test_gcp_rate_limit_counts_in_same_window_and_resets_later() -> None:
     import datetime as dt
 

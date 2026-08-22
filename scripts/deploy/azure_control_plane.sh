@@ -90,16 +90,32 @@ SECRETS_DIR="${SECRETS_DIR:-$HOME/.quill-secrets}"
 # Federation + deferred settlement. Identity federates from the GCP home plane
 # (a peer token grants directory reads only); credits do not. Deferred
 # settlement stays OFF until its token is present AND explicitly enabled.
-FEDERATION_HOME_BASE_URL="${FEDERATION_HOME_BASE_URL:-https://trustedrouter.com}"
-DEFERRED_SETTLEMENT_ENABLED="${DEFERRED_SETTLEMENT_ENABLED:-false}"
 # 120s, not 300s: the status page calls the monitor stale at 300s, so an
 # interval equal to the threshold flaps in and out of a stale banner.
 SYNTHETIC_INTERVAL_SECONDS="${SYNTHETIC_INTERVAL_SECONDS:-120}"
 SYNTHETIC_ROTATION_COUNT="${SYNTHETIC_ROTATION_COUNT:-8}"
+# Azure does not yet have an approved external scheduled worker. Both loops
+# therefore remain in this process, and the observer service MUST remain a
+# singleton: every additional replica would repeat paid inference and
+# remediation. These are source-of-truth literals rather than operator knobs;
+# changing ownership is a separately reviewed resource/cost migration.
+OBSERVER_REMEDIATOR_IN_PROCESS_ENABLED="true"
+OBSERVER_REMEDIATOR_MODE="observe"
+OBSERVER_MAX_REPLICAS_EFFECTIVE=1
 
 log() { printf '\n=== %s\n' "$*" >&2; }
 exists() { "$@" >/dev/null 2>&1; }
 die() { echo "[FAIL] $*" >&2; exit 1; }
+
+case "$SYNTHETIC_INTERVAL_SECONDS" in
+  ''|*[!0-9]*) die "SYNTHETIC_INTERVAL_SECONDS must be a positive integer" ;;
+esac
+[ "$SYNTHETIC_INTERVAL_SECONDS" -gt 0 ] \
+  || die "Azure has no external synthetic owner; the in-process scheduler cannot be disabled"
+[ "$OBSERVER_REMEDIATOR_IN_PROCESS_ENABLED" = "true" ] \
+  || die "Azure has no external remediation owner; the in-process remediator cannot be disabled"
+[ "$OBSERVER_REMEDIATOR_MODE" != "off" ] \
+  || die "Azure has no external remediation owner; remediator mode cannot be off"
 
 read_secret() {
   # A file in the secrets dir wins; otherwise the env file's own name.
@@ -130,20 +146,18 @@ exists az containerapp env show -g "$RG" -n "$APP_ENV" \
 PG_HOST="$(az postgres flexible-server show -g "$RG" -n "$PG_NAME" --query fullyQualifiedDomainName -o tsv)"
 ACR_SERVER="$(az acr show -g "$RG" -n "$ACR" --query loginServer -o tsv)"
 
-INTERNAL_TOKEN="$(read_secret trustedrouter-internal-gateway-token TR_INTERNAL_GATEWAY_TOKEN)"
+OBSERVER_TOKEN="$(read_secret trustedrouter-observer-internal-token TR_OBSERVER_INTERNAL_TOKEN)"
 MONITOR_KEY="$(read_secret trustedrouter-synthetic-monitor-api-key TR_SYNTHETIC_MONITOR_API_KEY)"
-FEDERATION_TOKEN="$(read_secret trustedrouter-federation-peer-token TR_FEDERATION_PEER_TOKEN)"
-SETTLEMENT_TOKEN="$(read_secret trustedrouter-federation-settlement-token-azure-uae UNSET_ON_PURPOSE)"
-[ -n "$INTERNAL_TOKEN" ] || die "no internal gateway token in $SECRETS_DIR or $KEYS_FILE"
+[ -n "$OBSERVER_TOKEN" ] || die "no observer internal token in $SECRETS_DIR or $KEYS_FILE"
 [ -n "$MONITOR_KEY" ] || die "no synthetic monitor key: the leaderboard cannot run without it"
+LEGACY_GATEWAY_TOKEN="$(read_secret trustedrouter-internal-gateway-token TR_INTERNAL_GATEWAY_TOKEN)"
+if [ -n "$LEGACY_GATEWAY_TOKEN" ] && [ "$OBSERVER_TOKEN" = "$LEGACY_GATEWAY_TOKEN" ]; then
+  die "observer internal token must differ from the billing gateway token"
+fi
+unset LEGACY_GATEWAY_TOKEN
 # The monitor key is what makes the leaderboard green: rotation calls the
 # gateway as a CUSTOMER of itself. Without it there is a status page with no
 # model rows, which reads as "no data" rather than "not measured".
-
-if [ -z "$SETTLEMENT_TOKEN" ] || [ "$DEFERRED_SETTLEMENT_ENABLED" != "true" ]; then
-  log "deferred settlement OFF (token present: $([ -n "$SETTLEMENT_TOKEN" ] && echo yes || echo no))"
-  DEFERRED_SETTLEMENT_ENABLED="false"
-fi
 
 if exists az containerapp show -g "$RG" -n "$APP"; then
   PG_PASSWORD="$(az containerapp secret show -g "$RG" -n "$APP" --secret-name pg-password --query value -o tsv)"
@@ -171,6 +185,17 @@ log "deploying by digest: ${IMAGE_DIGEST}"
 
 ENV_VARS=(
   "TR_ENVIRONMENT=canary"
+  "TR_SERVICE_SURFACE=observer"
+  "TR_NEW_SIGNUPS_ENABLED=false"
+  # Container Apps cannot safely overwrite the trusted client-IP header while
+  # this service is directly exposed. Ignore any caller-supplied value and use
+  # the conservative aggregate application bucket; the platform scale cap is
+  # the cost boundary until the documented Front Door/Private Link migration.
+  "TR_RATE_LIMIT_CLIENT_IP_MODE=untrusted"
+  "TR_MAX_REQUEST_BODY_BYTES=4194304"
+  "TR_MAX_IN_FLIGHT_REQUEST_BODY_BYTES=8388608"
+  "TR_MAX_CONCURRENT_REQUEST_BODIES=2"
+  "TR_REQUEST_BODY_READ_TIMEOUT_SECONDS=10"
   "TR_RELEASE=${IMAGE_TAG}"
   "TR_STORAGE_BACKEND=postgres"
   "TR_POSTGRES_DSN=secretref:pg-dsn"
@@ -195,8 +220,6 @@ ENV_VARS=(
   # Flip this and the enclave's own env together, never separately.
   "TR_SYNTHETIC_CONTROL_PLANE_BASE_URL=https://trustedrouter.com"
 
-  "TR_FEDERATION_HOME_BASE_URL=${FEDERATION_HOME_BASE_URL}"
-  "TR_FEDERATION_DEFERRED_SETTLEMENT_ENABLED=${DEFERRED_SETTLEMENT_ENABLED}"
 
   # The monitor runs IN THIS PROCESS. Azure has no Cloud Scheduler and no
   # EventBridge, and Container Apps Jobs cannot carry a `python -c` argv
@@ -211,28 +234,36 @@ ENV_VARS=(
   # no sample shows no verdict at all - not green, not red, absent.
   "TR_SYNTHETIC_SCHEDULER_INTERVAL_SECONDS=${SYNTHETIC_INTERVAL_SECONDS}"
   "TR_SYNTHETIC_SCHEDULER_ROTATION_COUNT=${SYNTHETIC_ROTATION_COUNT}"
+  "TR_REMEDIATOR_IN_PROCESS_ENABLED=${OBSERVER_REMEDIATOR_IN_PROCESS_ENABLED}"
+  "TR_REMEDIATOR_MODE=${OBSERVER_REMEDIATOR_MODE}"
 
-  "TR_INTERNAL_GATEWAY_TOKEN=secretref:internal-token"
+  "TR_OBSERVER_INTERNAL_TOKEN=secretref:observer-token"
   "TR_SYNTHETIC_MONITOR_API_KEY=secretref:monitor-key"
-  "TR_FEDERATION_HOME_TOKEN=secretref:federation-token"
 )
 SECRET_ARGS=(
   "pg-password=${PG_PASSWORD}"
   "pg-dsn=${DSN}"
-  "internal-token=${INTERNAL_TOKEN}"
+  "observer-token=${OBSERVER_TOKEN}"
   "monitor-key=${MONITOR_KEY}"
-  "federation-token=${FEDERATION_TOKEN}"
 )
-if [ "$DEFERRED_SETTLEMENT_ENABLED" = "true" ]; then
-  ENV_VARS+=("TR_FEDERATION_SETTLEMENT_HOME_TOKEN=secretref:settlement-token")
-  SECRET_ARGS+=("settlement-token=${SETTLEMENT_TOKEN}")
-fi
+RETIRED_OBSERVER_ENV_VARS=(
+  TR_INTERNAL_GATEWAY_TOKEN
+  TR_FEDERATION_HOME_TOKEN
+  TR_FEDERATION_SETTLEMENT_HOME_TOKEN
+  TR_FEDERATION_DEFERRED_SETTLEMENT_ENABLED
+  TR_FEDERATION_HOME_BASE_URL
+)
 
 if exists az containerapp show -g "$RG" -n "$APP"; then
   log "updating $APP"
   az containerapp secret set -g "$RG" -n "$APP" --secrets "${SECRET_ARGS[@]}" -o none
   az containerapp update -g "$RG" -n "$APP" \
-    --image "$IMAGE_REF" --set-env-vars "${ENV_VARS[@]}" -o none
+    --image "$IMAGE_REF" --set-env-vars "${ENV_VARS[@]}" \
+    --remove-env-vars "${RETIRED_OBSERVER_ENV_VARS[@]}" \
+    --min-replicas 1 --max-replicas "$OBSERVER_MAX_REPLICAS_EFFECTIVE" \
+    --scale-rule-name observer-http \
+    --scale-rule-type http \
+    --scale-rule-http-concurrency "${OBSERVER_HTTP_CONCURRENCY:-10}" -o none
 else
   log "creating $APP"
   ACR_USER="$(az acr credential show -n "$ACR" --query username -o tsv)"
@@ -246,8 +277,44 @@ else
     --secrets "${SECRET_ARGS[@]}" \
     --env-vars "${ENV_VARS[@]}" \
     --target-port 8080 --ingress external \
-    --min-replicas 1 --max-replicas 3 \
+    --min-replicas 1 --max-replicas "$OBSERVER_MAX_REPLICAS_EFFECTIVE" \
+    --scale-rule-name observer-http \
+    --scale-rule-type http \
+    --scale-rule-http-concurrency "${OBSERVER_HTTP_CONCURRENCY:-10}" \
     --cpu 1.0 --memory 2.0Gi -o none
+fi
+
+configured_env_names="$(az containerapp show -g "$RG" -n "$APP" \
+  --query 'properties.template.containers[0].env[].name' -o tsv)"
+configured_env_names="${configured_env_names//$'\t'/$'\n'}"
+while IFS= read -r configured_env_name; do
+  for retired_env_name in "${RETIRED_OBSERVER_ENV_VARS[@]}"; do
+    if [ "$configured_env_name" = "$retired_env_name" ]; then
+      die "observer retains forbidden legacy env ${retired_env_name}"
+    fi
+  done
+done <<<"$configured_env_names"
+
+# Scale limits are revision-scoped. Only switch to single mode after the
+# bounded replacement revision has deployed successfully, so an old staged
+# revision cannot keep serving outside this cap and a pre-existing staged
+# revision cannot be promoted before the known image is ready.
+az containerapp revision set-mode -g "$RG" -n "$APP" --mode single -o none
+active_revision_mode="$(az containerapp show -g "$RG" -n "$APP" \
+  --query properties.configuration.activeRevisionsMode -o tsv)"
+configured_max_replicas="$(az containerapp show -g "$RG" -n "$APP" \
+  --query properties.template.scale.maxReplicas -o tsv)"
+configured_http_concurrency="$(az containerapp show -g "$RG" -n "$APP" \
+  --query "properties.template.scale.rules[?name=='observer-http'].http.metadata.concurrentRequests | [0]" \
+  -o tsv)"
+case "$active_revision_mode" in
+  Single|single) mode_verified=1 ;;
+  *) mode_verified=0 ;;
+esac
+if [ "$mode_verified" != "1" ] \
+    || [ "$configured_max_replicas" != "$OBSERVER_MAX_REPLICAS_EFFECTIVE" ] \
+    || [ "$configured_http_concurrency" != "${OBSERVER_HTTP_CONCURRENCY:-10}" ]; then
+  die "observer scale verification failed: mode=${active_revision_mode:-unset} max=${configured_max_replicas:-unset} concurrency=${configured_http_concurrency:-unset}"
 fi
 
 FQDN="$(az containerapp show -g "$RG" -n "$APP" --query properties.configuration.ingress.fqdn -o tsv)"

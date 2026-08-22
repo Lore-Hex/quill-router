@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 import uuid
@@ -8,6 +9,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -28,12 +30,23 @@ from trusted_router.services.stripe_fees import (
     stripe_processing_fee,
 )
 from trusted_router.storage import STORE
+from trusted_router.storage_rate_limits import InMemoryRateLimits
 from trusted_router.types import ErrorType
 
 _TOKEN_CACHE_SECONDS_SKEW = 60
 _TOKEN_CACHE_LOCK = threading.Lock()
 _TOKEN_CACHE: dict[tuple[str, str], tuple[str, float]] = {}
 _CHECKOUT_REFERENCE_VERSION = "tr1"
+_PAYPAL_AUTH_ALGO_RE = re.compile(r"^[A-Za-z0-9]+$")
+_PAYPAL_WEBHOOK_VERIFY_MAX_PER_MINUTE = 30
+_PAYPAL_WEBHOOK_VERIFY_MAX_CONCURRENT = 4
+_PAYPAL_WEBHOOK_VERIFY_LIMITER = InMemoryRateLimits(
+    lock=threading.RLock(),
+    max_buckets=4,
+)
+_PAYPAL_WEBHOOK_VERIFY_SLOTS = threading.BoundedSemaphore(
+    _PAYPAL_WEBHOOK_VERIFY_MAX_CONCURRENT
+)
 
 
 @dataclass(frozen=True)
@@ -238,25 +251,99 @@ def verify_paypal_webhook_signature(
     if not settings.paypal_enabled:
         raise api_error(400, "PayPal webhook is not configured", ErrorType.BAD_REQUEST)
     if not settings.paypal_webhook_id:
-        if settings.environment.lower() == "production" and settings.paypal_enabled:
-            raise api_error(400, "PayPal webhook verification is not configured", ErrorType.BAD_REQUEST)
-        return
-    verification = _paypal_post(
-        settings,
-        "/v1/notifications/verify-webhook-signature",
-        request_id=f"tr-paypal-webhook-verify-{event.get('id') or uuid.uuid4().hex}",
-        json_body={
-            "transmission_id": headers.get("paypal-transmission-id"),
-            "transmission_time": headers.get("paypal-transmission-time"),
-            "cert_url": headers.get("paypal-cert-url"),
-            "auth_algo": headers.get("paypal-auth-algo"),
-            "transmission_sig": headers.get("paypal-transmission-sig"),
-            "webhook_id": settings.paypal_webhook_id,
-            "webhook_event": dict(event),
-        },
+        if settings.environment.lower() in {"local", "test"}:
+            return
+        raise api_error(
+            400,
+            "PayPal webhook verification is not configured",
+            ErrorType.BAD_REQUEST,
+        )
+    verification_fields = _validated_paypal_webhook_headers(headers)
+    hit = _PAYPAL_WEBHOOK_VERIFY_LIMITER.hit(
+        namespace="paypal_webhook_verify",
+        subject="process",
+        limit=_PAYPAL_WEBHOOK_VERIFY_MAX_PER_MINUTE,
+        window_seconds=60,
     )
+    if not hit.allowed:
+        raise api_error(
+            429,
+            "PayPal webhook verification is busy; retry",
+            ErrorType.RATE_LIMITED,
+            headers={"Retry-After": str(hit.retry_after_seconds)},
+        )
+    if not _PAYPAL_WEBHOOK_VERIFY_SLOTS.acquire(blocking=False):
+        raise api_error(
+            429,
+            "PayPal webhook verification is busy; retry",
+            ErrorType.RATE_LIMITED,
+            headers={"Retry-After": "1"},
+        )
+    try:
+        verification = _paypal_post(
+            settings,
+            "/v1/notifications/verify-webhook-signature",
+            request_id=f"tr-paypal-webhook-verify-{event.get('id') or uuid.uuid4().hex}",
+            json_body={
+                **verification_fields,
+                "webhook_id": settings.paypal_webhook_id,
+                "webhook_event": dict(event),
+            },
+        )
+    finally:
+        _PAYPAL_WEBHOOK_VERIFY_SLOTS.release()
     if verification.get("verification_status") != "SUCCESS":
         raise api_error(400, "Invalid PayPal webhook", ErrorType.BAD_REQUEST)
+
+
+def _validated_paypal_webhook_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    """Reject obviously forged deliveries before an OAuth/API round trip.
+
+    These are PayPal's documented required fields and maximum lengths. The
+    remote verification endpoint remains authoritative for the signature; the
+    local checks exist to make empty, oversized, or off-domain attacker input
+    cheap.
+    """
+
+    transmission_id = str(headers.get("paypal-transmission-id") or "")
+    transmission_time = str(headers.get("paypal-transmission-time") or "")
+    cert_url = str(headers.get("paypal-cert-url") or "")
+    auth_algo = str(headers.get("paypal-auth-algo") or "")
+    transmission_sig = str(headers.get("paypal-transmission-sig") or "")
+    values_and_limits = (
+        (transmission_id, 50),
+        (transmission_time, 100),
+        (cert_url, 500),
+        (auth_algo, 100),
+        (transmission_sig, 500),
+    )
+    if any(not value or len(value) > limit for value, limit in values_and_limits):
+        raise api_error(400, "Invalid PayPal webhook headers", ErrorType.BAD_REQUEST)
+    if _PAYPAL_AUTH_ALGO_RE.fullmatch(auth_algo) is None:
+        raise api_error(400, "Invalid PayPal webhook headers", ErrorType.BAD_REQUEST)
+
+    parsed = urlparse(cert_url)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise api_error(400, "Invalid PayPal webhook headers", ErrorType.BAD_REQUEST) from exc
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    if (
+        parsed.scheme != "https"
+        or (hostname != "paypal.com" and not hostname.endswith(".paypal.com"))
+        or port not in {None, 443}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+    ):
+        raise api_error(400, "Invalid PayPal webhook headers", ErrorType.BAD_REQUEST)
+    return {
+        "transmission_id": transmission_id,
+        "transmission_time": transmission_time,
+        "cert_url": cert_url,
+        "auth_algo": auth_algo,
+        "transmission_sig": transmission_sig,
+    }
 
 
 def _paypal_post(

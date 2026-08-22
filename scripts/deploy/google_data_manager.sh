@@ -31,6 +31,7 @@ fi
 ENV_VARS=(
   # One-shot worker: no Stripe, Sentry, gateway, provider, or BYOK secrets.
   "TR_ENVIRONMENT=worker"
+  "TR_SERVICE_SURFACE=control"
   "TR_RELEASE=$(git rev-parse --short HEAD 2>/dev/null || echo local)"
   "TR_GCP_PROJECT_ID=${PROJECT_ID}"
   "TR_SPANNER_INSTANCE_ID=${SPANNER_INSTANCE_ID}"

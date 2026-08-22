@@ -226,11 +226,12 @@ class TestTelnyxVoiceRequestShape:
         service = telephony.TelephonyService(
             _settings(
                 environment="production",
+                service_surface="control",
+                attribution_cookie_secret="a" * 32,
                 api_base_url="https://api.trustedrouter.com/v1",
                 trusted_domain="trustedrouter.com",
                 telnyx_texml_account_id="acct-1",
                 telnyx_texml_application_id="app-1",
-                internal_gateway_token="prod-token",  # noqa: S106 - test config.
                 stripe_webhook_secret="whsec_test",  # noqa: S106 - test config.
                 stripe_secret_key="sk_test",  # noqa: S106 - test config.
                 sentry_dsn="https://example@example.ingest.sentry.io/1",

@@ -61,6 +61,21 @@ TR_SPANNER_POOL_SIZE="${TR_SPANNER_POOL_SIZE:-8}"
 # 2Gi is kept (not lowered to 1Gi) because the per-request peak under
 # spiky bursts can still pin a single instance; the surplus is cheap.
 TR_CLOUD_RUN_MEMORY="${TR_CLOUD_RUN_MEMORY:-2Gi}"
+# The public service must only be reachable from the external Application Load
+# Balancer or from an explicitly private Google path. Authentication is a
+# separate control: public pages remain unauthenticated, but the run.app origin
+# is not an Internet bypass around Cloud Armor.
+TR_CLOUD_RUN_INGRESS="${TR_CLOUD_RUN_INGRESS:-internal-and-cloud-load-balancing}"
+# The legacy combined service has trusted regional synthetic jobs that use its
+# run.app URL through Private Google Access, so it keeps that URL by default.
+# Split public/control/billing services override this independently and disable
+# the URL when they have no trusted direct consumer.
+TR_CLOUD_RUN_DISABLE_DEFAULT_URL="${TR_CLOUD_RUN_DISABLE_DEFAULT_URL:-0}"
+# Service-level cost/saturation bulkhead. Split services set their own value;
+# 20 per region is the safe intermediate ceiling for the legacy combined
+# service. rollout.sh uses Cloud Run's mutable --max service cap, not the
+# per-revision --max-instances setting, so staged traffic cannot double it.
+TR_CLOUD_RUN_MAX_INSTANCES="${TR_CLOUD_RUN_MAX_INSTANCES:-20}"
 SERVICE="${SERVICE:-trusted-router}"
 REPO="${REPO:-trusted-router}"
 IMAGE="${IMAGE:-${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE}:$(git rev-parse --short HEAD 2>/dev/null || echo local)}"

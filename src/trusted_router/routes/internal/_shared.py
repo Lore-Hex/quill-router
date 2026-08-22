@@ -1,9 +1,11 @@
 """Shared auth gate for /internal/* routes.
 
-`require_internal_gateway` is the bearer-or-header check that guards
-the gateway authorize/settle/refund triplet plus the sentry-test
-synthetic. Production deploys must set TR_INTERNAL_GATEWAY_TOKEN; the
-local/test escape hatch lets unit tests avoid wiring a token.
+`require_internal_gateway` selects the credential owned by the route, not just
+the process. Billing routes accept only TR_INTERNAL_GATEWAY_TOKEN, while
+synthetic/Sentry routes accept only TR_OBSERVER_INTERNAL_TOKEN even when they
+are mounted on the internal service. That lets provider-facing monitor jobs
+operate without holding the credential that authorizes billing mutations.
+The local/test escape hatch lets unit tests avoid wiring a token.
 """
 
 from __future__ import annotations
@@ -16,16 +18,34 @@ from trusted_router.errors import api_error
 from trusted_router.security import constant_time_equal
 from trusted_router.types import ErrorType
 
+_OBSERVER_INTERNAL_EXACT_PATHS = frozenset({"/internal/sentry-test"})
+_OBSERVER_INTERNAL_PATH_PREFIXES = ("/internal/synthetic/",)
+
+
+def internal_service_credential(
+    settings: Settings,
+    path: str,
+) -> tuple[str, str | None]:
+    """Return the credential class and configured secret for an internal path."""
+    normalized_path = path[3:] if path.startswith("/v1/internal/") else path
+    observer_path = normalized_path in _OBSERVER_INTERNAL_EXACT_PATHS or normalized_path.startswith(
+        _OBSERVER_INTERNAL_PATH_PREFIXES
+    )
+    if observer_path:
+        return "observer", settings.observer_internal_token
+    return "gateway", settings.internal_gateway_token
+
 
 def require_internal_gateway(request: Request, settings: Settings) -> None:
-    if settings.internal_gateway_token:
+    _kind, expected = internal_service_credential(settings, request.url.path)
+    if expected:
         supplied = (
             get_authorization_bearer(request)
             or request.headers.get("x-trustedrouter-internal-token")
             or ""
         )
-        if not constant_time_equal(supplied, settings.internal_gateway_token):
-            raise api_error(401, "Invalid internal gateway token", ErrorType.UNAUTHORIZED)
+        if not constant_time_equal(supplied, expected):
+            raise api_error(401, "Invalid internal service token", ErrorType.UNAUTHORIZED)
         return
     if settings.environment not in {"local", "test"}:
-        raise api_error(403, "Internal gateway token is required", ErrorType.FORBIDDEN)
+        raise api_error(403, "Internal service token is required", ErrorType.FORBIDDEN)

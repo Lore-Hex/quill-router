@@ -213,6 +213,10 @@ async def test_daily_video_job_ingests_one_metadata_only_sample(
         if request.method == "GET" and request.url.path == "/v1/videos/job-daily/content":
             return httpx.Response(200, content=_mp4(), headers={"content-type": "video/mp4"})
         if request.method == "POST" and request.url.path == "/v1/internal/synthetic/samples":
+            assert (
+                request.headers["x-trustedrouter-internal-token"]
+                == "observer-test"
+            )
             ingested.append(json.loads(request.content))
             return httpx.Response(200, json={"data": {"recorded": 1}})
         return httpx.Response(404)
@@ -220,7 +224,8 @@ async def test_daily_video_job_ingests_one_metadata_only_sample(
     settings = Settings(
         environment="test",
         api_base_url="https://api.trustedrouter.com/v1",
-        internal_gateway_token="internal-test",  # noqa: S106 - test placeholder.
+        internal_gateway_token="billing-test",  # noqa: S106 - test placeholder.
+        observer_internal_token="observer-test",  # noqa: S106 - test placeholder.
         synthetic_monitor_api_key="sk-tr-test",
     )
     real_async_client = httpx.AsyncClient

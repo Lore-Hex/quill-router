@@ -486,7 +486,8 @@ def test_alias_oauth_credentials_are_normalized_and_fail_closed() -> None:
 def test_production_oauth_requires_credentials_for_every_backup_domain() -> None:
     values = {
         "environment": "production",
-        "internal_gateway_token": "internal-token",
+        "service_surface": "control",
+        "attribution_cookie_secret": "oauth-attribution-" + "a" * 32,
         "stripe_webhook_secret": "whsec-test",
         "stripe_secret_key": "sk-test",
         "sentry_dsn": "https://example@example.ingest.sentry.io/1",
@@ -516,6 +517,18 @@ def test_production_oauth_requires_credentials_for_every_backup_domain() -> None
         }
         for domain in ("allyrouter.com", "uptimerouter.com")
     }
+    alias_only = dict(values)
+    alias_only.pop("google_client_id")
+    alias_only.pop("google_client_secret")
+    with pytest.raises(
+        ValidationError,
+        match="requires canonical TR_GOOGLE_CLIENT_ID and TR_GOOGLE_CLIENT_SECRET",
+    ):
+        Settings(
+            **alias_only,
+            google_alias_credentials_json=json.dumps(alias_credentials),
+        )
+
     settings = Settings(
         **values,
         google_alias_credentials_json=json.dumps(alias_credentials),

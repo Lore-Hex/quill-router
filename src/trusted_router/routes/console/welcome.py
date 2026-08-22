@@ -57,7 +57,7 @@ def register(app: FastAPI) -> None:
             response.delete_cookie(
                 key=PENDING_REVEAL_COOKIE,
                 path="/console/welcome",
-                secure=settings.environment.lower() == "production",
+                secure=settings.environment.lower() not in {"local", "test"},
                 samesite="lax",
             )
         return response

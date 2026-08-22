@@ -12,6 +12,8 @@ import datetime as dt
 import hashlib
 import json
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from unittest.mock import patch
 
@@ -538,6 +540,147 @@ def test_sns_verify_rejects_non_amazonaws_cert_url() -> None:
     msg = _envelope(SigningCertURL="https://evil.example.com/cert.pem")
     with pytest.raises(SnsVerificationError):
         verify_sns_message(msg)
+
+
+@pytest.mark.parametrize(
+    "cert_url",
+    [
+        "https://sns.us-east-1.amazonaws.com/not-an-sns-cert.pem",
+        "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-x.pem?cache=bust",
+        "https://sns.us-east-1.amazonaws.com:444/SimpleNotificationService-x.pem",
+        "https://user@sns.us-east-1.amazonaws.com/SimpleNotificationService-x.pem",
+    ],
+)
+def test_sns_verify_rejects_noncanonical_amazon_cert_urls_before_fetch(
+    cert_url: str,
+) -> None:
+    fetches = 0
+
+    def forbidden(_url: str) -> bytes:
+        nonlocal fetches
+        fetches += 1
+        raise AssertionError("noncanonical SNS URL reached the network")
+
+    with pytest.raises(SnsVerificationError):
+        verify_sns_message(_envelope(SigningCertURL=cert_url), cert_fetcher=forbidden)
+    assert fetches == 0
+
+
+def test_default_sns_certificate_fetch_is_single_flight_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import trusted_router.sns_verify as sns_verify
+
+    sns_verify._reset_sns_cert_cache_for_tests()
+    calls = 0
+
+    class FakeResponse:
+        content = b"cached-certificate"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def get(_url: str, *, timeout: float) -> FakeResponse:
+        nonlocal calls
+        calls += 1
+        assert timeout == 10.0
+        return FakeResponse()
+
+    monkeypatch.setattr(sns_verify.httpx, "get", get)
+    url = "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-cache.pem"
+    try:
+        assert sns_verify._httpx_cert_fetcher(url) == b"cached-certificate"
+        assert sns_verify._httpx_cert_fetcher(url) == b"cached-certificate"
+        assert calls == 1
+    finally:
+        sns_verify._reset_sns_cert_cache_for_tests()
+
+
+def test_sns_certificate_cache_caps_attacker_controlled_misses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import trusted_router.sns_verify as sns_verify
+
+    sns_verify._reset_sns_cert_cache_for_tests()
+    calls = 0
+
+    class FakeResponse:
+        content = b"certificate"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def get(_url: str, *, timeout: float) -> FakeResponse:
+        nonlocal calls
+        calls += 1
+        assert timeout == 10.0
+        return FakeResponse()
+
+    monkeypatch.setattr(sns_verify.httpx, "get", get)
+    try:
+        for index in range(sns_verify._CERT_FETCH_MAX_PER_WINDOW):
+            sns_verify._httpx_cert_fetcher(
+                "https://sns.us-east-1.amazonaws.com/"
+                f"SimpleNotificationService-miss-{index}.pem"
+            )
+
+        with pytest.raises(RuntimeError, match="fetch capacity"):
+            sns_verify._httpx_cert_fetcher(
+                "https://sns.us-east-1.amazonaws.com/"
+                "SimpleNotificationService-one-too-many.pem"
+            )
+        assert calls == sns_verify._CERT_FETCH_MAX_PER_WINDOW
+    finally:
+        sns_verify._reset_sns_cert_cache_for_tests()
+
+
+def test_sns_certificate_fetch_concurrency_fails_closed_without_waiting_workers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import trusted_router.sns_verify as sns_verify
+
+    sns_verify._reset_sns_cert_cache_for_tests()
+    release = threading.Event()
+    both_started = threading.Event()
+    calls_lock = threading.Lock()
+    calls = 0
+
+    class FakeResponse:
+        content = b"certificate"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def get(_url: str, *, timeout: float) -> FakeResponse:
+        nonlocal calls
+        assert timeout == 10.0
+        with calls_lock:
+            calls += 1
+            if calls == sns_verify._CERT_FETCH_MAX_CONCURRENT:
+                both_started.set()
+        assert release.wait(timeout=2)
+        return FakeResponse()
+
+    monkeypatch.setattr(sns_verify.httpx, "get", get)
+    urls = [
+        "https://sns.us-east-1.amazonaws.com/"
+        f"SimpleNotificationService-concurrent-{index}.pem"
+        for index in range(sns_verify._CERT_FETCH_MAX_CONCURRENT + 1)
+    ]
+    try:
+        with ThreadPoolExecutor(max_workers=sns_verify._CERT_FETCH_MAX_CONCURRENT) as pool:
+            futures = [pool.submit(sns_verify._httpx_cert_fetcher, url) for url in urls[:-1]]
+            assert both_started.wait(timeout=2)
+            with pytest.raises(RuntimeError, match="fetch capacity"):
+                sns_verify._httpx_cert_fetcher(urls[-1])
+            assert calls == sns_verify._CERT_FETCH_MAX_CONCURRENT
+            release.set()
+            assert [future.result(timeout=2) for future in futures] == [
+                b"certificate"
+            ] * sns_verify._CERT_FETCH_MAX_CONCURRENT
+    finally:
+        release.set()
+        sns_verify._reset_sns_cert_cache_for_tests()
 
 
 def test_sns_verify_rejects_unknown_signature_version() -> None:

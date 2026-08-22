@@ -150,7 +150,7 @@ def set_attribution_cookie(
         value=encode_attribution_cookie(context, settings),
         max_age=ATTRIBUTION_COOKIE_MAX_AGE,
         httponly=True,
-        secure=settings.environment.lower() == "production",
+        secure=settings.environment.lower() not in {"local", "test"},
         samesite="lax",
         path="/",
     )
@@ -739,7 +739,15 @@ def _safe_text(value: str | None, limit: int) -> str:
 
 
 def _cookie_signing_key(settings: Settings) -> bytes:
-    root = settings.internal_gateway_token or f"local:{settings.service_name}"
+    # Public and control share only this narrow-purpose root. The gateway token
+    # remains a local/legacy fallback so existing development and combined-mode
+    # cookies keep working, but split production surfaces require the dedicated
+    # secret at Settings validation time.
+    root = (
+        settings.attribution_cookie_secret
+        or settings.internal_gateway_token
+        or f"local:{settings.service_name}"
+    )
     return hmac.new(
         root.encode("utf-8"),
         b"trustedrouter-attribution-cookie-v1",
