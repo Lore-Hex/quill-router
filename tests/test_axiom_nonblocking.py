@@ -37,6 +37,7 @@ import queue
 import threading
 import time
 from collections.abc import Iterator, Mapping
+from contextlib import suppress
 
 import pytest
 
@@ -405,14 +406,26 @@ def test_a_full_queue_drops_instead_of_blocking() -> None:
     """Backpressure must cost observability, never latency."""
     handler = _DroppingQueueHandler(queue.Queue(maxsize=1))
     handler.handle(_record("first"))
+    returned = threading.Event()
 
-    started = time.monotonic()
-    for index in range(50):
-        handler.handle(_record(f"overflow {index}"))
-    elapsed = time.monotonic() - started
+    def overflow() -> None:
+        handler.handle(_record("overflow"))
+        returned.set()
 
-    assert elapsed < 0.5, f"a full queue blocked for {elapsed:.3f}s"
-    assert handler._dropped >= 50, "drops were not counted"
+    caller = threading.Thread(target=overflow, daemon=True)
+    caller.start()
+    try:
+        assert returned.wait(timeout=5), "a full queue waited for capacity"
+        assert handler.queue.qsize() == 1, "overflow item was not dropped"
+        assert handler._dropped == 1, "drop was not counted"
+    finally:
+        # Release a deliberately blocking mutation without leaking its thread;
+        # an unexpectedly empty queue must not mask the assertion above.
+        with suppress(queue.Empty):
+            handler.queue.get_nowait()
+        caller.join(timeout=5)
+
+    assert not caller.is_alive()
 
 
 def test_the_idempotency_guard_knows_the_handler_that_is_actually_attached() -> None:
