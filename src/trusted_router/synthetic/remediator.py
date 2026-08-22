@@ -23,11 +23,20 @@ DECISIONS ARE SAMPLES. Each decision is recorded as a synthetic sample
 retention, and /fleet rendering path as every other ops signal. Each process
 records at most one onset row per (playbook, subject, 30-minute bucket), so
 the store can receive one row per control-plane instance for the same bucket;
-readers counting conditions should deduplicate by (target, bucket). A process
-also records at most one resolution row for each onset it observed.
+readers deduplicate rows by (target, bucket, id). Resolution writes use a
+stable id and have a small retry budget, but a backend that commits and then
+raises can still leave duplicate physical rows. That is an accepted property
+of this best-effort ops timeline, not evidence of two events.
 status="down" means "condition present" and status="up" means that condition
 cleared. remediation rows are in OPS_PROBE_TYPES: never a component, never an
 SLO, never the freshness clock.
+
+Only stale-heartbeat decisions can resolve. Heartbeat rows give positive,
+subject-specific evidence that a previously stale scheduler is healthy now.
+The other detectors infer their conditions from bounded or filtered reads: an
+empty route evaluation or an absent real probe is absence of evidence, not
+evidence of health. A condition inferred from absence of evidence must never
+be reported as cleared.
 
 DETECTORS (v1, all T0 blast radius — detection and paging only):
   * stale heartbeats     — a scheduler this deployment expected to beat has
@@ -69,6 +78,8 @@ REMEDIATION_PROBE = "remediation"
 # hours, and the store's row count scales with the control-plane instance
 # count. Readers counting conditions should deduplicate by (target, bucket).
 DECISION_BUCKET_SECONDS = 30 * 60
+MAX_RESOLUTION_ATTEMPTS = 3
+MAX_PENDING_RESOLUTIONS = 128
 _DECISION_MARKS: dict[str, int] = {}
 
 
@@ -83,7 +94,9 @@ class Decision:
 @dataclass(frozen=True)
 class DetectionResult:
     decisions: tuple[Decision, ...]
-    authoritative: bool
+    # Full durable keys positively observed healthy in this exact pass. Empty
+    # is deliberately the default: resolution is an explicit detector opt-in.
+    resolution_keys: frozenset[str] = frozenset()
 
 
 Detector = Callable[[Settings], DetectionResult]
@@ -93,18 +106,22 @@ _ActiveKey = tuple[Detector, str]
 @dataclass(frozen=True)
 class _ActiveCondition:
     first_seen_at: float
+    onset_recorded: bool = False
     pending_resolution: SyntheticProbeSample | None = None
+    resolution_attempts: int = 0
+    resolution_in_flight: bool = False
+    recurrence: tuple[Detector, Decision] | None = None
 
 
 _ACTIVE_CONDITIONS: dict[_ActiveKey, _ActiveCondition] = {}
 _ACTIVE_LOCK = threading.Lock()
 
 
-def _record_decision(decision: Decision, *, settings: Settings) -> None:
+def _record_decision(decision: Decision, *, settings: Settings) -> bool:
     bucket = int(time.time() // DECISION_BUCKET_SECONDS)
     mark_key = f"{decision.playbook}:{decision.subject}"
     if _DECISION_MARKS.get(mark_key) == bucket:
-        return
+        return True
     try:
         from trusted_router.storage import STORE
 
@@ -120,8 +137,10 @@ def _record_decision(decision: Decision, *, settings: Settings) -> None:
             )
         )
         _DECISION_MARKS[mark_key] = bucket
+        recorded = True
     except Exception:  # noqa: BLE001 - recording must never break the loop
         logger.exception("remediator decision record failed for %s", mark_key)
+        recorded = False
     if decision.page:
         ops_alert(
             f"remediator[{settings.remediator_mode}] {decision.playbook}: "
@@ -129,6 +148,27 @@ def _record_decision(decision: Decision, *, settings: Settings) -> None:
             fingerprint=["remediator", decision.playbook, decision.subject],
             tags={"playbook": decision.playbook, "mode": settings.remediator_mode},
         )
+    return recorded
+
+
+def _finish_onset(
+    active_key: _ActiveKey,
+    active: _ActiveCondition,
+    *,
+    recorded: bool,
+) -> None:
+    with _ACTIVE_LOCK:
+        if _ACTIVE_CONDITIONS.get(active_key) is not active:
+            return
+        if recorded:
+            _ACTIVE_CONDITIONS[active_key] = replace(
+                active,
+                onset_recorded=True,
+            )
+        else:
+            # No stored onset means this process has no occurrence it may
+            # later resolve. A future stale pass can try the onset again.
+            _ACTIVE_CONDITIONS.pop(active_key)
 
 
 def _record_resolution(
@@ -173,12 +213,15 @@ def _detect_stale_heartbeats(settings: Settings) -> DetectionResult:
     from trusted_router.synthetic.fleet import _heartbeat_rows
 
     decisions = []
-    for row in _heartbeat_rows():
+    healthy_keys = set()
+    rows = _heartbeat_rows()
+    for row in rows:
+        subject = str(row["name"])
         if row.get("stale"):
             decisions.append(
                 Decision(
                     playbook="heartbeat-stale",
-                    subject=str(row["name"]),
+                    subject=subject,
                     detail=(
                         f"no beat for {row.get('age_seconds')}s "
                         f"(last {row.get('last_beat_at')}); the scheduler behind this "
@@ -187,7 +230,11 @@ def _detect_stale_heartbeats(settings: Settings) -> DetectionResult:
                     page=True,
                 )
             )
-    return DetectionResult(tuple(decisions), authoritative=True)
+        elif row.get("stale") is False:
+            # Resolution requires this subject to be present and explicitly
+            # healthy in the non-empty row set evaluated by this pass.
+            healthy_keys.add(f"heartbeat-stale:{subject}")
+    return DetectionResult(tuple(decisions), frozenset(healthy_keys))
 
 
 def _detect_route_quarantine(settings: Settings) -> DetectionResult:
@@ -212,7 +259,7 @@ def _detect_route_quarantine(settings: Settings) -> DetectionResult:
                 page=False,
             )
         )
-    return DetectionResult(tuple(decisions), authoritative=True)
+    return DetectionResult(tuple(decisions))
 
 
 def _detect_monitor_stale(settings: Settings) -> DetectionResult:
@@ -229,15 +276,15 @@ def _detect_monitor_stale(settings: Settings) -> DetectionResult:
         # The store API can select one exact probe type but cannot exclude all
         # ops types. An empty filtered window can therefore mean provisioning
         # OR that fresh ops rows crowded a dead probe fleet out of the read.
-        return DetectionResult((), authoritative=False)
+        return DetectionResult(())
     newest = max(probe_samples, key=lambda s: s.created_at)
     try:
         created = dt.datetime.fromisoformat(newest.created_at.replace("Z", "+00:00"))
     except ValueError:
-        return DetectionResult((), authoritative=False)
+        return DetectionResult(())
     age = (utcnow() - created).total_seconds()
     if age <= CURRENT_SAMPLE_TTL_SECONDS:
-        return DetectionResult((), authoritative=True)
+        return DetectionResult(())
     return DetectionResult(
         (
             Decision(
@@ -251,7 +298,6 @@ def _detect_monitor_stale(settings: Settings) -> DetectionResult:
                 page=True,
             ),
         ),
-        authoritative=True,
     )
 
 
@@ -278,53 +324,134 @@ def run_remediator_pass(settings: Settings) -> list[Decision]:
             continue
         decisions = result.decisions
         present_keys = {f"{decision.playbook}:{decision.subject}" for decision in decisions}
+        deferred_keys: set[str] = set()
+        new_onsets: dict[str, tuple[_ActiveKey, _ActiveCondition]] = {}
+        resolutions: list[tuple[_ActiveKey, SyntheticProbeSample]] = []
         with _ACTIVE_LOCK:
-            for mark_key in present_keys:
+            for decision in decisions:
+                mark_key = f"{decision.playbook}:{decision.subject}"
                 active_key = (detector, mark_key)
+                pending_owner = next(
+                    (
+                        (key, active)
+                        for key, active in _ACTIVE_CONDITIONS.items()
+                        if key[1] == mark_key and active.pending_resolution is not None
+                    ),
+                    None,
+                )
+                if pending_owner is not None:
+                    owner_key, owner = pending_owner
+                    _ACTIVE_CONDITIONS[owner_key] = replace(
+                        owner,
+                        recurrence=(detector, decision),
+                    )
+                    deferred_keys.add(mark_key)
+                    continue
                 if active_key not in _ACTIVE_CONDITIONS:
-                    _ACTIVE_CONDITIONS[active_key] = _ActiveCondition(
+                    active = _ActiveCondition(
                         first_seen_at=time.time(),
                     )
-            resolved: list[tuple[_ActiveKey, _ActiveCondition]] = []
-            if result.authoritative:
-                owned_clears = [
-                    (active_key, active)
-                    for active_key, active in _ACTIVE_CONDITIONS.items()
-                    if active_key[0] is detector and active_key[1] not in present_keys
-                ]
-                for active_key, active in owned_clears:
+                    _ACTIVE_CONDITIONS[active_key] = active
+                    new_onsets[mark_key] = (active_key, active)
+                elif not _ACTIVE_CONDITIONS[active_key].onset_recorded:
+                    deferred_keys.add(mark_key)
+
+            pending_count = sum(
+                active.pending_resolution is not None
+                for active in _ACTIVE_CONDITIONS.values()
+            )
+            for mark_key in result.resolution_keys - present_keys:
+                active_key = (detector, mark_key)
+                candidate = _ACTIVE_CONDITIONS.get(active_key)
+                if (
+                    candidate is None
+                    or not candidate.onset_recorded
+                    or candidate.pending_resolution is not None
+                ):
+                    continue
+                if any(key != active_key and key[1] == mark_key for key in _ACTIVE_CONDITIONS):
                     _ACTIVE_CONDITIONS.pop(active_key)
-                    mark_key = active_key[1]
-                    if any(key[1] == mark_key for key in _ACTIVE_CONDITIONS):
-                        continue
-                    if active.pending_resolution is None:
-                        active = replace(
-                            active,
-                            pending_resolution=_resolution_sample(
-                                mark_key,
-                                first_seen_at=active.first_seen_at,
-                                settings=settings,
-                            ),
-                        )
-                    resolved.append((active_key, active))
+                    continue
+                if pending_count >= MAX_PENDING_RESOLUTIONS:
+                    continue
+                _ACTIVE_CONDITIONS[active_key] = replace(
+                    candidate,
+                    pending_resolution=_resolution_sample(
+                        mark_key,
+                        first_seen_at=candidate.first_seen_at,
+                        settings=settings,
+                    ),
+                )
+                pending_count += 1
+
+            # Retry only while this pass again contains positive healthy
+            # evidence for the same subject. Empty/failed reads resolve
+            # nothing, including previously pending work.
+            for active_key, active in list(_ACTIVE_CONDITIONS.items()):
+                if (
+                    active_key[0] is not detector
+                    or active_key[1] not in result.resolution_keys
+                    or active.pending_resolution is None
+                    or active.resolution_in_flight
+                    or active.resolution_attempts >= MAX_RESOLUTION_ATTEMPTS
+                ):
+                    continue
+                _ACTIVE_CONDITIONS[active_key] = replace(
+                    active,
+                    resolution_in_flight=True,
+                )
+                resolutions.append((active_key, active.pending_resolution))
 
         for decision in decisions:
-            _record_decision(decision, settings=settings)
-        for active_key, active in resolved:
-            resolution = active.pending_resolution
-            assert resolution is not None
-            if _record_resolution(resolution):
-                with _ACTIVE_LOCK:
-                    if not any(
-                        key[1] == active_key[1] for key in _ACTIVE_CONDITIONS
-                    ):
-                        _DECISION_MARKS.pop(active_key[1], None)
-            else:
-                # The pop happens before slow storage I/O so overlapping passes
-                # cannot both write. Restore failed work for the next pass;
-                # setdefault preserves a newer recurrence observed meanwhile.
-                with _ACTIVE_LOCK:
-                    _ACTIVE_CONDITIONS.setdefault(active_key, active)
+            mark_key = f"{decision.playbook}:{decision.subject}"
+            if mark_key not in deferred_keys:
+                recorded = _record_decision(decision, settings=settings)
+                if mark_key in new_onsets:
+                    active_key, active = new_onsets[mark_key]
+                    _finish_onset(active_key, active, recorded=recorded)
+        for active_key, resolution in resolutions:
+            recorded = _record_resolution(resolution)
+            recurrence: tuple[Detector, Decision] | None = None
+            recurring_onset: tuple[_ActiveKey, _ActiveCondition, Decision] | None = None
+            with _ACTIVE_LOCK:
+                current = _ACTIVE_CONDITIONS.get(active_key)
+                if current is None or current.pending_resolution != resolution:
+                    continue
+                attempts = current.resolution_attempts + 1
+                if recorded or attempts >= MAX_RESOLUTION_ATTEMPTS:
+                    _ACTIVE_CONDITIONS.pop(active_key)
+                    recurrence = current.recurrence
+                    # A completed (or exhausted best-effort) occurrence forgets
+                    # its bucket before a recurrence writes. Thus each subject's
+                    # occurrence ordering is onset, resolution, onset: never a
+                    # resolution followed by a current condition with no onset.
+                    _DECISION_MARKS.pop(active_key[1], None)
+                    if recurrence is not None:
+                        recurring_detector, recurring_decision = recurrence
+                        recurring_key = (recurring_detector, active_key[1])
+                        recurring_active = _ActiveCondition(
+                            first_seen_at=time.time(),
+                        )
+                        _ACTIVE_CONDITIONS[recurring_key] = recurring_active
+                        recurring_onset = (
+                            recurring_key,
+                            recurring_active,
+                            recurring_decision,
+                        )
+                else:
+                    _ACTIVE_CONDITIONS[active_key] = replace(
+                        current,
+                        resolution_attempts=attempts,
+                        resolution_in_flight=False,
+                    )
+            if recurring_onset is not None:
+                recurring_key, recurring_active, recurring_decision = recurring_onset
+                onset_recorded = _record_decision(recurring_decision, settings=settings)
+                _finish_onset(
+                    recurring_key,
+                    recurring_active,
+                    recorded=onset_recorded,
+                )
         all_decisions.extend(decisions)
     return all_decisions
 
