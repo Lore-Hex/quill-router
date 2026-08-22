@@ -1,0 +1,396 @@
+{
+  "_about": "Scaleway Generative APIs models available to the configured operator account. Availability comes from the authenticated OpenAI-compatible catalog; capabilities and exact EUR prices come from Scaleway's structured pricing data and are converted with the ECB daily EUR/USD reference rate.",
+  "provider": "scaleway",
+  "source": "https://api.scaleway.ai/v1/models",
+  "pricing_source": "https://www.scaleway.com/en/pricing/model-as-a-service/",
+  "generated_at": "2026-08-05T16:29:39Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 14,
+  "models": [
+    {
+      "display_name": "bge-multilingual-gemma2",
+      "title": "bge-multilingual-gemma2",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "baai/bge-multilingual-gemma2",
+      "upstream_id": "bge-multilingual-gemma2",
+      "context_length": 8192,
+      "provider_regions": [
+        "fr-par"
+      ],
+      "supported_features": [],
+      "input_token_price_per_m": 115540,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "gemma-4-26b-a4b-it",
+      "title": "gemma-4-26b-a4b-it",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-4-26b-a4b-it",
+      "upstream_id": "gemma-4-26b-a4b-it",
+      "context_length": 256000,
+      "provider_regions": [
+        "fr-par"
+      ],
+      "supported_features": [
+        "tools",
+        "reasoning"
+      ],
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 288850,
+      "output_token_price_per_m": 577700
+    },
+    {
+      "display_name": "holo2-30b-a3b",
+      "title": "holo2-30b-a3b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "hcompany/holo2-30b-a3b",
+      "upstream_id": "holo2-30b-a3b",
+      "context_length": 22000,
+      "provider_regions": [
+        "fr-par"
+      ],
+      "supported_features": [
+        "reasoning"
+      ],
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 346620,
+      "output_token_price_per_m": 808780
+    },
+    {
+      "display_name": "llama-3.3-70b-instruct",
+      "title": "llama-3.3-70b-instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-3.3-70b-instruct",
+      "upstream_id": "llama-3.3-70b-instruct",
+      "context_length": 128000,
+      "provider_regions": [
+        "fr-par"
+      ],
+      "supported_features": [
+        "tools"
+      ],
+      "max_output_tokens": 16384,
+      "input_token_price_per_m": 1039860,
+      "output_token_price_per_m": 1039860
+    },
+    {
+      "display_name": "mistral-medium-3.5-128b",
+      "title": "mistral-medium-3.5-128b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "mistralai/mistral-medium-3.5-128b",
+      "upstream_id": "mistral-medium-3.5-128b",
+      "context_length": 256000,
+      "provider_regions": [
+        "fr-par"
+      ],
+      "supported_features": [
+        "tools",
+        "reasoning"
+      ],
+      "max_output_tokens": 16384,
+      "input_token_price_per_m": 1733100,
+      "output_token_price_per_m": 8665500
+    },
+    {
+      "display_name": "mistral-small-3.2-24b-instruct-2506",
+      "title": "mistral-small-3.2-24b-instruct-2506",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "mistralai/mistral-small-3.2-24b-instruct-2506",
+      "upstream_id": "mistral-small-3.2-24b-instruct-2506",
+      "context_length": 128000,
+      "provider_regions": [
+        "fr-par"
+      ],
+      "supported_features": [
+        "tools"
+      ],
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 173310,
+      "output_token_price_per_m": 404390
+    },
+    {
+      "display_name": "pixtral-12b-2409",
+      "title": "pixtral-12b-2409",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "mistralai/pixtral-12b-2409",
+      "upstream_id": "pixtral-12b-2409",
+      "context_length": 128000,
+      "provider_regions": [
+        "fr-par"
+      ],
+      "supported_features": [
+        "tools"
+      ],
+      "max_output_tokens": 4096,
+      "input_token_price_per_m": 231080,
+      "output_token_price_per_m": 231080
+    },
+    {
+      "display_name": "gpt-oss-120b",
+      "title": "gpt-oss-120b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-oss-120b",
+      "upstream_id": "gpt-oss-120b",
+      "context_length": 128000,
+      "provider_regions": [
+        "fr-par"
+      ],
+      "supported_features": [
+        "tools",
+        "reasoning"
+      ],
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 173310,
+      "output_token_price_per_m": 693240
+    },
+    {
+      "display_name": "qwen3-235b-a22b-instruct-2507",
+      "title": "qwen3-235b-a22b-instruct-2507",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-235b-a22b-instruct-2507",
+      "upstream_id": "qwen3-235b-a22b-instruct-2507",
+      "context_length": 250000,
+      "provider_regions": [
+        "fr-par"
+      ],
+      "supported_features": [
+        "tools"
+      ],
+      "max_output_tokens": 16384,
+      "input_token_price_per_m": 866550,
+      "output_token_price_per_m": 2599650
+    },
+    {
+      "display_name": "qwen3-coder-30b-a3b-instruct",
+      "title": "qwen3-coder-30b-a3b-instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-coder-30b-a3b-instruct",
+      "upstream_id": "qwen3-coder-30b-a3b-instruct",
+      "context_length": 128000,
+      "provider_regions": [
+        "fr-par"
+      ],
+      "supported_features": [
+        "tools"
+      ],
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 231080,
+      "output_token_price_per_m": 924320
+    },
+    {
+      "display_name": "qwen3-embedding-8b",
+      "title": "qwen3-embedding-8b",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-embedding-8b",
+      "upstream_id": "qwen3-embedding-8b",
+      "context_length": 32768,
+      "provider_regions": [
+        "fr-par"
+      ],
+      "supported_features": [],
+      "input_token_price_per_m": 115540,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "qwen3.5-397b-a17b",
+      "title": "qwen3.5-397b-a17b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-397b-a17b",
+      "upstream_id": "qwen3.5-397b-a17b",
+      "context_length": 250000,
+      "provider_regions": [
+        "fr-par"
+      ],
+      "supported_features": [
+        "tools",
+        "reasoning"
+      ],
+      "max_output_tokens": 16384,
+      "input_token_price_per_m": 693240,
+      "output_token_price_per_m": 4159440
+    },
+    {
+      "display_name": "qwen3.6-35b-a3b",
+      "title": "qwen3.6-35b-a3b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.6-35b-a3b",
+      "upstream_id": "qwen3.6-35b-a3b",
+      "context_length": 256000,
+      "provider_regions": [
+        "fr-par"
+      ],
+      "supported_features": [
+        "tools",
+        "reasoning"
+      ],
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 288850,
+      "output_token_price_per_m": 1733100
+    },
+    {
+      "display_name": "glm-5.2",
+      "title": "glm-5.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "glm-5.2",
+      "context_length": 256000,
+      "provider_regions": [
+        "fr-par"
+      ],
+      "supported_features": [
+        "tools",
+        "reasoning"
+      ],
+      "max_output_tokens": 16384,
+      "input_token_price_per_m": 2079720,
+      "output_token_price_per_m": 6354700
+    }
+  ]
+}

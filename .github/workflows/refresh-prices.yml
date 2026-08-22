@@ -161,6 +161,7 @@ jobs:
                       MORPH_API_KEY:trustedrouter-morph-api-key \
                       ATLAS_CLOUD_API_KEY:trustedrouter-atlas-cloud-api-key \
                       STREAMLAKE_API_KEY:trustedrouter-streamlake-api-key \
+                      SCALEWAY_SECRET_KEY:trustedrouter-scaleway-api-key \
                       NEUROMETRIC_API_KEY:trustedrouter-neurometric-api-key \
                       ENGY_API_KEY:trustedrouter-engy-api-key \
                       PEARL_RESEARCH_API_KEY:trustedrouter-pearl-api-key; do

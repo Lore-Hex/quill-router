@@ -57,6 +57,7 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "pearl": ProviderBrand("https://pearlresearch.ai/"),
     "phala": ProviderBrand("https://phala.network/"),
     "runway": ProviderBrand("https://runwayml.com/"),
+    "scaleway": ProviderBrand("https://www.scaleway.com/en/generative-apis/"),
     "siliconflow": ProviderBrand("https://www.siliconflow.com/"),
     "streamlake": ProviderBrand("https://www.streamlake.ai/"),
     "telnyx": ProviderBrand("https://telnyx.com/products/inference"),

@@ -161,6 +161,24 @@ def _telnyx_model_id(native_id: str) -> str | None:
     return _TELNYX_MODEL_IDS.get(value) or canonicalize_native_model_id(value)
 
 
+_SCALEWAY_MODEL_IDS = {
+    "bge-multilingual-gemma2": "baai/bge-multilingual-gemma2",
+    "holo2-30b-a3b": "hcompany/holo2-30b-a3b",
+    "mistral-medium-3.5-128b": "mistralai/mistral-medium-3.5-128b",
+    "mistral-small-3.2-24b-instruct-2506": (
+        "mistralai/mistral-small-3.2-24b-instruct-2506"
+    ),
+    "pixtral-12b-2409": "mistralai/pixtral-12b-2409",
+}
+
+
+def _scaleway_model_id(native_id: str) -> str | None:
+    value = native_id.strip()
+    if not value or value == "whisper-large-v3":
+        return None
+    return _SCALEWAY_MODEL_IDS.get(value) or canonicalize_unqualified_model_id(value)
+
+
 _WAFER_MODEL_IDS = {
     "GLM-5.1": "z-ai/glm-5.1",
     "GLM-5.2": "z-ai/glm-5.2",
@@ -375,6 +393,12 @@ _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
         "https://api.telnyx.com/v2/ai/openai/models",
         ("TELNYX_API_KEY",),
         _telnyx_model_id,
+    ),
+    (
+        "scaleway",
+        "https://api.scaleway.ai/v1/models",
+        ("SCALEWAY_SECRET_KEY",),
+        _scaleway_model_id,
     ),
     (
         "wafer",

@@ -88,6 +88,7 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
         ("STREAMLAKE_API_KEY",),
         "https://vanchin.streamlake.ai/api/gateway/v1/endpoints",
     ),
+    "scaleway": (("SCALEWAY_SECRET_KEY",), "https://api.scaleway.ai/v1"),
     "neurometric": (
         ("NEUROMETRIC_API_KEY",),
         "https://wharf.neurometric.ai/v1",

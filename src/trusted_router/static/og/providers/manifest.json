@@ -350,6 +350,15 @@
     "route_mode": "Prepaid",
     "slug": "runway"
   },
+  "scaleway": {
+    "card_version": 2,
+    "model_count": 14,
+    "name": "Scaleway",
+    "privacy": "Policy documented",
+    "route_count": 14,
+    "route_mode": "Prepaid",
+    "slug": "scaleway"
+  },
   "siliconflow": {
     "card_version": 2,
     "model_count": 30,

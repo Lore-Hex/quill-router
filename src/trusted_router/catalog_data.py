@@ -921,6 +921,26 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url=("https://www.streamlake.ai/document/DOC/mgkci47q13qr66h9i54"),
         provider_headquarters_country=PROVIDER_JURISDICTION_SG,
     ),
+    "scaleway": Provider(
+        slug="scaleway",
+        name="Scaleway",
+        supports_embeddings=True,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Scaleway Generative APIs currently serve these routes from Paris. "
+            "TrustedRouter does not claim provider-side zero retention, "
+            "confidential compute, or end-to-end encryption for this provider."
+        ),
+        provider_policy_url=(
+            "https://www.scaleway.com/en/docs/generative-apis/"
+            "reference-content/supported-models/"
+        ),
+        provider_headquarters_country="FR",
+    ),
     "neurometric": Provider(
         slug="neurometric",
         name="Neurometric AI",
@@ -1354,6 +1374,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "morph",
         "atlas-cloud",
         "streamlake",
+        "scaleway",
         "neurometric",
         "engy",
         "pearl",
@@ -1703,6 +1724,7 @@ ORCHESTRATION_PRIMITIVE_MODEL_IDS = frozenset(
 
 EU_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
     "mistral",
+    "scaleway",
     "google-vertex",
     "openai",
     "anthropic",
@@ -2201,6 +2223,25 @@ _EMBEDDING_SPECS: tuple[_EmbeddingSpec, ...] = (
         "upstream_id": "Qwen/Qwen3-Embedding-8B",
         "context_length": 32_000,
         "cost_dollars_per_million": "0.01",
+    },
+    # Scaleway Generative APIs — OpenAI-shaped embeddings served from Paris.
+    # The committed provider manifest replaces these ECB-converted fallback
+    # prices after every successful hourly provider refresh.
+    {
+        "id": "qwen/qwen3-embedding-8b",
+        "name": "Qwen3 Embedding 8B",
+        "provider": "scaleway",
+        "upstream_id": "qwen3-embedding-8b",
+        "context_length": 32_768,
+        "cost_dollars_per_million": "0.11554",
+    },
+    {
+        "id": "baai/bge-multilingual-gemma2",
+        "name": "BGE Multilingual Gemma2",
+        "provider": "scaleway",
+        "upstream_id": "bge-multilingual-gemma2",
+        "context_length": 8_192,
+        "cost_dollars_per_million": "0.11554",
     },
 )
 
