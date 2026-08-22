@@ -91,6 +91,10 @@ async def test_real_sdk_pong_probes_mark_requests_and_flush_valid_telemetry(
         "/v1/chat/completions",
         "/v1/responses",
     ]
+    expected_top_level_keys = {
+        "/v1/chat/completions": {"model", "messages", "max_tokens", "temperature", "metadata"},
+        "/v1/responses": {"model", "input", "max_output_tokens", "temperature", "metadata"},
+    }
     for request in gateway_requests:
         assert request.headers["x-tr-client"] == "v=1;a=0;s=0"
         assert request.headers["user-agent"].startswith("trusted-router-py/")
@@ -102,7 +106,9 @@ async def test_real_sdk_pong_probes_mark_requests_and_flush_valid_telemetry(
         }
         body = json.loads(request.content)
         assert body["metadata"] == {"trustedrouter_synthetic": "true"}
-        assert body["app"] == "TrustedRouter Synthetic"
+        # validateResponsesFields answers 501 not_supported_in_alpha for keys outside its
+        # allowlist; on 2026-08-22 an added "app" key took responses_pong down.
+        assert set(body) == expected_top_level_keys[request.url.path]
 
     assert [sample.probe_type for sample in samples] == ["openai_sdk_pong", "responses_pong"]
     for sample in samples:
