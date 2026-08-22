@@ -211,7 +211,7 @@ def test_worker_environment_does_not_require_serving_pilot_allowlist() -> None:
     assert settings.regional_quota_lease_pilot_workspaces == frozenset()
 
 
-def test_deployed_job_env_selects_only_surface_compatible_with_its_bindings(
+def test_deployed_job_env_rejects_surfaces_that_do_not_own_its_bindings(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -248,11 +248,21 @@ def test_deployed_job_env_selects_only_surface_compatible_with_its_bindings(
     for name, value in job_env.items():
         monkeypatch.setenv(name, value)
 
-    invalid_surfaces = ("combined", "public", "actions", "internal", "observer")
+    invalid_surfaces = ("combined", "actions", "internal", "observer")
     for surface in invalid_surfaces:
         monkeypatch.setenv("TR_SERVICE_SURFACE", surface)
         with pytest.raises(ValidationError):
             worker.get_settings()
+
+    # The newer T1 error-reporting contract makes Sentry public-owned too, so
+    # this binding can no longer serve as proof that the worker env is invalid
+    # for public. The public ownership and its much narrower deployed secret
+    # allowlist are asserted in test_service_surface_secret_isolation.py and
+    # test_public_surface_deploy.py respectively. The real reconciler remains
+    # explicitly control below and in regional_quota_reconciler.sh.
+    monkeypatch.setenv("TR_SERVICE_SURFACE", "public")
+    public_compatible = worker.get_settings()
+    assert public_compatible.sentry_dsn == job_env["TR_SENTRY_DSN"]
 
     monkeypatch.setenv("TR_SERVICE_SURFACE", "control")
     settings = worker.get_settings()
