@@ -57,14 +57,26 @@ def test_provider_rollup_schema_replicates_all_published_granularities() -> None
         assert f"provider_analytics_{granularity}_replicated" in schema
 
 
-def test_operational_deploy_backfills_before_starting_live_ingest() -> None:
+def test_operational_deploy_resumes_live_ingest_before_backfills() -> None:
     script = (ROOT / "scripts/deploy/clickhouse_operational_analytics.sh").read_text()
-    backfill = script.index("clickhouse.backfill_operational_analytics --apply")
+    stop = script.index(
+        "systemctl stop tr-clickhouse-operational-ingest.service"
+    )
+    migration = script.index('log "adding workspace attribution to benchmark samples"')
     start = script.index(
         "systemctl start tr-clickhouse-operational-ingest.service",
-        backfill,
+        migration,
     )
-    assert backfill < start
+    replay = script.index("clickhouse.backfill_benchmark_samples")
+    backfill = script.index("clickhouse.backfill_operational_analytics --apply")
+    assert stop < migration < start < replay < backfill
+    paused_section = script[stop:start]
+    assert "backfill_" not in paused_section
+    assert "SYSTEM SYNC REPLICA" not in paused_section
+    assert "clickhouse_replicate_rollups.sh" not in paused_section
+    assert "trap cleanup EXIT" in script
+    assert 'if [ "$ingester_stopped" -eq 1 ]' in script
+    assert "deployment exited during parser/schema cutover" in script
     assert "SYSTEM SYNC REPLICA" in script
     assert "clickhouse_replicate_rollups.sh" in script
     assert "clickhouse_operational_analytics_finalize.sh --apply" in script
