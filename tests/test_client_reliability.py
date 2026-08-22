@@ -388,10 +388,38 @@ def test_client_observed_status_calibrates_then_passes_percentages() -> None:
     )
 
     assert calibrating["state"] == "calibrating"
+    assert calibrating["gated_available"] is True
     assert calibrating["windows"]["24h"]["availability_percent"] is None
     assert published["state"] == "published"
+    assert published["gated_available"] is True
     assert published["slo_id"] == "client_observed"
     assert published["windows"]["24h"]["availability_percent"] == 99.0
+
+
+def test_client_observed_status_exposes_calibration_without_gated_traffic() -> None:
+    section = client_observed_status_section(
+        _public_snapshot(
+            published=True,
+            windows={"24h": {"requests": 0, "distinct_tenants": 0}},
+            all_traffic={
+                "windows": {
+                    "24h": {
+                        "requests": 3_406,
+                        "successes": 3_405,
+                        "tr_fault": 1,
+                        "availability_percent": 99.9706,
+                    }
+                }
+            },
+        ),
+        now=dt.datetime(2026, 8, 17, 12, tzinfo=dt.UTC),
+    )
+
+    assert section["available"] is True
+    assert section["state"] == "calibrating"
+    assert section["gated_available"] is False
+    assert section["windows"]["24h"]["requests"] == 0
+    assert section["all_traffic"]["windows"]["24h"]["requests"] == 3_406
 
 
 def test_client_observed_status_whitelists_every_nested_field() -> None:

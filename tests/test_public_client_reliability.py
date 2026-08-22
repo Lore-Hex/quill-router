@@ -168,6 +168,8 @@ def test_status_html_labels_the_all_traffic_calibration_view(
     assert response.status_code == 200
     assert 'id="client-observed"' in response.text
     assert "<h2>Client-observed availability</h2>" in response.text
+    assert snapshot["client_observed"]["gated_available"] is True
+    assert 'aria-label="Client-observed availability windows"' in response.text
     assert CALIBRATION_LABEL in response.text
     assert "100.0000%" in response.text
     assert "<strong>8956</strong>" in response.text
@@ -175,6 +177,47 @@ def test_status_html_labels_the_all_traffic_calibration_view(
     assert "1600 ms" in response.text
     # The published window on the same page is still gated.
     assert "insufficient data — 1 requests from 1 tenants" in response.text
+
+
+def test_status_html_shows_only_calibration_without_gated_traffic(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    snapshot = _status_snapshot_with_client(
+        monkeypatch,
+        _client_snapshot(
+            all_traffic={
+                "windows": {
+                    "24h": {
+                        "requests": 3_406,
+                        "successes": 3_405,
+                        "tr_fault": 1,
+                        "availability_percent": 99.9706,
+                        "p50_total_ms": 700,
+                        "p95_total_ms": 1_400,
+                    }
+                }
+            }
+        ),
+    )
+    assert snapshot["client_observed"]["available"] is True
+    assert snapshot["client_observed"]["state"] == "calibrating"
+    assert snapshot["client_observed"]["gated_available"] is False
+    monkeypatch.setattr(public_routes, "_status_snapshot", lambda _settings: snapshot)
+
+    response = client.get("/status")
+
+    assert response.status_code == 200
+    assert 'id="client-observed"' in response.text
+    assert "<h2>Client-observed availability</h2>" in response.text
+    assert "Calibration only; no customer traffic has been measured yet." in response.text
+    assert '<span class="component-status status-degraded">calibrating</span>' in response.text
+    assert CALIBRATION_LABEL in response.text
+    assert "99.9706%" in response.text
+    assert "<strong>3406</strong>" in response.text
+    assert "Not part of the 99.99 % Router Core SLO" in response.text
+    assert 'aria-label="Client-observed availability windows"' not in response.text
+    assert "insufficient data" not in response.text
 
 
 def test_status_html_hides_client_section_without_real_traffic(
