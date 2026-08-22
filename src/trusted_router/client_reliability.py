@@ -8,6 +8,12 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 METHODOLOGY_VERSION = 1
+WINDOW_NAMES = ("5m", "1h", "24h", "7d", "30d")
+#: Fixed public disclosure carried on ``client_observed.all_traffic``.
+ALL_TRAFFIC_NOTE = (
+    "Calibration view; includes synthetic canary traffic; uncapped; ungated; "
+    "not the published methodology."
+)
 
 HOSTS = (
     "apex",
@@ -19,6 +25,7 @@ HOSTS = (
     "control",
     "custom",
 )
+SDKS = ("tr-py", "tr-js", "tr-go", "tr-rust", "tr-java", "tr-swift")
 ENDPOINTS = (
     "chat_completions",
     "messages",
@@ -249,7 +256,9 @@ def _total_rows(rows: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
     return totals or list(rows)
 
 
-def _window(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+def _window(rows: Sequence[Mapping[str, Any]], *, gated: bool = True) -> dict[str, Any]:
+    """Summarize one window; ``gated`` applies the publication thresholds."""
+
     rows = _total_rows(rows)
     requests = sum(_int(row, "requests") for row in rows)
     successes = sum(_int(row, "successes") for row in rows)
@@ -259,17 +268,16 @@ def _window(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     measured = availability(successes, tr_fault)
     total_hist = _merge_histograms(rows, "total_ms_hist")
     first_event_hist = _merge_histograms(rows, "first_event_ms_hist")
+    availability_percent: float | None = None
+    if measured is not None and (not gated or (requests >= 1_000 and distinct_tenants >= 3)):
+        availability_percent = round(measured * 100, 4)
     return {
         "requests": requests,
         "successes": successes,
         "tr_fault": tr_fault,
         "excluded": sum(_int(row, "excluded_failures") for row in rows),
         "aborted": sum(_int(row, "aborted") for row in rows),
-        "availability_percent": (
-            round(measured * 100, 4)
-            if measured is not None and requests >= 1_000 and distinct_tenants >= 3
-            else None
-        ),
+        "availability_percent": availability_percent,
         "distinct_tenants": distinct_tenants,
         "coverage": (round(successes / coverage_requests, 4) if coverage_requests else None),
         "p50_total_ms": histogram_percentile(total_hist, 50),
@@ -490,11 +498,37 @@ def _status_host_breakdown(value: Any) -> dict[str, dict[str, Any]]:
     return result
 
 
+def _status_sdk_breakdown(value: Any) -> dict[str, int]:
+    rows = value if isinstance(value, Mapping) else {}
+    return {sdk: max(0, _int(rows, sdk)) for sdk in SDKS if sdk in rows}
+
+
 def _status_canary(value: Any) -> dict[str, Any]:
     row = value if isinstance(value, Mapping) else {}
     return {
         "last_seen_age_seconds": _optional_float(row.get("last_seen_age_seconds")),
         "last_24h_count": max(0, _int(row, "last_24h_count")),
+    }
+
+
+def _status_all_traffic(value: Any) -> dict[str, Any] | None:
+    """Project the calibration view; ``None`` when the snapshot predates it."""
+
+    if not isinstance(value, Mapping):
+        return None
+    raw_windows = value.get("windows")
+    windows = raw_windows if isinstance(raw_windows, Mapping) else {}
+    return {
+        "includes_synthetic": True,
+        "gated": False,
+        "note": ALL_TRAFFIC_NOTE,
+        # Ungated by construction and labelled as such, so the percentage
+        # passes through regardless of the publication state.
+        "windows": {
+            name: _status_window(windows.get(name), published=True) for name in WINDOW_NAMES
+        },
+        "by_host_24h": _status_host_breakdown(value.get("by_host_24h")),
+        "by_sdk_24h": _status_sdk_breakdown(value.get("by_sdk_24h")),
     }
 
 
@@ -528,11 +562,36 @@ def client_observed_status_section(
         "methodology_version": _optional_int(snapshot.get("methodology_version")),
         "windows": {
             name: _status_window(windows.get(name), published=published)
-            for name in ("5m", "1h", "24h", "7d", "30d")
+            for name in WINDOW_NAMES
         },
         "by_host_24h": _status_host_breakdown(snapshot.get("by_host_24h")),
         "canary": _status_canary(snapshot.get("canary")),
+        # Tolerates a snapshot built by a worker that predates the calibration
+        # view: the control plane deploys before the ClickHouse node does.
+        "all_traffic": _status_all_traffic(snapshot.get("all_traffic")),
         "generated_at": generated_at if isinstance(generated_at, str) else None,
+    }
+
+
+def _all_traffic_section(
+    rows_by_window: Mapping[str, Iterable[Mapping[str, Any]]],
+) -> dict[str, Any]:
+    """Ungated, uncapped summary of fleet_all rollups, synthetic included.
+
+    A calibration aid while real SDK traffic is scarce: the pipeline can be
+    read end to end without touching the published methodology, which stays
+    gated, capped, and synthetic-free in ``windows``.
+    """
+
+    windows = {
+        name: [dict(row) for row in rows_by_window.get(name, ())] for name in WINDOW_NAMES
+    }
+    return {
+        "includes_synthetic": True,
+        "gated": False,
+        "windows": {name: _window(rows, gated=False) for name, rows in windows.items()},
+        "by_host_24h": _host_breakdown(windows["24h"]),
+        "by_sdk_24h": _sdk_breakdown(windows["24h"]),
     }
 
 
@@ -541,8 +600,14 @@ def build_client_reliability(
     now: dt.datetime,
     *,
     signals: Mapping[str, Any] | None = None,
+    all_traffic_rows_by_window: Mapping[str, Iterable[Mapping[str, Any]]] | None = None,
 ) -> dict[str, Any]:
-    """Build the content-free public snapshot from bounded fleet rollups."""
+    """Build the content-free public snapshot from bounded fleet rollups.
+
+    ``all_traffic_rows_by_window`` carries the ``fleet_all`` rollups; when it
+    is given the snapshot gains an ``all_traffic`` calibration section and
+    nothing else changes.
+    """
 
     if now.tzinfo is None:
         now = now.replace(tzinfo=dt.UTC)
@@ -550,7 +615,7 @@ def build_client_reliability(
         now = now.astimezone(dt.UTC)
     windows = {
         name: [dict(row) for row in rows_by_window.get(name, ())]
-        for name in ("5m", "1h", "24h", "7d", "30d")
+        for name in WINDOW_NAMES
     }
     watch_15m_rows = [
         dict(row)
@@ -559,7 +624,7 @@ def build_client_reliability(
     signal_row = signals or {}
     canary_last_received_at = _parse_timestamp(signal_row.get("canary_last_received_at"))
     newest_received_at = _parse_timestamp(signal_row.get("newest_received_at"))
-    return {
+    snapshot: dict[str, Any] = {
         "generated_at": now.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
         "methodology_version": METHODOLOGY_VERSION,
         "published": False,
@@ -584,3 +649,6 @@ def build_client_reliability(
             "by_host_7d": _watch_7d(windows["7d"]),
         },
     }
+    if all_traffic_rows_by_window is not None:
+        snapshot["all_traffic"] = _all_traffic_section(all_traffic_rows_by_window)
+    return snapshot

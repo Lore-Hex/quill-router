@@ -299,6 +299,13 @@ after those lines only a message string remains. TTFT is only observable in the 
   recompute the trailing 6 h every 5 min (matching the late-arrival cap); `age_ms > 6 h` excluded from rollups.
 - Own id `client_observed`; never inside `router_core` or `SLO_DEFINITIONS`. Calibration gate: 14 clean days
   before any percentage is published.
+- **Calibration view (`client_observed.all_traffic` on `/status.json`; labelled on `/status`).** Beside the
+  published windows, the status page carries an explicitly labelled all-traffic view built from the `fleet_all`
+  rollup scope: every counter row **including synthetic canary traffic**, **no** 25 % per-tenant cap, **no**
+  ≥ 1 000-request / ≥ 3-tenant gate, so its `availability_percent` is shown whenever the denominator is
+  non-empty. It exists so the pipeline can be read end to end while real SDK traffic is scarce. It is **not the
+  published number**: `windows`, `state`, `by_host_24h`, and `canary` are computed exactly as above and never
+  read `fleet_all` rows. It is kept or removed by an explicit decision after calibration.
 
 ## 9. Rollout ordering (why it is not arbitrary)
 1. Enclave request ids (independent). 2. Control plane accepts settle context (extras reach customer broadcast

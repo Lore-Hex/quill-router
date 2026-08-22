@@ -178,3 +178,107 @@ def test_recompute_dry_run_computes_but_never_inserts() -> None:
     assert summary["rollups"] > 0
     assert executor.inserted == []
     assert not any(sql.startswith("INSERT INTO") for sql in executor.queries)
+
+
+def _total_row(result: list[dict[str, Any]], scope: str) -> dict[str, Any]:
+    return next(
+        row
+        for row in result
+        if row["scope"] == scope and row["host"] == row["endpoint"] == row["sdk"] == ""
+    )
+
+
+def test_fleet_all_scope_is_uncapped_and_synthetic_inclusive_beside_unchanged_fleet_rows() -> None:
+    """fleet_all sums every counter row with no cap; the fleet rows do not see it.
+
+    t0 sends 80 of the 155 non-synthetic requests, so the published fleet row
+    caps it at 25 % (38) and reports the 42 capped requests; the canary tenant
+    is excluded there entirely. The calibration row keeps all 205 requests.
+    """
+    rows = [
+        _counter(
+            "t0",
+            requests=80,
+            first_attempt_success=80,
+            total_ms_hist={"lt200": 80},
+            first_event_ms_hist={"lt100": 80},
+        ),
+        *(_counter(f"t{index}") for index in range(1, 4)),
+        _counter(
+            "synthetic",
+            synthetic=1,
+            requests=50,
+            first_attempt_success=50,
+            total_ms_hist={"lt200": 50},
+            first_event_ms_hist={"lt100": 50},
+        ),
+    ]
+    coverage = [
+        _coverage("t0", requests=80),
+        *(_coverage(f"t{index}") for index in range(1, 4)),
+        _coverage("synthetic", requests=50, synthetic=1),
+    ]
+    arguments: dict[str, Any] = {
+        "period": "5m",
+        "period_start": START,
+        "computed_at": START + dt.timedelta(minutes=1),
+    }
+
+    with_synthetic = aggregate_client_rollups(rows, coverage, **arguments)
+    without_synthetic = aggregate_client_rollups(
+        [row for row in rows if not row["synthetic"]],
+        [row for row in coverage if not row["synthetic"]],
+        **arguments,
+    )
+
+    fleet = _total_row(with_synthetic, "fleet")
+    assert fleet["requests"] == 113
+    assert fleet["successes"] == 113
+    assert fleet["capped_requests"] == 42
+    assert fleet["distinct_tenants"] == 4
+    assert fleet["coverage_requests"] == 155
+
+    def fleet_rows(result: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return sorted((row for row in result if row["scope"] == "fleet"), key=lambda row: row["id"])
+
+    assert fleet_rows(with_synthetic) == fleet_rows(without_synthetic)
+
+    all_traffic = _total_row(with_synthetic, "fleet_all")
+    assert all_traffic["requests"] == 205
+    assert all_traffic["successes"] == 205
+    assert all_traffic["first_attempt_success"] == 205
+    assert all_traffic["capped_requests"] == 0
+    assert all_traffic["distinct_tenants"] == 5
+    assert all_traffic["coverage_requests"] == 205
+    assert all_traffic["total_ms_hist"] == {"lt200": 205}
+    assert all_traffic["first_event_ms_hist"] == {"lt100": 205}
+    assert all_traffic["tenant_id"] == ""
+    assert all_traffic["methodology_version"] == fleet["methodology_version"]
+    assert all_traffic["id"] != fleet["id"]
+    assert len({row["id"] for row in with_synthetic}) == len(with_synthetic)
+    assert {row["scope"] for row in with_synthetic} == {"tenant", "fleet", "fleet_all"}
+    assert sorted(
+        (row["host"], row["endpoint"], row["sdk"])
+        for row in with_synthetic
+        if row["scope"] == "fleet_all"
+    ) == sorted((row["host"], row["endpoint"], row["sdk"]) for row in fleet_rows(with_synthetic))
+
+
+def test_recompute_writes_fleet_all_rows_beside_the_published_rows() -> None:
+    from clickhouse.rollup_client_events import recompute
+
+    executor = _Executor(
+        [_counter("t1"), _counter("synthetic", synthetic=1, requests=50)],
+        [_coverage("t1"), _coverage("synthetic", requests=50, synthetic=1)],
+    )
+
+    recompute(executor, now=START + dt.timedelta(minutes=7))  # type: ignore[arg-type]
+
+    five_minute = [row for row in executor.inserted if row["period"] == "5m"]
+    # One real tenant is capped at 25 % of its own 25 requests; the canary is
+    # excluded. The calibration row is the plain sum of both.
+    fleet = _total_row(five_minute, "fleet")
+    assert (fleet["requests"], fleet["capped_requests"], fleet["distinct_tenants"]) == (6, 19, 1)
+    all_traffic = _total_row(five_minute, "fleet_all")
+    assert (all_traffic["requests"], all_traffic["capped_requests"]) == (75, 0)
+    assert all_traffic["distinct_tenants"] == 2
