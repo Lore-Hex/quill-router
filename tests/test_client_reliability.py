@@ -357,6 +357,12 @@ def _public_snapshot(**updates: Any) -> dict[str, Any]:
     [
         (None, {"available": False, "reason": "no_data"}),
         (
+            _public_snapshot(
+                windows={"24h": {"requests": 0, "distinct_tenants": 0}}
+            ),
+            {"available": False, "reason": "insufficient_real_data"},
+        ),
+        (
             _public_snapshot(freshness={"age_seconds": 901}),
             {"available": False, "reason": "stale"},
         ),

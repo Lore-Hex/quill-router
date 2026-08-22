@@ -30,6 +30,7 @@ def test_status_snapshot_keeps_router_core_byte_identical(monkeypatch) -> None:
         "methodology_version": 1,
         "published": False,
         "freshness": {"age_seconds": 0},
+        "windows": {"24h": {"requests": 1}},
     }
     monkeypatch.setattr(public_routes, "_STATUS_CACHE", None)
     with_client = public_routes._status_snapshot(settings)
@@ -145,33 +146,72 @@ def test_status_html_labels_the_all_traffic_calibration_view(
             }
         }
     }
-    snapshot = _status_snapshot_with_client(monkeypatch, _client_snapshot(all_traffic=all_traffic))
+    snapshot = _status_snapshot_with_client(
+        monkeypatch,
+        _client_snapshot(
+            windows={
+                "24h": {
+                    "requests": 1,
+                    "successes": 1,
+                    "tr_fault": 0,
+                    "distinct_tenants": 1,
+                }
+            },
+            all_traffic=all_traffic,
+        ),
+    )
     assert snapshot["client_observed"]["all_traffic"]["windows"]["24h"]["requests"] == 8_956
     monkeypatch.setattr(public_routes, "_status_snapshot", lambda _settings: snapshot)
 
     response = client.get("/status")
 
     assert response.status_code == 200
+    assert 'id="client-observed"' in response.text
+    assert "<h2>Client-observed availability</h2>" in response.text
     assert CALIBRATION_LABEL in response.text
     assert "100.0000%" in response.text
     assert "<strong>8956</strong>" in response.text
     assert "800 ms" in response.text
     assert "1600 ms" in response.text
     # The published window on the same page is still gated.
-    assert "insufficient data — 0 requests from 0 tenants" in response.text
+    assert "insufficient data — 1 requests from 1 tenants" in response.text
 
 
-def test_status_html_tolerates_a_client_snapshot_without_all_traffic(
+def test_status_html_hides_client_section_without_real_traffic(
     client: TestClient,
     monkeypatch,
 ) -> None:
     snapshot = _status_snapshot_with_client(monkeypatch, _client_snapshot())
-    assert snapshot["client_observed"]["all_traffic"] is None
+    assert snapshot["client_observed"] == {
+        "available": False,
+        "reason": "insufficient_real_data",
+    }
     monkeypatch.setattr(public_routes, "_status_snapshot", lambda _settings: snapshot)
 
     response = client.get("/status")
 
     assert response.status_code == 200
     assert CALIBRATION_LABEL not in response.text
-    assert "<h2>Client-observed availability</h2>" in response.text
-    assert "insufficient data — 0 requests from 0 tenants" in response.text
+    assert 'id="client-observed"' not in response.text
+    assert "Client-observed availability" not in response.text
+    assert "Client-observed availability: no data yet" not in response.text
+    assert '<span class="component-status status-unknown">no data</span>' not in response.text
+
+
+def test_status_html_keeps_stale_client_warning(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    snapshot = _status_snapshot_with_client(
+        monkeypatch,
+        _client_snapshot(freshness={"age_seconds": 901}),
+    )
+    assert snapshot["client_observed"] == {"available": False, "reason": "stale"}
+    monkeypatch.setattr(public_routes, "_status_snapshot", lambda _settings: snapshot)
+
+    response = client.get("/status")
+
+    assert response.status_code == 200
+    assert 'id="client-observed"' in response.text
+    assert "Client-observed availability: stale" in response.text
+    assert '<span class="component-status status-unknown">stale</span>' in response.text

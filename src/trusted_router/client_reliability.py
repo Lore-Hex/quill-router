@@ -14,6 +14,9 @@ ALL_TRAFFIC_NOTE = (
     "Calibration view; includes synthetic canary traffic; uncapped; ungated; "
     "not the published methodology."
 )
+#: Gated windows exclude synthetic traffic, so one 24h request is enough to
+#: distinguish real client use from an empty calibration-only snapshot.
+MIN_REAL_REQUESTS_24H = 1
 
 HOSTS = (
     "apex",
@@ -554,6 +557,10 @@ def client_observed_status_section(
     published = snapshot.get("published") is True
     raw_windows = snapshot.get("windows")
     windows = raw_windows if isinstance(raw_windows, Mapping) else {}
+    raw_24h = windows.get("24h")
+    window_24h = raw_24h if isinstance(raw_24h, Mapping) else {}
+    if _int(window_24h, "requests") < MIN_REAL_REQUESTS_24H:
+        return {"available": False, "reason": "insufficient_real_data"}
     generated_at = snapshot.get("generated_at")
     return {
         "available": True,
