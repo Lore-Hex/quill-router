@@ -148,8 +148,338 @@ _STUB = r"""#!/usr/bin/env bash
 # have any. The run's stdin is /dev/null, so this returns immediately when the
 # stub is not in a pipeline.
 cat >/dev/null 2>&1 || true
+joined="${0##*/} $*"
+
+if [ "${HARNESS_PUBLIC_SURFACE_SMOKE:-0}" = "1" ]; then
+  region=""
+  previous=""
+  output_file=""
+  ingress=""
+  for argument in "$@"; do
+    case "$argument" in
+      --region=*) region="${argument#--region=}" ;;
+      --region) previous="region"; continue ;;
+      --ingress=*) ingress="${argument#--ingress=}" ;;
+      --ingress) previous="ingress"; continue ;;
+      -o) previous="output"; continue ;;
+    esac
+    case "$previous" in
+      region) region="$argument" ;;
+      ingress) ingress="$argument" ;;
+      output) output_file="$argument" ;;
+    esac
+    previous=""
+  done
+  if [[ " $* " == *" run deploy trusted-router-public "* ]] \
+      && [[ " $* " == *"status.latestCreatedRevisionName"* ]]; then
+    python3 - "$HARNESS_PUBLIC_INGRESS_STATE" "$region" "$ingress" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+state = json.loads(path.read_text())
+state[sys.argv[2]] = sys.argv[3]
+path.write_text(json.dumps(state, sort_keys=True) + "\n")
+PY
+    printf 'trusted-router-public-candidate-%s\n' "$region"
+    exit 0
+  fi
+  if [[ " $* " == *" run services update trusted-router-public "* ]] \
+      && [ -n "$ingress" ]; then
+    python3 - "$HARNESS_PUBLIC_INGRESS_STATE" "$region" "$ingress" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+state = json.loads(path.read_text())
+state[sys.argv[2]] = sys.argv[3]
+path.write_text(json.dumps(state, sort_keys=True) + "\n")
+PY
+    exit 0
+  fi
+  if [[ " $* " == *" run services update-traffic trusted-router-public "* ]] \
+      && [[ " $* " == *" --update-tags="* ]]; then
+    tag_assignment=""
+    for argument in "$@"; do
+      case "$argument" in --update-tags=*) tag_assignment="${argument#--update-tags=}" ;; esac
+    done
+    printf '%s\n' "${tag_assignment#*=}" >"${HARNESS_PROBE_TAG_STATE_DIR}/${region}"
+    if [ "${HARNESS_PUBLIC_TERM_DURING_PROBE_TAG_REGION:-}" = "$region" ]; then
+      kill -TERM "$PPID"
+      exit 143
+    fi
+    exit 0
+  fi
+  if [[ " $* " == *" run services update-traffic trusted-router-public "* ]] \
+      && [[ " $* " == *" --remove-tags="* ]]; then
+    remaining="$(cat "$HARNESS_PROBE_TAG_REMOVE_FAILURES_STATE")"
+    if [ "${HARNESS_PROBE_TAG_REMOVE_ALWAYS_FAIL:-0}" = "1" ] || [ "$remaining" -gt 0 ]; then
+      if [ "$remaining" -gt 0 ]; then
+        printf '%s\n' "$((remaining - 1))" >"$HARNESS_PROBE_TAG_REMOVE_FAILURES_STATE"
+      fi
+      exit 1
+    fi
+    rm -f "${HARNESS_PROBE_TAG_STATE_DIR}/${region}"
+    exit 0
+  fi
+  if [[ " $* " == *" run services update-traffic trusted-router-public "* ]] \
+      && [[ " $* " == *"--to-revisions=trusted-router-public-candidate-${region}=100"* ]] \
+      && [ "${HARNESS_PUBLIC_TERM_DURING_PROMOTE_REGION:-}" = "$region" ]; then
+    kill -TERM "$PPID"
+    exit 143
+  fi
+  if [[ " $* " == *" run services describe trusted-router-public "* ]] \
+      && [[ " $* " == *" --format=json "* ]]; then
+    python3 - "$HARNESS_PUBLIC_INGRESS_STATE" "$HARNESS_PROBE_TAG_STATE_DIR" "$region" <<'PY'
+import json
+import pathlib
+import sys
+
+tag_path = pathlib.Path(sys.argv[2]) / sys.argv[3]
+region = sys.argv[3]
+ingress = json.loads(pathlib.Path(sys.argv[1]).read_text())[region]
+traffic = [
+    {
+        "percent": 100,
+        "revisionName": "trusted-router-public-active",
+    }
+]
+if tag_path.is_file():
+    traffic.append(
+        {
+            "percent": 0,
+            "revisionName": tag_path.read_text().strip(),
+            "tag": "public-revision-probe",
+        }
+    )
+print(
+    json.dumps(
+        {
+            "metadata": {
+                "annotations": {"run.googleapis.com/ingress": ingress}
+            },
+            "status": {"traffic": traffic},
+        },
+        separators=(",", ":"),
+    )
+)
+PY
+    exit 0
+  fi
+  if [[ " $* " == *" run services describe trusted-router-public "* ]] \
+      && [[ " $* " == *"status.traffic"* ]]; then
+    if [ -f "${HARNESS_PROBE_TAG_STATE_DIR}/${region}" ]; then
+      cat "${HARNESS_PROBE_TAG_STATE_DIR}/${region}"
+    fi
+    exit 0
+  fi
+  if [[ " $* " == *" run services describe trusted-router-public "* ]] \
+      && [[ " $* " == *"status.url"* ]]; then
+    printf 'https://trusted-router-public-%s.a.run.app\n' "$region"
+    exit 0
+  fi
+  if [ "${0##*/}" = "curl" ]; then
+    url="${*: -1}"
+    path="/${url#*://*/}"
+    [ "$path" = "//" ] && path="/"
+    direct_ingress="$(python3 - "$HARNESS_PUBLIC_INGRESS_STATE" "$url" <<'PY'
+import json
+import pathlib
+import sys
+
+state = json.loads(pathlib.Path(sys.argv[1]).read_text())
+url = sys.argv[2]
+print(next((ingress for region, ingress in state.items() if region in url), "all"))
+PY
+)"
+    if [ "$direct_ingress" != "all" ]; then
+      printf '403'
+      exit 0
+    fi
+    if [ "${HARNESS_PUBLIC_SMOKE_TRANSPORT_PATH:-}" = "$path" ]; then
+      printf '000'
+      exit 7
+    fi
+    code="200"
+    if [ -n "${HARNESS_PUBLIC_SMOKE_FAIL_REGION:-}" ] \
+        && [[ "$url" == *"${HARNESS_PUBLIC_SMOKE_FAIL_REGION}"* ]] \
+        && [ "${HARNESS_PUBLIC_SMOKE_FAIL_PATH:-}" = "$path" ]; then
+      code="500"
+    fi
+    if [ -n "$output_file" ]; then
+      printf 'harness response body\n' >"$output_file"
+    fi
+    printf '%s' "$code"
+    exit 0
+  fi
+fi
+
+if [ -n "${HARNESS_FAILURES:-}" ] && [ -f "$HARNESS_FAILURES" ]; then
+  while IFS= read -r pattern; do
+    [ -n "$pattern" ] || continue
+    if printf '%s' "$joined" | grep -Eq -- "$pattern"; then
+      exit 1
+    fi
+  done < "$HARNESS_FAILURES"
+fi
+
+# URL-map validation is part of the safety gate under test. Do not let the
+# generic success fallback launder a malformed candidate.
+if [ "${0##*/}" = "gcloud" ] || [ "${0##*/}" = "gc" ]; then
+  source_path=""
+  for argument in "$@"; do
+    case "$argument" in
+      --source=*) source_path="${argument#--source=}" ;;
+    esac
+  done
+  if [[ " $* " == *" compute url-maps validate "* ]]; then
+    python3 - "$source_path" "${HARNESS_URL_MAP_NAME:-trusted-router-control-map}" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+expected_name = sys.argv[2]
+try:
+    candidate = json.loads(path.read_text())
+except (OSError, json.JSONDecodeError) as exc:
+    raise SystemExit(f"invalid URL-map candidate: {exc}")
+if not isinstance(candidate, dict) or candidate.get("name") != expected_name:
+    raise SystemExit("URL-map candidate has the wrong or missing name")
+rejected = {"creationTimestamp", "id", "kind", "selfLink"}
+def rejected_fields(value):
+    if isinstance(value, dict):
+        return rejected.intersection(value).union(
+            *(rejected_fields(item) for item in value.values())
+        )
+    if isinstance(value, list):
+        return set().union(*(rejected_fields(item) for item in value))
+    return set()
+present = sorted(rejected_fields(candidate))
+if present:
+    raise SystemExit(f"URL-map candidate has output-only fields: {present}")
+
+services = []
+def collect(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in {"defaultService", "service"} and isinstance(item, str):
+                services.append(item)
+            collect(item)
+    elif isinstance(value, list):
+        for item in value:
+            collect(item)
+collect(candidate)
+if not services or any(
+    re.search(r"/global/backendServices/[^/]+$", service) is None
+    for service in services
+):
+    raise SystemExit("URL-map candidate references an invalid backend")
+
+if path.name.endswith(".public-candidate.json"):
+    backend_names = {service.rsplit("/", 1)[-1] for service in services}
+    expected = {
+        "trusted-router-control-backend",
+        "trusted-router-public-backend",
+    }
+    if not expected <= backend_names:
+        raise SystemExit("public candidate does not reference both expected backends")
+    matchers = candidate.get("pathMatchers") or []
+    if not any(
+        matcher.get("name") == "trusted-router-service-surfaces"
+        and matcher.get("pathRules")
+        for matcher in matchers
+    ):
+        raise SystemExit("public candidate has no service-surface path matcher")
+PY
+    exit $?
+  fi
+  if [[ " $* " == *" compute url-maps import "* ]]; then
+    import_state="$HARNESS_URL_MAP_STATE"
+    delayed_rollback=0
+    if [[ "$source_path" == *".rollback-source.json" ]] \
+        && [ "${HARNESS_URL_MAP_ROLLBACK_PENDING_READS:-0}" -gt 0 ]; then
+      import_state="$HARNESS_URL_MAP_PENDING_STATE"
+      delayed_rollback=1
+    fi
+    python3 - "$source_path" "$import_state" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1])
+state = pathlib.Path(sys.argv[2])
+document = json.loads(source.read_text())
+if not isinstance(document, dict) or not document.get("name"):
+    raise SystemExit("refusing malformed URL-map import")
+rejected = {"creationTimestamp", "id", "kind", "selfLink"}
+def rejected_fields(value):
+    if isinstance(value, dict):
+        return rejected.intersection(value).union(
+            *(rejected_fields(item) for item in value.values())
+        )
+    if isinstance(value, list):
+        return set().union(*(rejected_fields(item) for item in value))
+    return set()
+present = sorted(rejected_fields(document))
+if present:
+    raise SystemExit(f"refusing URL-map import with output-only fields: {present}")
+canonical = json.dumps(document, separators=(",", ":"), sort_keys=True).encode()
+document["fingerprint"] = "harness-" + hashlib.sha256(canonical).hexdigest()[:24]
+document.update(
+    {
+        "creationTimestamp": "2026-08-22T12:00:00.000-07:00",
+        "id": "1234567890123456789",
+        "kind": "compute#urlMap",
+        "selfLink": (
+            "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/"
+            "global/urlMaps/trusted-router-control-map"
+        ),
+    }
+)
+state.write_text(json.dumps(document, separators=(",", ":")) + "\n")
+PY
+    import_rc=$?
+    [ "$import_rc" -eq 0 ] || exit "$import_rc"
+    if [ "$delayed_rollback" -eq 1 ]; then
+      printf '%s\n' "$HARNESS_URL_MAP_ROLLBACK_PENDING_READS" \
+        >"$HARNESS_URL_MAP_PENDING_READS_STATE"
+      exit 1
+    fi
+    if [ "${HARNESS_URL_MAP_IMPORT_FAIL_AFTER_APPLY:-0}" = "1" ]; then
+      exit 1
+    fi
+    if [ "${HARNESS_URL_MAP_KILL_AFTER_APPLY:-0}" = "1" ]; then
+      kill -KILL "$PPID"
+      exit 137
+    fi
+    exit 0
+  fi
+  if [[ " $* " == *" compute url-maps describe "* ]] \
+      && [[ " $* " == *" --format=json "* ]] \
+      && [ -s "$HARNESS_URL_MAP_STATE" ]; then
+    if [ "${HARNESS_URL_MAP_POST_IMPORT_DESCRIBE_FAIL:-0}" = "1" ]; then
+      exit 1
+    fi
+    if [ -s "$HARNESS_URL_MAP_PENDING_STATE" ]; then
+      pending_reads="$(cat "$HARNESS_URL_MAP_PENDING_READS_STATE")"
+      if [ "$pending_reads" -le 0 ]; then
+        mv "$HARNESS_URL_MAP_PENDING_STATE" "$HARNESS_URL_MAP_STATE"
+      else
+        printf '%s\n' "$((pending_reads - 1))" \
+          >"$HARNESS_URL_MAP_PENDING_READS_STATE"
+      fi
+    fi
+    cat "$HARNESS_URL_MAP_STATE"
+    exit 0
+  fi
+fi
+
 if [ -n "${HARNESS_FIXTURES:-}" ] && [ -f "$HARNESS_FIXTURES" ]; then
-  joined="${0##*/} $*"
   while IFS=$'\t' read -r pattern encoded_reply; do
     [ -n "$pattern" ] || continue
     if printf '%s' "$joined" | grep -Eq -- "$pattern"; then
@@ -158,15 +488,6 @@ if [ -n "${HARNESS_FIXTURES:-}" ] && [ -f "$HARNESS_FIXTURES" ]; then
       exit 0
     fi
   done < "$HARNESS_FIXTURES"
-fi
-if [ -n "${HARNESS_FAILURES:-}" ] && [ -f "$HARNESS_FAILURES" ]; then
-  joined="${0##*/} $*"
-  while IFS= read -r pattern; do
-    [ -n "$pattern" ] || continue
-    if printf '%s' "$joined" | grep -Eq -- "$pattern"; then
-      exit 1
-    fi
-  done < "$HARNESS_FAILURES"
 fi
 printf '%s\n' "stub-output"
 exit 0
@@ -230,6 +551,153 @@ _SYNTHETIC_INGEST_SERVICE_JSON = json.dumps(
     separators=(",", ":"),
 )
 
+_PUBLIC_SURFACE_LEGACY_SERVICE_JSON = json.dumps(
+    {
+        "status": {
+            "traffic": [
+                {"percent": 100, "revisionName": "trusted-router-active"}
+            ]
+        }
+    },
+    separators=(",", ":"),
+)
+_PUBLIC_SURFACE_PUBLIC_SERVICE_JSON = json.dumps(
+    {
+        "metadata": {
+            "annotations": {"run.googleapis.com/ingress": "all"}
+        },
+        "status": {
+            "traffic": [
+                {"percent": 100, "revisionName": "trusted-router-public-active"}
+            ]
+        }
+    },
+    separators=(",", ":"),
+)
+_PUBLIC_SURFACE_LEGACY_ENV = {
+    "TR_RELEASE": "cb16dcc",
+    "TR_TRUSTED_DOMAIN": "trustedrouter.com",
+    "TR_TRUSTED_DOMAIN_ALIASES": "allyrouter.com,uptimerouter.com",
+    "TR_API_BASE_URL": "https://api.trustedrouter.com/v1",
+    "TR_SUPPORT_EMAIL": "help@trustedrouter.com",
+    "TR_GCP_PROJECT_ID": "quill-cloud-proxy",
+    "TR_REGIONS": "us-central1,us-east4,europe-west4,southamerica-east1",
+    "TR_PRIMARY_REGION": "us-central1",
+    "TR_STORAGE_BACKEND": "spanner-bigtable",
+    "TR_SPANNER_INSTANCE_ID": "trusted-router-nam6",
+    "TR_SPANNER_DATABASE_ID": "trusted-router",
+    "TR_SPANNER_POOL_SIZE": "8",
+    "TR_BIGTABLE_INSTANCE_ID": "trusted-router-logs",
+    "TR_BIGTABLE_GENERATION_TABLE": "trustedrouter-generations",
+    "TR_BIGTABLE_MIRROR_WRITES_ENABLED": "true",
+    "TR_ANALYTICS_READ_MODE": "clickhouse",
+    "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL": "http://10.128.15.10:8123",
+    "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER": "tr_control_read",
+    "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE": "tr",
+    "TR_TRUST_GCP_SOURCE_COMMIT": "source-commit",
+    "TR_TRUST_GCP_IMAGE_REFERENCE": "gcp-image-reference",
+    "TR_TRUST_GCP_IMAGE_DIGEST": "sha256:" + "2" * 64,
+    "TR_TRUST_GCP_RELEASE_URL": (
+        "https://trust.trustedrouter.com/trust/gcp-release.json"
+    ),
+    "TR_TRUST_GCP_RELEASE_FALLBACK_URLS": (
+        "https://raw.githubusercontent.com/Lore-Hex/quill-cloud-proxy/"
+        "main/trust-page/gcp-release.json"
+    ),
+    "TR_TRUST_AWS_RELEASE_URL": (
+        "https://trust.trustedrouter.com/trust/aws-release.json"
+    ),
+    "TR_TRUST_AZURE_RELEASE_URL": (
+        "https://trust.trustedrouter.com/trust/azure-release.json"
+    ),
+}
+_PUBLIC_SURFACE_LEGACY_REVISION_JSON = json.dumps(
+    {
+        "spec": {
+            "containers": [
+                {
+                    "image": (
+                        "us-central1-docker.pkg.dev/quill-cloud-proxy/"
+                        "trusted-router/trusted-router@sha256:" + "1" * 64
+                    ),
+                    "env": [
+                        *(
+                            {"name": name, "value": value}
+                            for name, value in _PUBLIC_SURFACE_LEGACY_ENV.items()
+                        ),
+                        *(
+                            {
+                                "name": name,
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "name": secret,
+                                        "key": "latest",
+                                    }
+                                },
+                            }
+                            for name, secret in (
+                                ("TR_GOOGLE_CLIENT_ID", "legacy-google-id"),
+                                ("TR_GOOGLE_CLIENT_SECRET", "legacy-google-secret"),
+                                ("TR_GITHUB_CLIENT_ID", "legacy-github-id"),
+                                ("TR_GITHUB_CLIENT_SECRET", "legacy-github-secret"),
+                            )
+                        ),
+                    ],
+                }
+            ]
+        }
+    },
+    separators=(",", ":"),
+)
+_PUBLIC_SURFACE_PUBLIC_REVISION_JSON = json.dumps(
+    {"metadata": {"name": "trusted-router-public-active"}},
+    separators=(",", ":"),
+)
+_PUBLIC_EDGE_LIVE_MAP_JSON = json.dumps(
+    {
+        "creationTimestamp": "2026-08-22T12:00:00.000-07:00",
+        "id": "1234567890123456789",
+        "kind": "compute#urlMap",
+        "name": "trusted-router-control-map",
+        "fingerprint": "source-fingerprint",
+        "selfLink": (
+            "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/"
+            "global/urlMaps/trusted-router-control-map"
+        ),
+        "defaultService": (
+            "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/"
+            "global/backendServices/trusted-router-control-backend"
+        ),
+    },
+    separators=(",", ":"),
+)
+_PUBLIC_EDGE_ROUTED_SERVICE_JSON = json.dumps(
+    {
+        "metadata": {
+            "annotations": {
+                "run.googleapis.com/ingress": "internal-and-cloud-load-balancing"
+            }
+        },
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": [
+                        {
+                            "env": [
+                                {
+                                    "name": "TR_RATE_LIMIT_CLIENT_IP_MODE",
+                                    "value": "edge_header",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        },
+    },
+    separators=(",", ":"),
+)
+
 
 @dataclass(frozen=True)
 class ScriptFixture:
@@ -253,6 +721,63 @@ class ScriptFixture:
 
 
 SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
+    "scripts/deploy/public_surface.sh": ScriptFixture(
+        env={"HARNESS_PUBLIC_SURFACE_SMOKE": "1"},
+        responses=(
+            (r"projects describe.*projectNumber", "44325983244"),
+            (
+                r"run services describe trusted-router .*--format=json",
+                _PUBLIC_SURFACE_LEGACY_SERVICE_JSON,
+            ),
+            (
+                r"run revisions describe trusted-router-active .*--format=json",
+                _PUBLIC_SURFACE_LEGACY_REVISION_JSON,
+            ),
+            (
+                r"run services describe trusted-router-public .*--format=json",
+                _PUBLIC_SURFACE_PUBLIC_SERVICE_JSON,
+            ),
+            (
+                r"run revisions describe trusted-router-public-active .*--format=json",
+                _PUBLIC_SURFACE_PUBLIC_REVISION_JSON,
+            ),
+        ),
+    ),
+    "scripts/deploy/public_surface_edge.sh": ScriptFixture(
+        responses=(
+            (r"projects describe.*projectNumber", "44325983244"),
+            (
+                r"run services describe trusted-router-public .*--format=json",
+                _PUBLIC_EDGE_ROUTED_SERVICE_JSON,
+            ),
+            (
+                r"backend-services describe trusted-router-public-backend"
+                r" .*securityPolicy[.]basename",
+                "trusted-router-public-edge",
+            ),
+            (
+                r"backend-services describe trusted-router-public-backend"
+                r" .*value[(]selfLink[)]",
+                "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/"
+                "global/backendServices/trusted-router-public-backend",
+            ),
+            (
+                r"backend-services describe trusted-router-control-backend"
+                r" .*value[(]selfLink[)]",
+                "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/"
+                "global/backendServices/trusted-router-control-backend",
+            ),
+            (
+                r"backend-services describe trusted-router-control-backend"
+                r" .*value[(]loadBalancingScheme[)]",
+                "EXTERNAL_MANAGED",
+            ),
+            (
+                r"url-maps describe trusted-router-control-map .*--format=json",
+                _PUBLIC_EDGE_LIVE_MAP_JSON,
+            ),
+        ),
+    ),
     "scripts/deploy/aws_eu_clickhouse.sh": ScriptFixture(),
     # GCP's out-of-band check needs nothing from an operator: it runs the gate,
     # retries while a Cloud Run revision takes traffic, and returns the gate's
@@ -398,6 +923,7 @@ class HarnessRun:
     stdout: str
     stderr: str
     calls: list[list[str]]
+    public_ingress_state: dict[str, str]
 
     @property
     def verifier_calls(self) -> list[list[str]]:
@@ -493,6 +1019,8 @@ class DeployScriptHarness:
         self,
         script: str,
         *,
+        args: tuple[str, ...] = (),
+        extra_env: dict[str, str] | None = None,
         verifier_rc: int = 0,
         timeout: int = 120,
         omit_env: tuple[str, ...] = (),
@@ -528,6 +1056,38 @@ class DeployScriptHarness:
         )
         failures_file = run_dir / "failures.txt"
         failures_file.write_text("".join(f"{pattern}\n" for pattern in fixture.failures))
+        public_ingress_state = run_dir / "public-ingress.json"
+        initial_public_ingress = (extra_env or {}).get(
+            "HARNESS_PUBLIC_INITIAL_INGRESS", "internal-and-cloud-load-balancing"
+        )
+        public_ingress_state.write_text(
+            json.dumps(
+                {
+                    region: initial_public_ingress
+                    for region in (
+                        "us-central1",
+                        "us-east4",
+                        "europe-west4",
+                        "southamerica-east1",
+                    )
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        )
+        probe_tag_state_dir = run_dir / "probe-tags"
+        probe_tag_state_dir.mkdir()
+        initial_probe_region = (extra_env or {}).get(
+            "HARNESS_PUBLIC_INITIAL_PROBE_TAG_REGION"
+        )
+        if initial_probe_region:
+            (probe_tag_state_dir / initial_probe_region).write_text(
+                "trusted-router-public-candidate-" + initial_probe_region + "\n"
+            )
+        probe_tag_remove_failures = run_dir / "probe-tag-remove-failures"
+        probe_tag_remove_failures.write_text(
+            f"{(extra_env or {}).get('HARNESS_PROBE_TAG_REMOVE_FAILURES', '0')}\n"
+        )
 
         env = {
             "PATH": str(self.bin),
@@ -537,12 +1097,26 @@ class DeployScriptHarness:
             "HARNESS_ARGV_LOG": str(argv_log),
             "HARNESS_FIXTURES": str(fixtures_file),
             "HARNESS_FAILURES": str(failures_file),
+            "HARNESS_URL_MAP_STATE": str(self.root / "url-map-state.json"),
+            "HARNESS_URL_MAP_PENDING_STATE": str(
+                self.root / "url-map-pending-state.json"
+            ),
+            "HARNESS_URL_MAP_PENDING_READS_STATE": str(
+                self.root / "url-map-pending-reads.txt"
+            ),
+            "HARNESS_URL_MAP_NAME": "trusted-router-control-map",
+            "HARNESS_PUBLIC_INGRESS_STATE": str(public_ingress_state),
+            "HARNESS_PROBE_TAG_STATE_DIR": str(probe_tag_state_dir),
+            "HARNESS_PROBE_TAG_REMOVE_FAILURES_STATE": str(
+                probe_tag_remove_failures
+            ),
             "HARNESS_VERIFIER_RC": str(verifier_rc),
             **{k: v for k, v in fixture.env.items() if k not in omit_env},
+            **(extra_env or {}),
         }
 
         proc = subprocess.run(  # noqa: S603 - fixed argv, stub PATH, repo-local script
-            ["bash", str(self.mirror / script)],  # noqa: S607
+            ["bash", str(self.mirror / script), *args],  # noqa: S607
             capture_output=True,
             text=True,
             env=env,
@@ -557,7 +1131,13 @@ class DeployScriptHarness:
             for line in argv_log.read_text().splitlines()
             if line.strip()
         ]
-        return HarnessRun(proc.returncode, proc.stdout, proc.stderr, calls)
+        return HarnessRun(
+            proc.returncode,
+            proc.stdout,
+            proc.stderr,
+            calls,
+            json.loads(public_ingress_state.read_text()),
+        )
 
 
 def summarise(run: HarnessRun) -> str:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import datetime as dt
+import hashlib
 import hmac
 import json
 import logging
@@ -91,6 +93,39 @@ def test_cookie_round_trip_and_tamper_rejection() -> None:
         )
         is None
     )
+
+
+def test_derived_cookie_key_matches_legacy_gateway_root_bidirectionally() -> None:
+    token = "pretend-gateway-token-value-1234567890"  # noqa: S105 - fixed test vector.
+    derived = hmac.new(
+        token.encode(),
+        b"trustedrouter-attribution-cookie-v1",
+        hashlib.sha256,
+    ).digest()
+    encoded_key = base64.b64encode(derived).decode("ascii")
+    assert encoded_key == "aDMnBV9nDwwAD1tr4MpooFMj7i8Kv6lB5Q9LTmrjTfc="
+
+    legacy = Settings(
+        environment="test",
+        service_surface="combined",
+        internal_gateway_token=token,
+    )
+    public = Settings(
+        environment="test",
+        service_surface="public",
+        attribution_cookie_key=encoded_key,
+    )
+    assert acquisition_module._cookie_signing_key(legacy) == derived  # noqa: SLF001
+    assert acquisition_module._cookie_signing_key(public) == derived  # noqa: SLF001
+
+    now = dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    touch = {"utm_source": "compatibility", "landing_path": "/", "captured_at": now}
+    context = AttributionContext("e" * 32, touch, touch, now)
+
+    public_cookie = encode_attribution_cookie(context, public)
+    legacy_cookie = encode_attribution_cookie(context, legacy)
+    assert decode_attribution_cookie(public_cookie, legacy) == context
+    assert decode_attribution_cookie(legacy_cookie, public) == context
 
 
 def test_expired_cookie_is_rejected() -> None:

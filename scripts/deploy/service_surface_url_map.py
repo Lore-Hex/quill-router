@@ -19,14 +19,11 @@ Surface = Literal["public", "actions", "control", "internal"]
 
 PUBLIC_PATH_PATTERNS = (
     "/analytics/events",
-    "/bedrock-group-buy",
-    "/bedrock-group-buy/",
     "/notify/texml",
     "/v1/health",
     "/v1/ready",
     "/v1/coverage/openrouter",
     "/v1/analytics/events",
-    "/v1/bedrock-group-buy",
     "/v1/embeddings/models",
     # Anonymous image-catalog reads (#693). Exact-and-under patterns beat the
     # authenticated /images/* control wildcard by specificity, exactly as
@@ -51,9 +48,11 @@ ACTIONS_PATH_PATTERNS = (
 )
 
 CONTROL_PATH_PATTERNS = (
+    "/v1",
     "/v1/*",
     "/models/user",
     "/v1/models/user",
+    "/bedrock-group-buy",
     "/bedrock-group-buy/*",
     "/google_oauth_callback",
     "/github_oauth_callback",
@@ -62,6 +61,7 @@ CONTROL_PATH_PATTERNS = (
     "/provider",
     "/provider/*",
     "/mcp",
+    "/chat-proxy",
     "/chat-proxy/*",
     "/auth",
     "/auth/*",
@@ -69,7 +69,9 @@ CONTROL_PATH_PATTERNS = (
     "/byok/*",
     "/credits",
     "/credits/*",
+    "/billing",
     "/billing/*",
+    "/broadcast",
     "/broadcast/*",
     "/custom-models",
     "/custom-models/*",
@@ -84,29 +86,38 @@ CONTROL_PATH_PATTERNS = (
     "/client-events",
     "/workspaces",
     "/workspaces/*",
+    "/organization",
     "/organization/*",
     "/chat/completions",
     "/messages",
     "/embeddings",
     "/responses",
+    "/audio",
     "/audio/*",
     "/rerank",
     "/videos",
     "/videos/*",
+    "/private",
     "/private/*",
     "/guardrails",
     "/guardrails/*",
+    "/analytics",
     "/analytics/*",
+    "/classifications",
     "/classifications/*",
+    "/datasets",
     "/datasets/*",
     "/files",
     "/files/*",
     "/images",
     "/images/*",
+    "/model",
     "/model/*",
+    "/observability",
     "/observability/*",
     "/presets",
     "/presets/*",
+    "/scim",
     "/scim/*",
     "/signup",
     "/notify",
@@ -126,7 +137,9 @@ CONTROL_PATH_PATTERNS = (
 )
 
 INTERNAL_PATH_PATTERNS = (
+    "/internal",
     "/internal/*",
+    "/v1/internal",
     "/v1/internal/*",
 )
 
@@ -139,7 +152,6 @@ _PATTERNS: dict[Surface, tuple[str, ...]] = {
 _MATCHER_NAME = "trusted-router-service-surfaces"
 _OUTPUT_ONLY_KEYS = {
     "creationTimestamp",
-    "fingerprint",
     "id",
     "kind",
     "selfLink",

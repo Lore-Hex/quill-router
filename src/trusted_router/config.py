@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import hmac
 import json
 import os
@@ -232,9 +234,10 @@ SERVICE_SURFACE_SECRET_OWNERS: dict[str, frozenset[str]] = {
     "operational_analytics_clickhouse_password": frozenset(
         {"public", "control", "internal", "observer"}
     ),
-    "sentry_dsn": frozenset({"control", "internal", "observer"}),
+    "sentry_dsn": frozenset({"public", "control", "internal", "observer"}),
     "google_data_manager_enabled": frozenset({"control"}),
     "google_data_manager_kms_key_name": frozenset({"control"}),
+    "attribution_cookie_key": frozenset({"public", "control"}),
     "attribution_cookie_secret": frozenset({"public", "control"}),
     "internal_gateway_token": frozenset({"internal"}),
     # Internal owns this only for synthetic/Sentry routes; its billing routes
@@ -544,10 +547,10 @@ class Settings(BaseSettings):
     # on the safe default and aggregate into the untrusted_lb bucket.
     rate_limit_client_ip_mode: str = "untrusted"
 
-    # Shared only by the anonymous public surface and the account/control
-    # surface so an attribution cookie survives the LB hand-off between them.
-    # This must never reuse the internal gateway credential: compromise of the
-    # public renderer must not disclose a token accepted by billing routes.
+    # Split public/control services may hold the base64-encoded, already-derived
+    # cookie key without receiving the legacy root that also authorizes gateway
+    # calls. A dedicated secret remains supported for independent deployments.
+    attribution_cookie_key: str | None = None
     attribution_cookie_secret: str | None = None
     internal_gateway_token: str | None = None
     # Dedicated to the externally reachable observer/status processes.  It
@@ -1080,6 +1083,26 @@ class Settings(BaseSettings):
     def production_is_fail_closed(self) -> Settings:
         environment = self.environment.lower()
         surface = self.service_surface
+        if self.attribution_cookie_key and self.attribution_cookie_secret:
+            raise ValueError(
+                "TR_ATTRIBUTION_COOKIE_KEY and TR_ATTRIBUTION_COOKIE_SECRET "
+                "must not both be set"
+            )
+        attribution_cookie_key_bytes: bytes | None = None
+        if self.attribution_cookie_key:
+            try:
+                attribution_cookie_key_bytes = base64.b64decode(
+                    self.attribution_cookie_key,
+                    validate=True,
+                )
+            except (binascii.Error, ValueError) as exc:
+                raise ValueError(
+                    "TR_ATTRIBUTION_COOKIE_KEY must be valid base64"
+                ) from exc
+            if len(attribution_cookie_key_bytes) != 32:
+                raise ValueError(
+                    "TR_ATTRIBUTION_COOKIE_KEY must decode to exactly 32 bytes"
+                )
         deployed_combined_bridge = (
             surface == "combined"
             and environment not in {"local", "test"}
@@ -1421,9 +1444,13 @@ class Settings(BaseSettings):
         production = environment == "production"
         missing = []
         if environment != "worker" and surface in {"control", "public"}:
-            if not self.attribution_cookie_secret:
-                missing.append("TR_ATTRIBUTION_COOKIE_SECRET")
-            elif len(self.attribution_cookie_secret.encode("utf-8")) < 32:
+            if not self.attribution_cookie_key and not self.attribution_cookie_secret:
+                missing.append(
+                    "TR_ATTRIBUTION_COOKIE_KEY or TR_ATTRIBUTION_COOKIE_SECRET"
+                )
+            elif self.attribution_cookie_secret and len(
+                self.attribution_cookie_secret.encode("utf-8")
+            ) < 32:
                 missing.append("TR_ATTRIBUTION_COOKIE_SECRET (at least 32 bytes)")
         if environment != "worker" and surface == "public":
             if self.google_oauth_login_available is None:
@@ -1458,6 +1485,17 @@ class Settings(BaseSettings):
         ):
             missing.append(
                 "TR_ATTRIBUTION_COOKIE_SECRET must differ from TR_INTERNAL_GATEWAY_TOKEN"
+            )
+        if (
+            attribution_cookie_key_bytes
+            and self.internal_gateway_token
+            and hmac.compare_digest(
+                attribution_cookie_key_bytes,
+                self.internal_gateway_token.encode("utf-8"),
+            )
+        ):
+            missing.append(
+                "TR_ATTRIBUTION_COOKIE_KEY must differ from TR_INTERNAL_GATEWAY_TOKEN"
             )
         if (
             self.observer_internal_token
@@ -1843,6 +1881,7 @@ _LOCAL_KEY_FALLBACKS: tuple[str, ...] = (
     "ses_alert_from_email",
     "ses_alert_from_name",
     "ses_alert_configuration_set",
+    "attribution_cookie_key",
     "attribution_cookie_secret",
     "internal_gateway_token",
     "stripe_webhook_secret",
