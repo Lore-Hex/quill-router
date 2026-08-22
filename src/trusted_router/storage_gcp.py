@@ -2970,7 +2970,11 @@ class SpannerBigtableStore:
     ) -> None:
         ledger = self._regional_quota_ledger
         if ledger is None:
-            raise RuntimeError("regional quota ledger is unavailable")
+            from trusted_router.regional_quota_ledger import (
+                RegionalLeaseLedgerError,
+            )
+
+            raise RegionalLeaseLedgerError("regional quota ledger is unavailable")
         lease_id = authorization.regional_lease_id
         fencing_token = authorization.regional_fencing_token
         hold_id = authorization.regional_hold_id
