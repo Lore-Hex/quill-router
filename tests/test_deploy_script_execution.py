@@ -1050,7 +1050,7 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
         previous_deploy_index = deploy_index
 
 
-def test_synthetic_deploy_requires_explicit_split_billing_service_before_any_job(
+def test_synthetic_deploy_requires_explicit_split_billing_service_before_any_gcloud_call(
     tmp_path: Path,
 ) -> None:
     isolated = DeployScriptHarness(tmp_path / "synthetic-no-split-service")
@@ -1063,11 +1063,41 @@ def test_synthetic_deploy_requires_explicit_split_billing_service_before_any_job
 
     assert run.returncode != 0
     assert "TR_BILLING_SERVICE is required" in run.stderr
-    assert not any(
-        call[:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
-        and call[4:6] == ["jobs", "deploy"]
-        for call in run.calls
+    assert run.calls == []
+
+
+def test_synthetic_combined_bridge_restores_legacy_job_deploys(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = "scripts/deploy/synthetic.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        script,
+        replace(
+            fixture,
+            env={**fixture.env, "TR_ALLOW_DEPLOYED_COMBINED_SURFACE": "true"},
+        ),
     )
+    isolated = DeployScriptHarness(tmp_path / "synthetic-combined-bridge")
+
+    run = isolated.run(script, verifier_rc=0, omit_env=("TR_BILLING_SERVICE",))
+
+    assert run.returncode == 0, summarise(run)
+    deploys = [
+        call
+        for call in run.calls
+        if call[:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
+        and call[4:6] == ["jobs", "deploy"]
+    ]
+    assert [(call[6], call[call.index("--region") + 1]) for call in deploys] == [
+        ("trusted-router-synthetic-us-central1", "us-central1"),
+        ("trusted-router-synthetic-europe-west4", "europe-west4"),
+        ("trusted-router-throughput-us-central1", "us-central1"),
+        ("trusted-router-image-generation-us-central1", "us-central1"),
+        ("trusted-router-video-generation-us-central1", "us-central1"),
+    ]
     assert not any(
         call[:6]
         == [
@@ -1080,6 +1110,34 @@ def test_synthetic_deploy_requires_explicit_split_billing_service_before_any_job
         ]
         for call in run.calls
     )
+    assert not any(
+        call[:5]
+        == [
+            "gcloud",
+            "--project",
+            "quill-cloud-proxy",
+            "secrets",
+            "describe",
+        ]
+        and call[5] == "trustedrouter-observer-internal-token"
+        for call in run.calls
+    )
+    for deploy in deploys:
+        deploy_text = " ".join(deploy)
+        region = deploy[deploy.index("--region") + 1]
+        assert f"https://trusted-router-stub-output.{region}.run.app" in deploy_text
+        assert (
+            "TR_INTERNAL_GATEWAY_TOKEN=trustedrouter-internal-gateway-token:latest"
+            in deploy_text
+        )
+        assert "TR_OBSERVER_INTERNAL_TOKEN" not in deploy_text
+        assert "TR_SERVICE_SURFACE=observer" not in deploy_text
+        assert "TR_BYOK_KMS_KEY_NAME=" in deploy_text
+        assert "--update-secrets" in deploy
+        assert "--set-secrets" not in deploy
+        assert "--network" not in deploy
+        assert "--subnet" not in deploy
+        assert "--vpc-egress" not in deploy
 
 
 @pytest.mark.parametrize(

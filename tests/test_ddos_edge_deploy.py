@@ -702,20 +702,27 @@ def test_every_synthetic_job_uses_private_run_app_ingress() -> None:
         '"TR_OBSERVER_INTERNAL_TOKEN=trustedrouter-observer-internal-token:latest"'
         in deploy
     )
-    assert '"TR_INTERNAL_GATEWAY_TOKEN=' not in deploy
-    assert "TR_INTERNAL_GATEWAY_TOKEN=trustedrouter" not in deploy
+    assert (
+        '"TR_INTERNAL_GATEWAY_TOKEN=trustedrouter-internal-gateway-token:latest"'
+        in deploy
+    )
     assert (
         'SYNTHETIC_INGEST_SERVICE="$TR_BILLING_SERVICE"'
     ) in deploy
+    assert 'SYNTHETIC_INGEST_SERVICE="$SERVICE"' in deploy
     assert "TR_SYNTHETIC_INGEST_SERVICE" not in deploy
     assert deploy.count("${SYNTHETIC_INGEST_SERVICE}-${PROJECT_NUMBER}") == 4
-    assert "https://${SERVICE}-${PROJECT_NUMBER}" not in deploy
     assert deploy.count("gc run jobs deploy") == 4
-    assert deploy.count('--set-secrets "$SET_SECRETS"') == 4
-    assert "--update-secrets" not in deploy
-    assert deploy.count("ensure_private_run_app_access") == 4
-    assert deploy.count("verify_synthetic_ingest_service_contract") == 5
-    assert deploy.count('"${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]}"') == 4
+    assert deploy.count('"$JOB_SECRET_FLAG" "$JOB_SECRETS"') == 4
+    assert 'JOB_SECRET_FLAG="--set-secrets"' in deploy
+    assert 'JOB_SECRET_FLAG="--update-secrets"' in deploy
+    assert deploy.count("ensure_private_run_app_access") == 1
+    assert deploy.count("verify_synthetic_ingest_service_contract") == 2
+    guarded_network_args = (
+        '"${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]+'
+        '"${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]}"}"'
+    )
+    assert deploy.count(guarded_network_args) == 4
 
 
 def test_secret_bootstrap_provisions_a_distinct_observer_credential() -> None:
