@@ -239,7 +239,7 @@ _EXPECTED_OWNER_GROUPS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
             "twilio_api_key_secret",
         ),
     ),
-    (frozenset({"control", "internal", "observer"}), ("sentry_dsn",)),
+    (frozenset({"public", "control", "internal", "observer"}), ("sentry_dsn",)),
     (frozenset({"public", "control"}), ("attribution_cookie_secret",)),
     (
         frozenset({"internal"}),
@@ -466,10 +466,11 @@ def test_every_sensitive_setting_rejects_an_unauthorized_deployed_surface(
         )
 
 
-def test_public_production_needs_only_attribution_and_non_secret_login_flags() -> None:
+def test_public_production_accepts_only_t1_owned_secrets_and_login_flags() -> None:
     settings = _production(
         "public",
         attribution_cookie_secret=_ATTRIBUTION_SECRET,
+        sentry_dsn="https://example@example.ingest.sentry.io/1",
         google_oauth_login_available=True,
         github_oauth_login_available=False,
     )
@@ -477,7 +478,7 @@ def test_public_production_needs_only_attribution_and_non_secret_login_flags() -
     assert settings.attribution_cookie_secret == _ATTRIBUTION_SECRET
     assert settings.internal_gateway_token is None
     assert settings.stripe_secret_key is None
-    assert settings.sentry_dsn is None
+    assert settings.sentry_dsn == "https://example@example.ingest.sentry.io/1"
     assert settings.aws_access_key_id is None
     assert settings.byok_kms_key_name is None
     assert settings.google_oauth_enabled is True
@@ -625,7 +626,10 @@ def test_actions_production_rejects_other_surface_secrets(name: str, value: str)
         ("internal_gateway_token", _GATEWAY_SECRET),
         ("stripe_webhook_secret", "whsec-test"),
         ("stripe_secret_key", "sk-test"),
-        ("sentry_dsn", "https://example@example.ingest.sentry.io/1"),
+        # Sentry is intentionally absent: the newer T1 error-reporting
+        # contract permits it on public and is exercised by
+        # test_public_production_accepts_only_t1_owned_secrets_and_login_flags
+        # plus the exact deploy allowlist test in test_public_surface_deploy.py.
         ("aws_access_key_id", "ses-access"),
         ("aws_secret_access_key", "ses-secret"),
         ("byok_kms_key_name", "projects/test/cryptoKeys/byok"),

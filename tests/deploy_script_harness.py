@@ -230,6 +230,128 @@ _SYNTHETIC_INGEST_SERVICE_JSON = json.dumps(
     separators=(",", ":"),
 )
 
+_PUBLIC_SURFACE_LEGACY_SERVICE_JSON = json.dumps(
+    {
+        "status": {
+            "traffic": [
+                {"percent": 100, "revisionName": "trusted-router-active"}
+            ]
+        }
+    },
+    separators=(",", ":"),
+)
+_PUBLIC_SURFACE_LEGACY_ENV = {
+    "TR_RELEASE": "cb16dcc",
+    "TR_TRUSTED_DOMAIN": "trustedrouter.com",
+    "TR_TRUSTED_DOMAIN_ALIASES": "allyrouter.com,uptimerouter.com",
+    "TR_API_BASE_URL": "https://api.trustedrouter.com/v1",
+    "TR_SUPPORT_EMAIL": "help@trustedrouter.com",
+    "TR_GCP_PROJECT_ID": "quill-cloud-proxy",
+    "TR_REGIONS": "us-central1,us-east4,europe-west4,southamerica-east1",
+    "TR_PRIMARY_REGION": "us-central1",
+    "TR_STORAGE_BACKEND": "spanner-bigtable",
+    "TR_SPANNER_INSTANCE_ID": "trusted-router-nam6",
+    "TR_SPANNER_DATABASE_ID": "trusted-router",
+    "TR_SPANNER_POOL_SIZE": "8",
+    "TR_BIGTABLE_INSTANCE_ID": "trusted-router-logs",
+    "TR_BIGTABLE_GENERATION_TABLE": "trustedrouter-generations",
+    "TR_BIGTABLE_MIRROR_WRITES_ENABLED": "true",
+    "TR_ANALYTICS_READ_MODE": "clickhouse",
+    "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL": "http://10.128.15.10:8123",
+    "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER": "tr_control_read",
+    "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE": "tr",
+    "TR_TRUST_GCP_SOURCE_COMMIT": "source-commit",
+    "TR_TRUST_GCP_IMAGE_REFERENCE": "gcp-image-reference",
+    "TR_TRUST_GCP_IMAGE_DIGEST": "sha256:" + "2" * 64,
+    "TR_TRUST_GCP_RELEASE_URL": (
+        "https://trust.trustedrouter.com/trust/gcp-release.json"
+    ),
+    "TR_TRUST_GCP_RELEASE_FALLBACK_URLS": (
+        "https://raw.githubusercontent.com/Lore-Hex/quill-cloud-proxy/"
+        "main/trust-page/gcp-release.json"
+    ),
+    "TR_TRUST_AWS_RELEASE_URL": (
+        "https://trust.trustedrouter.com/trust/aws-release.json"
+    ),
+    "TR_TRUST_AZURE_RELEASE_URL": (
+        "https://trust.trustedrouter.com/trust/azure-release.json"
+    ),
+}
+_PUBLIC_SURFACE_LEGACY_REVISION_JSON = json.dumps(
+    {
+        "spec": {
+            "containers": [
+                {
+                    "image": (
+                        "us-central1-docker.pkg.dev/quill-cloud-proxy/"
+                        "trusted-router/trusted-router@sha256:" + "1" * 64
+                    ),
+                    "env": [
+                        *(
+                            {"name": name, "value": value}
+                            for name, value in _PUBLIC_SURFACE_LEGACY_ENV.items()
+                        ),
+                        *(
+                            {
+                                "name": name,
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "name": secret,
+                                        "key": "latest",
+                                    }
+                                },
+                            }
+                            for name, secret in (
+                                ("TR_GOOGLE_CLIENT_ID", "legacy-google-id"),
+                                ("TR_GOOGLE_CLIENT_SECRET", "legacy-google-secret"),
+                                ("TR_GITHUB_CLIENT_ID", "legacy-github-id"),
+                                ("TR_GITHUB_CLIENT_SECRET", "legacy-github-secret"),
+                            )
+                        ),
+                    ],
+                }
+            ]
+        }
+    },
+    separators=(",", ":"),
+)
+_PUBLIC_EDGE_LIVE_MAP_JSON = json.dumps(
+    {
+        "name": "trusted-router-control-map",
+        "defaultService": (
+            "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/"
+            "global/backendServices/trusted-router-control-backend"
+        ),
+    },
+    separators=(",", ":"),
+)
+_PUBLIC_EDGE_ROUTED_SERVICE_JSON = json.dumps(
+    {
+        "metadata": {
+            "annotations": {
+                "run.googleapis.com/ingress": "internal-and-cloud-load-balancing"
+            }
+        },
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": [
+                        {
+                            "env": [
+                                {
+                                    "name": "TR_RATE_LIMIT_CLIENT_IP_MODE",
+                                    "value": "edge_header",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        },
+    },
+    separators=(",", ":"),
+)
+
 
 @dataclass(frozen=True)
 class ScriptFixture:
@@ -253,6 +375,54 @@ class ScriptFixture:
 
 
 SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
+    "scripts/deploy/public_surface.sh": ScriptFixture(
+        responses=(
+            (r"projects describe.*projectNumber", "44325983244"),
+            (
+                r"run services describe trusted-router .*--format=json",
+                _PUBLIC_SURFACE_LEGACY_SERVICE_JSON,
+            ),
+            (
+                r"run revisions describe trusted-router-active .*--format=json",
+                _PUBLIC_SURFACE_LEGACY_REVISION_JSON,
+            ),
+        ),
+    ),
+    "scripts/deploy/public_surface_edge.sh": ScriptFixture(
+        responses=(
+            (r"projects describe.*projectNumber", "44325983244"),
+            (
+                r"run services describe trusted-router-public .*--format=json",
+                _PUBLIC_EDGE_ROUTED_SERVICE_JSON,
+            ),
+            (
+                r"backend-services describe trusted-router-public-backend"
+                r" .*securityPolicy[.]basename",
+                "trusted-router-public-edge",
+            ),
+            (
+                r"backend-services describe trusted-router-public-backend"
+                r" .*value[(]selfLink[)]",
+                "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/"
+                "global/backendServices/trusted-router-public-backend",
+            ),
+            (
+                r"backend-services describe trusted-router-control-backend"
+                r" .*value[(]selfLink[)]",
+                "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/"
+                "global/backendServices/trusted-router-control-backend",
+            ),
+            (
+                r"backend-services describe trusted-router-control-backend"
+                r" .*value[(]loadBalancingScheme[)]",
+                "EXTERNAL_MANAGED",
+            ),
+            (
+                r"url-maps describe trusted-router-control-map .*--format=json",
+                _PUBLIC_EDGE_LIVE_MAP_JSON,
+            ),
+        ),
+    ),
     "scripts/deploy/aws_eu_clickhouse.sh": ScriptFixture(),
     # GCP's out-of-band check needs nothing from an operator: it runs the gate,
     # retries while a Cloud Run revision takes traffic, and returns the gate's
@@ -493,6 +663,8 @@ class DeployScriptHarness:
         self,
         script: str,
         *,
+        args: tuple[str, ...] = (),
+        extra_env: dict[str, str] | None = None,
         verifier_rc: int = 0,
         timeout: int = 120,
         omit_env: tuple[str, ...] = (),
@@ -539,10 +711,11 @@ class DeployScriptHarness:
             "HARNESS_FAILURES": str(failures_file),
             "HARNESS_VERIFIER_RC": str(verifier_rc),
             **{k: v for k, v in fixture.env.items() if k not in omit_env},
+            **(extra_env or {}),
         }
 
         proc = subprocess.run(  # noqa: S603 - fixed argv, stub PATH, repo-local script
-            ["bash", str(self.mirror / script)],  # noqa: S607
+            ["bash", str(self.mirror / script), *args],  # noqa: S607
             capture_output=True,
             text=True,
             env=env,

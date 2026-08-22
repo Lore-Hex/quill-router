@@ -21,6 +21,7 @@ PROJECT_ID="${PROJECT_ID:-quill-cloud-proxy}"
 SERVICE="${SERVICE:-trusted-router}"
 WATCHDOG_SLO_CLASS="${TR_WATCHDOG_SLO_CLASS:-router_core}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LEGACY_SURFACE_BASE_URL="${TR_LEGACY_SURFACE_BASE_URL:-https://trustedrouter.com}"
 
 log() { echo "[staged-traffic ${REGION}] $*"; }
 
@@ -41,20 +42,42 @@ shift_traffic() {
   fi
 }
 
+rollback_to_old() {
+  local reason="$1"
+  log "ROLLBACK — ${reason}; reverting to 100% ${OLD_REV}"
+  gcloud run services update-traffic "$SERVICE" \
+    --region="$REGION" --project="$PROJECT_ID" \
+    --to-revisions="${OLD_REV}=100" \
+    --quiet
+  log "${REGION} traffic restored to ${OLD_REV} (0% on bad revision)"
+}
+
+probe_legacy_surface_or_rollback() {
+  local stage_pct="$1"
+  local console_code
+  local session_code
+  console_code="$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' \
+    "${LEGACY_SURFACE_BASE_URL}/console" || true)"
+  session_code="$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' \
+    "${LEGACY_SURFACE_BASE_URL}/auth/session" || true)"
+  if [ "$console_code" != "302" ] || [ "$session_code" != "401" ]; then
+    rollback_to_old \
+      "legacy surface probe failed after ${stage_pct}% shift (console=${console_code:-fetch-error}, auth/session=${session_code:-fetch-error})"
+    exit 1
+  fi
+  log "legacy surface probe passed after ${stage_pct}% shift (console=302, auth/session=401)"
+}
+
 watch_or_rollback() {
   local stage_pct="$1"
+  probe_legacy_surface_or_rollback "$stage_pct"
   log "watching ${REGION} for 1 min after ${stage_pct}% shift"
   if ! python3 "${SCRIPT_DIR}/watchdog.py" \
       --regions "$REGION" \
       --duration-min 1 \
       --rollback-after 1 \
       --slo-class "$WATCHDOG_SLO_CLASS"; then
-    log "ROLLBACK at ${stage_pct}% — synthetics tripped; reverting to 100% ${OLD_REV}"
-    gcloud run services update-traffic "$SERVICE" \
-      --region="$REGION" --project="$PROJECT_ID" \
-      --to-revisions="${OLD_REV}=100" \
-      --quiet
-    log "${REGION} traffic restored to ${OLD_REV} (0% on bad revision)"
+    rollback_to_old "synthetics tripped at ${stage_pct}%"
     exit 1
   fi
 }
@@ -81,4 +104,5 @@ watch_or_rollback 50
 
 # Final cut over
 shift_traffic 100
+probe_legacy_surface_or_rollback 100
 log "${REGION} traffic fully on ${NEW_REV}"

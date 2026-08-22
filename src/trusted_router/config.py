@@ -232,7 +232,7 @@ SERVICE_SURFACE_SECRET_OWNERS: dict[str, frozenset[str]] = {
     "operational_analytics_clickhouse_password": frozenset(
         {"public", "control", "internal", "observer"}
     ),
-    "sentry_dsn": frozenset({"control", "internal", "observer"}),
+    "sentry_dsn": frozenset({"public", "control", "internal", "observer"}),
     "google_data_manager_enabled": frozenset({"control"}),
     "google_data_manager_kms_key_name": frozenset({"control"}),
     "attribution_cookie_secret": frozenset({"public", "control"}),

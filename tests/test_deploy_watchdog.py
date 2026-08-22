@@ -135,3 +135,14 @@ def test_trust_degraded_ranks_with_down_in_severity() -> None:
     watchdog = _load_watchdog()
     assert watchdog.SEVERITY["trust_degraded"] == watchdog.SEVERITY["down"]
     assert watchdog.SEVERITY["trust_degraded"] > watchdog.SEVERITY["degraded"]
+
+
+def test_staged_ramp_gates_the_legacy_console_and_auth_surface() -> None:
+    script = (
+        Path(__file__).resolve().parents[1] / "scripts" / "deploy" / "staged_traffic.sh"
+    ).read_text(encoding="utf-8")
+    assert '"${LEGACY_SURFACE_BASE_URL}/console"' in script
+    assert '"${LEGACY_SURFACE_BASE_URL}/auth/session"' in script
+    assert '[ "$console_code" != "302" ]' in script
+    assert '[ "$session_code" != "401" ]' in script
+    assert "probe_legacy_surface_or_rollback 100" in script

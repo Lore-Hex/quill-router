@@ -536,6 +536,11 @@ jobs:
         run: |
           set -euo pipefail
 
+          watchdog_extra=()
+          if [ -n "${WD_EXTRA}" ]; then
+            read -ra watchdog_extra <<<"${WD_EXTRA}"
+          fi
+
           previous_revision() {
             case "$1" in
               europe-west4) printf '%s\n' "${PREV_EU}" ;;
@@ -611,7 +616,7 @@ jobs:
               --duration-min 3 \
               --rollback-after 2 \
               --slo-class router_core \
-              ${WD_EXTRA}; then
+              "${watchdog_extra[@]}"; then
               rollback_region "${region}"
               return 1
             fi
@@ -829,6 +834,74 @@ jobs:
           SPANNER_INSTANCE_ID: trusted-router-nam6
           SPANNER_DATABASE_ID: trusted-router
         run: scripts/deploy/retire_settle_outbox_hot_index.sh
+
+  public-surface-companion:
+    # This job creates/updates the isolated T1 service only after the legacy
+    # rollout is healthy. It never prepares or imports a URL map. Before the
+    # owner cutover it deploys the smokeable run.app companion; after cutover
+    # it detects the public backend in the live map and preserves routed-mode
+    # ingress/header trust on every later automatic deploy.
+    needs: [deploy]
+    continue-on-error: false
+    runs-on: ubuntu-latest
+    env:
+      PROJECT_ID: quill-cloud-proxy
+      REGION: us-central1
+      SERVICE: trusted-router
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve fail-closed public deployment stage
+        id: public_stage
+        run: |
+          set -euo pipefail
+          public_self_link="$(gcloud compute backend-services describe \
+            trusted-router-public-backend --project="${PROJECT_ID}" --global \
+            --format='value(selfLink)' 2>/dev/null || true)"
+          live_map="$(gcloud compute url-maps describe trusted-router-control-map \
+            --project="${PROJECT_ID}" --global --format=json)"
+          if [ -n "${public_self_link}" ] && \
+             jq -e --arg backend "${public_self_link}" \
+               '.. | strings | select(. == $backend)' <<<"${live_map}" >/dev/null; then
+            echo "stage=routed" >> "$GITHUB_OUTPUT"
+            echo "public backend is live; preserving routed-only ingress"
+          else
+            echo "stage=companion" >> "$GITHUB_OUTPUT"
+            echo "public backend is not live; deploying smokeable companion only"
+          fi
+
+      - name: Deploy isolated T1 public service
+        run: bash scripts/deploy/public_surface.sh "${{ steps.public_stage.outputs.stage }}"
+
+      - name: Smoke isolated T1 public service
+        env:
+          PUBLIC_STAGE: ${{ steps.public_stage.outputs.stage }}
+        run: |
+          set -euo pipefail
+          if [ "${PUBLIC_STAGE}" = "routed" ]; then
+            base_url="https://trustedrouter.com"
+            for path in / /health /ready /status.json /v1/models /static/charter.css; do
+              curl -fsS --max-time 20 -o /dev/null "${base_url}${path}"
+            done
+            exit 0
+          fi
+          for region in us-central1 us-east4 europe-west4 southamerica-east1; do
+            base_url="$(gcloud run services describe trusted-router-public \
+              --project="${PROJECT_ID}" --region="${region}" \
+              --format='value(status.url)')"
+            for path in /health /ready /status.json /v1/models /static/charter.css; do
+              curl -fsS --max-time 20 -o /dev/null "${base_url}${path}"
+            done
+          done
 
   # ---------------------------------------------------------------------------
   # Did the CLOUD end up working, or did only the deploy finish?

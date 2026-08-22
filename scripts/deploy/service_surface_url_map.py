@@ -19,14 +19,11 @@ Surface = Literal["public", "actions", "control", "internal"]
 
 PUBLIC_PATH_PATTERNS = (
     "/analytics/events",
-    "/bedrock-group-buy",
-    "/bedrock-group-buy/",
     "/notify/texml",
     "/v1/health",
     "/v1/ready",
     "/v1/coverage/openrouter",
     "/v1/analytics/events",
-    "/v1/bedrock-group-buy",
     "/v1/embeddings/models",
     # Anonymous image-catalog reads (#693). Exact-and-under patterns beat the
     # authenticated /images/* control wildcard by specificity, exactly as
@@ -54,6 +51,7 @@ CONTROL_PATH_PATTERNS = (
     "/v1/*",
     "/models/user",
     "/v1/models/user",
+    "/bedrock-group-buy",
     "/bedrock-group-buy/*",
     "/google_oauth_callback",
     "/github_oauth_callback",
