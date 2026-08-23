@@ -18,7 +18,7 @@
       "id": "mistralai/codestral-2508",
       "upstream_id": "codestral-2508",
       "context_length": 256000,
-      "created": 1787440967,
+      "created": 1787448301,
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 900000
     },
@@ -39,7 +39,7 @@
       "id": "mistralai/mistral-large",
       "upstream_id": "mistral-large-latest",
       "context_length": 262144,
-      "created": 1787440967,
+      "created": 1787448301,
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 1500000
     },
@@ -60,7 +60,7 @@
       "id": "mistralai/mistral-medium-3-5",
       "upstream_id": "mistral-medium-3.5",
       "context_length": 262144,
-      "created": 1787440967,
+      "created": 1787448301,
       "input_token_price_per_m": 1500000,
       "output_token_price_per_m": 7500000
     },
@@ -81,13 +81,13 @@
       "id": "mistralai/mistral-small-2603",
       "upstream_id": "mistral-small-2603",
       "context_length": 262144,
-      "created": 1787440967,
+      "created": 1787448301,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 600000
     }
   ],
   "source": "https://api.mistral.ai/v1/models",
-  "generated_at": "2026-08-22T23:23:01Z",
+  "generated_at": "2026-08-23T01:25:17Z",
   "price_scale": "microdollars_per_million",
   "model_count": 4
 }
