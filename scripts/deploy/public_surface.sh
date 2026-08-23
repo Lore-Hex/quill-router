@@ -318,6 +318,14 @@ ENV_VARS=(
   "TR_BIGTABLE_GENERATION_TABLE=$(legacy_env_required TR_BIGTABLE_GENERATION_TABLE)"
   "TR_BIGTABLE_MIRROR_WRITES_ENABLED=$(legacy_env_required TR_BIGTABLE_MIRROR_WRITES_ENABLED)"
   "TR_ANALYTICS_READ_MODE=${ANALYTICS_READ_MODE}"
+  # The public surface serves /status.json, whose analytics section reports
+  # outbox freshness. Without this flag the store is built with NO outbox
+  # object, the page publishes reason=not_configured, and stage (c) of
+  # verify-cloud-complete fails on every deploy — which is exactly what
+  # happened when this service took over the domain (#742). The API service
+  # does the enqueueing; this flag only lets the public store SEE the outbox
+  # to read the oldest undelivered row.
+  "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true"
   "TR_ENABLE_LIVE_PROVIDERS=false"
   "TR_GOOGLE_OAUTH_LOGIN_AVAILABLE=${GOOGLE_OAUTH_AVAILABLE}"
   "TR_GITHUB_OAUTH_LOGIN_AVAILABLE=${GITHUB_OAUTH_AVAILABLE}"
