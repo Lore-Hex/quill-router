@@ -532,13 +532,14 @@ test("model picker applies privacy to exact provider routes", async ({ page }) =
   const picker = page.frameLocator("#tr-choose-frame");
 
   await expect(picker.locator("#loadState")).toContainText("independently scored models");
+  await expect(picker.locator("#providerCount")).not.toHaveText("...");
   await picker.getByRole("button", { name: /Simple/ }).click();
   await picker.getByRole("button", { name: /Any/ }).click();
   await picker.locator("#privacy").selectOption("3");
 
   await expect(picker.locator(".model-card").first()).toBeVisible();
   await expect(picker.locator(".route-recommendation code").first()).toHaveText(
-    "trustedrouter/e2e",
+    "trustedrouter/confidential",
   );
   await expect(picker.locator(".model-card", { hasText: "DeepSeek V4 Pro" })).toHaveCount(0);
   const routeLabels = await picker.locator(".provider-route").allTextContents();

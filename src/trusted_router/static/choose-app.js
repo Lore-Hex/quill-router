@@ -490,13 +490,17 @@
   }
 
   function recommendedRoutes() {
-    if (state.privacy >= 3) return [routeById("trustedrouter/e2e")].filter(Boolean);
-    if (state.privacy >= 2) return [routeById("trustedrouter/zdr"), routeById("trustedrouter/e2e")].filter(Boolean);
+    const confidential = routeById("trustedrouter/confidential") || routeById("trustedrouter/e2e");
+    if (state.privacy >= 3) return [confidential].filter(Boolean);
+    if (state.privacy >= 2) return [routeById("trustedrouter/zdr"), confidential].filter(Boolean);
     if (state.quality === "frontier" || state.preference.quality >= 0.5) {
       return [routeById("trustedrouter/synth"), routeById("trustedrouter/auto")].filter(Boolean);
     }
     if (state.preference.cost >= 0.45) {
       return [routeById("trustedrouter/cheap"), routeById("trustedrouter/auto")].filter(Boolean);
+    }
+    if (state.preference.speed >= 0.45) {
+      return [routeById("trustedrouter/fast"), routeById("trustedrouter/auto")].filter(Boolean);
     }
     return [routeById("trustedrouter/auto"), routeById("trustedrouter/cheap")].filter(Boolean);
   }
@@ -771,8 +775,9 @@
       if (!response.ok) throw new Error(`Catalog request failed with HTTP ${response.status}.`);
       state.catalog = normalizeCatalog(await response.json());
       dom.liveCount.textContent = String(state.catalog.catalog_model_count);
+      dom.providerCount.textContent = String(state.catalog.catalog_provider_count);
       dom.evaluatedCount.textContent = String(state.catalog.evaluated_model_count);
-      setLoadState(`${state.catalog.evaluated_model_count} independently scored models matched against ${state.catalog.catalog_route_count} live provider routes.`);
+      setLoadState(`${state.catalog.evaluated_model_count} independently scored models matched against ${state.catalog.catalog_route_count} live routes across ${state.catalog.catalog_provider_count} providers.`);
       render();
     } catch (error) {
       state.catalog = null;
@@ -797,7 +802,7 @@
       "triangle", "tooltip", "privacy", "privacyNote", "problem", "examples", "guess", "rationale",
       "qualitySegments", "speedSegments", "qualityWeight", "costWeight", "speedWeight", "loadState",
       "loadText", "resultsTitle", "modelResults", "routeRecommendation", "liveCount",
-      "evaluatedCount",
+      "providerCount", "evaluatedCount",
     ]) dom[id] = byId(id);
     dom.retryCatalog = byId("retry-catalog");
   }
