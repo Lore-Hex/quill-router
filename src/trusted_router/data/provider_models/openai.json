@@ -843,7 +843,7 @@
     }
   ],
   "source": "https://api.openai.com/v1/models",
-  "generated_at": "2026-08-23T10:26:28Z",
+  "generated_at": "2026-08-23T11:22:50Z",
   "price_scale": "microdollars_per_million",
   "model_count": 34
 }
