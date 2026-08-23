@@ -15,6 +15,21 @@ on:
 # conclusion for the SHA, and a run only concludes success when every job
 # succeeds, so the gate semantics are unchanged by the split.
 jobs:
+  runtime-import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      # Match the production Docker image dependency set. The regular test
+      # jobs include development packages, which can otherwise mask a missing
+      # runtime dependency until Cloud Run starts the image.
+      - name: Install production dependencies only
+        run: uv sync --frozen --no-dev
+      - name: Import runtime-only modules
+        run: uv run --no-dev python -c "import bs4; import trusted_router.markdown_negotiation"
+
   lint:
     runs-on: ubuntu-latest
     steps:
