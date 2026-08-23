@@ -73,7 +73,13 @@ CONTENT_OR_INTERNAL_FIELDS = frozenset(
 
 # Raw tenant identifiers. These may appear in the Spanner system of record, but
 # must be surrogated before reaching ClickHouse or any external sink.
-RAW_TENANT_FIELDS = frozenset({"workspace_id", "key_hash"})
+#
+# workspace_id left this set on 2026-08-19 for the ACTIVITY projection only:
+# it is pseudonymous, ClickHouse holds no emails, and rows that name their
+# workspace need no directory refresh to be joinable. It remains forbidden on
+# the console-events surface below, which has no need of it.
+RAW_TENANT_FIELDS = frozenset({"key_hash"})
+EVENTS_RAW_TENANT_FIELDS = RAW_TENANT_FIELDS | {"workspace_id"}
 
 # Everything else on Generation is metadata that projections may carry.
 EXPECTED_ACTIVITY_KEYS = frozenset(
@@ -81,6 +87,10 @@ EXPECTED_ACTIVITY_KEYS = frozenset(
         "generation_id",
         "request_id",
         "tenant_id",
+        # Raw, deliberately (2026-08-19): pseudonymous workspace ids belong in
+        # the private analytics row -- it is what makes rows joinable without a
+        # refreshed directory. Key hashes remain surrogate-only.
+        "workspace_id",
         "key_id",
         "model",
         "provider",
@@ -236,11 +246,14 @@ def _leaked_markers(payload: Any) -> set[str]:
     object's string form still counts.
     """
     blob = json.dumps(payload, default=str, ensure_ascii=False)
+    # Field NAMES, not marked strings. The original returned _marked(name)
+    # values and intersected them with sets of bare names, so `forbidden` was
+    # empty by construction and the leak assertions could never fire. Exposed
+    # on 2026-08-19 when a change that put a marked field into the payload
+    # sailed through this guard.
     return {
-        marker
-        for marker in (_marked(f.name) for f in dataclasses.fields(Generation))
-        if marker in blob
-    } | ({_marked("tool_arguments")} if _marked("tool_arguments") in blob else set())
+        f.name for f in dataclasses.fields(Generation) if _marked(f.name) in blob
+    } | ({"tool_arguments"} if _marked("tool_arguments") in blob else set())
 
 
 # ---------------------------------------------------------------------------
@@ -354,9 +367,13 @@ def test_activity_payload_carries_no_content_and_no_raw_tenant_ids(
     leaked = _leaked_markers(activity_payload(generation))
     forbidden = leaked & (CONTENT_OR_INTERNAL_FIELDS | RAW_TENANT_FIELDS)
     assert not forbidden, f"activity_payload leaked {sorted(forbidden)}"
-    assert _marked("tool_arguments") not in leaked, (
+    assert "tool_arguments" not in leaked, (
         "tool-call arguments are free-form model output and must never reach analytics"
     )
+    # The vacuity canary: workspace_id is DELIBERATELY present, so its marker
+    # must be detected. If this line fails, the leak detector has gone blind
+    # again and every assertion above it is decorative.
+    assert "workspace_id" in leaked
 
 
 @given(generation=generations())
@@ -380,7 +397,7 @@ def test_generation_events_key_set_is_frozen_and_content_free(
     assert set(events[0]) == EXPECTED_EVENT_KEYS
 
     leaked = _leaked_markers(events[0])
-    forbidden = leaked & (CONTENT_OR_INTERNAL_FIELDS | RAW_TENANT_FIELDS)
+    forbidden = leaked & (CONTENT_OR_INTERNAL_FIELDS | EVENTS_RAW_TENANT_FIELDS)
     assert not forbidden, f"generation_events leaked {sorted(forbidden)}"
 
 
