@@ -199,6 +199,9 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "zero-g",
         "openrouter-exclusive",
         "azure",
+        "scaleway",
+        "featherless",
+        "jina",
     }
 )
 
@@ -206,10 +209,9 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
 def _authoritative_provider_model_ids(provider_slug: str) -> frozenset[str]:
     """Return fail-closed route model IDs for an authoritative manifest.
 
-    Explicit embedding specs remain eligible because provider manifests do not
-    synthesize embedding routes. A missing or malformed manifest therefore
-    disables dynamic chat and image routes without accidentally disabling a
-    separately verified embedding.
+    Explicit embedding specs remain eligible alongside dynamically discovered
+    embedding rows. A missing or malformed manifest therefore disables dynamic
+    routes without accidentally disabling a separately verified static embedding.
     """
     allowed = {
         str(spec["id"]) for spec in _EMBEDDING_SPECS if spec.get("provider") == provider_slug
@@ -225,10 +227,12 @@ def _authoritative_provider_model_ids(provider_slug: str) -> frozenset[str]:
     for row in raw_models:
         if not isinstance(row, dict) or row.get("routable") is False:
             continue
-        if row.get("model_type") not in (None, "chat", "image", "video"):
+        if row.get("model_type") not in (None, "chat", "image", "video", "embedding"):
             continue
         endpoint_types = {str(item) for item in (row.get("endpoints") or [])}
-        if not endpoint_types.intersection({"chat/completions", "images", "videos"}):
+        if not endpoint_types.intersection(
+            {"chat/completions", "images", "videos", "embeddings"}
+        ):
             continue
         model_id = row.get("id")
         if not isinstance(model_id, str) or not model_id:
@@ -838,6 +842,9 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "sambanova",
         "arcee",
         "inception",
+        "io-net",
+        "scaleway",
+        "featherless",
         "meta",
         "openrouter-exclusive",
     ):
@@ -1046,6 +1053,66 @@ def _embedding_models() -> dict[str, Model]:
             price_tiers=_flat_tier(prompt_price, 0, None),
             published_price_tiers=_flat_tier(published_price, 0, None),
         )
+    for path in sorted(_PROVIDER_MODELS_DIR.glob("*.json")):
+        provider_slug = path.stem
+        provider = PROVIDERS.get(provider_slug)
+        if provider is None or not provider.supports_embeddings:
+            continue
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        rows = raw.get("models") if isinstance(raw, dict) else None
+        if not isinstance(rows, list):
+            continue
+        price_scale = _provider_manifest_price_scale(raw)
+        for row in rows:
+            if (
+                not isinstance(row, dict)
+                or row.get("routable") is False
+                or row.get("model_type") != "embedding"
+            ):
+                continue
+            endpoints = {str(item) for item in (row.get("endpoints") or [])}
+            if "embeddings" not in endpoints:
+                continue
+            model_id = row.get("id")
+            upstream_id = row.get("upstream_id")
+            if not isinstance(model_id, str) or not model_id:
+                continue
+            if not isinstance(upstream_id, str) or not upstream_id:
+                continue
+            input_cost = _provider_manifest_price_cost(
+                row.get("input_token_price_per_m"),
+                price_scale=price_scale,
+            )
+            if input_cost <= 0:
+                continue
+            prompt_price = _customer_price(input_cost)
+            context_length = _as_positive_int(row.get("context_length")) or 8192
+            input_modalities = tuple(
+                str(value) for value in (row.get("input_modalities") or ["text"])
+            )
+            models[model_id] = Model(
+                id=model_id,
+                name=str(row.get("display_name") or model_id),
+                provider=provider_slug,
+                context_length=context_length,
+                upstream_id=upstream_id,
+                supports_chat=False,
+                supports_messages=False,
+                supports_embeddings=True,
+                input_modalities=input_modalities,
+                output_modalities=("embeddings",),
+                prepaid_available=provider.supports_prepaid,
+                byok_available=provider.supports_byok,
+                prompt_price_microdollars_per_million_tokens=prompt_price,
+                completion_price_microdollars_per_million_tokens=0,
+                published_prompt_price_microdollars_per_million_tokens=prompt_price,
+                published_completion_price_microdollars_per_million_tokens=0,
+                price_tiers=_flat_tier(prompt_price, 0, None),
+                published_price_tiers=_flat_tier(prompt_price, 0, None),
+            )
     return models
 
 

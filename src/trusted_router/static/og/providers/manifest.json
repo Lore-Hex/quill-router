@@ -188,6 +188,15 @@
     "route_mode": "Prepaid",
     "slug": "engy"
   },
+  "featherless": {
+    "card_version": 2,
+    "model_count": 3,
+    "name": "Featherless AI",
+    "privacy": "Policy documented",
+    "route_count": 3,
+    "route_mode": "Prepaid",
+    "slug": "featherless"
+  },
   "fireworks": {
     "card_version": 2,
     "model_count": 12,
@@ -262,12 +271,21 @@
   },
   "io-net": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 32,
     "name": "IO Intelligence",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 32,
+    "route_mode": "Prepaid",
     "slug": "io-net"
+  },
+  "jina": {
+    "card_version": 2,
+    "model_count": 17,
+    "name": "Jina AI",
+    "privacy": "Policy documented",
+    "route_count": 17,
+    "route_mode": "Prepaid",
+    "slug": "jina"
   },
   "kimi": {
     "card_version": 2,
@@ -449,6 +467,15 @@
     "route_mode": "Prepaid",
     "slug": "openrouter-exclusive"
   },
+  "ovhcloud": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "OVHcloud",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "ovhcloud"
+  },
   "parasail": {
     "card_version": 2,
     "model_count": 27,
@@ -566,6 +593,15 @@
     "route_mode": "Prepaid",
     "slug": "sambanova"
   },
+  "scaleway": {
+    "card_version": 2,
+    "model_count": 10,
+    "name": "Scaleway",
+    "privacy": "Policy documented",
+    "route_count": 10,
+    "route_mode": "Prepaid",
+    "slug": "scaleway"
+  },
   "siliconflow": {
     "card_version": 2,
     "model_count": 30,
@@ -664,6 +700,15 @@
     "route_count": 2,
     "route_mode": "Prepaid + BYOK",
     "slug": "voyage"
+  },
+  "vultr": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Vultr",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "vultr"
   },
   "wafer": {
     "card_version": 2,

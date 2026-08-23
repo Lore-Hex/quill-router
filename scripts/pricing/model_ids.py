@@ -21,6 +21,7 @@ _AUTHOR_ALIASES = {
     "zhipu-ai": "z-ai",
     "xai": "x-ai",
     "x-ai": "x-ai",
+    "xiaomimimo": "xiaomi",
 }
 
 _MODEL_CHARS_RE = re.compile(r"[^a-z0-9._-]+")

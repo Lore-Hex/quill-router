@@ -104,6 +104,12 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "trinity-large-thinking"}]}
     if "api.inceptionlabs.ai" in url:
         return {"data": [{"id": "mercury-2"}]}
+    if "api.intelligence.io.solutions" in url:
+        return {"data": [{"id": "deepseek-ai/DeepSeek-V4-Flash-0731"}]}
+    if "api.scaleway.ai" in url:
+        return {"data": [{"id": "glm-5.2"}]}
+    if "api.featherless.ai" in url:
+        return {"data": [{"id": "zai-org/GLM-5.2"}]}
     return {"data": []}
 
 

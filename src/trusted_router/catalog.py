@@ -720,11 +720,14 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
 
 
 def provider_to_openrouter_shape(provider: Provider) -> dict[str, object]:
+    routing_status = "active" if provider.supports_prepaid or provider.supports_byok else "blocked"
     return {
         "id": provider.slug,
         "name": provider.name,
         "supports_prepaid": provider.supports_prepaid,
         "supports_byok": provider.supports_byok,
+        "routing_status": routing_status,
+        "routing_status_reason": provider.provider_policy if routing_status == "blocked" else None,
         "attested_gateway": provider.attested_gateway,
         "stores_content": provider.stores_content,
         "provider_zero_data_retention": provider.provider_zero_data_retention,
