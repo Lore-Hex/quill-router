@@ -210,7 +210,7 @@ def test_direct_provider_discovery_uses_route_canonical_ids() -> None:
     assert normalizers["nextbit"]("deepseek:v4-flash-0731") == (
         "deepseek/deepseek-v4-flash-0731"
     )
-    assert normalizers["mancer"]("future-model") == "mancer/future-model"
+    assert normalizers["mancer"]("future-model") is None
     assert normalizers["arcee"]("trinity-large-thinking") == (
         "arcee-ai/trinity-large-thinking"
     )
