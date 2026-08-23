@@ -108,6 +108,7 @@ def test_sentry_test_route_is_disabled_in_production_unless_explicitly_enabled()
         spanner_instance_id="trusted-router",
         spanner_database_id="trusted-router",
         bigtable_instance_id="trusted-router-logs",
+        settle_outbox_enabled=True,
     )
     disabled = TestClient(
         create_app(

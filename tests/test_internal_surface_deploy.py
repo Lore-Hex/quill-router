@@ -197,6 +197,10 @@ def test_settings_from_exact_emitted_internal_env_fail_closed(
             ("adyen_api_key", "adyen-forbidden"),
             ("aws_secret_access_key", "ses-forbidden"),
             ("attribution_cookie_secret", "a" * 40),
+            (
+                "byok_kms_key_name",
+                "projects/p/locations/l/keyRings/r/cryptoKeys/k",
+            ),
         ):
             with pytest.raises(
                 ValidationError,
@@ -247,6 +251,105 @@ def test_routed_authenticated_validate_smoke_precedes_promotion_and_restricts_in
             and "internal-and-cloud-load-balancing" in candidate
         )
         assert smoke_index < promote_index < restrict_index
+
+
+def test_routed_validate_smoke_rejects_wrong_internal_token(tmp_path: Path) -> None:
+    run = DeployScriptHarness(tmp_path / "wrong-internal-smoke-token").run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={"HARNESS_INTERNAL_EXPECTED_TOKEN": "different-token"},
+    )
+
+    assert run.returncode != 0
+    assert "authenticated validate smoke expected the dummy-key 401" in run.stderr
+    assert not any("candidate-us-central1=100" in " ".join(call) for call in run.calls)
+
+
+@pytest.mark.parametrize("status", ("200", "500"))
+def test_routed_validate_smoke_rejects_non_401_status(
+    tmp_path: Path,
+    status: str,
+) -> None:
+    run = DeployScriptHarness(tmp_path / f"bad-internal-smoke-{status}").run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={"HARNESS_INTERNAL_SMOKE_HTTP_CODE": status},
+    )
+
+    assert run.returncode != 0
+    assert "authenticated validate smoke expected the dummy-key 401" in run.stderr
+    assert not any("candidate-us-central1=100" in " ".join(call) for call in run.calls)
+
+
+def test_routed_validate_smoke_rejects_unexpected_401_body(tmp_path: Path) -> None:
+    run = DeployScriptHarness(tmp_path / "bad-internal-smoke-body").run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={"HARNESS_INTERNAL_SMOKE_BODY": "unexpected"},
+    )
+
+    assert run.returncode != 0
+    assert "authenticated validate smoke expected the dummy-key 401" in run.stderr
+
+
+def test_internal_settings_explicitly_reject_stripe_secret_key(
+    harness: DeployScriptHarness,
+) -> None:
+    run = harness.run(SCRIPT, args=("routed",))
+    assert run.returncode == 0, summarise(run)
+    kwargs = _settings_kwargs(_deploy_calls(run)[0])
+
+    with pytest.raises(
+        ValidationError,
+        match="unset TR_STRIPE_SECRET_KEY for TR_SERVICE_SURFACE=internal",
+    ):
+        Settings(**kwargs, stripe_secret_key="sk_live_forbidden")  # noqa: S106
+
+
+def test_region_three_failure_restores_every_earlier_internal_promotion(
+    tmp_path: Path,
+) -> None:
+    run = DeployScriptHarness(tmp_path / "internal-region-three-failure").run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={"HARNESS_INTERNAL_SMOKE_FAIL_REGION": "europe-west4"},
+    )
+
+    assert run.returncode != 0
+    for region in ("us-central1", "us-east4"):
+        assert any(
+            "update-traffic" in call
+            and region in call
+            and "--to-revisions=trusted-router-internal-active=100" in call
+            for call in run.calls
+        )
+
+
+def test_failed_internal_fleet_restore_reports_every_exact_command(
+    tmp_path: Path,
+) -> None:
+    run = DeployScriptHarness(tmp_path / "internal-restore-failure").run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={
+            "HARNESS_INTERNAL_SMOKE_FAIL_REGION": "europe-west4",
+            "HARNESS_INTERNAL_RESTORE_FAIL_REGION": "us-east4",
+        },
+    )
+
+    assert run.returncode != 0
+    assert "FLEET IS SPLIT" in run.stderr
+    for region in ("us-central1", "us-east4", "europe-west4"):
+        assert (
+            "gcloud --project quill-cloud-proxy run services update-traffic "
+            f"trusted-router-internal --region {region} "
+            "--to-revisions=trusted-router-internal-active=100 --quiet"
+        ) in run.stderr
+        assert (
+            "gcloud --project quill-cloud-proxy run services update "
+            f"trusted-router-internal --region {region} "
+            "--ingress internal-and-cloud-load-balancing --quiet"
+        ) in run.stderr
 
 
 def test_companion_cloud_state_is_a_legitimate_routed_start(

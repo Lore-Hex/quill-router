@@ -1951,6 +1951,7 @@ def _settle_gateway_authorization(
     _typed_store = typed_billing_store(STORE)
     is_typed = _typed_store is not None
     intent_kind = "settle" if success else "refund"
+    is_customer_billing_event = partner_mode != PartnerBillingMode.INTERNAL
     enqueue_ms = 0.0
     outbox_enqueued = False
     if settings.settle_outbox_enabled:
@@ -1979,6 +1980,14 @@ def _settle_gateway_authorization(
                     model_id=generation_model_id,
                     selected_usage_type=str(selected_usage_type),
                     settle_body=json.dumps(frozen_settle_body, separators=(",", ":")),
+                    auto_refill_workspace_id=(
+                        authorization.workspace_id
+                        if settings.service_surface == "internal"
+                        and success
+                        and is_customer_billing_event
+                        and selected_usage_type == UsageType.CREDITS
+                        else None
+                    ),
                 ),
                 # Grace so inline finalize wins the benign race; the drain only
                 # sees rows whose inline attempt is dead >=60s, avoiding replays.
@@ -2128,7 +2137,6 @@ def _settle_gateway_authorization(
             authorization.id,
         )
 
-    is_customer_billing_event = partner_mode != PartnerBillingMode.INTERNAL
     if success and is_customer_billing_event and selected_usage_type == UsageType.CREDITS:
         _schedule_auto_refill(authorization.workspace_id, settings, background_tasks)
     if success and is_customer_billing_event:
@@ -2942,6 +2950,12 @@ def _schedule_auto_refill(
 ) -> None:
     from trusted_router.services.auto_refill import maybe_charge_after_settle
 
+    # The internal surface has no Stripe credential. Its successful credit
+    # settlement attached durable refill work to the settlement outbox row;
+    # the control-owned drain performs the charge. Combined preserves the
+    # legacy in-process behavior below.
+    if settings.service_surface == "internal":
+        return
     if background_tasks is not None:
         background_tasks.add_task(maybe_charge_after_settle, workspace_id, settings=settings)
         return

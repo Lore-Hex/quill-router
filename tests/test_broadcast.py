@@ -60,7 +60,7 @@ def test_broadcast_inline_drain_defaults_to_non_production_only() -> None:
             spanner_instance_id="inst",
             spanner_database_id="db",
             bigtable_instance_id="bt",
-            byok_kms_key_name="projects/p/locations/global/keyRings/r/cryptoKeys/k",
+            settle_outbox_enabled=True,
         )
     ) is False
 

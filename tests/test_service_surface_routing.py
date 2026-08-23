@@ -7,7 +7,7 @@ from types import ModuleType
 
 import pytest
 
-from trusted_router.config import Settings
+from trusted_router.config import SERVICE_SURFACE_SECRET_OWNERS, Settings
 from trusted_router.main import create_app
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -99,6 +99,109 @@ def test_every_combined_route_sent_to_public_is_mounted_by_public() -> None:
         and route.path not in public_paths
     }
     assert violations == set()
+
+
+def test_broadcast_drain_is_control_worker_owned_not_internal_mounted() -> None:
+    internal = create_app(
+        Settings(environment="test", service_surface="internal"),
+        configure_store_arg=False,
+        init_observability=False,
+    )
+    combined = create_app(
+        Settings(
+            environment="test",
+            service_surface="combined",
+            settle_outbox_enabled=True,
+        ),
+        configure_store_arg=False,
+        init_observability=False,
+    )
+    control = create_app(
+        Settings(
+            environment="test",
+            service_surface="control",
+            settle_outbox_enabled=True,
+        ),
+        configure_store_arg=False,
+        init_observability=False,
+    )
+
+    internal_paths = {route.path for route in internal.routes}
+    combined_paths = {route.path for route in combined.routes}
+    assert "/internal/broadcast/drain" not in internal_paths
+    assert "/v1/internal/broadcast/drain" not in internal_paths
+    assert "/internal/broadcast/drain" in combined_paths
+    assert URL_MAP.route_surface("/internal/broadcast/drain") == "control"
+    assert URL_MAP.route_surface("/v1/internal/broadcast/drain") == "control"
+    assert any(
+        handler.__name__ == "_start_auto_refill_outbox_loop"
+        for handler in control.router.on_startup
+    )
+    assert any(
+        handler.__name__ == "_start_auto_refill_outbox_loop"
+        for handler in combined.router.on_startup
+    )
+
+
+def test_internal_surface_route_inventory_matches_capability_audit() -> None:
+    internal = create_app(
+        Settings(environment="test", service_surface="internal"),
+        configure_store_arg=False,
+        init_observability=False,
+    )
+    expected = {
+        ("GET", "/health"),
+        ("GET", "/ready"),
+        ("POST", "/internal/gateway/validate"),
+        ("POST", "/internal/gateway/key"),
+        ("POST", "/internal/gateway/resolve-custom-model"),
+        ("POST", "/internal/gateway/authorize"),
+        ("POST", "/internal/gateway/settle"),
+        ("POST", "/internal/gateway/refund"),
+        ("POST", "/internal/gateway/settle-outbox/drain"),
+        ("POST", "/internal/gateway/regional-quota/reconcile"),
+        ("POST", "/internal/gateway/home-settlement/drain"),
+        ("POST", "/internal/gateway/deferred/reap"),
+        ("POST", "/internal/gateway/video/jobs/prepare"),
+        ("POST", "/internal/gateway/video/jobs/{job_id}/queued"),
+        ("POST", "/internal/gateway/video/jobs/{job_id}/lookup"),
+        ("POST", "/internal/gateway/video/jobs/claim"),
+        ("POST", "/internal/gateway/video/jobs/{job_id}/update"),
+        ("POST", "/internal/gateway/video/jobs/{job_id}/cleaned"),
+        ("POST", "/internal/gateway/fetch-image"),
+        ("POST", "/internal/reconcile/generation-activity"),
+        ("POST", "/internal/federation/resolve-key"),
+        ("POST", "/internal/federation/apply-usage"),
+        ("POST", "/internal/federation/credit-transfer"),
+        ("POST", "/internal/federation/credit-transfers"),
+        ("POST", "/internal/federation/credit-transfers/recover"),
+        ("GET", "/internal/synthetic/health"),
+        ("POST", "/internal/synthetic/samples"),
+        ("POST", "/internal/synthetic/benchmark"),
+        ("POST", "/internal/synthetic/route-health"),
+        ("POST", "/internal/synthetic/remediate"),
+        ("POST", "/internal/synthetic/run"),
+        ("GET", "/internal/sentry-test"),
+    }
+    actual = {
+        (method, route.path)
+        for route in internal.routes
+        if not route.path.startswith("/v1")
+        for method in (route.methods or set())
+    }
+
+    assert actual == expected
+    assert {
+        (method, route.path.removeprefix("/v1"))
+        for route in internal.routes
+        if route.path.startswith("/v1")
+        for method in (route.methods or set())
+    } == expected
+
+
+def test_byok_decrypt_credentials_are_control_owned_only() -> None:
+    assert SERVICE_SURFACE_SECRET_OWNERS["byok_kms_key_name"] == frozenset({"control"})
+    assert SERVICE_SURFACE_SECRET_OWNERS["byok_envelope_key_b64"] == frozenset({"control"})
 
 
 @pytest.mark.parametrize(

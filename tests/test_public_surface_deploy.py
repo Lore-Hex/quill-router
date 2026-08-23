@@ -522,6 +522,56 @@ def test_routed_failing_region_does_not_promote_it(tmp_path: Path) -> None:
     assert not any("candidate-us-central1=100" in " ".join(call) for call in traffic)
 
 
+def test_region_three_failure_restores_every_earlier_public_promotion(
+    tmp_path: Path,
+) -> None:
+    run = DeployScriptHarness(tmp_path / "public-region-three-failure").run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={
+            "HARNESS_PUBLIC_SMOKE_FAIL_REGION": "europe-west4",
+            "HARNESS_PUBLIC_SMOKE_FAIL_PATH": "/status.json",
+        },
+    )
+
+    assert run.returncode != 0
+    traffic = _traffic_calls(run)
+    for region in ("us-central1", "us-east4"):
+        assert any(
+            _region_arg(call) == region
+            and "--to-revisions=trusted-router-public-active=100" in call
+            for call in traffic
+        )
+
+
+def test_failed_public_fleet_restore_reports_every_exact_command(
+    tmp_path: Path,
+) -> None:
+    run = DeployScriptHarness(tmp_path / "public-restore-failure").run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={
+            "HARNESS_PUBLIC_SMOKE_FAIL_REGION": "europe-west4",
+            "HARNESS_PUBLIC_SMOKE_FAIL_PATH": "/status.json",
+            "HARNESS_PUBLIC_RESTORE_FAIL_REGION": "us-east4",
+        },
+    )
+
+    assert run.returncode != 0
+    assert "FLEET IS SPLIT" in run.stderr
+    for region in ("us-central1", "us-east4", "europe-west4"):
+        assert (
+            "gcloud --project quill-cloud-proxy run services update-traffic "
+            f"trusted-router-public --region {region} "
+            "--to-revisions=trusted-router-public-active=100 --quiet"
+        ) in run.stderr
+        assert (
+            "gcloud --project quill-cloud-proxy run services update "
+            f"trusted-router-public --region {region} "
+            "--ingress internal-and-cloud-load-balancing --quiet"
+        ) in run.stderr
+
+
 def test_routed_transport_failure_retries_and_fails_safe(tmp_path: Path) -> None:
     isolated = DeployScriptHarness(tmp_path / "transport-routed-public")
 

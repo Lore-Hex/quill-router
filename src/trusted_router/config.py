@@ -253,8 +253,8 @@ SERVICE_SURFACE_SECRET_OWNERS: dict[str, frozenset[str]] = {
     "adyen_client_key": frozenset({"control"}),
     "adyen_hmac_key": frozenset({"control"}),
     "adyen_reference_key": frozenset({"control"}),
-    "byok_kms_key_name": frozenset({"control", "internal"}),
-    "byok_envelope_key_b64": frozenset({"control", "internal"}),
+    "byok_kms_key_name": frozenset({"control"}),
+    "byok_envelope_key_b64": frozenset({"control"}),
     "google_client_id": frozenset({"control"}),
     "google_client_secret": frozenset({"control"}),
     "google_alias_credentials_json": frozenset({"control"}),
@@ -1613,10 +1613,12 @@ class Settings(BaseSettings):
                 missing.append("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD")
         if (
             storage_required
-            and self.request_record_write_mode == "typed"
+            and (self.request_record_write_mode == "typed" or surface == "internal")
             and not self.settle_outbox_enabled
         ):
-            missing.append("TR_SETTLE_OUTBOX_ENABLED=true when TR_REQUEST_RECORD_WRITE_MODE=typed")
+            missing.append(
+                "TR_SETTLE_OUTBOX_ENABLED=true for typed request records and the internal surface"
+            )
         if surface in account_surfaces and not self.byok_kms_key_name:
             missing.append("TR_BYOK_KMS_KEY_NAME")
         if not self.trust_gcp_release_url:

@@ -28,7 +28,7 @@ from trusted_router.storage_gcp_request_records import (
     clear_gateway_authorization_retention,
     complete_gateway_authorization_retention,
 )
-from trusted_router.storage_models import SettleOutboxRow
+from trusted_router.storage_models import AutoRefillOutboxRow, SettleOutboxRow
 
 # Column order shared by INSERT and the row-tuple SELECTs (keep in sync with the
 # DDL in scripts/deploy/migrate_typed_counters.sh).
@@ -52,6 +52,21 @@ OUTBOX_COLUMNS = [
     "updated_at",
     "terminal_at",
 ]
+
+AUTO_REFILL_COLUMNS = [
+    "authorization_id",
+    "auto_refill_workspace_id",
+    "auto_refill_status",
+    "auto_refill_attempts",
+    "auto_refill_last_error",
+    "auto_refill_next_attempt_at",
+    "auto_refill_lease_owner",
+    "auto_refill_leased_until",
+    "auto_refill_enqueued_at",
+    "auto_refill_updated_at",
+    "auto_refill_terminal_at",
+]
+INSERT_COLUMNS = [*OUTBOX_COLUMNS, *AUTO_REFILL_COLUMNS[1:]]
 
 # Statuses that must FREEZE the hold — the reaper may not free-release a
 # reservation whose authorization still has an outbox row in one of these
@@ -123,6 +138,23 @@ def _row_from_tuple(values: Any) -> SettleOutboxRow:
     )
 
 
+def _auto_refill_row_from_tuple(values: Any) -> AutoRefillOutboxRow:
+    d = dict(zip(AUTO_REFILL_COLUMNS, values, strict=True))
+    return AutoRefillOutboxRow(
+        authorization_id=d["authorization_id"],
+        workspace_id=d["auto_refill_workspace_id"],
+        status=d["auto_refill_status"],
+        attempts=int(d["auto_refill_attempts"] or 0),
+        last_error=d["auto_refill_last_error"],
+        next_attempt_at=_ts_str(d["auto_refill_next_attempt_at"]),
+        lease_owner=d["auto_refill_lease_owner"],
+        leased_until=_ts_str(d["auto_refill_leased_until"]),
+        enqueued_at=_ts_str(d["auto_refill_enqueued_at"]) or "",
+        updated_at=_ts_str(d["auto_refill_updated_at"]),
+        terminal_at=_ts_str(d["auto_refill_terminal_at"]),
+    )
+
+
 def _ts_str(value: Any) -> str | None:
     if value is None:
         return None
@@ -156,8 +188,9 @@ class SpannerSettleOutbox:
         )
 
         def insert_txn(transaction: Any) -> None:
-            cols = ", ".join(OUTBOX_COLUMNS)
-            binds = ", ".join(f"@{c}" for c in OUTBOX_COLUMNS)
+            cols = ", ".join(INSERT_COLUMNS)
+            binds = ", ".join(f"@{c}" for c in INSERT_COLUMNS)
+            auto_refill_requested = row.auto_refill_workspace_id is not None
             values = {
                 "authorization_id": row.authorization_id,
                 "intent_kind": row.intent_kind,
@@ -177,6 +210,18 @@ class SpannerSettleOutbox:
                 "created_at": now,
                 "updated_at": now,
                 "terminal_at": None,
+                "auto_refill_workspace_id": row.auto_refill_workspace_id,
+                "auto_refill_status": "pending" if auto_refill_requested else None,
+                "auto_refill_attempts": 0,
+                "auto_refill_last_error": None,
+                "auto_refill_next_attempt_at": (
+                    next_attempt_at if auto_refill_requested else None
+                ),
+                "auto_refill_lease_owner": None,
+                "auto_refill_leased_until": None,
+                "auto_refill_enqueued_at": now if auto_refill_requested else None,
+                "auto_refill_updated_at": now if auto_refill_requested else None,
+                "auto_refill_terminal_at": None,
             }
             types = {
                 "authorization_id": pt.STRING,
@@ -197,6 +242,16 @@ class SpannerSettleOutbox:
                 "created_at": pt.TIMESTAMP,
                 "updated_at": pt.TIMESTAMP,
                 "terminal_at": pt.TIMESTAMP,
+                "auto_refill_workspace_id": pt.STRING,
+                "auto_refill_status": pt.STRING,
+                "auto_refill_attempts": pt.INT64,
+                "auto_refill_last_error": pt.STRING,
+                "auto_refill_next_attempt_at": pt.TIMESTAMP,
+                "auto_refill_lease_owner": pt.STRING,
+                "auto_refill_leased_until": pt.TIMESTAMP,
+                "auto_refill_enqueued_at": pt.TIMESTAMP,
+                "auto_refill_updated_at": pt.TIMESTAMP,
+                "auto_refill_terminal_at": pt.TIMESTAMP,
             }
             transaction.execute_update(
                 f"INSERT INTO tr_settle_outbox ({cols}) VALUES ({binds})",  # noqa: S608 - fixed column list
@@ -228,6 +283,18 @@ class SpannerSettleOutbox:
                 "reservation_id=@reservation_id, actual_cost_micro=@actual_cost_micro, "
                 "selected_endpoint_id=@selected_endpoint_id, model_id=@model_id, "
                 "selected_usage_type=@selected_usage_type, settle_body=@settle_body, "
+                "auto_refill_workspace_id=COALESCE(auto_refill_workspace_id, "
+                "@auto_refill_workspace_id), auto_refill_status=CASE WHEN "
+                "auto_refill_status IS NULL AND @auto_refill_workspace_id IS NOT NULL "
+                "THEN 'pending' ELSE auto_refill_status END, "
+                "auto_refill_next_attempt_at=CASE WHEN auto_refill_status IS NULL AND "
+                "@auto_refill_workspace_id IS NOT NULL THEN @now ELSE "
+                "auto_refill_next_attempt_at END, auto_refill_enqueued_at=CASE WHEN "
+                "auto_refill_status IS NULL AND @auto_refill_workspace_id IS NOT NULL "
+                "THEN @now ELSE auto_refill_enqueued_at END, "
+                "auto_refill_updated_at=CASE WHEN auto_refill_status IS NULL AND "
+                "@auto_refill_workspace_id IS NOT NULL THEN @now ELSE "
+                "auto_refill_updated_at END, "
                 "updated_at=@now WHERE authorization_id=@authorization_id "
                 "AND intent_kind=@intent_kind AND status='pending' "
                 "AND (leased_until IS NULL OR leased_until < @now)",
@@ -239,6 +306,7 @@ class SpannerSettleOutbox:
                     "model_id": row.model_id,
                     "selected_usage_type": row.selected_usage_type,
                     "settle_body": row.settle_body,
+                    "auto_refill_workspace_id": row.auto_refill_workspace_id,
                     "now": now,
                     "authorization_id": row.authorization_id,
                     "intent_kind": row.intent_kind,
@@ -251,6 +319,7 @@ class SpannerSettleOutbox:
                     "model_id": pt.STRING,
                     "selected_usage_type": pt.STRING,
                     "settle_body": pt.STRING,
+                    "auto_refill_workspace_id": pt.STRING,
                     "now": pt.TIMESTAMP,
                     "authorization_id": pt.STRING,
                     "intent_kind": pt.STRING,
@@ -572,6 +641,179 @@ class SpannerSettleOutbox:
             return True
 
         return bool(run_in_transaction_with_retry(self._database, txn))
+
+    # ── control-owned auto-refill sub-queue ─────────────────────────────────
+    def due_auto_refills(self, *, limit: int = 100) -> list[AutoRefillOutboxRow]:
+        now = _iso_now()
+        with self._database.snapshot() as snapshot:
+            rows = list(
+                snapshot.execute_sql(
+                    f"SELECT {', '.join(AUTO_REFILL_COLUMNS)} "  # noqa: S608 - fixed columns
+                    "FROM tr_settle_outbox"
+                    "@{FORCE_INDEX=tr_settle_outbox_auto_refill_due} "
+                    "WHERE queue_shard IS NOT NULL "
+                    "AND auto_refill_next_attempt_at IS NOT NULL "
+                    "AND auto_refill_status='pending' "
+                    "AND auto_refill_next_attempt_at <= @now "
+                    "ORDER BY auto_refill_next_attempt_at LIMIT @limit",
+                    params={"now": now, "limit": int(limit)},
+                    param_types={"now": self._pt.TIMESTAMP, "limit": self._pt.INT64},
+                )
+            )
+        return [_auto_refill_row_from_tuple(row) for row in rows]
+
+    def claim_auto_refills(
+        self,
+        *,
+        limit: int = 100,
+        lease_seconds: int = 60,
+    ) -> list[AutoRefillOutboxRow]:
+        owner = f"arworker_{uuid.uuid4().hex}"
+        lease_until = _iso_after_seconds(lease_seconds)
+        claimed: list[AutoRefillOutboxRow] = []
+        for candidate in self.due_auto_refills(limit=limit * 2):
+            if len(claimed) >= limit:
+                break
+            if self._claim_auto_refill_one(
+                candidate.authorization_id,
+                owner=owner,
+                lease_until=lease_until,
+            ):
+                candidate.lease_owner = owner
+                candidate.leased_until = lease_until
+                claimed.append(candidate)
+        return claimed
+
+    def _claim_auto_refill_one(
+        self,
+        authorization_id: str,
+        *,
+        owner: str,
+        lease_until: str,
+    ) -> bool:
+        now = _iso_now()
+
+        def txn(transaction: Any) -> int:
+            return transaction.execute_update(
+                "UPDATE tr_settle_outbox SET auto_refill_lease_owner=@owner, "
+                "auto_refill_leased_until=@lease, auto_refill_updated_at=@now "
+                "WHERE authorization_id=@aid AND intent_kind='settle' "
+                "AND auto_refill_status='pending' AND "
+                "(auto_refill_leased_until IS NULL OR auto_refill_leased_until < @now)",
+                params={
+                    "owner": owner,
+                    "lease": lease_until,
+                    "now": now,
+                    "aid": authorization_id,
+                },
+                param_types={
+                    "owner": self._pt.STRING,
+                    "lease": self._pt.TIMESTAMP,
+                    "now": self._pt.TIMESTAMP,
+                    "aid": self._pt.STRING,
+                },
+            )
+
+        return run_in_transaction_with_retry(self._database, txn) == 1
+
+    def resolve_auto_refill(
+        self,
+        authorization_id: str,
+        *,
+        lease_owner: str,
+        done: bool,
+        error: str | None = None,
+        retry_after_seconds: int = 60,
+        count_attempt: bool = True,
+        max_attempts: int = 12,
+    ) -> str | None:
+        """Lease-fenced terminal or retry transition for refill work."""
+        now = _iso_now()
+
+        def txn(transaction: Any) -> str | None:
+            rows = list(
+                transaction.execute_sql(
+                    "SELECT auto_refill_attempts, auto_refill_lease_owner "
+                    "FROM tr_settle_outbox WHERE authorization_id=@aid "
+                    "AND intent_kind='settle' AND auto_refill_status='pending'",
+                    params={"aid": authorization_id},
+                    param_types={"aid": self._pt.STRING},
+                )
+            )
+            if not rows:
+                return None
+            attempts = int(rows[0][0] or 0)
+            if rows[0][1] != lease_owner:
+                return None
+            next_attempts = attempts + (1 if count_attempt else 0)
+            if done:
+                status, next_at, terminal_at, note = "done", None, now, None
+            elif next_attempts >= max_attempts:
+                status, next_at, terminal_at = "dead", None, None
+                note = (error or "auto-refill drain failed")[:1000]
+            else:
+                status = "pending"
+                next_at = _iso_after_seconds(max(1, retry_after_seconds))
+                terminal_at = None
+                note = (error or "auto-refill retry")[:1000]
+            updated = transaction.execute_update(
+                "UPDATE tr_settle_outbox SET auto_refill_status=@status, "
+                "auto_refill_attempts=@attempts, auto_refill_last_error=@error, "
+                "auto_refill_next_attempt_at=@next_at, auto_refill_lease_owner=NULL, "
+                "auto_refill_leased_until=NULL, auto_refill_updated_at=@now, "
+                "auto_refill_terminal_at=@terminal_at WHERE authorization_id=@aid "
+                "AND intent_kind='settle' AND auto_refill_status='pending' "
+                "AND auto_refill_lease_owner=@lease_owner",
+                params={
+                    "status": status,
+                    "attempts": next_attempts,
+                    "error": note,
+                    "next_at": next_at,
+                    "now": now,
+                    "terminal_at": terminal_at,
+                    "aid": authorization_id,
+                    "lease_owner": lease_owner,
+                },
+                param_types={
+                    "status": self._pt.STRING,
+                    "attempts": self._pt.INT64,
+                    "error": self._pt.STRING,
+                    "next_at": self._pt.TIMESTAMP,
+                    "now": self._pt.TIMESTAMP,
+                    "terminal_at": self._pt.TIMESTAMP,
+                    "aid": self._pt.STRING,
+                    "lease_owner": self._pt.STRING,
+                },
+            )
+            return status if updated == 1 else None
+
+        return run_in_transaction_with_retry(self._database, txn)
+
+    def get_auto_refill(self, authorization_id: str) -> AutoRefillOutboxRow | None:
+        with self._database.snapshot() as snapshot:
+            rows = list(
+                snapshot.execute_sql(
+                    f"SELECT {', '.join(AUTO_REFILL_COLUMNS)} "  # noqa: S608 - fixed columns
+                    "FROM tr_settle_outbox WHERE authorization_id=@aid "
+                    "AND intent_kind='settle' AND auto_refill_status IS NOT NULL",
+                    params={"aid": authorization_id},
+                    param_types={"aid": self._pt.STRING},
+                )
+            )
+        return _auto_refill_row_from_tuple(rows[0]) if rows else None
+
+    def auto_refill_pending_freshness(self) -> tuple[str | None, int]:
+        """Return oldest pending enqueue timestamp and queue depth."""
+        with self._database.snapshot() as snapshot:
+            rows = list(
+                snapshot.execute_sql(
+                    "SELECT MIN(auto_refill_enqueued_at), COUNT(*) "
+                    "FROM tr_settle_outbox WHERE auto_refill_status='pending'"
+                )
+            )
+        if not rows:
+            return None, 0
+        return _ts_str(rows[0][0]), int(rows[0][1] or 0)
 
     # ── reaper guard predicate ───────────────────────────────────────────────
     def has_intent(self, authorization_id: str) -> bool:

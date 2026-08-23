@@ -181,6 +181,46 @@ def create_app(
 
             threading.Thread(target=loop, name="home-settlement", daemon=True).start()
 
+    # Split-surface auto-refill handoff. The internal settle path durably
+    # attaches a request to its settle-outbox row but owns no Stripe secret;
+    # only a payment-owning process claims that work. Today's control plane is
+    # still the legacy combined surface; it both preserves its historical
+    # in-process trigger and drains requests emitted by split internal nodes.
+    if surface in {"combined", "control"} and settings.settle_outbox_enabled:
+
+        @app.on_event("startup")
+        async def _start_auto_refill_outbox_loop() -> None:  # pragma: no cover - task wiring
+            import asyncio as _asyncio
+            import logging as _logging
+            import random as _random
+
+            from trusted_router.services.auto_refill_outbox_drain import (
+                drain_auto_refill_outbox,
+            )
+            from trusted_router.synthetic.fleet import record_heartbeat
+
+            async def loop() -> None:
+                await _asyncio.sleep(_random.uniform(5, 30))  # noqa: S311
+                while True:
+                    try:
+                        await _asyncio.to_thread(
+                            drain_auto_refill_outbox,
+                            settings,
+                            limit=100,
+                        )
+                    except Exception:
+                        _logging.getLogger(__name__).exception(
+                            "auto-refill outbox pass failed"
+                        )
+                    await _asyncio.to_thread(
+                        record_heartbeat,
+                        "scheduler:auto-refill-outbox",
+                        settings=settings,
+                    )
+                    await _asyncio.sleep(30)
+
+            _asyncio.create_task(loop())  # noqa: RUF006 - lifetime is the process
+
     if (
         surface in {"combined", "control"}
         and settings.activation_reminder_interval_seconds > 0

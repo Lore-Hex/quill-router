@@ -240,6 +240,11 @@ PY
     kill -TERM "$PPID"
     exit 143
   fi
+  if [[ " $* " == *" run services update-traffic trusted-router-public "* ]] \
+      && [[ " $* " == *"--to-revisions=trusted-router-public-active=100"* ]] \
+      && [ "${HARNESS_PUBLIC_RESTORE_FAIL_REGION:-}" = "$region" ]; then
+    exit 1
+  fi
   if [[ " $* " == *" run services describe trusted-router-public "* ]] \
       && [[ " $* " == *" --format=json "* ]]; then
     python3 - "$HARNESS_PUBLIC_INGRESS_STATE" "$HARNESS_PROBE_TAG_STATE_DIR" "$region" <<'PY'
@@ -377,6 +382,8 @@ if [ "${HARNESS_INTERNAL_SURFACE_SMOKE:-0}" = "1" ]; then
   region=""
   previous=""
   output_file=""
+  header_file=""
+  request_body=""
   ingress=""
   for argument in "$@"; do
     case "$argument" in
@@ -385,11 +392,15 @@ if [ "${HARNESS_INTERNAL_SURFACE_SMOKE:-0}" = "1" ]; then
       --ingress=*) ingress="${argument#--ingress=}" ;;
       --ingress) previous="ingress"; continue ;;
       -o) previous="output"; continue ;;
+      --header) previous="header"; continue ;;
+      --data) previous="data"; continue ;;
     esac
     case "$previous" in
       region) region="$argument" ;;
       ingress) ingress="$argument" ;;
       output) output_file="$argument" ;;
+      header) header_file="${argument#@}" ;;
+      data) request_body="$argument" ;;
     esac
     previous=""
   done
@@ -437,6 +448,11 @@ PY
     rm -f "${HARNESS_INTERNAL_PROBE_TAG_STATE_DIR}/${region}"
     exit 0
   fi
+  if [[ " $* " == *" run services update-traffic trusted-router-internal "* ]] \
+      && [[ " $* " == *"--to-revisions=trusted-router-internal-active=100"* ]] \
+      && [ "${HARNESS_INTERNAL_RESTORE_FAIL_REGION:-}" = "$region" ]; then
+    exit 1
+  fi
   if [[ " $* " == *" run services describe trusted-router-internal "* ]] \
       && [[ " $* " == *" --format=json "* ]]; then
     python3 - "$HARNESS_INTERNAL_INGRESS_STATE" "$HARNESS_INTERNAL_PROBE_TAG_STATE_DIR" "$region" <<'PY'
@@ -474,10 +490,40 @@ PY
     exit 0
   fi
   if [ "${0##*/}" = "curl" ]; then
-    if [ -n "$output_file" ]; then
-      printf '{"error":{"message":"Invalid API key"}}\n' >"$output_file"
+    expected_body='{"api_key_lookup_hash":"0000000000000000000000000000000000000000000000000000000000000000","route_type":"deploy-smoke"}'
+    if [ "$request_body" != "$expected_body" ]; then
+      if [ -n "$output_file" ]; then
+        printf '{"error":{"message":"Unexpected smoke request"}}\n' >"$output_file"
+      fi
+      printf '400'
+      exit 0
     fi
-    printf '401'
+    supplied_token=""
+    if [ -n "$header_file" ] && [ -f "$header_file" ]; then
+      supplied_token="$(sed -n 's/^Authorization: Bearer //p' "$header_file" | head -n 1)"
+    fi
+    expected_token="${HARNESS_INTERNAL_EXPECTED_TOKEN:-harness-internal-gateway-token-${HARNESS_INTERNAL_TOKEN_SUFFIX:-gggggggggggggggggggggggggggggggg}}"
+    if [ -z "$supplied_token" ] || [ "$supplied_token" != "$expected_token" ]; then
+      if [ -n "$output_file" ]; then
+        printf '{"error":{"message":"Invalid internal service token"}}\n' >"$output_file"
+      fi
+      printf '401'
+      exit 0
+    fi
+    smoke_code="${HARNESS_INTERNAL_SMOKE_HTTP_CODE:-401}"
+    if [ -n "${HARNESS_INTERNAL_SMOKE_FAIL_REGION:-}" ] && \
+        [[ "${*: -1}" == *"${HARNESS_INTERNAL_SMOKE_FAIL_REGION}"* ]]; then
+      smoke_code="500"
+    fi
+    if [ -n "$output_file" ]; then
+      if [ "${HARNESS_INTERNAL_SMOKE_BODY:-valid}" = "valid" ] && \
+          [ "$smoke_code" = "401" ]; then
+        printf '{"error":{"message":"Invalid API key"}}\n' >"$output_file"
+      else
+        printf '{"error":{"message":"Unexpected smoke response"}}\n' >"$output_file"
+      fi
+    fi
+    printf '%s' "$smoke_code"
     exit 0
   fi
 fi

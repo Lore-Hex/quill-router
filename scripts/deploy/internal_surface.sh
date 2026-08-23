@@ -33,6 +33,8 @@ INTERNAL_PROBE_RETRY_SECONDS="${TR_INTERNAL_PROBE_RETRY_SECONDS:-2}"
 INTERNAL_PROBE_TAG="internal-revision-probe"
 INTERNAL_PROBE_REGION=""
 INTERNAL_PROBE_TAG_CLEANUP_REQUIRED=0
+PROMOTED_INDEXES=()
+CURRENT_REGION_INDEX=""
 INTERNAL_SMOKE_DIR=""
 INTERNAL_DEPLOY_STATE_DIR="${TR_INTERNAL_DEPLOY_STATE_DIR:-${HOME}/.local/state/trusted-router/internal-surface}"
 PROMOTION_MARKER="${INTERNAL_DEPLOY_STATE_DIR}/${INTERNAL_SERVICE}.promotion-in-flight"
@@ -167,8 +169,17 @@ restore_in_flight_promotion() {
 }
 
 handle_internal_signal() {
-  local status="$1"
+  local status="$1" restore_current_traffic=1
   trap - INT TERM
+  if [ "$STAGE" = routed ] && [ -n "$CURRENT_REGION_INDEX" ] && \
+     declare -F fail_routed_region >/dev/null; then
+    cleanup_internal_smoke
+    if read_promotion_marker && [ "$IN_FLIGHT_PHASE" = ingress-armed ]; then
+      restore_current_traffic=0
+    fi
+    fail_routed_region "$CURRENT_REGION_INDEX" "interrupted by signal" "$status" \
+      "$restore_current_traffic"
+  fi
   [ "$STAGE" != routed ] || restore_in_flight_promotion || true
   cleanup_internal_artifacts || true
   exit "$status"
@@ -490,23 +501,76 @@ print(f"{ingress}\t{probe}")
   done
 fi
 
+verify_internal_restore() {
+  local index="$1" region old_revision old_ingress active_json active_revision service_json
+  region="${TARGET_REGIONS[$index]}"
+  old_revision="${ORIGINAL_REVISIONS[$index]}"
+  old_ingress="${ORIGINAL_INGRESSES[$index]}"
+  active_json="$(regional_quota_active_revision_json "$region" false)" || return 1
+  active_revision="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["metadata"]["name"])' \
+    <<<"$active_json")" || return 1
+  [ "$active_revision" = "$old_revision" ] || return 1
+  service_json="$(gc run services describe "$INTERNAL_SERVICE" --region "$region" --format=json)" || \
+    return 1
+  python3 -c '
+import json
+import sys
+service = json.load(sys.stdin)
+actual = service.get("metadata", {}).get("annotations", {}).get("run.googleapis.com/ingress")
+raise SystemExit(0 if actual == sys.argv[1] else 1)
+' "$old_ingress" <<<"$service_json"
+}
+
 fail_routed_region() {
-  local region="$1" old_revision="$2" old_ingress="$3" reason="$4" restore_failed=0
-  if ! gc run services update-traffic "$INTERNAL_SERVICE" --region "$region" \
-      --to-revisions="${old_revision}=100" --quiet >/dev/null; then
-    restore_failed=1
+  local failed_index="$1" reason="$2" exit_status="${3:-1}"
+  local restore_current_traffic="${4:-1}"
+  local restore_failed=0 index region old_revision old_ingress
+  local rollback_indexes=("$failed_index") seen=",${failed_index},"
+  if [ "${#PROMOTED_INDEXES[@]}" -gt 0 ]; then
+    for index in "${PROMOTED_INDEXES[@]}"; do
+      if [[ "$seen" != *",${index},"* ]]; then
+        rollback_indexes+=("$index")
+        seen+="${index},"
+      fi
+    done
   fi
-  if ! gc run services update "$INTERNAL_SERVICE" --region "$region" \
-      --ingress "$old_ingress" --quiet >/dev/null; then
-    restore_failed=1
+  for index in "${rollback_indexes[@]}"; do
+    region="${TARGET_REGIONS[$index]}"
+    old_revision="${ORIGINAL_REVISIONS[$index]}"
+    old_ingress="${ORIGINAL_INGRESSES[$index]}"
+    if [ "$index" != "$failed_index" ] || [ "$restore_current_traffic" -eq 1 ]; then
+      if ! gc run services update-traffic "$INTERNAL_SERVICE" --region "$region" \
+          --to-revisions="${old_revision}=100" --quiet >/dev/null; then
+        restore_failed=1
+      fi
+    fi
+    if ! gc run services update "$INTERNAL_SERVICE" --region "$region" \
+        --ingress "$old_ingress" --quiet >/dev/null; then
+      restore_failed=1
+    fi
+    if ! verify_internal_restore "$index"; then
+      restore_failed=1
+    fi
+  done
+  if [ "$restore_failed" -eq 0 ]; then
+    clear_promotion_marker
+  else
+    echo "CRITICAL: FLEET IS SPLIT OR RESTORE COULD NOT BE VERIFIED; run every command below and verify every region before retrying." >&2
+    for index in "${rollback_indexes[@]}"; do
+      region="${TARGET_REGIONS[$index]}"
+      old_revision="${ORIGINAL_REVISIONS[$index]}"
+      old_ingress="${ORIGINAL_INGRESSES[$index]}"
+      echo "CRITICAL: gcloud --project ${PROJECT_ID} run services update-traffic ${INTERNAL_SERVICE} --region ${region} --to-revisions=${old_revision}=100 --quiet" >&2
+      echo "CRITICAL: gcloud --project ${PROJECT_ID} run services update ${INTERNAL_SERVICE} --region ${region} --ingress ${old_ingress} --quiet" >&2
+    done
   fi
-  cleanup_internal_probe_tag || restore_failed=1
-  [ "$restore_failed" -ne 0 ] || clear_promotion_marker
-  echo "ERROR: routed internal deploy failed in ${region}: ${reason}; previous revision=${old_revision}" >&2
-  exit 1
+  region="${TARGET_REGIONS[$failed_index]}"
+  echo "ERROR: routed internal deploy failed in ${region}: ${reason}; rolled back current and all previously promoted regions" >&2
+  exit "$exit_status"
 }
 
 for index in "${!TARGET_REGIONS[@]}"; do
+  CURRENT_REGION_INDEX="$index"
   target="${TARGET_REGIONS[$index]}"
   deploy_args=(
     --region "$target" --image "$LEGACY_IMAGE" --allow-unauthenticated --port 8080
@@ -529,27 +593,27 @@ for index in "${!TARGET_REGIONS[@]}"; do
   }
   if ! new_revision="$(gc run deploy "$INTERNAL_SERVICE" "${deploy_args[@]}" \
       --no-traffic --format 'value(status.latestCreatedRevisionName)' --quiet)"; then
-    fail_routed_region "$target" "$old_revision" "$old_ingress" "no-traffic deploy failed"
+    fail_routed_region "$index" "no-traffic deploy failed"
   fi
   case "$new_revision" in
     "${INTERNAL_SERVICE}-"*) ;;
-    *) fail_routed_region "$target" "$old_revision" "$old_ingress" "invalid new revision" ;;
+    *) fail_routed_region "$index" "invalid new revision" ;;
   esac
 
   INTERNAL_PROBE_REGION="$target"
   INTERNAL_PROBE_TAG_CLEANUP_REQUIRED=1
   cloud_run_probe_tag_reconcile "$INTERNAL_SERVICE" "$target" "$PROJECT_ID" \
     "$INTERNAL_PROBE_TAG" "$new_revision" || \
-    fail_routed_region "$target" "$old_revision" "$old_ingress" "probe tag inconclusive"
+    fail_routed_region "$index" "probe tag inconclusive"
   probe_base_url="$(cloud_run_probe_tagged_base_url "$INTERNAL_SERVICE" "$target" \
     "$PROJECT_ID" "$INTERNAL_PROBE_TAG" "$new_revision")" || \
-    fail_routed_region "$target" "$old_revision" "$old_ingress" "tagged URL inconclusive"
+    fail_routed_region "$index" "tagged URL inconclusive"
 
   token_ref="$(legacy_secret_reference TR_INTERNAL_GATEWAY_TOKEN)"
   token_secret="${token_ref%%:*}"
   token_version="${token_ref#*:}"
   token="$(gc secrets versions access "$token_version" --secret "$token_secret")" || \
-    fail_routed_region "$target" "$old_revision" "$old_ingress" "cannot read smoke token"
+    fail_routed_region "$index" "cannot read smoke token"
   INTERNAL_SMOKE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tr-internal-probe-${target}-XXXXXX")"
   chmod 700 "$INTERNAL_SMOKE_DIR"
   printf 'Authorization: Bearer %s\nContent-Type: application/json\n' "$token" \
@@ -572,22 +636,23 @@ for index in "${!TARGET_REGIONS[@]}"; do
   if [ "$smoke_code" != 401 ] || \
      ! grep -Fq 'Invalid API key' "${INTERNAL_SMOKE_DIR}/body"; then
     cleanup_internal_smoke
-    fail_routed_region "$target" "$old_revision" "$old_ingress" \
+    fail_routed_region "$index" \
       "authenticated validate smoke expected the dummy-key 401"
   fi
   cleanup_internal_smoke
 
   # Marker is durable before the mutation whose outcome can be ambiguous.
   arm_promotion "$target" "$old_revision" "$new_revision" "$old_ingress" || \
-    fail_routed_region "$target" "$old_revision" "$old_ingress" "promotion marker failed"
+    fail_routed_region "$index" "promotion marker failed"
   gc run services update-traffic "$INTERNAL_SERVICE" --region "$target" \
     --to-revisions="${new_revision}=100" --quiet >/dev/null || \
-    fail_routed_region "$target" "$old_revision" "$old_ingress" "promotion failed"
+    fail_routed_region "$index" "promotion failed"
   gc run services update "$INTERNAL_SERVICE" --region "$target" \
     --ingress internal-and-cloud-load-balancing --quiet >/dev/null || \
-    fail_routed_region "$target" "$old_revision" "$old_ingress" "ingress restriction failed"
-  clear_promotion_marker
-  cleanup_internal_probe_tag || exit 1
+    fail_routed_region "$index" "ingress restriction failed"
+  PROMOTED_INDEXES+=("$index")
+  clear_promotion_marker || fail_routed_region "$index" "promotion marker cleanup failed"
+  cleanup_internal_probe_tag || fail_routed_region "$index" "probe tag cleanup failed"
 done
 
 log "${INTERNAL_SERVICE} ${STAGE} deploy complete; no load-balancer route was changed"

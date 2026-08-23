@@ -128,12 +128,14 @@ CONTROL_PATH_PATTERNS = (
     "/internal/veriff/webhook",
     "/internal/ses/notifications",
     "/internal/chat/issue-browser-key",
+    "/internal/broadcast/drain",
     "/v1/internal/stripe/webhook",
     "/v1/internal/paypal/webhook",
     "/v1/internal/adyen/webhook",
     "/v1/internal/veriff/webhook",
     "/v1/internal/ses/notifications",
     "/v1/internal/chat/issue-browser-key",
+    "/v1/internal/broadcast/drain",
 )
 
 INTERNAL_PATH_PATTERNS = (
