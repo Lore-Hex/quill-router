@@ -8,6 +8,7 @@ SLUG = "akashml"
 BASE_URL = "https://api.akashml.com/v1"
 URL = f"{BASE_URL}/models"
 MANIFEST_PATH = Path(__file__).resolve().parents[3] / "src/trusted_router/data/provider_models/akashml.json"
+MANIFEST_STALE_FALLBACK = True
 CATALOG = DirectOpenAIProvider(
     DirectOpenAIProviderSpec(
         slug=SLUG,

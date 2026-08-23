@@ -296,7 +296,7 @@ def _mistral_model_id(native_id: str) -> str | None:
     return f"mistralai/{value}" if value else None
 
 
-_DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
+_DISCOVERABLE_MANIFEST_PROVIDERS_BASE: tuple[
     tuple[str, str, tuple[str, ...], Callable[[str], str | None]], ...
 ] = (
     (
@@ -431,26 +431,35 @@ _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
         ("PEARL_RESEARCH_API_KEY",),
         _canonical_provider_model_id,
     ),
-) + tuple(
+)
+
+_DIRECT_OPENAI_DISCOVERY_MODULES = (
+    upstage,
+    sail_research,
+    reka,
+    nextbit,
+    akashml,
+    mancer,
+    aion_labs,
+    sambanova,
+    arcee,
+    inception,
+)
+
+_OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS = frozenset(
+    module.SLUG
+    for module in _DIRECT_OPENAI_DISCOVERY_MODULES
+    if bool(getattr(module, "MANIFEST_STALE_FALLBACK", False))
+)
+
+_DISCOVERABLE_MANIFEST_PROVIDERS = _DISCOVERABLE_MANIFEST_PROVIDERS_BASE + tuple(
     (
         module.SLUG,
-        module.CATALOG.spec.catalog_url
-        or f"{module.CATALOG.spec.base_url.rstrip('/')}/models",
+        module.CATALOG.spec.catalog_url or f"{module.CATALOG.spec.base_url.rstrip('/')}/models",
         module.CATALOG.api_key_envs,
         module.CATALOG.model_id,
     )
-    for module in (
-        upstage,
-        sail_research,
-        reka,
-        nextbit,
-        akashml,
-        mancer,
-        aion_labs,
-        sambanova,
-        arcee,
-        inception,
-    )
+    for module in _DIRECT_OPENAI_DISCOVERY_MODULES
 )
 
 _GLM_DISCOVERABLE_PROVIDER_APIS: tuple[tuple[str, str, tuple[str, ...]], ...] = (

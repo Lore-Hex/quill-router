@@ -8,6 +8,7 @@ SLUG = "sambanova"
 BASE_URL = "https://api.sambanova.ai/v1"
 URL = f"{BASE_URL}/models"
 MANIFEST_PATH = Path(__file__).resolve().parents[3] / "src/trusted_router/data/provider_models/sambanova.json"
+MANIFEST_STALE_FALLBACK = True
 EXPLICIT_MODEL_MAP = {
     "DeepSeek-V3.1": "deepseek/deepseek-v3.1",
     "DeepSeek-V3.2": "deepseek/deepseek-v3.2",

@@ -82,7 +82,7 @@ def default_provider_secret_ref(provider: str) -> str:
         "zero-g": "ZERO_G_API_KEY",
         "vertex": "VERTEX_ACCESS_TOKEN",
     }
-    name = env_names.get(provider, f"{provider.upper()}_API_KEY")
+    name = env_names.get(provider, f"{provider.upper().replace('-', '_')}_API_KEY")
     return f"env://{name}"
 
 

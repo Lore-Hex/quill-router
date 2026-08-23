@@ -11,6 +11,7 @@ SLUG = "nextbit"
 BASE_URL = "https://api.nextbit256.com/v1"
 URL = f"{BASE_URL}/models"
 MANIFEST_PATH = Path(__file__).resolve().parents[3] / "src/trusted_router/data/provider_models/nextbit.json"
+MANIFEST_STALE_FALLBACK = True
 EXPLICIT_MODEL_MAP = {
     "alia-salamandra:40b": "bsc-lt/alia-40b-instruct-2601",
     "deepseek:v4-flash-0731": "deepseek/deepseek-v4-flash-0731",

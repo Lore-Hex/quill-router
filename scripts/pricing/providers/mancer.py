@@ -17,6 +17,7 @@ CREDIT_PACKS_URL = "https://mancer.tech/internal/api/get_pricing"
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3] / "src/trusted_router/data/provider_models/mancer.json"
 )
+MANIFEST_STALE_FALLBACK = True
 EXPLICIT_MODEL_MAP = {
     "deepseek-v4-flash": "deepseek/deepseek-v4-flash",
     "deepseek-v4-flash-0731": "deepseek/deepseek-v4-flash-0731",

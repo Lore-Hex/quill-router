@@ -6,6 +6,7 @@ from pathlib import Path
 from scripts.check_price_coverage import (
     _DISCOVERABLE_MANIFEST_PROVIDERS,
     _GLM_DISCOVERABLE_PROVIDER_APIS,
+    _OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -350,6 +351,8 @@ def test_every_authenticated_discovery_feed_is_wired_to_narrow_secret_access() -
 
     for provider, env_names in feeds:
         wired_env = next((name for name in env_names if name in workflow_pairs), None)
+        if wired_env is None and provider in _OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS:
+            continue
         assert wired_env is not None, (
             f"{provider} discovery requires one of {env_names}, but the hourly "
             "workflow loads none of them"

@@ -8,6 +8,7 @@ SLUG = "inception"
 BASE_URL = "https://api.inceptionlabs.ai/v1"
 URL = f"{BASE_URL}/models"
 MANIFEST_PATH = Path(__file__).resolve().parents[3] / "src/trusted_router/data/provider_models/inception.json"
+MANIFEST_STALE_FALLBACK = True
 EXPLICIT_MODEL_MAP = {"mercury-2": "inception/mercury-2"}
 CATALOG = DirectOpenAIProvider(
     DirectOpenAIProviderSpec(

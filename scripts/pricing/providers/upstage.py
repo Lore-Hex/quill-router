@@ -16,6 +16,7 @@ PRICING_URL = "https://www.upstage.ai/pricing/api"
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3] / "src/trusted_router/data/provider_models/upstage.json"
 )
+MANIFEST_STALE_FALLBACK = True
 EXPLICIT_MODEL_MAP = {
     "solar-pro2": "upstage/solar-pro2",
     "solar-pro3": "upstage/solar-pro3",

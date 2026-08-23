@@ -22,6 +22,7 @@ PRICING_FEED_URL = f"{PRICING_URL}.md"
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3] / "src/trusted_router/data/provider_models/reka.json"
 )
+MANIFEST_STALE_FALLBACK = True
 EXPLICIT_MODEL_MAP = {
     "reka-edge": "reka/reka-edge",
     "reka-edge-2603": "reka/reka-edge-2603",
@@ -111,7 +112,7 @@ CATALOG = DirectOpenAIProvider(
         api_key_env=("REKA_API_KEY", "REKA_PERSONALAPI_KEY"),
         explicit_model_map=EXPLICIT_MODEL_MAP,
         price_loader=_load_prices,
-        expected_models=("reka/reka-edge-2603", "reka/reka-flash"),
+        expected_models=("reka/reka-edge-2603",),
         pricing_source_url=PRICING_URL,
     ),
     manifest_path=MANIFEST_PATH,

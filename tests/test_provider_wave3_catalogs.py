@@ -420,3 +420,10 @@ def test_wave3_secrets_do_not_join_the_all_or_nothing_refresh_block() -> None:
     mandatory_step = mandatory_step.split("- name:", 1)[0]
     for module in MODULES:
         assert f"trustedrouter-{module.SLUG}-api-key" not in mandatory_step
+
+
+def test_wave3_refreshes_reuse_committed_manifests_when_live_auth_is_unavailable() -> None:
+    for module in MODULES:
+        assert module.MANIFEST_STALE_FALLBACK is True
+        rows = json.loads(module.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
+        assert rows

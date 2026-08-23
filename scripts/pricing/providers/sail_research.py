@@ -17,6 +17,7 @@ MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src/trusted_router/data/provider_models/sail-research.json"
 )
+MANIFEST_STALE_FALLBACK = True
 EXPLICIT_MODEL_MAP = {
     "zai-org/GLM-5.2-FP8": "z-ai/glm-5.2",
     "deepseek/deepseek-v4-flash-0731": "deepseek/deepseek-v4-flash-0731",
