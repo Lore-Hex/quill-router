@@ -9,9 +9,16 @@ from scripts import check_price_coverage
 from scripts.check_price_coverage import audit
 
 _NEW_AUTOMATIC_FEED_MODELS = {
+    "aion-labs/aion-3.0",
+    "arcee-ai/trinity-large-thinking",
     "openai/gpt-5.6-sol",
+    "openai/gpt-oss-120b",
+    "upstage/solar-pro4",
+    "reka/reka-edge-2603",
+    "inception/mercury-2",
     "x-ai/grok-4.6",
     "deepseek/deepseek-v4-flash",
+    "deepseek/deepseek-v4-flash-0731",
     "mistralai/mistral-small-2603",
     "z-ai/glm-5.2",
 }
@@ -72,6 +79,26 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "glm-5.2"}]}
     if "inference.pearlresearch.ai" in url:
         return {"data": [{"id": "deepseek/deepseek-v4-flash"}]}
+    if "api.upstage.ai" in url:
+        return {"data": [{"id": "solar-pro4"}]}
+    if "api.sailresearch.com" in url:
+        return {"data": [{"id": "zai-org/GLM-5.2-FP8"}]}
+    if "api.reka.ai" in url:
+        return {"data": [{"id": "reka-edge-2603"}]}
+    if "api.nextbit256.com" in url:
+        return {"data": [{"id": "deepseek:v4-flash-0731"}]}
+    if "api.akashml.com" in url:
+        return {"data": [{"id": "deepseek-ai/DeepSeek-V4-Flash-0731"}]}
+    if "mancer.tech" in url:
+        return {"data": [{"id": "deepseek-v4-flash-0731"}]}
+    if "api.aionlabs.ai" in url:
+        return {"data": [{"id": "aion-labs/aion-3.0"}]}
+    if "api.sambanova.ai" in url:
+        return {"data": [{"id": "gpt-oss-120b"}]}
+    if "api.arcee.ai" in url:
+        return {"data": [{"id": "trinity-large-thinking"}]}
+    if "api.inceptionlabs.ai" in url:
+        return {"data": [{"id": "mercury-2"}]}
     return {"data": []}
 
 
@@ -167,6 +194,55 @@ def test_provider_glm_required_gate_targets_current_flagships() -> None:
     assert not check_price_coverage._is_required_provider_glm_model_id("z-ai/glm-5.1")
     assert not check_price_coverage._is_required_provider_glm_model_id("z-ai/glm-5-turbo")
     assert not check_price_coverage._is_required_provider_glm_model_id("z-ai/glm-4.7-h")
+
+
+def test_direct_provider_discovery_uses_route_canonical_ids() -> None:
+    normalizers = {
+        slug: normalize
+        for slug, _url, _env_names, normalize in (
+            check_price_coverage._DISCOVERABLE_MANIFEST_PROVIDERS
+        )
+    }
+
+    assert normalizers["upstage"]("solar-pro4") == "upstage/solar-pro4"
+    assert normalizers["sail-research"]("zai-org/GLM-5.2-FP8") == "z-ai/glm-5.2"
+    assert normalizers["reka"]("reka-edge-2603") == "reka/reka-edge-2603"
+    assert normalizers["nextbit"]("deepseek:v4-flash-0731") == (
+        "deepseek/deepseek-v4-flash-0731"
+    )
+    assert normalizers["mancer"]("future-model") is None
+    assert normalizers["arcee"]("trinity-large-thinking") == (
+        "arcee-ai/trinity-large-thinking"
+    )
+
+
+def test_direct_provider_discovery_configuration_comes_from_each_catalog() -> None:
+    modules = (
+        check_price_coverage.upstage,
+        check_price_coverage.sail_research,
+        check_price_coverage.reka,
+        check_price_coverage.nextbit,
+        check_price_coverage.akashml,
+        check_price_coverage.mancer,
+        check_price_coverage.aion_labs,
+        check_price_coverage.sambanova,
+        check_price_coverage.arcee,
+        check_price_coverage.inception,
+    )
+    configured = {
+        slug: (url, env_names, normalize)
+        for slug, url, env_names, normalize in (
+            check_price_coverage._DISCOVERABLE_MANIFEST_PROVIDERS
+        )
+    }
+    for module in modules:
+        expected_url = module.CATALOG.spec.catalog_url or (
+            f"{module.CATALOG.spec.base_url.rstrip('/')}/models"
+        )
+        url, env_names, normalize = configured[module.SLUG]
+        assert url == expected_url
+        assert env_names == module.CATALOG.api_key_envs
+        assert normalize("future-model") == module.CATALOG.model_id("future-model")
 
 
 def test_model_discovery_warns_when_docs_mention_unpublished_model() -> None:

@@ -1,0 +1,142 @@
+{
+  "provider": "sail-research",
+  "models": [
+    {
+      "display_name": "deepseek/deepseek-v4-flash-0731",
+      "title": "deepseek/deepseek-v4-flash-0731",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "upstream_id": "deepseek/deepseek-v4-flash-0731",
+      "created": 1700000000,
+      "routable": true,
+      "input_token_price_per_m": 90000,
+      "output_token_price_per_m": 180000,
+      "cached_input_token_price_per_m": 20000
+    },
+    {
+      "display_name": "google/gemma-4-31B-it",
+      "title": "google/gemma-4-31B-it",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-4-31b-it",
+      "upstream_id": "google/gemma-4-31B-it",
+      "created": 1700000000,
+      "routable": true,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 600000,
+      "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "nvidia/Gemma-4-31B-IT-NVFP4",
+      "title": "nvidia/Gemma-4-31B-IT-NVFP4",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-4-31b-it-nvfp4",
+      "upstream_id": "nvidia/Gemma-4-31B-IT-NVFP4",
+      "created": 1700000000,
+      "routable": true,
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 70000
+    },
+    {
+      "display_name": "moonshotai/Kimi-K2.6",
+      "title": "moonshotai/Kimi-K2.6",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2.6",
+      "upstream_id": "moonshotai/Kimi-K2.6",
+      "created": 1700000000,
+      "routable": true,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 4000000,
+      "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "openai/gpt-oss-120b",
+      "title": "openai/gpt-oss-120b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-oss-120b",
+      "upstream_id": "openai/gpt-oss-120b",
+      "created": 1700000000,
+      "routable": true,
+      "input_token_price_per_m": 60000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 30000
+    },
+    {
+      "display_name": "zai-org/GLM-5.2-FP8",
+      "title": "zai-org/GLM-5.2-FP8",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "zai-org/GLM-5.2-FP8",
+      "created": 1700000000,
+      "routable": true,
+      "input_token_price_per_m": 800000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 160000
+    }
+  ],
+  "source": "https://api.sailresearch.com/v1/models",
+  "pricing_source": "https://docs.sailresearch.com/pricing",
+  "generated_at": "2026-08-22T20:16:38Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 6
+}

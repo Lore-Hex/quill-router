@@ -130,6 +130,16 @@ PROVIDER_SLUGS = [
     "decart",
     "nvidia_nim",
     "databricks",
+    "upstage",
+    "sail_research",
+    "reka",
+    "nextbit",
+    "akashml",
+    "mancer",
+    "aion_labs",
+    "sambanova",
+    "arcee",
+    "inception",
     # 0G Private Computer publishes exact per-route prices and trust metadata
     # in its public marketplace hydration data. The adapter admits only
     # healthy TeeML/private chat routes and keeps them dark until a keyed PONG.
@@ -151,6 +161,8 @@ _PRICING_RESULT_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
     "zero_g": ("zero-g",),
     "nvidia_nim": ("nvidia-nim",),
     "openrouter_exclusive": ("openrouter-exclusive",),
+    "sail_research": ("sail-research",),
+    "aion_labs": ("aion-labs",),
 }
 
 # These providers run a pricing-page parser (Kimi has a custom multi-page

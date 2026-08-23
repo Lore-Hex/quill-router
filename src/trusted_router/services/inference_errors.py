@@ -75,11 +75,14 @@ def default_provider_secret_ref(provider: str) -> str:
         "fireworks": "FIREWORKS_API_KEY",
         "thinkingmachines": "THINKING_MACHINES_API_KEY",
         "engy": "ENGY_API_KEY",
+        "sail-research": "SAIL_RESEARCH_API_KEY",
+        "aion-labs": "AION_LABS_API_KEY",
+        "io-net": "IO_NET_API_KEY",
         "databricks": "DATABRICKS_TOKEN",
         "zero-g": "ZERO_G_API_KEY",
         "vertex": "VERTEX_ACCESS_TOKEN",
     }
-    name = env_names.get(provider, f"{provider.upper()}_API_KEY")
+    name = env_names.get(provider, f"{provider.upper().replace('-', '_')}_API_KEY")
     return f"env://{name}"
 
 
