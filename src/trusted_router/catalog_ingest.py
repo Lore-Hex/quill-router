@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -32,13 +33,25 @@ from trusted_router.pricing import (
     _customer_price,
     _customer_price_from_dollars_per_token,
     _flat_tier,
+    _optional_customer_price_from_dollars_per_token,
     _priced,
+    _provider_manifest_optional_price_cost,
     _provider_manifest_price_cost,
     _provider_manifest_price_scale,
     _provider_manifest_price_tiers,
     _read_pricing_tiers,
 )
 from trusted_router.provider_lifecycle import provider_model_retired
+from trusted_router.provider_manifest_policy import (
+    EXPIRED_PROVIDER_MANIFEST as _EXPIRED_PROVIDER_MANIFEST,
+)
+from trusted_router.provider_manifest_policy import (
+    EXPIRING_PROVIDER_MANIFEST_SLUGS,
+    RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS,
+)
+from trusted_router.provider_manifest_policy import (
+    provider_manifest_valid_until as _provider_manifest_valid_until,
+)
 
 
 def _positive_float(value: object) -> float | None:
@@ -112,6 +125,45 @@ def _build_endpoints(models: dict[str, Model]) -> dict[str, ModelEndpoint]:
 _INGEST_PATH = Path(__file__).parent / "data" / "openrouter_snapshot.json"
 
 _PROVIDER_MODELS_DIR = Path(__file__).parent / "data" / "provider_models"
+
+# These provider catalogs require credentials that are intentionally unavailable
+# to GitHub Actions until the operator explicitly approves that trust expansion.
+# Their routes fail closed at manifest expiry without freezing unrelated catalog
+# updates. Fresh authenticated discovery advances the deadline automatically.
+_RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS = RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS
+_EXPIRING_PROVIDER_MANIFEST_SLUGS = EXPIRING_PROVIDER_MANIFEST_SLUGS
+
+
+def _apply_provider_manifest_expiry(
+    endpoints: dict[str, ModelEndpoint],
+) -> dict[str, ModelEndpoint]:
+    """Attach one provider-scoped deadline to every manifest-backed route.
+
+    Some media routes are installed statically after supplemental ingestion,
+    so applying the policy at the final endpoint boundary is what guarantees
+    chat, image, video, Credits, and BYOK routes all fail closed together.
+    """
+    deadlines: dict[str, datetime] = {}
+    for provider_slug in _EXPIRING_PROVIDER_MANIFEST_SLUGS:
+        path = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError):
+            deadlines[provider_slug] = _EXPIRED_PROVIDER_MANIFEST
+            continue
+        deadlines[provider_slug] = (
+            _provider_manifest_valid_until(provider_slug, raw)
+            or _EXPIRED_PROVIDER_MANIFEST
+        )
+
+    return {
+        endpoint_id: (
+            replace(endpoint, catalog_valid_until=deadlines[endpoint.provider])
+            if endpoint.provider in deadlines
+            else endpoint
+        )
+        for endpoint_id, endpoint in endpoints.items()
+    }
 
 # These providers publish authoritative model catalogs. Their generated
 # manifests, rather than OpenRouter's provider inventory, determine which
@@ -602,10 +654,9 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
             # Cached input rate — Anthropic / OpenAI / DeepSeek / Z.AI
             # / Kimi / Novita / Venice all expose this; OR snapshot
             # uses `input_cache_read` as the field name.
-            cached_price: int | None = None
-            cache_read = pricing.get("input_cache_read")
-            if cache_read:
-                cached_price, _, _ = _customer_price_from_dollars_per_token(str(cache_read))
+            cached_price = _optional_customer_price_from_dollars_per_token(
+                pricing.get("input_cache_read")
+            )
             # Tier-aware pricing: read multi-tier from snapshot if present;
             # otherwise synthesize a single-tier list from the headline rate.
             tiers = _read_pricing_tiers(pricing, "prompt") or _flat_tier(
@@ -797,6 +848,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         raw_models = raw.get("models")
         if not isinstance(raw_models, list):
             continue
+        catalog_valid_until = _provider_manifest_valid_until(provider_slug, raw)
         provider = PROVIDERS[provider_slug]
         price_scale = _provider_manifest_price_scale(raw)
         for raw_model in raw_models:
@@ -829,8 +881,9 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                 raw_model.get("output_token_price_per_m"),
                 price_scale=price_scale,
             )
-            cached_cost = _provider_manifest_price_cost(
-                raw_model.get("cached_input_token_price_per_m"),
+            cached_raw = raw_model.get("cached_input_token_price_per_m")
+            cached_cost = _provider_manifest_optional_price_cost(
+                cached_raw,
                 price_scale=price_scale,
             )
             if raw_model.get("model_type") == "image":
@@ -844,7 +897,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
             else:
                 prompt_price = _customer_price(prompt_cost)
                 completion_price = _customer_price(completion_cost)
-                cached_price = _customer_price(cached_cost) if cached_cost > 0 else None
+                cached_price = _customer_price(cached_cost) if cached_cost is not None else None
                 tiers = _provider_manifest_price_tiers(
                     raw_model,
                     prompt_price,
@@ -927,6 +980,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                     stream_idle_timeout_seconds=_positive_float(
                         reliability.get("stream_idle_timeout_seconds")
                     ),
+                    catalog_valid_until=catalog_valid_until,
                 )
             if provider.supports_byok:
                 byok_id = f"{model_id}@{provider_slug}/byok"
@@ -951,6 +1005,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                     stream_idle_timeout_seconds=_positive_float(
                         reliability.get("stream_idle_timeout_seconds")
                     ),
+                    catalog_valid_until=catalog_valid_until,
                 )
     return models, endpoints
 

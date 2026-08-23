@@ -58,6 +58,13 @@ def openai_model_price(row: dict[str, Any]) -> ModelPrice | None:
     )
 
 
+def _supports_text_output(row: dict[str, Any]) -> bool:
+    output_modalities = row.get("output_modalities")
+    if not isinstance(output_modalities, list) or not output_modalities:
+        return True
+    return "text" in {str(item).casefold() for item in output_modalities}
+
+
 def discover_openai_chat_catalog(
     rows: list[dict[str, Any]],
     *,
@@ -79,10 +86,8 @@ def discover_openai_chat_catalog(
             continue
         if include is not None and not include(source):
             continue
-        output_modalities = source.get("output_modalities")
-        if isinstance(output_modalities, list) and output_modalities:
-            if "text" not in {str(item).casefold() for item in output_modalities}:
-                continue
+        if not _supports_text_output(source):
+            continue
         model_id = mapped_or_canonical_model_id(native_id, explicit_map)
         if model_id is None:
             continue
@@ -143,6 +148,8 @@ def discover_available_priced_chat_catalog(
         if not isinstance(native_id, str) or not native_id.strip():
             continue
         if include is not None and not include(source):
+            continue
+        if not _supports_text_output(source):
             continue
         model_id = mapped_or_canonical_model_id(native_id, explicit_map)
         if model_id is None or model_id not in prices:

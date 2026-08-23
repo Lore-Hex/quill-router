@@ -33,6 +33,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
 from bs4 import BeautifulSoup
@@ -260,6 +261,73 @@ class ProviderPricingResult:
     include_in_price_index: bool = True
 
 
+def read_stale_provider_manifest(
+    *,
+    slug: str,
+    manifest_path: Path,
+    include_in_price_index: bool,
+) -> tuple[ProviderPricingResult | None, str | None]:
+    """Load an authenticated provider fallback without partial publication."""
+
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError) as exc:
+        return None, f"committed provider manifest is unreadable ({type(exc).__name__})"
+    rows = raw.get("models") if isinstance(raw, dict) else None
+    if not isinstance(rows, list) or not rows:
+        return None, "committed provider manifest has no model rows"
+
+    prices: dict[str, ModelPrice] = {}
+    invalid_rows = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            invalid_rows += 1
+            continue
+        model_id = row.get("id")
+        if not isinstance(model_id, str) or not model_id:
+            invalid_rows += 1
+            continue
+        if not include_in_price_index:
+            prices[model_id] = ModelPrice(0, 0)
+            continue
+        if not row.get("routable", True):
+            continue
+        try:
+            prompt = int(row.get("input_token_price_per_m") or 0)
+            completion = int(row.get("output_token_price_per_m") or 0)
+            cached_raw = row.get("cached_input_token_price_per_m")
+            cached = int(cached_raw) if cached_raw is not None else None
+        except (TypeError, ValueError):
+            invalid_rows += 1
+            continue
+        if prompt <= 0 or completion <= 0 or (cached is not None and cached < 0):
+            invalid_rows += 1
+            continue
+        prices[model_id] = ModelPrice(
+            prompt_micro_per_m=prompt,
+            completion_micro_per_m=completion,
+            prompt_cached_micro_per_m=cached,
+        )
+
+    if invalid_rows:
+        return None, (
+            f"committed provider manifest has {invalid_rows} invalid model row(s)"
+        )
+    if not prices:
+        return None, "committed provider manifest has no usable model rows"
+    return (
+        ProviderPricingResult(
+            slug=slug,
+            prices=prices,
+            source="stale_manifest",
+            fetched_url=str(manifest_path),
+            notes=["provider refresh failed; reused committed provider manifest"],
+            include_in_price_index=include_in_price_index,
+        ),
+        None,
+    )
+
+
 def configure_runtime_required_models(
     required_by_slug: dict[str, set[str] | frozenset[str]],
 ) -> None:
@@ -291,7 +359,7 @@ def runtime_required_models(slug: str) -> frozenset[str]:
 # ----------------------------------------------------------------------
 
 
-def _provider_client() -> httpx.Client:
+def _provider_client(*, follow_redirects: bool = True) -> httpx.Client:
     """Construct an httpx.Client with transport-level retries on
     connect-failures (TCP reset, DNS hiccup). 5xx responses are still
     returned bodies and need application-level retry; that's handled
@@ -299,9 +367,116 @@ def _provider_client() -> httpx.Client:
     transport = httpx.HTTPTransport(retries=PROVIDER_FETCH_TRANSPORT_RETRIES)
     return httpx.Client(
         timeout=PROVIDER_FETCH_TIMEOUT,
-        follow_redirects=True,
+        follow_redirects=follow_redirects,
         transport=transport,
     )
+
+
+def _safe_log_url(url: str) -> str:
+    """Keep query credentials and signed parameters out of logs."""
+
+    parsed = urlsplit(url)
+    hostname = parsed.hostname or "invalid-host"
+    if ":" in hostname:
+        hostname = f"[{hostname}]"
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    netloc = f"{hostname}:{port}" if port is not None else hostname
+    return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
+
+
+def safe_exception_summary(exc: Exception) -> str:
+    """Return actionable network failure context without signed URLs.
+
+    HTTP client exceptions retain their request URL, which may contain API
+    keys or signed query parameters. Prefer structured status and a scrubbed
+    URL; sanitize embedded URLs in wrapper exceptions as a fallback.
+    """
+
+    network_exc: BaseException | None = exc
+    while network_exc is not None:
+        response = getattr(network_exc, "response", None)
+        request = getattr(network_exc, "request", None) or getattr(response, "request", None)
+        if request is not None or response is not None:
+            break
+        network_exc = network_exc.__cause__
+
+    response = getattr(network_exc, "response", None)
+    status = getattr(response, "status_code", None)
+    request = getattr(network_exc, "request", None) or getattr(response, "request", None)
+    request_url = getattr(request, "url", None)
+    details = [type(exc).__name__]
+    if network_exc is not None and network_exc is not exc:
+        details.append(f"cause={type(network_exc).__name__}")
+    if isinstance(status, int):
+        details.append(f"status={status}")
+    if request_url is not None:
+        details.append(f"url={_safe_log_url(str(request_url))}")
+        return " ".join(details)
+
+    category = _safe_provider_error_category(str(exc))
+    if category is not None:
+        details.append(f"category={category}")
+    return " ".join(details)
+
+
+def _safe_provider_error_category(message: str) -> str | None:
+    """Classify self-authored failures without copying their raw text."""
+
+    folded = message.casefold()
+    if "timed out" in folded or "timeout" in folded:
+        return "timeout"
+    if "self-heal" in folded:
+        return "self_heal_failed"
+    if "sandbox" in folded:
+        return "sandbox_failed"
+    if "parser" in folded:
+        return "parser_failed"
+    if "validation" in folded or "invalid price" in folded or "malformed" in folded:
+        return "validation_failed"
+    if "manifest" in folded:
+        return "manifest_invalid"
+    if "no priced" in folded or "no supported" in folded or "no active models" in folded:
+        return "no_supported_models"
+    if "no data list" in folded or "unexpected shape" in folded:
+        return "unexpected_catalog_shape"
+    if (
+        "required" in folded or "not set" in folded or "must be set together" in folded
+    ) and any(marker in folded for marker in ("api_key", "api key", "token", "credential")):
+        return "missing_credentials"
+    if "missing expected model" in folded or "missing required model" in folded:
+        return "missing_required_models"
+    return None
+
+
+def _has_sensitive_headers(headers: dict[str, str] | None) -> bool:
+    if not headers:
+        return False
+    markers = ("authorization", "api-key", "apikey", "token", "secret", "credential")
+    return any(any(marker in name.casefold() for marker in markers) for name in headers)
+
+
+def _request_may_contain_credentials(
+    url: str,
+    headers: dict[str, str] | None,
+) -> bool:
+    parsed = urlsplit(url)
+    return bool(parsed.username or parsed.password or parsed.query) or _has_sensitive_headers(
+        headers
+    )
+
+
+def _same_origin(left: str, right: str) -> bool:
+    def origin(url: str) -> tuple[str, str, int | None]:
+        parsed = urlsplit(url)
+        return parsed.scheme.casefold(), (parsed.hostname or "").casefold(), parsed.port
+
+    try:
+        return origin(left) == origin(right)
+    except ValueError:
+        return False
 
 
 def _get_with_retries(client: httpx.Client, url: str, headers: dict[str, str]) -> httpx.Response:
@@ -317,7 +492,7 @@ def _get_with_retries(client: httpx.Client, url: str, headers: dict[str, str]) -
         if attempt < PROVIDER_FETCH_5XX_RETRIES:
             log.warning(
                 "pricing.fetch_5xx_retry url=%s status=%d attempt=%d/%d",
-                url,
+                _safe_log_url(url),
                 response.status_code,
                 attempt + 1,
                 PROVIDER_FETCH_5XX_RETRIES,
@@ -325,6 +500,35 @@ def _get_with_retries(client: httpx.Client, url: str, headers: dict[str, str]) -
             time.sleep(PROVIDER_FETCH_5XX_BACKOFF_SECONDS * (attempt + 1))
     assert last_response is not None
     return last_response
+
+
+def _get_with_safe_redirects(
+    client: httpx.Client,
+    url: str,
+    headers: dict[str, str],
+    *,
+    sensitive_request: bool,
+    allow_redirects: bool,
+) -> httpx.Response:
+    """Follow authenticated redirects only within the original origin."""
+
+    current_url = url
+    for _redirect in range(6):
+        response = _get_with_retries(client, current_url, headers)
+        if not response.is_redirect:
+            return response
+        if not allow_redirects:
+            return response
+        location = response.headers.get("location")
+        if not location:
+            return response
+        next_url = urljoin(current_url, location)
+        if urlsplit(next_url).scheme.casefold() != "https":
+            return response
+        if sensitive_request and not _same_origin(current_url, next_url):
+            return response
+        current_url = next_url
+    raise RuntimeError("provider redirect limit exceeded")
 
 
 def fetch_html(
@@ -347,8 +551,15 @@ def fetch_html(
     headers = {"User-Agent": PROVIDER_FETCH_UA}
     if extra_headers:
         headers.update(extra_headers)
-    with _provider_client() as client:
-        response = _get_with_retries(client, url, headers)
+    sensitive_request = _request_may_contain_credentials(url, extra_headers)
+    with _provider_client(follow_redirects=False) as client:
+        response = _get_with_safe_redirects(
+            client,
+            url,
+            headers,
+            sensitive_request=sensitive_request,
+            allow_redirects=True,
+        )
         if response.status_code not in accepted_status_codes:
             response.raise_for_status()
         return response.text
@@ -406,7 +617,12 @@ def normalize_parser_input(source: str, *, include_raw_html: bool = True) -> str
     return f"{str(soup)}\n\n<!-- trustedrouter-normalized -->\n{projection}"
 
 
-def fetch_json(url: str, *, extra_headers: dict[str, str] | None = None) -> Any:
+def fetch_json(
+    url: str,
+    *,
+    extra_headers: dict[str, str] | None = None,
+    follow_redirects: bool | None = None,
+) -> Any:
     """Fetch a provider JSON API (e.g., Together's /v1/models). The
     only providers that bypass the parser tier are those with a real
     JSON pricing API; this helper lives here so its network IO is also
@@ -415,8 +631,16 @@ def fetch_json(url: str, *, extra_headers: dict[str, str] | None = None) -> Any:
     headers = {"User-Agent": PROVIDER_FETCH_UA, "Accept": "application/json"}
     if extra_headers:
         headers.update(extra_headers)
-    with _provider_client() as client:
-        response = _get_with_retries(client, url, headers)
+    sensitive_request = _request_may_contain_credentials(url, extra_headers)
+    allow_redirects = follow_redirects is not False
+    with _provider_client(follow_redirects=False) as client:
+        response = _get_with_safe_redirects(
+            client,
+            url,
+            headers,
+            sensitive_request=sensitive_request,
+            allow_redirects=allow_redirects,
+        )
         response.raise_for_status()
         return response.json()
 

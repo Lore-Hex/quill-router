@@ -100,7 +100,9 @@ def public_video_benchmark_samples(
         {
             endpoint.provider
             for endpoint in MODEL_ENDPOINTS.values()
-            if (model := MODELS.get(endpoint.model_id)) is not None and model.supports_video
+            if endpoint.catalog_is_current()
+            and (model := MODELS.get(endpoint.model_id)) is not None
+            and model.supports_video
         }
     )
     per_provider = max(50, -(-limit // max(len(providers), 1)))

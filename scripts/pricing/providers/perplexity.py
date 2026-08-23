@@ -47,7 +47,17 @@ def _normalize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _is_perplexity_route(row: dict[str, Any]) -> bool:
     model_id = row.get("id")
-    return isinstance(model_id, str) and model_id.startswith("perplexity/")
+    if not isinstance(model_id, str) or not model_id.strip():
+        return False
+    normalized = model_id.strip().casefold()
+    if normalized.startswith("perplexity/"):
+        normalized = normalized.removeprefix("perplexity/")
+    elif "/" in normalized:
+        return False
+    # Perplexity's catalog can expose third-party or account-specific rows.
+    # Admit only documented first-party model families; unknown unqualified
+    # IDs remain dark until they are deliberately classified.
+    return normalized.startswith("sonar") or normalized == "r1-1776"
 
 
 CATALOG = DirectOpenAIProvider(

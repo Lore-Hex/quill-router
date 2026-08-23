@@ -225,6 +225,7 @@ def model_deadlines(
                 if candidate.model_id == model_id
                 and candidate.provider == provider
                 and candidate.usage_type == "Credits"
+                and candidate.catalog_is_current()
             ),
             None,
         )

@@ -349,6 +349,8 @@ def endpoints_for_model(model_id: str) -> list[ModelEndpoint]:
     for endpoint in MODEL_ENDPOINTS.values():
         if endpoint.model_id != model_id:
             continue
+        if not endpoint.catalog_is_current():
+            continue
         if (model is None or not model.supports_video) and provider_model_retired(
             endpoint.provider,
             endpoint.model_id,

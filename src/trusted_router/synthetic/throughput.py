@@ -170,7 +170,8 @@ def credits_endpoint_prices(provider: str, model: str) -> tuple[int, int] | None
     endpoints = [
         effective_endpoint(endpoint)
         for endpoint in MODEL_ENDPOINTS.values()
-        if endpoint.provider == provider
+        if endpoint.catalog_is_current()
+        and endpoint.provider == provider
         and endpoint.model_id == model
         and endpoint.usage_type == "Credits"
     ]

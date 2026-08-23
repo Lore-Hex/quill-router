@@ -135,3 +135,40 @@ def test_is_unpriced_helper() -> None:
     assert not R._is_unpriced(_mp(1, 0))
     assert not R._is_unpriced(_mp(0, 1))
     assert not R._is_unpriced(_mp(50_000, 100_000))
+
+
+def test_snapshot_missing_cache_price_does_not_invent_free_cache() -> None:
+    price = R._or_pricing_to_micro_per_m(
+        {"prompt": "0.000001", "completion": "0.000002"}
+    )
+
+    assert price is not None
+    assert price.tiers[0].prompt_cached_micro_per_m is None
+    assert "input_cache_read" not in R._price_to_pricing_block(price)
+
+
+def test_snapshot_explicit_zero_cache_price_remains_explicit() -> None:
+    price = R._or_pricing_to_micro_per_m(
+        {
+            "prompt": "0.000001",
+            "completion": "0.000002",
+            "input_cache_read": "0",
+        }
+    )
+
+    assert price is not None
+    assert price.tiers[0].prompt_cached_micro_per_m == 0
+    assert R._price_to_pricing_block(price)["input_cache_read"] == "0"
+
+
+def test_snapshot_malformed_cache_price_falls_back_to_prompt_rate() -> None:
+    price = R._or_pricing_to_micro_per_m(
+        {
+            "prompt": "0.000001",
+            "completion": "0.000002",
+            "input_cache_read": "not-a-price",
+        }
+    )
+
+    assert price is not None
+    assert price.tiers[0].prompt_cached_micro_per_m is None

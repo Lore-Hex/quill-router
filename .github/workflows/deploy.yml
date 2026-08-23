@@ -285,6 +285,8 @@ jobs:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@v2
+      - name: Verify deploy isolation from runtime-only provider keys
+        run: bash scripts/deploy/revoke_runtime_only_secret_access.sh
       - name: Validate required SES credentials
         run: |
           set -euo pipefail

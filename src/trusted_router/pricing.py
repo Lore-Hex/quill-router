@@ -187,6 +187,25 @@ def _customer_price_from_dollars_per_token(price_per_token: str) -> tuple[int, i
     customer = _customer_price(cost)
     return customer, customer, cost
 
+def _optional_customer_price_from_dollars_per_token(value: object) -> int | None:
+    """Parse an optional cached-input price without inventing a discount.
+
+    A published zero is valid and receives the normal customer price floor.
+    Missing, negative, non-finite, or malformed values mean the provider did
+    not publish a cache-read rate, so callers must bill cached tokens at the
+    regular prompt rate.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    try:
+        per_token = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    if not per_token.is_finite() or per_token < 0:
+        return None
+    cost = int((per_token * MICRODOLLARS_PER_DOLLAR * TOKENS_PER_MILLION).to_integral_value())
+    return _customer_price(cost)
+
 def _read_pricing_tiers(pricing: dict[str, Any], dimension: str) -> tuple[PriceTier, ...] | None:
     """Read `pricing.prompt_tiers` / `pricing.completion_tiers` arrays
     from the snapshot. Returns None if the snapshot has only flat
@@ -222,10 +241,9 @@ def _read_pricing_tiers(pricing: dict[str, Any], dimension: str) -> tuple[PriceT
         completion_micro, _pub2, _cost2 = _customer_price_from_dollars_per_token(
             completion_per_token
         )
-        cached_micro: int | None = None
-        cache_read = prompt_tier.get("input_cache_read")
-        if cache_read:
-            cached_micro, _pub3, _cost3 = _customer_price_from_dollars_per_token(str(cache_read))
+        cached_micro = _optional_customer_price_from_dollars_per_token(
+            prompt_tier.get("input_cache_read")
+        )
         tiers.append(
             PriceTier(
                 max_prompt_tokens=threshold,
@@ -265,6 +283,28 @@ def _provider_manifest_price_cost(value: object, *, price_scale: int) -> int:
     parsed = _as_positive_int(value)
     if parsed <= 0:
         return 0
+    return parsed * price_scale
+
+def _provider_manifest_optional_price_cost(
+    value: object,
+    *,
+    price_scale: int,
+) -> int | None:
+    """Parse an optional manifest price while preserving explicit zero.
+
+    Missing or malformed values return None so cached tokens use the regular
+    prompt rate. A literal zero remains zero and receives the customer floor.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if not isinstance(value, int | str | float | bytes | bytearray):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if parsed < 0:
+        return None
     return parsed * price_scale
 
 def _provider_manifest_price_tiers(
@@ -323,11 +363,11 @@ def _provider_manifest_price_tiers(
                 default_completion_price,
                 prompt_cached=default_cached_prompt_price,
             )
-        cached_cost = _provider_manifest_price_cost(
+        cached_cost = _provider_manifest_optional_price_cost(
             raw_tier.get("cached_input_token_price_per_m"),
             price_scale=price_scale,
         )
-        cached_price = _customer_price(cached_cost) if cached_cost > 0 else None
+        cached_price = _customer_price(cached_cost) if cached_cost is not None else None
         tiers.append(
             PriceTier(
                 max_prompt_tokens=threshold,

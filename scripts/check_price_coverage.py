@@ -10,8 +10,9 @@ actually re-reads each run. This reports the gaps:
   * provider_models/<slug>.json manifests whose `generated_at` is older than
     --max-age-days (stale → may serve wrong prices).
 
-Run in refresh-prices.yml as a non-failing visibility step (writes to the
-Actions run summary). Pass --strict to fail CI on any gap.
+Run in refresh-prices.yml as a report-producing gate. Stale authenticated
+fallback manifests and required model-discovery gaps block publication while
+the last known-good catalog remains live. Pass --strict to fail on every gap.
 """
 
 from __future__ import annotations
@@ -25,7 +26,14 @@ import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
+from scripts.pricing.base import (
+    fetch_json as fetch_provider_json,
+)
+from scripts.pricing.base import (
+    read_stale_provider_manifest,
+)
 from scripts.pricing.model_ids import (
     canonicalize_native_model_id,
     canonicalize_unqualified_model_id,
@@ -34,17 +42,29 @@ from scripts.pricing.providers import (
     aion_labs,
     akashml,
     arcee,
+    bfl,
+    decart,
     inception,
     mancer,
     nextbit,
+    nvidia_nim,
+    recraft,
     reka,
+    relace,
     sail_research,
     sambanova,
+    stepfun,
     upstage,
 )
 from scripts.pricing.video_sources import (
     VIDEO_PRICE_PROVIDER_SLUGS,
     audit_video_price_sources,
+)
+from trusted_router.provider_manifest_policy import (
+    EXPIRED_PROVIDER_MANIFEST,
+    EXPIRING_PROVIDER_MANIFEST_SLUGS,
+    RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS,
+    provider_manifest_valid_until,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -60,7 +80,7 @@ _ZAI_MODEL_RE = re.compile(r"\bglm-\d+(?:\.\d+)?(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?(?
 _SHARED_LIVE_SCRAPER_OWNERS = {
     "google-ai-studio": "gemini",
     "google-vertex": "gemini",
-    "openrouter-exclusive": "openrouter_exclusive",
+    "openrouter-exclusive": "openrouter-exclusive",
 }
 
 
@@ -446,10 +466,28 @@ _DIRECT_OPENAI_DISCOVERY_MODULES = (
     inception,
 )
 
-_OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS = frozenset(
-    module.SLUG
-    for module in _DIRECT_OPENAI_DISCOVERY_MODULES
+_STALE_MANIFEST_PROVIDER_MODULES = (
+    *_DIRECT_OPENAI_DISCOVERY_MODULES,
+    bfl,
+    decart,
+    nvidia_nim,
+    recraft,
+    relace,
+    stepfun,
+)
+
+_STALE_MANIFEST_PROVIDER_MODULE_BY_SLUG = {
+    module.SLUG: module
+    for module in _STALE_MANIFEST_PROVIDER_MODULES
     if bool(getattr(module, "MANIFEST_STALE_FALLBACK", False))
+}
+_OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS = frozenset(
+    _STALE_MANIFEST_PROVIDER_MODULE_BY_SLUG
+)
+
+_RUNTIME_ONLY_DISCOVERY_SLUGS = RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS
+_DIRECT_OPENAI_DISCOVERY_SLUGS = frozenset(
+    module.SLUG for module in _DIRECT_OPENAI_DISCOVERY_MODULES
 )
 
 _DISCOVERABLE_MANIFEST_PROVIDERS = _DISCOVERABLE_MANIFEST_PROVIDERS_BASE + tuple(
@@ -535,7 +573,9 @@ def _scraper_slugs() -> set[str]:
     if not PROVIDERS_DIR.is_dir():
         return set()
     return {
-        p.stem for p in PROVIDERS_DIR.glob("*.py") if p.stem not in {"__init__", "base", "_base"}
+        p.stem.replace("_", "-")
+        for p in PROVIDERS_DIR.glob("*.py")
+        if p.stem not in {"__init__", "base", "_base"}
     }
 
 
@@ -579,15 +619,22 @@ def _fetch_json(url: str, env_names: tuple[str, ...]) -> Any:
     }
     token = next((os.environ.get(name) for name in env_names if os.environ.get(name)), None)
     is_gemini = "generativelanguage.googleapis.com" in url
-    if token and not is_gemini:
-        headers["Authorization"] = f"Bearer {token}"
-    request_url = url
-    if is_gemini and token:
-        sep = "&" if "?" in url else "?"
-        request_url = f"{url}{sep}key={token}"
-    req = urllib.request.Request(request_url, headers=headers)  # noqa: S310
-    with urllib.request.urlopen(req, timeout=20) as response:  # noqa: S310
-        return json.loads(response.read().decode("utf-8", errors="replace"))
+    if token:
+        if is_gemini:
+            # Google accepts API keys in this header. Never put credentials in
+            # the URL, which can be copied into retry logs and proxy traces.
+            headers["x-goog-api-key"] = token
+        else:
+            headers["Authorization"] = f"Bearer {token}"
+    # Authenticated discovery must never replay a provider key to a redirect
+    # target. The shared httpx helper also centralizes retries and timeouts;
+    # redirects are disabled here because a moved catalog URL must be reviewed
+    # before credentials are sent to it.
+    return fetch_provider_json(
+        url,
+        extra_headers=headers,
+        follow_redirects=False,
+    )
 
 
 def _json_model_rows(payload: Any) -> list[dict[str, Any]]:
@@ -760,6 +807,18 @@ def _is_required_provider_glm_model_id(model_id: str) -> bool:
     return major > 5 or (major == 5 and minor >= 2)
 
 
+def _safe_fetch_error(url: str, exc: Exception) -> str:
+    """Describe a failed fetch without copying headers or redirect URLs."""
+
+    host = urlsplit(url).hostname or "unknown-host"
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    if not isinstance(status, int):
+        status = getattr(exc, "code", None)
+    status_text = f" status={status}" if isinstance(status, int) else ""
+    return f"{type(exc).__name__}{status_text} host={host}"
+
+
 def _model_discovery_audit(
     *,
     fetch_text: Callable[[str], str],
@@ -771,7 +830,10 @@ def _model_discovery_audit(
     try:
         zai_doc = fetch_text(ZAI_MODEL_DISCOVERY_URL)
     except Exception as exc:  # noqa: BLE001
-        warnings.append(f"zai: model discovery fetch failed ({type(exc).__name__}: {exc})")
+        warnings.append(
+            f"zai: model discovery fetch failed "
+            f"({_safe_fetch_error(ZAI_MODEL_DISCOVERY_URL, exc)})"
+        )
     else:
         discovered = _discover_zai_coding_plan_models(zai_doc)
         missing = sorted(discovered - published_model_ids)
@@ -791,10 +853,20 @@ def _model_discovery_audit(
         # coverage.  The global catalog can contain the same model through a
         # different provider and must not hide this provider's unresolved row.
         published = routable or published_model_ids
+        if slug in _RUNTIME_ONLY_DISCOVERY_SLUGS and not any(
+            os.environ.get(env_name) for env_name in env_names
+        ):
+            info.append(
+                f"{slug}: authenticated discovery intentionally disabled; "
+                "committed manifest age gate active ✓"
+            )
+            continue
         try:
             payload = fetch_json(url, env_names)
         except Exception as exc:  # noqa: BLE001
-            warnings.append(f"{slug}: model discovery fetch failed ({type(exc).__name__}: {exc})")
+            warnings.append(
+                f"{slug}: model discovery fetch failed ({_safe_fetch_error(url, exc)})"
+            )
             continue
         discovered_ids: set[str] = set()
         for row in _json_model_rows(payload):
@@ -861,10 +933,19 @@ def _model_discovery_audit(
             payload = fetch_json(url, env_names)
         except Exception as exc:  # noqa: BLE001
             warnings.append(
-                f"{slug}: GLM model discovery fetch failed ({type(exc).__name__}: {exc})"
+                f"{slug}: GLM model discovery fetch failed ({_safe_fetch_error(url, exc)})"
             )
             continue
+        provider_rows = [
+            row for row in _json_model_rows(payload) if _active_discovery_row(row)
+        ]
+        if not provider_rows:
+            warnings.append(f"{slug}: GLM model discovery returned no model ids")
+            continue
         discovered = _provider_glm_model_ids(payload)
+        if not discovered:
+            info.append(f"{slug}: live model catalog currently lists no GLM routes ✓")
+            continue
         missing = sorted(discovered - published)
         required_missing = [
             model_id for model_id in missing if _is_required_provider_glm_model_id(model_id)
@@ -883,6 +964,66 @@ def _model_discovery_audit(
         if discovered and not missing:
             info.append(f"{slug}: GLM model discovery matched catalog ({len(discovered)} id(s)) ✓")
     return warnings, info
+
+
+def _audit_fallback_manifest(
+    slug: str,
+    *,
+    max_age_days: int,
+    now: dt.datetime,
+) -> tuple[str | None, str | None]:
+    """Return one hard warning or one coverage line for a fallback manifest."""
+
+    manifest = MANIFEST_DIR / f"{slug}.json"
+    source_label = "live scraper fallback manifest"
+    if not manifest.exists():
+        return (
+            f"{slug}: NO price source ({source_label} missing) — "
+            "catalog prices cannot refresh safely",
+            None,
+        )
+    try:
+        raw = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError) as exc:
+        return (
+            f"{slug}: {source_label} is invalid ({type(exc).__name__})",
+            None,
+        )
+    deadline = provider_manifest_valid_until(
+        slug,
+        raw,
+        max_age_days=max_age_days,
+    )
+    if deadline is None or deadline == EXPIRED_PROVIDER_MANIFEST:
+        return f"{slug}: {source_label} fails runtime route validity checks", None
+    remaining_days = (deadline - now).total_seconds() / 86_400
+    age = max_age_days - remaining_days
+    if deadline <= now:
+        return (
+            f"{slug}: {source_label} is {age:.0f}d stale "
+            f"(>= {max_age_days}d) — provider routes are quarantined",
+            None,
+        )
+    module = _STALE_MANIFEST_PROVIDER_MODULE_BY_SLUG[slug]
+    _result, manifest_error = read_stale_provider_manifest(
+        slug=slug,
+        manifest_path=manifest,
+        include_in_price_index=bool(getattr(module, "INCLUDE_IN_PRICE_INDEX", True)),
+    )
+    if manifest_error is not None:
+        return f"{slug}: {source_label} is invalid ({manifest_error})", None
+    if remaining_days <= 3:
+        remaining = max(remaining_days, 0)
+        return (
+            f"{slug}: {source_label} expires in {remaining:.0f}d "
+            f"at the {max_age_days}d provider-route deadline",
+            None,
+        )
+    return (
+        None,
+        f"{slug}: {source_label} {max(age, 0):.0f}d old "
+        f"(within {max_age_days}d) ✓",
+    )
 
 
 def _run_audit(
@@ -905,6 +1046,38 @@ def _run_audit(
     info: list[str] = []
     hard_fail_warnings: list[str] = []
 
+    expiry_policy_mismatch = _OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS.symmetric_difference(
+        EXPIRING_PROVIDER_MANIFEST_SLUGS
+    )
+    if expiry_policy_mismatch:
+        warning = (
+            "fallback manifest expiry policy mismatch: "
+            f"{', '.join(sorted(expiry_policy_mismatch))}"
+        )
+        warnings.append(warning)
+        hard_fail_warnings.append(warning)
+
+    runtime_only_without_age_gate = _RUNTIME_ONLY_DISCOVERY_SLUGS - (
+        set(GATEWAY_PREPAID_PROVIDER_SLUGS)
+        & set(_OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS)
+    )
+    if runtime_only_without_age_gate:
+        warning = (
+            "runtime-only discovery provider(s) lack a prepaid manifest age gate: "
+            f"{', '.join(sorted(runtime_only_without_age_gate))}"
+        )
+        warnings.append(warning)
+        hard_fail_warnings.append(warning)
+
+    if _DIRECT_OPENAI_DISCOVERY_SLUGS != _RUNTIME_ONLY_DISCOVERY_SLUGS:
+        warning = (
+            "authenticated discovery provider policy mismatch: modules="
+            f"{', '.join(sorted(_DIRECT_OPENAI_DISCOVERY_SLUGS))}; policy="
+            f"{', '.join(sorted(_RUNTIME_ONLY_DISCOVERY_SLUGS))}"
+        )
+        warnings.append(warning)
+        hard_fail_warnings.append(warning)
+
     if check_model_discovery:
         video_prices = audit_video_price_sources(fetch_text)
         warnings.extend(video_prices.warnings)
@@ -916,26 +1089,70 @@ def _run_audit(
             if not check_model_discovery:
                 info.append(f"{slug}: official fixed-cost video price gate (network skipped) ✓")
             continue
-        if slug in scrapers:
+        uses_stale_manifest_fallback = slug in _OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS
+        if slug in scrapers and not uses_stale_manifest_fallback:
             info.append(f"{slug}: live scraper ✓")
             continue
-        manifest = MANIFEST_DIR / f"{slug}.json"
-        if not manifest.exists():
-            warnings.append(
-                f"{slug}: NO price source (no scraper, no manifest) — "
-                f"catalog prices are hand-coded and never refresh"
+        if uses_stale_manifest_fallback:
+            warning, covered = _audit_fallback_manifest(
+                slug,
+                max_age_days=max_age_days,
+                now=now,
             )
+            if warning is not None:
+                warnings.append(warning)
+                # Runtime-only authenticated catalogs expire their own routes
+                # dynamically. Their stale manifest remains an operator alert,
+                # but cannot freeze unrelated providers' price publication.
+                if slug not in EXPIRING_PROVIDER_MANIFEST_SLUGS:
+                    hard_fail_warnings.append(warning)
+            elif covered is not None:
+                info.append(covered)
+            continue
+        manifest = MANIFEST_DIR / f"{slug}.json"
+        source_label = "no scraper; manifest"
+        if not manifest.exists():
+            warning = (
+                f"{slug}: NO price source ({source_label} missing) — "
+                "catalog prices cannot refresh safely"
+            )
+            warnings.append(warning)
+            hard_fail_warnings.append(warning)
             continue
         age = _manifest_age_days(manifest, now)
         if age is None:
-            warnings.append(f"{slug}: no scraper; manifest has no parseable generated_at")
+            warning = f"{slug}: {source_label} has no parseable generated_at"
+            warnings.append(warning)
+            hard_fail_warnings.append(warning)
         elif age > max_age_days:
-            warnings.append(
-                f"{slug}: no scraper; manifest is {age:.0f}d stale "
+            warning = (
+                f"{slug}: {source_label} is {age:.0f}d stale "
                 f"(> {max_age_days}d) — prices may be wrong"
             )
+            warnings.append(warning)
+            hard_fail_warnings.append(warning)
         else:
-            info.append(f"{slug}: manifest {age:.0f}d old (within {max_age_days}d) ✓")
+            info.append(
+                f"{slug}: {source_label} {max(age, 0):.0f}d old "
+                f"(within {max_age_days}d) ✓"
+            )
+
+    # Discovery-only providers do not create billable routes. Keep stale or
+    # malformed manifests visible as operator warnings, but never let one
+    # freeze unrelated providers' price publication. Runtime routing has its
+    # own provider-scoped expiry gate for every provider that can bill users.
+    for slug in sorted(
+        _OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS - set(GATEWAY_PREPAID_PROVIDER_SLUGS)
+    ):
+        warning, covered = _audit_fallback_manifest(
+            slug,
+            max_age_days=max_age_days,
+            now=now,
+        )
+        if warning is not None:
+            warnings.append(warning)
+        elif covered is not None:
+            info.append(covered)
 
     if check_model_discovery:
         discovery_warnings, discovery_info = _model_discovery_audit(
@@ -946,9 +1163,7 @@ def _run_audit(
         hard_fail_warnings.extend(
             warning
             for warning in discovery_warnings
-            if warning.startswith("zai:")
-            or warning.startswith("kimi:")
-            or "required unpublished model" in warning
+            if "required unpublished model" in warning
             or "newly discovered required model" in warning
             or "live GLM current model API lists unpublished" in warning
         )
@@ -963,15 +1178,14 @@ def audit(
     *,
     check_model_discovery: bool = True,
     fetch_text: Callable[[str], str] = _fetch_text,
-) -> tuple[list[str], list[str]]:
-    """Return (warnings, info)."""
-    warnings, info, _hard_fail_warnings = _run_audit(
+) -> tuple[list[str], list[str], list[str]]:
+    """Return (warnings, info, hard_fail_warnings)."""
+    return _run_audit(
         max_age_days,
         now,
         check_model_discovery=check_model_discovery,
         fetch_text=fetch_text,
     )
-    return warnings, info
 
 
 def main(argv: list[str] | None = None) -> int:

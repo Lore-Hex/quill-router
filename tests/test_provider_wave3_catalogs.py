@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -8,6 +12,7 @@ import pytest
 
 from scripts.check_price_coverage import _DISCOVERABLE_MANIFEST_PROVIDERS
 from scripts.pricing.base import ModelPrice
+from scripts.pricing.openai_catalog import discover_available_priced_chat_catalog
 from scripts.pricing.providers import (
     _direct_openai,
     aion_labs,
@@ -33,6 +38,18 @@ from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     MODEL_ENDPOINTS,
     PROVIDERS,
+    endpoints_for_model,
+)
+from trusted_router.catalog_ingest import (
+    _EXPIRED_PROVIDER_MANIFEST,
+    _RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS,
+    _provider_manifest_valid_until,
+)
+from trusted_router.provider_manifest_policy import (
+    EXPIRING_PROVIDER_MANIFEST_SLUGS,
+    PROVIDER_MANIFEST_MAX_AGE_DAYS,
+    RUNTIME_ONLY_PROVIDER_MANIFEST_MAX_AGE_DAYS,
+    RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS,
 )
 from trusted_router.services.inference_errors import default_provider_secret_ref
 
@@ -116,6 +133,16 @@ def test_failed_live_canaries_stay_dark() -> None:
     }
     assert nextbit_rows["google/gemma-2-27b-it"]["routable"] is False
     assert samba_rows["minimax/minimax-m3"]["routable"] is False
+    assert not any(
+        endpoint.provider == "nextbit"
+        and endpoint.model_id == "google/gemma-2-27b-it"
+        for endpoint in MODEL_ENDPOINTS.values()
+    )
+    assert not any(
+        endpoint.provider == "sambanova"
+        and endpoint.model_id == "minimax/minimax-m3"
+        for endpoint in MODEL_ENDPOINTS.values()
+    )
 
 
 def test_upstage_parser_reads_all_three_first_party_price_axes() -> None:
@@ -220,6 +247,28 @@ def test_direct_provider_drops_any_zero_direction_before_canary() -> None:
             "zero/output": ModelPrice(1, 0),
         }
     ) == {"ok/model": ModelPrice(1, 2)}
+
+
+def test_price_joined_catalog_excludes_non_text_output_models() -> None:
+    upstream_ids: dict[str, str] = {}
+    discovered = discover_available_priced_chat_catalog(
+        [
+            {"id": "vendor/text", "output_modalities": ["text"]},
+            {"id": "vendor/image", "output_modalities": ["image"]},
+        ],
+        prices={
+            "vendor/text": ModelPrice(1, 2),
+            "vendor/image": ModelPrice(1, 2),
+        },
+        explicit_map={
+            "vendor/text": "vendor/text",
+            "vendor/image": "vendor/image",
+        },
+        upstream_id_map=upstream_ids,
+    )
+
+    assert set(discovered) == {"vendor/text"}
+    assert upstream_ids == {"vendor/text": "vendor/text"}
 
 
 def test_direct_provider_catalog_fetch_uses_shared_retry_helper(
@@ -400,6 +449,15 @@ def test_perplexity_omits_an_undocumented_cache_rate() -> None:
     assert "input_cache_read" not in rows[0]["pricing"]
 
 
+def test_perplexity_accepts_unqualified_native_ids_for_namespacing() -> None:
+    assert perplexity._is_perplexity_route({"id": "sonar"}) is True
+    assert perplexity._is_perplexity_route({"id": "r1-1776"}) is True
+    assert perplexity.CATALOG.model_id("sonar") == "perplexity/sonar"
+    assert perplexity.CATALOG.model_id("Sonar-Pro") == "perplexity/sonar-pro"
+    assert perplexity._is_perplexity_route({"id": "other/sonar"}) is False
+    assert perplexity._is_perplexity_route({"id": "llama-3.1-70b-instruct"}) is False
+
+
 def test_wave3_pricing_fixtures_are_captured_from_first_party_sources() -> None:
     expected_sources = {
         "upstage.html": "https://www.upstage.ai/pricing/api",
@@ -413,13 +471,348 @@ def test_wave3_pricing_fixtures_are_captured_from_first_party_sources() -> None:
 
 
 def test_wave3_secrets_do_not_join_the_all_or_nothing_refresh_block() -> None:
+    root = Path(__file__).parents[1]
+    workflow = (
+        root / ".github/workflows/refresh-prices.yml"
+    ).read_text(encoding="utf-8")
+    secret_setup = (root / "scripts/deploy/secrets.sh").read_text(encoding="utf-8")
+    runtime_only = {
+        line.strip()
+        for line in (
+            root / "scripts/deploy/runtime_only_provider_secrets.txt"
+        ).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    }
+    mandatory_step = workflow.split("- name: Pull PARASAIL_API_KEY", 1)[1]
+    mandatory_step = mandatory_step.split("- name:", 1)[0]
+    expected_secrets = {f"trustedrouter-{module.SLUG}-api-key" for module in MODULES}
+    assert runtime_only == expected_secrets
+    for module in MODULES:
+        secret_name = f"trustedrouter-{module.SLUG}-api-key"
+        assert secret_name not in mandatory_step
+        assert f'grant_tr_deploy_secret_access "{secret_name}"' not in secret_setup
+
+    assert _RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS == READY
+    assert RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS == READY
+    assert READY < EXPIRING_PROVIDER_MANIFEST_SLUGS
+    assert PROVIDER_MANIFEST_MAX_AGE_DAYS == 14
+    assert RUNTIME_ONLY_PROVIDER_MANIFEST_MAX_AGE_DAYS == 14
+
+
+def test_runtime_only_provider_routes_expire_without_freezing_other_catalogs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sample = next(endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "upstage")
+    now = datetime.now(UTC)
+    expired = replace(
+        sample,
+        id=f"{sample.id}-expired-test",
+        catalog_valid_until=now - timedelta(seconds=1),
+    )
+    current = replace(
+        sample,
+        id=f"{sample.id}-current-test",
+        catalog_valid_until=now + timedelta(minutes=5),
+    )
+    monkeypatch.setitem(MODEL_ENDPOINTS, expired.id, expired)
+    monkeypatch.setitem(MODEL_ENDPOINTS, current.id, current)
+
+    endpoint_ids = {endpoint.id for endpoint in endpoints_for_model(sample.model_id)}
+    assert expired.id not in endpoint_ids
+    assert current.id in endpoint_ids
+    assert sample.catalog_valid_until is not None
+
+
+def test_malformed_runtime_only_manifest_expires_every_route() -> None:
+    assert _provider_manifest_valid_until(
+        "upstage",
+        {
+            "generated_at": "2026-08-22T00:00:00Z",
+            "models": [
+                {
+                    "id": "upstage/bad-price",
+                    "routable": True,
+                    "input_token_price_per_m": 0,
+                    "output_token_price_per_m": 100,
+                }
+            ],
+        },
+    ) == _EXPIRED_PROVIDER_MANIFEST
+
+
+def test_media_fallback_manifests_receive_provider_scoped_expiry() -> None:
+    for provider_slug in ("bfl", "decart", "recraft"):
+        raw = json.loads(
+            (
+                Path(__file__).parents[1]
+                / "src/trusted_router/data/provider_models"
+                / f"{provider_slug}.json"
+            ).read_text(encoding="utf-8")
+        )
+        deadline = _provider_manifest_valid_until(provider_slug, raw)
+        assert deadline is not None
+        assert deadline != _EXPIRED_PROVIDER_MANIFEST
+
+    decart_endpoints = [
+        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "decart"
+    ]
+    assert decart_endpoints
+    assert any(endpoint.model_id == "decart/lucy-2.5" for endpoint in decart_endpoints)
+    assert all(endpoint.catalog_valid_until is not None for endpoint in decart_endpoints)
+
+
+def test_malformed_media_price_expires_entire_provider_manifest() -> None:
+    assert _provider_manifest_valid_until(
+        "bfl",
+        {
+            "generated_at": "2026-08-22T00:00:00Z",
+            "models": [
+                {
+                    "id": "black-forest-labs/bad-image-price",
+                    "model_type": "image",
+                    "routable": True,
+                    "fixed_output_price_microdollars": {"1k": 0},
+                }
+            ],
+        },
+    ) == _EXPIRED_PROVIDER_MANIFEST
+
+
+def test_free_cache_cost_is_not_mistaken_for_missing_cache_price(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import catalog_ingest
+
+    (tmp_path / "upstage.json").write_text(
+        json.dumps(
+            {
+                "generated_at": datetime.now(UTC).isoformat(),
+                "models": [
+                    {
+                        "id": "upstage/cache-free-test",
+                        "upstream_id": "cache-free-test",
+                        "display_name": "Cache Free Test",
+                        "model_type": "chat",
+                        "endpoints": ["chat/completions"],
+                        "routable": True,
+                        "input_token_price_per_m": 1_000_000,
+                        "output_token_price_per_m": 2_000_000,
+                        "cached_input_token_price_per_m": 0,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+
+    _models, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+    endpoint = endpoints["upstage/cache-free-test@upstage/prepaid"]
+
+    assert endpoint.prompt_price_microdollars_per_million_tokens == 1_055_000
+    assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 10_000
+
+
+def test_malformed_optional_cache_cost_falls_back_to_prompt_rate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import catalog_ingest
+
+    (tmp_path / "baseten.json").write_text(
+        json.dumps(
+            {
+                "models": [
+                    {
+                        "id": "baseten/malformed-cache-test",
+                        "upstream_id": "malformed-cache-test",
+                        "display_name": "Malformed Cache Test",
+                        "model_type": "chat",
+                        "endpoints": ["chat/completions"],
+                        "routable": True,
+                        "input_token_price_per_m": 1_000_000,
+                        "output_token_price_per_m": 2_000_000,
+                        "cached_input_token_price_per_m": "not-a-price",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+
+    _models, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+    endpoint = endpoints["baseten/malformed-cache-test@baseten/prepaid"]
+
+    assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens is None
+
+
+def test_every_deploy_verifies_runtime_only_provider_secret_isolation() -> None:
+    root = Path(__file__).parents[1]
+    workflow = (root / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    secret_setup = (root / "scripts/deploy/secrets.sh").read_text(encoding="utf-8")
+    revocation = (
+        root / "scripts/deploy/revoke_runtime_only_secret_access.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "bash scripts/deploy/revoke_runtime_only_secret_access.sh" in workflow
+    assert 'bash "${SCRIPT_DIR}/revoke_runtime_only_secret_access.sh"' not in secret_setup
+    assert "Verify deploy isolation from runtime-only provider keys" in workflow
+    assert "secrets get-iam-policy" in revocation
+    assert "secrets remove-iam-policy-binding" in revocation
+    assert "secrets versions access latest" in revocation
+    assert '--role="roles/secretmanager.secretAccessor"' in revocation
+    assert "still has accessor" in revocation
+    assert "has effective access" in revocation
+    assert 'read -r secret_name <&3' in revocation
+    assert "MAX_ATTEMPTS" in revocation
+    assert "NOT_FOUND|FAILED_PRECONDITION" not in revocation
+    assert "secretmanager\\.versions\\.access.*denied" in revocation
+    assert "TR_REMEDIATE_RUNTIME_ONLY_SECRET_IAM" in revocation
+    assert "setIamPolicy" in revocation
+
+
+def test_runtime_only_secret_isolation_verifier_and_operator_repair(
+    tmp_path: Path,
+) -> None:
+    root = Path(__file__).parents[1]
+    fake_gcloud = tmp_path / "gcloud"
+    fake_gcloud.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$FAKE_GCLOUD_CALLS"
+if printf '%s\\n' "$*" | grep -q "projects describe"; then
+  echo "123456789"
+  exit 0
+fi
+if printf '%s\\n' "$*" | grep -q "auth list"; then
+  echo "${FAKE_GCLOUD_ACCOUNT:-tr-deploy@test-project.iam.gserviceaccount.com}"
+  exit 0
+fi
+while [ "$#" -gt 0 ] && [ "$1" != "secrets" ]; do shift; done
+[ "$#" -ge 3 ]
+action="$2"
+secret_name="$3"
+if [ "$action" = "versions" ]; then
+  for argument in "$@"; do
+    case "$argument" in --secret=*) secret_name="${argument#--secret=}" ;; esac
+  done
+  state="$FAKE_GCLOUD_STATE/$secret_name"
+  if [ -f "$state" ]; then
+    echo "PERMISSION_DENIED: secretmanager.versions.access denied" >&2
+    exit 1
+  fi
+  echo "supersecret-that-must-not-escape"
+  exit 0
+fi
+state="$FAKE_GCLOUD_STATE/$secret_name"
+case "$action" in
+  get-iam-policy)
+    if [ ! -f "$state" ]; then
+      echo "serviceAccount:tr-deploy@test-project.iam.gserviceaccount.com"
+    fi
+    ;;
+  remove-iam-policy-binding) touch "$state" ;;
+  *) exit 2 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_gcloud.chmod(0o755)
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    calls = tmp_path / "calls.log"
+    env = {
+        **os.environ,
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+        "PROJECT_ID": "test-project",
+        "TR_DEPLOY_SA": "tr-deploy@test-project.iam.gserviceaccount.com",
+        "FAKE_GCLOUD_CALLS": str(calls),
+        "FAKE_GCLOUD_STATE": str(state_dir),
+    }
+    script = root / "scripts/deploy/revoke_runtime_only_secret_access.sh"
+    secret_names = [f"trustedrouter-{module.SLUG}-api-key" for module in MODULES]
+    for secret_name in secret_names:
+        state_dir.joinpath(secret_name).touch()
+
+    subprocess.run(  # noqa: S603 - checked-in script with a fake gcloud binary
+        [str(script)], cwd=root, env=env, check=True, capture_output=True
+    )
+    subprocess.run(  # noqa: S603 - second run proves idempotency
+        [str(script)], cwd=root, env=env, check=True, capture_output=True
+    )
+
+    assert "get-iam-policy" not in calls.read_text(encoding="utf-8")
+    assert "remove-iam-policy-binding" not in calls.read_text(encoding="utf-8")
+
+    # Reintroduce one old direct binding. The deploy identity detects it but
+    # cannot mutate IAM or leak the captured secret value.
+    state_dir.joinpath(secret_names[0]).unlink()
+    failed = subprocess.run(  # noqa: S603 - intentional fail-closed probe
+        [str(script)], cwd=root, env=env, check=False, capture_output=True, text=True
+    )
+    assert failed.returncode != 0
+    assert "has effective access" in failed.stderr
+    assert "supersecret-that-must-not-escape" not in failed.stdout + failed.stderr
+    assert "remove-iam-policy-binding" not in calls.read_text(encoding="utf-8")
+
+    # An operator can remove only the direct binding. The deploy identity then
+    # independently proves effective denial on the next run.
+    repair_calls = tmp_path / "repair-calls.log"
+    repair_env = {
+        **env,
+        "FAKE_GCLOUD_ACCOUNT": "operator@example.com",
+        "FAKE_GCLOUD_CALLS": str(repair_calls),
+        "TR_REMEDIATE_RUNTIME_ONLY_SECRET_IAM": "1",
+    }
+    subprocess.run(  # noqa: S603 - checked-in operator remediation path
+        [str(script)], cwd=root, env=repair_env, check=True, capture_output=True
+    )
+    assert repair_calls.read_text(encoding="utf-8").count(
+        "remove-iam-policy-binding"
+    ) == 1
+    assert "secrets versions access latest" not in repair_calls.read_text(
+        encoding="utf-8"
+    )
+    subprocess.run(  # noqa: S603 - post-repair effective denial proof
+        [str(script)], cwd=root, env=env, check=True, capture_output=True
+    )
+
+
+def test_price_coverage_failure_blocks_commit_and_deploy() -> None:
     workflow = (
         Path(__file__).parents[1] / ".github/workflows/refresh-prices.yml"
     ).read_text(encoding="utf-8")
-    mandatory_step = workflow.split("- name: Pull PARASAIL_API_KEY", 1)[1]
-    mandatory_step = mandatory_step.split("- name:", 1)[0]
-    for module in MODULES:
-        assert f"trustedrouter-{module.SLUG}-api-key" not in mandatory_step
+
+    audit = workflow.index("- name: Price-source coverage audit")
+    blocker = workflow.index("- name: Block unsafe coverage before publication")
+    commit = workflow.index("- name: Commit and push if changed")
+    assert audit < blocker < commit
+    blocker_step = workflow[blocker:commit]
+    assert "steps.coverage_audit.outcome == 'failure'" in blocker_step
+    assert "exit 1" in blocker_step
+    validation = workflow.index("- name: Validate generated catalog")
+    validation_step = workflow[validation:commit]
+    assert "if: always()" not in validation_step
+    assert "continue-on-error: true" not in validation_step
+    assert "last known-good snapshot remains live" in workflow
+    assert "manifest_attention=true" in workflow
+    assert "discovery_attention=true" in workflow
+    assert "model discovery fetch failed" in workflow
+    assert "returned no model ids" in workflow
+    assert "found no GLM model ids" in workflow
+    assert "official video price verification unavailable" in workflow
+    assert '"${COVERAGE_OUTCOME}" != "success"' in workflow
+    assert '"${JOB_STATUS}" != "success"' in workflow
+    assert '"${MANIFEST_ATTENTION}" != "false"' in workflow
+    assert '"${DISCOVERY_ATTENTION}" != "false"' in workflow
+    assert "(coverage summary unavailable)" in workflow
+    assert "Coverage audit incomplete" in workflow
+    assert "Catalog publication incomplete" in workflow
+    assert "Provider manifest expiry" in workflow
+    assert "Model discovery unavailable" in workflow
+    assert "provider-scoped route deadline" in workflow
 
 
 def test_wave3_refreshes_reuse_committed_manifests_when_live_auth_is_unavailable() -> None:

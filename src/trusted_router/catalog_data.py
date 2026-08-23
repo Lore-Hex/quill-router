@@ -10,6 +10,7 @@ catalog.py re-exports these names for backward compatibility.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TypedDict
 
 from trusted_router.pricing import PriceTier
@@ -361,10 +362,19 @@ class ModelEndpoint:
     first_token_timeout_seconds: float | None = None
     completion_timeout_seconds: float | None = None
     stream_idle_timeout_seconds: float | None = None
+    catalog_valid_until: datetime | None = None
 
     @property
     def is_byok(self) -> bool:
         return self.usage_type.lower() == "byok"
+
+    def catalog_is_current(self, *, at: datetime | None = None) -> bool:
+        if self.catalog_valid_until is None:
+            return True
+        current = at or datetime.now(UTC)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=UTC)
+        return current.astimezone(UTC) < self.catalog_valid_until
 
 
 PROVIDERS: dict[str, Provider] = {

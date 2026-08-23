@@ -195,7 +195,7 @@
     "model_id_pattern": "^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$",
     "owner_pattern": "^[a-z0-9][a-z0-9._-]*$"
   },
-  "contract_version": "973e380e5ab7e6303576dd7555c186244649befdc2da5c64017611abe9918769",
+  "contract_version": "faefb025842467d9db1d804e4ffd2a211bb52203b7c38daceb4abb3aa79f6bc4",
   "decision_tables": [
     {
       "max_tokens": 512,
@@ -4311,7 +4311,7 @@
     "probes._sse_line_payload": "b1c471040fa210f1fafb8653c207989707ae0cdd014e9e31ed03cbc931d70e6e",
     "probes._sse_line_usage": "03d596eaae4e6875f2e58789d477987617c72f87ba23120503c101374d4063bc",
     "provider_reliability.classify_provider_failure": "f8e1b14099827858028ec415bf78272616bc81f3aeafc04a0b83117efd2c9e37",
-    "provider_reliability.model_deadlines": "61436cfe1e43f1aeb34ada0539a284de2a1c9ea4f871118db1ea80e6039dee08",
+    "provider_reliability.model_deadlines": "7ba97c1b11a564e48c8b0029619fa42a5b3f0fe017fca1d552d4847e45adab45",
     "routes._classify": "e28308b685513256d3d6441d429e1896796f68cc1d131bb78832fad4633bf7f0"
   }
 }
