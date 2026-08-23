@@ -164,20 +164,13 @@ ANALYTICS_FRESHNESS_FLEET: tuple[FleetAnalyticsEndpoint, ...] = (
         cloud="azure",
         status_url="https://azure.trustedrouter.com/status.json",
         expected_backend=BACKEND_POSTGRES,
-        expects_outbox=False,
         note=(
             "The Azure control plane's own hostname, set as STATUS_HOST by "
             "scripts/deploy/azure_control_plane.sh and pointed at the container app "
-            "by that script's Cloud DNS step. It runs PostgresStore, so it COULD "
-            "hold the same outbox shape as AWS -- but that deploy script sets no "
-            "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED at all, the setting defaults "
-            "to False (config.py), and PostgresStore therefore builds no outbox. "
-            "That is read off the deploy script and the default, not off the "
-            "wire -- Azure published no `analytics` section when this was "
-            "written, and the current answer is one command away: "
-            "curl -s https://azure.trustedrouter.com/status.json | jq .data.analytics . "
-            "There is no drain here to be missing; expects_outbox=False "
-            "asserts that absence and fails the day it stops being true."
+            "by that script's Cloud DNS step. Production now publishes a live "
+            "Postgres operational-analytics outbox lag from this endpoint. Keep "
+            "expects_outbox=True so a stalled or removed Azure drain fails the "
+            "same fleet-wide freshness gate as AWS and GCP."
         ),
     ),
     FleetAnalyticsEndpoint(
