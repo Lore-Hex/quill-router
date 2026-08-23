@@ -2720,6 +2720,42 @@ def public_not_found_html(settings: Settings, requested_path: str) -> str:
     )
 
 
+def public_not_found_markdown(settings: Settings, requested_path: str) -> str:
+    """A 404 body an agent can act on instead of a dead end.
+
+    A bare status line tells a crawler the path is wrong and nothing about
+    where the content it wanted actually lives, so the usual recovery is to
+    guess more paths. Naming the machine-readable indexes turns one 404 into
+    the start of a correct traversal: llms.txt is the curated entry point,
+    sitemap.xml is the exhaustive one, and openapi.json is the API surface.
+
+    Kept deliberately short. This is an error body, not a site map, and an
+    agent that has just been told "not here" should not have to read a page of
+    prose to find the index.
+    """
+    domain = settings.trusted_domain
+    safe_path = requested_path if requested_path.startswith("/") else f"/{requested_path}"
+    return "\n".join(
+        (
+            "# 404 Not Found",
+            "",
+            f"`{safe_path}` does not exist on {domain}.",
+            "",
+            "## Where to look instead",
+            "",
+            f"- Site index for agents: https://{domain}/llms.txt",
+            f"- Full URL list: https://{domain}/sitemap.xml",
+            f"- Documentation index: https://{domain}/docs",
+            f"- OpenAPI specification: https://{domain}/openapi.json",
+            f"- Model catalog (public, no API key): https://{domain}/v1/models",
+            f"- Status: https://status.{domain}/",
+            "",
+            "The API base URL is https://api." + domain + "/v1 and is OpenAI compatible.",
+            "",
+        )
+    )
+
+
 def public_blog_index_html(settings: Settings) -> str:
     site_url = f"https://{settings.trusted_domain}/blog"
     return (
@@ -4033,6 +4069,25 @@ def llms_txt(settings: Settings) -> str:
         "- OpenPatcher G2: use trustedrouter/openpatcher-g2 for a Kimi K3 worker with parallel Gemma 4 and Prometheus 2.0 advisors.",
         "- Plato Pro 2.0: use trustedrouter/plato-pro-2.0 for GLM 5.2 advised by Prometheus 2.0.",
         "- Synth Code: use trustedrouter/synth-code, trustedrouter/iris-code-1.0, trustedrouter/prometheus-code-1.0, or trustedrouter/zeus-code-1.0 for code-tuned panel and synthesis prompts",
+        "",
+        "## Developer Resources",
+        (
+            "- Named so an agent searching for \"TrustedRouter API docs\", \"TrustedRouter "
+            "OpenAPI spec\" or \"TrustedRouter MCP server\" finds the exact URL here "
+            "rather than having to guess paths."
+        ),
+        f"- TrustedRouter API documentation: https://{domain}/docs",
+        f"- TrustedRouter OpenAPI specification (JSON): https://{domain}/openapi.json",
+        f"- TrustedRouter interactive API reference: https://{domain}/docs",
+        f"- TrustedRouter authentication: https://{domain}/docs#authentication",
+        f"- TrustedRouter MCP server: https://{domain}/docs/mcp",
+        f"- TrustedRouter agent setup guide: https://{domain}/docs/agent-setup",
+        f"- TrustedRouter SDK quickstarts: https://{domain}/docs#sdks",
+        f"- TrustedRouter status page: https://status.{domain}/",
+        f"- TrustedRouter attestation and trust evidence: https://trust.{domain}/",
+        f"- This index: https://{domain}/llms.txt",
+        f"- Extended index with full page text: https://{domain}/llms-full.txt",
+        f"- Machine-readable URL list: https://{domain}/sitemap.xml",
         "",
         "## Catalog",
         f"- Public model pages: {model_count}",

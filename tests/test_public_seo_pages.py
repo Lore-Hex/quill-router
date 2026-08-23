@@ -345,10 +345,16 @@ def test_openrouter_experiment_honors_global_privacy_control(
 def test_unknown_openrouter_landing_variant_is_a_real_404(
     client: TestClient,
 ) -> None:
-    response = client.get("/openrouter-alternative/lp/unknown")
+    response = client.get("/openrouter-alternative/lp/unknown", headers={"accept": "text/html"})
 
     assert response.status_code == 404
     assert "Page Not Found" in response.text
+
+    agent = client.get("/openrouter-alternative/lp/unknown", headers={"accept": "*/*"})
+
+    assert agent.status_code == 404
+    assert agent.headers["content-type"].startswith("text/markdown")
+    assert "/llms.txt" in agent.text
 
 
 def test_public_footer_links_to_canonical_trust_page(client: TestClient) -> None:

@@ -24,8 +24,13 @@ from trusted_router.analytics_sink import create_analytics_sink
 from trusted_router.axiom_config import init_axiom
 from trusted_router.catalog import validate_auto_model_order
 from trusted_router.config import Settings, get_settings
-from trusted_router.dashboard import public_not_found_html
+from trusted_router.dashboard import public_not_found_html, public_not_found_markdown
 from trusted_router.errors import error_response
+from trusted_router.markdown_negotiation import (
+    MARKDOWN_CONTENT_TYPE,
+    is_public_page_path,
+    prefers_markdown,
+)
 from trusted_router.middleware import register_http_middleware
 from trusted_router.public_openapi import (
     load_public_openapi_payload,
@@ -120,7 +125,29 @@ def create_app(
     # Swagger UI moves to /api/reference so the public docs hub can own
     # /docs (the marketing nav points "Docs" there). ReDoc stays at /redoc.
     app = FastAPI(
-        title="TrustedRouter",
+        # Named and described here so the dynamic schema and the pre-serialized
+        # public asset agree. An agent that fetches openapi.json by name gets
+        # this document and nothing else, so the info block is the only place
+        # it can learn what the product is or which base URL to call.
+        title="TrustedRouter API",
+        summary="OpenAI-compatible AI router with an attested prompt path.",
+        description=(
+            "TrustedRouter is an OpenAI-compatible API for hundreds of models across "
+            "many providers, with provider fallback, zero-retention routing, and an "
+            "attested gateway whose running source commit and image digest can be "
+            "verified.\n\n"
+            "Base URL: https://api.trustedrouter.com/v1\n"
+            "Authentication: `Authorization: Bearer <api key>`\n\n"
+            "Further machine-readable entry points: "
+            "https://trustedrouter.com/llms.txt (index), "
+            "https://trustedrouter.com/sitemap.xml (all URLs), "
+            "https://trustedrouter.com/docs (documentation), "
+            "https://trustedrouter.com/docs/mcp (MCP server)."
+        ),
+        servers=[
+            {"url": "https://api.trustedrouter.com/v1", "description": "Global"},
+            {"url": "https://api-europe-west4.quillrouter.com/v1", "description": "EU regional"},
+        ],
         version="0.1.0",
         docs_url=None,
         redoc_url=None,
@@ -324,10 +351,26 @@ def create_app(
         if isinstance(exc.detail, dict) and "error" in exc.detail:
             return JSONResponse(exc.detail, status_code=exc.status_code, headers=exc.headers)
         if exc.status_code == 404 and _is_public_html_request(request):
+            headers = dict(exc.headers or {})
+            headers["vary"] = "Accept"
             return HTMLResponse(
                 public_not_found_html(settings, request.url.path),
                 status_code=404,
-                headers=exc.headers,
+                headers=headers,
+            )
+        if exc.status_code == 404 and _is_public_agent_request(request):
+            # An agent that just got a 404 needs somewhere to go next. JSON here
+            # is a dead end: `{"error": {"code": 404}}` says the guess was wrong
+            # and nothing about where the real content is, so the usual recovery
+            # is to guess more paths. The markdown body names llms.txt,
+            # sitemap.xml and openapi.json instead.
+            headers = dict(exc.headers or {})
+            headers["vary"] = "Accept"
+            return Response(
+                public_not_found_markdown(settings, request.url.path),
+                status_code=404,
+                headers=headers,
+                media_type=MARKDOWN_CONTENT_TYPE,
             )
         response = error_response(
             exc.status_code,
@@ -432,20 +475,33 @@ def _is_public_html_request(request: Request) -> bool:
         return False
     if "text/html" not in request.headers.get("accept", "").lower():
         return False
-    path = request.url.path
-    non_public_prefixes = (
-        "/v1",
-        "/internal",
-        "/api",
-        "/auth",
-        "/oauth",
-        "/console",
-        "/static",
-        "/webhooks",
-        "/.well-known",
-    )
-    return not any(
-        path == prefix or path.startswith(f"{prefix}/") for prefix in non_public_prefixes
+    return is_public_page_path(request.url.path)
+
+
+def _is_public_agent_request(request: Request) -> bool:
+    """A non-browser GET of a public path that has not demanded another format.
+
+    Three groups reach a public 404: browsers (handled above by the HTML
+    branch), clients that explicitly asked for JSON or another concrete type,
+    and everything else — `Accept: */*` from curl and most SDKs, `text/markdown`
+    from an agent, or no Accept header at all. Only that third group is
+    rerouted to markdown, so a caller that named `application/json` still gets
+    the JSON envelope it asked for and existing integrations are unaffected.
+    """
+    if request.method not in {"GET", "HEAD"}:
+        return False
+    if not is_public_page_path(request.url.path):
+        return False
+    accept = request.headers.get("accept", "").strip().lower()
+    if not accept:
+        return True
+    if prefers_markdown(accept):
+        return True
+    # A wildcard-only Accept expresses no preference, so the origin picks.
+    return all(
+        media.split(";")[0].strip() in {"*/*", "text/*"}
+        for media in accept.split(",")
+        if media.strip()
     )
 
 

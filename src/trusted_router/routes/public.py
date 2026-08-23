@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, Query, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import (
     FileResponse,
@@ -81,7 +81,6 @@ from trusted_router.dashboard import (
     public_model_region_html,
     public_model_section_html,
     public_models_html,
-    public_not_found_html,
     public_openrouter_experiment_html,
     public_page_html,
     public_privacy_html,
@@ -1057,13 +1056,11 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         variant_slug: str,
     ) -> Response:
         if variant_slug not in OPENROUTER_PAID_LANDING_VARIANTS:
-            return HTMLResponse(
-                public_not_found_html(
-                    settings,
-                    f"/openrouter-alternative/lp/{variant_slug}",
-                ),
-                status_code=404,
-            )
+            # Raise rather than return HTML: the central 404 handler picks the
+            # representation from Accept, so an agent gets the markdown body
+            # with the site indexes and a browser gets the same styled page as
+            # before. Returning HTML here would hand every client HTML.
+            raise HTTPException(status_code=404)
         return HTMLResponse(public_openrouter_experiment_html(settings, variant_slug))
 
     @public_html_route("/private-llm-api/quickstart")
@@ -1262,10 +1259,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             )
         html = public_blog_post_html(settings, slug)
         if html is None:
-            return HTMLResponse(
-                public_not_found_html(settings, f"/blog/{slug}"),
-                status_code=404,
-            )
+            raise HTTPException(status_code=404)
         return html
 
     @public_html_route("/security")
@@ -1385,7 +1379,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def benchmark_report(period: str) -> HTMLResponse:
         body = public_benchmark_report_html(settings, period)
         if body is None:
-            return HTMLResponse(public_not_found_html(settings, "/benchmarks/reports"), 404)
+            raise HTTPException(status_code=404)
         return HTMLResponse(body)
 
     @public_html_route("/rankings")
@@ -1475,6 +1469,32 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             docs_llms_full_txt(settings),
             headers=public_document_headers("/docs/llms-full.txt"),
         )
+
+    # Root-level aliases for the paths an agent tries by convention before it
+    # tries anything else. /llms-full.txt and /.well-known/llms.txt are where
+    # the llms.txt convention says to look; both used to 404 while the real
+    # documents sat under /docs, which is discoverable only after you have
+    # already found the index you were looking for.
+    @app.api_route("/llms-full.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse)
+    async def llms_full() -> PlainTextResponse:
+        return PlainTextResponse(
+            docs_llms_full_txt(settings),
+            headers=public_document_headers("/llms-full.txt"),
+        )
+
+    @app.api_route(
+        "/.well-known/llms.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse
+    )
+    async def well_known_llms() -> PlainTextResponse:
+        return PlainTextResponse(
+            llms_txt(settings),
+            headers=public_document_headers("/llms.txt"),
+        )
+
+    @app.api_route("/api", methods=["GET", "HEAD"], include_in_schema=False)
+    async def api_alias() -> RedirectResponse:
+        """/api is the first URL an agent guesses for API docs. It 404'd."""
+        return RedirectResponse(url="/docs", status_code=308)
 
     @public_html_route("/status")
     async def status_page(request: Request, background_tasks: BackgroundTasks) -> Response:
@@ -1680,10 +1700,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def competitor_compare(competitor_slug: str) -> HTMLResponse:
         body = public_competitor_compare_html(settings, competitor_slug.strip())
         if body is None:
-            return HTMLResponse(
-                public_not_found_html(settings, f"/compare/{competitor_slug}"),
-                status_code=404,
-            )
+            raise HTTPException(status_code=404)
         return HTMLResponse(body)
 
     @public_html_route("/chat")
