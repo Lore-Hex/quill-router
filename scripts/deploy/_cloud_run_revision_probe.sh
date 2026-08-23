@@ -1,6 +1,31 @@
 # shellcheck shell=bash
 # Shared Cloud Run revision-tag helpers. Callers own traps and probe policy.
 
+cloud_run_probe_tag_revision() {
+  local service="$1"
+  local region="$2"
+  local project="$3"
+  local tag="$4"
+  local document
+
+  document="$(gcloud run services describe "$service" \
+    --region="$region" \
+    --project="$project" \
+    --format=json)" || return 1
+  printf '%s' "$document" | python3 -c '
+import json, sys
+tag = sys.argv[1]
+try:
+    document = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+for entry in document.get("status", {}).get("traffic", []):
+    if entry.get("tag") == tag:
+        print(entry.get("revisionName", ""))
+        break
+' "$tag"
+}
+
 cloud_run_probe_tag_reconcile() {
   local service="$1"
   local region="$2"
@@ -14,10 +39,8 @@ cloud_run_probe_tag_reconcile() {
     --project="$project" \
     --update-tags="${tag}=${revision}" \
     --quiet || return 1
-  resolved="$(gcloud run services describe "$service" \
-    --region="$region" \
-    --project="$project" \
-    --format="value(status.traffic[?tag='${tag}'].revisionName)")" || return 1
+  resolved="$(cloud_run_probe_tag_revision \
+    "$service" "$region" "$project" "$tag")" || return 1
   if [ "$resolved" != "$revision" ]; then
     echo "ERROR: probe tag ${tag} resolves to ${resolved:-<nothing>}, expected ${revision}" >&2
     return 1
@@ -45,10 +68,8 @@ cloud_run_probe_tag_remove() {
         --project="$project" \
         --remove-tags="$tag" \
         --quiet; then
-      if resolved="$(gcloud run services describe "$service" \
-          --region="$region" \
-          --project="$project" \
-          --format="value(status.traffic[?tag='${tag}'].revisionName)")"; then
+      if resolved="$(cloud_run_probe_tag_revision \
+          "$service" "$region" "$project" "$tag")"; then
         if [ -z "$resolved" ]; then
           return 0
         fi
@@ -77,10 +98,8 @@ cloud_run_probe_tagged_base_url() {
   local resolved
   local service_url
 
-  resolved="$(gcloud run services describe "$service" \
-    --region="$region" \
-    --project="$project" \
-    --format="value(status.traffic[?tag='${tag}'].revisionName)")" || return 1
+  resolved="$(cloud_run_probe_tag_revision \
+    "$service" "$region" "$project" "$tag")" || return 1
   [ "$resolved" = "$revision" ] || {
     echo "ERROR: probe tag ${tag} resolves to ${resolved:-<nothing>}, expected ${revision}" >&2
     return 1

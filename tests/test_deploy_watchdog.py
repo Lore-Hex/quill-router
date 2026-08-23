@@ -5,10 +5,13 @@ import io
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load_watchdog() -> Any:
@@ -149,6 +152,7 @@ def _run_staged_probe(
     resolved_tag_revision: str = "new-rev",
     remove_failures: int = 0,
     remove_always_fails: bool = False,
+    remove_leaves_tag: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     stub_bin = tmp_path / "bin"
     stub_bin.mkdir()
@@ -172,9 +176,22 @@ case " $* " in
       fi
       exit 1
     fi
-    : >"$STAGED_TAG_STATE"
+    if [ "$STAGED_REMOVE_LEAVES_TAG" != "1" ]; then
+      : >"$STAGED_TAG_STATE"
+    fi
     ;;
-  *"status.traffic"*) cat "$STAGED_TAG_STATE" ;;
+  *"status.traffic[?tag="*)
+    printf '%s\\n' 'TEST ERROR: unsupported gcloud resource projection' >&2
+    exit 64
+    ;;
+  *" --format=json"*)
+    tagged_revision="$(cat "$STAGED_TAG_STATE")"
+    if [ -n "$tagged_revision" ]; then
+      printf '{"status":{"traffic":[{"percent":100,"revisionName":"old-rev"},{"percent":0,"revisionName":"%s","tag":"staged-probe"}]}}\\n' "$tagged_revision"
+    else
+      printf '%s\\n' '{"status":{"traffic":[{"percent":100,"revisionName":"old-rev"}]}}'
+    fi
+    ;;
   *"status.url"*) printf '%s\\n' 'https://trusted-router-hash-uc.a.run.app' ;;
 esac
 """
@@ -194,10 +211,19 @@ printf '%s' "$code"
 [ "$code" != "000" ]
 """
     )
-    for name in ("python3", "sleep"):
-        stub = stub_bin / name
-        stub.write_text("#!/usr/bin/env bash\nexit 0\n")
-        stub.chmod(0o755)
+    sleep = stub_bin / "sleep"
+    sleep.write_text("#!/usr/bin/env bash\nexit 0\n")
+    sleep.chmod(0o755)
+    python3 = stub_bin / "python3"
+    python3.write_text(
+        """#!/usr/bin/env bash
+if [ "$1" = "-c" ]; then
+  exec "$STAGED_REAL_PYTHON" "$@"
+fi
+exit 0
+"""
+    )
+    python3.chmod(0o755)
     gcloud.chmod(0o755)
     curl.chmod(0o755)
     script = Path(__file__).resolve().parents[1] / "scripts" / "deploy" / "staged_traffic.sh"
@@ -213,6 +239,8 @@ printf '%s' "$code"
         "STAGED_TAG_STATE": str(tag_state),
         "STAGED_REMOVE_FAILURES_STATE": str(remove_failures_state),
         "STAGED_REMOVE_ALWAYS_FAILS": "1" if remove_always_fails else "0",
+        "STAGED_REMOVE_LEAVES_TAG": "1" if remove_leaves_tag else "0",
+        "STAGED_REAL_PYTHON": sys.executable,
         "TR_LEGACY_PROBE_RETRY_SECONDS": "0",
         "TR_PROBE_TAG_REMOVE_RETRY_SECONDS": "0",
         # This helper exercises a traffic ramp nested inside the workflow's
@@ -229,6 +257,94 @@ printf '%s' "$code"
         timeout=20,
     )
     return run, call_log.read_text().splitlines()
+
+
+def test_probe_tag_resolution_uses_json_and_unset_tag_resolves_to_empty(
+    tmp_path: Path,
+) -> None:
+    stub_bin = tmp_path / "bin"
+    stub_bin.mkdir()
+    call_log = tmp_path / "calls.log"
+    service_json = tmp_path / "service.json"
+    gcloud = stub_bin / "gcloud"
+    gcloud.write_text(
+        """#!/usr/bin/env bash
+printf 'gcloud %s\\n' "$*" >>"$PROBE_CALL_LOG"
+case " $* " in
+  # Match real gcloud: this unsupported projection succeeds with empty output.
+  # The call-log assertion below proves the implementation never takes it.
+  *"status.traffic[?tag="*) exit 0 ;;
+  *" --format=json"*) cat "$PROBE_SERVICE_JSON" ;;
+  *) exit 9 ;;
+esac
+"""
+    )
+    gcloud.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{stub_bin}:/bin:/usr/bin",
+        "PROBE_CALL_LOG": str(call_log),
+        "PROBE_SERVICE_JSON": str(service_json),
+    }
+    command = (
+        f"source {ROOT / 'scripts/deploy/_cloud_run_revision_probe.sh'}; "
+        "cloud_run_probe_tag_revision trusted-router us-central1 test-project "
+        "staged-probe"
+    )
+
+    service_json.write_text(
+        json.dumps(
+            {
+                "status": {
+                    "traffic": [
+                        {"percent": 100, "revisionName": "old-rev"},
+                        {
+                            "percent": 0,
+                            "revisionName": "new-rev",
+                            "tag": "staged-probe",
+                        },
+                    ]
+                }
+            }
+        )
+    )
+    resolved = subprocess.run(  # noqa: S603 - fixed shell with stubbed gcloud
+        ["/bin/bash", "-c", command],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=10,
+    )
+
+    assert resolved.returncode == 0, resolved.stderr
+    assert resolved.stdout == "new-rev\n"
+    calls = call_log.read_text().splitlines()
+    assert calls == [
+        "gcloud run services describe trusted-router --region=us-central1 "
+        "--project=test-project --format=json"
+    ]
+
+    call_log.write_text("")
+    service_json.write_text(
+        json.dumps(
+            {
+                "status": {
+                    "traffic": [{"percent": 100, "revisionName": "old-rev"}]
+                }
+            }
+        )
+    )
+    unresolved = subprocess.run(  # noqa: S603 - fixed shell with stubbed gcloud
+        ["/bin/bash", "-c", command],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=10,
+    )
+
+    assert unresolved.returncode == 0, unresolved.stderr
+    assert unresolved.stdout == ""
+    assert call_log.read_text().splitlines() == calls
 
 
 @pytest.mark.parametrize(
@@ -270,6 +386,12 @@ def test_staged_legacy_probe_uses_regional_origin_and_classifies_results(
         for call in calls
         if call.startswith("gcloud run services update-traffic")
     )
+    assert any(
+        "--format=json" in call
+        for call in calls
+        if call.startswith("gcloud run services describe")
+    )
+    assert not any("status.traffic[?tag=" in call for call in calls)
     rollback_calls = [
         call
         for call in calls
@@ -291,9 +413,12 @@ def test_staged_probe_reconciles_and_verifies_a_leftover_tag(tmp_path: Path) -> 
 
     assert run.returncode == 0, run.stderr
     assert any("--update-tags=staged-probe=new-rev" in call for call in calls)
+    assert any("--format=json" in call for call in calls)
+    assert not any("status.traffic[?tag=" in call for call in calls)
     assert any("--remove-tags=staged-probe" in call for call in calls)
     assert not any(call.startswith("curl ") for call in calls)
     assert "probe tag does not resolve to new-rev" in run.stdout
+    assert "resolves to old-rev, expected new-rev" in run.stderr
 
 
 def test_staged_probe_tag_cleanup_retries_a_transient_failure(tmp_path: Path) -> None:
@@ -323,3 +448,23 @@ def test_staged_probe_tag_cleanup_permanent_failure_is_nonzero(tmp_path: Path) -
         "--project=test-project --remove-tags=staged-probe --quiet"
     ) in run.stderr
     assert sum("--remove-tags=staged-probe" in call for call in calls) == 6
+
+
+def test_staged_probe_tag_cleanup_verifies_a_successful_removal(
+    tmp_path: Path,
+) -> None:
+    run, calls = _run_staged_probe(
+        tmp_path,
+        console_code="302",
+        session_code="401",
+        remove_leaves_tag=True,
+    )
+
+    assert run.returncode != 0
+    assert "still resolves to new-rev after removal attempt" in run.stderr
+    assert "probe tag staged-probe may still be addressable" in run.stderr
+    assert sum("--remove-tags=staged-probe" in call for call in calls) == 6
+    removal_index = next(
+        index for index, call in enumerate(calls) if "--remove-tags=staged-probe" in call
+    )
+    assert any("--format=json" in call for call in calls[removal_index + 1 :])

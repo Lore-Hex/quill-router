@@ -150,6 +150,14 @@ _STUB = r"""#!/usr/bin/env bash
 cat >/dev/null 2>&1 || true
 joined="${0##*/} $*"
 
+if { [ "${0##*/}" = "gcloud" ] || [ "${0##*/}" = "gc" ]; } \
+    && [[ " $* " == *" run services describe "* ]] \
+    && [[ " $* " == *"status.traffic[?tag="* ]]; then
+  printf '%s\n' \
+    'HARNESS ERROR: gcloud does not support JMESPath filters in resource projections' >&2
+  exit 64
+fi
+
 if [ "${HARNESS_PUBLIC_SURFACE_SMOKE:-0}" = "1" ]; then
   region=""
   previous=""
@@ -268,11 +276,39 @@ print(
 PY
     exit 0
   fi
-  if [[ " $* " == *" run services describe trusted-router-public "* ]] \
-      && [[ " $* " == *"status.traffic"* ]]; then
-    if [ -f "${HARNESS_PROBE_TAG_STATE_DIR}/${region}" ]; then
-      cat "${HARNESS_PROBE_TAG_STATE_DIR}/${region}"
-    fi
+  if [[ " $* " == *" run services update-traffic trusted-router "* ]] \
+      && [[ " $* " == *" --update-tags="* ]]; then
+    tag_assignment=""
+    for argument in "$@"; do
+      case "$argument" in --update-tags=*) tag_assignment="${argument#--update-tags=}" ;; esac
+    done
+    printf '%s\n' "${tag_assignment#*=}" >"${HARNESS_PROBE_TAG_STATE_DIR}/${region}"
+    exit 0
+  fi
+  if [[ " $* " == *" run services update-traffic trusted-router "* ]] \
+      && [[ " $* " == *" --remove-tags="* ]]; then
+    rm -f "${HARNESS_PROBE_TAG_STATE_DIR}/${region}"
+    exit 0
+  fi
+  if [[ " $* " == *" run services describe trusted-router "* ]] \
+      && [[ " $* " == *" --format=json "* ]]; then
+    python3 - "$HARNESS_PROBE_TAG_STATE_DIR" "$region" <<'PY'
+import json
+import pathlib
+import sys
+
+tag_path = pathlib.Path(sys.argv[1]) / sys.argv[2]
+traffic = [{"percent": 100, "revisionName": "trusted-router-active"}]
+if tag_path.is_file():
+    traffic.append(
+        {
+            "percent": 0,
+            "revisionName": tag_path.read_text().strip(),
+            "tag": "staged-probe",
+        }
+    )
+print(json.dumps({"status": {"traffic": traffic}}, separators=(",", ":")))
+PY
     exit 0
   fi
   if [[ " $* " == *" run services describe trusted-router-public "* ]] \
@@ -551,16 +587,6 @@ _SYNTHETIC_INGEST_SERVICE_JSON = json.dumps(
     separators=(",", ":"),
 )
 
-_PUBLIC_SURFACE_LEGACY_SERVICE_JSON = json.dumps(
-    {
-        "status": {
-            "traffic": [
-                {"percent": 100, "revisionName": "trusted-router-active"}
-            ]
-        }
-    },
-    separators=(",", ":"),
-)
 _PUBLIC_SURFACE_PUBLIC_SERVICE_JSON = json.dumps(
     {
         "metadata": {
@@ -725,10 +751,6 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
         env={"HARNESS_PUBLIC_SURFACE_SMOKE": "1"},
         responses=(
             (r"projects describe.*projectNumber", "44325983244"),
-            (
-                r"run services describe trusted-router .*--format=json",
-                _PUBLIC_SURFACE_LEGACY_SERVICE_JSON,
-            ),
             (
                 r"run revisions describe trusted-router-active .*--format=json",
                 _PUBLIC_SURFACE_LEGACY_REVISION_JSON,
