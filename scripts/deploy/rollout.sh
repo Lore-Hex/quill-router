@@ -655,21 +655,60 @@ prune_failed_revisions() {
   # routed (so they're safe to delete) and remove them. Idempotent;
   # no-op when everything is healthy.
   local target="$1"
-  local serving
-  serving=$(gc run services describe "$SERVICE" --region "$target" \
-    --format='value(status.traffic[].revisionName)' 2>/dev/null \
-    | tr ';' ' ')
+  local service_json
+  if ! service_json=$(gc run services describe "$SERVICE" --region "$target" \
+      --format=json 2>/dev/null); then
+    log "  WARN: cannot inspect ${target} traffic before pruning failed revisions"
+    return 1
+  fi
   local failed_revs
   failed_revs=$(gc run revisions list --service "$SERVICE" --region "$target" \
     --format='value(metadata.name,status.conditions[0].status)' 2>/dev/null \
     | awk '$2 == "False" { print $1 }')
+  [ -n "$failed_revs" ] || return 0
+
+  # A failed canary can remain in spec.traffic even though Cloud Run correctly
+  # keeps 100% of effective traffic on the old healthy revision. That stale
+  # desired split makes every later `gcloud run deploy --no-traffic` return the
+  # old failure after it has successfully created a new Ready revision. Roll
+  # the desired state back to the sole effective 100% revision first. The
+  # update also removes a dangling staged-probe tag while preserving unrelated
+  # tags. A real active split is ambiguous and the planner fails closed.
+  local repair_plan
+  if ! repair_plan=$(python3 "${SCRIPT_DIR}/resolve_failed_revision_repair.py" \
+      $failed_revs <<<"$service_json"); then
+    log "  ERROR: cannot safely resolve stale failed traffic in ${target}"
+    return 1
+  fi
+  if [ -n "$repair_plan" ]; then
+    local active_revision="${repair_plan%%$'\t'*}"
+    local referenced_failed="${repair_plan#*$'\t'}"
+    log "  repairing stale failed traffic in ${target}: ${referenced_failed}; restoring 100% ${active_revision}"
+    if ! gc run services update-traffic "$SERVICE" --region "$target" \
+        --to-revisions="${active_revision}=100" --quiet >/dev/null 2>&1; then
+      # Cloud Run can persist the requested repair but return non-zero while
+      # the old failed configuration is reconciling. Verify state instead of
+      # trusting either the success or failure exit code.
+      log "  WARN: traffic repair command returned non-zero; verifying live state"
+    fi
+    if ! service_json=$(gc run services describe "$SERVICE" --region "$target" \
+        --format=json 2>/dev/null); then
+      log "  ERROR: cannot verify stale failed traffic repair in ${target}"
+      return 1
+    fi
+    local remaining_plan
+    if ! remaining_plan=$(python3 "${SCRIPT_DIR}/resolve_failed_revision_repair.py" \
+        $failed_revs <<<"$service_json"); then
+      log "  ERROR: repaired traffic in ${target} is not an unambiguous 100% split"
+      return 1
+    fi
+    if [ -n "$remaining_plan" ]; then
+      log "  ERROR: failed revisions remain referenced after traffic repair in ${target}"
+      return 1
+    fi
+  fi
+
   for rev in $failed_revs; do
-    # Skip if this NotReady revision is somehow still in the traffic
-    # split — better to leave it and let the operator decide than risk
-    # hitting a revision we deleted while live.
-    case " $serving " in
-      *" $rev "*) continue ;;
-    esac
     log "  pruning failed revision ${rev} in ${target}"
     gc run revisions delete "$rev" --region "$target" --quiet >/dev/null 2>&1 \
       || log "  WARN: failed to prune ${rev}; will let gcloud's deploy step error if it cares"

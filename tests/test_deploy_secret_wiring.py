@@ -174,6 +174,19 @@ def test_all_attested_control_plane_regions_remain_warm() -> None:
     assert '"TR_SPANNER_POOL_SIZE=${TR_SPANNER_POOL_SIZE}"' in rollout
 
 
+def test_rollout_repairs_stale_failed_traffic_before_pruning_revisions() -> None:
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text(encoding="utf-8")
+    prune = rollout.split("prune_failed_revisions() {", 1)[1].split(
+        "\n}\n\nis_warm_region()", 1
+    )[0]
+
+    planner = 'resolve_failed_revision_repair.py"'
+    rollback = '--to-revisions="${active_revision}=100"'
+    delete = 'run revisions delete "$rev"'
+    assert prune.count(planner) == 2
+    assert prune.index(planner) < prune.index(rollback) < prune.index(delete)
+
+
 def test_production_deploy_interlocks_regional_quota_issuance() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
     helper = (ROOT / "scripts/deploy/regional_quota_rollout.sh").read_text()
