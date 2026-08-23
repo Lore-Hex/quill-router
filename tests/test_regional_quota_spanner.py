@@ -775,6 +775,8 @@ def test_reconciler_lock_is_single_owner_and_fenced_after_expiry() -> None:
     )
     assert replacement is not None
     assert replacement.fencing_token == first.fencing_token + 1
+    assert replacement.previous_owner == "worker-a"
+    assert replacement.previous_fencing_token == first.fencing_token
     assert (
         store.release_regional_quota_reconciler_lock(
             owner="worker-a",

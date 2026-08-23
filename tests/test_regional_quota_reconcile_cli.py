@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,20 +13,41 @@ from trusted_router import regional_quota_reconcile_cli as worker
 
 
 @pytest.fixture(autouse=True)
-def _isolate_observability(monkeypatch: pytest.MonkeyPatch) -> None:
+def _isolate_observability(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     monkeypatch.setattr(worker, "init_sentry", lambda _settings: None)
     monkeypatch.setattr(worker, "record_heartbeat", lambda *_args, **_kwargs: None)
+    caplog.set_level(logging.INFO, logger=worker.__name__)
 
 
 class _Store:
-    def __init__(self, result: dict[str, int], *, lock_available: bool = True) -> None:
+    def __init__(
+        self,
+        result: dict[str, int],
+        *,
+        lock_available: bool = True,
+        release_result: bool = True,
+        reconcile_error: Exception | None = None,
+        release_error: Exception | None = None,
+        previous_owner: str | None = None,
+        previous_fencing_token: int | None = None,
+    ) -> None:
         self.result = result
         self.limits: list[int] = []
         self.lock_available = lock_available
+        self.release_result = release_result
+        self.reconcile_error = reconcile_error
+        self.release_error = release_error
+        self.previous_owner = previous_owner
+        self.previous_fencing_token = previous_fencing_token
         self.released: list[tuple[str, int]] = []
 
     def reconcile_regional_quota_leases(self, *, limit: int) -> dict[str, int]:
         self.limits.append(limit)
+        if self.reconcile_error is not None:
+            raise self.reconcile_error
         return self.result
 
     def verify_regional_quota_ledger(self) -> tuple[str, ...]:
@@ -41,7 +63,11 @@ class _Store:
         assert ttl_seconds == 90
         if not self.lock_available:
             return None
-        return SimpleNamespace(fencing_token=7)
+        return SimpleNamespace(
+            fencing_token=7,
+            previous_owner=self.previous_owner,
+            previous_fencing_token=self.previous_fencing_token,
+        )
 
     def release_regional_quota_reconciler_lock(
         self,
@@ -50,7 +76,9 @@ class _Store:
         fencing_token: int,
     ) -> bool:
         self.released.append((owner, fencing_token))
-        return True
+        if self.release_error is not None:
+            raise self.release_error
+        return self.release_result
 
 
 def test_disabled_worker_does_not_open_storage(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -68,7 +96,10 @@ def test_disabled_worker_does_not_open_storage(monkeypatch: pytest.MonkeyPatch) 
     assert worker.main() == 0
 
 
-def test_worker_reconciles_with_bounded_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_worker_reconciles_with_bounded_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     store = _Store({"inspected": 2, "reconciled": 2, "closed": 1, "errors": 0})
     monkeypatch.setattr(
         worker,
@@ -91,6 +122,107 @@ def test_worker_reconciles_with_bounded_limit(monkeypatch: pytest.MonkeyPatch) -
     assert len(store.released) == 1
     assert store.released[0][1] == 7
     assert heartbeats == ["job:regional-quota-reconcile"]
+    assert "regional_quota.reconciler_lock_acquired" in caplog.text
+    assert "regional_quota.reconciler_lock_released" in caplog.text
+
+
+def test_worker_logs_expired_lock_takeover(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = _Store(
+        {"inspected": 1, "reconciled": 1, "closed": 1, "errors": 0},
+        previous_owner="rqrec-expired-owner",
+        previous_fencing_token=6,
+    )
+    monkeypatch.setattr(
+        worker,
+        "get_settings",
+        lambda: SimpleNamespace(
+            regional_quota_reconciler_worker=True,
+            regional_quota_leases_enabled=True,
+            regional_quota_reconcile_limit=25,
+        ),
+    )
+    monkeypatch.setattr(worker, "create_store", lambda _settings: store)
+
+    assert worker.main() == 0
+    assert "regional_quota.reconciler_lock_takeover" in caplog.text
+    assert "previous_owner=rqrec-expired-owner" in caplog.text
+    assert "previous_fencing_token=6" in caplog.text
+
+
+def test_reconcile_exception_still_releases_lock_and_exits_one(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = _Store(
+        {"inspected": 0, "reconciled": 0, "closed": 0, "errors": 0},
+        reconcile_error=RuntimeError("reconcile exploded"),
+    )
+    monkeypatch.setattr(
+        worker,
+        "get_settings",
+        lambda: SimpleNamespace(
+            regional_quota_reconciler_worker=True,
+            regional_quota_leases_enabled=True,
+            regional_quota_reconcile_limit=25,
+        ),
+    )
+    monkeypatch.setattr(worker, "create_store", lambda _settings: store)
+
+    assert worker.main() == 1
+    assert len(store.released) == 1
+    assert "regional_quota.reconciler_failed" in caplog.text
+    assert "regional_quota.reconciler_lock_released" in caplog.text
+
+
+def test_release_lost_exits_one_and_logs(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = _Store(
+        {"inspected": 1, "reconciled": 1, "closed": 1, "errors": 0},
+        release_result=False,
+    )
+    monkeypatch.setattr(
+        worker,
+        "get_settings",
+        lambda: SimpleNamespace(
+            regional_quota_reconciler_worker=True,
+            regional_quota_leases_enabled=True,
+            regional_quota_reconcile_limit=25,
+        ),
+    )
+    monkeypatch.setattr(worker, "create_store", lambda _settings: store)
+
+    assert worker.main() == 1
+    assert "regional_quota.reconciler_lock_release_lost" in caplog.text
+    assert "regional_quota.reconciler_lock_released" not in caplog.text
+
+
+def test_release_exception_is_caught_and_exits_one(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = _Store(
+        {"inspected": 1, "reconciled": 1, "closed": 1, "errors": 0},
+        release_error=RuntimeError("release exploded"),
+    )
+    monkeypatch.setattr(
+        worker,
+        "get_settings",
+        lambda: SimpleNamespace(
+            regional_quota_reconciler_worker=True,
+            regional_quota_leases_enabled=True,
+            regional_quota_reconcile_limit=25,
+        ),
+    )
+    monkeypatch.setattr(worker, "create_store", lambda _settings: store)
+
+    assert worker.main() == 1
+    assert "regional_quota.reconciler_lock_release_failed" in caplog.text
+    assert "regional_quota.reconciler_lock_release_lost" not in caplog.text
 
 
 def test_worker_fails_execution_when_any_lease_fails(
@@ -169,6 +301,7 @@ def test_worker_fails_closed_when_no_ledger_region_is_verified(
 
 def test_worker_skips_when_another_reconciler_owns_the_lock(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     store = _Store(
         {"inspected": 1, "reconciled": 1, "closed": 1, "errors": 0},
@@ -188,6 +321,7 @@ def test_worker_skips_when_another_reconciler_owns_the_lock(
     assert worker.main() == 0
     assert store.limits == []
     assert store.released == []
+    assert "regional_quota.reconciler_lock_busy" in caplog.text
 
 
 def test_worker_environment_does_not_require_serving_pilot_allowlist() -> None:

@@ -345,6 +345,11 @@ jobs:
     needs: [build-image, migrate-schema, sync-runtime-secrets, confirm-current-main]
     if: ${{ needs.confirm-current-main.outputs.proceed == 'true' }}
     runs-on: ubuntu-latest
+    # Must stay UNDER the deployment mutex TTL (deploy_mutex.sh, 5400s): a job
+    # that outlives the lease invites a legal expired-lock takeover while this
+    # run is still shifting traffic — the exact overlap the mutex exists to
+    # prevent. GitHub's default 360-minute bound is four TTLs too generous.
+    timeout-minutes: 85
     env:
       PROJECT_ID: quill-cloud-proxy
       REGION: us-central1
@@ -371,6 +376,12 @@ jobs:
 
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
+
+      - name: Acquire production deployment mutex
+        env:
+          TR_DEPLOY_MUTEX_OWNER: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TR_DEPLOY_MUTEX_TOOL: workflow
+        run: bash scripts/deploy/deploy_mutex.sh acquire >> "$GITHUB_ENV"
 
       # Staged regional deploy. Deploy us-central1 first, gate on a
       # 3-min single-region synthetic watch; only proceed to the
@@ -837,6 +848,10 @@ jobs:
           SPANNER_DATABASE_ID: trusted-router
         run: scripts/deploy/retire_settle_outbox_hot_index.sh
 
+      - name: Release production deployment mutex
+        if: always()
+        run: bash scripts/deploy/deploy_mutex.sh release
+
   public-surface-companion:
     # This job creates/updates the isolated T1 service only after the legacy
     # rollout is healthy. It never prepares or imports a URL map. Before the
@@ -847,8 +862,13 @@ jobs:
     continue-on-error: false
     runs-on: ubuntu-latest
     # Four sequential regional Cloud Run deploys normally finish in 12-20
-    # minutes. Thirty allows cold image pulls and bounded smoke retries without
-    # letting this T1 follow-on hold the workflow-wide production lock for hours.
+    # minutes. Thirty allows cold image pulls and bounded smoke retries.
+    # NOTE: this job runs AFTER the deploy job has released the production
+    # deployment mutex, and does not hold it. That is deliberate scope: the
+    # mutex fences trusted-router revisions/traffic, which manual rollout
+    # scripts also mutate; the T1 companion touches only its own service and
+    # is serialized against other workflow runs by the concurrency group. If
+    # manual T1 tooling ever appears, give it the same mutex first.
     timeout-minutes: 30
     env:
       PROJECT_ID: quill-cloud-proxy
