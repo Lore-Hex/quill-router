@@ -1837,6 +1837,35 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             headers={"cache-control": "max-age=86400, public"},
         )
 
+    @app.get("/trust/control-plane.json")
+    async def trust_control_plane() -> JSONResponse:
+        """What commit THIS control plane is running.
+
+        The enclave release records answer "which gateway build is serving".
+        Nothing answered the same question about the control plane, and two of
+        the three planes did not even record it: AWS shipped TR_RELEASE="eu"
+        and Azure "azure", both constants, so every deploy reported the same
+        string and a fresh plane was indistinguishable from a stale one. That
+        is why Azure ran for an unknown length of time on a deploy script that
+        could no longer deploy it, with nothing able to notice.
+
+        Deliberately per-plane and unauthenticated: the staleness check reads
+        this from outside, the same way the trust-drift check reads
+        attestations, so it measures what is SERVING rather than what some
+        deploy job believed it shipped.
+        """
+        return JSONResponse(
+            {
+                # trusted_domain is what already differs per plane
+                # (trustedrouter.com / aws. / azure.), so it identifies the
+                # plane without adding a setting that could be set wrong.
+                "plane": settings.trusted_domain,
+                "release": settings.release,
+                "api_base_url": settings.api_base_url,
+            },
+            headers=public_document_headers("/trust/control-plane.json"),
+        )
+
     @app.get("/trust/gcp-release.json")
     async def trust_release() -> JSONResponse:
         release = await resolved_trust_release()

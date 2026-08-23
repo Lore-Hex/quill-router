@@ -58,6 +58,9 @@ PG_ADMIN="${PG_ADMIN:-tradmin}"
 PG_DB="${PG_DB:-trustedrouter}"
 ACR="${ACR:-$(echo "${STACK}${LOCATION}acr" | tr -cd "[:alnum:]")}"
 IMAGE_TAG="${IMAGE_TAG:-azure}"
+# TR_RELEASE was IMAGE_TAG, the constant "azure", so this plane reported the
+# same release string on every deploy and staleness could not be measured.
+RELEASE_COMMIT="${RELEASE_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}"
 STATE_DIR="${STATE_DIR:-$HOME/.config/$STACK}"
 PW_FILE="${PW_FILE:-$STATE_DIR/pgpw}"
 
@@ -249,7 +252,7 @@ ENV_VARS=(
   "TR_MAX_IN_FLIGHT_REQUEST_BODY_BYTES=8388608"
   "TR_MAX_CONCURRENT_REQUEST_BODIES=2"
   "TR_REQUEST_BODY_READ_TIMEOUT_SECONDS=10"
-  "TR_RELEASE=${IMAGE_TAG}"
+  "TR_RELEASE=${RELEASE_COMMIT}"
   "TR_STORAGE_BACKEND=postgres"
   "TR_POSTGRES_DSN=secretref:pg-dsn"
   "TR_ENABLE_LIVE_PROVIDERS=false"
