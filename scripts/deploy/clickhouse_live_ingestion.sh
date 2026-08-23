@@ -94,6 +94,21 @@ ssh_node --command="sudo sh -c '
   systemctl daemon-reload
   systemctl enable tr-clickhouse-ingest.service
   systemctl restart tr-clickhouse-ingest.service
+  # Restart EVERY long-running daemon whose code this deploy just replaced,
+  # not only the benchmark drain. On 2026-08-23 this script shipped a new
+  # ACTIVITY_COLUMNS allowlist while tr-clickhouse-operational-ingest kept the
+  # old module in memory: it silently dropped the new workspace_id key from
+  # every payload while systemctl reported active -- a running process says
+  # nothing about WHICH code it runs. Timer-driven oneshots pick up new code
+  # on their next fire and need no restart. The operational units are guarded
+  # on existence because they are installed by a different script (and the
+  # postgres variant only exists on the AWS/Azure nodes).
+  for unit in tr-clickhouse-operational-ingest.service tr-clickhouse-operational-ingest-postgres.service; do
+    if [ -f \"/etc/systemd/system/\$unit\" ]; then
+      systemctl restart \"\$unit\"
+      systemctl is-active \"\$unit\"
+    fi
+  done
   systemctl enable --now tr-clickhouse-reconcile.timer
   systemctl enable --now tr-clickhouse-archive.timer
   systemctl enable --now tr-clickhouse-archive-restore.timer

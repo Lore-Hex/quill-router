@@ -358,3 +358,33 @@ def test_workspace_directory_is_on_demand_not_a_timer() -> None:
     # need the workspace_id column before the drain ships.
     assert "010_workspace_directory.sql" in deploy
     assert "012_activity_generations_workspace_id.sql" in deploy
+
+
+def test_live_ingestion_restarts_every_daemon_whose_code_it_ships() -> None:
+    """The deploy replaces /opt/tr-clickhouse wholesale, so every long-running
+    daemon on that tree must be restarted, not only the benchmark drain.
+
+    On 2026-08-23 this script shipped a new ACTIVITY_COLUMNS allowlist while
+    tr-clickhouse-operational-ingest kept the old module in memory: it
+    silently dropped the new workspace_id key from every payload, and
+    systemctl reported "active" throughout -- a running process says nothing
+    about which code it runs. Asserting only that the benchmark drain is
+    restarted was exactly the under-assertion that let this through.
+
+    Timer-driven oneshots (archive, rollups, reconcile) pick up new code on
+    their next fire and need no restart.
+    """
+    script = (ROOT / "scripts/deploy/clickhouse_live_ingestion.sh").read_text()
+
+    assert "systemctl restart tr-clickhouse-ingest.service" in script
+    # The operational drains restart through the guarded loop: both units are
+    # named, and the loop both restarts and re-asserts activeness. The guard
+    # exists because the postgres variant only exists on the AWS/Azure nodes.
+    loop = script[script.index("for unit in") : script.index("done", script.index("for unit in"))]
+    assert "tr-clickhouse-operational-ingest.service" in loop
+    assert "tr-clickhouse-operational-ingest-postgres.service" in loop
+    assert "systemctl restart" in loop
+    assert "systemctl is-active" in loop
+    # The restart must come AFTER the tree extraction that replaces the code,
+    # or it restarts the daemons into the same stale module.
+    assert script.index("tar -xzf - -C /opt/tr-clickhouse") < script.index("for unit in")
