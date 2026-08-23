@@ -15,6 +15,7 @@ Index:
 - [GCP enclave deploy keeps auto-rolling back europe-west4](#eu-rollback)
 - [GCP enclave deploy fails with "unrecognized arguments: --min-ready"](#min-ready)
 - [Hourly price bot commits but TR catalog stays stale](#bot-doesnt-deploy)
+- [Production deployment mutex](#deployment-mutex)
 - [Status page shows a region "down" but the region is actually healthy](#stale-status)
 - [`refresh.py` reports "too_many_failures" locally](#local-refresh-fails)
 - [A provider serves a model but TR's `/v1/models` doesn't list it](#missing-model)
@@ -280,6 +281,34 @@ The reason for the workaround: GHA's loop-prevention says commits
 pushed by `GITHUB_TOKEN` don't trigger `push:` events. `workflow_dispatch`
 events from `GITHUB_TOKEN` DO fire workflows — that's the exception
 we exploit.
+
+---
+
+## <a id="deployment-mutex"></a>Production deployment mutex
+
+The control-plane deploy workflow, direct `rollout.sh` runs, and manual
+`staged_traffic.sh` traffic shifts share a generation-fenced lock in GCS. It
+prevents two operators or automation paths from changing production Cloud Run
+revisions or traffic at the same time. Inspect the current metadata-only holder
+record without changing it:
+
+```bash
+bash scripts/deploy/deploy_mutex.sh status
+```
+
+Break glass only after running `status`, checking that the recorded owner is no
+longer active, and confirming that no GitHub Actions or manual production deploy
+is still running. Use the generation printed by `status`; the precondition keeps
+this command from deleting a replacement lock acquired after the inspection:
+
+```bash
+gcloud storage rm \
+  gs://tr-deploy-mutex-quill-cloud-proxy/locks/trusted-router-production.json \
+  --if-generation-match=GENERATION
+```
+
+Normal recovery does not require manual removal: locks expire after 90 minutes,
+and the next acquirer can take over an expired generation safely.
 
 ---
 

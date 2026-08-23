@@ -45,6 +45,23 @@ def main() -> int:
     if lock is None:
         logger.info("regional_quota.reconciler_lock_busy")
         return 0
+    logger.info(
+        "regional_quota.reconciler_lock_acquired owner=%s fencing_token=%d ttl_seconds=%d",
+        owner,
+        int(lock.fencing_token),
+        _LOCK_TTL_SECONDS,
+    )
+    previous_owner = getattr(lock, "previous_owner", None)
+    previous_fencing_token = getattr(lock, "previous_fencing_token", None)
+    if previous_owner is not None and previous_fencing_token is not None:
+        logger.info(
+            "regional_quota.reconciler_lock_takeover owner=%s fencing_token=%d "
+            "previous_owner=%s previous_fencing_token=%d",
+            owner,
+            int(lock.fencing_token),
+            previous_owner,
+            int(previous_fencing_token),
+        )
 
     exit_code = 1
     try:
@@ -60,10 +77,17 @@ def main() -> int:
             )
         except Exception:
             logger.exception("regional_quota.reconciler_lock_release_failed")
-            released = False
-        if not released:
-            logger.error("regional_quota.reconciler_lock_release_lost")
             exit_code = 1
+        else:
+            if released:
+                logger.info(
+                    "regional_quota.reconciler_lock_released owner=%s fencing_token=%d",
+                    owner,
+                    int(lock.fencing_token),
+                )
+            else:
+                logger.error("regional_quota.reconciler_lock_release_lost")
+                exit_code = 1
     if exit_code == 0:
         record_heartbeat("job:regional-quota-reconcile", settings=settings)
     return exit_code

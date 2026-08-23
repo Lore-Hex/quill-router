@@ -23,6 +23,8 @@ WATCHDOG_SLO_CLASS="${TR_WATCHDOG_SLO_CLASS:-router_core}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_cloud_run_revision_probe.sh
 source "${SCRIPT_DIR}/_cloud_run_revision_probe.sh"
+# shellcheck source=scripts/deploy/deploy_mutex.sh
+source "${SCRIPT_DIR}/deploy_mutex.sh"
 LEGACY_PROBE_ATTEMPTS="${TR_LEGACY_PROBE_ATTEMPTS:-3}"
 LEGACY_PROBE_RETRY_SECONDS="${TR_LEGACY_PROBE_RETRY_SECONDS:-2}"
 LEGACY_PROBE_TAG="staged-probe"
@@ -57,9 +59,30 @@ cleanup_probe_tag() {
   return 1
 }
 
-trap cleanup_probe_tag EXIT
+cleanup_staged_traffic() {
+  local staged_status=$?
+  # A signal landing mid-cleanup would exit without re-running this handler,
+  # leaking the mutex until its TTL. Finish cleanup uninterrupted.
+  trap '' INT TERM
+  trap - EXIT
+  if ! cleanup_probe_tag && [ "$staged_status" -eq 0 ]; then
+    staged_status=1
+  fi
+  if [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then
+    deploy_mutex_release
+  fi
+  exit "$staged_status"
+}
+
+# The workflow owns one mutex across every regional ramp. A direct manual
+# traffic shift acquires the same object and releases it through the chained
+# EXIT cleanup below.
+trap cleanup_staged_traffic EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+if [ -z "${TR_DEPLOY_MUTEX_OPERATION:-}" ]; then
+  deploy_mutex_acquire
+fi
 
 shift_traffic() {
   local new_pct="$1"

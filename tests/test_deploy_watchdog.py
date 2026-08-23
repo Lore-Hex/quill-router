@@ -215,6 +215,11 @@ printf '%s' "$code"
         "STAGED_REMOVE_ALWAYS_FAILS": "1" if remove_always_fails else "0",
         "TR_LEGACY_PROBE_RETRY_SECONDS": "0",
         "TR_PROBE_TAG_REMOVE_RETRY_SECONDS": "0",
+        # This helper exercises a traffic ramp nested inside the workflow's
+        # already-acquired deployment-mutex scope. Dedicated mutex tests cover
+        # direct/manual acquisition against a generation-aware storage stub.
+        "TR_DEPLOY_MUTEX_OPERATION": "watchdog-test-operation",
+        "TR_DEPLOY_MUTEX_GENERATION": "1",
     }
     run = subprocess.run(  # noqa: S603 - fixed local script and stubbed PATH
         ["/bin/bash", str(script), "us-central1", "new-rev", "old-rev"],
