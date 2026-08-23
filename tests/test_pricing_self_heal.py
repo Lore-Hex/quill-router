@@ -751,6 +751,66 @@ def test_failed_provider_without_snapshot_price_still_counts_unrecovered() -> No
     assert "new-provider" not in results
 
 
+def test_manifest_stale_fallback_rejects_nonpositive_or_malformed_prices(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "provider.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "models": [
+                    {
+                        "id": "provider/good",
+                        "routable": True,
+                        "input_token_price_per_m": 1,
+                        "output_token_price_per_m": 2,
+                        "cached_input_token_price_per_m": 0,
+                    },
+                    {
+                        "id": "provider/free-input",
+                        "routable": True,
+                        "input_token_price_per_m": 0,
+                        "output_token_price_per_m": 2,
+                    },
+                    {
+                        "id": "provider/free-output",
+                        "routable": True,
+                        "input_token_price_per_m": 1,
+                        "output_token_price_per_m": 0,
+                    },
+                    {
+                        "id": "provider/malformed",
+                        "routable": True,
+                        "input_token_price_per_m": "not-a-price",
+                        "output_token_price_per_m": 2,
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeProvider:
+        MANIFEST_STALE_FALLBACK = True
+        MANIFEST_PATH = manifest_path
+        INCLUDE_IN_PRICE_INDEX = True
+
+    monkeypatch.setattr(refresh, "_import_provider", lambda _slug: FakeProvider)
+    results: dict[str, pricing_base.ProviderPricingResult] = {}
+
+    unrecovered = refresh._apply_stale_fallbacks(
+        results,
+        [("provider", "temporary failure")],
+        {"models": []},
+    )
+
+    assert unrecovered == []
+    assert results["provider"].prices == {
+        "provider/good": pricing_base.ModelPrice(1, 2)
+    }
+
+
 def test_stale_snapshot_never_rewrites_provider_manifest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -47,7 +47,9 @@ def _normalize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _is_perplexity_route(row: dict[str, Any]) -> bool:
     model_id = row.get("id")
-    return isinstance(model_id, str) and model_id.startswith("perplexity/")
+    if not isinstance(model_id, str) or not model_id.strip():
+        return False
+    return "/" not in model_id or model_id.startswith("perplexity/")
 
 
 CATALOG = DirectOpenAIProvider(

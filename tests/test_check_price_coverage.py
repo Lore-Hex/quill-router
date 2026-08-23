@@ -5,6 +5,8 @@ from __future__ import annotations
 import datetime as dt
 import json
 
+import pytest
+
 from scripts import check_price_coverage
 from scripts.check_price_coverage import audit
 
@@ -120,6 +122,83 @@ def test_shared_gemini_scraper_covers_ai_studio_and_vertex() -> None:
     assert not any("google-vertex: NO price source" in warning for warning in warnings)
     assert "google-ai-studio: live scraper ✓" in info
     assert "google-vertex: live scraper ✓" in info
+
+
+def test_authenticated_model_discovery_refuses_redirects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_fetch_json(
+        url: str,
+        *,
+        extra_headers: dict[str, str],
+        follow_redirects: bool,
+    ) -> dict[str, list[object]]:
+        seen.update(
+            url=url,
+            authorization=extra_headers.get("Authorization"),
+            follow_redirects=follow_redirects,
+        )
+        return {"data": []}
+
+    monkeypatch.setenv("TEST_PROVIDER_API_KEY", "secret-token")
+    monkeypatch.setattr(check_price_coverage, "fetch_provider_json", fake_fetch_json)
+
+    assert check_price_coverage._fetch_json(
+        "https://provider.example/v1/models",
+        ("TEST_PROVIDER_API_KEY",),
+    ) == {"data": []}
+    assert seen == {
+        "url": "https://provider.example/v1/models",
+        "authorization": "Bearer secret-token",
+        "follow_redirects": False,
+    }
+
+
+def test_gemini_model_discovery_keeps_api_key_out_of_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_fetch_json(
+        url: str,
+        *,
+        extra_headers: dict[str, str],
+        follow_redirects: bool,
+    ) -> dict[str, list[object]]:
+        seen.update(url=url, headers=extra_headers, follow_redirects=follow_redirects)
+        return {"models": []}
+
+    monkeypatch.setenv("GEMINI_TEST_KEY", "secret-token")
+    monkeypatch.setattr(check_price_coverage, "fetch_provider_json", fake_fetch_json)
+    url = "https://generativelanguage.googleapis.com/v1beta/models"
+
+    assert check_price_coverage._fetch_json(url, ("GEMINI_TEST_KEY",)) == {"models": []}
+    assert seen["url"] == url
+    assert seen["follow_redirects"] is False
+    headers = seen["headers"]
+    assert isinstance(headers, dict)
+    assert headers["x-goog-api-key"] == "secret-token"
+
+
+def test_stale_fallback_manifests_are_age_gated_even_with_live_scrapers() -> None:
+    raw = json.loads(
+        check_price_coverage.MANIFEST_DIR.joinpath("upstage.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    generated = dt.datetime.fromisoformat(raw["generated_at"].replace("Z", "+00:00"))
+
+    warnings, _info, hard_failures = check_price_coverage._run_audit(
+        14,
+        generated + dt.timedelta(days=15),
+        check_model_discovery=False,
+    )
+
+    warning = next(item for item in warnings if item.startswith("upstage:"))
+    assert "live scraper fallback manifest is 15d stale" in warning
+    assert warning in hard_failures
 
 
 def test_zai_model_discovery_extracts_glm_ids_from_docs() -> None:

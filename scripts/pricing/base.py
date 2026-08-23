@@ -291,7 +291,7 @@ def runtime_required_models(slug: str) -> frozenset[str]:
 # ----------------------------------------------------------------------
 
 
-def _provider_client() -> httpx.Client:
+def _provider_client(*, follow_redirects: bool = True) -> httpx.Client:
     """Construct an httpx.Client with transport-level retries on
     connect-failures (TCP reset, DNS hiccup). 5xx responses are still
     returned bodies and need application-level retry; that's handled
@@ -299,7 +299,7 @@ def _provider_client() -> httpx.Client:
     transport = httpx.HTTPTransport(retries=PROVIDER_FETCH_TRANSPORT_RETRIES)
     return httpx.Client(
         timeout=PROVIDER_FETCH_TIMEOUT,
-        follow_redirects=True,
+        follow_redirects=follow_redirects,
         transport=transport,
     )
 
@@ -406,7 +406,12 @@ def normalize_parser_input(source: str, *, include_raw_html: bool = True) -> str
     return f"{str(soup)}\n\n<!-- trustedrouter-normalized -->\n{projection}"
 
 
-def fetch_json(url: str, *, extra_headers: dict[str, str] | None = None) -> Any:
+def fetch_json(
+    url: str,
+    *,
+    extra_headers: dict[str, str] | None = None,
+    follow_redirects: bool = True,
+) -> Any:
     """Fetch a provider JSON API (e.g., Together's /v1/models). The
     only providers that bypass the parser tier are those with a real
     JSON pricing API; this helper lives here so its network IO is also
@@ -415,7 +420,7 @@ def fetch_json(url: str, *, extra_headers: dict[str, str] | None = None) -> Any:
     headers = {"User-Agent": PROVIDER_FETCH_UA, "Accept": "application/json"}
     if extra_headers:
         headers.update(extra_headers)
-    with _provider_client() as client:
+    with _provider_client(follow_redirects=follow_redirects) as client:
         response = _get_with_retries(client, url, headers)
         response.raise_for_status()
         return response.json()

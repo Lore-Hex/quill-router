@@ -8,6 +8,7 @@ import pytest
 
 from scripts.check_price_coverage import _DISCOVERABLE_MANIFEST_PROVIDERS
 from scripts.pricing.base import ModelPrice
+from scripts.pricing.openai_catalog import discover_available_priced_chat_catalog
 from scripts.pricing.providers import (
     _direct_openai,
     aion_labs,
@@ -116,6 +117,16 @@ def test_failed_live_canaries_stay_dark() -> None:
     }
     assert nextbit_rows["google/gemma-2-27b-it"]["routable"] is False
     assert samba_rows["minimax/minimax-m3"]["routable"] is False
+    assert not any(
+        endpoint.provider == "nextbit"
+        and endpoint.model_id == "google/gemma-2-27b-it"
+        for endpoint in MODEL_ENDPOINTS.values()
+    )
+    assert not any(
+        endpoint.provider == "sambanova"
+        and endpoint.model_id == "minimax/minimax-m3"
+        for endpoint in MODEL_ENDPOINTS.values()
+    )
 
 
 def test_upstage_parser_reads_all_three_first_party_price_axes() -> None:
@@ -220,6 +231,28 @@ def test_direct_provider_drops_any_zero_direction_before_canary() -> None:
             "zero/output": ModelPrice(1, 0),
         }
     ) == {"ok/model": ModelPrice(1, 2)}
+
+
+def test_price_joined_catalog_excludes_non_text_output_models() -> None:
+    upstream_ids: dict[str, str] = {}
+    discovered = discover_available_priced_chat_catalog(
+        [
+            {"id": "vendor/text", "output_modalities": ["text"]},
+            {"id": "vendor/image", "output_modalities": ["image"]},
+        ],
+        prices={
+            "vendor/text": ModelPrice(1, 2),
+            "vendor/image": ModelPrice(1, 2),
+        },
+        explicit_map={
+            "vendor/text": "vendor/text",
+            "vendor/image": "vendor/image",
+        },
+        upstream_id_map=upstream_ids,
+    )
+
+    assert set(discovered) == {"vendor/text"}
+    assert upstream_ids == {"vendor/text": "vendor/text"}
 
 
 def test_direct_provider_catalog_fetch_uses_shared_retry_helper(
@@ -400,6 +433,12 @@ def test_perplexity_omits_an_undocumented_cache_rate() -> None:
     assert "input_cache_read" not in rows[0]["pricing"]
 
 
+def test_perplexity_accepts_unqualified_native_ids_for_namespacing() -> None:
+    assert perplexity._is_perplexity_route({"id": "sonar"}) is True
+    assert perplexity.CATALOG.model_id("sonar") == "perplexity/sonar"
+    assert perplexity._is_perplexity_route({"id": "other/sonar"}) is False
+
+
 def test_wave3_pricing_fixtures_are_captured_from_first_party_sources() -> None:
     expected_sources = {
         "upstage.html": "https://www.upstage.ai/pricing/api",
@@ -413,13 +452,17 @@ def test_wave3_pricing_fixtures_are_captured_from_first_party_sources() -> None:
 
 
 def test_wave3_secrets_do_not_join_the_all_or_nothing_refresh_block() -> None:
+    root = Path(__file__).parents[1]
     workflow = (
-        Path(__file__).parents[1] / ".github/workflows/refresh-prices.yml"
+        root / ".github/workflows/refresh-prices.yml"
     ).read_text(encoding="utf-8")
+    secret_setup = (root / "scripts/deploy/secrets.sh").read_text(encoding="utf-8")
     mandatory_step = workflow.split("- name: Pull PARASAIL_API_KEY", 1)[1]
     mandatory_step = mandatory_step.split("- name:", 1)[0]
     for module in MODULES:
-        assert f"trustedrouter-{module.SLUG}-api-key" not in mandatory_step
+        secret_name = f"trustedrouter-{module.SLUG}-api-key"
+        assert secret_name not in mandatory_step
+        assert f'grant_tr_deploy_secret_access "{secret_name}"' not in secret_setup
 
 
 def test_wave3_refreshes_reuse_committed_manifests_when_live_auth_is_unavailable() -> None:

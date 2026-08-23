@@ -652,10 +652,24 @@ def _apply_stale_fallbacks(
             model_id = row.get("id")
             if not isinstance(model_id, str) or not model_id:
                 continue
-            prompt = int(row.get("input_token_price_per_m") or 0)
-            completion = int(row.get("output_token_price_per_m") or 0)
+            try:
+                prompt = int(row.get("input_token_price_per_m") or 0)
+                completion = int(row.get("output_token_price_per_m") or 0)
+            except (TypeError, ValueError):
+                continue
+            # Live direct-provider discovery requires both directions to be
+            # positive. Preserve the same invariant when recovering from a
+            # committed manifest so malformed hand edits cannot publish a
+            # free input or output direction.
+            if prompt <= 0 or completion <= 0:
+                continue
             cached_raw = row.get("cached_input_token_price_per_m")
-            cached = int(cached_raw) if cached_raw is not None else None
+            try:
+                cached = int(cached_raw) if cached_raw is not None else None
+            except (TypeError, ValueError):
+                cached = None
+            if cached is not None and cached <= 0:
+                cached = None
             prices[model_id] = ModelPrice(
                 prompt_micro_per_m=prompt,
                 completion_micro_per_m=completion,

@@ -26,6 +26,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from scripts.pricing.base import fetch_json as fetch_provider_json
 from scripts.pricing.model_ids import (
     canonicalize_native_model_id,
     canonicalize_unqualified_model_id,
@@ -579,15 +580,22 @@ def _fetch_json(url: str, env_names: tuple[str, ...]) -> Any:
     }
     token = next((os.environ.get(name) for name in env_names if os.environ.get(name)), None)
     is_gemini = "generativelanguage.googleapis.com" in url
-    if token and not is_gemini:
-        headers["Authorization"] = f"Bearer {token}"
-    request_url = url
-    if is_gemini and token:
-        sep = "&" if "?" in url else "?"
-        request_url = f"{url}{sep}key={token}"
-    req = urllib.request.Request(request_url, headers=headers)  # noqa: S310
-    with urllib.request.urlopen(req, timeout=20) as response:  # noqa: S310
-        return json.loads(response.read().decode("utf-8", errors="replace"))
+    if token:
+        if is_gemini:
+            # Google accepts API keys in this header. Never put credentials in
+            # the URL, which can be copied into retry logs and proxy traces.
+            headers["x-goog-api-key"] = token
+        else:
+            headers["Authorization"] = f"Bearer {token}"
+    # Authenticated discovery must never replay a provider key to a redirect
+    # target. The shared httpx helper also centralizes retries and timeouts;
+    # redirects are disabled here because a moved catalog URL must be reviewed
+    # before credentials are sent to it.
+    return fetch_provider_json(
+        url,
+        extra_headers=headers,
+        follow_redirects=False,
+    )
 
 
 def _json_model_rows(payload: Any) -> list[dict[str, Any]]:
@@ -916,26 +924,44 @@ def _run_audit(
             if not check_model_discovery:
                 info.append(f"{slug}: official fixed-cost video price gate (network skipped) ✓")
             continue
-        if slug in scrapers:
+        uses_stale_manifest_fallback = slug in _OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS
+        if slug in scrapers and not uses_stale_manifest_fallback:
             info.append(f"{slug}: live scraper ✓")
             continue
         manifest = MANIFEST_DIR / f"{slug}.json"
+        source_label = (
+            "live scraper fallback manifest"
+            if uses_stale_manifest_fallback
+            else "no scraper; manifest"
+        )
         if not manifest.exists():
-            warnings.append(
-                f"{slug}: NO price source (no scraper, no manifest) — "
-                f"catalog prices are hand-coded and never refresh"
+            warning = (
+                f"{slug}: NO price source ({source_label} missing) — "
+                "catalog prices cannot refresh safely"
             )
+            warnings.append(warning)
+            if uses_stale_manifest_fallback:
+                hard_fail_warnings.append(warning)
             continue
         age = _manifest_age_days(manifest, now)
         if age is None:
-            warnings.append(f"{slug}: no scraper; manifest has no parseable generated_at")
+            warning = f"{slug}: {source_label} has no parseable generated_at"
+            warnings.append(warning)
+            if uses_stale_manifest_fallback:
+                hard_fail_warnings.append(warning)
         elif age > max_age_days:
-            warnings.append(
-                f"{slug}: no scraper; manifest is {age:.0f}d stale "
+            warning = (
+                f"{slug}: {source_label} is {age:.0f}d stale "
                 f"(> {max_age_days}d) — prices may be wrong"
             )
+            warnings.append(warning)
+            if uses_stale_manifest_fallback:
+                hard_fail_warnings.append(warning)
         else:
-            info.append(f"{slug}: manifest {age:.0f}d old (within {max_age_days}d) ✓")
+            info.append(
+                f"{slug}: {source_label} {age:.0f}d old "
+                f"(within {max_age_days}d) ✓"
+            )
 
     if check_model_discovery:
         discovery_warnings, discovery_info = _model_discovery_audit(
