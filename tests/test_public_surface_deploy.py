@@ -315,6 +315,21 @@ def test_routed_healthy_smoke_promotes_each_region(tmp_path: Path) -> None:
     }
 
 
+def test_routed_accepts_deliberate_companion_cloud_state(tmp_path: Path) -> None:
+    isolated = DeployScriptHarness(tmp_path / "companion-to-routed-public")
+
+    run = isolated.run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={"HARNESS_PUBLIC_INITIAL_INGRESS": "all"},
+    )
+
+    assert run.returncode == 0, summarise(run)
+    assert run.public_ingress_state == {
+        region: "internal-and-cloud-load-balancing" for region in REGIONS
+    }
+
+
 def test_routed_smoke_is_reachable_before_each_region_restricts_ingress(
     tmp_path: Path,
 ) -> None:

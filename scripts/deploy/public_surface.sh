@@ -406,6 +406,7 @@ done
 ORIGINAL_REVISIONS=()
 ORIGINAL_INGRESSES=()
 ORIGINAL_PROBE_REVISIONS=()
+ORIGINAL_RATE_LIMIT_MODES=()
 if [ "$STAGE" = "routed" ]; then
   # Resolve every serving revision before the first mutation. The existing
   # helper rejects split or ambiguous traffic and describes the traffic-taking
@@ -430,6 +431,19 @@ print(name)
       exit 1
     fi
     ORIGINAL_REVISIONS+=("$active_revision")
+    if ! active_rate_limit_mode="$(regional_quota_revision_env \
+        "$active_json" "TR_RATE_LIMIT_CLIENT_IP_MODE" "__missing__")"; then
+      echo "ERROR: cannot identify the serving public client-IP mode in ${target}" >&2
+      exit 1
+    fi
+    case "$active_rate_limit_mode" in
+      untrusted|edge_header) ;;
+      *)
+        echo "ERROR: serving public revision in ${target} has unsupported TR_RATE_LIMIT_CLIENT_IP_MODE=${active_rate_limit_mode}" >&2
+        exit 1
+        ;;
+    esac
+    ORIGINAL_RATE_LIMIT_MODES+=("$active_rate_limit_mode")
     if ! service_json="$(gc run services describe "$PUBLIC_SERVICE" \
         --region "$target" --format=json)"; then
       echo "ERROR: cannot capture public ingress in ${target}" >&2
@@ -482,12 +496,22 @@ print(f"{ingress}\t{probe_revision}")
     target="${TARGET_REGIONS[$index]}"
     active_ingress="${ORIGINAL_INGRESSES[$index]}"
     active_probe_revision="${ORIGINAL_PROBE_REVISIONS[$index]}"
+    active_rate_limit_mode="${ORIGINAL_RATE_LIMIT_MODES[$index]}"
     if [ "$active_ingress" = "internal-and-cloud-load-balancing" ] && \
-       [ "$active_probe_revision" = "none" ]; then
+       [ "$active_probe_revision" = "none" ] && \
+       [ "$active_rate_limit_mode" = "edge_header" ]; then
+      continue
+    fi
+    # A companion revision is deliberately direct-reachable and does not trust
+    # the edge header.  That exact cloud-observed tuple is a clean starting
+    # state for companion -> routed, not evidence of an interrupted rollout.
+    if [ "$active_ingress" = "all" ] && \
+       [ "$active_probe_revision" = "none" ] && \
+       [ "$active_rate_limit_mode" = "untrusted" ]; then
       continue
     fi
     cloud_recovery_detected=1
-    echo "ERROR: cloud recovery state detected for ${PUBLIC_SERVICE}/${target}: serving=${ORIGINAL_REVISIONS[$index]}; ingress=${active_ingress}; probe tag ${PUBLIC_PROBE_TAG}=${active_probe_revision}" >&2
+    echo "ERROR: cloud recovery state detected for ${PUBLIC_SERVICE}/${target}: serving=${ORIGINAL_REVISIONS[$index]}; ingress=${active_ingress}; client-ip-mode=${active_rate_limit_mode}; probe tag ${PUBLIC_PROBE_TAG}=${active_probe_revision}" >&2
     if [ "$active_probe_revision" != "none" ]; then
       echo "Restore before retrying: gcloud --project ${PROJECT_ID} run services update-traffic ${PUBLIC_SERVICE} --region ${target} --remove-tags=${PUBLIC_PROBE_TAG} --quiet" >&2
     fi
