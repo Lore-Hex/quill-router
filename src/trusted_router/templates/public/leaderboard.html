@@ -21,7 +21,7 @@
   <div class="status-note">
     Continuously sampled from TrustedRouter's monitor regions using a
     {{ snapshot.window_label or "recent live sample" }}. Time-to-first-token (TTFT),
-    time-to-first-byte (TTFB), effective throughput, and success rate come from real
+    effective throughput, and success rate come from real
     streaming requests, not vendor claims. Completion rate shows the end-user result.
     Provider availability excludes failures owned by TrustedRouter, customers, or route
     configuration, while still reporting those failures under their actual owner.
@@ -40,7 +40,7 @@
     <div class="status-section-head">
       <div>
         <h2>Providers</h2>
-        <p>Ranked by provider-attributed availability, then p50 time-to-first-token across all of a provider's models
+        <p>Ranked by p50 time-to-first-token across all of a provider's models. Provider-attributed availability remains visible and breaks latency ties
           ({{ snapshot.provider_count }} providers · {{ snapshot.total_samples }} availability samples ·
           {{ snapshot.total_throughput_samples }} sustained throughput samples). Providers below the
           evidence floor remain visible as warming, but do not receive a rank.</p>
@@ -85,7 +85,7 @@
     <div class="status-section-head">
       <div>
         <h2>Models</h2>
-        <p>Qualified models are ranked by provider-attributed availability, then p50 TTFT. Thin availability and
+        <p>Qualified models are ranked by p50 TTFT, with provider-attributed availability as a tie-breaker. Thin availability and
           throughput measurements stay visible below the ranked set as warming.</p>
       </div>
     </div>
@@ -95,7 +95,7 @@
           <tr>
             <th>#</th><th>Model</th><th>Provider</th>
             <th>Completion</th><th>Provider availability</th><th>Within deadline</th><th>Capacity accepted</th>
-            <th>p50 TTFT</th><th>p95 TTFT</th><th>p50 TTFB</th><th>p95 TTFB</th>
+            <th>p50 TTFT</th><th>p95 TTFT</th>
             <th>Effective throughput</th><th>Config excluded</th><th>Samples</th>
           </tr>
         </thead>
@@ -113,8 +113,6 @@
             <td>{% if m.capacity_acceptance_rate is not none %}{{ '%.2f'|format(m.capacity_acceptance_rate * 100) }}%{% else %}—{% endif %}</td>
             <td>{% if m.p50_ttft_ms is not none %}{{ m.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
             <td>{% if m.p95_ttft_ms is not none %}{{ m.p95_ttft_ms }} ms{% else %}—{% endif %}</td>
-            <td>{% if m.p50_ttfb_ms is not none %}{{ m.p50_ttfb_ms }} ms{% else %}—{% endif %}</td>
-            <td>{% if m.p95_ttfb_ms is not none %}{{ m.p95_ttfb_ms }} ms{% else %}—{% endif %}</td>
             <td>{% if m.p50_tokens_per_second is not none and m.throughput_sample_count %}{{ '%.0f'|format(m.p50_tokens_per_second) }} tok/s{% if m.throughput_sample_count < 3 %} <span class="lb-badge">warming</span>{% endif %}{% else %}—{% endif %}</td>
             <td>{% if m.excluded_count %}{{ m.excluded_count }}{% if m.top_excluded %} <code>{{ m.top_excluded }}</code>{% endif %}{% else %}—{% endif %}</td>
             <td>{{ m.sample_count }}</td>

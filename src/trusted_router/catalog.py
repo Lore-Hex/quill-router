@@ -749,9 +749,26 @@ def provider_to_openrouter_shape(provider: Provider) -> dict[str, object]:
 
 
 def providers_for_display() -> tuple[Provider, ...]:
-    """Provider transparency should lead with privacy-forward upstreams."""
-    pinned = [PROVIDERS[slug] for slug in _PROVIDER_DISPLAY_ORDER if slug in PROVIDERS]
-    pinned_slugs = {provider.slug for provider in pinned}
-    return tuple(
-        pinned + [provider for provider in PROVIDERS.values() if provider.slug not in pinned_slugs]
-    )
+    """Order transparency surfaces by the strongest tracked privacy posture."""
+    pinned_rank = {slug: index for index, slug in enumerate(_PROVIDER_DISPLAY_ORDER)}
+
+    def display_key(provider: Provider) -> tuple[int, int, str, str]:
+        if provider.slug == "trustedrouter":
+            posture_rank = 0
+        elif provider.provider_confidential_compute is True and provider.provider_e2ee is True:
+            posture_rank = 1
+        elif (
+            provider.provider_zero_data_retention is True
+            or provider.prepaid_zero_data_retention is True
+        ):
+            posture_rank = 2
+        else:
+            posture_rank = 3
+        return (
+            posture_rank,
+            pinned_rank.get(provider.slug, len(pinned_rank)),
+            provider.name.casefold(),
+            provider.slug,
+        )
+
+    return tuple(sorted(PROVIDERS.values(), key=display_key))
