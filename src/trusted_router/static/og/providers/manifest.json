@@ -163,10 +163,10 @@
   },
   "deepseek": {
     "card_version": 2,
-    "model_count": 5,
+    "model_count": 6,
     "name": "DeepSeek",
     "privacy": "Policy documented",
-    "route_count": 8,
+    "route_count": 10,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepseek"
   },
@@ -226,10 +226,10 @@
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 12,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 24,
+    "route_count": 22,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },
