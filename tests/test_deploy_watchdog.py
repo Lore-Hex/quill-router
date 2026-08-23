@@ -153,6 +153,7 @@ def _run_staged_probe(
     remove_failures: int = 0,
     remove_always_fails: bool = False,
     remove_leaves_tag: bool = False,
+    traffic_shift_failure_pct: int | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     stub_bin = tmp_path / "bin"
     stub_bin.mkdir()
@@ -166,6 +167,10 @@ def _run_staged_probe(
     gcloud.write_text(
         """#!/usr/bin/env bash
 printf 'gcloud %s\\n' "$*" >>"$STAGED_CALL_LOG"
+if [ -n "$STAGED_TRAFFIC_SHIFT_FAILURE_PCT" ] \
+    && [[ " $* " == *" --to-revisions=new-rev=${STAGED_TRAFFIC_SHIFT_FAILURE_PCT},"* ]]; then
+  exit 1
+fi
 case " $* " in
   *" --update-tags="*) printf '%s\\n' "$STAGED_RESOLVED_TAG_REV" >"$STAGED_TAG_STATE" ;;
   *" --remove-tags="*)
@@ -240,6 +245,9 @@ exit 0
         "STAGED_REMOVE_FAILURES_STATE": str(remove_failures_state),
         "STAGED_REMOVE_ALWAYS_FAILS": "1" if remove_always_fails else "0",
         "STAGED_REMOVE_LEAVES_TAG": "1" if remove_leaves_tag else "0",
+        "STAGED_TRAFFIC_SHIFT_FAILURE_PCT": (
+            "" if traffic_shift_failure_pct is None else str(traffic_shift_failure_pct)
+        ),
         "STAGED_REAL_PYTHON": sys.executable,
         "TR_LEGACY_PROBE_RETRY_SECONDS": "0",
         "TR_PROBE_TAG_REMOVE_RETRY_SECONDS": "0",
@@ -468,3 +476,24 @@ def test_staged_probe_tag_cleanup_verifies_a_successful_removal(
         index for index, call in enumerate(calls) if "--remove-tags=staged-probe" in call
     )
     assert any("--format=json" in call for call in calls[removal_index + 1 :])
+
+
+def test_failed_traffic_shift_restores_the_old_desired_revision(tmp_path: Path) -> None:
+    run, calls = _run_staged_probe(
+        tmp_path,
+        console_code="302",
+        session_code="401",
+        traffic_shift_failure_pct=10,
+    )
+
+    assert run.returncode != 0
+    traffic_calls = [
+        call
+        for call in calls
+        if call.startswith("gcloud run services update-traffic")
+        and "--to-revisions=" in call
+    ]
+    assert any("--to-revisions=new-rev=10,old-rev=90" in call for call in traffic_calls)
+    assert any("--to-revisions=old-rev=100" in call for call in traffic_calls)
+    assert "ROLLBACK" in run.stdout
+    assert "traffic update to 10% failed" in run.stdout
