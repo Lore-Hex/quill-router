@@ -3,7 +3,7 @@
   "provider": "fireworks",
   "source": "https://api.fireworks.ai/inference/v1/models",
   "price_source": "https://docs.fireworks.ai/serverless/pricing",
-  "generated_at": "2026-08-23T09:30:32Z",
+  "generated_at": "2026-08-23T10:26:28Z",
   "model_count": 6,
   "models": [
     {
