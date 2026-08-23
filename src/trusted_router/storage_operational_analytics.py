@@ -172,6 +172,11 @@ def activity_payload(generation: Generation) -> dict[str, Any]:
         "generation_id": generation.id,
         "request_id": generation.request_id,
         "tenant_id": analytics_surrogate("workspace", generation.workspace_id),
+        # The raw id, alongside the surrogate. The surrogate stays because it
+        # is the ClickHouse sort key; the raw id is deliberate (2026-08-19):
+        # workspace ids are pseudonymous, ClickHouse holds no emails, and rows
+        # that name their workspace need no directory refresh to be joinable.
+        "workspace_id": generation.workspace_id,
         "key_id": analytics_surrogate("api-key", generation.key_hash),
         "model": generation.model,
         "provider": generation.provider or "",

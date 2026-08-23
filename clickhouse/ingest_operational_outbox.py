@@ -25,6 +25,7 @@ ACTIVITY_COLUMNS = (
     "generation_id",
     "request_id",
     "tenant_id",
+    "workspace_id",
     "key_id",
     "model",
     "provider",

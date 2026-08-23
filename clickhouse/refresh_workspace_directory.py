@@ -1,4 +1,10 @@
-"""Refresh the no-PII ClickHouse workspace directory from Spanner.
+"""Refresh the no-PII ClickHouse workspace directory from Spanner, on demand.
+
+Not a scheduled job, deliberately. Since 2026-08-19 every new activity row
+carries its own ``workspace_id``, so the tenant_id map only matters for the
+closed set of rows written before that change -- a set that cannot grow. Run
+this when a workspace RENAME should be reflected in ``workspace_directory``,
+or to re-freeze the historical map; there is nothing that needs it hourly.
 
 The projection permits workspace ids and workspace names only; all other
 entity attributes are discarded before a ClickHouse payload is built.

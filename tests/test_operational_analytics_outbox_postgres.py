@@ -154,7 +154,10 @@ def _outbox(conn: _FakeConn) -> PostgresOperationalAnalyticsOutbox:
 # --------------------------------------------------------------------------
 
 
-def test_enqueued_activity_payload_carries_surrogates_not_raw_identifiers() -> None:
+def test_enqueued_activity_payload_names_its_workspace_but_never_keys() -> None:
+    """Same 2026-08-19 boundary as the Spanner side, asserted on the AWS path
+    so the two clouds cannot drift apart: workspace_id rides in the row, key
+    hashes and content stay out."""
     conn = _FakeConn()
     generation = _generation()
 
@@ -164,10 +167,10 @@ def test_enqueued_activity_payload_carries_surrogates_not_raw_identifiers() -> N
     encoded = params[3]
     payload = json.loads(encoded)
     assert payload["tenant_id"] == analytics_surrogate("workspace", generation.workspace_id)
+    assert payload["workspace_id"] == generation.workspace_id
     assert payload["key_id"] == analytics_surrogate("api-key", generation.key_hash)
-    # Assert on the encoded bytes: a raw identifier could otherwise hide in a
+    # Assert on the encoded bytes: a raw key hash could otherwise hide in a
     # nested structure the key assertions above never look at.
-    assert generation.workspace_id not in encoded
     assert generation.key_hash not in encoded
     assert "private model output" not in encoded
     assert "tool_calls" not in payload
