@@ -30,6 +30,8 @@ TEST_BYOK_KMS_KEY_NAME = (
 def test_signup_credit_defaults_stay_aligned() -> None:
     assert DEFAULT_SIGNUP_CREDIT_MICRODOLLARS == 300_000
     assert Settings(environment="test").signup_trial_credit_microdollars == 300_000
+
+
 TEST_SES_SETTINGS = {
     "aws_access_key_id": "test-access-key",
     "aws_secret_access_key": "test-secret-key",
@@ -52,7 +54,9 @@ def test_stubbed_endpoints_are_explicit(client: TestClient) -> None:
         assert resp.json()["error"]["type"] == type_
 
 
-def test_content_storage_cannot_be_enabled(client: TestClient, user_headers: dict[str, str]) -> None:
+def test_content_storage_cannot_be_enabled(
+    client: TestClient, user_headers: dict[str, str]
+) -> None:
     workspaces = client.get("/v1/workspaces", headers=user_headers).json()["data"]
     workspace_id = workspaces[0]["id"]
     resp = client.patch(
@@ -94,7 +98,9 @@ def test_users_cannot_select_another_users_workspace(client: TestClient) -> None
     assert resp.json()["error"]["type"] == "forbidden"
 
 
-def test_management_keys_are_pinned_to_their_workspace(client: TestClient, user_headers: dict[str, str]) -> None:
+def test_management_keys_are_pinned_to_their_workspace(
+    client: TestClient, user_headers: dict[str, str]
+) -> None:
     personal_key = client.post("/v1/keys", headers=user_headers, json={"name": "personal"}).json()
     personal_workspace_id = personal_key["data"]["workspace_id"]
     org = client.post("/v1/workspaces", headers=user_headers, json={"name": "Org"}).json()["data"]
@@ -106,7 +112,9 @@ def test_management_keys_are_pinned_to_their_workspace(client: TestClient, user_
     ).json()["key"]
     management_headers = {"authorization": f"Bearer {org_management_key}"}
 
-    workspace_resp = client.get(f"/v1/workspaces/{personal_workspace_id}", headers=management_headers)
+    workspace_resp = client.get(
+        f"/v1/workspaces/{personal_workspace_id}", headers=management_headers
+    )
     assert workspace_resp.status_code == 403
     assert workspace_resp.json()["error"]["type"] == "forbidden"
 
@@ -131,7 +139,9 @@ def test_management_keys_are_pinned_to_their_workspace(client: TestClient, user_
     assert checkout_resp.json()["error"]["type"] == "forbidden"
 
 
-def test_users_have_uuid_ids_not_email_identifiers(client: TestClient, user_headers: dict[str, str]) -> None:
+def test_users_have_uuid_ids_not_email_identifiers(
+    client: TestClient, user_headers: dict[str, str]
+) -> None:
     org = client.post("/v1/workspaces", headers=user_headers, json={"name": "Org"}).json()["data"]
     org_headers = {**user_headers, "x-trustedrouter-workspace": org["id"]}
     add = client.post(
@@ -377,15 +387,25 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert providers_json.status_code == 200
     assert providers_json.headers["content-type"].startswith("application/json")
     provider_rows = providers_json.json()["data"]
-    assert [item["id"] for item in provider_rows[:2]] == ["tinfoil", "trustedrouter"]
+    assert [item["id"] for item in provider_rows[:2]] == ["trustedrouter", "tinfoil"]
+    display_groups = [
+        0
+        if item["id"] == "trustedrouter"
+        else 1
+        if item["provider_confidential_compute"] is True and item["provider_e2ee"] is True
+        else 2
+        if item["provider_zero_data_retention"] is True
+        or item["prepaid_zero_data_retention"] is True
+        else 3
+        for item in provider_rows
+    ]
+    assert display_groups == sorted(display_groups)
     tinfoil = next(item for item in provider_rows if item["id"] == "tinfoil")
     assert tinfoil["provider_e2ee"] is True
     openai = next(item for item in provider_rows if item["id"] == "openai")
     assert openai["provider_zero_data_retention"] is False
     assert openai["provider_confidential_compute"] is None
-    google_ai_studio = next(
-        item for item in provider_rows if item["id"] == "google-ai-studio"
-    )
+    google_ai_studio = next(item for item in provider_rows if item["id"] == "google-ai-studio")
     google_vertex = next(item for item in provider_rows if item["id"] == "google-vertex")
     assert google_ai_studio["provider_zero_data_retention"] is False
     assert google_ai_studio["supports_byok"] is True
@@ -634,9 +654,7 @@ def test_static_fonts_force_woff2_media_type(
     # Some minimal Linux images do not register WOFF2 in /etc/mime.types.
     # Simulate that production environment so the application owns the
     # browser-facing contract instead of relying on the host image.
-    monkeypatch.setattr(
-        "starlette.responses.guess_type", lambda _path: ("text/plain", None)
-    )
+    monkeypatch.setattr("starlette.responses.guess_type", lambda _path: ("text/plain", None))
 
     font = client.get("/static/fonts/archivo-latin.woff2")
 
@@ -905,6 +923,7 @@ def test_public_bearer_does_not_authenticate_or_use_durable_limiter(
 
 def test_rate_limit_does_not_touch_store_and_remains_local_on_store_error(monkeypatch) -> None:
     """Request admission must not depend on or amplify a storage outage."""
+
     def boom(self, *_args, **_kwargs):
         del self
         raise RuntimeError("Aborted: Deadlock with higher priority transaction.")
@@ -1057,12 +1076,17 @@ def test_production_control_plane_does_not_register_inference_routes() -> None:
     assert ("/v1/internal/gateway/authorize", "POST") not in registered
 
 
-def test_prompt_output_never_enter_metadata_store(client: TestClient, inference_headers: dict[str, str]) -> None:
+def test_prompt_output_never_enter_metadata_store(
+    client: TestClient, inference_headers: dict[str, str]
+) -> None:
     prompt = "super private user prompt"
     resp = client.post(
         "/v1/chat/completions",
         headers=inference_headers,
-        json={"model": "anthropic/claude-sonnet-4.6", "messages": [{"role": "user", "content": prompt}]},
+        json={
+            "model": "anthropic/claude-sonnet-4.6",
+            "messages": [{"role": "user", "content": prompt}],
+        },
     )
     assert resp.status_code == 200
     assert prompt not in str(STORE.generation_store.generations)
@@ -1302,9 +1326,7 @@ def test_in_memory_rate_limit_bucket_cardinality_is_capped() -> None:
     # is throttled collectively instead of resetting per identity.
     assert hit.allowed is False
     # Distinct subjects below the cap keep their own buckets untouched.
-    early = limits.hit(
-        namespace="internal", subject="fabricated-1", limit=3, window_seconds=60
-    )
+    early = limits.hit(namespace="internal", subject="fabricated-1", limit=3, window_seconds=60)
     assert early.allowed is True
 
 
