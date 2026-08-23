@@ -46,6 +46,10 @@ BASE_ENV = {
     "TR_BIGTABLE_GENERATION_TABLE": "trustedrouter-generations",
     "TR_BIGTABLE_MIRROR_WRITES_ENABLED": "true",
     "TR_ANALYTICS_READ_MODE": "clickhouse",
+    # The status page this surface serves reports outbox freshness; without
+    # this its store has no outbox object and publishes not_configured,
+    # failing verify-cloud-complete stage (c) on every deploy.
+    "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED": "true",
     "TR_ENABLE_LIVE_PROVIDERS": "false",
     "TR_GOOGLE_OAUTH_LOGIN_AVAILABLE": "true",
     "TR_GITHUB_OAUTH_LOGIN_AVAILABLE": "true",
