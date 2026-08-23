@@ -47,8 +47,12 @@ set -euo pipefail
 STACK="${STACK:-tr-azure}"
 RG="${RG:-$STACK}"
 LOCATION="${LOCATION:-uaenorth}"
-APP="${APP:-$STACK}"
-APP_ENV="${APP_ENV:-$STACK-env}"
+# The live app and environment carry a -vnet suffix; the pre-vnet names have
+# not existed since the VNet migration. These defaults were still $STACK and
+# $STACK-env, which meant this script targeted a container app and a managed
+# environment that do not exist -- see the preflight below for what that cost.
+APP="${APP:-$STACK-vnet}"
+APP_ENV="${APP_ENV:-$STACK-env-vnet}"
 PG_NAME="${PG_NAME:-$STACK-pg}"
 PG_ADMIN="${PG_ADMIN:-tradmin}"
 PG_DB="${PG_DB:-trustedrouter}"
@@ -166,6 +170,49 @@ else
   PG_PASSWORD="$(cat "$PW_FILE")"
 fi
 DSN="postgresql://${PG_ADMIN}:${PG_PASSWORD}@${PG_HOST}:5432/${PG_DB}?sslmode=require"
+
+# PREFLIGHT. Runs before the ACR build because the build takes minutes and this
+# takes seconds, and the whole point is to fail while the operator still has
+# options.
+#
+# MEASURED 2026-08-23: with the pre-vnet defaults this script targeted
+# containerapp "tr-azure" in environment "tr-azure-env". Neither exists. The
+# live control plane -- the one azure.trustedrouter.com resolves to and which
+# answers 200 -- is "tr-azure-vnet" in "tr-azure-env-vnet", and that name
+# appears nowhere in this repository. So an Azure deploy failed at the
+# `containerapp create` step, AFTER the image build, having changed nothing.
+# In an emergency that is minutes spent to arrive at a confusing error.
+preflight() {
+  local problems=0
+  if ! exists az group show -n "$RG"; then
+    echo "resource group ${RG} not found" >&2
+    problems=1
+  fi
+  if ! exists az containerapp env show -g "$RG" -n "$APP_ENV"; then
+    echo "managed environment ${APP_ENV} not found in ${RG}. Available:" >&2
+    az containerapp env list -g "$RG" --query "[].name" -o tsv 2>/dev/null | sed 's/^/  /' >&2
+    problems=1
+  fi
+  if ! exists az containerapp show -g "$RG" -n "$APP"; then
+    # Not fatal on its own: first-run genuinely creates the app. It IS fatal
+    # when something is already serving the public hostname, because then this
+    # run would build a second app beside the real one and report success.
+    echo "container app ${APP} not found in ${RG}. Available:" >&2
+    az containerapp list -g "$RG" --query "[].name" -o tsv 2>/dev/null | sed 's/^/  /' >&2
+    local serving
+    serving="$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+      "https://${TRUSTED_DOMAIN:-azure.trustedrouter.com}/v1/health" 2>/dev/null || echo 000)"
+    if [ "$serving" = "200" ]; then
+      echo "refusing: ${TRUSTED_DOMAIN:-azure.trustedrouter.com} is already serving (200)," >&2
+      echo "so creating ${APP} would add a second app beside the live one." >&2
+      echo "Set APP= and APP_ENV= to the app that is actually serving." >&2
+      problems=1
+    fi
+  fi
+  [ "$problems" -eq 0 ] || die "preflight failed; nothing was built or changed"
+  log "preflight ok: ${APP} in ${APP_ENV} (${RG})"
+}
+preflight
 
 log "building linux/amd64 image in ACR ${ACR}"
 az acr build --registry "$ACR" --platform linux/amd64 \
