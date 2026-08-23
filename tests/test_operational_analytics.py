@@ -105,7 +105,12 @@ class _Database:
         callback(self.transaction)
 
 
-def test_activity_payload_uses_surrogates_and_omits_content_and_raw_ids() -> None:
+def test_activity_payload_names_its_workspace_but_never_keys_or_content() -> None:
+    """The 2026-08-19 boundary: workspace_id is pseudonymous and belongs in the
+    row (it is what makes rows joinable without a refreshed directory); key
+    hashes and generation content remain surrogate-only/absent. If this test
+    fails on the workspace_id line, someone is re-anonymising the private
+    table -- that decision was made deliberately, reverse it deliberately."""
     generation = _generation()
     payload = activity_payload(generation)
     encoded = json.dumps(payload, sort_keys=True)
@@ -113,8 +118,8 @@ def test_activity_payload_uses_surrogates_and_omits_content_and_raw_ids() -> Non
     assert payload["tenant_id"] == analytics_surrogate(
         "workspace", generation.workspace_id
     )
+    assert payload["workspace_id"] == generation.workspace_id
     assert payload["key_id"] == analytics_surrogate("api-key", generation.key_hash)
-    assert generation.workspace_id not in encoded
     assert generation.key_hash not in encoded
     assert "private model output" not in encoded
     assert "tool_calls" not in payload
@@ -1109,3 +1114,15 @@ def test_spanner_oldest_enqueued_at_spends_one_budget_across_all_shards() -> Non
     outbox.oldest_enqueued_at(timeout=5.0)
 
     assert database.timeouts == [5.0]
+
+
+def test_activity_allowlist_carries_workspace_id_to_clickhouse() -> None:
+    """The drain projects payloads onto ACTIVITY_COLUMNS; a key missing from
+    the allowlist is dropped silently, which would ship this feature as a
+    column of empty strings."""
+    from clickhouse.ingest_operational_outbox import ACTIVITY_COLUMNS
+
+    assert "workspace_id" in ACTIVITY_COLUMNS
+    # Order stability: appended after tenant_id's group, never before
+    # generation_id -- the archive row hash is computed over this tuple.
+    assert ACTIVITY_COLUMNS.index("workspace_id") > ACTIVITY_COLUMNS.index("tenant_id")

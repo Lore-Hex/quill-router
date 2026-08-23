@@ -339,32 +339,22 @@ def test_capacity_probe_is_disposable_and_uses_a_conservative_gate() -> None:
     assert "add_shard_now" in script
 
 
-def test_workspace_directory_refresh_is_installed_and_scheduled_hourly() -> None:
-    deploy = (ROOT / "scripts/deploy/clickhouse_live_ingestion.sh").read_text()
-    service = (ROOT / "clickhouse/tr-clickhouse-workspace-directory.service").read_text()
-    timer = (ROOT / "clickhouse/tr-clickhouse-workspace-directory.timer").read_text()
+def test_workspace_directory_is_on_demand_not_a_timer() -> None:
+    """The directory refresh is an operator tool, not a scheduled unit.
 
-    assert "tr-clickhouse-workspace-directory.service" in deploy
-    assert "tr-clickhouse-workspace-directory.timer" in deploy
+    The hourly timer was removed on 2026-08-19: new activity rows carry
+    workspace_id directly, so the map of tenant_id -> workspace_id only covers
+    the CLOSED set of pre-change rows and never goes stale. A timer would be a
+    standing moving part guarding against a drift that can no longer happen --
+    and it was wired into this deploy script, so removing the units without
+    removing the wiring would break the next deploy at install -m.
+    """
+    deploy = (ROOT / "scripts/deploy/clickhouse_live_ingestion.sh").read_text()
+
+    assert "tr-clickhouse-workspace-directory" not in deploy
+    assert not (ROOT / "clickhouse/tr-clickhouse-workspace-directory.service").exists()
+    assert not (ROOT / "clickhouse/tr-clickhouse-workspace-directory.timer").exists()
+    # The schema applies stay: the directory remains queryable, and new rows
+    # need the workspace_id column before the drain ships.
     assert "010_workspace_directory.sql" in deploy
-    assert "systemctl enable --now tr-clickhouse-workspace-directory.timer" in deploy
-    assert "systemctl is-active tr-clickhouse-workspace-directory.timer" in deploy
-    assert "EnvironmentFile=/etc/tr-clickhouse-ingest.env" in service
-    assert "User=tr-clickhouse-ingest" in service
-    assert "WorkingDirectory=/opt/tr-clickhouse" in service
-    assert (
-        "ExecStart=/opt/tr-clickhouse/venv/bin/python "
-        "-m clickhouse.refresh_workspace_directory"
-    ) in service
-    for hardening in (
-        "NoNewPrivileges=true",
-        "PrivateTmp=true",
-        "ProtectHome=true",
-        "ProtectSystem=strict",
-    ):
-        assert hardening in service
-    assert "After=network-online.target clickhouse-server.service" in service
-    assert "Requires=clickhouse-server.service" in service
-    assert "OnCalendar=hourly" in timer
-    assert "RandomizedDelaySec=5min" in timer
-    assert "Persistent=true" in timer
+    assert "012_activity_generations_workspace_id.sql" in deploy
