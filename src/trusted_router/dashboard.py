@@ -1354,10 +1354,10 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "docs/agent-setup": PublicPage(
         template="public/agent_setup.html",
-        title="AI Agent Router Base URL Setup",
+        title="Agent Router Base URL: Claude Code & Codex",
         description=(
-            "TrustedRouter base URLs, environment variables, smoke tests, and model "
-            "aliases for Claude Code, Codex, OpenAI SDK agents, and Anthropic SDK agents."
+            "Set the TrustedRouter base URL for Claude Code, Codex, Cursor, and OpenAI "
+            "or Anthropic SDK agents. Copy env vars, smoke tests, and model aliases."
         ),
         faq_items=(
             (
@@ -1434,10 +1434,10 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "eu": PublicPage(
         template="public/eu.html",
         og_card="eu.png",
-        title="EU LLM Gateway: Private AI Routing",
+        title="EU LLM Gateway Base URL & Data Residency",
         description=(
-            "Route OpenAI-compatible LLM requests through an attested Europe West "
-            "gateway, with EU-focused models, provider controls, and no prompt logs."
+            "Use the Europe West EU LLM gateway base URL with OpenAI-compatible APIs, "
+            "EU-focused routes, data-residency controls, and no prompt logs."
         ),
         faq_items=(
             (
@@ -3099,11 +3099,11 @@ def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
         .render(
             api_base_url=settings.api_base_url,
             site_url=f"https://{settings.trusted_domain}/models",
-            title="Models | TrustedRouter",
+            title="AI Models: Prices, Providers & API Routes | TrustedRouter",
             heading="Models",
             description=(
-                "Browse hundreds of AI models with current provider routes, token pricing, "
-                "privacy policies, regional availability, measured performance, and API support."
+                "Compare hundreds of AI models by price, context window, provider, "
+                "privacy policy, and live API routes. Filter open-weight, US, and EU options."
             ),
             models=models,
             active_filter=normalized_filter,
