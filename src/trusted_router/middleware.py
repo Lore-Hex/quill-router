@@ -46,6 +46,13 @@ from trusted_router.domains import (
     request_hostname,
 )
 from trusted_router.errors import error_response
+from trusted_router.markdown_negotiation import (
+    MARKDOWN_CONTENT_TYPE,
+    MARKDOWN_VARY,
+    html_to_markdown,
+    is_public_page_path,
+    prefers_markdown,
+)
 from trusted_router.request_body_limit import (
     RequestBodyLimitMiddleware,
     UnreadRequestBodyCloseMiddleware,
@@ -104,6 +111,55 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
     Starlette prepends each newly registered middleware, so the final
     registration is the outermost wrapper.
     """
+
+    @app.middleware("http")
+    async def markdown_negotiation_middleware(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        """Serve public pages as markdown when the client asks for markdown.
+
+        Registered BEFORE GZipMiddleware on purpose. Starlette prepends, so the
+        later registration is the outer wrapper: gzip ends up outside this, sees
+        the markdown body, and compresses that. Register it after gzip instead
+        and this middleware would be handed already-compressed bytes and would
+        either corrupt them or have to decompress and recompress every page.
+
+        `Vary` is set on the HTML variant too, not only the markdown one. That
+        is the half that breaks caches when it is skipped: a CDN holding an HTML
+        variant under a key that ignores Accept will serve it to the next agent
+        asking for markdown, and whichever representation missed cache first
+        wins for everybody.
+        """
+        response = await call_next(request)
+        if request.method not in {"GET", "HEAD"}:
+            return response
+        if not is_public_page_path(request.url.path):
+            return response
+        if not response.headers.get("content-type", "").lower().startswith("text/html"):
+            return response
+
+        response.headers["vary"] = MARKDOWN_VARY
+        if not prefers_markdown(request.headers.get("accept")):
+            return response
+
+        body = b""
+        async for chunk in response.body_iterator:  # type: ignore[attr-defined]
+            body += bytes(chunk)
+
+        markdown = html_to_markdown(body.decode("utf-8", "replace"))
+        headers = {
+            key: value
+            for key, value in response.headers.items()
+            if key.lower() not in {"content-type", "content-length", "vary"}
+        }
+        headers["vary"] = MARKDOWN_VARY
+        return Response(
+            content=markdown,
+            status_code=response.status_code,
+            headers=headers,
+            media_type=MARKDOWN_CONTENT_TYPE,
+        )
 
     app.add_middleware(GZipMiddleware, minimum_size=1_000, compresslevel=6)
     app.add_middleware(

@@ -95,6 +95,48 @@ def _canonicalize_operation_ids(paths: dict[str, Any]) -> None:
             operation["operationId"] = f"{method.lower()}_{path_slug}"
 
 
+def _describe_for_agents(schema: dict[str, Any]) -> None:
+    """Make the spec self-describing when it is fetched on its own.
+
+    An agent that finds openapi.json by name gets the whole document and
+    nothing else -- no surrounding page, no nav. The shipped info block was
+    `{"title": "TrustedRouter", "version": "0.1.0"}` with no servers array, so
+    the one artifact an agent is most likely to fetch first could not tell it
+    what the product does or which base URL to call. Everything added here is
+    standard OpenAPI 3 metadata; no path or schema is touched.
+    """
+    info = schema.setdefault("info", {})
+    info["title"] = "TrustedRouter API"
+    info["summary"] = "OpenAI-compatible AI router with an attested prompt path."
+    info["description"] = (
+        "TrustedRouter is an OpenAI-compatible API for hundreds of models across many "
+        "providers, with provider fallback, zero-retention routing, and an attested "
+        "gateway whose running source commit and image digest can be verified.\n\n"
+        "Base URL: https://api.trustedrouter.com/v1\n"
+        "Authentication: `Authorization: Bearer <api key>`\n\n"
+        "Further machine-readable entry points: https://trustedrouter.com/llms.txt "
+        "(index), https://trustedrouter.com/sitemap.xml (all URLs), "
+        "https://trustedrouter.com/docs (documentation), "
+        "https://trustedrouter.com/docs/mcp (MCP server)."
+    )
+    info.setdefault("contact", {"name": "TrustedRouter", "url": "https://trustedrouter.com/support"})
+    info.setdefault("termsOfService", "https://trustedrouter.com/legal")
+    schema.setdefault(
+        "servers",
+        [
+            {"url": "https://api.trustedrouter.com/v1", "description": "Global"},
+            {
+                "url": "https://api-europe-west4.quillrouter.com/v1",
+                "description": "EU regional",
+            },
+        ],
+    )
+    schema.setdefault(
+        "externalDocs",
+        {"description": "TrustedRouter documentation", "url": "https://trustedrouter.com/docs"},
+    )
+
+
 def build_public_schema() -> dict[str, Any]:
     # Importing trusted_router.main normally constructs its ASGI app. Isolate
     # that one import from ambient shell/.env credentials and force the memory
@@ -143,6 +185,7 @@ def build_public_schema() -> dict[str, Any]:
         if not path.startswith(("/internal/", "/v1/internal/"))
     }
     _canonicalize_operation_ids(schema["paths"])
+    _describe_for_agents(schema)
     _prune_components(schema)
     # Prove the final graph is closed after pruning.
     components = schema.get("components", {})
