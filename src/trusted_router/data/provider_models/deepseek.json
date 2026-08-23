@@ -43,7 +43,7 @@
     }
   ],
   "source": "https://api.deepseek.com/models",
-  "generated_at": "2026-08-23T03:06:17Z",
+  "generated_at": "2026-08-23T04:39:30Z",
   "price_scale": "microdollars_per_million",
   "model_count": 2
 }
