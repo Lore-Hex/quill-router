@@ -726,6 +726,11 @@ deploy_one_region() {
   else
     log "deploying Cloud Run service ${SERVICE} to ${target}"
   fi
+  if [ "${TR_DEPLOY_NO_TRAFFIC:-0}" = "1" ]; then
+    SERVICE="$SERVICE" PROJECT_ID="$PROJECT_ID" \
+      bash "${SCRIPT_DIR}/normalize_staged_traffic.sh" "$target" \
+      >>"$logfile" 2>&1
+  fi
   prune_failed_revisions "$target" >>"$logfile" 2>&1 || true
   # A global override wins. Otherwise use the per-region service minimum;
   # unknown warm regions retain one instance and unknown cold regions scale to
