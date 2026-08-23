@@ -47,6 +47,18 @@ jobs:
       - name: Stylelint
         run: npx stylelint "src/trusted_router/static/*.css"
 
+  production-import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Sync production dependencies only
+        run: uv sync --frozen --no-dev
+      - name: Import the production application
+        run: uv run --no-sync python -c "import trusted_router.main"
+
   test:
     runs-on: ubuntu-latest
     env:
