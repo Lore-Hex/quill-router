@@ -4419,6 +4419,7 @@ def _endpoint_provider_views(
 
 
 def _provider_view(provider: Provider) -> dict[str, object]:
+    routing_status = "active" if provider.supports_prepaid or provider.supports_byok else "blocked"
     return {
         "id": provider.slug,
         "name": provider.name,
@@ -4426,6 +4427,8 @@ def _provider_view(provider: Provider) -> dict[str, object]:
         "homepage_url": provider_homepage_url(provider.slug),
         "supports_prepaid": provider.supports_prepaid,
         "supports_byok": provider.supports_byok,
+        "routing_status": routing_status,
+        "routing_status_label": "Active" if routing_status == "active" else "Not routable",
         "attested_gateway": provider.attested_gateway,
         "gateway_stores_content": provider.stores_content,
         "zero_data_retention": provider.provider_zero_data_retention,

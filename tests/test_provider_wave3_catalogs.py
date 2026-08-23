@@ -19,6 +19,7 @@ from scripts.pricing.providers import (
     akashml,
     arcee,
     inception,
+    io_net,
     mancer,
     nextbit,
     perceptron,
@@ -66,7 +67,9 @@ READY = {
     "sambanova",
     "arcee",
     "inception",
+    "io-net",
 }
+RUNTIME_ONLY_READY = READY - {"io-net"}
 PENDING = {
     "perceptron",
     "perplexity",
@@ -75,7 +78,6 @@ PENDING = {
     "modal",
     "byteplus",
     "riverflow",
-    "io-net",
     "liquid",
 }
 MODULES = (
@@ -89,6 +91,7 @@ MODULES = (
     sambanova,
     arcee,
     inception,
+    io_net,
 )
 
 
@@ -376,6 +379,11 @@ def test_perplexity_converts_catalog_usd_per_million_without_floats() -> None:
     }
 
 
+def test_perplexity_uses_distinct_catalog_and_inference_paths() -> None:
+    assert perplexity.BASE_URL == "https://api.perplexity.ai"
+    assert perplexity.URL == "https://api.perplexity.ai/v1/models"
+
+
 def test_perceptron_filters_media_free_and_unpriced_rows() -> None:
     rows = perceptron._normalize_rows(
         [
@@ -413,11 +421,72 @@ def test_perceptron_filters_media_free_and_unpriced_rows() -> None:
     assert [row["id"] for row in rows] == ["ok"]
 
 
+def test_io_net_normalizes_exact_prices_capabilities_and_limits() -> None:
+    rows = io_net._normalize_rows(
+        [
+            {
+                "id": "XiaomiMiMo/MiMo-V2.5",
+                "input_token_price": "0.0000001934",
+                "output_token_price": "0.0000006268",
+                "cache_read_token_price": "0.0000000967",
+                "context_window": 262144,
+                "max_tokens": 32768,
+                "supports_tools": True,
+                "supports_reasoning": True,
+                "supports_prompt_cache": True,
+            }
+        ]
+    )
+
+    assert rows == [
+        {
+            "id": "XiaomiMiMo/MiMo-V2.5",
+            "input_token_price": "0.0000001934",
+            "output_token_price": "0.0000006268",
+            "cache_read_token_price": "0.0000000967",
+            "context_window": 262144,
+            "max_tokens": 32768,
+            "supports_tools": True,
+            "supports_reasoning": True,
+            "supports_prompt_cache": True,
+            "pricing": {
+                "prompt": "1.934E-7",
+                "completion": "6.268E-7",
+                "input_cache_read": "9.67E-8",
+            },
+            "context_length": 262144,
+            "max_output_tokens": 32768,
+            "supported_features": ["tools", "reasoning", "prompt_cache"],
+        }
+    ]
+    assert io_net.CATALOG.model_id("XiaomiMiMo/MiMo-V2.5") == "xiaomi/mimo-v2.5"
+
+
+def test_io_net_drops_unpriced_or_one_sided_rows() -> None:
+    rows = io_net._normalize_rows(
+        [
+            {"id": "missing"},
+            {
+                "id": "zero-input",
+                "input_token_price": "0",
+                "output_token_price": "0.5",
+            },
+            {
+                "id": "zero-output",
+                "input_token_price": "0.5",
+                "output_token_price": "0",
+            },
+        ]
+    )
+    assert rows == []
+
+
 def test_wave3_hourly_discovery_and_provider_aliases_are_registered() -> None:
     module_names = {slug.replace("-", "_") for slug in READY}
     assert module_names <= set(PROVIDER_SLUGS)
     assert _PRICING_RESULT_PROVIDER_ALIASES["sail_research"] == ("sail-research",)
     assert _PRICING_RESULT_PROVIDER_ALIASES["aion_labs"] == ("aion-labs",)
+    assert _PRICING_RESULT_PROVIDER_ALIASES["io_net"] == ("io-net",)
     discoverable = {slug for slug, _url, _env, _normalize in _DISCOVERABLE_MANIFEST_PROVIDERS}
     assert READY <= discoverable
 
@@ -425,7 +494,7 @@ def test_wave3_hourly_discovery_and_provider_aliases_are_registered() -> None:
 def test_hyphenated_provider_secret_refs_use_valid_environment_names() -> None:
     assert default_provider_secret_ref("sail-research") == "env://SAIL_RESEARCH_API_KEY"
     assert default_provider_secret_ref("aion-labs") == "env://AION_LABS_API_KEY"
-    assert default_provider_secret_ref("io-net") == "env://IO_NET_API_KEY"
+    assert default_provider_secret_ref("io-net") == "env://IONET_API_KEY"
 
 
 def test_unqualified_unknown_models_are_not_guessed_for_aggregators() -> None:
@@ -485,15 +554,21 @@ def test_wave3_secrets_do_not_join_the_all_or_nothing_refresh_block() -> None:
     }
     mandatory_step = workflow.split("- name: Pull PARASAIL_API_KEY", 1)[1]
     mandatory_step = mandatory_step.split("- name:", 1)[0]
-    expected_secrets = {f"trustedrouter-{module.SLUG}-api-key" for module in MODULES}
+    expected_secrets = {
+        f"trustedrouter-{module.SLUG}-api-key"
+        for module in MODULES
+        if module.SLUG in RUNTIME_ONLY_READY
+    }
     assert runtime_only == expected_secrets
     for module in MODULES:
+        if module.SLUG not in RUNTIME_ONLY_READY:
+            continue
         secret_name = f"trustedrouter-{module.SLUG}-api-key"
         assert secret_name not in mandatory_step
         assert f'grant_tr_deploy_secret_access "{secret_name}"' not in secret_setup
 
-    assert _RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS == READY
-    assert RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS == READY
+    assert _RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS == RUNTIME_ONLY_READY
+    assert RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS == RUNTIME_ONLY_READY
     assert READY < EXPIRING_PROVIDER_MANIFEST_SLUGS
     assert PROVIDER_MANIFEST_MAX_AGE_DAYS == 14
     assert RUNTIME_ONLY_PROVIDER_MANIFEST_MAX_AGE_DAYS == 14

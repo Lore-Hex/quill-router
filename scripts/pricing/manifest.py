@@ -114,6 +114,43 @@ def write_embedding_provider_manifest(
     ]
 
 
+def write_discovered_embedding_manifest(
+    result: ProviderPricingResult,
+    *,
+    manifest_path: Path,
+    discovered_rows: dict[str, dict[str, Any]],
+    source_url: str,
+) -> list[str]:
+    """Rebuild a dynamic input-only embedding manifest through the shared writer."""
+
+    normalized: dict[str, dict[str, Any]] = {}
+    for model_id, source in discovered_rows.items():
+        price = result.prices.get(model_id)
+        if price is None:
+            continue
+        if len(price.tiers) != 1 or price.completion_micro_per_m != 0:
+            raise RuntimeError(
+                f"{result.slug} embedding price for {model_id} must be single-tier and input-only"
+            )
+        row = dict(source)
+        row.update(
+            {
+                "id": model_id,
+                "model_type": "embedding",
+                "endpoints": ["embeddings"],
+                "output_modalities": ["embeddings"],
+            }
+        )
+        normalized[model_id] = row
+    return write_discovered_chat_manifest(
+        result,
+        manifest_path=manifest_path,
+        discovered_rows=normalized,
+        source_url=source_url,
+        pricing_source_url=source_url,
+    )
+
+
 def write_discovered_chat_manifest(
     result: ProviderPricingResult,
     *,

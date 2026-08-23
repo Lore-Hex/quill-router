@@ -145,6 +145,10 @@ PROVIDER_SLUGS = [
     "sambanova",
     "arcee",
     "inception",
+    "io_net",
+    "scaleway",
+    "featherless",
+    "jina",
     # 0G Private Computer publishes exact per-route prices and trust metadata
     # in its public marketplace hydration data. The adapter admits only
     # healthy TeeML/private chat routes and keeps them dark until a keyed PONG.
@@ -168,6 +172,7 @@ _PRICING_RESULT_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
     "openrouter_exclusive": ("openrouter-exclusive",),
     "sail_research": ("sail-research",),
     "aion_labs": ("aion-labs",),
+    "io_net": ("io-net",),
 }
 
 # These providers run a pricing-page parser (Kimi has a custom multi-page
