@@ -7,6 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
+# shellcheck source=scripts/deploy/_clickhouse_bundle.sh
+source "${SCRIPT_DIR}/_clickhouse_bundle.sh"
 
 NAMES=(tr-clickhouse-1 tr-clickhouse-2 tr-clickhouse-3)
 ZONES=(us-central1-a us-central1-b us-central1-c)
@@ -102,7 +104,7 @@ cleanup() {
   return "$status"
 }
 trap cleanup EXIT
-tar -C "$ROOT" -czf "$archive" clickhouse src/trusted_router
+build_clickhouse_bundle "$ROOT" "$archive"
 node_ssh 0 --command="sudo mkdir -p /opt/tr-clickhouse"
 node_ssh 0 --command="sudo tar -xzf - -C /opt/tr-clickhouse" <"$archive"
 

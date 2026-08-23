@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
@@ -88,6 +89,91 @@ def test_operational_deploy_resumes_live_ingest_before_backfills() -> None:
     assert "tr-clickhouse-synthetic-reconcile.timer" in script
     assert "systemctl enable" in script
     assert 'id_column="event_id"' in script
+
+
+def test_clickhouse_manual_deploys_bundle_only_valid_committed_source() -> None:
+    helper = (ROOT / "scripts/deploy/_clickhouse_bundle.sh").read_text()
+    assert "git -C \"$root\" status --porcelain" in helper
+    assert "git -C \"$root\" archive" in helper
+    assert "provider bundle contains invalid JSON" in helper
+    assert "path.read_text(encoding=\"utf-8\")" in helper
+
+    for relative in (
+        "scripts/deploy/clickhouse_live_ingestion.sh",
+        "scripts/deploy/clickhouse_operational_analytics.sh",
+    ):
+        script = (ROOT / relative).read_text()
+        assert "source \"${SCRIPT_DIR}/_clickhouse_bundle.sh\"" in script
+        assert "build_clickhouse_bundle \"$ROOT\" \"$archive\"" in script
+        assert 'tar -C "$ROOT" -czf "$archive" clickhouse src/trusted_router' not in script
+
+
+def _committed_clickhouse_fixture(tmp_path: Path, *, manifest: bytes) -> Path:
+    repo = tmp_path / "repo"
+    (repo / "clickhouse").mkdir(parents=True)
+    data = repo / "src/trusted_router/data/provider_models"
+    data.mkdir(parents=True)
+    (repo / "clickhouse/worker.py").write_text("VALUE = 1\n")
+    (data / "provider.json").write_bytes(manifest)
+    for command in (
+        ["git", "init", "-q"],
+        ["git", "config", "user.email", "test@trustedrouter.com"],
+        ["git", "config", "user.name", "TrustedRouter Test"],
+        ["git", "add", "clickhouse", "src/trusted_router"],
+        ["git", "commit", "-qm", "fixture"],
+    ):
+        subprocess.run(command, cwd=repo, check=True, capture_output=True)  # noqa: S603
+    return repo
+
+
+def _run_bundle_helper(repo: Path, archive: Path) -> subprocess.CompletedProcess[str]:
+    helper = ROOT / "scripts/deploy/_clickhouse_bundle.sh"
+    return subprocess.run(  # noqa: S603
+        [
+            "/bin/bash",
+            "-c",
+            'source "$1"; build_clickhouse_bundle "$2" "$3"',
+            "bundle-test",
+            str(helper),
+            str(repo),
+            str(archive),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_clickhouse_bundle_is_a_valid_committed_snapshot(tmp_path: Path) -> None:
+    repo = _committed_clickhouse_fixture(tmp_path, manifest=b'{"models": []}\n')
+    archive = tmp_path / "bundle.tar.gz"
+
+    result = _run_bundle_helper(repo, archive)
+
+    assert result.returncode == 0, result.stderr
+    with tarfile.open(archive) as bundle:
+        assert "src/trusted_router/data/provider_models/provider.json" in bundle.getnames()
+
+
+def test_clickhouse_bundle_rejects_dirty_or_invalid_source(tmp_path: Path) -> None:
+    dirty_repo = _committed_clickhouse_fixture(
+        tmp_path / "dirty",
+        manifest=b'{"models": []}\n',
+    )
+    (dirty_repo / "src/trusted_router/data/provider_models/provider.json").write_bytes(
+        b"\xa3"
+    )
+    dirty = _run_bundle_helper(dirty_repo, tmp_path / "dirty.tar.gz")
+    assert dirty.returncode != 0
+    assert "refusing ClickHouse deployment from modified worker source" in dirty.stderr
+
+    invalid_repo = _committed_clickhouse_fixture(
+        tmp_path / "invalid",
+        manifest=b"\xa3",
+    )
+    invalid = _run_bundle_helper(invalid_repo, tmp_path / "invalid.tar.gz")
+    assert invalid.returncode != 0
+    assert "provider bundle contains invalid JSON" in invalid.stderr
 
 
 def test_client_telemetry_single_node_schema_is_applied_with_operational_schema() -> None:

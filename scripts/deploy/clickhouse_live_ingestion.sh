@@ -6,7 +6,10 @@
 # enqueue setting.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# shellcheck source=scripts/deploy/_clickhouse_bundle.sh
+source "${SCRIPT_DIR}/_clickhouse_bundle.sh"
 PROJECT="${PROJECT:-quill-cloud-proxy}"
 ZONE="${ZONE:-us-central1-a}"
 NAME="${NAME:-tr-clickhouse-1}"
@@ -32,7 +35,7 @@ fi
 
 archive=$(mktemp "${TMPDIR:-/tmp}/tr-clickhouse-live.XXXXXX.tar.gz")
 trap 'rm -f "$archive"' EXIT
-tar -C "$ROOT" -czf "$archive" clickhouse src/trusted_router
+build_clickhouse_bundle "$ROOT" "$archive"
 
 ssh_node --command="sudo mkdir -p /opt/tr-clickhouse"
 ssh_node --command="sudo tar -xzf - -C /opt/tr-clickhouse" < "$archive"
