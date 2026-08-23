@@ -697,10 +697,7 @@ OPENROUTER_PAID_LANDING_VARIANTS: dict[str, OpenRouterLandingVariant] = {
 
 OPENROUTER_PAID_LANDING_PATHS: tuple[str, ...] = (
     "/openrouter-alternative/quickstart",
-    *tuple(
-        f"/openrouter-alternative/lp/{slug}"
-        for slug in OPENROUTER_PAID_LANDING_VARIANTS
-    ),
+    *tuple(f"/openrouter-alternative/lp/{slug}" for slug in OPENROUTER_PAID_LANDING_VARIANTS),
 )
 
 
@@ -1967,7 +1964,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "How do I make sure my prompts only reach US providers?",
-                "Set provider.jurisdiction to \"us\" on the request. The router then considers only providers whose recorded operator country is the United States and fails closed when none qualify, rather than falling back to a provider you did not approve. For an exact list rather than a country test, use provider.only with the provider slugs you approved.",
+                'Set provider.jurisdiction to "us" on the request. The router then considers only providers whose recorded operator country is the United States and fails closed when none qualify, rather than falling back to a provider you did not approve. For an exact list rather than a country test, use provider.only with the provider slugs you approved.',
             ),
             (
                 "Does a US provider mean my data stays in the United States?",
@@ -1999,7 +1996,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Can I require an EU provider the way I can require a US one?",
-                "Not with the jurisdiction preference. provider.jurisdiction accepts \"us\" and nothing else today, so an EU requirement is expressed with provider.only and the provider list on this page. Separately, the EU gateway region is chosen by base URL: https://api-europe-west4.quillrouter.com/v1 begins authentication, policy checks, provider selection, and streaming in Europe West inside the attested gateway.",
+                'Not with the jurisdiction preference. provider.jurisdiction accepts "us" and nothing else today, so an EU requirement is expressed with provider.only and the provider list on this page. Separately, the EU gateway region is chosen by base URL: https://api-europe-west4.quillrouter.com/v1 begins authentication, policy checks, provider selection, and streaming in Europe West inside the attested gateway.',
             ),
             (
                 "Is provider jurisdiction the same as provider privacy posture?",
@@ -2023,7 +2020,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "How do I use a Chinese model without China-bound traffic?",
-                "Set provider.jurisdiction to \"us\" on the request. The router then considers only providers whose recorded operator country is the United States, and fails closed when none serve that model, rather than silently routing elsewhere. provider.only pins an exact operator allowlist when a country test is not specific enough.",
+                'Set provider.jurisdiction to "us" on the request. The router then considers only providers whose recorded operator country is the United States, and fails closed when none serve that model, rather than silently routing elsewhere. provider.only pins an exact operator allowlist when a country test is not specific enough.',
             ),
             (
                 "Which providers are operated from China?",
@@ -2136,6 +2133,7 @@ def dashboard_html(
         _env()
         .get_template("dashboard.html")
         .render(
+            organization_json_ld=_json_ld_graph(settings),
             api_base_url=resolved_api_base_url,
             site_url=site_url,
             canonical_site_url=canonical_site_url,
@@ -2232,12 +2230,21 @@ def _blog_index_posts(settings: Settings) -> tuple[BlogIndexPost, ...]:
     )
 
 
-def _json_ld_graph(*nodes: dict[str, object] | None) -> str:
+def _json_ld_graph(settings: Settings, *nodes: dict[str, object] | None) -> str:
+    """Every page's graph, with the operating company always in it.
+
+    The Organization node is prepended here rather than added at each call
+    site. There are a dozen of those and adding it to each would be a dozen
+    places to forget it, which matters because an assistant asked "who runs
+    this and how do I contact them" has no reason to have landed on whichever
+    page somebody remembered to annotate.
+    """
     graph = [node for node in nodes if node]
     if len(graph) == 1:
         payload: dict[str, object] = {"@context": "https://schema.org", **graph[0]}
     else:
-        payload = {"@context": "https://schema.org", "@graph": graph}
+        graph = [_organization_node(settings), *graph]
+    payload = {"@context": "https://schema.org", "@graph": graph}
     return json.dumps(payload, separators=(",", ":"))
 
 
@@ -2274,6 +2281,7 @@ def _faq_node(faq_items: Sequence[tuple[str, str]]) -> dict[str, object] | None:
 
 def _blog_index_json_ld(settings: Settings) -> str:
     return _json_ld_graph(
+        settings,
         _breadcrumb_node(settings, (("Home", "/"), ("Blog", "/blog"))),
         {
             "@type": "Blog",
@@ -2295,6 +2303,7 @@ def _blog_index_json_ld(settings: Settings) -> str:
 
 def _blog_post_json_ld(settings: Settings, post: BlogPost) -> str:
     return _json_ld_graph(
+        settings,
         _breadcrumb_node(
             settings,
             (("Home", "/"), ("Blog", "/blog"), (post.title, post.href)),
@@ -2316,6 +2325,80 @@ def _blog_post_json_ld(settings: Settings, post: BlogPost) -> str:
             "isBasedOn": post.source_url,
         },
     )
+
+
+def _organization_node(settings: Settings) -> dict[str, object]:
+    """The operating company, in the form a verifier can actually check.
+
+    Every Organization node on the site until now was a two-field publisher
+    stub -- name and url -- attached to a blog post or a dataset. None of them
+    said who operates TrustedRouter, how to reach a human, or where the company
+    is, which is exactly what an assistant is asked when somebody wants to know
+    whether a vendor is real before sending it traffic.
+
+    The values come from the same settings the legal and procurement pages
+    render, so this cannot drift into being a second, prettier set of facts.
+    contactPoint is split by purpose because "who do I email about a
+    vulnerability" and "who do I email about an invoice" are different
+    questions with different answers.
+    """
+    domain = settings.trusted_domain
+    return {
+        "@type": "Organization",
+        "@id": f"https://{domain}/#organization",
+        "name": "TrustedRouter",
+        "legalName": settings.legal_entity_name,
+        "url": f"https://{domain}/",
+        "logo": _absolute_url(settings, "/static/logo.png"),
+        # EIN and DUNS are already published on /legal for procurement. Repeating
+        # them here in the machine-readable node is the difference between a
+        # human being able to verify the company and an assistant being able to.
+        "taxID": settings.legal_entity_ein,
+        "duns": settings.legal_entity_duns,
+        "description": (
+            "An OpenAI-compatible AI router with an attested prompt path: one API "
+            "for hundreds of models across many providers, with provider fallback, "
+            "zero-retention routing, and a gateway whose running source commit and "
+            "image digest can be verified."
+        ),
+        "address": {
+            "@type": "PostalAddress",
+            "streetAddress": settings.legal_entity_street,
+            "addressLocality": settings.legal_entity_city,
+            "addressRegion": settings.legal_entity_region,
+            "postalCode": settings.legal_entity_postal_code,
+            "addressCountry": settings.legal_entity_country,
+        },
+        "contactPoint": [
+            {
+                "@type": "ContactPoint",
+                "contactType": "customer support",
+                "email": settings.support_email,
+                "telephone": settings.legal_entity_phone,
+                "url": f"https://{domain}/support",
+                "availableLanguage": ["en"],
+            },
+            {
+                "@type": "ContactPoint",
+                "contactType": "security",
+                "email": settings.security_contact_email,
+                "url": f"https://{domain}/security",
+                "availableLanguage": ["en"],
+            },
+            {
+                "@type": "ContactPoint",
+                "contactType": "sales",
+                "email": settings.support_email,
+                "telephone": settings.legal_entity_phone,
+                "url": f"https://{domain}/legal",
+                "availableLanguage": ["en"],
+            },
+        ],
+        "sameAs": [
+            "https://github.com/Lore-Hex",
+            f"https://{domain}/trust",
+        ],
+    }
 
 
 def _dataset_node(
@@ -2424,9 +2507,7 @@ def public_page_html(
         page_key=page_key,
         site_url=site_url,
         canonical_url_override=(
-            canonical_public_url(settings, canonical_path)
-            if canonical_path is not None
-            else None
+            canonical_public_url(settings, canonical_path) if canonical_path is not None else None
         ),
         robots_meta=robots_meta,
     )
@@ -2549,13 +2630,12 @@ def public_competitor_compare_index_html(settings: Settings) -> str:
             ),
             comparison_count=len(COMPETITOR_COMPARISONS),
             category_count=len(grouped),
-            source_count=sum(
-                len(comparison.sources) for comparison in COMPETITOR_COMPARISONS
+            source_count=sum(len(comparison.sources) for comparison in COMPETITOR_COMPARISONS),
+            verified_on_label=datetime.fromisoformat(COMPETITOR_COMPARISONS_VERIFIED_ON).strftime(
+                "%B %-d, %Y"
             ),
-            verified_on_label=datetime.fromisoformat(
-                COMPETITOR_COMPARISONS_VERIFIED_ON
-            ).strftime("%B %-d, %Y"),
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(settings, (("Home", "/"), ("AI gateway comparisons", path))),
                 _item_list_node(name="TrustedRouter gateway comparisons", items=items),
             ),
@@ -2572,9 +2652,9 @@ def public_competitor_compare_html(settings: Settings, slug: str) -> str | None:
         return None
     path = comparison.href
     canonical_url = canonical_public_url(settings, path)
-    verified_on_label = datetime.fromisoformat(
-        COMPETITOR_COMPARISONS_VERIFIED_ON
-    ).strftime("%B %-d, %Y")
+    verified_on_label = datetime.fromisoformat(COMPETITOR_COMPARISONS_VERIFIED_ON).strftime(
+        "%B %-d, %Y"
+    )
     page_node: dict[str, object] = {
         "@type": "WebPage",
         "name": comparison.title,
@@ -2606,6 +2686,7 @@ def public_competitor_compare_html(settings: Settings, slug: str) -> str | None:
             verified_on_label=verified_on_label,
             faq_items=comparison.faq_items,
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(
                     settings,
                     (("Home", "/"), ("Comparisons", "/compare"), (comparison.name, path)),
@@ -2642,9 +2723,9 @@ def _render_public_page(
     verified_on_label: str | None = None
     page_specific_json_ld: tuple[dict[str, object], ...] = ()
     if page_key == "openrouter-alternative":
-        verified_on_label = datetime.fromisoformat(
-            OPENROUTER_ALTERNATIVES_VERIFIED_ON
-        ).strftime("%B %-d, %Y")
+        verified_on_label = datetime.fromisoformat(OPENROUTER_ALTERNATIVES_VERIFIED_ON).strftime(
+            "%B %-d, %Y"
+        )
         page_specific_json_ld = (
             {
                 "@type": "WebPage",
@@ -2687,6 +2768,8 @@ def _render_public_page(
             catalog_evidence=catalog_evidence,
             verified_on_label=verified_on_label,
             json_ld_blob=_json_ld_graph(
+                settings,
+                _organization_node(settings),
                 _breadcrumb_node(settings, (("Home", "/"), (page.title, path))),
                 *page_specific_json_ld,
                 *extra_json_ld,
@@ -2810,6 +2893,10 @@ def public_legal_html(settings: Settings) -> str:
         _env()
         .get_template("public/legal.html")
         .render(
+            # /legal is the procurement page: the entity, EIN and DUNS are
+            # already rendered here for humans, and this is the machine-readable
+            # form of the same facts.
+            json_ld_blob=_json_ld_graph(settings),
             api_base_url=settings.api_base_url,
             site_url=f"https://{settings.trusted_domain}/legal",
             title="Legal And Procurement Packet | TrustedRouter",
@@ -2903,6 +2990,9 @@ def public_support_html(settings: Settings) -> str:
         _env()
         .get_template("public/support.html")
         .render(
+            # The page an assistant reaches for a contact query, so the
+            # contactPoint block belongs here more than anywhere.
+            json_ld_blob=_json_ld_graph(settings),
             api_base_url=settings.api_base_url,
             site_url=f"https://{settings.trusted_domain}/support",
             title="Support | TrustedRouter",
@@ -2948,6 +3038,7 @@ def public_bedrock_group_buy_html(
             og_image=(f"https://{settings.trusted_domain}/static/og/bedrock-group-buy.png"),
             og_image_alt=("TrustedRouter Bedrock Group Buy: $1 million per month and 10% savings"),
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(
                     settings,
                     (("Home", "/"), ("Bedrock Group Buy", "/bedrock-group-buy")),
@@ -3150,6 +3241,7 @@ def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
                 {"id": "eu", "label": "EU-focused", "href": "/models?filter=eu"},
             ],
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(settings, (("Home", "/"), ("Models", "/models"))),
                 _item_list_node(
                     name="TrustedRouter model catalog",
@@ -3182,8 +3274,7 @@ def public_benchmarks_html(settings: Settings) -> str:
             providers=[_provider_view(provider) for provider in providers_for_display()],
             benchmark_links=list(_BENCHMARK_INDEX_LINKS),
             monthly_reports=[
-                monthly_benchmark_report_view(report)
-                for report in monthly_benchmark_reports()
+                monthly_benchmark_report_view(report) for report in monthly_benchmark_reports()
             ],
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
@@ -3193,9 +3284,7 @@ def public_benchmarks_html(settings: Settings) -> str:
 
 
 def public_benchmark_reports_index_html(settings: Settings) -> str:
-    reports = [
-        monthly_benchmark_report_view(report) for report in monthly_benchmark_reports()
-    ]
+    reports = [monthly_benchmark_report_view(report) for report in monthly_benchmark_reports()]
     return (
         _env()
         .get_template("public/benchmark_reports_index.html")
@@ -3210,6 +3299,7 @@ def public_benchmark_reports_index_html(settings: Settings) -> str:
             ),
             reports=reports,
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(
                     settings,
                     (
@@ -3312,6 +3402,7 @@ def public_leaderboard_html(settings: Settings, snapshot: dict[str, object]) -> 
             page_kind="leaderboard",
             snapshot=snapshot,
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(settings, (("Home", "/"), ("Leaderboard", "/leaderboard"))),
                 _dataset_node(
                     name="TrustedRouter LLM provider and model speed leaderboard",
@@ -3346,6 +3437,7 @@ def public_video_leaderboard_html(settings: Settings, snapshot: dict[str, object
             page_kind="video-leaderboard",
             snapshot=snapshot,
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(
                     settings,
                     (
@@ -3491,6 +3583,7 @@ def public_providers_html(settings: Settings) -> str:
             ),
             providers=providers,
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(settings, (("Home", "/"), ("Providers", "/providers"))),
                 _item_list_node(
                     name="TrustedRouter provider catalog",
@@ -3536,6 +3629,7 @@ def public_provider_detail_html(settings: Settings, provider_slug: str) -> str |
             measured=measured_for_provider(provider.slug, test_mode=settings.environment == "test"),
             faq_items=provider_faq_items,
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(
                     settings,
                     (
@@ -3601,6 +3695,7 @@ def public_provider_performance_html(settings: Settings, provider_slug: str) -> 
             ),
             measured=measured,
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(
                     settings,
                     (
@@ -3717,6 +3812,7 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
             comparison_neighbors=_model_comparison_neighbor_rows(left.id, right.id),
             faq_items=faq_items,
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(
                     settings,
                     (
@@ -3782,6 +3878,7 @@ def public_model_compare_index_html(settings: Settings, *, page: int = 1) -> str
                 for number in range(1, page_count + 1)
             ],
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(
                     settings,
                     (("Home", "/"), ("Models", "/models"), ("Compare models", site_path)),
@@ -4008,49 +4105,51 @@ def llms_txt(settings: Settings) -> str:
         ),
         "",
         "## Primary Links",
-        f"- Homepage: https://{domain}/",
-        f"- Models: https://{domain}/models",
-        f"- Providers: https://{domain}/providers",
-        f"- AI gateway comparisons: https://{domain}/compare",
-        f"- Provider marketplace: https://{domain}/providers/marketplace",
+        f"- [Homepage](https://{domain}/)",
+        f"- [Models](https://{domain}/models)",
+        f"- [Providers](https://{domain}/providers)",
+        f"- [AI gateway comparisons](https://{domain}/compare)",
+        f"- [Provider marketplace](https://{domain}/providers/marketplace)",
         (
             "- Model origin vs serving jurisdiction directories (the lab that built a "
-            f"model and the company operating each route are separate): https://{domain}"
-            f"/us-ai-models, https://{domain}/eu-ai-models, https://{domain}/china-ai-models"
+            "model and the company operating each route are separate): "
+            f"[US]({f'https://{domain}/us-ai-models'}), "
+            f"[EU]({f'https://{domain}/eu-ai-models'}), "
+            f"[China]({f'https://{domain}/china-ai-models'})"
         ),
-        f"- EU routing: https://{domain}/eu",
-        f"- TrustedOS for AI clouds: https://{domain}/trustedos",
-        f"- Benchmarks: https://{domain}/benchmarks",
-        f"- Rankings: https://{domain}/rankings",
-        "- Status: https://status.trustedrouter.com/",
-        "- Trust: https://trust.trustedrouter.com/",
-        f"- Legal/procurement packet: https://{domain}/legal",
-        f"- SOC 2 readiness: https://{domain}/legal/soc2-readiness",
-        f"- HIPAA readiness: https://{domain}/legal/hipaa-readiness",
-        f"- Agent setup: https://{domain}/docs/agent-setup",
-        f"- Agent model-advisor skill/playbook: https://{domain}/docs/agent-setup#codex-skill",
+        f"- [EU routing](https://{domain}/eu)",
+        f"- [TrustedOS for AI clouds](https://{domain}/trustedos)",
+        f"- [Benchmarks](https://{domain}/benchmarks)",
+        f"- [Rankings](https://{domain}/rankings)",
+        "- [Status](https://status.trustedrouter.com/)",
+        "- [Trust](https://trust.trustedrouter.com/)",
+        f"- [Legal/procurement packet](https://{domain}/legal)",
+        f"- [SOC 2 readiness](https://{domain}/legal/soc2-readiness)",
+        f"- [HIPAA readiness](https://{domain}/legal/hipaa-readiness)",
+        f"- [Agent setup](https://{domain}/docs/agent-setup)",
+        f"- [Agent model-advisor skill/playbook](https://{domain}/docs/agent-setup#codex-skill)",
         "- Agent skill name: trustedrouter-model-advisor",
-        "- Agent playbook source: https://github.com/Lore-Hex/LLM-advisor",
-        "- Raw agent playbook: https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md",
-        f"- MCP server: https://{domain}/docs/mcp",
-        f"- Evals guide: https://{domain}/docs/evals",
-        f"- Provider conformance suite: https://{domain}/docs/provider-conformance",
-        f"- Synth guide: https://{domain}/docs/synth",
-        f"- Responses web search: https://{domain}/docs/web-search",
-        f"- Prompt caching: https://{domain}/docs/prompt-caching",
-        f"- Batch API: https://{domain}/docs/batch",
-        f"- Video generation: https://{domain}/docs/video",
-        f"- Request tagging and cost allocation: https://{domain}/docs/tagging",
-        f"- Client reliability telemetry: https://{domain}/docs/telemetry",
-        f"- Blog: https://{domain}/blog",
-        f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
-        f"- Request tagging and cost allocation: https://{domain}/docs/tagging",
-        f"- Client reliability telemetry: https://{domain}/docs/telemetry",
+        "- [Agent playbook source](https://github.com/Lore-Hex/LLM-advisor)",
+        "- [Raw agent playbook](https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md)",
+        f"- [MCP server](https://{domain}/docs/mcp)",
+        f"- [Evals guide](https://{domain}/docs/evals)",
+        f"- [Provider conformance suite](https://{domain}/docs/provider-conformance)",
+        f"- [Synth guide](https://{domain}/docs/synth)",
+        f"- [Responses web search](https://{domain}/docs/web-search)",
+        f"- [Prompt caching](https://{domain}/docs/prompt-caching)",
+        f"- [Batch API](https://{domain}/docs/batch)",
+        f"- [Video generation](https://{domain}/docs/video)",
+        f"- [Request tagging and cost allocation](https://{domain}/docs/tagging)",
+        f"- [Client reliability telemetry](https://{domain}/docs/telemetry)",
+        f"- [Blog](https://{domain}/blog)",
+        f"- [Migration guide](https://{domain}/docs/migrate-from-openrouter)",
+        f"- [Request tagging and cost allocation](https://{domain}/docs/tagging)",
+        f"- [Client reliability telemetry](https://{domain}/docs/telemetry)",
         "",
         "## API",
-        "- OpenAI compatible base URL: https://api.trustedrouter.com/v1",
-        "- EU regional base URL: https://api-europe-west4.quillrouter.com/v1",
-        f"- Canonical live model catalog (public, no API key): https://{domain}/v1/models",
+        "- [OpenAI compatible base URL](https://api.trustedrouter.com/v1)",
+        "- [EU regional base URL](https://api-europe-west4.quillrouter.com/v1)",
+        f"- [Canonical live model catalog (public, no API key)](https://{domain}/v1/models)",
         (
             "- Read the live model catalog before naming current model IDs, prices, "
             "context windows, or provider availability. This concise llms.txt is a "
@@ -4072,22 +4171,22 @@ def llms_txt(settings: Settings) -> str:
         "",
         "## Developer Resources",
         (
-            "- Named so an agent searching for \"TrustedRouter API docs\", \"TrustedRouter "
-            "OpenAPI spec\" or \"TrustedRouter MCP server\" finds the exact URL here "
+            '- Named so an agent searching for "TrustedRouter API docs", "TrustedRouter '
+            'OpenAPI spec" or "TrustedRouter MCP server" finds the exact URL here '
             "rather than having to guess paths."
         ),
-        f"- TrustedRouter API documentation: https://{domain}/docs",
-        f"- TrustedRouter OpenAPI specification (JSON): https://{domain}/openapi.json",
-        f"- TrustedRouter interactive API reference: https://{domain}/docs",
-        f"- TrustedRouter authentication: https://{domain}/docs#authentication",
-        f"- TrustedRouter MCP server: https://{domain}/docs/mcp",
-        f"- TrustedRouter agent setup guide: https://{domain}/docs/agent-setup",
-        f"- TrustedRouter SDK quickstarts: https://{domain}/docs#sdks",
-        f"- TrustedRouter status page: https://status.{domain}/",
-        f"- TrustedRouter attestation and trust evidence: https://trust.{domain}/",
-        f"- This index: https://{domain}/llms.txt",
-        f"- Extended index with full page text: https://{domain}/llms-full.txt",
-        f"- Machine-readable URL list: https://{domain}/sitemap.xml",
+        f"- [TrustedRouter API documentation](https://{domain}/docs)",
+        f"- [TrustedRouter OpenAPI specification (JSON)](https://{domain}/openapi.json)",
+        f"- [TrustedRouter interactive API reference](https://{domain}/docs)",
+        f"- [TrustedRouter authentication](https://{domain}/docs#authentication)",
+        f"- [TrustedRouter MCP server](https://{domain}/docs/mcp)",
+        f"- [TrustedRouter agent setup guide](https://{domain}/docs/agent-setup)",
+        f"- [TrustedRouter SDK quickstarts](https://{domain}/docs#sdks)",
+        f"- [TrustedRouter status page](https://status.{domain}/)",
+        f"- [TrustedRouter attestation and trust evidence](https://trust.{domain}/)",
+        f"- [This index](https://{domain}/llms.txt)",
+        f"- [Extended index with full page text](https://{domain}/llms-full.txt)",
+        f"- [Machine-readable URL list](https://{domain}/sitemap.xml)",
         "",
         "## Catalog",
         f"- Public model pages: {model_count}",
@@ -4867,7 +4966,7 @@ def _model_section_json_ld(
                 keywords=("LLM latency", model.name, "provider performance"),
             )
         )
-    return _json_ld_graph(*nodes)
+    return _json_ld_graph(settings, *nodes)
 
 
 def _sample_count(row: Mapping[str, object]) -> int:
@@ -5450,6 +5549,7 @@ def _model_json_ld(
     as USD per million tokens, matching the unit the page itself displays.
     """
     return _json_ld_graph(
+        settings,
         _breadcrumb_node(
             settings,
             (("Home", "/"), ("Models", "/models"), (model.name, f"/models/{model.id}")),

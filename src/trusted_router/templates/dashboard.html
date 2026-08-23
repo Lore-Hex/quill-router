@@ -39,6 +39,9 @@
   <link rel="preload" href="/static/fonts/spectral-300-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/charter.css?v={{ static_version|default('local') }}">
+  {# The homepage carried no structured data at all, which is the page an
+     assistant is most likely to land on when asked who operates this. #}
+  {% if organization_json_ld %}<script type="application/ld+json" nonce="{{ csp_nonce() }}">{{ organization_json_ld|safe }}</script>{% endif %}
   <script nonce="{{ csp_nonce() }}">window.__TR__ = {{ tr_config | safe }};</script>
   <script src="/static/dashboard.js?v={{ static_version|default('local') }}" defer></script>
 </head>
