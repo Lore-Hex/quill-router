@@ -63,7 +63,6 @@ NOW = dt.datetime(2026, 8, 17, 12, 0, tzinfo=dt.UTC)
 #: whose whole thesis is that hand-maintained cloud lists are the defect.
 CHECKABLE_CLOUDS = [entry.cloud for entry in checkable_endpoints()]
 MEASURED_CLOUDS = [entry.cloud for entry in checkable_endpoints() if entry.expects_outbox]
-OUTBOX_FREE_CLOUDS = [entry.cloud for entry in checkable_endpoints() if not entry.expects_outbox]
 
 
 # ---------------------------------------------------------------------------
@@ -559,30 +558,59 @@ def test_a_cloud_with_a_reason_is_reported_as_unchecked_and_does_not_fail() -> N
     assert result.unchecked[0].startswith("aws: NOT CHECKED")
 
 
+def _outbox_free_fixture(
+    observer_payload: dict[str, object],
+) -> tuple[
+    tuple[FleetAnalyticsEndpoint, ...],
+    dict[str, dict[str, object] | None],
+]:
+    registry = (
+        FleetAnalyticsEndpoint(
+            cloud="observer-only",
+            status_url="https://observer.example/status.json",
+            expected_backend=BACKEND_POSTGRES,
+            expects_outbox=False,
+        ),
+        FleetAnalyticsEndpoint(
+            cloud="gcp",
+            status_url="https://gcp.example/status.json",
+            expected_backend=BACKEND_SPANNER,
+        ),
+    )
+    return registry, {"observer-only": observer_payload, "gcp": _healthy("gcp")}
+
+
 def test_a_cloud_declared_outbox_free_is_unchecked_rather_than_failing() -> None:
-    """Azure today: no TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED, so no outbox.
+    """A deliberate observer-only deployment can still declare no outbox.
 
     It would publish `not_configured` forever. Failing on it daily is the
     cry-wolf shape the repo already fixed once, in the client-telemetry
     freshness check's `CANARY_COUNT_GATE_FROM` ramp-up guard.
     """
-    result = evaluate_fleet(_as_declared(), now=NOW)
+    registry, payloads = _outbox_free_fixture(
+        {ANALYTICS_STATUS_KEY: analytics_status_unavailable(REASON_NOT_CONFIGURED)}
+    )
+    result = evaluate_fleet(
+        payloads,
+        now=NOW,
+        registry=registry,
+        deployed=("observer-only", "gcp"),
+    )
 
     assert result.problems == []
-    for cloud in OUTBOX_FREE_CLOUDS:
-        assert any(note.startswith(f"{cloud}: NOT CHECKED") for note in result.unchecked)
+    assert any(note.startswith("observer-only: NOT CHECKED") for note in result.unchecked)
     assert any("expects_outbox=False" in note for note in result.unchecked)
 
 
-def test_the_azure_entry_is_the_one_declared_outbox_free() -> None:
-    """Read off the deploy script, and pinned so a silent flip is visible.
+def test_every_deployed_cloud_with_a_live_outbox_is_measured() -> None:
+    """Pin the production contract so a live drain cannot become unmonitored.
 
-    `scripts/deploy/azure_control_plane.sh` sets no
-    TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED at all, and the setting defaults to
-    False, so PostgresStore builds no outbox there.
+    Azure now publishes a live Postgres outbox lag. Its registry entry must
+    therefore enforce that lag just like AWS and GCP instead of retaining the
+    historical ``expects_outbox=False`` exemption.
     """
     azure = fleet_endpoint("azure")
-    assert azure is not None and azure.expects_outbox is False
+    assert azure is not None and azure.expects_outbox is True
 
     for cloud in ("aws", "gcp"):
         entry = fleet_endpoint(cloud)
@@ -592,27 +620,37 @@ def test_the_azure_entry_is_the_one_declared_outbox_free() -> None:
 def test_a_cloud_declared_outbox_free_that_grows_one_FAILS() -> None:
     """The trapdoor this closes, and the reason it is not just `reason=`.
 
-    Retiring Azure behind a bare reason would also retire the ability to notice
+    Retiring a cloud behind a bare reason would also retire the ability to notice
     the day it gets a pipeline -- which would then be unwatched for exactly the
     reason AWS-EU's was.
     """
-    payloads = _all_healthy()
+    registry, payloads = _outbox_free_fixture(_healthy())
 
-    result = evaluate_fleet(payloads, now=NOW)
+    result = evaluate_fleet(
+        payloads,
+        now=NOW,
+        registry=registry,
+        deployed=("observer-only", "gcp"),
+    )
 
-    assert [problem for problem in result.problems if problem.startswith("azure:")]
+    assert [problem for problem in result.problems if problem.startswith("observer-only:")]
     assert any("expects_outbox=True" in problem for problem in result.problems)
 
 
-@pytest.mark.parametrize("cloud", OUTBOX_FREE_CLOUDS)
-def test_a_cloud_declared_outbox_free_still_fails_when_its_database_is_broken(cloud: str) -> None:
+def test_a_cloud_declared_outbox_free_still_fails_when_its_database_is_broken() -> None:
     """`expects_outbox=False` excuses `not_configured`, and nothing else."""
-    payloads = _as_declared()
-    payloads[cloud] = {ANALYTICS_STATUS_KEY: analytics_status_unavailable(REASON_UNREACHABLE)}
+    registry, payloads = _outbox_free_fixture(
+        {ANALYTICS_STATUS_KEY: analytics_status_unavailable(REASON_UNREACHABLE)}
+    )
 
-    result = evaluate_fleet(payloads, now=NOW)
+    result = evaluate_fleet(
+        payloads,
+        now=NOW,
+        registry=registry,
+        deployed=("observer-only", "gcp"),
+    )
 
-    assert [problem for problem in result.problems if problem.startswith(f"{cloud}:")]
+    assert [problem for problem in result.problems if problem.startswith("observer-only:")]
 
 
 def test_unavailable_explanations_differ_per_reason() -> None:
@@ -687,8 +725,8 @@ def _as_declared() -> dict[str, dict[str, object] | None]:
 
     Derived from the registry rather than written out, so a fourth entry is
     covered by every test built on this the day it lands. `_all_healthy` is
-    kept separate on purpose -- it makes the outbox-free clouds publish a live
-    lag, which is a FAILURE and has its own test.
+    kept separate so an intentionally outbox-free future deployment remains
+    representable without weakening the production fleet contract.
     """
     return {
         entry.cloud: (
@@ -700,11 +738,12 @@ def _as_declared() -> dict[str, dict[str, object] | None]:
     }
 
 
-def test_whole_fleet_healthy_reports_only_the_declared_absence() -> None:
-    """Azure is unchecked by declaration; the other two must be clean."""
+def test_whole_production_fleet_healthy_is_fully_measured() -> None:
+    """All three production clouds publish and enforce a live drain lag."""
     result = evaluate_fleet(_as_declared(), now=NOW)
 
     assert result.problems == []
+    assert result.unchecked == []
     assert result.ok
 
 
