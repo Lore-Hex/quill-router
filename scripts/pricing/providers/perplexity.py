@@ -49,7 +49,15 @@ def _is_perplexity_route(row: dict[str, Any]) -> bool:
     model_id = row.get("id")
     if not isinstance(model_id, str) or not model_id.strip():
         return False
-    return "/" not in model_id or model_id.startswith("perplexity/")
+    normalized = model_id.strip().casefold()
+    if normalized.startswith("perplexity/"):
+        normalized = normalized.removeprefix("perplexity/")
+    elif "/" in normalized:
+        return False
+    # Perplexity's catalog can expose third-party or account-specific rows.
+    # Admit only documented first-party model families; unknown unqualified
+    # IDs remain dark until they are deliberately classified.
+    return normalized.startswith("sonar") or normalized == "r1-1776"
 
 
 CATALOG = DirectOpenAIProvider(

@@ -15,7 +15,6 @@ from typing import Any
 from trusted_router.benchmark_scores import scores_for_model
 from trusted_router.catalog import (
     META_MODEL_IDS,
-    MODEL_ENDPOINTS,
     MODELS,
     PROVIDERS,
     Model,
@@ -77,7 +76,9 @@ def seo_catalog_evidence(page_key: str, *, test_mode: bool = False) -> dict[str,
     public_models = [model for model in MODELS.values() if model.id not in META_MODEL_IDS]
     public_model_ids = {model.id for model in public_models}
     public_endpoints = [
-        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.model_id in public_model_ids
+        endpoint
+        for model_id in public_model_ids
+        for endpoint in endpoints_for_model(model_id)
     ]
     snapshot = measured_snapshot(test_mode=test_mode)
     measured_models = _mapping_rows(snapshot.get("models"))

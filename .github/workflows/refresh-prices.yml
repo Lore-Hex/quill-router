@@ -238,17 +238,37 @@ jobs:
 
       - name: Price-source coverage audit
         id: coverage_audit
-        # Keep strict discovery as a durable alert, but do not let one provider's
-        # unpublished model freeze independently safe catalog updates from every
-        # other provider. The missing route remains fail-closed and the final
-        # step still fails this workflow after validation, commit, and dispatch.
+        # Capture the complete report before failing. The explicit gate below
+        # prevents commit and deploy while the always-run reconciliation step
+        # still updates the durable GitHub issue.
         continue-on-error: true
         if: always()
         run: |
+          set +e
           set -o pipefail
           uv run python -m scripts.check_price_coverage --strict-model-discovery \
             | tee /tmp/coverage-summary.txt \
             | tee -a "$GITHUB_STEP_SUMMARY"
+          rc=${PIPESTATUS[0]}
+          if grep -qE '::warning title=Price/model coverage gap::.*live scraper fallback manifest' \
+              /tmp/coverage-summary.txt; then
+            echo "manifest_attention=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "manifest_attention=false" >> "$GITHUB_OUTPUT"
+          fi
+          if grep -qE '::warning title=Price/model coverage gap::.*(model discovery fetch failed|model discovery returned no model ids|model discovery found no GLM model ids|official video price verification unavailable)' \
+              /tmp/coverage-summary.txt; then
+            echo "discovery_attention=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "discovery_attention=false" >> "$GITHUB_OUTPUT"
+          fi
+          exit "$rc"
+
+      - name: Block unsafe coverage before publication
+        if: steps.coverage_audit.outcome == 'failure'
+        run: |
+          echo "::error title=Price/model coverage gate::Catalog publication is blocked; the last known-good snapshot remains live."
+          exit 1
 
       - name: Validate generated catalog before commit
         # The refresh can change parsers, provider manifests, model ownership,
@@ -341,7 +361,10 @@ jobs:
       - name: Reconcile model-discovery coverage issue
         if: always()
         env:
+          JOB_STATUS: ${{ job.status }}
           COVERAGE_OUTCOME: ${{ steps.coverage_audit.outcome }}
+          MANIFEST_ATTENTION: ${{ steps.coverage_audit.outputs.manifest_attention }}
+          DISCOVERY_ATTENTION: ${{ steps.coverage_audit.outputs.discovery_attention }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
@@ -353,13 +376,27 @@ jobs:
             --json number,title \
             --jq "map(select(.title == \"${title}\"))[0].number // empty")
 
-          if [ "${COVERAGE_OUTCOME}" = "failure" ]; then
+          if [ "${JOB_STATUS}" != "success" ] || \
+             [ "${COVERAGE_OUTCOME}" != "success" ] || \
+             [ "${MANIFEST_ATTENTION}" != "false" ] || \
+             [ "${DISCOVERY_ATTENTION}" != "false" ]; then
             {
-              echo "The hourly price refresh published every independently safe update, but the separate model-discovery audit found unresolved coverage."
+              if [ "${JOB_STATUS}" != "success" ] && \
+                 [ "${COVERAGE_OUTCOME}" = "success" ]; then
+                echo "The hourly workflow did not complete successfully, so its clean working-tree audit is not evidence that the published catalog is healthy. The last known-good catalog remains live."
+              elif [ "${COVERAGE_OUTCOME}" = "failure" ]; then
+                echo "The hourly price refresh was blocked before commit and deploy because the price/model coverage audit found an unsafe gap. The last known-good catalog remains live."
+              elif [ "${MANIFEST_ATTENTION}" = "true" ]; then
+                echo "The hourly refresh completed, but one or more provider manifests are approaching or past their provider-scoped route deadline. Those routes fail closed independently; unrelated providers continue refreshing."
+              elif [ "${DISCOVERY_ATTENTION}" = "true" ]; then
+                echo "The hourly refresh completed, but one or more model or pricing discovery sources are unavailable or returned no usable data. Existing routes and prices remain isolated, but newly released models or upstream price changes may not be discovered until this is repaired."
+              else
+                echo "The price/model coverage audit did not complete, so there is no positive evidence that the prior discovery issue is resolved. The last known-good catalog remains live."
+              fi
               echo
               echo "Latest run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
               echo
-              cat /tmp/coverage-summary.txt
+              cat /tmp/coverage-summary.txt 2>/dev/null || echo "(coverage summary unavailable)"
             } > /tmp/coverage-issue.md
 
             if [ -n "${issue_number}" ]; then
@@ -372,7 +409,18 @@ jobs:
                 --title "${title}" \
                 --body-file /tmp/coverage-issue.md
             fi
-            echo "::warning title=Model discovery coverage gap::Safe provider updates were published; unresolved discovery coverage is tracked in GitHub Issues."
+            if [ "${JOB_STATUS}" != "success" ] && \
+               [ "${COVERAGE_OUTCOME}" = "success" ]; then
+              echo "::warning title=Catalog publication incomplete::The existing discovery issue remains open because this run did not publish a validated catalog."
+            elif [ "${COVERAGE_OUTCOME}" = "failure" ]; then
+              echo "::error title=Model discovery coverage gap::Catalog publication was blocked; unresolved coverage is tracked in GitHub Issues."
+            elif [ "${MANIFEST_ATTENTION}" = "true" ]; then
+              echo "::warning title=Provider manifest expiry::Provider-scoped route expiry is tracked in GitHub Issues."
+            elif [ "${DISCOVERY_ATTENTION}" = "true" ]; then
+              echo "::warning title=Model discovery unavailable::Persistent discovery failures are tracked in GitHub Issues."
+            else
+              echo "::warning title=Coverage audit incomplete::The existing discovery issue remains open because this run produced no clean audit evidence."
+            fi
             exit 0
           fi
 
