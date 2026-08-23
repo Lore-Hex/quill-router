@@ -199,13 +199,19 @@ preflight() {
     # run would build a second app beside the real one and report success.
     echo "container app ${APP} not found in ${RG}. Available:" >&2
     az containerapp list -g "$RG" --query "[].name" -o tsv 2>/dev/null | sed 's/^/  /' >&2
-    local serving
-    serving="$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
-      "https://${TRUSTED_DOMAIN:-azure.trustedrouter.com}/v1/health" 2>/dev/null || echo 000)"
-    if [ "$serving" = "200" ]; then
-      echo "refusing: ${TRUSTED_DOMAIN:-azure.trustedrouter.com} is already serving (200)," >&2
-      echo "so creating ${APP} would add a second app beside the live one." >&2
-      echo "Set APP= and APP_ENV= to the app that is actually serving." >&2
+    # Distinguish a genuine first run from drift WITHOUT a network call. The
+    # first version curled the public hostname, which is wrong twice over: a
+    # deploy preflight that needs the public internet fails for its own reasons
+    # offline, and it made an ordinary unit test reach production. The resource
+    # group already knows. Empty means first run and creating is correct.
+    # Non-empty means something here is already the deployment, and creating
+    # would stand up a second app beside it.
+    local existing
+    existing="$(az containerapp list -g "$RG" --query "[].name" -o tsv 2>/dev/null | tr "\n" " ")"
+    if [ -n "${existing// /}" ]; then
+      echo "refusing: ${RG} already contains container app(s): ${existing}" >&2
+      echo "Creating ${APP} would stand up a second app beside one of those." >&2
+      echo "Set APP= and APP_ENV= to the deployment that is actually serving." >&2
       problems=1
     fi
   fi
