@@ -180,6 +180,27 @@ jobs:
   # tests/test_check_format_ordering.py, in
   # test_an_unchanged_write_side_is_silent_and_reads_no_network, which drives
   # the real main() with every network seam replaced by a function that raises.
+  no-dev-import-smoke:
+    # The production image installs with --no-dev (Dockerfile), while every
+    # other CI job syncs the dev group. A runtime module importing a dev-only
+    # package therefore passes ALL tests and then crashes the container at
+    # startup, failing every deploy at the traffic ramp — which is exactly
+    # what happened when markdown_negotiation imported bs4 while
+    # beautifulsoup4 sat in the dev group (#764, discovered 2026-08-23).
+    # This job boots the app's import graph the way production does.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Sync without dev dependencies, exactly like the image
+        run: uv sync --frozen --no-dev
+      - name: Import the app the way uvicorn does at boot
+        env:
+          TR_ENVIRONMENT: test
+        run: uv run --no-sync python -c "import trusted_router.main"
+
   byok-format-ordering:
     runs-on: ubuntu-latest
     steps:
