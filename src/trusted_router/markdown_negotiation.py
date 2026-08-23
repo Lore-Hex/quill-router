@@ -41,7 +41,7 @@ cannot drift apart.
 from __future__ import annotations
 
 import re
-from typing import Final
+from typing import Any, Final
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
@@ -259,3 +259,91 @@ def html_to_markdown(html: str) -> str:
             continue
         deduped.append(block)
     return "\n\n".join(deduped).strip() + "\n"
+
+
+class MarkdownNegotiationMiddleware:
+    """Pure ASGI, deliberately not `BaseHTTPMiddleware`.
+
+    The first version of this was an `@app.middleware("http")` function, which
+    Starlette implements with `BaseHTTPMiddleware`. That wrapper turns EVERY
+    response into a streaming one, including responses this middleware returns
+    untouched. Starlette's GZipMiddleware then takes its streaming branch,
+    which emits chunked transfer-encoding and no `Content-Length`.
+
+    MEASURED: the browser smoke suite caught it on a static PNG.
+    `/static/claude-code-hero.png` arrived with no Content-Length, so a test
+    asserting the hero image is over 10 KB read 0 and failed. Nothing here ever
+    looks at `/static`; merely being in the chain as a BaseHTTPMiddleware was
+    enough to change how every asset on the site was framed on the wire.
+
+    As raw ASGI, a request that is not a public page reaches the inner app with
+    no wrapping at all, so its response is framed exactly as it would be
+    without this installed. Only public page responses are intercepted, and
+    only their headers unless markdown was actually asked for.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if (
+            scope.get("type") != "http"
+            or scope.get("method") not in {"GET", "HEAD"}
+            or not is_public_page_path(scope.get("path", ""))
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        want_markdown = prefers_markdown(_accept_header(scope))
+        held_start: dict[str, Any] | None = None
+        body = bytearray()
+
+        async def send_wrapper(message: dict[str, Any]) -> None:
+            nonlocal held_start
+            if message["type"] == "http.response.start":
+                original = list(message.get("headers", []))
+                content_type = b""
+                for key, value in original:
+                    if key.lower() == b"content-type":
+                        content_type = value.lower()
+                if not content_type.startswith(b"text/html"):
+                    # Not a page. Adding Vary to a JSON body or an asset would
+                    # claim a negotiation that does not happen here.
+                    await send(message)
+                    return
+                headers = [(k, v) for k, v in original if k.lower() != b"vary"]
+                headers.append((b"vary", MARKDOWN_VARY.encode()))
+                if want_markdown:
+                    # Hold the start: the new content-length is not known
+                    # until the body has been converted.
+                    held_start = {**message, "headers": headers}
+                    return
+                await send({**message, "headers": headers})
+                return
+
+            if message["type"] == "http.response.body" and held_start is not None:
+                body.extend(message.get("body", b""))
+                if message.get("more_body", False):
+                    return
+                payload = html_to_markdown(bytes(body).decode("utf-8", "replace")).encode("utf-8")
+                headers = [
+                    (k, v)
+                    for k, v in held_start["headers"]
+                    if k.lower() not in {b"content-type", b"content-length"}
+                ]
+                headers.append((b"content-type", MARKDOWN_CONTENT_TYPE.encode()))
+                headers.append((b"content-length", str(len(payload)).encode()))
+                await send({**held_start, "headers": headers})
+                await send({"type": "http.response.body", "body": payload})
+                return
+
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
+
+
+def _accept_header(scope: Any) -> str:
+    for key, value in scope.get("headers", []):
+        if key.lower() == b"accept":
+            return value.decode("latin-1")
+    return ""

@@ -130,3 +130,41 @@ def test_conversion_of_a_real_page_is_not_empty(client: TestClient) -> None:
 
     assert len(response.text.strip()) > 500
     assert response.text.count("#") >= 2
+
+
+def test_static_assets_keep_their_content_length(client: TestClient) -> None:
+    """The regression that made this middleware raw ASGI instead of a
+    BaseHTTPMiddleware.
+
+    BaseHTTPMiddleware converts every response into a streaming one, including
+    the ones this middleware hands through untouched. GZipMiddleware then takes
+    its streaming branch and emits chunked transfer-encoding with no
+    Content-Length. Measured against a real uvicorn server, the hero PNG came
+    back `transfer-encoding: chunked` with the header absent, and the browser
+    suite's "hero image is over 10 KB" assertion read 0.
+
+    Nothing in this module looks at /static. Being in the chain at all was
+    enough.
+    """
+    response = client.get("/static/claude-code-hero.png")
+
+    assert response.status_code == 200
+    assert response.headers.get("content-length") is not None
+    assert int(response.headers["content-length"]) > 10_000
+    # Gzip's own `Vary: Accept-Encoding` is expected here and correct. What
+    # must NOT appear is `Accept`, which would claim this asset negotiates.
+    vary = {token.strip().lower() for token in response.headers.get("vary", "").split(",")}
+    assert "accept" not in vary
+
+
+def test_json_endpoints_are_not_given_a_vary_header(client: TestClient) -> None:
+    """Vary: Accept on a response that does not negotiate claims a variation
+    that does not exist, and costs cache efficiency for nothing."""
+    response = client.get("/openapi.json")
+
+    assert response.headers["content-type"].startswith("application/json")
+    # Tokenised, not a substring test: "accept" is a substring of
+    # "accept-encoding", so `in` on the raw header is always true once gzip
+    # has added its own token.
+    vary = {token.strip().lower() for token in response.headers.get("vary", "").split(",")}
+    assert "accept" not in vary
