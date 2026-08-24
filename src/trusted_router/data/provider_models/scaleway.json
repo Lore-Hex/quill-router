@@ -40,8 +40,7 @@
       "id": "google/gemma-4-26b-a4b-it",
       "upstream_id": "gemma-4-26b-a4b-it",
       "created": 1777469299,
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 307099,
       "output_token_price_per_m": 614198
     },
@@ -104,8 +103,7 @@
       "id": "mistralai/mistral-small-3.2-24b-instruct-2506",
       "upstream_id": "mistral-small-3.2-24b-instruct-2506",
       "created": 1755006551,
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 184260,
       "output_token_price_per_m": 429939
     },
@@ -259,7 +257,7 @@
   ],
   "source": "https://api.scaleway.ai/v1/models",
   "pricing_source": "https://www.scaleway.com/en/pricing/model-as-a-service/",
-  "generated_at": "2026-08-23T17:22:24Z",
+  "generated_at": "2026-08-24T03:06:05Z",
   "price_scale": "microdollars_per_million",
   "model_count": 12
 }

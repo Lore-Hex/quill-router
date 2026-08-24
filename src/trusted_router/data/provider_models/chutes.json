@@ -2,7 +2,7 @@
   "_about": "Provider-native Chutes TEE model catalog. Refreshed hourly from the authenticated Chutes OpenAI-compatible models API.",
   "provider": "chutes",
   "source": "https://llm.chutes.ai/v1/models",
-  "generated_at": "2026-08-23T20:25:34Z",
+  "generated_at": "2026-08-24T03:06:05Z",
   "price_scale": "microdollars_per_million",
   "model_count": 13,
   "models": [
