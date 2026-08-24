@@ -29,7 +29,10 @@ OpenRouter intent creates signup volume. The action-led OpenAI-compatible page
 produces materially better activation and the only observed purchase. Kimi K3
 traffic has high volume and weak downstream intent.
 
-## Experiment 1: OpenRouter Migration
+## Initial Proposal: OpenRouter Migration
+
+This proposal is superseded by the version 2 test below. It is retained to
+explain the experiment's original control and challenger.
 
 Use a Google Ads custom experiment with a 50/50 traffic split. Keep keywords,
 negative keywords, bids, geography, schedule, devices, and responsive-search-ad
@@ -59,11 +62,15 @@ The challenger preserves the OpenRouter promise but puts key creation, working
 SDK code, and the three migration steps in the first screen. It is no-index and
 canonicalized to the permanent OpenRouter page.
 
-## Experiment 1B: Multi-Arm OpenRouter Landing Test
+## Active Experiment: Two-Arm Activation Test
 
-The first directional results favored action-led pages, but did not identify
-which product promise drives the first successful API call. The existing exact
-intent ad keeps its approved destination and assets unchanged:
+The seven-day first-party cohort on August 24 showed that the OpenAI-compatible
+page activated 4 of 26 engaged visitors, compared with 2 of 93 for the general
+OpenRouter alternative page. The six-arm exploration spread too little traffic
+across too many pages, so version 2 tests the strongest observed page against
+one focused migration challenger.
+
+The existing exact-intent ad keeps its approved destination and assets unchanged:
 
 ```text
 https://trustedrouter.com/openrouter-alternative
@@ -74,8 +81,8 @@ https://trustedrouter.com/openrouter-alternative
   &utm_content=search
 ```
 
-TrustedRouter recognizes that paid campaign and assigns a visitor consistently
-to one of six pages. The direct `/openrouter-alternative/experiment` entry point
+TrustedRouter recognizes that campaign and assigns each visitor consistently
+to one of two pages. The direct `/openrouter-alternative/experiment` entry point
 remains available for future campaigns. Both paths preserve the complete query
 string, so the campaign and ad creative remain measurable while the landing
 path identifies the page arm. Assignment redirects are private and `no-store`,
@@ -83,17 +90,13 @@ which prevents a CDN from serving one visitor's arm to another visitor.
 
 | Arm | Landing path | Promise |
 |---|---|---|
-| Control | `/openrouter-alternative/quickstart` | Keep the SDK and switch the base URL |
-| Breadth | `/openrouter-alternative/lp/every-model` | Hundreds of models behind one key |
-| Reliability | `/openrouter-alternative/lp/provider-failover` | Automatic provider fallback |
-| Privacy | `/openrouter-alternative/lp/privacy-with-proof` | Verify the prompt path |
-| Price | `/openrouter-alternative/lp/usage-pricing` | Usage pricing without a subscription |
-| Controls | `/openrouter-alternative/lp/production-controls` | Scoped keys, limits, and policy |
+| Control | `/openai-compatible-llm-api` | Keep the SDK and change one base URL |
+| Challenger | `/openrouter-alternative/quickstart` | Switch from OpenRouter and make the first request |
 
-Every arm uses the same OpenAI SDK sample, key-creation flow, page structure,
-and no-card-required reassurance. The promise, proof, and sample route vary.
-All experiment pages are `noindex,follow` and canonicalize to the permanent
-OpenRouter alternative page.
+Both arms put a working OpenAI SDK example and key-creation action above the
+fold. The experiment therefore measures the migration framing rather than the
+presence of a quickstart. The four exploratory promise pages remain available,
+but receive no version 2 experiment traffic.
 
 Assignment uses a one-way hash of the anonymous first-party attribution ID.
 TrustedRouter does not store an additional experiment identity. Global Privacy
@@ -133,9 +136,9 @@ https://trustedrouter.com/private-llm-api/quickstart
 - Guardrail: the challenger must not reduce activation per engaged visitor.
 - Do not optimize toward click-through rate or signup volume alone.
 - Do not name a payment winner from one purchase.
-- For the six-arm test, require at least 100 engaged visitors and three
-  activated users in an arm before promoting its promise.
-- Compare each challenger to the quickstart control with a two-sided 95%
+- Require at least 100 engaged visitors and 10 activated users in each arm
+  before naming a winner, unless the 30-day stop is reached first.
+- Compare the challenger to the OpenAI-compatible control with a two-sided 95%
   interval for activated users per engaged visitor.
 - Keep the ad text, keywords, geography, device mix, bids, and schedule fixed
   during the landing-page test.
@@ -171,12 +174,12 @@ uv run python scripts/marketing_funnel_report.py \
   --days 30
 ```
 
-Report every multi-arm landing page together:
+Report the two-arm experiment together:
 
 ```bash
 uv run python scripts/marketing_funnel_report.py \
   --source google \
-  --campaign openrouter_lp_multi_20260822 \
+  --campaign openrouter_alternative_exact \
   --days 30
 ```
 
