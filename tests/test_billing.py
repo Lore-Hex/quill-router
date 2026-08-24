@@ -882,7 +882,7 @@ def test_internal_gateway_rejects_disabled_key(user_headers: dict[str, str], cli
         },
     )
     assert resp.status_code == 401
-    assert resp.json()["error"]["type"] == "unauthorized"
+    assert resp.json()["error"]["type"] == "invalid_api_key"  # the enclave negative-cache wire contract
 
 
 def test_stripe_webhook_handles_stripe_object_from_construct_event(
