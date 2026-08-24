@@ -80,9 +80,9 @@ name: Check fleet analytics freshness
 #          before #672, so it still sent Aurora DSQL a SET LOCAL
 #          statement_timeout that DSQL rejects. Redeployed.
 #   azure  was publishing no analytics section at all -- the control plane had
-#          never been redeployed past revision 0000001. Redeployed; it now
-#          reports not_configured, which is the honest answer for a cloud with
-#          no outbox and is what expects_outbox=False asserts.
+#          never been redeployed past revision 0000001. That historical deploy
+#          first reported not_configured; Azure now publishes a live Postgres
+#          outbox lag and the registry requires expects_outbox=True.
 #
 #   fleet analytics freshness: OK aws=0.0 azure=None gcp=0.287 unchecked=1
 #
@@ -285,7 +285,7 @@ jobs:
             echo
             echo "Lines marked \`(unchecked)\` are NOT failures and NOT passes. They are the"
             echo "clouds this run did not measure and why — a cloud with no public status"
-            echo "page, or one the registry declares runs no outbox at all (Azure today)."
+            echo "page, or one the registry deliberately declares runs no outbox at all."
             echo "They are printed on every run so \"we do not watch that cloud\" stays a"
             echo "visible fact instead of an absence from a list."
             echo
