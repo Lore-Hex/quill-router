@@ -1789,8 +1789,8 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         og_card="llm-provider-latency-benchmarks.png",
         title="LLM Provider Latency Benchmarks",
         description=(
-            "Measured time-to-first-token, throughput, and "
-            "success rate for LLM providers routed through TrustedRouter."
+            "Compare measured time-to-first-token, throughput, uptime, and success rates "
+            "across LLM providers routed continuously through TrustedRouter."
         ),
         faq_items=(
             (
