@@ -1673,9 +1673,6 @@ def _is_web_search_restricted_provider(provider: Any) -> bool:
     )
 
 
-@spanner_rpc_budget(_BILLING_PATH_SPANNER_BUDGET_SECONDS)
-
-
 def _report_route_fallbacks(body: GatewaySettleRequest) -> None:
     """Accumulate successful provider failovers in Sentry as warnings.
 
@@ -1713,6 +1710,9 @@ def _report_route_fallbacks(body: GatewaySettleRequest) -> None:
             )
     except Exception:  # noqa: BLE001 - observability must never break settlement
         logger.warning("route fallback sentry report failed", exc_info=True)
+
+
+@spanner_rpc_budget(_BILLING_PATH_SPANNER_BUDGET_SECONDS)
 def _settle_gateway_authorization(
     body: GatewaySettleRequest,
     *,
