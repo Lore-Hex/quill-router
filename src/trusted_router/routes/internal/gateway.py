@@ -251,7 +251,7 @@ def _authorize_gateway_sync(
     require_internal_gateway(request, settings)
     api_key = _api_key_for_gateway_authorization(body)
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
-        raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
+        raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     workspace = STORE.get_workspace(api_key.workspace_id)
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
@@ -945,7 +945,7 @@ def _gateway_validate_sync(
         api_key_lookup_hash=body.api_key_lookup_hash,
     )
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
-        raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
+        raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     workspace = STORE.get_workspace(api_key.workspace_id)
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
@@ -977,7 +977,7 @@ def _gateway_key_info_sync(
         api_key_lookup_hash=body.api_key_lookup_hash,
     )
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
-        raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
+        raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     from trusted_router.routes.keys import _enriched_key_shape
 
     return {"data": _enriched_key_shape(api_key)}
@@ -994,7 +994,7 @@ def _gateway_resolve_custom_model_sync(
         api_key_lookup_hash=body.api_key_lookup_hash,
     )
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
-        raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
+        raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     workspace = STORE.get_workspace(api_key.workspace_id)
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
