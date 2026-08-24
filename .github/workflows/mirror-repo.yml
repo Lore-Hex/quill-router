@@ -1,0 +1,48 @@
+name: Mirror repo to GCS
+
+# The repository, as a verified git bundle in a versioned GCS bucket.
+#
+# WHAT THIS IS FOR, precisely: losing the repository — an account action, a
+# deleted org, a compromised owner. It is NOT an answer to a GitHub outage.
+# During an outage the code was never at risk; every clone is a full copy. What
+# an outage takes is the ability to ship, and this workflow cannot help with
+# that because it runs on the thing that is down. That half is
+# scripts/deploy/break_glass_deploy.sh, which runs from a laptop.
+#
+# Daily is the right cadence for the same reason the trust-drift check is
+# daily: match the interval to how fast the watched thing changes and how long
+# you can tolerate not knowing. Losing a day of commits to a catastrophic
+# account event is an acceptable worst case when every developer clone is also
+# a full copy; paying for an hourly full-history bundle upload is not.
+on:
+  schedule:
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  id-token: write # for Workload Identity Federation
+  contents: read
+
+concurrency:
+  group: mirror-repo
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: bundle and upload
+    runs-on: ubuntu-latest
+    steps:
+      # A shallow checkout is fine here: the script does not bundle this
+      # checkout. It mirror-clones origin itself, because a CI checkout has one
+      # local branch and `git bundle --all` over it produced a bundle that
+      # restored 3 refs out of 46 -- every object present, 42 branches
+      # unreachable by name. Only the script is needed from this checkout.
+      - uses: actions/checkout@v4
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Mirror
+        run: scripts/deploy/mirror_repo_to_gcs.sh --apply

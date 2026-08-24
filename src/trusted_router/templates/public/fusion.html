@@ -1,0 +1,270 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Synth quickstart">
+  <div class="marketing-copy">
+    <h2>Run a panel of models inside the attested gateway.</h2>
+    <p>
+      <code>trustedrouter/synth</code> fans one request across several models,
+      asks a judge model to evaluate the panel, and returns one OpenAI-compatible
+      chat completion. Use it for hard prompts, evals, and prompts where one
+      provider's refusal or error should not decide the whole result.
+    </p>
+    <ul class="check-list">
+      <li>Panel calls, judge calls, and final synthesis calls stay in the attested gateway.</li>
+      <li>Judge and final models can each have up to 8 fallbacks.</li>
+      <li>Default quality mode judges with Kimi K2.7 Code, falls back to MiniMax M3, synthesizes with GLM 5.2, then falls back to MiniMax M3.</li>
+      <li>Versioned presets include <code>trustedrouter/iris-1.0</code>, <code>trustedrouter/iris-2.0</code>, <code>trustedrouter/prometheus-1.0</code>, <code>trustedrouter/prometheus-2.0</code>, and <code>trustedrouter/zeus-1.0</code>.</li>
+      <li>Code-tuned presets are <code>trustedrouter/iris-code-1.0</code>, <code>trustedrouter/prometheus-code-1.0</code>, and <code>trustedrouter/zeus-code-1.0</code>.</li>
+      <li>Unversioned aliases such as <code>trustedrouter/prometheus</code> track the latest preset.</li>
+      <li><code>synthesize_non_refusals</code> is the default and removes panel refusals before synthesis.</li>
+      <li>TrustedRouter stores billing and route metadata, never prompt/output content.</li>
+    </ul>
+    <div class="hero-actions">
+      <a class="btn primary" href="/chat">Try in chat</a>
+      <a class="btn" href="https://trust.trustedrouter.com">Verify gateway</a>
+    </div>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Synth</span><span>curl</span></div>
+    <pre><code>curl {{ api_base_url }}/chat/completions \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "trustedrouter/synth",
+    "messages": [
+      {"role": "user", "content": "Compare the best options and answer plainly."}
+    ],
+    "tools": [{
+      "type": "trustedrouter:synth",
+      "parameters": {
+        "preset": "quality",
+        "synthesis_prompt": "Return a short recommendation with tradeoffs.",
+        "max_completion_tokens": 800
+      }
+    }]
+  }'</code></pre>
+  </div>
+</section>
+
+<section style="margin-top:48px" aria-label="Synth presets">
+  <h2 class="section-center">Named presets</h2>
+  <p class="section-center" style="max-width:780px;margin:0 auto 26px;color:var(--muted)">
+    Each preset pins its panel, judge, synthesizer, and fallback order for repeatable routing.
+    Call any of them by model id.
+    <a href="/blog/synth-iris-prometheus-zeus">How we measured them &rarr;</a>
+  </p>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
+      <span class="card-label">Budget</span>
+      <h3>Iris 1.0</h3>
+      <p><code>trustedrouter/iris-1.0</code></p>
+      <p>A small budget panel &mdash; the cheapest way into Synth. <strong>62.6</strong> on DRACO deep research,
+        about <strong>$20</strong> to run all 100 tasks.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Budget &middot; Kimi K3 &middot; 1M context</span>
+      <h3>Iris 2.0</h3>
+      <p><code>trustedrouter/iris-2.0</code></p>
+      <p>MiniMax M3, Kimi K3, and DeepSeek V4 Pro answer in parallel. Kimi K3 judges with MiniMax M3 fallback; GLM 5.2 synthesizes with MiniMax M3 fallback.</p>
+    </div>
+    <div class="marketing-card featured">
+      <span class="card-label">Quality &middot; all open-weights</span>
+      <h3>Prometheus 1.0</h3>
+      <p><code>trustedrouter/prometheus-1.0</code></p>
+      <p>An all open-weights panel &mdash; MiniMax M3, Kimi K2.6, GLM 5.2, Gemma 4, DeepSeek V4 Pro.
+        Near-frontier quality at open-model cost: <strong>69.2</strong> on DRACO, about <strong>$34</strong>/100 tasks &mdash;
+        beating Fable 5 (65.3) at a seventh of the price.</p>
+    </div>
+    <div class="marketing-card featured">
+      <span class="card-label">Quality &middot; 1M context &middot; all open-weights</span>
+      <h3>Prometheus 2.0</h3>
+      <p><code>trustedrouter/prometheus-2.0</code></p>
+      <p>MiniMax M3, Kimi K3, GLM 5.2, DeepSeek V4 Pro, and MiMo V2.5 Pro answer in parallel. MiniMax M3 judges with Kimi K3 fallback; Kimi K3 synthesizes with GLM 5.2 and MiniMax M3 fallbacks.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Frontier</span>
+      <h3>Zeus 1.0</h3>
+      <p><code>trustedrouter/zeus-1.0</code></p>
+      <p>The commercial frontier on the panel &mdash; the ceiling. <strong>73.4</strong> on DRACO, the state of the art,
+        about <strong>$180</strong>/100 tasks.</p>
+    </div>
+  </div>
+</section>
+
+<section style="margin-top:48px" aria-label="Synth code presets">
+  <h2 class="section-center">Code-tuned presets</h2>
+  <p class="section-center" style="max-width:780px;margin:0 auto 26px;color:var(--muted)">
+    Add <code>-code</code> to use the same budget, open, or frontier panel tier with the synth-code prompt path.
+    The code variants use the code-tuned Kimi judge and code-specific panel and synthesis prompts.
+  </p>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
+      <span class="card-label">Budget code</span>
+      <h3>Iris Code</h3>
+      <p><code>trustedrouter/iris-code-1.0</code></p>
+    </div>
+    <div class="marketing-card featured">
+      <span class="card-label">Open code</span>
+      <h3>Prometheus Code</h3>
+      <p><code>trustedrouter/prometheus-code-1.0</code></p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Frontier code</span>
+      <h3>Zeus Code</h3>
+      <p><code>trustedrouter/zeus-code-1.0</code></p>
+    </div>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">How it works</h2>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
+      <h3>1. Panel</h3>
+      <p>
+        The gateway runs <code>analysis_models</code> in order, with normal
+        provider fallback for each route. A failed or empty panel member is
+        recorded as a panel failure, not a client-visible failure. The quality
+        preset uses MiniMax M3, Kimi latest, GLM latest, Gemma 4 31B, and
+        DeepSeek V4 Pro unless you supply a custom panel.
+      </p>
+    </div>
+    <div class="marketing-card">
+      <h3>2. Judge</h3>
+      <p>
+        The judge sees the panel outputs and produces an internal assessment.
+        <code>judge_models</code>, <code>fallback_judges</code>, and
+        <code>judges</code> are aliases for the same ordered fallback list. If
+        omitted, Kimi K2.6 is the first judge and MiniMax M3 is the fallback judge.
+      </p>
+    </div>
+    <div class="marketing-card">
+      <h3>3. Final</h3>
+      <p>
+        The final model writes the visible answer. <code>final_models</code>,
+        <code>fallback_final_models</code>, <code>synthesis_models</code>, and
+        <code>synthesizer_models</code> are aliases for that ordered fallback list.
+        If omitted, GLM 5.2 is the first final synthesizer and MiniMax M3 is the fallback synthesizer.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">Parameters</h2>
+  <div class="panel">
+    <div class="panel-body">
+      <table class="data-table">
+        <thead><tr><th>Name</th><th>Use</th></tr></thead>
+        <tbody>
+          <tr><td><code>preset</code></td><td><code>quality</code> or <code>budget</code>. Sets a built-in panel unless <code>analysis_models</code> is supplied. Quality defaults to an open-model panel: MiniMax M3, Kimi latest, GLM latest, Gemma 4 31B, and DeepSeek V4 Pro.</td></tr>
+          <tr><td><code>analysis_models</code></td><td>Panel model IDs. Must contain 1 to 8 models.</td></tr>
+          <tr><td><code>model</code></td><td>Legacy shorthand for the judge/final model when specific fallback lists are not supplied.</td></tr>
+          <tr><td><code>selection_strategy</code></td><td><code>synthesize</code>, <code>synthesize_non_refusals</code>, <code>first_success</code>, or <code>first_non_refusal</code>. The default is <code>synthesize_non_refusals</code>.</td></tr>
+          <tr><td><code>judge_models</code></td><td>Ordered judge fallback list. Also accepts <code>fallback_judges</code> or <code>judges</code>. Defaults to Kimi K2.6, then MiniMax M3.</td></tr>
+          <tr><td><code>final_models</code></td><td>Ordered final-answer fallback list. Also accepts <code>fallback_final_models</code>, <code>synthesis_models</code>, or <code>synthesizer_models</code>. Defaults to GLM 5.2, then MiniMax M3.</td></tr>
+          <tr><td><code>max_completion_tokens</code></td><td>Caps each internal panel, judge, and final completion.</td></tr>
+          <tr><td><code>max_tool_calls</code></td><td>Reserved compatibility field, accepted from 1 to 16.</td></tr>
+        </tbody>
+      </table>
+      <p class="muted">
+        Exact model IDs are accepted. The gateway also resolves <code>~anthropic/claude-latest</code>,
+        <code>~openai/gpt-latest</code>, <code>~google/gemini-pro-latest</code>,
+        <code>~google/gemini-flash-latest</code>, <code>~kimi/latest</code>, and
+        <code>~zai/glm-latest</code> aliases. The built-in quality panel uses
+        <code>minimax/minimax-m3</code>, <code>~kimi/latest</code>,
+        <code>~zai/glm-latest</code>, <code>google/gemma-4-31b-it</code>, and
+        <code>deepseek/deepseek-v4-pro</code>. Default judging resolves to
+        <code>moonshotai/kimi-k2.7-code</code>, then <code>minimax/minimax-m3</code>;
+        default final synthesis resolves to <code>z-ai/glm-5.2</code>, then
+        <code>minimax/minimax-m3</code>.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">SDK examples</h2>
+  <div class="marketing-grid two">
+    <div class="copy-terminal">
+      <div class="code-head"><span>Python</span><span>OpenAI SDK</span></div>
+      <pre><code>import os
+
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+    base_url="https://api.trustedrouter.com/v1",
+)
+
+result = client.chat.completions.create(
+    model="trustedrouter/synth",
+    messages=[{"role": "user", "content": "Give the best answer."}],
+)
+
+print(result.choices[0].message.content)</code></pre>
+    </div>
+    <div class="copy-terminal">
+      <div class="code-head"><span>TypeScript</span><span>OpenAI SDK</span></div>
+      <pre><code>import OpenAI from "openai";
+
+const client = new OpenAI({
+  apiKey: process.env.TRUSTEDROUTER_API_KEY,
+  baseURL: "https://api.trustedrouter.com/v1"
+});
+
+const result = await client.chat.completions.create({
+  model: "trustedrouter/synth",
+  messages: [{ role: "user", content: "Give the best answer." }],
+});
+
+console.log(result.choices[0].message.content);</code></pre>
+    </div>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">Operational notes</h2>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
+      <h3>Cost</h3>
+      <p>
+        Synth is multiple model calls. Budget it as panel calls plus judge
+        attempts plus final attempts. Use <code>preset="budget"</code> and
+        <code>max_completion_tokens</code> for cheaper eval loops.
+      </p>
+    </div>
+    <div class="marketing-card">
+      <h3>Streaming</h3>
+      <p>
+        Streaming runs the panel and judge first, then streams the final answer.
+        Final fallback can switch before the first byte. After bytes are sent,
+        the stream cannot safely switch to a different final model.
+      </p>
+    </div>
+    <div class="marketing-card">
+      <h3>Privacy</h3>
+      <p>
+        The intermediate panel, judge, and final prompts live in enclave memory.
+        Durable storage keeps request IDs, route metadata, usage, cost, and
+        status, never prompt or output text.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="cta-band">
+  <div>
+    <h2>Need an agent to wire it in?</h2>
+    <p>Use the agent setup guide and ask the agent to call <code>trustedrouter/synth</code> only for hard prompts or evals.</p>
+  </div>
+  <div class="sdk-links">
+    <a class="pill" href="/docs/agent-setup">Agent setup</a>
+    <a class="pill" href="/docs/evals">Evals</a>
+    <a class="pill" href="/docs/llms-full.txt">llms-full.txt</a>
+    <a class="pill" href="/models">Models</a>
+  </div>
+</section>
+
+{% endblock %}

@@ -6,7 +6,7 @@
     <span class="eyebrow">Zero data retention</span>
     <h2>Zero data retention as a verifiable property, not a contract clause.</h2>
     <p>"ZDR" usually means a clause in your enterprise agreement. The operator promises not to retain. You hope they comply.</p>
-    <p>TrustedRouter's prompt path never writes request or response bodies to persistent storage. The code that handles your prompts is open-source. The image hash is published. You can verify that retention is zero — without trusting us.</p>
+    <p>TrustedRouter's ordinary synchronous and streaming prompt path does not write request or response bodies to persistent storage. Batch is a separate opt-in encrypted-retention mode. The code that handles your prompts is open-source. The image hash is published. You can verify the real-time path without trusting us.</p>
     <p>
       <a class="btn primary" href="/chat">Try the playground</a>
       <a class="btn" href="/security">Trust surface</a>
@@ -82,7 +82,7 @@
   <div>
     <p>Upstream providers have their own retention behavior. We can route to providers that match your posture and we publish each one's known stance on the model pages.</p>
     <p>Attestation proves the running binary is the published binary. It doesn't prove the binary is bug-free.</p>
-    <p>If you can't trust AWS or GCP's hardware root keys at all, the attestation chain doesn't save you. Cross-cloud helps — TR runs on both — but it doesn't eliminate the dependency.</p>
+    <p>If you can't trust the GCP Confidential Space attestation chain at all, hosted attestation doesn't save you. Self-hosting lets you pin and publish your own image digest under your own controls.</p>
   </div>
 </section>
 

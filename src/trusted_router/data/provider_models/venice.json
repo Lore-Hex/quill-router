@@ -1,0 +1,1139 @@
+{
+  "_about": "Provider-native supplement for Venice models whose live /v1/models feed is ahead of the shared snapshot. Verified against https://api.venice.ai/api/v1/models on 2026-06-22.",
+  "provider": "venice",
+  "source": "https://api.venice.ai/api/v1/models?type=text",
+  "generated_at": "2026-08-24T10:39:58Z",
+  "model_count": 42,
+  "models": [
+    {
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "zai-org-glm-5-2",
+      "display_name": "GLM 5.2",
+      "title": "z-ai/glm-5.2",
+      "context_length": 1000000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000,
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "display_name": "DeepSeek V3.2",
+      "title": "deepseek-v3.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v3.2",
+      "upstream_id": "deepseek-v3.2",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 160000,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 330000,
+      "output_token_price_per_m": 480000,
+      "cached_input_token_price_per_m": 160000
+    },
+    {
+      "display_name": "DeepSeek V4 Flash 0423",
+      "title": "deepseek-v4-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash",
+      "upstream_id": "deepseek-v4-flash",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 1000000,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 138000,
+      "output_token_price_per_m": 275000,
+      "cached_input_token_price_per_m": 28000
+    },
+    {
+      "display_name": "DeepSeek V4 Flash 0731",
+      "title": "deepseek-v4-flash-0731",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "upstream_id": "deepseek-v4-flash-0731",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 1000000,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 175000,
+      "output_token_price_per_m": 350000,
+      "cached_input_token_price_per_m": 35000
+    },
+    {
+      "display_name": "DeepSeek V4 Flash 0731 Fast",
+      "title": "deepseek-v4-flash-0731-fast",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-0731-fast",
+      "upstream_id": "deepseek-v4-flash-0731-fast",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 1000000,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 350000,
+      "output_token_price_per_m": 700000,
+      "cached_input_token_price_per_m": 87500
+    },
+    {
+      "display_name": "DeepSeek V4 Pro",
+      "title": "deepseek-v4-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-pro",
+      "upstream_id": "deepseek-v4-pro",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 1000000,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 1650000,
+      "output_token_price_per_m": 3301000,
+      "cached_input_token_price_per_m": 330000
+    },
+    {
+      "display_name": "Gemma 4 Uncensored",
+      "title": "gemma-4-uncensored",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-4-uncensored",
+      "upstream_id": "gemma-4-uncensored",
+      "features": [
+        "function-calling",
+        "structured-outputs"
+      ],
+      "context_length": 256000,
+      "max_output_tokens": 8192,
+      "input_token_price_per_m": 162500,
+      "output_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Llama 3.2 3B",
+      "title": "llama-3.2-3b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-3.2-3b",
+      "upstream_id": "llama-3.2-3b",
+      "features": [
+        "function-calling"
+      ],
+      "context_length": 128000,
+      "max_output_tokens": 4096,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 600000
+    },
+    {
+      "display_name": "Llama 3.3 70B",
+      "title": "llama-3.3-70b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-3.3-70b",
+      "upstream_id": "llama-3.3-70b",
+      "features": [
+        "function-calling"
+      ],
+      "context_length": 128000,
+      "max_output_tokens": 4096,
+      "input_token_price_per_m": 700000,
+      "output_token_price_per_m": 2800000
+    },
+    {
+      "display_name": "MiniMax M2.5",
+      "title": "minimax-m25",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m25",
+      "upstream_id": "minimax-m25",
+      "features": [
+        "function-calling",
+        "reasoning"
+      ],
+      "context_length": 198000,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 270000,
+      "output_token_price_per_m": 950000,
+      "cached_input_token_price_per_m": 30000
+    },
+    {
+      "display_name": "MiniMax M2.7",
+      "title": "minimax-m27",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m27",
+      "upstream_id": "minimax-m27",
+      "features": [
+        "function-calling",
+        "reasoning"
+      ],
+      "context_length": 198000,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 375000,
+      "output_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 68750
+    },
+    {
+      "display_name": "MiniMax M3 Preview",
+      "title": "minimax-m3-preview",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m3-preview",
+      "upstream_id": "minimax-m3-preview",
+      "features": [
+        "function-calling",
+        "reasoning"
+      ],
+      "context_length": 524288,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 60000
+    },
+    {
+      "display_name": "Kimi K2.5",
+      "title": "kimi-k2-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2-5",
+      "upstream_id": "kimi-k2-5",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 256000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 560000,
+      "output_token_price_per_m": 3500000,
+      "cached_input_token_price_per_m": 220000
+    },
+    {
+      "display_name": "Kimi K2.6",
+      "title": "kimi-k2-6",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2-6",
+      "upstream_id": "kimi-k2-6",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 256000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 750000,
+      "output_token_price_per_m": 3500000,
+      "cached_input_token_price_per_m": 160000
+    },
+    {
+      "display_name": "Kimi K2.7 Code",
+      "title": "kimi-k2-7-code",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2-7-code",
+      "upstream_id": "kimi-k2-7-code",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 256000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 750000,
+      "output_token_price_per_m": 3500000,
+      "cached_input_token_price_per_m": 160000
+    },
+    {
+      "display_name": "Kimi K3",
+      "title": "kimi-k3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3",
+      "upstream_id": "kimi-k3",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 1000000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 3750000,
+      "output_token_price_per_m": 18750000,
+      "cached_input_token_price_per_m": 375000
+    },
+    {
+      "display_name": "Kimi K3 Fast",
+      "title": "kimi-k3-fast-api",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3-fast-api",
+      "upstream_id": "kimi-k3-fast-api",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 1000000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 4500000,
+      "output_token_price_per_m": 22500000,
+      "cached_input_token_price_per_m": 450000
+    },
+    {
+      "display_name": "NVIDIA Nemotron 3.5 Lightning 30B",
+      "title": "nvidia-nemotron-3-5-lightning-30b-a3b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "nvidia/nemotron-3.5-lightning",
+      "upstream_id": "nvidia-nemotron-3-5-lightning-30b-a3b",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 1000000,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 250000,
+      "missing_since": "2026-08-21",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
+    },
+    {
+      "display_name": "Qwen 3.6 Plus Uncensored",
+      "title": "qwen-3-6-plus",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen-3-6-plus",
+      "upstream_id": "qwen-3-6-plus",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 1000000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 625000,
+      "output_token_price_per_m": 3750000,
+      "cached_input_token_price_per_m": 62500
+    },
+    {
+      "display_name": "Qwen 3.7 Max",
+      "title": "qwen-3-7-max",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen-3-7-max",
+      "upstream_id": "qwen-3-7-max",
+      "features": [
+        "function-calling",
+        "reasoning"
+      ],
+      "context_length": 1000000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 2700000,
+      "output_token_price_per_m": 8050000,
+      "cached_input_token_price_per_m": 270000
+    },
+    {
+      "display_name": "Qwen 3.7 Plus",
+      "title": "qwen-3-7-plus",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen-3-7-plus",
+      "upstream_id": "qwen-3-7-plus",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 1000000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 2000000,
+      "cached_input_token_price_per_m": 50000
+    },
+    {
+      "display_name": "Qwen 3.8 2.4T",
+      "title": "qwen-3-8-2-4t-a95b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen-3-8-2-4t-a95b",
+      "upstream_id": "qwen-3-8-2-4t-a95b",
+      "features": [
+        "function-calling",
+        "reasoning"
+      ],
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 2500000,
+      "output_token_price_per_m": 7500000,
+      "cached_input_token_price_per_m": 312500
+    },
+    {
+      "display_name": "Qwen 3.8 Max",
+      "title": "qwen-3-8-max",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen-3-8-max",
+      "upstream_id": "qwen-3-8-max",
+      "features": [
+        "function-calling",
+        "reasoning"
+      ],
+      "context_length": 1000000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 2500000,
+      "output_token_price_per_m": 7500000,
+      "cached_input_token_price_per_m": 312500
+    },
+    {
+      "display_name": "Qwen 3 235B A22B Instruct 2507",
+      "title": "qwen3-235b-a22b-instruct-2507",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-235b-a22b-instruct-2507",
+      "upstream_id": "qwen3-235b-a22b-instruct-2507",
+      "features": [
+        "function-calling",
+        "structured-outputs"
+      ],
+      "context_length": 128000,
+      "max_output_tokens": 16384,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 750000
+    },
+    {
+      "display_name": "Qwen 3 235B A22B Thinking 2507",
+      "title": "qwen3-235b-a22b-thinking-2507",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-235b-a22b-thinking-2507",
+      "upstream_id": "qwen3-235b-a22b-thinking-2507",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 128000,
+      "max_output_tokens": 16384,
+      "input_token_price_per_m": 450000,
+      "output_token_price_per_m": 3500000
+    },
+    {
+      "display_name": "Qwen 3.5 35B A3B",
+      "title": "qwen3-5-35b-a3b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-5-35b-a3b",
+      "upstream_id": "qwen3-5-35b-a3b",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 256000,
+      "max_output_tokens": 16384,
+      "input_token_price_per_m": 312500,
+      "output_token_price_per_m": 1250000,
+      "cached_input_token_price_per_m": 156250
+    },
+    {
+      "display_name": "Qwen 3.6 35B A3B",
+      "title": "qwen3-6-35b-a3b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-6-35b-a3b",
+      "upstream_id": "qwen3-6-35b-a3b",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 256000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 1000000
+    },
+    {
+      "display_name": "Qwen 3 Coder 480B Turbo",
+      "title": "qwen3-coder-480b-a35b-instruct-turbo",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-coder-480b-a35b-instruct-turbo",
+      "upstream_id": "qwen3-coder-480b-a35b-instruct-turbo",
+      "features": [
+        "function-calling",
+        "structured-outputs"
+      ],
+      "context_length": 256000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 350000,
+      "output_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 40000
+    },
+    {
+      "display_name": "Qwen 3 Next 80b",
+      "title": "qwen3-next-80b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-next-80b",
+      "upstream_id": "qwen3-next-80b",
+      "features": [
+        "function-calling",
+        "structured-outputs"
+      ],
+      "context_length": 256000,
+      "max_output_tokens": 16384,
+      "input_token_price_per_m": 350000,
+      "output_token_price_per_m": 1900000
+    },
+    {
+      "display_name": "Qwen3 VL 235B",
+      "title": "qwen3-vl-235b-a22b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-vl-235b-a22b",
+      "upstream_id": "qwen3-vl-235b-a22b",
+      "features": [
+        "function-calling",
+        "structured-outputs"
+      ],
+      "context_length": 128000,
+      "max_output_tokens": 16384,
+      "input_token_price_per_m": 210000,
+      "output_token_price_per_m": 1900000,
+      "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "Qwen 3.5 397B",
+      "title": "qwen3-5-397b-a17b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-397b-a17b",
+      "upstream_id": "qwen3-5-397b-a17b",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 128000,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 750000,
+      "output_token_price_per_m": 4500000
+    },
+    {
+      "display_name": "Qwen 3.5 9B",
+      "title": "qwen3-5-9b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-9b",
+      "upstream_id": "qwen3-5-9b",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 256000,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 150000
+    },
+    {
+      "display_name": "Qwen 3.6 27B",
+      "title": "qwen3-6-27b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.6-27b",
+      "upstream_id": "qwen3-6-27b",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 256000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 325000,
+      "output_token_price_per_m": 3250000
+    },
+    {
+      "display_name": "GLM 4.6",
+      "title": "zai-org-glm-4.6",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-4.6",
+      "upstream_id": "zai-org-glm-4.6",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 198000,
+      "max_output_tokens": 16384,
+      "input_token_price_per_m": 430000,
+      "output_token_price_per_m": 1750000,
+      "cached_input_token_price_per_m": 80000
+    },
+    {
+      "display_name": "GLM 4.7",
+      "title": "zai-org-glm-4.7",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-4.7",
+      "upstream_id": "zai-org-glm-4.7",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 198000,
+      "max_output_tokens": 16384,
+      "input_token_price_per_m": 550000,
+      "output_token_price_per_m": 2650000,
+      "cached_input_token_price_per_m": 110000
+    },
+    {
+      "display_name": "GLM 4.7 Flash",
+      "title": "zai-org-glm-4.7-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-4.7-flash",
+      "upstream_id": "zai-org-glm-4.7-flash",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 128000,
+      "max_output_tokens": 16384,
+      "input_token_price_per_m": 60000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 10000
+    },
+    {
+      "display_name": "GLM 5",
+      "title": "zai-org-glm-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5",
+      "upstream_id": "zai-org-glm-5",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 198000,
+      "max_output_tokens": 32000,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 3200000,
+      "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "GLM 5 Turbo",
+      "title": "z-ai-glm-5-turbo",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5-turbo",
+      "upstream_id": "z-ai-glm-5-turbo",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 200000,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 1200000,
+      "output_token_price_per_m": 4000000,
+      "cached_input_token_price_per_m": 240000
+    },
+    {
+      "display_name": "GLM 5.1",
+      "title": "zai-org-glm-5-1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.1",
+      "upstream_id": "zai-org-glm-5-1",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 200000,
+      "max_output_tokens": 80000,
+      "input_token_price_per_m": 1540000,
+      "output_token_price_per_m": 4840000,
+      "cached_input_token_price_per_m": 286000
+    },
+    {
+      "display_name": "GLM 5V Turbo",
+      "title": "z-ai-glm-5v-turbo",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5v-turbo",
+      "upstream_id": "z-ai-glm-5v-turbo",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 200000,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 1500000,
+      "output_token_price_per_m": 5000000,
+      "cached_input_token_price_per_m": 300000
+    },
+    {
+      "display_name": "DeepSeek V4 Pro 0813",
+      "title": "deepseek-v4-pro-0813",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-pro-0813",
+      "upstream_id": "deepseek-v4-pro-0813",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 1000000,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 1650000,
+      "output_token_price_per_m": 4950000,
+      "cached_input_token_price_per_m": 165000
+    },
+    {
+      "display_name": "Qwen 3.8 27B",
+      "title": "qwen-3-8-27b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen-3-8-27b",
+      "upstream_id": "qwen-3-8-27b",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 450000,
+      "output_token_price_per_m": 3200000
+    }
+  ],
+  "price_scale": "microdollars_per_million"
+}

@@ -1,9 +1,13 @@
 TrustedRouter
-Copyright 2026 Lore-Hex
+Copyright 2026 Lore Hex Corp
 
 This product is part of TrustedRouter (https://trustedrouter.com),
 developed by Lore-Hex (https://github.com/Lore-Hex).
 
-Licensed under the Apache License, Version 2.0 (see LICENSE).
-Redistribution must retain this NOTICE file per Section 4(b) of
-the license.
+Licensed under the Business Source License 1.1 (see LICENSE). The source
+is published for transparency: so anyone can read, build, and verify the
+code behind TrustedRouter's privacy and attestation claims. Non-production
+use is permitted under the license; production use requires a commercial
+license from Lore Hex Corp (licensing@trustedrouter.com). Each version
+converts to the Apache License 2.0 four years after publication. Code
+published before July 3, 2026 remains Apache-2.0.

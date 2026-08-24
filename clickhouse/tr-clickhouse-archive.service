@@ -1,0 +1,25 @@
+[Unit]
+Description=TrustedRouter verified daily ClickHouse Parquet archive
+After=network-online.target clickhouse-server.service
+Wants=network-online.target
+Requires=clickhouse-server.service
+
+[Service]
+Type=oneshot
+User=tr-clickhouse-ingest
+Group=tr-clickhouse-ingest
+WorkingDirectory=/opt/tr-clickhouse
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/var/lib/tr-clickhouse-ingest
+Environment=GCP_PROJECT_ID=quill-cloud-proxy
+Environment=ARCHIVE_BUCKET=quill-cloud-proxy-tr-clickhouse-archive
+EnvironmentFile=/etc/tr-clickhouse-ingest.env
+ExecStart=/opt/tr-clickhouse/venv/bin/python -m clickhouse.archive_daily --lookback-days 7
+TimeoutStartSec=6h
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

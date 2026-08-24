@@ -37,8 +37,11 @@ from trusted_router.provider_types import (
     mock_text,
 )
 from trusted_router.secrets import LocalKeyFile
+from trusted_router.wafer_policy import wafer_zdr_support
 
 OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
+    "meta": (("OPENROUTER_API_KEY",), "https://openrouter.ai/api/v1"),
+    "openrouter-exclusive": (("OPENROUTER_API_KEY",), "https://openrouter.ai/api/v1"),
     "openai": (("OPENAI_API_KEY",), "https://api.openai.com/v1"),
     "cerebras": (("CEREBRAS_API_KEY",), "https://api.cerebras.ai/v1"),
     "deepseek": (("DEEPSEEK_API_KEY",), "https://api.deepseek.com"),
@@ -46,12 +49,68 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     "kimi": (("KIMI_API_KEY", "MOONSHOT_API_KEY"), "https://api.moonshot.ai/v1"),
     "zai": (("ZAI_API_KEY", "ZHIPU_API_KEY"), "https://api.z.ai/api/paas/v4"),
     "together": (("TOGETHER_API_KEY",), "https://api.together.xyz/v1"),
+    "fireworks": (
+        ("FIREWORKS_API_KEY", "FIREWORKS_AI_API_KEY"),
+        "https://api.fireworks.ai/inference/v1",
+    ),
     # DeepInfra — OpenAI-compatible chat + embeddings (serves Qwen3-Embedding-8B).
     "deepinfra": (("DEEPINFRA_API_KEY",), "https://api.deepinfra.com/v1/openai"),
     # Voyage AI — OpenAI-shaped embeddings (voyage-3-large).
     "voyage": (("VOYAGE_API_KEY",), "https://api.voyageai.com/v1"),
     # Xiaomi MiMo — OpenAI-compatible chat (MiMo-V2 / V2.5).
     "xiaomi": (("XIAOMI_API_KEY",), "https://api.xiaomimimo.com/v1"),
+    # Baseten Model APIs — OpenAI-compatible chat completions.
+    "baseten": (("BASETEN_API_KEY",), "https://inference.baseten.co/v1"),
+    # Telnyx Inference — OpenAI-compatible chat completions.
+    "telnyx": (("TELNYX_API_KEY",), "https://api.telnyx.com/v2/ai/openai"),
+    # Thinking Machines Lab Tinker OpenAI-compatible sampler.
+    "thinkingmachines": (
+        ("THINKING_MACHINES_API_KEY", "TINKER_API_KEY"),
+        "https://tinker.thinkingmachines.dev/services/tinker-prod/oai/api/v1",
+    ),
+    # Wafer serverless API — OpenAI-compatible chat completions with
+    # request-scoped ZDR when `Wafer-ZDR: required` is present.
+    "wafer": (("WAFER_API_KEY",), "https://pass.wafer.ai/v1"),
+    # Crusoe Managed Inference — OpenAI-compatible chat completions.
+    "crusoe": (("CRUSOE_API_KEY",), "https://api.inference.crusoecloud.com/v1"),
+    # Makora Inference — OpenAI-compatible chat completions. Their tooling
+    # documents MAKORA_OPTIMIZE_TOKEN, so accept both names locally.
+    "makora": (("MAKORA_API_KEY", "MAKORA_OPTIMIZE_TOKEN"), "https://inference.makora.com/v1"),
+    "chutes": (("CHUTES_API_KEY",), "https://llm.chutes.ai/v1"),
+    "digitalocean": (("DIGITAL_OCEAN_API_KEY",), "https://inference.do-ai.run/v1"),
+    "cloudflare-workers-ai": (
+        ("CLOUDFLARE_WORKERS_AI_API_TOKEN",),
+        "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1",
+    ),
+    "inceptron": (("INCEPTRON_API_KEY",), "https://api.inceptron.io/v1"),
+    "morph": (("MORPH_API_KEY",), "https://api.morphllm.com/v1"),
+    "atlas-cloud": (("ATLAS_CLOUD_API_KEY",), "https://api.atlascloud.ai/v1"),
+    "streamlake": (
+        ("STREAMLAKE_API_KEY",),
+        "https://vanchin.streamlake.ai/api/gateway/v1/endpoints",
+    ),
+    "neurometric": (
+        ("NEUROMETRIC_API_KEY",),
+        "https://wharf.neurometric.ai/v1",
+    ),
+    "engy": (("ENGY_API_KEY",), "https://api.engy.ai/v1"),
+    "pearl": (
+        ("PEARL_RESEARCH_API_KEY",),
+        "https://inference.pearlresearch.ai/v1",
+    ),
+    "databricks": (
+        ("DATABRICKS_TOKEN",),
+        "https://invalid-unconfigured.cloud.databricks.com/serving-endpoints",
+    ),
+    # 0G Private Computer. TeeTLS only attests the router; forcing private
+    # ensures inference itself uses a TeeML confidential-compute route.
+    "zero-g": (("ZERO_G_API_KEY",), "https://router-api.0g.ai/v1"),
+    # Alibaba Cloud Model Studio / DashScope — workspace-scoped OpenAI-compatible endpoint.
+    "alibaba": (
+        ("ALIBABA_API_KEY", "DASHSCOPE_API_KEY", "ALIYUN_API_KEY"),
+        "https://ws-el6e4bpnggpx7g88.eu-central-1.maas.aliyuncs.com/compatible-mode/v1",
+    ),
+    "sakana": (("SAKANA_API_KEY",), "https://api.sakana.ai/v1"),
 }
 
 __all__ = [
@@ -82,12 +141,13 @@ class ProviderClient:
                     request,
                     env_keys=env_keys,
                     base_url=self._provider_base_url(model.provider, base_url),
+                    extra_headers=self._provider_extra_headers(model),
                 )
             if model.provider == "anthropic":
                 return await self._anthropic_chat(model, request)
-            if model.provider == "gemini":
+            if model.provider == "google-ai-studio":
                 return await self._gemini_chat(model, request)
-            if model.provider == "vertex" and is_vertex_openai_model(model):
+            if model.provider == "google-vertex" and is_vertex_openai_model(model):
                 return await self._vertex_openai_compatible_chat(model, request)
 
         started = time.monotonic()
@@ -126,12 +186,15 @@ class ProviderClient:
                     state,
                     env_keys=env_keys,
                     base_url=self._provider_base_url(model.provider, base_url),
+                    extra_headers=self._provider_extra_headers(model),
                 )
             if model.provider == "anthropic":
-                return self._anthropic_messages_stream(model, request, state, output_format="openai")
-            if model.provider == "gemini":
+                return self._anthropic_messages_stream(
+                    model, request, state, output_format="openai"
+                )
+            if model.provider == "google-ai-studio":
                 return self._gemini_chat_stream(model, request, state)
-            if model.provider == "vertex" and is_vertex_openai_model(model):
+            if model.provider == "google-vertex" and is_vertex_openai_model(model):
                 return self._vertex_openai_compatible_chat_stream(model, request, state)
         return self._synthetic_chat_stream(model, request, state)
 
@@ -152,7 +215,7 @@ class ProviderClient:
                 if not api_key:
                     raise RuntimeError("COHERE_API_KEY is not configured")
                 return await cohere_embeddings(model, request, api_key=api_key)
-            if model.provider == "gemini":
+            if model.provider == "google-ai-studio":
                 api_key = self._secret("GEMINI_API_KEY")
                 if not api_key:
                     raise RuntimeError("GEMINI_API_KEY is not configured")
@@ -200,11 +263,18 @@ class ProviderClient:
         env_keys: tuple[str, ...] | None = None,
         auth_token: str | None = None,
         base_url: str,
+        extra_headers: dict[str, str] | None = None,
     ) -> ProviderResult:
         api_key = auth_token or self._secret_any(env_keys)
         if not api_key:
             raise RuntimeError(f"{_credential_label(env_keys, model.provider)} is not configured")
-        return await openai_compatible_chat(model, request, api_key=api_key, base_url=base_url)
+        return await openai_compatible_chat(
+            model,
+            request,
+            api_key=api_key,
+            base_url=base_url,
+            extra_headers=extra_headers,
+        )
 
     async def _anthropic_chat(self, model: Model, request: dict[str, Any]) -> ProviderResult:
         api_key = self._secret("ANTHROPIC_API_KEY")
@@ -221,11 +291,19 @@ class ProviderClient:
         env_keys: tuple[str, ...],
         auth_token: str | None = None,
         base_url: str,
+        extra_headers: dict[str, str] | None = None,
     ) -> AsyncIterator[bytes]:
         api_key = auth_token or self._secret_any(env_keys)
         if not api_key:
             raise RuntimeError(f"{_credential_label(env_keys, model.provider)} is not configured")
-        return openai_compatible_chat_stream(model, request, state, api_key=api_key, base_url=base_url)
+        return openai_compatible_chat_stream(
+            model,
+            request,
+            state,
+            api_key=api_key,
+            base_url=base_url,
+            extra_headers=extra_headers,
+        )
 
     def _anthropic_messages_stream(
         self,
@@ -238,7 +316,9 @@ class ProviderClient:
         api_key = self._secret("ANTHROPIC_API_KEY")
         if not api_key:
             raise RuntimeError("ANTHROPIC_API_KEY is not configured")
-        return anthropic_messages_stream(model, request, state, api_key=api_key, output_format=output_format)
+        return anthropic_messages_stream(
+            model, request, state, api_key=api_key, output_format=output_format
+        )
 
     async def _synthetic_chat_stream(
         self,
@@ -255,6 +335,7 @@ class ProviderClient:
         state.usage_estimated = result.usage_estimated
         state.elapsed_seconds = result.elapsed_seconds
         state.text_parts = [result.text]
+        state.tool_calls = result.tool_calls
         async for chunk in stream_openai_chunks(
             request_id=result.request_id,
             model_id=model.id,
@@ -278,6 +359,7 @@ class ProviderClient:
         state.usage_estimated = result.usage_estimated
         state.elapsed_seconds = result.elapsed_seconds
         state.text_parts = [result.text]
+        state.tool_calls = result.tool_calls
         yield anthropic_sse(
             "message_start",
             {
@@ -295,7 +377,11 @@ class ProviderClient:
         )
         yield anthropic_sse(
             "content_block_start",
-            {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""},
+            },
         )
         for token in chunk_text(result.text):
             yield anthropic_sse(
@@ -361,14 +447,33 @@ class ProviderClient:
             base_url=base_url,
         )
 
+    @staticmethod
+    def _provider_extra_headers(model: Model) -> dict[str, str]:
+        if model.provider == "zero-g":
+            return {"X-0G-Provider-Trust-Mode": "private"}
+        if (
+            model.provider == "wafer"
+            and wafer_zdr_support(model.upstream_id or model.id) is True
+        ):
+            return {"Wafer-ZDR": "required"}
+        return {}
+
     def _secret(self, name: str | None) -> str | None:
         if name is None:
             return None
         return self.key_file.get(name) or os.environ.get(name)
 
     def _secret_any(self, names: tuple[str, ...] | None) -> str | None:
+        # Treat the explicitly supplied key file as one source. Check every
+        # accepted alias there before consulting ambient process variables;
+        # otherwise KIMI_API_KEY in the environment can unexpectedly override
+        # MOONSHOT_API_KEY in the caller's key file (and likewise for Makora).
         for name in names or ():
-            value = self._secret(name)
+            value = self.key_file.get(name)
+            if value:
+                return value
+        for name in names or ():
+            value = os.environ.get(name)
             if value:
                 return value
         return None
@@ -376,6 +481,16 @@ class ProviderClient:
     def _provider_base_url(self, provider: str, default: str) -> str:
         if provider == "kimi":
             return self._secret("KIMI_BASE_URL") or self._secret("MOONSHOT_BASE_URL") or default
+        if provider == "cloudflare-workers-ai":
+            account_id = self._secret("CLOUDFLARE_WORKERS_AI_ACCOUNT_ID")
+            if not account_id:
+                raise RuntimeError("CLOUDFLARE_WORKERS_AI_ACCOUNT_ID is required")
+            return default.format(account_id=account_id)
+        if provider == "databricks":
+            host = (self._secret("DATABRICKS_HOST") or "").strip().rstrip("/")
+            if not host:
+                raise RuntimeError("DATABRICKS_HOST is required")
+            return f"{host}/serving-endpoints"
         return self._secret(f"{provider.upper()}_BASE_URL") or default
 
     def _vertex_auth_and_base_url(self) -> tuple[str, str]:
@@ -417,7 +532,11 @@ class ProviderClient:
         if base_url:
             return token, base_url.rstrip("/")
 
-        host = "aiplatform.googleapis.com" if location == "global" else f"{location}-aiplatform.googleapis.com"
+        host = (
+            "aiplatform.googleapis.com"
+            if location == "global"
+            else f"{location}-aiplatform.googleapis.com"
+        )
         return (
             token,
             f"https://{host}/v1beta1/projects/{project_id}/locations/{location}/endpoints/openapi",

@@ -1,9 +1,9 @@
 {
   "provider": "xiaomi",
-  "source": "https://api.xiaomimimo.com/v1/models",
-  "generated_at": "2026-06-09T00:00:00Z",
+  "source": "https://mimo.mi.com/docs/en-US/price/pay-as-you-go",
+  "generated_at": "2026-08-24T10:39:58Z",
   "model_count": 5,
-  "_note": "Xiaomi MiMo. OpenAI-compatible chat at api.xiaomimimo.com/v1 (Bearer auth). Model ids verified live against /v1/models 2026-06-09; prices from platform.xiaomimimo.com (provider cost, marked up by the catalog). Context set to the documented MiMo-V2 256K window. /v1/models does not expose context/price, so these are hand-maintained. mimo-v2.5-pro-ultraspeed: 1T-param speed-serving tier (up to ~1000 tok/s), id + pricing + 131072 max_completion_tokens from platform.xiaomimimo.com/docs/.../mimo-v2.5-pro-ultraspeed (added 2026-06-09 on beta access).",
+  "_note": "Xiaomi MiMo provider-native routes. PAYG prices for MiMo V2.5 and V2.5 Pro are refreshed hourly from Xiaomi's official overseas USD table. V2.5 Pro UltraSpeed remains live in Xiaomi's authenticated /v1/models feed but has no public PAYG row, so its last verified price is retained until Xiaomi republishes one. Legacy V2 rows are kept only as historical fallback metadata.",
   "models": [
     {
       "id": "xiaomi/mimo-v2-flash",
@@ -16,10 +16,19 @@
       "input_token_price_per_m": 90000,
       "output_token_price_per_m": 290000,
       "model_type": "chat",
-      "endpoints": ["chat/completions"],
-      "features": ["function-calling", "serverless"],
-      "input_modalities": ["text"],
-      "output_modalities": ["text"]
+      "endpoints": [
+        "chat/completions"
+      ],
+      "features": [
+        "function-calling",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
     },
     {
       "id": "xiaomi/mimo-v2-pro",
@@ -32,10 +41,19 @@
       "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 3000000,
       "model_type": "chat",
-      "endpoints": ["chat/completions"],
-      "features": ["function-calling", "serverless"],
-      "input_modalities": ["text"],
-      "output_modalities": ["text"]
+      "endpoints": [
+        "chat/completions"
+      ],
+      "features": [
+        "function-calling",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
     },
     {
       "id": "xiaomi/mimo-v2.5",
@@ -43,15 +61,25 @@
       "display_name": "Xiaomi MiMo V2.5",
       "title": "MiMo-V2.5",
       "created": 1781000000,
-      "context_length": 262144,
+      "context_length": 1048576,
       "max_output_tokens": 65536,
-      "input_token_price_per_m": 400000,
-      "output_token_price_per_m": 2000000,
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 280000,
       "model_type": "chat",
-      "endpoints": ["chat/completions"],
-      "features": ["function-calling", "serverless"],
-      "input_modalities": ["text"],
-      "output_modalities": ["text"]
+      "endpoints": [
+        "chat/completions"
+      ],
+      "features": [
+        "function-calling",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "cached_input_token_price_per_m": 2800
     },
     {
       "id": "xiaomi/mimo-v2.5-pro",
@@ -59,15 +87,25 @@
       "display_name": "Xiaomi MiMo V2.5 Pro",
       "title": "MiMo-V2.5-Pro",
       "created": 1781000000,
-      "context_length": 262144,
-      "max_output_tokens": 65536,
-      "input_token_price_per_m": 1000000,
-      "output_token_price_per_m": 3000000,
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 435000,
+      "output_token_price_per_m": 870000,
       "model_type": "chat",
-      "endpoints": ["chat/completions"],
-      "features": ["function-calling", "serverless"],
-      "input_modalities": ["text"],
-      "output_modalities": ["text"]
+      "endpoints": [
+        "chat/completions"
+      ],
+      "features": [
+        "function-calling",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "cached_input_token_price_per_m": 3600
     },
     {
       "id": "xiaomi/mimo-v2.5-pro-ultraspeed",
@@ -80,10 +118,20 @@
       "input_token_price_per_m": 1305000,
       "output_token_price_per_m": 2610000,
       "model_type": "chat",
-      "endpoints": ["chat/completions"],
-      "features": ["function-calling", "serverless"],
-      "input_modalities": ["text"],
-      "output_modalities": ["text"]
+      "endpoints": [
+        "chat/completions"
+      ],
+      "features": [
+        "function-calling",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "cached_input_token_price_per_m": 10800
     }
   ]
 }

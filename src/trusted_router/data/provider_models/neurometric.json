@@ -1,0 +1,209 @@
+{
+  "provider": "neurometric",
+  "source": "https://wharf.neurometric.ai/v1/models",
+  "price_scale": "microdollars_per_million",
+  "models": [
+    {
+      "display_name": "granite-4.1-8b",
+      "title": "ibm-granite/granite-4.1-8b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "ibm-granite/granite-4.1-8b",
+      "upstream_id": "ibm-granite/granite-4.1-8b",
+      "context_length": 32768,
+      "max_output_tokens": 16384,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 100000
+    },
+    {
+      "display_name": "Qwen3-VL-8B-Instruct",
+      "title": "qwen/qwen3-vl-8b-instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-vl-8b-instruct",
+      "upstream_id": "qwen/qwen3-vl-8b-instruct",
+      "context_length": 32768,
+      "max_output_tokens": 16384,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "input_token_price_per_m": 105000,
+      "output_token_price_per_m": 410000
+    },
+    {
+      "display_name": "Qwen3-VL-8B-Thinking",
+      "title": "qwen/qwen3-vl-8b-thinking",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-vl-8b-thinking",
+      "upstream_id": "qwen/qwen3-vl-8b-thinking",
+      "context_length": 32768,
+      "max_output_tokens": 16384,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "input_token_price_per_m": 162000,
+      "output_token_price_per_m": 1890000
+    },
+    {
+      "display_name": "gemma-4-12B-it",
+      "title": "google/gemma-4-12b-it",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-4-12b-it",
+      "upstream_id": "google/gemma-4-12b-it",
+      "context_length": 32768,
+      "max_output_tokens": 16384,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "input_token_price_per_m": 10000,
+      "output_token_price_per_m": 120000
+    },
+    {
+      "display_name": "gemma-4-E2B-it",
+      "title": "google/gemma-4-e2b-it",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-4-e2b-it",
+      "upstream_id": "google/gemma-4-e2b-it",
+      "context_length": 4096,
+      "max_output_tokens": 2048,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "input_token_price_per_m": 20000,
+      "output_token_price_per_m": 120000
+    },
+    {
+      "display_name": "diffusiongemma-26B-A4B-it",
+      "title": "google/diffusiongemma-26b-a4b-it",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/diffusiongemma-26b-a4b-it",
+      "upstream_id": "google/diffusiongemma-26b-a4b-it",
+      "context_length": 65536,
+      "max_output_tokens": 32000,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 120000
+    }
+  ],
+  "generated_at": "2026-08-24T10:39:58Z",
+  "model_count": 6
+}

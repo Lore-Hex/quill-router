@@ -10,12 +10,12 @@
  *     "0 prompt logs" promise from the homepage holds — TR servers
  *     never see the conversation.
  *   * Send button gated client-side on hasSignedInHint() from
- *     dashboard.js. Signed-out clicks pop the existing #signinModal
- *     and fire ZERO requests to api.trustedrouter.com.
+ *     dashboard.js. Signed-out clicks add a local sign-in notice and
+ *     fire ZERO requests to api.trustedrouter.com.
  *   * Browser-side API key auto-issued via
  *     POST /internal/chat/issue-browser-key on first signed-in Send.
  *     Server returns the raw key in a one-shot tr_chat_key cookie;
- *     we copy it to sessionStorage and clear the cookie.
+ *     we copy it to scoped browser storage and clear the cookie.
  *   * SSE streaming via fetch + getReader. Standard OpenAI delta
  *     protocol — `data: {json}\n\n` chunks, `data: [DONE]` terminator.
  *   * Markdown rendered with marked + highlight.js, sanitized with
@@ -25,28 +25,35 @@
 
 (function () {
     // ── Constants ─────────────────────────────────────────────────────
-    const STORAGE_KEY = "tr_chat_state_v1";
-    const KEY_SESSION_STORAGE = "tr_chat_key";
+    const CHAT_CONFIG = window.__TR_CHAT__ || {};
+    const LOCKED_MODEL_ID = (CHAT_CONFIG.lockedModelId || "").trim();
+    const LOCKED_MODEL_LABEL = (CHAT_CONFIG.lockedModelLabel || "Custom model").trim();
+    const STORAGE_KEY = CHAT_CONFIG.storageKey || "tr_chat_state_v1";
+    const KEY_STORAGE_PREFIX = "tr_chat_key";
     const KEY_COOKIE =
-        (window.__TR_CHAT__ && window.__TR_CHAT__.keyCookieName) || "tr_chat_key";
+        CHAT_CONFIG.keyCookieName || "tr_chat_key";
     // Inference endpoints (chat/completions, messages, responses) go
     // through the same-origin chat-proxy because direct cross-origin
     // fetch to api.trustedrouter.com is CORS-blocked by the attested
     // gateway. Server-side template renders this as "/chat-proxy/v1".
     const API_BASE =
-        (window.__TR_CHAT__ && window.__TR_CHAT__.apiBaseUrl) ||
+        CHAT_CONFIG.apiBaseUrl ||
         "/chat-proxy/v1";
     // Public catalog endpoint — TR control plane serves /v1/models
     // anonymously, so the picker can load without any browser key /
     // proxy hop. Avoids hitting the attested gateway's 401 for an
     // unauthenticated catalog list.
     const CATALOG_BASE =
-        (window.__TR_CHAT__ && window.__TR_CHAT__.catalogBaseUrl) ||
+        CHAT_CONFIG.catalogBaseUrl ||
         "/v1";
     const ISSUE_KEY_PATH =
-        (window.__TR_CHAT__ && window.__TR_CHAT__.issueKeyPath) ||
+        CHAT_CONFIG.issueKeyPath ||
         "/internal/chat/issue-browser-key";
-    const DEFAULT_MODEL_ID = "anthropic/claude-sonnet-4.6";
+    const AUTH_SESSION_PATH =
+        CHAT_CONFIG.authSessionPath ||
+        "/auth/session";
+    const URL_MODEL_ID = LOCKED_MODEL_ID ? "" : queryModelId();
+    const DEFAULT_MODEL_ID = LOCKED_MODEL_ID || URL_MODEL_ID || "trustedrouter/plato";
     const MAX_MODELS_PER_CHAT = 4; // matches OpenRouter's apparent cap
 
     // Curated "Popular" list surfaced at the top of the picker when the
@@ -127,12 +134,15 @@
     // ── State ─────────────────────────────────────────────────────────
     /** @type {{chats: Object, activeChatId: string|null, preferences: Object}} */
     let STATE = loadState();
+    applyUrlModelOverride();
     /** @type {Array<Object>} cached model catalog from /v1/models */
     let MODELS = [];
     /** @type {boolean} */
     let MODELS_LOADING = false;
     /** @type {Map<string, AbortController>} active stream cancellation handles */
     const STREAMS = new Map();
+    let AUTH_SCOPE_PROMISE = null;
+    let BOOTSTRAP_RAW_KEY = null;
 
     function loadState() {
         try {
@@ -174,6 +184,27 @@
             // Corrupt state — reset rather than break the page
         }
         return { chats: {}, activeChatId: null, preferences: {} };
+    }
+
+    function queryModelId() {
+        try {
+            return (new URLSearchParams(window.location.search).get("model") || "").trim();
+        } catch (_) {
+            return "";
+        }
+    }
+
+    function applyUrlModelOverride() {
+        if (!URL_MODEL_ID || LOCKED_MODEL_ID) return;
+        const chat = ensureActiveChat();
+        const slot = chat.models[0] || _defaultSlot();
+        chat.models[0] = slot;
+        slot.model_id = URL_MODEL_ID;
+        slot.enabled = true;
+        chat.updated_at = isoNow();
+        STATE.preferences.lastModelId = URL_MODEL_ID;
+        rememberRecentModel(URL_MODEL_ID);
+        saveState();
     }
 
     // Belt-and-suspenders chat-shape healer. Returns a guaranteed-valid
@@ -237,12 +268,23 @@
 
     function saveState() {
         try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(STATE));
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(stateForStorage()));
         } catch (e) {
             // localStorage may be over-quota or unavailable. Fail silent
             // — the chat continues working in-memory for this session.
             console.warn("chat: localStorage save failed:", e);
         }
+    }
+
+    function stateForStorage() {
+        const chats = {};
+        for (const [id, chat] of Object.entries(STATE.chats || {})) {
+            chats[id] = {
+                ...chat,
+                messages: (chat.messages || []).filter((m) => !m.local_notice),
+            };
+        }
+        return { ...STATE, chats };
     }
 
     function newChatId() {
@@ -287,28 +329,91 @@
             .find((c) => c.startsWith(KEY_COOKIE + "="));
         if (!match) return;
         const raw = decodeURIComponent(match.slice(KEY_COOKIE.length + 1));
-        try {
-            sessionStorage.setItem(KEY_SESSION_STORAGE, raw);
-        } catch (_) {}
+        BOOTSTRAP_RAW_KEY = raw;
         // Clear cookie immediately (one-shot pattern).
         document.cookie =
             KEY_COOKIE + "=; path=/chat; expires=Thu, 01 Jan 1970 00:00:00 GMT";
     }
 
+    async function browserKeyScope() {
+        if (!isSignedIn()) return null;
+        if (AUTH_SCOPE_PROMISE) return AUTH_SCOPE_PROMISE;
+        AUTH_SCOPE_PROMISE = (async function () {
+            try {
+                const resp = await fetch(AUTH_SESSION_PATH, {
+                    method: "GET",
+                    credentials: "same-origin",
+                    headers: { accept: "application/json" },
+                });
+                if (!resp.ok) return null;
+                const json = await resp.json();
+                const data = json && json.data ? json.data : {};
+                const workspaceId = data.workspace && data.workspace.id;
+                const userId = data.user && data.user.id ? data.user.id : "api-key";
+                if (!workspaceId) return null;
+                return "u:" + userId + ":w:" + workspaceId;
+            } catch (_) {
+                return null;
+            }
+        })();
+        return AUTH_SCOPE_PROMISE;
+    }
+
+    function scopedBrowserKeyStorage(scope) {
+        return KEY_STORAGE_PREFIX + ":" + scope;
+    }
+
+    function readStoredBrowserKey(scope) {
+        const storageKey = scopedBrowserKeyStorage(scope);
+        try {
+            const persistent = localStorage.getItem(storageKey);
+            if (persistent) return persistent;
+        } catch (_) {}
+        try {
+            const sessionOnly = sessionStorage.getItem(storageKey);
+            if (sessionOnly) return sessionOnly;
+        } catch (_) {}
+        return null;
+    }
+
+    function storeBrowserKey(scope, raw) {
+        const storageKey = scopedBrowserKeyStorage(scope);
+        try { localStorage.setItem(storageKey, raw); } catch (_) {}
+        try { sessionStorage.setItem(storageKey, raw); } catch (_) {}
+    }
+
+    function clearStoredBrowserKey(scope) {
+        const storageKey = scopedBrowserKeyStorage(scope);
+        try { localStorage.removeItem(storageKey); } catch (_) {}
+        try { sessionStorage.removeItem(storageKey); } catch (_) {}
+        try { sessionStorage.removeItem(KEY_STORAGE_PREFIX); } catch (_) {}
+    }
+
     /** Returns the raw browser-API key. Fetches a new one if missing. */
     async function ensureBrowserKey(opts) {
         const forceRefresh = !!(opts && opts.forceRefresh);
+        const scope = await browserKeyScope();
+        if (!scope) {
+            AUTH_SCOPE_PROMISE = null;
+            openSigninModal();
+            throw new Error("not signed in");
+        }
         let key = null;
         if (!forceRefresh) {
-            try {
-                key = sessionStorage.getItem(KEY_SESSION_STORAGE);
-            } catch (_) {}
+            if (BOOTSTRAP_RAW_KEY) {
+                key = BOOTSTRAP_RAW_KEY;
+                BOOTSTRAP_RAW_KEY = null;
+                storeBrowserKey(scope, key);
+            } else {
+                key = readStoredBrowserKey(scope);
+            }
             if (key) return key;
         } else {
             // Caller hit a 401 — the cached key is stale. Drop it before
             // asking for a fresh one so we don't accidentally reuse it
             // on the next call.
-            try { sessionStorage.removeItem(KEY_SESSION_STORAGE); } catch (_) {}
+            BOOTSTRAP_RAW_KEY = null;
+            clearStoredBrowserKey(scope);
         }
 
         // POST to the issue-key endpoint. Same-origin (trustedrouter.com)
@@ -320,6 +425,7 @@
         if (resp.status === 302 || resp.status === 401) {
             // Server-side gate said "not signed in" — JS shouldn't have
             // called us. Pop the modal and bail.
+            AUTH_SCOPE_PROMISE = null;
             openSigninModal();
             throw new Error("not signed in");
         }
@@ -332,9 +438,7 @@
         const json = await resp.json();
         const raw = (json && json.data && json.data.raw_key) || null;
         if (!raw) throw new Error("issue-key returned no raw_key");
-        try {
-            sessionStorage.setItem(KEY_SESSION_STORAGE, raw);
-        } catch (_) {}
+        storeBrowserKey(scope, raw);
         document.cookie =
             KEY_COOKIE + "=; path=/chat; expires=Thu, 01 Jan 1970 00:00:00 GMT";
         return raw;
@@ -346,14 +450,28 @@
         if (MODELS_LOADING || MODELS.length > 0) return;
         MODELS_LOADING = true;
         try {
-            const resp = await fetch(CATALOG_BASE + "/models");
-            if (!resp.ok) throw new Error("models fetch " + resp.status);
-            const json = await resp.json();
-            const data = Array.isArray(json.data) ? json.data : [];
-            // Each model has top-level id + an OpenRouter-shaped
-            // pricing block; TR also surfaces a `trustedrouter`
-            // extension with provider-specific context.
-            MODELS = data.map((m) => normalizeModel(m));
+            if (window.TrustedRouterModelCatalog) {
+                MODELS = await window.TrustedRouterModelCatalog.loadModels(CATALOG_BASE);
+            } else {
+                const resp = await fetch(CATALOG_BASE + "/models");
+                if (!resp.ok) throw new Error("models fetch " + resp.status);
+                const json = await resp.json();
+                const data = Array.isArray(json.data) ? json.data : [];
+                // Each model has top-level id + an OpenRouter-shaped
+                // pricing block; TR also surfaces a `trustedrouter`
+                // extension with provider-specific context.
+                MODELS = data.map((m) => normalizeModel(m));
+            }
+            if (LOCKED_MODEL_ID && !MODELS.some((m) => m.id === LOCKED_MODEL_ID)) {
+                MODELS.push({
+                    id: LOCKED_MODEL_ID,
+                    name: LOCKED_MODEL_LABEL || LOCKED_MODEL_ID,
+                    provider: "trustedrouter",
+                    capabilities: [],
+                    free: false,
+                    internal_only: false,
+                });
+            }
             renderModelPicker();
         } catch (e) {
             console.warn("chat: model catalog load failed:", e);
@@ -363,6 +481,9 @@
     }
 
     function normalizeModel(raw) {
+        if (window.TrustedRouterModelCatalog) {
+            return window.TrustedRouterModelCatalog.normalizeModel(raw);
+        }
         const pricing = raw.pricing || {};
         const ext = raw.trustedrouter || {};
         // Pricing in OpenAI shape is dollars per token; convert to
@@ -393,6 +514,9 @@
             uptime_pct: ext.uptime_pct || null,
             capabilities: allCaps,
             free: pricing && Number(pricing.prompt) === 0,
+            open_weights: !!ext.open_weights,
+            us_provider_available: !!ext.us_provider_available,
+            eu_focused_provider_available: !!ext.eu_focused_provider_available,
             total_per_m: (inPerM || 0) + (outPerM || 0),
             // Internal-only routing pools (trustedrouter/monitor) leak
             // through some catalog snapshots; track the flag so the
@@ -408,6 +532,9 @@
     // won't match it. Picky over generous so we don't promise
     // capabilities a model doesn't have.
     function inferCapabilities(id) {
+        if (window.TrustedRouterModelCatalog) {
+            return window.TrustedRouterModelCatalog.inferCapabilities(id);
+        }
         const i = (id || "").toLowerCase();
         const caps = [];
         // Vision-capable families (image input via /chat/completions
@@ -454,7 +581,7 @@
     function newChat() {
         const chat = {
             id: newChatId(),
-            title: "New chat",
+            title: LOCKED_MODEL_ID ? LOCKED_MODEL_LABEL : "New chat",
             created_at: isoNow(),
             updated_at: isoNow(),
             models: [
@@ -496,6 +623,33 @@
         renderModelsBar();
         renderThread();
         renderSystemPrompt();
+    }
+
+    function clearCurrentChat() {
+        const chat = ensureActiveChat();
+        if (!chat.messages.length && !(chat._pending_attachments || []).length) {
+            showToast("Current chat is already empty");
+            return;
+        }
+        confirmModal({
+            title: "Clear current chat?",
+            message: "Messages and pending attachments in this chat will be removed. Model settings stay the same.",
+            confirmText: "Clear chat",
+            danger: true,
+        }).then((ok) => {
+            if (!ok) return;
+            chat.messages = [];
+            chat._pending_attachments = [];
+            chat.title = "New chat";
+            chat.updated_at = isoNow();
+            saveState();
+            renderSidebar();
+            renderModelsBar();
+            renderThread();
+            renderAttachmentTray();
+            updateInputEstimate();
+            showToast("Chat cleared");
+        });
     }
 
     function setActiveChat(chatId) {
@@ -655,12 +809,21 @@
         if (!bar) return;
         bar.innerHTML = "";
         const chat = ensureActiveChat();
+        if (LOCKED_MODEL_ID) {
+            chat.models = [{
+                model_id: LOCKED_MODEL_ID,
+                system_prompt: "",
+                params: chat.models[0] ? { ...DEFAULT_PARAMS, ...chat.models[0].params } : { ...DEFAULT_PARAMS },
+                enabled: true,
+                label: LOCKED_MODEL_LABEL,
+            }];
+        }
 
         chat.models.forEach((slot, idx) => {
             bar.appendChild(makeModelPill(chat, slot, idx));
         });
 
-        if (chat.models.length < MAX_MODELS_PER_CHAT) {
+        if (!LOCKED_MODEL_ID && chat.models.length < MAX_MODELS_PER_CHAT) {
             const addBtn = document.createElement("button");
             addBtn.type = "button";
             addBtn.className = "chat-model-add";
@@ -677,7 +840,7 @@
         const costEl = document.querySelector("[data-chat-header-cost]");
         const chat = getActiveChat();
         if (titleEl) {
-            titleEl.textContent = (chat && chat.title) || "";
+            titleEl.textContent = (chat && chat.title) || "TrustedRouter Chat";
         }
         updateTabTitle();
         if (costEl) {
@@ -714,7 +877,8 @@
         const pill = document.createElement("button");
         pill.type = "button";
         pill.className = "chat-model-pill";
-        pill.dataset.action = "toggle-model-dropdown";
+        if (LOCKED_MODEL_ID) pill.title = LOCKED_MODEL_ID;
+        if (!LOCKED_MODEL_ID) pill.dataset.action = "toggle-model-dropdown";
         pill.dataset.slotIdx = String(idx);
         const label =
             slot.label ||
@@ -740,23 +904,25 @@
             (chat.models.length > 1
                 ? '<span class="chat-model-pill-num">#' + (idx + 1) + "</span>"
                 : "") +
-            '<span class="chat-model-pill-caret">▾</span>';
+            (LOCKED_MODEL_ID ? "" : '<span class="chat-model-pill-caret">▾</span>');
         wrap.appendChild(pill);
         // Inline × close button — OR-style one-click model removal.
         // Visible on hover; on mobile (no hover) it's always visible.
         // For the LAST model the action becomes "reset to default"
         // rather than "remove" so the user is never stuck with zero.
-        const closer = document.createElement("button");
-        closer.type = "button";
-        closer.className = "chat-model-pill-close";
-        closer.dataset.action = "remove-model";
-        closer.dataset.slotIdx = String(idx);
-        closer.title = chat.models.length > 1
-            ? "Remove this model from the chat"
-            : "Reset to default model";
-        closer.setAttribute("aria-label", closer.title);
-        closer.innerHTML = "×";
-        wrap.appendChild(closer);
+        if (!LOCKED_MODEL_ID) {
+            const closer = document.createElement("button");
+            closer.type = "button";
+            closer.className = "chat-model-pill-close";
+            closer.dataset.action = "remove-model";
+            closer.dataset.slotIdx = String(idx);
+            closer.title = chat.models.length > 1
+                ? "Remove this model from the chat"
+                : "Reset to default model";
+            closer.setAttribute("aria-label", closer.title);
+            closer.innerHTML = "×";
+            wrap.appendChild(closer);
+        }
         if (openDropdownSlotIdx === idx) {
             wrap.appendChild(makeModelDropdown(chat, slot, idx));
         }
@@ -951,6 +1117,7 @@
     }
 
     function addModel() {
+        if (LOCKED_MODEL_ID) return;
         const chat = ensureActiveChat();
         if (chat.models.length >= MAX_MODELS_PER_CHAT) return;
         chat.models.push({
@@ -969,6 +1136,7 @@
     }
 
     function duplicateModel(idx) {
+        if (LOCKED_MODEL_ID) return;
         const chat = ensureActiveChat();
         const src = chat.models[idx];
         if (!src || chat.models.length >= MAX_MODELS_PER_CHAT) return;
@@ -985,6 +1153,7 @@
     }
 
     function removeModel(idx) {
+        if (LOCKED_MODEL_ID) return;
         const chat = ensureActiveChat();
         if (chat.models.length > 1) {
             chat.models.splice(idx, 1);
@@ -1076,14 +1245,14 @@
     // different suggestions; pure client-side hash of the day-of-year
     // for stable-within-a-day suggestion ordering.
     const SUGGESTED_PROMPTS = [
-        { emoji: "💡", title: "Explain a concept", body: "Explain how transformers work, like I'm a curious engineer." },
-        { emoji: "🧠", title: "Brainstorm ideas", body: "Brainstorm 10 startup ideas that combine LLMs and accessibility." },
-        { emoji: "💻", title: "Write code", body: "Write a Python function that returns the n-th Fibonacci number using memoization." },
-        { emoji: "⚖️", title: "Compare two things", body: "Compare Anthropic's Claude and OpenAI's GPT for coding tasks, in a table." },
-        { emoji: "📝", title: "Draft an email", body: "Draft a polite email asking my landlord to fix the heating before winter." },
-        { emoji: "🎨", title: "Be creative", body: "Write a haiku about a rainy commute." },
-        { emoji: "🧪", title: "Plan an experiment", body: "Design an A/B test plan for evaluating a new onboarding flow." },
-        { emoji: "🗺️", title: "Travel planner", body: "Plan a 3-day food-focused trip to Tokyo for someone allergic to shellfish." },
+        { glyph: "01", title: "Explain a concept", body: "Explain how transformers work, like I'm a curious engineer." },
+        { glyph: "02", title: "Brainstorm ideas", body: "Brainstorm 10 startup ideas that combine LLMs and accessibility." },
+        { glyph: "03", title: "Write code", body: "Write a Python function that returns the n-th Fibonacci number using memoization." },
+        { glyph: "04", title: "Compare two things", body: "Compare Anthropic's Claude and OpenAI's GPT for coding tasks, in a table." },
+        { glyph: "05", title: "Draft an email", body: "Draft a polite email asking my landlord to fix the heating before winter." },
+        { glyph: "06", title: "Be creative", body: "Write a haiku about a rainy commute." },
+        { glyph: "07", title: "Plan an experiment", body: "Design an A/B test plan for evaluating a new onboarding flow." },
+        { glyph: "08", title: "Travel planner", body: "Plan a 3-day food-focused trip to Tokyo for someone allergic to shellfish." },
     ];
 
     function pickedSuggestions() {
@@ -1105,23 +1274,14 @@
         // showing it after the user gets the hang of things.
         const welcomeBanner = STATE.preferences.welcome_dismissed
             ? ""
-            : '<div class="chat-welcome">' +
-              '<button class="chat-welcome-close" data-action="dismiss-welcome" aria-label="Dismiss">×</button>' +
-              '<div class="chat-welcome-eyebrow">Welcome</div>' +
-              '<h3>Compare models side-by-side</h3>' +
-              '<ol>' +
-              '<li>Pick a model in the header, type a prompt.</li>' +
-              '<li>Hit <kbd>+ Add model</kbd> to add up to 3 more. Each one streams its response in its own column.</li>' +
-              '<li>Sign in only when you press Send — nothing fires until then.</li>' +
-              "</ol>" +
-              "</div>";
+            : lockedWelcomeBanner();
         const grid = pickedSuggestions()
             .map(
                 (p) =>
                     '<button type="button" class="chat-suggest" data-prompt="' +
                     escapeHtml(p.body) +
-                    '"><span class="chat-suggest-emoji">' +
-                    p.emoji +
+                    '"><span class="chat-suggest-index">' +
+                    p.glyph +
                     '</span><span class="chat-suggest-title">' +
                     escapeHtml(p.title) +
                     '</span><span class="chat-suggest-body">' +
@@ -1129,10 +1289,16 @@
                     "</span></button>",
             )
             .join("");
+        const heading = LOCKED_MODEL_ID
+            ? "Chat with this custom model."
+            : "Try any model — zero tokens until you sign in.";
+        const body = LOCKED_MODEL_ID
+            ? "The hidden prompt is prepended inside the attested gateway. Callers only need the model ID."
+            : "Pick a model above, type a prompt, hit Send. Compare up to 4 models side-by-side.";
         empty.innerHTML =
             welcomeBanner +
-            '<h2>Try any model — zero tokens until you sign in.</h2>' +
-            '<p>Pick a model above, type a prompt, hit Send. Compare up to 4 models side-by-side.</p>' +
+            "<h2>" + escapeHtml(heading) + "</h2>" +
+            "<p>" + escapeHtml(body) + "</p>" +
             '<div class="chat-suggest-grid">' + grid + "</div>";
         empty.addEventListener("click", (e) => {
             const closer = e.target && e.target.closest
@@ -1155,6 +1321,31 @@
             }
         });
         thread.appendChild(empty);
+    }
+
+    function lockedWelcomeBanner() {
+        if (!LOCKED_MODEL_ID) {
+            return '<div class="chat-welcome">' +
+                '<button class="chat-welcome-close" data-action="dismiss-welcome" aria-label="Dismiss">×</button>' +
+                '<div class="chat-welcome-eyebrow">Welcome</div>' +
+                '<h3>Compare models side-by-side</h3>' +
+                '<ol>' +
+                '<li>Pick a model in the header, type a prompt.</li>' +
+                '<li>Hit <kbd>+ Add model</kbd> to add up to 3 more. Each one streams its response in its own column.</li>' +
+                '<li>Sign in only when you press Send — nothing fires until then.</li>' +
+                "</ol>" +
+                "</div>";
+        }
+        return '<div class="chat-welcome">' +
+            '<button class="chat-welcome-close" data-action="dismiss-welcome" aria-label="Dismiss">×</button>' +
+            '<div class="chat-welcome-eyebrow">Custom model</div>' +
+            "<h3>" + escapeHtml(LOCKED_MODEL_LABEL) + "</h3>" +
+            '<ol>' +
+            "<li>Locked to <code>" + escapeHtml(LOCKED_MODEL_ID) + "</code>.</li>" +
+            "<li>Type a prompt and press Send. Nothing fires until then.</li>" +
+            '<li>Edit the hidden prompt from <a href="/console/custom-models">Custom Models</a>.</li>' +
+            "</ol>" +
+            "</div>";
     }
 
     function renderThread() {
@@ -1247,6 +1438,10 @@
     }
 
     function renderMessage(msg, chat) {
+        if (msg.local_notice === "signed_out_send") {
+            return renderSignedOutSendNotice(msg, chat);
+        }
+
         const el = document.createElement("div");
         el.className =
             "chat-msg chat-msg-" + (msg.role === "user" ? "user" : "assistant");
@@ -1345,7 +1540,7 @@
                 if (!resp.content) reas.open = true;
                 const summary = document.createElement("summary");
                 summary.innerHTML =
-                    '<span class="chat-msg-reasoning-icon">🧠</span> Thinking';
+                    '<span class="chat-msg-reasoning-icon" aria-hidden="true">∴</span> Thinking';
                 reas.appendChild(summary);
                 const body = document.createElement("div");
                 body.className = "chat-msg-reasoning-body";
@@ -1462,6 +1657,63 @@
         actions.appendChild(makeAction("Branch", () => branchFromMessage(chat, msg)));
         actions.appendChild(makeAction("Delete", () => deleteMessage(chat, msg)));
         el.appendChild(actions);
+        return el;
+    }
+
+    function renderSignedOutSendNotice(msg, chat) {
+        const el = document.createElement("div");
+        el.className = "chat-msg chat-msg-assistant chat-msg-local-notice";
+        el.dataset.msgId = msg.id;
+
+        const bubble = document.createElement("div");
+        bubble.className = "chat-msg-bubble chat-auth-notice";
+        const preview = (msg.draft_preview || "").trim();
+        bubble.innerHTML =
+            '<div class="chat-auth-notice-eyebrow">Sign in required</div>' +
+            "<h3>Sign in to send this message.</h3>" +
+            "<p>Your draft is still in the composer. Sign in to send it through TrustedRouter, or start a fresh chat.</p>" +
+            (preview
+                ? '<div class="chat-auth-notice-draft"><span>Draft</span>' +
+                  escapeHtml(preview) +
+                  "</div>"
+                : "") +
+            '<div class="chat-auth-notice-actions">' +
+            '<button type="button" class="chat-auth-notice-primary" data-action="notice-signin">Sign in</button>' +
+            '<button type="button" class="chat-auth-notice-secondary" data-action="notice-new-chat">New chat</button>' +
+            '<button type="button" class="chat-auth-notice-link" data-action="notice-keep-editing">Keep editing</button>' +
+            "</div>";
+
+        bubble.addEventListener("click", (e) => {
+            const action = e.target && e.target.closest
+                ? e.target.closest("[data-action]")
+                : null;
+            if (!action) return;
+            const name = action.dataset.action;
+            if (name === "notice-signin") {
+                openSigninModal();
+                return;
+            }
+            if (name === "notice-new-chat") {
+                removeSignedOutSendNotices(chat);
+                const next = newChat();
+                const input = document.querySelector("[data-chat-input]");
+                if (input) {
+                    input.focus();
+                    autoResize(input);
+                }
+                renderSidebar();
+                renderModelsBar();
+                renderThread();
+                renderSystemPrompt();
+                return next;
+            }
+            if (name === "notice-keep-editing") {
+                const input = document.querySelector("[data-chat-input]");
+                if (input) input.focus();
+            }
+        });
+
+        el.appendChild(bubble);
         return el;
     }
 
@@ -1901,7 +2153,14 @@
     // "cheap" replaces the old "free" chip — TR has no truly free
     // models, so the chip would always be empty. Cheap sorts the
     // visible list by ascending total price ($/M in + out).
-    const PICKER_FILTERS = { cheap: false, vision: false, tools: false };
+    const PICKER_FILTERS = {
+        cheap: false,
+        vision: false,
+        tools: false,
+        open: false,
+        us: false,
+        eu: false,
+    };
 
     function renderModelPicker() {
         if (!pickerEl) return;
@@ -1929,6 +2188,9 @@
                 !caps.includes("tool_use")
             )
                 return false;
+            if (PICKER_FILTERS.open && !m.open_weights) return false;
+            if (PICKER_FILTERS.us && !m.us_provider_available) return false;
+            if (PICKER_FILTERS.eu && !m.eu_focused_provider_available) return false;
             return true;
         });
         // "Cheap" filter — sort ascending by total $/M and cap to the
@@ -1952,14 +2214,24 @@
             const nameMatch = (m.name || "").toLowerCase().includes(q);
             return idMatch || nameMatch;
         });
-        const counts = { cheap: queryMatched.length, vision: 0, tools: 0 };
+        const counts = {
+            cheap: queryMatched.length,
+            vision: 0,
+            tools: 0,
+            open: 0,
+            us: 0,
+            eu: 0,
+        };
         for (const m of queryMatched) {
             const caps = m.capabilities || [];
             if (caps.includes("vision")) counts.vision++;
             if (caps.includes("tools") || caps.includes("tool_use")) counts.tools++;
+            if (m.open_weights) counts.open++;
+            if (m.us_provider_available) counts.us++;
+            if (m.eu_focused_provider_available) counts.eu++;
         }
         if (pickerEl) {
-            for (const k of ["cheap", "vision", "tools"]) {
+            for (const k of ["cheap", "vision", "tools", "open", "us", "eu"]) {
                 const el = pickerEl.querySelector('[data-count="' + k + '"]');
                 const chip = pickerEl.querySelector(
                     '.chat-picker-filter[data-filter="' + k + '"]',
@@ -2015,7 +2287,10 @@
                 } else if (
                     !PICKER_FILTERS.cheap &&
                     !PICKER_FILTERS.vision &&
-                    !PICKER_FILTERS.tools
+                    !PICKER_FILTERS.tools &&
+                    !PICKER_FILTERS.open &&
+                    !PICKER_FILTERS.us &&
+                    !PICKER_FILTERS.eu
                 ) {
                     // Catalog hasn't loaded (or doesn't include this id
                     // yet). Synthesize a stub so the user still sees
@@ -2026,6 +2301,9 @@
                         name: prettifyModelId(id),
                         capabilities: [],
                         free: false,
+                        open_weights: false,
+                        us_provider_available: false,
+                        eu_focused_provider_available: false,
                         _stub: true,
                     });
                 }
@@ -2125,8 +2403,11 @@
                 }
                 ${m.context_length ? `<span>${(m.context_length / 1000).toFixed(0)}k ctx</span>` : ""}
                 ${m.free ? '<span class="chat-tag chat-tag-free">Free</span>' : ""}
-                ${(m.capabilities || []).includes("vision") ? '<span class="chat-tag chat-tag-vision">👁 Vision</span>' : ""}
-                ${(m.capabilities || []).includes("tools") || (m.capabilities || []).includes("tool_use") ? '<span class="chat-tag chat-tag-tools">⚒ Tools</span>' : ""}
+                ${m.open_weights ? '<span class="chat-tag chat-tag-open">Open weights</span>' : ""}
+                ${m.us_provider_available ? '<span class="chat-tag chat-tag-region">US</span>' : ""}
+                ${m.eu_focused_provider_available ? '<span class="chat-tag chat-tag-region">EU</span>' : ""}
+                ${(m.capabilities || []).includes("vision") ? '<span class="chat-tag chat-tag-vision">Vision</span>' : ""}
+                ${(m.capabilities || []).includes("tools") || (m.capabilities || []).includes("tool_use") ? '<span class="chat-tag chat-tag-tools">Tools</span>' : ""}
                 ${activeIds && activeIds.has(m.id) ? '<span class="chat-tag chat-tag-active">In use</span>' : ""}
             </div>
         `;
@@ -2141,6 +2422,9 @@
     // of "openai/gpt-5.4-nano", etc. Falls back to the whole id when
     // there's no "/" (some catalog entries use unqualified ids).
     function providerFromModelId(id) {
+        if (window.TrustedRouterModelCatalog) {
+            return window.TrustedRouterModelCatalog.providerFromModelId(id);
+        }
         if (!id || typeof id !== "string") return "";
         const slash = id.indexOf("/");
         return slash > 0 ? id.slice(0, slash) : id;
@@ -2247,13 +2531,19 @@
     let pickerTargetSlot = 0;
 
     function selectModel(modelId) {
+        if (LOCKED_MODEL_ID) return;
         const chat = ensureActiveChat();
         const slot = chat.models[pickerTargetSlot] || chat.models[0];
         if (slot) slot.model_id = modelId;
         chat.updated_at = isoNow();
         STATE.preferences.lastModelId = modelId;
-        // Track recently-used models so the picker can surface a
-        // "Recent" section at the top of the list.
+        rememberRecentModel(modelId);
+        saveState();
+        renderModelsBar();
+    }
+
+    function rememberRecentModel(modelId) {
+        if (!modelId) return;
         if (!STATE.preferences.recentModelIds) {
             STATE.preferences.recentModelIds = [];
         }
@@ -2262,11 +2552,10 @@
         );
         recent.unshift(modelId);
         STATE.preferences.recentModelIds = recent.slice(0, 6);
-        saveState();
-        renderModelsBar();
     }
 
     function openModelPicker(slotIdx) {
+        if (LOCKED_MODEL_ID) return;
         pickerTargetSlot = typeof slotIdx === "number" ? slotIdx : 0;
         if (pickerEl) return;
         pickerEl = document.createElement("div");
@@ -2279,6 +2568,9 @@
                     <button type="button" class="chat-picker-filter" data-filter="cheap" title="Sort ascending by price (top 30 cheapest)">Cheap <span class="chat-picker-filter-count" data-count="cheap"></span></button>
                     <button type="button" class="chat-picker-filter" data-filter="vision" title="Models with image-input support">Vision <span class="chat-picker-filter-count" data-count="vision"></span></button>
                     <button type="button" class="chat-picker-filter" data-filter="tools" title="Models with tool/function-call support">Tools <span class="chat-picker-filter-count" data-count="tools"></span></button>
+                    <button type="button" class="chat-picker-filter" data-filter="open" title="Pure open-weight model or orchestration">Open weights <span class="chat-picker-filter-count" data-count="open"></span></button>
+                    <button type="button" class="chat-picker-filter" data-filter="us" title="Models with at least one US-based provider route">US <span class="chat-picker-filter-count" data-count="us"></span></button>
+                    <button type="button" class="chat-picker-filter" data-filter="eu" title="Models with at least one EU-focused provider route">EU <span class="chat-picker-filter-count" data-count="eu"></span></button>
                 </div>
                 <div class="chat-model-picker-list"></div>
                 <div class="chat-model-picker-footer">
@@ -2381,6 +2673,32 @@
 
     // ── Send + stream ─────────────────────────────────────────────────
 
+    function removeSignedOutSendNotices(chat) {
+        if (!chat || !Array.isArray(chat.messages)) return;
+        chat.messages = chat.messages.filter(
+            (m) => m.local_notice !== "signed_out_send",
+        );
+    }
+
+    function showSignedOutSendNotice(text) {
+        const chat = ensureActiveChat();
+        removeSignedOutSendNotices(chat);
+        const compact = text.replace(/\s+/g, " ").trim();
+        const preview =
+            compact.length > 180 ? compact.slice(0, 177) + "..." : compact;
+        chat.messages.push({
+            id: newMsgId(),
+            role: "assistant",
+            local_notice: "signed_out_send",
+            draft_preview: preview,
+            created_at: isoNow(),
+        });
+        chat.updated_at = isoNow();
+        renderSidebar();
+        renderThread();
+        showToast("Sign in to send your message");
+    }
+
     async function handleSendClick(event) {
         event.preventDefault();
         // If any stream is active, the Send button is now Stop.
@@ -2388,20 +2706,23 @@
             stopAllStreams();
             return;
         }
-        if (!isSignedIn()) {
-            // The user's hard constraint: NO request fires when
-            // signed out.
-            openSigninModal();
-            return;
-        }
         const input = document.querySelector("[data-chat-input]");
         if (!input) return;
         const text = (input.value || "").trim();
         if (!text) return;
+        if (!isSignedIn()) {
+            // The user's hard constraint: NO request fires when
+            // signed out. Show an in-thread local notice instead of
+            // silently doing nothing or immediately hiding the chat
+            // behind a modal.
+            showSignedOutSendNotice(text);
+            return;
+        }
         input.value = "";
         autoResize(input);
 
         const chat = ensureActiveChat();
+        removeSignedOutSendNotices(chat);
         const attachments = consumePendingAttachments(chat);
         const userMsg = {
             id: newMsgId(),
@@ -2504,6 +2825,7 @@
         // model. Find the matching response by model_id+slot_label.
         for (const m of chat.messages) {
             if (m.id === assistantMsg.id) break;
+            if (m.local_notice) continue;
             if (m.role === "user") {
                 // OpenAI content shape: either a string (text only)
                 // or an array of parts (text + image_url for vision).
@@ -2650,6 +2972,9 @@
                             (delta &&
                             typeof delta.reasoning_content === "string"
                                 ? delta.reasoning_content
+                                : "") ||
+                            (delta && typeof delta.thinking === "string"
+                                ? delta.thinking
                                 : "");
                         if (reasoningText) {
                             respSlot.reasoning =
@@ -3811,7 +4136,7 @@
             '<span class="chat-settings-row-label">Default model</span>' +
             '<input type="text" data-setting="default_model_id" value="' +
             escapeHtml(prefs.lastModelId || "") +
-            '" placeholder="anthropic/claude-sonnet-4.6">' +
+            '" placeholder="trustedrouter/plato">' +
             "</label>" +
             '<label class="chat-settings-row chat-settings-row-flex">' +
             '<input type="checkbox" data-setting="enter_to_send" ' +
@@ -4123,6 +4448,10 @@
             if (toggle) {
                 const panel = document.querySelector("[data-chat-system-prompt]");
                 if (panel) panel.hidden = !panel.hidden;
+                return;
+            }
+            if (target.closest('[data-action="clear-chat"]')) {
+                clearCurrentChat();
                 return;
             }
             const hamburger = target.closest('[data-action="toggle-sidebar"]');

@@ -2,17 +2,35 @@
 
 {% block body %}
 <section class="public-section docs-section">
+  <section class="public-proof-strip" aria-label="Sixty second agent setup">
+    <div><strong>1. Create a key</strong><span>Use one TrustedRouter key across supported agents.</span></div>
+    <div><strong>2. Set the base URL</strong><span><span class="mono">{{ api_base_url }}</span></span></div>
+    <div><strong>3. Send PONG</strong><span>Confirm authentication, routing, and streaming before migration.</span></div>
+    <div><strong>4. Choose from the catalog</strong><span>Read the live <a href="/v1/models">model API</a> or compare measured routes.</span></div>
+  </section>
+
   <div class="panel">
-    <div class="panel-head"><h2>Agent setup</h2><span class="pill good">OpenAI compatible</span></div>
+    <div class="panel-head"><h2>Agent router base URLs</h2><span class="pill good">OpenAI compatible</span></div>
     <div class="panel-body">
-      <p>Use this when a coding agent needs to switch a project to TrustedRouter without changing the app architecture.</p>
+      <p>For Claude Code, Codex, Cursor, eval runners, and other AI agents using the OpenAI SDK, set the base URL to <span class="mono">{{ api_base_url }}</span>. Keep the SDK and application architecture you already use.</p>
+      <div class="model-table-wrap">
+        <table>
+          <thead><tr><th>Client</th><th>Base URL</th><th>Use when</th></tr></thead>
+          <tbody>
+            <tr><td>OpenAI compatible</td><td><span class="mono">{{ api_base_url }}</span></td><td>Chat Completions, Responses, models, and most agents</td></tr>
+            <tr><td>Anthropic compatible</td><td><span class="mono">https://api.trustedrouter.com</span></td><td>Anthropic SDK Messages calls</td></tr>
+            <tr><td>EU regional</td><td><span class="mono">https://api-europe-west4.quillrouter.com/v1</span></td><td>Europe-focused gateway and routing</td></tr>
+            <tr><td>Permanent alias</td><td><span class="mono">https://api.quillrouter.com/v1</span></td><td>Existing integrations using the original hostname</td></tr>
+          </tbody>
+        </table>
+      </div>
       <pre><code>export TRUSTEDROUTER_API_KEY="sk-tr-v1-..."
 export OPENAI_API_KEY="$TRUSTEDROUTER_API_KEY"
 export OPENAI_BASE_URL="{{ api_base_url }}"</code></pre>
       <pre><code># Anthropic SDKs use the non-/v1 base URL.
 export ANTHROPIC_API_KEY="$TRUSTEDROUTER_API_KEY"
 export ANTHROPIC_BASE_URL="https://api.trustedrouter.com"</code></pre>
-      <p class="muted">Already integrated against <span class="mono">api.quillrouter.com</span>? It stays a permanent working alias — no migration needed. Both hostnames terminate inside the same attested gateway.</p>
+      <p class="muted">All listed TrustedRouter API hostnames terminate prompt TLS inside an attested gateway. Browse the current public catalog at <a href="/v1/models">/v1/models</a>, then run the PONG check below before changing application code.</p>
     </div>
   </div>
 
@@ -28,6 +46,7 @@ export ANTHROPIC_BASE_URL="https://api.trustedrouter.com"</code></pre>
     "max_tokens": 4
   }'</code></pre>
       <p>The response should contain <span class="mono">PONG</span>. Use this check before moving evals or production traffic.</p>
+      <p class="muted">After PONG, compare current routes on the <a href="/leaderboard">live leaderboard</a> and verify longer-term behavior in the <a href="/benchmarks/reports">monthly benchmark reports</a>.</p>
     </div>
   </div>
 
@@ -37,9 +56,17 @@ export ANTHROPIC_BASE_URL="https://api.trustedrouter.com"</code></pre>
       <div class="panel-body">
         <ul class="plain-list">
           <li><span class="mono">trustedrouter/zdr</span>: zero-data-retention routes first. Good default for legal and sensitive work.</li>
-          <li><span class="mono">trustedrouter/e2e</span>: end-to-end encrypted route pool, currently centered on confidential providers.</li>
+          <li><span class="mono">trustedrouter/e2e</span> or <span class="mono">trustedrouter/confidential</span>: end-to-end encrypted route pool, currently centered on confidential providers.</li>
+          <li><span class="mono">trustedrouter/eu</span>: EU-focused routing. Use with <span class="mono">https://api-europe-west4.quillrouter.com/v1</span> for the EU regional gateway.</li>
           <li><span class="mono">trustedrouter/auto</span>: broad provider fallback when availability matters more than the strictest privacy filter.</li>
           <li><span class="mono">trustedrouter/cheap</span>: low-cost paid route pool for cost-sensitive tests.</li>
+          <li><span class="mono">trustedrouter/socrates</span>: rolling named advisor model. Use <span class="mono">trustedrouter/socrates-1.1</span> for the current pinned version; <span class="mono">trustedrouter/socrates-1.0</span> remains available only for old pinned integrations.</li>
+          <li><span class="mono">trustedrouter/subagent</span>: primitive for OpenRouter-compatible subtask delegation. Use a concrete parent model with a <span class="mono">trustedrouter:subagent</span> or <span class="mono">openrouter:subagent</span> tool.</li>
+          <li><span class="mono">trustedrouter/iris-2.0</span>, <span class="mono">trustedrouter/prometheus-2.0</span>, <span class="mono">trustedrouter/zeus-1.0</span>: versioned budget, open, and frontier Synth presets inside the attested gateway.</li>
+          <li><span class="mono">trustedrouter/openpatcher-s2</span>: Kimi K3 and GLM 5.2 synthesis with judge and final fallbacks.</li>
+          <li><span class="mono">trustedrouter/openpatcher-g2</span>: Kimi K3 worker with parallel Gemma 4 and Prometheus 2.0 advisors.</li>
+          <li><span class="mono">trustedrouter/plato-pro-2.0</span>: GLM 5.2 worker advised by Prometheus 2.0.</li>
+          <li><span class="mono">trustedrouter/iris-code-1.0</span>, <span class="mono">trustedrouter/prometheus-code-1.0</span>, <span class="mono">trustedrouter/zeus-code-1.0</span>: versioned code-tuned Synth presets for implementation-heavy agent turns.</li>
         </ul>
       </div>
     </div>
@@ -50,8 +77,88 @@ export ANTHROPIC_BASE_URL="https://api.trustedrouter.com"</code></pre>
 Use base_url "{{ api_base_url }}".
 Read the API key from TRUSTEDROUTER_API_KEY.
 Use trustedrouter/zdr by default unless the user asks for broad fallback.
+For Europe-focused workloads, use base_url "https://api-europe-west4.quillrouter.com/v1" and model trustedrouter/eu.
+Use trustedrouter/prometheus-2.0 for hard prompts, evals, or synthesis where multiple model calls are worth the cost and a 1M context window matters.
+Use trustedrouter/prometheus-code-1.0 for implementation-heavy agent turns.
+Use trustedrouter/socrates for the current rolling advisor model, or trustedrouter/socrates-1.1 when you need the current pinned version.
 Run a PONG smoke test before editing app code.</code></pre>
       </div>
+    </div>
+  </div>
+
+  <div class="panel" id="socrates">
+    <div class="panel-head"><h2>Socrates prompt</h2><span class="pill">advisor orchestration</span></div>
+    <div class="panel-body">
+      <p><span class="mono">trustedrouter/socrates</span> is the rolling named advisor model, currently pointing at <span class="mono">trustedrouter/socrates-1.1</span>. The worker gets one private zero-argument tool, <span class="mono">_trustedrouter_get_advice</span>, and should call it only when stuck, uncertain, or facing a high-stakes decision. Use the generic <span class="mono">trustedrouter/advisor</span> primitive only when you provide explicit worker and advisor models yourself.</p>
+      <pre><code>{
+  "model": "trustedrouter/socrates-1.1",
+  "messages": [{"role": "user", "content": "Review this migration plan for production risk."}],
+  "tools": [{
+    "type": "trustedrouter:advisor",
+    "parameters": {
+      "depth": 2,
+      "advisor_models": ["anthropic/claude-opus-4.8"],
+      "max_get_advice_calls": 1,
+      "advisor_max_tokens": 4096,
+      "advisor_timeout_ms": 90000
+    }
+  }]
+}</code></pre>
+      <p class="muted">The advisor sees the same prompt context as the worker. Use <span class="mono">provider.min_privacy = "zdr"</span> for a hard zero-retention floor or <span class="mono">provider.min_privacy = "confidential"</span> to require both provider-side confidential compute and E2EE. The <span class="mono">trustedrouter/zdr</span> and <span class="mono">trustedrouter/e2e</span> aliases select those pools. If the advisor is itself a Synth model such as <span class="mono">trustedrouter/zeus-1.0</span>, TrustedRouter decrements orchestration depth automatically.</p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>Subagent prompt</h2><span class="pill">server tool</span></div>
+    <div class="panel-body">
+      <p><span class="mono">trustedrouter/subagent</span> lets a parent model delegate self-contained subtasks to a worker model during the same generation. The worker sees only the task description that the parent model writes.</p>
+      <pre><code>{
+  "model": "anthropic/claude-sonnet-5",
+  "messages": [{"role": "user", "content": "Research the options, then propose one implementation."}],
+  "tools": [{
+    "type": "openrouter:subagent",
+    "parameters": {
+      "model": "deepseek/deepseek-v4-flash",
+      "instructions": "Be concise. Return only useful findings.",
+      "max_tool_calls": 4,
+      "max_completion_tokens": 800
+    }
+  }]
+}</code></pre>
+      <p class="muted">The private function exposed to the parent model is <span class="mono">_trustedrouter_subagent</span> with <span class="mono">task_name</span> and <span class="mono">task_description</span>. Function tools inside the subagent worker are rejected; recursive subagents are blocked.</p>
+    </div>
+  </div>
+
+  <div class="panel" id="codex-skill">
+    <div class="panel-head"><h2>Agent skill</h2><span class="pill good">model advisor</span></div>
+    <div class="panel-body">
+      <p>Use the <span class="mono">trustedrouter-model-advisor</span> playbook when Codex, Claude Code, Hermes, Cursor, or another coding agent needs to choose a model, estimate cost and speed, weigh privacy tiers, connect MCP, or decide whether prompt caching makes one stable model cheaper than broad routing.</p>
+      <pre><code># Codex native skill
+Use $trustedrouter-model-advisor to choose the best TrustedRouter model for this task.
+
+# Claude Code, Hermes, Cursor, or any agent that can read a URL
+Read https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md and follow it.
+Consider speed, cost, AI IQ, privacy, context length, prompt caching, and recent provider health before making calls.</code></pre>
+      <p class="muted">Skill source: <a href="https://github.com/Lore-Hex/LLM-advisor">GitHub folder</a>. Raw instructions for any agent: <a href="https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md">SKILL.md</a>.</p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>Synth prompt</h2><span class="pill">hard prompts</span></div>
+    <div class="panel-body">
+      <pre><code>For a hard prompt, use model trustedrouter/synth.
+Attach one tool:
+{
+  "type": "trustedrouter:synth",
+  "parameters": {
+    "preset": "quality",
+    "selection_strategy": "synthesize_non_refusals",
+    "fallback_judges": ["~anthropic/claude-latest", "~google/gemini-pro-latest", "~zai/glm-latest"],
+    "fallback_final_models": ["~anthropic/claude-latest", "~google/gemini-pro-latest", "~kimi/latest"],
+    "max_completion_tokens": 800
+  }
+}
+Read the full behavior at https://trustedrouter.com/docs/synth.</code></pre>
     </div>
   </div>
 
@@ -63,9 +170,16 @@ Run a PONG smoke test before editing app code.</code></pre>
     <div class="sdk-links">
       <a class="pill" href="/docs/llms.txt">llms.txt</a>
       <a class="pill" href="/docs/llms-full.txt">llms-full.txt</a>
+      <a class="pill" href="#codex-skill">Agent skill</a>
+      <a class="pill" href="/docs/synth">Synth</a>
       <a class="pill" href="/models">Models</a>
+      <a class="pill" href="/compare/models">Model comparisons</a>
       <a class="pill" href="/providers">Providers</a>
       <a class="pill" href="/leaderboard">Leaderboard</a>
+      <a class="pill" href="/benchmarks/reports">Monthly reports</a>
+      <a class="pill" href="/private-llm-api">Private API</a>
+      <a class="pill" href="/eu">EU setup</a>
+      <a class="pill" href="/docs/migrate-from-openrouter">Migration guide</a>
     </div>
   </section>
 </section>

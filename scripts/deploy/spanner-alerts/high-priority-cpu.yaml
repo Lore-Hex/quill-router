@@ -1,0 +1,27 @@
+displayName: "TR Spanner: high-priority CPU"
+combiner: OR
+enabled: true
+documentation:
+  mimeType: text/markdown
+  content: |
+    A production Spanner replica exceeded the 45% multi-region high-priority
+    CPU target. Inspect per-region CPU, transaction contention, and traffic
+    before increasing capacity. Runbook: docs/spanner-reliability.md.
+conditions:
+  - displayName: "High-priority CPU above 45% for 5 minutes"
+    conditionThreshold:
+      filter: 'resource.type = "spanner_instance" AND resource.labels.instance_id = "trusted-router-nam6" AND metric.type = "spanner.googleapis.com/instance/cpu/utilization_by_priority" AND metric.labels.priority = "high"'
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_MAX
+          crossSeriesReducer: REDUCE_MAX
+      comparison: COMPARISON_GT
+      thresholdValue: 0.45
+      duration: 300s
+      trigger:
+        count: 1
+alertStrategy:
+  autoClose: 86400s
+  notificationPrompts:
+    - OPENED
+    - CLOSED

@@ -1,0 +1,50 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Page not found">
+  <div class="marketing-copy">
+    <span class="eyebrow">404</span>
+    <h2>That page is not here.</h2>
+    <p>The address may have changed, or the page may no longer exist. The API, documentation, model catalog, and public status pages are available below.</p>
+    <p>
+      <a class="btn primary" href="/docs">Open documentation</a>
+      <a class="btn" href="/">Return home</a>
+    </p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>TrustedRouter</span><span>Useful routes</span></div>
+    <pre><code>Documentation   /docs
+Models          /models
+Providers       /providers
+API status      /status
+Support         /support</code></pre>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">Continue from here</h2>
+  <div class="marketing-grid four">
+    <a class="marketing-card card-as-link" href="/docs">
+      <h3>Documentation</h3>
+      <p>Quickstarts, SDK setup, routing, caching, privacy, and API guides.</p>
+      <span class="card-link">Open docs</span>
+    </a>
+    <a class="marketing-card card-as-link" href="/models">
+      <h3>Models</h3>
+      <p>Browse current models, providers, pricing, and privacy posture.</p>
+      <span class="card-link">Browse models</span>
+    </a>
+    <a class="marketing-card card-as-link" href="/status">
+      <h3>Status</h3>
+      <p>See router health, regional checks, uptime, and recent incidents.</p>
+      <span class="card-link">View status</span>
+    </a>
+    <a class="marketing-card card-as-link" href="/support">
+      <h3>Support</h3>
+      <p>Get help with accounts, billing, provider routes, or API requests.</p>
+      <span class="card-link">Contact support</span>
+    </a>
+  </div>
+</section>
+
+{% endblock %}

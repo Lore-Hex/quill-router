@@ -9,14 +9,15 @@ Chunk 1 covers:
     and the issue-key-endpoint path
   * Static assets `chat.js` and `chat.css` are referenced
 
-The Send-button gating itself is a JS-runtime behavior covered by
-manual verification (test plan: anonymous user clicks Send → modal
-opens, no network request to api.trustedrouter.com fires). pytest can
-only assert that the right hooks are in place; we don't run JS in
-the test suite.
+The Send-button gating itself is a JS-runtime behavior. pytest asserts
+that the right hooks and static guards are in place; browser smoke can
+verify anonymous user types, clicks Send, sees the local sign-in notice,
+and no inference request fires.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -44,6 +45,9 @@ def test_chat_page_renders_without_auth() -> None:
     assert "data-chat-thread" in body
     assert "data-chat-input" in body
     assert "data-chat-send" in body
+    assert 'data-action="clear-chat"' in body
+    assert '<h1 class="chat-header-chat-title"' in body
+    assert "TrustedRouter Chat</h1>" in body
 
     # The marketing chrome's sign-in modal trigger is reachable
     # (this is what the Send-button gate fall back to when signed-out)
@@ -52,10 +56,13 @@ def test_chat_page_renders_without_auth() -> None:
     # Inline runtime config that chat.js reads
     assert "window.__TR_CHAT__" in body
     assert "issueKeyPath" in body
+    assert "authSessionPath" in body
+    assert "/auth/session" in body
     assert "/internal/chat/issue-browser-key" in body
     assert "tr_chat_key" in body  # keyCookieName
 
     # Static assets are referenced
+    assert "/static/model_catalog.js" in body
     assert "/static/chat.js" in body
     assert "/static/chat.css" in body
 
@@ -117,3 +124,90 @@ def test_chat_page_render_does_not_require_models_list() -> None:
     # `<option>` or `<li data-model-id>` elements; assert this stays
     # minimal.)
     assert resp.text.count("data-model-id") == 0
+
+
+def test_chat_js_supports_model_query_param() -> None:
+    """Deep links like /chat?model=trustedrouter/openpatcher-s1 should
+    open the playground with that model selected in the first slot."""
+    js = Path("src/trusted_router/static/chat.js").read_text()
+
+    assert 'new URLSearchParams(window.location.search).get("model")' in js
+    assert "applyUrlModelOverride" in js
+    assert "rememberRecentModel(URL_MODEL_ID)" in js
+
+
+def test_chat_js_defaults_to_plato_alias() -> None:
+    js = Path("src/trusted_router/static/chat.js").read_text()
+
+    assert (
+        'const DEFAULT_MODEL_ID = LOCKED_MODEL_ID || URL_MODEL_ID || "trustedrouter/plato";'
+        in js
+    )
+    assert 'placeholder="trustedrouter/plato"' in js
+    assert '|| "anthropic/claude-sonnet-4.6"' not in js
+
+
+def test_chat_js_signed_out_send_shows_local_notice_without_request() -> None:
+    """Anonymous Send should produce a pleasant in-thread notice, not
+    silently fail or emit an inference request. The request-builder also
+    skips local notices so they cannot leak into later model history."""
+    js = Path("src/trusted_router/static/chat.js").read_text()
+
+    assert 'local_notice: "signed_out_send"' in js
+    assert "showSignedOutSendNotice(text)" in js
+    assert 'Sign in to send this message.' in js
+    assert 'data-action="notice-signin"' in js
+    assert 'data-action="notice-new-chat"' in js
+    assert "if (m.local_notice) continue;" in js
+    assert "stateForStorage" in js
+    assert "filter((m) => !m.local_notice)" in js
+
+
+def test_chat_and_synth_reuse_scoped_browser_keys() -> None:
+    """Browser-issued chat keys should persist for the current user/workspace
+    instead of creating a fresh API key on every page/tab open."""
+    chat_js = Path("src/trusted_router/static/chat.js").read_text()
+    fusion_js = Path("src/trusted_router/static/fusion.js").read_text()
+
+    for js in (chat_js, fusion_js):
+        assert '"/auth/session"' in js
+        assert "workspace.id" in js
+        assert "data.user && data.user.id" in js
+        assert "localStorage.getItem(storageKey)" in js
+        assert "localStorage.setItem(storageKey, raw)" in js
+        assert "sessionStorage.getItem(KEY_STORAGE_PREFIX)" not in js
+        assert "sessionStorage.getItem(KEY_SESSION_STORAGE)" not in js
+
+    assert "BOOTSTRAP_RAW_KEY" in chat_js
+
+
+def test_synth_page_renders_raw_thinking_hooks_and_valid_defaults(client: TestClient) -> None:
+    resp = client.get("/synth")
+    assert resp.status_code == 200
+    body = resp.text
+
+    assert "trustedrouter/synth" in body
+    assert "Synthesize many models into one perfect frontier answer." in body
+    assert "raw thinking when returned" in body
+    assert "data-fusion-details" in body
+    assert "data-fusion-synthesis-prompt" in body
+    assert '<details class="fusion-advanced">' in body
+    assert "Advanced settings" in body
+    assert "Synthesis instructions" in body
+    assert 'data-action="toggle-fusion-detail-layout"' in body
+    assert '<option value="budget" selected>Iris 1.0 &mdash; budget</option>' in body
+    assert '<option value="frontier">Zeus 1.0 &mdash; frontier</option>' in body
+    assert "Panel models" in body
+    assert 'data-fusion-model-cards="panel"' in body
+    assert body.index("data-fusion-preset") < body.index('<details class="fusion-advanced">')
+    assert body.index('data-fusion-model-cards="panel"') > body.index('<details class="fusion-advanced">')
+    assert "/static/model_catalog.js" in body
+    assert "data-fusion-panel" not in body
+    assert "deepseek/deepseek-v4-flash" in body
+    assert "openai/gpt-5.5" in body
+    assert "anthropic/claude-opus-4.8" in body
+    assert "moonshotai/kimi-k2.6" in body
+    assert "Judge and fallback judge" in body
+    assert "Synthesizer and fallback synthesizer" in body
+    assert "defaultJudges: [\"moonshotai/kimi-k2.6\", \"minimax/minimax-m3\"]" in body
+    assert 'data-fusion-max-tokens type="number" min="64" max="8192" step="1" value="2048"' in body

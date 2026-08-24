@@ -94,6 +94,7 @@ def test_issue_chat_browser_key_creates_scoped_key_and_sets_cookie() -> None:
     assert issued.creator_user_id == user_id
     assert issued.management is False  # browser keys must NEVER be mgmt
     assert issued.limit_microdollars == CHAT_BROWSER_KEY_LIMIT_MICRODOLLARS
+    assert issued.budget_alert_only is False
     assert issued.expires_at is not None
 
     # Cookie is set with the right attributes for the chat client
@@ -141,9 +142,10 @@ def test_issue_chat_browser_key_expires_at_is_30_days_out() -> None:
 def test_issue_chat_browser_key_multiple_calls_produce_distinct_keys() -> None:
     """Each call creates a fresh key — we don't cache raw keys server-
     side (would violate the "we only ever store hashes" invariant). The
-    client preserves continuity across page refreshes via sessionStorage
-    + cookie, so this endpoint is only called when both client caches
-    are empty (cold first Send, or first Send after tab close)."""
+    client preserves continuity across page refreshes via scoped
+    browser storage + cookie, so this endpoint is only called when the
+    current user/workspace has no reusable browser key or when a stale
+    key rotates."""
     client, _, workspace_id = _console_client()
     resp1 = client.post("/internal/chat/issue-browser-key")
     resp2 = client.post("/internal/chat/issue-browser-key")
@@ -168,10 +170,14 @@ def test_issue_chat_browser_key_secure_flag_in_production() -> None:
     # Production app
     prod_settings = Settings(
         environment="production",
-        internal_gateway_token="t",  # noqa: S106 - test fixture.
+        service_surface="control",
+        attribution_cookie_secret="attribution-cookie-secret-for-control-test",  # noqa: S106
         stripe_webhook_secret="w",  # noqa: S106 - test fixture.
         stripe_secret_key="s",  # noqa: S106 - test fixture.
         sentry_dsn="https://example@example.ingest.sentry.io/1",
+        aws_access_key_id="test-access-key",
+        aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
+        ses_from_email="noreply@example.com",
         storage_backend="spanner-bigtable",
         spanner_instance_id="i",
         spanner_database_id="d",

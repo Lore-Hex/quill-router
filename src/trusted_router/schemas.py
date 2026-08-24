@@ -14,9 +14,22 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
+from trusted_router.client_context import (
+    ClientArch,
+    ClientContextSource,
+    ClientContextVersion,
+    ClientLang,
+    ClientOs,
+    ClientPrevErrorClass,
+    ClientPrevHost,
+    ClientPrevOutcome,
+    ClientSdk,
+)
 from trusted_router.money import (
     MAX_CHECKOUT_DOLLARS,
+    MICRODOLLARS_PER_CENT,
     MICRODOLLARS_PER_DOLLAR,
+    MIN_PAYPAL_CHECKOUT_MICRODOLLARS,
     dollars_to_microdollars,
 )
 
@@ -41,9 +54,21 @@ class SignupRequest(_Strict):
 class CheckoutRequest(_Lenient):
     amount: Decimal | str | int | float = Decimal("20")
     workspace_id: str | None = None
+    purpose: Literal["identity_verification"] | None = None
     success_url: str | None = None
     cancel_url: str | None = None
-    payment_method: Literal["auto", "stablecoin", "crypto", "usdc", "paypal"] = "auto"
+    payment_method: Literal[
+        "auto",
+        "card",
+        "ach",
+        "bank",
+        "us_bank_account",
+        "stablecoin",
+        "crypto",
+        "usdc",
+        "paypal",
+        "adyen",
+    ] = "auto"
 
     @field_validator("amount")
     @classmethod
@@ -53,7 +78,38 @@ class CheckoutRequest(_Lenient):
             raise ValueError("amount must be at least 1")
         if microdollars > MAX_CHECKOUT_DOLLARS * MICRODOLLARS_PER_DOLLAR:
             raise ValueError(f"amount must be at most {MAX_CHECKOUT_DOLLARS}")
+        if microdollars % MICRODOLLARS_PER_CENT != 0:
+            raise ValueError("amount must be exactly representable in cents")
         return Decimal(str(value))
+
+    @model_validator(mode="after")
+    def paypal_amount_in_range(self) -> CheckoutRequest:
+        if (
+            self.payment_method == "paypal"
+            and dollars_to_microdollars(self.amount) < MIN_PAYPAL_CHECKOUT_MICRODOLLARS
+        ):
+            raise ValueError("PayPal checkout amount must be at least 10")
+        return self
+
+
+class X402FundingRequest(_Strict):
+    amount: Decimal | str | int = Decimal("10.00")
+
+    @field_validator("amount")
+    @classmethod
+    def amount_in_range(cls, value: Decimal | str | int) -> Decimal:
+        microdollars = dollars_to_microdollars(value)
+        if microdollars < MICRODOLLARS_PER_DOLLAR:
+            raise ValueError("amount must be at least 1")
+        if microdollars > MAX_CHECKOUT_DOLLARS * MICRODOLLARS_PER_DOLLAR:
+            raise ValueError(f"amount must be at most {MAX_CHECKOUT_DOLLARS}")
+        if microdollars % MICRODOLLARS_PER_CENT != 0:
+            raise ValueError("amount must be exactly representable in cents")
+        return Decimal(str(value))
+
+
+class X402SettleRequest(_Strict):
+    payment_intent_id: str = Field(pattern=r"^pi_[A-Za-z0-9_:-]{1,253}$")
 
 
 def _validate_dollars(value: Decimal | str | int | float | None) -> Decimal | None:
@@ -72,12 +128,19 @@ class CreateKeyRequest(_Lenient):
     name: str = Field(default="API key", max_length=120)
     limit: Decimal | None = None
     limit_reset: str | None = None
+    # Optional per-window spend limits (USD; fixed UTC calendar windows).
+    limit_daily: Decimal | None = None
+    limit_weekly: Decimal | None = None
+    limit_monthly: Decimal | None = None
+    # False = hard-limit (429, default); True = alert by email without blocking.
+    budget_alert_only: bool = False
     include_byok_in_limit: bool = True
     expires_at: str | None = None
     workspace_id: str | None = None
     management: bool = False
+    tags: dict[str, Any] | None = None
 
-    @field_validator("limit", mode="before")
+    @field_validator("limit", "limit_daily", "limit_weekly", "limit_monthly", mode="before")
     @classmethod
     def _check_limit(cls, value: Any) -> Decimal | None:
         return _validate_dollars(value)
@@ -88,9 +151,14 @@ class PatchKeyRequest(_Lenient):
     disabled: bool | None = None
     limit: Decimal | None = None
     limit_reset: str | None = None
+    limit_daily: Decimal | None = None
+    limit_weekly: Decimal | None = None
+    limit_monthly: Decimal | None = None
+    budget_alert_only: bool | None = None
     include_byok_in_limit: bool | None = None
+    tags: dict[str, Any] | None = None
 
-    @field_validator("limit", mode="before")
+    @field_validator("limit", "limit_daily", "limit_weekly", "limit_monthly", mode="before")
     @classmethod
     def _check_limit(cls, value: Any) -> Decimal | None:
         return _validate_dollars(value)
@@ -129,22 +197,89 @@ class BroadcastDestinationPatchRequest(_Strict):
     api_key: str | None = None
 
 
+class CustomModelCreateRequest(_Strict):
+    name: str = Field(min_length=1, max_length=120)
+    slug: str | None = Field(default=None, min_length=3, max_length=96)
+    base_model_id: str = Field(min_length=1, max_length=256)
+    hidden_prompt: str = Field(min_length=0, max_length=262_144)
+    enabled: bool = True
+
+
+class CustomModelPatchRequest(_Strict):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    slug: str | None = Field(default=None, min_length=3, max_length=96)
+    base_model_id: str | None = Field(default=None, min_length=1, max_length=256)
+    hidden_prompt: str | None = Field(default=None, min_length=0, max_length=262_144)
+    enabled: bool | None = None
+
+
+class UserModelCreateRequest(_Strict):
+    name: str = Field(min_length=1, max_length=120)
+    slug: str | None = Field(default=None, min_length=3, max_length=96)
+    kind: Literal["machine", "agent", "human"]
+    description: str = Field(default="", max_length=2000)
+    display_identity: Literal["handle", "verified_name"] = "handle"
+    display_name: str = Field(min_length=1, max_length=120)
+    endpoint_url: str = Field(min_length=1, max_length=2048)
+    upstream_model_id: str | None = Field(default=None, min_length=1, max_length=256)
+    endpoint_api_key: str | None = Field(default=None, min_length=1, max_length=8192)
+    supports_streaming: bool = True
+    heartbeat_interval_seconds: int | None = Field(default=None, ge=5, le=3600)
+    max_concurrency: int = Field(default=4, ge=1, le=100)
+    prompt_price_microdollars_per_million_tokens: int = Field(default=0, ge=0)
+    completion_price_microdollars_per_million_tokens: int = Field(default=0, ge=0)
+
+
+class UserModelPatchRequest(_Strict):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    slug: str | None = Field(default=None, min_length=3, max_length=96)
+    kind: Literal["machine", "agent", "human"] | None = None
+    description: str | None = Field(default=None, max_length=2000)
+    display_identity: Literal["handle", "verified_name"] | None = None
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
+    endpoint_url: str | None = Field(default=None, min_length=1, max_length=2048)
+    upstream_model_id: str | None = Field(default=None, min_length=1, max_length=256)
+    endpoint_api_key: str | None = Field(default=None, min_length=1, max_length=8192)
+    supports_streaming: bool | None = None
+    heartbeat_interval_seconds: int | None = Field(default=None, ge=5, le=3600)
+    max_concurrency: int | None = Field(default=None, ge=1, le=100)
+    prompt_price_microdollars_per_million_tokens: int | None = Field(default=None, ge=0)
+    completion_price_microdollars_per_million_tokens: int | None = Field(default=None, ge=0)
+
+
+class EarningsTransferRequest(_Strict):
+    workspace_id: str = Field(min_length=1, max_length=80)
+    amount_microdollars: int
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=64)
+
+
 class GatewayAuthorizeRequest(_Lenient):
     api_key_hash: str | None = Field(default=None, min_length=1)
     api_key_lookup_hash: str | None = Field(default=None, min_length=1)
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=256)
+    request_fingerprint: str | None = Field(default=None, pattern="^[0-9a-f]{64}$")
     model: str = Field(min_length=1)
     models: list[str] | None = None
     provider: dict[str, Any] | None = None
     estimated_input_tokens: int = Field(default=1, ge=0)
     max_output_tokens: int | None = Field(default=None, ge=1)
+    max_completion_tokens: int | None = Field(default=None, ge=1)
     max_tokens: int | None = Field(default=None, ge=1)
+    service_tier: str | None = Field(default=None, min_length=1, max_length=20)
     region: str | None = None
     user: str | None = Field(default=None, max_length=256)
     session_id: str | None = Field(default=None, max_length=256)
     trace: dict[str, Any] | None = None
     metadata: dict[str, Any] | None = None
+    tags: dict[str, Any] | None = None
+    app: str | None = Field(default=None, max_length=120)
+    http_referer: str | None = Field(default=None, max_length=2048)
+    app_categories: list[str] | None = None
     route_type: str | None = None
+    # Attested hosted tools may reserve a bounded non-token cost on the same
+    # atomic hold as their planner model call. This is internal-only and is
+    # accepted only for enclave-owned hosted tools and asynchronous media.
+    additional_cost_reservation_microdollars: int = Field(default=0, ge=0, le=100_000_000)
 
     @model_validator(mode="after")
     def key_identifier_required(self) -> GatewayAuthorizeRequest:
@@ -154,21 +289,66 @@ class GatewayAuthorizeRequest(_Lenient):
 
     @property
     def output_estimate(self) -> int:
-        if self.max_output_tokens is not None:
-            return self.max_output_tokens
         if self.max_tokens is not None:
             return self.max_tokens
+        if self.max_completion_tokens is not None:
+            return self.max_completion_tokens
+        if self.max_output_tokens is not None:
+            return self.max_output_tokens
         return 512
 
 
 class GatewayFetchImageRequest(_Lenient):
-    # AWS Nitro enclaves have no DNS/network stack of their own, so when a
-    # caller references an image by URL the enclave proxies the fetch
-    # through this endpoint. The control plane resolves DNS, rejects
-    # private/loopback IPs (the same SSRF check the GCP-direct enclave
-    # variant does locally in llm/multimodal_direct.go), and returns
-    # the bytes as base64 to be re-embedded inline by the enclave.
+    # Some gateway paths proxy image URL fetches through the control plane.
+    # The control plane resolves DNS, rejects private/loopback IPs, and
+    # returns the bytes as base64 to be re-embedded inline by the gateway.
     url: str = Field(min_length=1)
+
+
+class GatewayVideoJobPrepareRequest(_Strict):
+    job_id: str = Field(min_length=8, max_length=128)
+    authorization_id: str = Field(min_length=1, max_length=128)
+    model: str = Field(min_length=1, max_length=256)
+    provider: str = Field(min_length=1, max_length=64)
+    endpoint_id: str = Field(min_length=1, max_length=512)
+    provider_model: str = Field(min_length=1, max_length=256)
+    quoted_microdollars: int = Field(ge=1, le=100_000_000)
+    input_mode: str = Field(default="text", pattern="^(text|image|reference|video)$")
+    duration_seconds: int = Field(default=0, ge=0, le=60)
+    resolution: str = Field(default="", max_length=32)
+    aspect_ratio: str = Field(default="", max_length=32)
+    generate_audio: bool = False
+    region: str = Field(default="", max_length=64)
+
+
+class GatewayVideoJobQueuedRequest(_Strict):
+    provider_job_id: str = Field(min_length=1, max_length=512)
+    # Optional during the rolling gateway upgrade. Older gateways queued the
+    # route prepared on the job; newer gateways send the actual fallback route.
+    provider: str | None = Field(default=None, min_length=1, max_length=64)
+    endpoint_id: str | None = Field(default=None, min_length=1, max_length=512)
+    provider_model: str | None = Field(default=None, min_length=1, max_length=256)
+    quoted_microdollars: int | None = Field(default=None, ge=1, le=100_000_000)
+    poll_after_seconds: int = Field(default=5, ge=1, le=300)
+
+
+class GatewayVideoJobLookupRequest(_Strict):
+    api_key_lookup_hash: str = Field(min_length=1, max_length=128)
+
+
+class GatewayVideoJobClaimRequest(_Strict):
+    lease_owner: str = Field(min_length=1, max_length=128)
+    limit: int = Field(default=10, ge=1, le=100)
+    lease_seconds: int = Field(default=60, ge=10, le=600)
+
+
+class GatewayVideoJobUpdateRequest(_Strict):
+    status: str = Field(pattern="^(pending|in_progress|completed|failed)$")
+    lease_owner: str | None = Field(default=None, max_length=128)
+    provider_status: str | None = Field(default=None, max_length=64)
+    generation_id: str | None = Field(default=None, max_length=128)
+    error: str | None = Field(default=None, max_length=500)
+    poll_after_seconds: int = Field(default=5, ge=1, le=300)
 
 
 class GatewayValidateRequest(_Lenient):
@@ -183,10 +363,47 @@ class GatewayValidateRequest(_Lenient):
         return self
 
 
+class GatewayResolveCustomModelRequest(_Lenient):
+    api_key_hash: str | None = Field(default=None, min_length=1)
+    api_key_lookup_hash: str | None = Field(default=None, min_length=1)
+    model: str = Field(min_length=1, max_length=256)
+    route_type: str | None = None
+
+    @model_validator(mode="after")
+    def key_identifier_required(self) -> GatewayResolveCustomModelRequest:
+        if not self.api_key_hash and not self.api_key_lookup_hash:
+            raise ValueError("api_key_hash or api_key_lookup_hash is required")
+        return self
+
+
 class ReconcileGenerationActivityRequest(_Strict):
     workspace_id: str = Field(min_length=1)
     date: str | None = None
     limit: int = Field(default=1000, ge=1, le=10_000)
+
+
+class GatewayClientContext(_Strict):
+    v: ClientContextVersion | None = None
+    source: ClientContextSource | None = None
+    sdk: ClientSdk | None = None
+    sdk_version: str | None = Field(
+        default=None,
+        pattern=r"^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}([-+][0-9A-Za-z.]{0,20})?$",
+        max_length=32,
+    )
+    lang: ClientLang | None = None
+    runtime: str | None = Field(default=None, pattern=r"^[a-z]{1,10}/[0-9A-Za-z.+-]{1,24}$")
+    os: ClientOs | None = None
+    arch: ClientArch | None = None
+    timeout_ms: int | None = Field(default=None, ge=1, le=3_600_000)
+    attempt: int | None = Field(default=None, ge=0, le=99)
+    prev_outcome: ClientPrevOutcome | None = None
+    prev_error_class: ClientPrevErrorClass | None = None
+    prev_host: ClientPrevHost | None = None
+    prev_elapsed_ms: int | None = Field(default=None, ge=0, le=3_600_000)
+    since_first_ms: int | None = Field(default=None, ge=0, le=3_600_000)
+    stream: bool | None = None
+    failover_used: bool | None = None
 
 
 class GatewaySettleRequest(_Lenient):
@@ -201,6 +418,11 @@ class GatewaySettleRequest(_Lenient):
     # and Gemini prompt counts INCLUDE the cached subset.
     cache_read_input_tokens: int | None = Field(default=None, ge=0)
     cache_creation_input_tokens: int | None = Field(default=None, ge=0)
+    # Provider-reported initial context used only to choose a context-priced
+    # tier. actual_input_tokens remains the complete billable input count.
+    price_tier_input_tokens: int | None = Field(default=None, ge=0)
+    reasoning_tokens: int | None = Field(default=None, ge=0)
+    service_tier: str | None = Field(default=None, min_length=1, max_length=20)
     request_id: str | None = None
     finish_reason: str | None = None
     status: str | None = None
@@ -219,7 +441,18 @@ class GatewaySettleRequest(_Lenient):
     session_id: str | None = Field(default=None, max_length=256)
     trace: dict[str, Any] | None = None
     metadata: dict[str, Any] | None = None
+    tags: dict[str, Any] | None = None
+    http_referer: str | None = Field(default=None, max_length=2048)
+    app_categories: list[str] | None = None
     route_type: str | None = None
+    client: dict[str, Any] | None = None
+    gateway_request_id: str | None = Field(default=None, max_length=64)
+    additional_cost_microdollars: int = Field(default=0, ge=0, le=100_000_000)
+    video_input_mode: str | None = Field(default=None, pattern="^(text|image|reference|video)$")
+    video_duration_seconds: int | None = Field(default=None, ge=0, le=60)
+    video_resolution: str | None = Field(default=None, max_length=32)
+    video_aspect_ratio: str | None = Field(default=None, max_length=32)
+    video_generate_audio: bool | None = None
 
     @property
     def input_count(self) -> int:

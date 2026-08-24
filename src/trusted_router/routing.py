@@ -1,27 +1,43 @@
 from __future__ import annotations
 
 import dataclasses
+import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 
 from trusted_router.catalog import (
     AUTO_MODEL_ID,
     E2E_MODEL_ID,
+    EU_FOCUSED_PROVIDER_ORDER,
+    EU_MODEL_ID,
+    FUSION_CODE_MODEL_ID,
+    FUSION_MODEL_ID,
+    MAPREDUCE_MODEL_ID,
+    META_MODEL_IDS,
     MODELS,
     PRIVACY_TIER_ALIASES,
     PRIVACY_TIER_NO_STORE,
+    PROVIDER_JURISDICTION_US,
     PROVIDERS,
+    ROUTING_MODEL_ALIAS_TARGETS,
+    ROUTING_MODEL_MIN_PRIVACY_TIERS,
+    SELECTOR_MODEL_ID,
+    SYNTH_CODE_MODEL_ID,
+    SYNTH_MODEL_ID,
+    US_PROVIDER_ONLY_MODEL_IDS,
     ZDR_MODEL_ID,
     Model,
     ModelEndpoint,
     auto_candidate_models,
+    endpoint_privacy_tier,
     endpoints_for_model,
     meta_candidate_models,
     model_max_privacy_tier,
-    provider_privacy_tier,
 )
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
+from trusted_router.image_generation import IMAGE_MODEL_ID_SET
 from trusted_router.types import ErrorType
 
 
@@ -34,14 +50,18 @@ class RoutePreferences:
     data_collection: str | None = None
     sort: str | None = None
     usage_type: str | None = None
+    provider_jurisdiction: str | None = None
     # Minimum upstream-provider privacy tier (see catalog.PRIVACY_TIER_*).
     # 0 = no filter (default). Set via provider.min_privacy in the body.
     min_privacy_rank: int = 0
 
 
 _PROVIDER_ALIASES = {
-    "google": "gemini",
-    "google-ai-studio": "gemini",
+    "google-ai": "google-ai-studio",
+    "ai-studio": "google-ai-studio",
+    "google-vertex-ai": "google-vertex",
+    "vertex": "google-vertex",
+    "vertex-ai": "google-vertex",
     "chatgpt": "openai",
     "chat-gpt": "openai",
     "mistralai": "mistral",
@@ -55,6 +75,23 @@ _PROVIDER_ALIASES = {
     "together-ai": "together",
     "togetherai": "together",
 }
+_PROVIDER_GROUP_ALIASES: dict[str, tuple[str, ...]] = {
+    # Before the provider split, both products were exposed as `gemini`.
+    # Expand legacy filters to both real failure domains rather than silently
+    # changing existing callers to just one of them.
+    "gemini": ("google-vertex", "google-ai-studio"),
+    "google": ("google-vertex", "google-ai-studio"),
+}
+_ROUTER_PROVIDER_SLUGS = frozenset(
+    {
+        "openrouter",
+        "open-router",
+        "trustedrouter",
+        "trusted-router",
+        "quillrouter",
+        "quill-router",
+    }
+)
 
 # OpenRouter-style model-id suffixes. Append `:nitro` to a model id to
 # re-sort the upstream provider list by throughput-first (equivalent to
@@ -69,16 +106,46 @@ _VARIANT_SUFFIXES: dict[str, tuple[str, str]] = {
 }
 
 
+# Throughput-first routing rank. Lower values are tried first for
+# `provider.sort = "throughput"` and `:nitro`.
+#
+# Generated from the public /leaderboard provider table on 2026-06-27 with:
+#   python scripts/update_provider_throughput_rank.py --write
+# The generator admits only providers with enough samples, >=95% measured uptime,
+# and positive p50 output tokens/second. Providers without reliable token/s data
+# keep conservative secondary ranks so they do not beat measured fast routes.
 _THROUGHPUT_RANK = {
-    "cerebras": 0,
-    "gemini": 1,
-    "together": 2,  # speculative-decoded inference, generally fast for OS models
-    "deepseek": 3,
-    "kimi": 4,
-    "zai": 5,
-    "mistral": 6,
-    "openai": 7,
-    "anthropic": 8,
+    "baseten": 0,
+    "deepseek": 1,
+    "fireworks": 2,
+    "kimi": 3,
+    "siliconflow": 4,
+    "deepinfra": 5,
+    "minimax": 6,
+    "crusoe": 7,
+    # Current leaderboard rows do not expose enough usable token/s for these
+    # providers. Keep strong prior ordering below the measured set until the
+    # synthetic probes emit stable longer completions for every provider.
+    "cerebras": 20,
+    "mistral": 21,
+    "openai": 22,
+    "google-vertex": 23,
+    "google-ai-studio": 24,
+    "together": 25,
+    "zai": 26,
+    "anthropic": 27,
+    "tinfoil": 28,
+    "venice": 29,
+    "grok": 30,
+    "lightning": 31,
+    "nebius": 32,
+    "friendli": 33,
+    "novita": 34,
+    "phala": 35,
+    "gmi": 36,
+    "parasail": 37,
+    "wafer": 38,
+    "xiaomi": 39,
     "trustedrouter": 99,
 }
 
@@ -100,6 +167,14 @@ _PROVIDER_PREFERENCE = {
     "gmi": 5,
 }
 
+# Narrow, evidence-backed exceptions to the global provider preference. These
+# affect only default routing; caller-supplied provider.order/sort still wins.
+_MODEL_PROVIDER_PREFERENCE: dict[str, dict[str, int]] = {
+    "z-ai/glm-5.2": {"parasail": -1},
+}
+
+_CandidateT = TypeVar("_CandidateT")
+
 
 def chat_route_candidates(body: dict[str, Any], settings: Settings) -> list[Model]:
     raw_ids, prefs = _routing_for_body(body, settings)
@@ -117,7 +192,7 @@ def chat_route_candidates(body: dict[str, Any], settings: Settings) -> list[Mode
             candidates.append(model)
             seen.add(model.id)
 
-    candidates = _apply_provider_filters(candidates, prefs)
+    candidates = _filter_candidates_soft_data_collection(candidates, prefs, _apply_provider_filters)
     if not candidates:
         raise api_error(
             400,
@@ -130,7 +205,9 @@ def chat_route_candidates(body: dict[str, Any], settings: Settings) -> list[Mode
     return candidates
 
 
-def chat_route_endpoint_candidates(body: dict[str, Any], settings: Settings) -> list[tuple[Model, ModelEndpoint]]:
+def chat_route_endpoint_candidates(
+    body: dict[str, Any], settings: Settings
+) -> list[tuple[Model, ModelEndpoint]]:
     raw_ids, prefs = _routing_for_body(body, settings)
     candidates: list[tuple[Model, ModelEndpoint]] = []
     seen: set[str] = set()
@@ -148,13 +225,72 @@ def chat_route_endpoint_candidates(body: dict[str, Any], settings: Settings) -> 
             candidates.append((model, endpoint))
             seen.add(endpoint.id)
 
-    candidates = _apply_endpoint_provider_filters(candidates, prefs)
+    candidates = _filter_candidates_soft_data_collection(
+        candidates, prefs, _apply_endpoint_provider_filters
+    )
     if not candidates:
         raise api_error(
             400,
             "No route candidates match the requested provider filters",
             ErrorType.MODEL_NOT_SUPPORTED,
         )
+    candidates = _sort_endpoint_candidates(candidates, prefs)
+    if not prefs.allow_fallbacks:
+        return candidates[:1]
+    return candidates
+
+
+def image_route_endpoint_candidates(
+    body: dict[str, Any], settings: Settings
+) -> list[tuple[Model, ModelEndpoint]]:
+    """Resolve only models whose normalized image contract is implemented."""
+
+    raw_ids, prefs = _routing_for_body(body, settings)
+    candidates: list[tuple[Model, ModelEndpoint]] = []
+    seen: set[str] = set()
+    for model_id in raw_ids:
+        model = MODELS.get(model_id)
+        if model is None or model.id not in IMAGE_MODEL_ID_SET:
+            raise api_error(
+                400,
+                f"Model does not support image generation: {model_id}",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
+        for endpoint in endpoints_for_model(model.id):
+            if endpoint.id in seen:
+                continue
+            candidates.append((model, endpoint))
+            seen.add(endpoint.id)
+
+    candidates = _filter_candidates_soft_data_collection(
+        candidates, prefs, _apply_endpoint_provider_filters
+    )
+    if not candidates:
+        raise api_error(
+            400,
+            "No image route candidates match the requested provider filters",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
+    candidates = _sort_endpoint_candidates(candidates, prefs)
+    if not prefs.allow_fallbacks:
+        return candidates[:1]
+    return candidates
+
+
+def catalog_endpoint_candidates(
+    model: Model,
+    prefs: RoutePreferences,
+) -> list[tuple[Model, ModelEndpoint]]:
+    """Endpoint candidates for the public model-endpoints catalog route.
+
+    Unlike inference routing, this intentionally does not require
+    `supports_chat`; the OpenRouter-compatible endpoint catalog should be able
+    to describe any served model while still honoring provider filters.
+    """
+    candidates = [(model, endpoint) for endpoint in endpoints_for_model(model.id)]
+    candidates = _filter_candidates_soft_data_collection(
+        candidates, prefs, _apply_endpoint_provider_filters
+    )
     candidates = _sort_endpoint_candidates(candidates, prefs)
     if not prefs.allow_fallbacks:
         return candidates[:1]
@@ -186,11 +322,49 @@ def embeddings_route_endpoint_candidates(
             candidates.append((model, endpoint))
             seen.add(endpoint.id)
 
-    candidates = _apply_endpoint_provider_filters(candidates, prefs)
+    candidates = _filter_candidates_soft_data_collection(
+        candidates, prefs, _apply_endpoint_provider_filters
+    )
     if not candidates:
         raise api_error(
             400,
             "No route candidates match the requested provider filters",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
+    candidates = _sort_endpoint_candidates(candidates, prefs)
+    if not prefs.allow_fallbacks:
+        return candidates[:1]
+    return candidates
+
+
+def video_route_endpoint_candidates(
+    body: dict[str, Any], settings: Settings
+) -> list[tuple[Model, ModelEndpoint]]:
+    """Resolve only provider endpoints backed by the attested video worker."""
+    raw_ids, prefs = _routing_for_body(body, settings)
+    candidates: list[tuple[Model, ModelEndpoint]] = []
+    seen: set[str] = set()
+    for model_id in raw_ids:
+        model = MODELS.get(model_id)
+        if model is None or not model.supports_video:
+            raise api_error(
+                400,
+                f"Model does not support video generation: {model_id}",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
+        for endpoint in endpoints_for_model(model.id):
+            if endpoint.id in seen:
+                continue
+            candidates.append((model, endpoint))
+            seen.add(endpoint.id)
+
+    candidates = _filter_candidates_soft_data_collection(
+        candidates, prefs, _apply_endpoint_provider_filters
+    )
+    if not candidates:
+        raise api_error(
+            400,
+            "No video route candidates match the requested provider filters",
             ErrorType.MODEL_NOT_SUPPORTED,
         )
     candidates = _sort_endpoint_candidates(candidates, prefs)
@@ -204,9 +378,9 @@ def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
     if not isinstance(raw, dict):
         return RoutePreferences()
 
-    order = tuple(_provider_slug(item) for item in _string_list(raw.get("order")))
-    only = frozenset(_provider_slug(item) for item in _string_list(raw.get("only")))
-    ignore = frozenset(_provider_slug(item) for item in _string_list(raw.get("ignore")))
+    order = tuple(_provider_filter_list("order", raw.get("order")))
+    only = frozenset(_provider_filter_list("only", raw.get("only")))
+    ignore = frozenset(_provider_filter_list("ignore", raw.get("ignore")))
     allow_fallbacks = raw.get("allow_fallbacks")
     if allow_fallbacks is None:
         allow_fallbacks_bool = True
@@ -227,6 +401,12 @@ def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
 
     sort = _sort_mode(raw.get("sort"))
     usage_type = _usage_type(raw.get("usage") or raw.get("usage_type") or raw.get("billing"))
+    provider_jurisdiction = _provider_jurisdiction(
+        raw.get("jurisdiction")
+        or raw.get("country")
+        or raw.get("headquarters_country")
+        or raw.get("provider_country")
+    )
 
     # provider.min_privacy: route only to providers whose posture clears
     # this bar. Accepts friendly names ("zdr", "confidential", "no_store",
@@ -239,7 +419,7 @@ def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
         if key not in PRIVACY_TIER_ALIASES:
             raise api_error(
                 400,
-                "provider.min_privacy must be one of: any, no_store, zdr, confidential",
+                "provider.min_privacy must be one of: any, no_store, zdr, confidential (aliases: e2e, e2ee)",
                 ErrorType.BAD_REQUEST,
             )
         min_privacy_rank = PRIVACY_TIER_ALIASES[key]
@@ -253,6 +433,7 @@ def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
         min_privacy_rank=min_privacy_rank,
         sort=sort,
         usage_type=usage_type,
+        provider_jurisdiction=provider_jurisdiction,
     )
 
 
@@ -280,12 +461,12 @@ def _routing_for_body(
     if "order" in overrides:
         prefs = dataclasses.replace(
             prefs,
-            order=tuple(
-                _provider_slug(provider)
-                for provider in overrides["order"].split(",")
-                if provider.strip()
-            ),
+            order=tuple(_provider_filter_list("order", overrides["order"])),
         )
+    if "only" in overrides:
+        override_only = frozenset(_provider_filter_list("only", overrides["only"]))
+        effective_only = override_only if not prefs.only else prefs.only & override_only
+        prefs = dataclasses.replace(prefs, only=effective_only)
     if "min_privacy" in overrides:
         prefs = dataclasses.replace(
             prefs,
@@ -294,7 +475,65 @@ def _routing_for_body(
                 PRIVACY_TIER_ALIASES[overrides["min_privacy"]],
             ),
         )
+    if overrides.get("usage") == "Credits":
+        if prefs.usage_type == "BYOK":
+            raise api_error(
+                400,
+                "TrustedRouter orchestration models do not support BYOK routes",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
+        prefs = dataclasses.replace(prefs, usage_type="Credits")
+    if "provider_jurisdiction" in overrides:
+        jurisdiction = overrides["provider_jurisdiction"]
+        if prefs.provider_jurisdiction and prefs.provider_jurisdiction != jurisdiction:
+            raise api_error(
+                400,
+                "Requested model requires provider.jurisdiction='us'",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
+        prefs = dataclasses.replace(prefs, provider_jurisdiction=jurisdiction)
     return ids, prefs
+
+
+def resolved_route_preferences(body: dict[str, Any], settings: Settings) -> RoutePreferences:
+    """Return the authoritative preferences after aliases and suffixes resolve.
+
+    Cross-cutting policy gates must use this instead of reparsing raw provider
+    fields, otherwise shorthand such as ``:zdr`` can diverge from routing.
+    """
+    _, preferences = _routing_for_body(body, settings)
+    return preferences
+
+
+# OpenAI-style dated snapshot suffix, e.g. the "-2025-04-14" in
+# "gpt-4.1-2025-04-14". Anthropic-style undashed dates ("20241022") don't match.
+_DATED_SNAPSHOT_RE = re.compile(r"-\d{4}-\d{2}-\d{2}$")
+
+
+def resolve_model_alias(model_id: str) -> str:
+    """Map a bare or dated OpenAI-style id to its canonical catalog id.
+
+    The OpenAI SDK and LiteLLM send the *bare* name (`gpt-4.1`) or OpenAI's
+    *dated snapshot* (`gpt-4.1-2025-04-14`); our catalog ids are vendor-prefixed
+    (`openai/gpt-4.1`). Accept what that tooling sends so it works against TR with
+    no client-side shim. Conservative by design: only rewrites when the resolved
+    id actually exists in the catalog — a genuinely unknown model is returned
+    unchanged and still surfaces MODEL_NOT_SUPPORTED downstream. Catalog ids
+    (already vendor-prefixed) short-circuit on the first check, so real ids and
+    meta ids (AUTO / fusion / zdr / …) are never altered.
+    """
+    if model_id in ROUTING_MODEL_ALIAS_TARGETS:
+        return ROUTING_MODEL_ALIAS_TARGETS[model_id]
+    if model_id in MODELS:
+        return model_id
+    base = _DATED_SNAPSHOT_RE.sub("", model_id)
+    for candidate in (model_id, base):
+        if candidate in MODELS:
+            return candidate
+        prefixed = f"openai/{candidate}"
+        if prefixed in MODELS:
+            return prefixed
+    return model_id
 
 
 def _requested_model_ids(
@@ -305,14 +544,49 @@ def _requested_model_ids(
 
     def take(raw: str) -> None:
         stripped, ovr = _strip_variant_suffix(raw)
+        stripped = resolve_model_alias(stripped)
+        if stripped in META_MODEL_IDS:
+            overrides["usage"] = "Credits"
+        if stripped in US_PROVIDER_ONLY_MODEL_IDS:
+            overrides["provider_jurisdiction"] = PROVIDER_JURISDICTION_US
+        if stripped in {
+            SYNTH_MODEL_ID,
+            SYNTH_CODE_MODEL_ID,
+            FUSION_MODEL_ID,
+            FUSION_CODE_MODEL_ID,
+            SELECTOR_MODEL_ID,
+            MAPREDUCE_MODEL_ID,
+        }:
+            raise api_error(
+                501,
+                "TrustedRouter orchestration models execute only inside the attested gateway; control-plane routing must not silently degrade to a single model",
+                ErrorType.ENDPOINT_NOT_SUPPORTED,
+            )
         if ovr:
             overrides.update(ovr)
+        enforced_privacy_tier = ROUTING_MODEL_MIN_PRIVACY_TIERS.get(stripped)
+        if enforced_privacy_tier is not None:
+            alias = "e2ee" if enforced_privacy_tier >= 3 else "zdr"
+            # Strictest wins, not last-seen. `overrides` is one flat dict shared
+            # by every id in `model` + `models[]`, so a plain assignment let a
+            # later, weaker meta-model overwrite a stricter earlier one:
+            # {"model": "trustedrouter/e2e", "models": ["trustedrouter/zdr"]}
+            # resolved to the zdr rank and returned rank-2 endpoints, while the
+            # reverse order resolved to e2ee. A request's privacy guarantee must
+            # not depend on which fallback happens to be listed last.
+            previous = overrides.get("min_privacy")
+            if previous is None or PRIVACY_TIER_ALIASES[alias] > PRIVACY_TIER_ALIASES[previous]:
+                overrides["min_privacy"] = alias
         if stripped == ZDR_MODEL_ID:
-            overrides["min_privacy"] = "zdr"
-            overrides["order"] = "anthropic,openai,gemini,tinfoil,venice,phala"
+            overrides["order"] = (
+                "anthropic,openai,google-vertex,google-ai-studio,tinfoil,venice,phala"
+            )
         elif stripped == E2E_MODEL_ID:
-            overrides["min_privacy"] = "e2ee"
-            overrides["order"] = "tinfoil,venice,phala,gmi"
+            overrides["order"] = "tinfoil,phala"
+        elif stripped == EU_MODEL_ID:
+            provider_order = ",".join(EU_FOCUSED_PROVIDER_ORDER)
+            overrides["order"] = provider_order
+            overrides["only"] = provider_order
         ids.extend(_expand_model_id(stripped, settings))
 
     model_id = str(body.get("model") or "").strip()
@@ -342,6 +616,24 @@ def _expand_model_id(model_id: str, settings: Settings) -> list[str]:
     return [model_id]
 
 
+def _filter_candidates_soft_data_collection(
+    candidates: list[_CandidateT],
+    prefs: RoutePreferences,
+    apply_fn: Callable[[list[_CandidateT], RoutePreferences], list[_CandidateT]],
+) -> list[_CandidateT]:
+    """Apply provider filters with data_collection='deny' as a soft preference.
+
+    Some OpenRouter-migrated clients send this compatibility flag on every request
+    unconditionally, so it must not hard-fail routing when it is the only filter
+    emptying an otherwise valid route. Explicit privacy floors and provider
+    inclusion/exclusion filters remain hard.
+    """
+    filtered = apply_fn(candidates, prefs)
+    if not filtered and prefs.data_collection == "deny":
+        filtered = apply_fn(candidates, dataclasses.replace(prefs, data_collection=None))
+    return filtered
+
+
 def _apply_provider_filters(candidates: list[Model], prefs: RoutePreferences) -> list[Model]:
     out: list[Model] = []
     for model in candidates:
@@ -350,13 +642,15 @@ def _apply_provider_filters(candidates: list[Model], prefs: RoutePreferences) ->
             continue
         if model.provider in prefs.ignore:
             continue
+        if not _provider_matches_jurisdiction(provider, prefs.provider_jurisdiction):
+            continue
         # "deny" = no data collection — require at least the no-store
         # tier. Keyed off the privacy tier (not raw stores_content) so
         # ZDR/confidential providers, which carry the conservative
         # stores_content=True default, are correctly kept.
         if (
             prefs.data_collection == "deny"
-            and provider_privacy_tier(provider) < PRIVACY_TIER_NO_STORE
+            and model_max_privacy_tier(model) < PRIVACY_TIER_NO_STORE
         ):
             continue
         # Keep a model if ANY provider that serves it can meet the
@@ -406,16 +700,18 @@ def _apply_endpoint_provider_filters(
             continue
         if endpoint.provider in prefs.ignore:
             continue
+        if not _provider_matches_jurisdiction(provider, prefs.provider_jurisdiction):
+            continue
         # "deny" = no data collection — require at least the no-store
         # tier. Keyed off the privacy tier (not raw stores_content) so
         # ZDR/confidential providers, which carry the conservative
         # stores_content=True default, are correctly kept.
         if (
             prefs.data_collection == "deny"
-            and provider_privacy_tier(provider) < PRIVACY_TIER_NO_STORE
+            and endpoint_privacy_tier(endpoint) < PRIVACY_TIER_NO_STORE
         ):
             continue
-        if prefs.min_privacy_rank and provider_privacy_tier(provider) < prefs.min_privacy_rank:
+        if prefs.min_privacy_rank and endpoint_privacy_tier(endpoint) < prefs.min_privacy_rank:
             continue
         if prefs.usage_type is not None and endpoint.usage_type != prefs.usage_type:
             continue
@@ -429,9 +725,11 @@ def _sort_endpoint_candidates(
 ) -> list[tuple[Model, ModelEndpoint]]:
     with_index = list(enumerate(candidates))
     provider_order = {provider: index for index, provider in enumerate(prefs.order)}
+    candidate_model_ids = {model.id for model, _endpoint in candidates}
+    single_model_id = next(iter(candidate_model_ids)) if len(candidate_model_ids) == 1 else None
 
     def key(item: tuple[int, tuple[Model, ModelEndpoint]]) -> tuple[int, int, int]:
-        original_index, (_model, endpoint) = item
+        original_index, (model, endpoint) = item
         order_rank = provider_order.get(endpoint.provider, len(provider_order))
         if prefs.sort == "price":
             sort_rank = (
@@ -443,7 +741,15 @@ def _sort_endpoint_candidates(
         else:
             # Default: reliability-informed preference (Phase 4), catalog order
             # preserved within a tier via the original_index tiebreaker below.
-            sort_rank = _PROVIDER_PREFERENCE.get(endpoint.provider, _DEFAULT_PROVIDER_PREFERENCE)
+            # A provider preference for one model must not promote that model
+            # ahead of a caller's primary model or a meta-router's model order.
+            model_preference = (
+                _MODEL_PROVIDER_PREFERENCE.get(model.id, {}) if model.id == single_model_id else {}
+            )
+            sort_rank = model_preference.get(
+                endpoint.provider,
+                _PROVIDER_PREFERENCE.get(endpoint.provider, _DEFAULT_PROVIDER_PREFERENCE),
+            )
         return order_rank, sort_rank, original_index
 
     return [candidate for _, candidate in sorted(with_index, key=key)]
@@ -454,15 +760,83 @@ def _provider_slug(value: str) -> str:
     return _PROVIDER_ALIASES.get(slug, slug)
 
 
-def _string_list(value: Any) -> list[str]:
+def _provider_filter_list(field: str, value: Any) -> list[str]:
+    out: list[str] = []
+    for item in _string_list(field, value):
+        raw_slug = item.strip().lower().replace("_", "-").replace(" ", "-")
+        slugs = _PROVIDER_GROUP_ALIASES.get(raw_slug, (_provider_slug(item),))
+        if any(slug in _ROUTER_PROVIDER_SLUGS for slug in slugs):
+            raise api_error(
+                400,
+                (
+                    f"Routing filters cannot contain router name '{item}'. "
+                    "Use model='trustedrouter/zdr' or another TrustedRouter alias, "
+                    "and omit the router from provider filters."
+                ),
+                ErrorType.BAD_REQUEST,
+            )
+        for slug in slugs:
+            if slug not in PROVIDERS:
+                raise api_error(
+                    400,
+                    f"Unknown provider in provider.{field}: {item}",
+                    ErrorType.BAD_REQUEST,
+                )
+            if slug not in out:
+                out.append(slug)
+    return out
+
+
+def _provider_jurisdiction(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise api_error(
+            400,
+            "provider.jurisdiction must be 'us'",
+            ErrorType.BAD_REQUEST,
+        )
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    if not normalized:
+        return None
+    if normalized in {"us", "usa", "united_states", "united_states_of_america"}:
+        return PROVIDER_JURISDICTION_US
+    raise api_error(
+        400,
+        "provider.jurisdiction currently supports only 'us'",
+        ErrorType.BAD_REQUEST,
+    )
+
+
+def _provider_matches_jurisdiction(provider: Any, jurisdiction: str | None) -> bool:
+    if jurisdiction is None:
+        return True
+    if jurisdiction == PROVIDER_JURISDICTION_US:
+        return provider.provider_headquarters_country == PROVIDER_JURISDICTION_US
+    return False
+
+
+def _string_list(field: str, value: Any) -> list[str]:
     if value is None:
         return []
-    if not isinstance(value, list):
-        raise api_error(400, "provider routing lists must be arrays of strings", ErrorType.BAD_REQUEST)
+    if isinstance(value, str):
+        values = [item.strip() for item in value.split(",") if item.strip()]
+    elif isinstance(value, list):
+        values = value
+    else:
+        raise api_error(
+            400,
+            f"provider.{field} must be an array of strings or a comma-separated string",
+            ErrorType.BAD_REQUEST,
+        )
     out: list[str] = []
-    for item in value:
+    for item in values:
         if not isinstance(item, str) or not item.strip():
-            raise api_error(400, "provider routing lists must contain strings", ErrorType.BAD_REQUEST)
+            raise api_error(
+                400,
+                f"provider.{field} must contain only provider names",
+                ErrorType.BAD_REQUEST,
+            )
         out.append(item)
     return out
 

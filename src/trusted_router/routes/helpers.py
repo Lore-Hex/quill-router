@@ -1,17 +1,26 @@
 from __future__ import annotations
 
+import logging
+import threading
 from json import JSONDecodeError
 from typing import Any
 
 from fastapi import Request
 
-from trusted_router.catalog import Model, select_price_tier
+from trusted_router.catalog import Model
 from trusted_router.errors import api_error
 from trusted_router.money import (
     dollars_to_microdollars,
     microdollars_to_float,
     token_cost_microdollars,
 )
+from trusted_router.pricing import resolve_request_rates
+from trusted_router.storage_models import RateLimitHit
+from trusted_router.storage_rate_limits import InMemoryRateLimits
+
+log = logging.getLogger(__name__)
+
+_CLIENT_EVENT_RATE_LIMITS = InMemoryRateLimits(lock=threading.RLock())
 
 
 async def json_body(request: Request) -> dict[str, Any]:
@@ -22,6 +31,41 @@ async def json_body(request: Request) -> dict[str, Any]:
     if not isinstance(body, dict):
         raise api_error(400, "JSON body must be an object", "bad_request")
     return body
+
+
+async def read_json_body_bounded(request: Request, max_bytes: int) -> bytes:
+    """Read a request stream without ever buffering more than the allowed body."""
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > max_bytes:
+            raise api_error(413, "Request body is too large", "payload_too_large")
+        body.extend(chunk)
+    return bytes(body)
+
+
+def enforce_rate_limit(
+    namespace: str,
+    subject: str,
+    limit: int,
+    *,
+    window_seconds: int,
+) -> RateLimitHit | None:
+    """Apply a bounded process-local rate limit, failing open on limiter errors."""
+    if limit <= 0:
+        return None
+    try:
+        return _CLIENT_EVENT_RATE_LIMITS.hit(
+            namespace=namespace,
+            subject=subject,
+            limit=limit,
+            window_seconds=window_seconds,
+        )
+    except Exception:  # noqa: BLE001 - telemetry must never depend on its limiter.
+        log.exception(
+            "client_events.rate_limit_unavailable",
+            extra={"namespace": namespace},
+        )
+        return None
 
 
 def cost_microdollars(
@@ -56,34 +100,37 @@ def cost_microdollars(
     cached_input_tokens = max(0, min(cached_input_tokens, input_tokens))
     uncached_input_tokens = input_tokens - cached_input_tokens
 
-    tiers = model.price_tiers
-    if tiers:
-        tier = select_price_tier(tiers, input_tokens)
-        cached_rate = (
-            tier.prompt_cached_price_microdollars_per_million_tokens
-            if tier.prompt_cached_price_microdollars_per_million_tokens is not None
-            else tier.prompt_price_microdollars_per_million_tokens
-        )
+    rates = resolve_request_rates(
+        model.price_tiers,
+        headline_prompt_micro_per_m=model.prompt_price_microdollars_per_million_tokens,
+        headline_completion_micro_per_m=model.completion_price_microdollars_per_million_tokens,
+        total_prompt_tokens=input_tokens,
+    )
+    if not model.price_tiers:
         return (
             token_cost_microdollars(
-                uncached_input_tokens,
-                tier.prompt_price_microdollars_per_million_tokens,
+                input_tokens,
+                rates.prompt_price_microdollars_per_million_tokens,
             )
-            + token_cost_microdollars(cached_input_tokens, cached_rate)
             + token_cost_microdollars(
                 output_tokens,
-                tier.completion_price_microdollars_per_million_tokens,
+                rates.completion_price_microdollars_per_million_tokens,
             )
         )
-    # Pre-tier flat-rate path. Cached tokens fall back to the same rate
-    # as uncached because there's no cached-rate field on Model.
+    cached_rate = (
+        rates.prompt_cached_price_microdollars_per_million_tokens
+        if rates.prompt_cached_price_microdollars_per_million_tokens is not None
+        else rates.prompt_price_microdollars_per_million_tokens
+    )
     return (
         token_cost_microdollars(
-            input_tokens, model.prompt_price_microdollars_per_million_tokens
+            uncached_input_tokens,
+            rates.prompt_price_microdollars_per_million_tokens,
         )
+        + token_cost_microdollars(cached_input_tokens, cached_rate)
         + token_cost_microdollars(
             output_tokens,
-            model.completion_price_microdollars_per_million_tokens,
+            rates.completion_price_microdollars_per_million_tokens,
         )
     )
 

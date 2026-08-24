@@ -1,19 +1,22 @@
 {% extends "public/_base.html" %}
+{% from "public/_provider_identity.html" import provider_identity %}
 {% block body %}
 <section class="panel">
   <div class="panel-head">
-    <h2><code>{{ provider.id }}</code></h2>
-    <span class="pill {% if provider.privacy_tier in ['Confidential', 'TR gateway', 'No logs'] %}good{% endif %}">{{ provider.privacy_tier }}</span>
+    <h2 class="provider-detail-title">{{ provider_identity(provider.id, provider.name, size="large", subtitle=provider.id) }}</h2>
+    <span class="pill {% if provider.privacy_tier in ['Confidential', 'TR gateway', 'No logs', 'No logs (prepaid)'] %}good{% endif %}">{{ provider.privacy_tier }}</span>
   </div>
   <div class="panel-body">
     <p><a href="/providers">All providers</a></p>
     <table>
       <tbody>
         <tr><th>Provider</th><td>{{ provider.name }}</td></tr>
+        <tr><th>Routing status</th><td><span class="pill {% if provider.routing_status == 'active' %}good{% endif %}">{{ provider.routing_status_label }}</span></td></tr>
+        {% if provider.homepage_url %}<tr><th>Provider website</th><td><a href="{{ provider.homepage_url }}" rel="nofollow noopener">{{ provider.homepage_url }}</a></td></tr>{% endif %}
         <tr><th>Models</th><td>{{ provider.served_model_count }} public model{{ '' if provider.served_model_count == 1 else 's' }}</td></tr>
         <tr><th>Prepaid routes</th><td>{{ provider.prepaid_model_count }}</td></tr>
         <tr><th>BYOK routes</th><td>{{ provider.byok_model_count }}</td></tr>
-        <tr><th>Zero data retention</th><td><span class="pill {% if provider.zero_data_retention %}good{% endif %}">{{ provider.zero_data_retention_label }}</span></td></tr>
+        <tr><th>Zero data retention</th><td><span class="pill {% if provider.zero_data_retention or provider.prepaid_zero_data_retention %}good{% endif %}">{{ provider.zero_data_retention_label }}</span></td></tr>
         <tr><th>Confidential compute</th><td><span class="pill {% if provider.confidential_compute %}good{% endif %}">{{ provider.confidential_compute_label }}</span></td></tr>
         <tr><th>Provider E2EE</th><td><span class="pill {% if provider.provider_e2ee %}good{% endif %}">{{ provider.provider_e2ee_label }}</span></td></tr>
         <tr><th>Policy note</th><td>{{ provider.policy }}{% if provider.policy_url %}<br><a href="{{ provider.policy_url }}">Policy source</a>{% endif %}</td></tr>
@@ -29,26 +32,25 @@
     <span class="pill good">{{ measured.provider_row.sample_count }} samples</span>
   </div>
   <div class="panel-body">
-    <p class="muted-copy">Continuously sampled across {{ provider.name }}'s routed models — p50 TTFT, throughput, and success rate. Unsupported route and probe-configuration rows are separated from provider downtime. No prompt or output content stored.</p>
+    <p class="muted-copy">Continuously sampled across {{ provider.name }}'s routed models: p50 TTFT, effective throughput, and success rate. Effective throughput uses provider-reported output tokens over complete request time. Unsupported route and probe-configuration rows are separated from provider downtime. No prompt or output content stored.</p>
     <table>
       <tbody>
         <tr><th>p50 TTFT</th><td>{% if measured.provider_row.p50_ttft_ms is not none %}{{ measured.provider_row.p50_ttft_ms }} ms{% else %}—{% endif %}</td></tr>
-        <tr><th>Throughput</th><td>{% if measured.provider_row.p50_tokens_per_second is not none %}{{ '%.0f'|format(measured.provider_row.p50_tokens_per_second) }} tok/s{% else %}—{% endif %}</td></tr>
-        <tr><th>Uptime</th><td>{{ '%.2f'|format(measured.provider_row.uptime * 100) }}%</td></tr>
+        <tr><th>Effective throughput</th><td>{% if measured.provider_row.p50_tokens_per_second is not none %}{{ '%.0f'|format(measured.provider_row.p50_tokens_per_second) }} tok/s <span class="lb-sample-count">n={{ measured.provider_row.throughput_sample_count|default(0) }}</span>{% else %}—{% endif %}</td></tr>
+        <tr><th>Uptime</th><td>{% if measured.provider_row.sample_count %}{{ '%.2f'|format(measured.provider_row.uptime * 100) }}%{% else %}—{% endif %}</td></tr>
       </tbody>
     </table>
     {% if measured.models %}
     <div class="leaderboard-table-wrap" style="margin-top:12px">
       <table class="leaderboard-table">
-        <thead><tr><th>Model</th><th>p50 TTFT</th><th>p50 TTFB</th><th>Throughput</th><th>Uptime</th><th>Config excluded</th><th>Samples</th></tr></thead>
+        <thead><tr><th>Model</th><th>p50 TTFT</th><th>Effective throughput</th><th>Uptime</th><th>Config excluded</th><th>Availability samples</th></tr></thead>
         <tbody>
           {% for m in measured.models %}
           <tr>
             <td><a href="/models/{{ m.model }}/performance">{{ m.model }}</a></td>
             <td>{% if m.p50_ttft_ms is not none %}{{ m.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
-            <td>{% if m.p50_ttfb_ms is not none %}{{ m.p50_ttfb_ms }} ms{% else %}—{% endif %}</td>
-            <td>{% if m.p50_tokens_per_second is not none %}{{ '%.0f'|format(m.p50_tokens_per_second) }} tok/s{% else %}—{% endif %}</td>
-            <td>{{ '%.2f'|format(m.uptime * 100) }}%</td>
+            <td>{% if m.p50_tokens_per_second is not none %}{{ '%.0f'|format(m.p50_tokens_per_second) }} tok/s <span class="lb-sample-count">n={{ m.throughput_sample_count }}</span>{% else %}—{% endif %}</td>
+            <td>{% if m.sample_count %}{{ '%.2f'|format(m.uptime * 100) }}%{% else %}—{% endif %}</td>
             <td>{% if m.excluded_count %}{{ m.excluded_count }}{% if m.top_excluded %} <code>{{ m.top_excluded }}</code>{% endif %}{% else %}—{% endif %}</td>
             <td>{{ m.sample_count }}</td>
           </tr>
@@ -57,7 +59,7 @@
       </table>
     </div>
     {% endif %}
-    <p class="muted-copy" style="margin-top:10px"><a href="/leaderboard">Full provider &amp; model leaderboard</a>.</p>
+    <p class="muted-copy" style="margin-top:10px"><a href="/providers/{{ provider.id }}/performance">{{ provider.name }} performance history</a> · <a href="/leaderboard">Full provider &amp; model leaderboard</a>.</p>
   </div>
 </section>
 {% endif %}
@@ -75,6 +77,7 @@
       <thead>
         <tr>
           <th>Model</th>
+          <th>AI IQ</th>
           <th>Context</th>
           <th>Endpoints</th>
           <th>Prompt</th>
@@ -87,11 +90,20 @@
         <tr>
           <td>
             <a href="{{ model.detail_href }}"><code>{{ model.id }}</code></a><br>{{ model.name }}
+            {% if model.benchmarks_href or model.providers_href or model.pricing_href %}
             <div class="mini-links">
-              <a href="{{ model.benchmarks_href }}">benchmarks</a>
-              <a href="{{ model.detail_href }}/performance">performance</a>
-              <a href="{{ model.detail_href }}/api">api</a>
+              {% if model.benchmarks_href %}<a href="{{ model.benchmarks_href }}">benchmarks</a>{% endif %}
+              {% if model.providers_href %}<a href="{{ model.providers_href }}">providers</a>{% endif %}
+              {% if model.pricing_href %}<a href="{{ model.pricing_href }}">pricing</a>{% endif %}
             </div>
+            {% endif %}
+          </td>
+          <td>
+            {% if model.ai_iq %}
+            <a class="ai-iq-link" href="{{ model.ai_iq.url }}" rel="nofollow noopener"><strong>IQ {{ model.ai_iq.iq }}</strong><span>#{{ model.ai_iq.rank }}</span></a>
+            {% else %}
+            <span class="muted-copy">—</span>
+            {% endif %}
           </td>
           <td>{{ model.context_length }}</td>
           <td>{{ model.endpoint_count }}</td>

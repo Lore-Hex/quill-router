@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Choose an LLM | TrustedRouter</title>
+  <meta name="description" content="Compare independently scored models against live TrustedRouter pricing, provider privacy, context, and measured performance.">
+  <meta name="robots" content="noindex,follow">
+  <link rel="canonical" href="https://trustedrouter.com/choose">
+  <link rel="stylesheet" href="/static/choose-app.css?v=2">
+  <script src="/static/choose-app.js?v=3" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-header">
+      <a class="brand" href="https://trustedrouter.com" target="_blank" rel="noopener">
+        <span class="brand-mark" aria-hidden="true">TR</span>
+        <span><strong>TrustedRouter</strong><small>Model advisor</small></span>
+      </a>
+      <div class="catalog-state">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span><strong id="liveCount">...</strong> live models</span>
+        <span><strong id="providerCount">...</strong> providers</span>
+        <span><strong id="evaluatedCount">...</strong> independently scored</span>
+      </div>
+    </header>
+
+    <section class="intro">
+      <p class="eyebrow">Smart. Cheap. Fast. Private.</p>
+      <h1>Choose with route-level facts.</h1>
+      <p>Quality comes from independent evaluations. Price, privacy, context, and performance come from the live model and provider routes TrustedRouter can call.</p>
+    </section>
+
+    <main>
+      <div class="picker-grid">
+        <section class="chart-panel" aria-labelledby="chartTitle">
+          <div class="section-heading">
+            <div>
+              <h2 id="chartTitle">Evaluated models</h2>
+              <p>Move your preference toward quality, cost, or measured throughput.</p>
+            </div>
+            <div class="legend" aria-label="Provider route privacy legend">
+              <span><i class="tier-dot tier-0"></i>Open</span>
+              <span><i class="tier-dot tier-2"></i>ZDR</span>
+              <span><i class="tier-dot tier-3"></i>TEE</span>
+              <span><i class="preference-dot"></i>Your mix</span>
+            </div>
+          </div>
+          <svg class="triangle" id="triangle" viewBox="0 0 1000 940" role="application" tabindex="0" aria-describedby="triangleHelp" aria-label="Model chart using independent quality, qualified route cost, and measured provider throughput"></svg>
+          <p class="sr-only" id="triangleHelp">Use Arrow Up for quality, Arrow Left for cost, Arrow Right for speed, or Arrow Down to rebalance.</p>
+          <div class="tooltip" id="tooltip" role="tooltip"></div>
+        </section>
+
+        <aside class="controls" aria-label="Model requirements">
+          <section class="control-section">
+            <label for="privacy"><span>1</span>Upstream privacy floor</label>
+            <p>The TrustedRouter gateway is attested on every request. This controls the provider after the gateway.</p>
+            <select id="privacy">
+              <option value="0" selected>Open: any upstream posture</option>
+              <option value="2">ZDR: zero retention or stronger</option>
+              <option value="3">TEE: confidential compute plus E2EE</option>
+            </select>
+            <div class="privacy-note" id="privacyNote"></div>
+          </section>
+
+          <section class="control-section">
+            <label for="problem"><span>2</span>Task</label>
+            <p>Describe the work to set a useful starting point.</p>
+            <textarea id="problem" placeholder="Refactor a React component and write tests"></textarea>
+            <div class="examples" id="examples"></div>
+            <button class="command-button" id="guess" type="button">Set requirements</button>
+            <div class="rationale" id="rationale" aria-live="polite"></div>
+          </section>
+
+          <fieldset class="control-section">
+            <legend><span>3</span>Quality needed</legend>
+            <p>Independent AI IQ score floor.</p>
+            <div class="segments" id="qualitySegments"></div>
+          </fieldset>
+
+          <fieldset class="control-section">
+            <legend><span>4</span>Latency tolerance</legend>
+            <p>Strict options require recent measurements.</p>
+            <div class="segments" id="speedSegments"></div>
+            <div class="weights" aria-live="polite">
+              <div class="weight quality"><strong id="qualityWeight">33</strong><span>Quality</span></div>
+              <div class="weight cost"><strong id="costWeight">33</strong><span>Cost</span></div>
+              <div class="weight speed"><strong id="speedWeight">33</strong><span>Speed</span></div>
+            </div>
+          </fieldset>
+        </aside>
+      </div>
+
+      <section class="results" aria-labelledby="resultsTitle">
+        <div class="load-state" id="loadState" role="status">
+          <span id="loadText">Loading verified route data...</span>
+          <button id="retry-catalog" type="button" hidden>Retry</button>
+        </div>
+        <h2 id="resultsTitle" aria-live="polite">Matches</h2>
+        <div class="results-grid">
+          <div class="model-results" id="modelResults"></div>
+          <aside class="route-recommendation" id="routeRecommendation" aria-label="TrustedRouter alias recommendation"></aside>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <p>AI IQ supplies independent quality scores. TrustedRouter supplies live integer pricing, exact provider privacy scope, context, and measured route performance.</p>
+      <div>
+        <a href="https://trust.trustedrouter.com" target="_blank" rel="noopener">Verify gateway</a>
+        <a href="https://trustedrouter.com/models" target="_blank" rel="noopener">Full catalog</a>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

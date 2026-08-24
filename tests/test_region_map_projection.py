@@ -13,7 +13,6 @@ import pytest
 
 from trusted_router.config import Settings
 from trusted_router.regions import (
-    AWS_REGION_GEO,
     GCP_REGION_GEO,
     _project_x,
     _project_y,
@@ -56,7 +55,7 @@ def test_project_y_maps_latitude_to_svg_pixels(lat: float, expected_y: float) ->
 def test_every_known_region_projects_inside_svg_bounds() -> None:
     """If we add a new region with a typo'd lat/long, this catches the
     marker landing off the canvas before it ships."""
-    for region in [*GCP_REGION_GEO.values(), *AWS_REGION_GEO.values()]:
+    for region in GCP_REGION_GEO.values():
         x = _project_x(region.lng)
         y = _project_y(region.lat)
         assert 0 <= x <= SVG_WIDTH, f"{region.id} x={x} outside [0, {SVG_WIDTH}]"
@@ -91,21 +90,31 @@ def test_region_map_payload_marks_primary() -> None:
     assert primaries[0]["id"] == settings.primary_region
 
 
-def test_default_region_map_shows_seven_region_marketing_footprint() -> None:
+def test_default_region_map_marks_sao_paulo_live() -> None:
+    rendered = region_map_payload(Settings(environment="local"))
+
+    sao_paulo = next(row for row in rendered if row["id"] == "southamerica-east1")
+    assert sao_paulo["city"] == "São Paulo"
+    assert sao_paulo["status_label"] == "live"
+
+
+def test_default_region_map_shows_gcp_region_marketing_footprint() -> None:
     settings = Settings(environment="local", regions="us-central1,europe-west4")
     rendered = region_map_payload(settings)
 
-    assert [r["id"] for r in rendered] == [
+    gcp = [r for r in rendered if r["cloud"] == "gcp"]
+    assert [r["id"] for r in gcp] == [
         "us-central1",
         "europe-west4",
         "us-east4",
         "asia-northeast1",
+        "asia-east2",
         "asia-southeast1",
         "southamerica-east1",
-        "aws-us-west-2",
     ]
-    assert [r["status_label"] for r in rendered[:2]] == ["live", "live"]
-    assert all(r["status_label"] == "edge" for r in rendered[2:])
+    assert [r["status_label"] for r in gcp[:2]] == ["live", "live"]
+    assert all(r["status_label"] == "edge" for r in gcp[2:])
+    assert next(r for r in rendered if r["id"] == "asia-east2")["city"] == "Hong Kong"
 
 
 def test_region_map_payload_skips_unknown_region_ids() -> None:
@@ -139,3 +148,44 @@ def test_region_map_payload_orders_primary_first() -> None:
     rendered = region_map_payload(settings)
     if rendered:
         assert rendered[0]["id"] == settings.primary_region
+
+
+def test_map_shows_multicloud_deployments_with_honest_serving_flags() -> None:
+    """The marketing map now carries the standalone AWS and Azure deployments.
+
+    The serving flag is a factual claim — external_live_regions must only list
+    deployments whose own smoke passes — so this pins the shipped default:
+    Dublin, Paris, and Sydney live; Stockholm (database peer, no compute) staged.
+    """
+    settings = Settings(environment="local")
+    rows = {row["id"]: row for row in region_map_payload(settings)}
+
+    assert rows["aws-eu-west-1"]["city"] == "Dublin"
+    assert rows["aws-eu-west-1"]["cloud"] == "aws"
+    assert rows["aws-eu-west-1"]["serving"] is True
+
+    assert rows["aws-eu-west-3"]["city"] == "Paris"
+    assert rows["aws-eu-west-3"]["cloud"] == "aws"
+    assert rows["aws-eu-west-3"]["serving"] is True
+    assert rows["aws-eu-west-3"]["label_dy"] > 0
+
+    assert rows["azure-australiaeast"]["cloud"] == "azure"
+    assert rows["azure-australiaeast"]["serving"] is True
+    assert rows["azure-australiaeast"]["label_anchor"] == "end"
+
+    # Stockholm replicates the AWS-EU database but has no compute yet. If this
+    # assertion starts failing because someone flipped it live, that flip must
+    # come with compute actually serving there.
+    assert rows["aws-eu-north-1"]["serving"] is False
+
+    assert sum(row["serving"] for row in rows.values()) == 7
+    assert {row["cloud"] for row in rows.values() if row["serving"]} == {
+        "gcp",
+        "aws",
+        "azure",
+    }
+
+    # No duplicate cities on the map (Joseph's rule): the Azure Sydney entry
+    # must not coexist with GCP's australia-southeast1 Sydney dot.
+    cities = [row["city"] for row in region_map_payload(settings)]
+    assert len(cities) == len(set(cities)), f"duplicate city dots: {cities}"

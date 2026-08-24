@@ -18,6 +18,33 @@ interface VerifyResponse {
   data: { redirect: string; state: string };
 }
 
+function requestedSigninTarget(): string | null {
+  const value = new URLSearchParams(location.search).get("next");
+  if (!value || !value.startsWith("/") || value.startsWith("//") || value.includes("\\")) {
+    return null;
+  }
+  const target = new URL(value, location.origin);
+  if (target.origin !== location.origin) return null;
+  return `${target.pathname}${target.search}${target.hash}`;
+}
+
+function applySigninTarget(): void {
+  const target = requestedSigninTarget();
+  if (!target) return;
+  document.querySelectorAll<HTMLAnchorElement>("#signinModal a[data-provider]").forEach((link) => {
+    const url = new URL(link.href, location.origin);
+    url.searchParams.set("next", target);
+    link.href = `${url.pathname}${url.search}`;
+  });
+  if (target.startsWith("/auth?") || target.startsWith("/v1/auth?")) {
+    const creditNote = document.getElementById("signinCreditNote");
+    if (creditNote) {
+      creditNote.textContent =
+        "Accounts created for this app start at $0. After sign in, add credits and choose the maximum this app may spend.";
+    }
+  }
+}
+
 function moneyFromMicrodollars(value: unknown): string {
   if (value === null || value === undefined || value === "") return "$0.00";
   const raw = typeof value === "number" ? String(Math.trunc(value)) : String(value);
@@ -91,6 +118,84 @@ function openSigninModal(): void {
   }
 }
 
+type MarketingFunnelEvent = "landing_engaged" | "sign_in_opened";
+
+function trackFunnelEvent(event: MarketingFunnelEvent): void {
+  void fetch("/analytics/events", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ event }),
+    credentials: "same-origin",
+    keepalive: true,
+  }).catch(() => {
+    /* measurement is best-effort and must never interrupt sign-in */
+  });
+}
+
+function trackEngagedLanding(): void {
+  let sent = false;
+  const sendWhenVisible = (): void => {
+    if (sent || document.visibilityState !== "visible") return;
+    sent = true;
+    document.removeEventListener("visibilitychange", sendWhenVisible);
+    trackFunnelEvent("landing_engaged");
+  };
+  window.setTimeout(() => {
+    sendWhenVisible();
+    if (!sent) {
+      document.addEventListener("visibilitychange", sendWhenVisible);
+    }
+  }, 1500);
+}
+
+// Swap a click-to-load video facade for the real player.
+//
+// The facade exists so the homepage makes NO third-party request until the
+// visitor asks for one. A page whose claim is "we cannot read your requests"
+// should not hand Google a pageview to render. We therefore load the
+// privacy-enhanced host (youtube-nocookie.com), and only on an explicit press.
+function loadVideoEmbed(facade: HTMLElement): void {
+  const videoId = facade.dataset.videoId;
+  if (!videoId || facade.classList.contains("is-loaded")) {
+    return;
+  }
+  const start = Number.parseInt(facade.dataset.videoStart ?? "", 10);
+  const params = new URLSearchParams({ autoplay: "1", rel: "0" });
+  if (Number.isFinite(start) && start > 0) {
+    params.set("start", String(start));
+  }
+  const iframe = document.createElement("iframe");
+  iframe.src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?${params}`;
+  iframe.title = facade.dataset.videoTitle || "TrustedRouter explainer video";
+  iframe.allow = "accelerometer; autoplay; encrypted-media; picture-in-picture";
+  iframe.referrerPolicy = "strict-origin-when-cross-origin";
+  iframe.setAttribute("allowfullscreen", "");
+  facade.classList.add("is-loaded");
+  facade.replaceChildren(iframe);
+  facade.removeAttribute("role");
+  facade.removeAttribute("tabindex");
+  facade.removeAttribute("aria-label");
+}
+
+async function copyCode(button: HTMLElement): Promise<void> {
+  const targetId = button.dataset.copyTarget;
+  const target = targetId ? document.getElementById(targetId) : null;
+  const text = target?.textContent?.trim();
+  if (!text || !navigator.clipboard || !window.isSecureContext) return;
+
+  const original = button.textContent || "Copy";
+  try {
+    await navigator.clipboard.writeText(text);
+    button.textContent = "Copied";
+    button.setAttribute("aria-live", "polite");
+  } catch {
+    button.textContent = "Copy failed";
+  }
+  window.setTimeout(() => {
+    button.textContent = original;
+  }, 1600);
+}
+
 function setSigninError(message: string): void {
   const el = document.getElementById("signinError");
   if (!el) return;
@@ -149,7 +254,7 @@ async function startMetaMaskSignin(): Promise<void> {
     setSigninError("Verification failed. The nonce may have expired.");
     return;
   }
-  location.href = verify.data.redirect;
+  location.href = requestedSigninTarget() ?? verify.data.redirect;
 }
 
 async function postJSON<T>(path: string, body: unknown): Promise<T | null> {
@@ -207,7 +312,9 @@ function applyAuthAwareChrome(): void {
 
 function init(): void {
   applyAuthAwareChrome();
+  applySigninTarget();
   applyStoredTheme();
+  trackEngagedLanding();
 
   document.addEventListener("click", (event) => {
     const target = event.target as HTMLElement | null;
@@ -221,13 +328,26 @@ function init(): void {
     const opener = target.closest('[data-action="open-signin"]') as HTMLElement | null;
     if (opener) {
       event.preventDefault();
+      trackFunnelEvent("sign_in_opened");
       openSigninModal();
+      return;
+    }
+    const copyButton = target.closest('[data-action="copy-code"]') as HTMLElement | null;
+    if (copyButton) {
+      event.preventDefault();
+      void copyCode(copyButton);
       return;
     }
     const metamask = target.closest('[data-action="metamask-signin"]') as HTMLElement | null;
     if (metamask) {
       event.preventDefault();
       void startMetaMaskSignin();
+    }
+    const videoFacade = target.closest('[data-action="load-video"]') as HTMLElement | null;
+    if (videoFacade) {
+      event.preventDefault();
+      loadVideoEmbed(videoFacade);
+      return;
     }
     const regionLi = target.closest(".region-list li[data-region-id]") as HTMLElement | null;
     if (regionLi && regionLi.dataset.regionId) {
@@ -244,6 +364,15 @@ function init(): void {
     if (regionLi && regionLi.dataset.regionId) {
       event.preventDefault();
       selectRegion(regionLi.dataset.regionId);
+      return;
+    }
+    // The video facade is a role="button", so it must answer Enter/Space too.
+    const videoFacade = target && target.closest
+      ? (target.closest('[data-action="load-video"]') as HTMLElement | null)
+      : null;
+    if (videoFacade) {
+      event.preventDefault();
+      loadVideoEmbed(videoFacade);
     }
   });
 

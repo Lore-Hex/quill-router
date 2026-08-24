@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import dataclasses
 import json
-from typing import Any
+from typing import Any, TypeAlias
 
 from trusted_router.storage_gcp_codec import json_body, reverse_time_key
 from trusted_router.storage_models import ProviderBenchmarkSample
+
+FamilyNames: TypeAlias = str | tuple[str, ...]
 
 
 def write_provider_benchmark(table: Any, family: str, sample: ProviderBenchmarkSample) -> None:
@@ -27,7 +30,7 @@ def write_provider_benchmark(table: Any, family: str, sample: ProviderBenchmarkS
 
 def provider_benchmark_samples(
     table: Any,
-    family: str,
+    family: FamilyNames,
     *,
     date: str | None,
     provider: str | None,
@@ -77,11 +80,24 @@ def _benchmark_prefix(
     return b"benchmark_recent#", False
 
 
-def _samples_from_rows(rows: Any, family: str) -> list[ProviderBenchmarkSample]:
+def _samples_from_rows(
+    rows: Any,
+    family: FamilyNames,
+) -> list[ProviderBenchmarkSample]:
+    field_names = {field.name for field in dataclasses.fields(ProviderBenchmarkSample)}
     samples: list[ProviderBenchmarkSample] = []
     for row in rows:
-        cells = row.cells.get(family, {}).get(b"body", [])
+        ordered = (family,) if isinstance(family, str) else family
+        cells = []
+        for family_name in ordered:
+            cells = row.cells.get(family_name, {}).get(b"body", [])
+            if cells:
+                break
         if not cells:
             continue
-        samples.append(ProviderBenchmarkSample(**json.loads(cells[0].value.decode("utf-8"))))
+        decoded = json.loads(cells[0].value.decode("utf-8"))
+        # Forward-compat: rollback readers predating a new stored field must
+        # not crash on rows that already carry it.
+        filtered = {key: value for key, value in decoded.items() if key in field_names}
+        samples.append(ProviderBenchmarkSample(**filtered))
     return samples

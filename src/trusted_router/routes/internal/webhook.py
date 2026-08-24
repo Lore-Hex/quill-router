@@ -1,6 +1,8 @@
-"""/internal/stripe/webhook — handles four Stripe event types:
+"""/internal/stripe/webhook handles Stripe billing events:
 
-* checkout.session.completed (payment, prepaid credit add)
+* checkout.session.completed (immediate payment or delayed-payment pending state)
+* checkout.session.async_payment_succeeded (delayed prepaid credit add)
+* checkout.session.async_payment_failed (delayed payment failure)
 * checkout.session.completed mode=setup (saved-card capture)
 * setup_intent.succeeded (saved-card capture from PaymentIntent flow)
 * payment_intent.succeeded (auto-refill credit add)
@@ -13,41 +15,26 @@ here, not in __init__.py.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
 import stripe
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 
+from trusted_router.acquisition import (
+    record_credit_purchase,
+    record_payment_method_saved,
+)
 from trusted_router.auth import SettingsDep
 from trusted_router.errors import api_error
-from trusted_router.money import DEFAULT_TRIAL_CREDIT_MICRODOLLARS, MICRODOLLARS_PER_CENT
+from trusted_router.money import MICRODOLLARS_PER_CENT
 from trusted_router.routes.helpers import json_body
+from trusted_router.services.x402_billing import X402_PAYMENT_METHOD, credit_x402_payment_intent
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
-
-def _grant_trial_credit_on_card_attach(workspace_id: str) -> int:
-    """First time a valid card is attached to this workspace, grant the
-    standard trial credit. Idempotent across webhook replays + repeat
-    setup_intents (e.g. user adds a second card later) by using a
-    deterministic per-workspace event_id — credit_workspace_once dedupes
-    via the stripe_events ledger so the trial only ever lands once.
-
-    Returns the amount actually credited (0 if already granted previously,
-    or DEFAULT_TRIAL_CREDIT_MICRODOLLARS on the first attach).
-
-    Trial credit was previously granted at signup; it now requires a
-    Stripe-validated card to defend against throwaway-email farming.
-    See storage.py / storage_gcp.py create_workspace for the matching
-    "$0 at creation" change.
-    """
-    event_id = f"trial:{workspace_id}"
-    if STORE.credit_workspace_once(
-        workspace_id, DEFAULT_TRIAL_CREDIT_MICRODOLLARS, event_id
-    ):
-        return DEFAULT_TRIAL_CREDIT_MICRODOLLARS
-    return 0
+log = logging.getLogger(__name__)
 
 
 def register(router: APIRouter) -> None:
@@ -84,18 +71,29 @@ def register(router: APIRouter) -> None:
                 event: dict[str, Any] = constructed
             else:
                 event = constructed._to_dict_recursive()  # noqa: SLF001
-        else:
+        elif settings.environment.lower() in {"local", "test"}:
             event = await json_body(request)
+        else:
+            raise api_error(
+                503,
+                "Stripe webhook verification is not configured",
+                ErrorType.SERVICE_UNAVAILABLE,
+            )
         event_id = str(event.get("id") or uuid.uuid4())
         event_type = event.get("type")
 
-        if event_type == "checkout.session.completed":
+        if event_type in {
+            "checkout.session.completed",
+            "checkout.session.async_payment_succeeded",
+            "checkout.session.async_payment_failed",
+        }:
             obj = event.get("data", {}).get("object", {})
-            workspace_id = obj.get("metadata", {}).get("workspace_id")
+            metadata = obj.get("metadata") or {}
+            workspace_id = metadata.get("workspace_id")
             amount_total = int(obj.get("amount_total") or 0)
             customer_id = obj.get("customer")
             if workspace_id and STORE.get_credit_account(workspace_id) is not None:
-                if obj.get("mode") == "setup":
+                if event_type == "checkout.session.completed" and obj.get("mode") == "setup":
                     if isinstance(customer_id, str):
                         STORE.set_stripe_customer(workspace_id, customer_id=customer_id)
                     return {
@@ -105,26 +103,67 @@ def register(router: APIRouter) -> None:
                             "trial_credit_granted_microdollars": 0,
                         }
                     }
-                credited = STORE.credit_workspace_once(
-                    workspace_id, amount_total * MICRODOLLARS_PER_CENT, event_id
+                if event_type == "checkout.session.async_payment_failed":
+                    return {
+                        "data": {
+                            "credited": False,
+                            "payment_failed": True,
+                            "event_id": event_id,
+                            "trial_credit_granted_microdollars": 0,
+                        }
+                    }
+                if (
+                    event_type == "checkout.session.completed"
+                    and obj.get("payment_status") != "paid"
+                ):
+                    return {
+                        "data": {
+                            "credited": False,
+                            "payment_pending": True,
+                            "payment_status": obj.get("payment_status") or "unpaid",
+                            "event_id": event_id,
+                            "trial_credit_granted_microdollars": 0,
+                        }
+                    }
+                amount_microdollars = _checkout_credit_amount_microdollars(
+                    metadata=metadata,
+                    amount_total_cents=amount_total,
                 )
+                payment_method = str(metadata.get("payment_method") or "stripe")
+                credit_event_id = _checkout_credit_event_id(
+                    event_id=event_id,
+                    checkout_session=obj,
+                    payment_method=payment_method,
+                )
+                credited = STORE.credit_workspace_typed_direct(
+                    workspace_id,
+                    amount_microdollars,
+                    credit_event_id,
+                    lifetime_topup_user_id=_lifetime_topup_user_id(workspace_id, metadata),
+                )
+                if credited:
+                    record_credit_purchase(
+                        workspace_id,
+                        amount_microdollars=amount_microdollars,
+                        payment_method=(
+                            "stripe_ach" if payment_method == "ach" else "stripe"
+                        ),
+                    )
                 # Capture the Stripe customer the first time they pay so
                 # auto-refill can use it later. The default payment method
                 # arrives separately in `setup_intent.succeeded` (or via the
                 # PaymentIntent's `payment_method` if Checkout was set up
                 # with `setup_future_usage`).
-                if isinstance(customer_id, str):
+                if isinstance(customer_id, str) and payment_method != "ach":
                     STORE.set_stripe_customer(workspace_id, customer_id=customer_id)
-                # A successful paid checkout is the strongest possible
-                # card-validation signal — Stripe just successfully charged
-                # the card. Grant the trial credit too if it hasn't been
-                # granted yet (idempotent via the per-workspace event_id).
-                granted = _grant_trial_credit_on_card_attach(workspace_id)
                 return {
                     "data": {
                         "credited": credited,
+                        "credited_microdollars": amount_microdollars,
                         "event_id": event_id,
-                        "trial_credit_granted_microdollars": granted,
+                        # Kept for response compatibility. Starter credit is
+                        # granted atomically at account creation, never here.
+                        "trial_credit_granted_microdollars": 0,
                     }
                 }
 
@@ -145,18 +184,48 @@ def register(router: APIRouter) -> None:
                     customer_id=customer_id,
                     payment_method_id=payment_method,
                 )
-                granted = _grant_trial_credit_on_card_attach(workspace_id)
+                record_payment_method_saved(
+                    workspace_id,
+                    payment_method="stripe_card",
+                )
                 return {
                     "data": {
                         "setup_saved": True,
                         "event_id": event_id,
-                        "trial_credit_granted_microdollars": granted,
+                        "trial_credit_granted_microdollars": 0,
                     }
                 }
 
         if event_type == "payment_intent.succeeded":
             obj = event.get("data", {}).get("object", {})
             metadata = obj.get("metadata") or {}
+            if metadata.get("payment_method") == X402_PAYMENT_METHOD:
+                try:
+                    result = credit_x402_payment_intent(
+                        obj,
+                        expected_workspace_id=None,
+                        settings=settings,
+                    )
+                except HTTPException as exc:
+                    if exc.status_code != 404:
+                        raise
+                    log.error(
+                        "x402.orphan_payment_intent",
+                        extra={
+                            "event_id": event_id,
+                            "payment_intent_id": obj.get("id"),
+                            "workspace_id": metadata.get("workspace_id"),
+                        },
+                    )
+                    return {
+                        "data": {
+                            "event_id": event_id,
+                            "x402": True,
+                            "orphan": True,
+                            "credited": False,
+                        }
+                    }
+                return {"data": {"event_id": event_id, "x402": True, **result}}
             workspace_id = metadata.get("workspace_id")
             amount_microdollars_raw = metadata.get("amount_microdollars")
             if (
@@ -164,10 +233,22 @@ def register(router: APIRouter) -> None:
                 and isinstance(workspace_id, str)
                 and isinstance(amount_microdollars_raw, str)
             ):
-                amount_microdollars = int(amount_microdollars_raw)
-                credited = STORE.credit_workspace_once(
-                    workspace_id, amount_microdollars, event_id
+                amount_microdollars = _auto_refill_credit_amount_microdollars(
+                    metadata=metadata,
+                    payment_intent_amount_cents=obj.get("amount"),
                 )
+                credited = STORE.credit_workspace_typed_direct(
+                    workspace_id,
+                    amount_microdollars,
+                    event_id,
+                    lifetime_topup_user_id=_lifetime_topup_user_id(workspace_id, metadata),
+                )
+                if credited:
+                    record_credit_purchase(
+                        workspace_id,
+                        amount_microdollars=amount_microdollars,
+                        payment_method="stripe_auto_refill",
+                    )
                 STORE.record_auto_refill_outcome(workspace_id, status="succeeded")
                 # Also persist the payment-method if Stripe surfaced one —
                 # first auto-refill after a Checkout that didn't include
@@ -179,8 +260,16 @@ def register(router: APIRouter) -> None:
                         customer_id=str(obj.get("customer") or ""),
                         payment_method_id=payment_method,
                     )
+                    record_payment_method_saved(
+                        workspace_id,
+                        payment_method="stripe_card",
+                    )
                 return {"data": {"credited": credited, "event_id": event_id, "auto_refill": True}}
-            if isinstance(workspace_id, str) and STORE.get_credit_account(workspace_id) is not None:
+            if (
+                metadata.get("payment_method") in {None, "auto", "card"}
+                and isinstance(workspace_id, str)
+                and STORE.get_credit_account(workspace_id) is not None
+            ):
                 payment_method = obj.get("payment_method")
                 customer_id = obj.get("customer")
                 if isinstance(payment_method, str) and isinstance(customer_id, str):
@@ -189,13 +278,36 @@ def register(router: APIRouter) -> None:
                         customer_id=customer_id,
                         payment_method_id=payment_method,
                     )
+                    record_payment_method_saved(
+                        workspace_id,
+                        payment_method="stripe_card",
+                    )
                     return {
                         "data": {
                             "payment_method_saved": True,
                             "event_id": event_id,
                             "trial_credit_granted_microdollars": 0,
                         }
+                }
+
+        if event_type in {
+            "payment_intent.processing",
+            "payment_intent.requires_action",
+            "payment_intent.canceled",
+            "payment_intent.payment_failed",
+        }:
+            obj = event.get("data", {}).get("object", {})
+            metadata = obj.get("metadata") or {}
+            if metadata.get("payment_method") == X402_PAYMENT_METHOD:
+                return {
+                    "data": {
+                        "event_id": event_id,
+                        "x402": True,
+                        "status": obj.get("status") or event_type.removeprefix("payment_intent."),
+                        "payment_intent_id": obj.get("id"),
+                        "credited": False,
                     }
+                }
 
         if event_type == "payment_intent.payment_failed":
             obj = event.get("data", {}).get("object", {})
@@ -207,4 +319,138 @@ def register(router: APIRouter) -> None:
                 STORE.record_auto_refill_outcome(workspace_id, status=f"failed:{code}")
                 return {"data": {"event_id": event_id, "auto_refill_failed": True, "code": code}}
 
+        if event_type in {"charge.refunded", "charge.refund.updated"}:
+            obj = event.get("data", {}).get("object", {})
+            metadata = obj.get("metadata") or {}
+            if metadata.get("payment_method") == X402_PAYMENT_METHOD:
+                log.warning(
+                    "x402.refund_requires_manual_review",
+                    extra={
+                        "event_id": event_id,
+                        "payment_intent_id": obj.get("payment_intent"),
+                        "refund_id": obj.get("id"),
+                    },
+                )
+                return {
+                    "data": {
+                        "event_id": event_id,
+                        "x402": True,
+                        "refund_requires_manual_review": True,
+                        "credited": False,
+                    }
+                }
+
         return {"data": {"ignored": True, "event_id": event_id}}
+
+
+def _lifetime_topup_user_id(workspace_id: str, metadata: dict[str, Any]) -> str | None:
+    initiating_user_id = metadata.get("initiating_user_id")
+    if isinstance(initiating_user_id, str) and initiating_user_id:
+        return initiating_user_id
+    workspace = STORE.get_workspace(workspace_id)
+    return workspace.owner_user_id if workspace is not None else None
+
+
+def _checkout_credit_event_id(
+    *,
+    event_id: str,
+    checkout_session: dict[str, Any],
+    payment_method: str,
+) -> str:
+    """Deduplicate ACH fulfillment across completed and async events.
+
+    Card events historically used the Stripe event id, so that key remains
+    unchanged. ACH is new and can safely key fulfillment to the PaymentIntent
+    or Checkout Session instead.
+    """
+    if payment_method != "ach":
+        return event_id
+    payment_id = checkout_session.get("payment_intent") or checkout_session.get("id")
+    if isinstance(payment_id, str) and payment_id:
+        return f"stripe_checkout:{payment_id}"
+    return event_id
+
+
+def _checkout_credit_amount_microdollars(
+    *,
+    metadata: dict[str, Any],
+    amount_total_cents: int,
+) -> int:
+    """Return credit principal, excluding the separately charged fee.
+
+    Sessions created before fee pass-through have no principal metadata and
+    retain the legacy amount_total behavior. New sessions fail closed if the
+    signed Stripe event contains malformed or impossible principal metadata.
+    """
+    raw = metadata.get("credit_amount_microdollars")
+    if raw is None:
+        return amount_total_cents * MICRODOLLARS_PER_CENT
+    processing_fee_raw = metadata.get("processing_fee_cents")
+    charge_amount_raw = metadata.get("charge_amount_cents")
+    if (
+        not isinstance(raw, str)
+        or not isinstance(processing_fee_raw, str)
+        or not isinstance(charge_amount_raw, str)
+    ):
+        raise api_error(400, "Invalid Stripe credit amount", ErrorType.BAD_REQUEST)
+    try:
+        amount_microdollars = int(raw)
+        processing_fee_cents = int(processing_fee_raw)
+        charge_amount_cents = int(charge_amount_raw)
+    except ValueError as exc:
+        raise api_error(400, "Invalid Stripe credit amount", ErrorType.BAD_REQUEST) from exc
+    if (
+        amount_microdollars <= 0
+        or amount_microdollars % MICRODOLLARS_PER_CENT
+        or processing_fee_cents < 0
+        or charge_amount_cents != amount_total_cents
+        or amount_microdollars // MICRODOLLARS_PER_CENT + processing_fee_cents
+        != amount_total_cents
+    ):
+        raise api_error(400, "Invalid Stripe credit amount", ErrorType.BAD_REQUEST)
+    return amount_microdollars
+
+
+def _auto_refill_credit_amount_microdollars(
+    *,
+    metadata: dict[str, Any],
+    payment_intent_amount_cents: Any,
+) -> int:
+    raw = metadata.get("amount_microdollars")
+    if not isinstance(raw, str):
+        raise api_error(400, "Invalid Stripe refill amount", ErrorType.BAD_REQUEST)
+    try:
+        amount_microdollars = int(raw)
+    except ValueError as exc:
+        raise api_error(400, "Invalid Stripe refill amount", ErrorType.BAD_REQUEST) from exc
+    if amount_microdollars <= 0 or amount_microdollars % MICRODOLLARS_PER_CENT:
+        raise api_error(400, "Invalid Stripe refill amount", ErrorType.BAD_REQUEST)
+
+    charge_amount_raw = metadata.get("charge_amount_cents")
+    if charge_amount_raw is None:
+        # Legacy PaymentIntents predate explicit fee metadata.
+        return amount_microdollars
+    processing_fee_raw = metadata.get("processing_fee_cents")
+    credit_amount_raw = metadata.get("credit_amount_microdollars")
+    if (
+        not isinstance(charge_amount_raw, str)
+        or not isinstance(processing_fee_raw, str)
+        or not isinstance(credit_amount_raw, str)
+        or not isinstance(payment_intent_amount_cents, int)
+    ):
+        raise api_error(400, "Invalid Stripe refill amount", ErrorType.BAD_REQUEST)
+    try:
+        charge_amount_cents = int(charge_amount_raw)
+        processing_fee_cents = int(processing_fee_raw)
+        credit_amount_microdollars = int(credit_amount_raw)
+    except ValueError as exc:
+        raise api_error(400, "Invalid Stripe refill amount", ErrorType.BAD_REQUEST) from exc
+    if (
+        processing_fee_cents < 0
+        or credit_amount_microdollars != amount_microdollars
+        or charge_amount_cents != payment_intent_amount_cents
+        or amount_microdollars // MICRODOLLARS_PER_CENT + processing_fee_cents
+        != charge_amount_cents
+    ):
+        raise api_error(400, "Invalid Stripe refill amount", ErrorType.BAD_REQUEST)
+    return amount_microdollars

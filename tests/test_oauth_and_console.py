@@ -14,6 +14,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from eth_account import Account
@@ -22,7 +23,9 @@ from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.storage import STORE, Generation
+from trusted_router.routes.console.activity import _USAGE_CACHE
+from trusted_router.storage import STORE, Generation, InMemoryStore
+from trusted_router.typed_balance import live_credit_summary
 
 
 @pytest.fixture
@@ -59,7 +62,20 @@ def github_client(github_settings: Settings) -> Iterator[TestClient]:
         yield client
 
 
+def _begin_oauth(client: TestClient, provider: str, *, next_path: str | None = None) -> str:
+    response = client.get(
+        f"/auth/{provider}/login",
+        params={"next": next_path} if next_path else None,
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    state = parse_qs(urlsplit(response.headers["location"]).query)["state"][0]
+    assert client.cookies.get("tr_oauth_state") == state
+    return state
+
+
 # ── Provider availability ───────────────────────────────────────────────────
+
 
 def test_marketing_modal_hides_disabled_providers(client: TestClient) -> None:
     page = client.get("/")
@@ -88,6 +104,7 @@ def test_github_login_404s_when_unconfigured(client: TestClient) -> None:
 
 
 # ── Google OAuth ────────────────────────────────────────────────────────────
+
 
 def test_google_login_redirects_with_state_cookie(google_client: TestClient) -> None:
     resp = google_client.get("/auth/google/login", follow_redirects=False)
@@ -141,7 +158,7 @@ async def test_google_oauth_helpers_use_expected_http_contract(httpx_mock) -> No
 
 
 def test_google_callback_rejects_state_mismatch(google_client: TestClient) -> None:
-    google_client.cookies.set("tr_oauth_state", "good-state")
+    _begin_oauth(google_client, "google")
     resp = google_client.get(
         "/google_oauth_callback?code=abc&state=evil-state",
         follow_redirects=False,
@@ -151,7 +168,7 @@ def test_google_callback_rejects_state_mismatch(google_client: TestClient) -> No
 
 @pytest.mark.asyncio
 async def test_google_callback_creates_session_for_new_user(google_client: TestClient) -> None:
-    google_client.cookies.set("tr_oauth_state", "matching-state")
+    state = _begin_oauth(google_client, "google")
 
     async def fake_exchange(**_: Any) -> str:
         return "access-token"  # noqa: S105
@@ -166,10 +183,12 @@ async def test_google_callback_creates_session_for_new_user(google_client: TestC
             display_name="Alice",
         )
 
-    with patch("trusted_router.routes.oauth.exchange_code", fake_exchange), \
-         patch("trusted_router.routes.oauth.fetch_user", fake_fetch_user):
+    with (
+        patch("trusted_router.routes.oauth.exchange_code", fake_exchange),
+        patch("trusted_router.routes.oauth.fetch_user", fake_fetch_user),
+    ):
         resp = google_client.get(
-            "/google_oauth_callback?code=auth-code&state=matching-state",
+            f"/google_oauth_callback?code=auth-code&state={state}",
             follow_redirects=False,
         )
     assert resp.status_code == 302
@@ -190,6 +209,57 @@ async def test_google_callback_creates_session_for_new_user(google_client: TestC
     user = STORE.find_user_by_email("alice@example.com")
     assert user is not None
     assert user.email_verified is True
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    assert live_credit_summary(workspace.id)["total_credits"] == 300_000
+
+
+@pytest.mark.asyncio
+async def test_google_callback_delegated_signup_starts_at_zero_without_management_key(
+    google_client: TestClient,
+) -> None:
+    next_path = (
+        "/auth?callback_url=https%3A%2F%2Fslopnazi.com%2Feditor"
+        "&key_label=SlopNazi&limit=5&usage_limit_type=monthly"
+    )
+    state = _begin_oauth(google_client, "google", next_path=next_path)
+
+    async def fake_exchange(**_: Any) -> str:
+        return "access-token"  # noqa: S105
+
+    async def fake_fetch_user(**_: Any) -> Any:
+        from trusted_router.oauth_provider import OAuthUserInfo
+
+        return OAuthUserInfo(
+            sub="google-slopnazi-user",
+            email="writer@example.com",
+            email_verified=True,
+            display_name="Writer",
+        )
+
+    with (
+        patch("trusted_router.routes.oauth.exchange_code", fake_exchange),
+        patch("trusted_router.routes.oauth.fetch_user", fake_fetch_user),
+    ):
+        response = google_client.get(
+            f"/google_oauth_callback?code=auth-code&state={state}",
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == next_path
+    assert "tr_pending_reveal=" not in response.headers.get("set-cookie", "")
+    user = STORE.find_user_by_email("writer@example.com")
+    assert user is not None
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    assert live_credit_summary(workspace.id)["total_credits"] == 0
+    assert STORE.list_keys(workspace.id) == []
+
+    consent = google_client.get(response.headers["location"])
+    assert consent.status_code == 200
+    assert "$0.00 available" in consent.text
+    assert "This account starts at $0" in consent.text
+    assert 'value="5"' in consent.text
+    assert '<option value="monthly" selected>' in consent.text
 
 
 @pytest.mark.asyncio
@@ -201,7 +271,7 @@ async def test_google_callback_for_returning_user_sets_no_pending_reveal(
     pointing at a stale value. A returning user already has API keys; the
     welcome page's one-shot reveal is meaningless for them and the cookie
     would only widen the log-exposure surface."""
-    google_client.cookies.set("tr_oauth_state", "matching-state")
+    state = _begin_oauth(google_client, "google")
 
     # Seed an existing user so first_time=False
     seeded = STORE.signup(email="bob@example.com")
@@ -220,10 +290,12 @@ async def test_google_callback_for_returning_user_sets_no_pending_reveal(
             display_name="Bob",
         )
 
-    with patch("trusted_router.routes.oauth.exchange_code", fake_exchange), \
-         patch("trusted_router.routes.oauth.fetch_user", fake_fetch_user):
+    with (
+        patch("trusted_router.routes.oauth.exchange_code", fake_exchange),
+        patch("trusted_router.routes.oauth.fetch_user", fake_fetch_user),
+    ):
         resp = google_client.get(
-            "/google_oauth_callback?code=c&state=matching-state",
+            f"/google_oauth_callback?code=c&state={state}",
             follow_redirects=False,
         )
     assert resp.status_code == 302
@@ -233,7 +305,7 @@ async def test_google_callback_for_returning_user_sets_no_pending_reveal(
 
 @pytest.mark.asyncio
 async def test_google_callback_rejects_unverified_email(google_client: TestClient) -> None:
-    google_client.cookies.set("tr_oauth_state", "matching-state")
+    state = _begin_oauth(google_client, "google")
 
     async def fake_exchange(**_: Any) -> str:
         return "tok"  # noqa: S105
@@ -248,16 +320,19 @@ async def test_google_callback_rejects_unverified_email(google_client: TestClien
             display_name=None,
         )
 
-    with patch("trusted_router.routes.oauth.exchange_code", fake_exchange), \
-         patch("trusted_router.routes.oauth.fetch_user", fake_fetch_user):
+    with (
+        patch("trusted_router.routes.oauth.exchange_code", fake_exchange),
+        patch("trusted_router.routes.oauth.fetch_user", fake_fetch_user),
+    ):
         resp = google_client.get(
-            "/google_oauth_callback?code=x&state=matching-state",
+            f"/google_oauth_callback?code=x&state={state}",
             follow_redirects=False,
         )
     assert resp.status_code == 400
 
 
 # ── GitHub OAuth ────────────────────────────────────────────────────────────
+
 
 def test_github_login_redirects_with_state_cookie(github_client: TestClient) -> None:
     resp = github_client.get("/auth/github/login", follow_redirects=False)
@@ -338,7 +413,7 @@ async def test_github_oauth_helper_marks_fallback_email_unverified(httpx_mock) -
 
 @pytest.mark.asyncio
 async def test_github_callback_creates_session(github_client: TestClient) -> None:
-    github_client.cookies.set("tr_oauth_state", "gh-state")
+    state = _begin_oauth(github_client, "github")
 
     async def fake_exchange(**_: Any) -> str:
         return "gh-tok"  # noqa: S105
@@ -353,10 +428,12 @@ async def test_github_callback_creates_session(github_client: TestClient) -> Non
             display_name="Alice",
         )
 
-    with patch("trusted_router.routes.oauth.exchange_code", fake_exchange), \
-         patch("trusted_router.routes.oauth.fetch_user", fake_fetch_user):
+    with (
+        patch("trusted_router.routes.oauth.exchange_code", fake_exchange),
+        patch("trusted_router.routes.oauth.fetch_user", fake_fetch_user),
+    ):
         resp = github_client.get(
-            "/github_oauth_callback?code=c&state=gh-state",
+            f"/github_oauth_callback?code=c&state={state}",
             follow_redirects=False,
         )
     assert resp.status_code == 302
@@ -364,6 +441,7 @@ async def test_github_callback_creates_session(github_client: TestClient) -> Non
 
 
 # ── Wallet / SIWE ───────────────────────────────────────────────────────────
+
 
 def test_wallet_challenge_returns_siwe_message(client: TestClient) -> None:
     address = "0x" + "a" * 40
@@ -383,7 +461,9 @@ def test_wallet_verify_success_creates_active_wallet_only_session_with_zero_cred
     challenge = client.post("/v1/auth/wallet/challenge", json={"address": address})
     message = challenge.json()["data"]["message"]
     nonce = challenge.json()["data"]["nonce"]
-    signature = Account.sign_message(encode_defunct(text=message), private_key=private_key).signature.hex()
+    signature = Account.sign_message(
+        encode_defunct(text=message), private_key=private_key
+    ).signature.hex()
 
     verify = client.post(
         "/v1/auth/wallet/verify",
@@ -401,7 +481,7 @@ def test_wallet_verify_success_creates_active_wallet_only_session_with_zero_cred
     assert user.email_verified is False
     workspace = STORE.list_workspaces_for_user(user.id)[0]
     assert data["workspace_id"] == workspace.id
-    assert STORE.get_credit_account(workspace.id).total_credits_microdollars == 0
+    assert live_credit_summary(workspace.id)["total_credits"] == 0
     session_cookie = client.cookies.get("tr_session")
     assert session_cookie is not None
     session = STORE.get_auth_session_by_raw(session_cookie)
@@ -413,6 +493,26 @@ def test_wallet_verify_success_creates_active_wallet_only_session_with_zero_cred
     assert console.status_code == 200
     assert "API Keys" in console.text
 
+    second_challenge = client.post(
+        "/v1/auth/wallet/challenge",
+        json={"address": address},
+    ).json()["data"]
+    second_signature = Account.sign_message(
+        encode_defunct(text=second_challenge["message"]),
+        private_key=private_key,
+    ).signature.hex()
+    second_verify = client.post(
+        "/v1/auth/wallet/verify",
+        json={
+            "address": address,
+            "signature": "0x" + second_signature,
+            "nonce": second_challenge["nonce"],
+        },
+    )
+    assert second_verify.status_code == 200
+    assert len(STORE.list_workspaces_for_user(user.id)) == 1
+    assert live_credit_summary(workspace.id)["total_credits"] == 0
+
 
 def test_wallet_verify_replay_rejects_second_use(client: TestClient) -> None:
     private_key = "0x" + "2" * 64
@@ -420,9 +520,12 @@ def test_wallet_verify_replay_rejects_second_use(client: TestClient) -> None:
     challenge = client.post("/v1/auth/wallet/challenge", json={"address": address})
     message = challenge.json()["data"]["message"]
     nonce = challenge.json()["data"]["nonce"]
-    signature = "0x" + Account.sign_message(
-        encode_defunct(text=message), private_key=private_key
-    ).signature.hex()
+    signature = (
+        "0x"
+        + Account.sign_message(
+            encode_defunct(text=message), private_key=private_key
+        ).signature.hex()
+    )
     first = client.post(
         "/v1/auth/wallet/verify",
         json={"address": address, "signature": signature, "nonce": nonce},
@@ -443,9 +546,12 @@ def test_wallet_user_created_workspaces_do_not_receive_trial_credits(
     challenge = client.post("/v1/auth/wallet/challenge", json={"address": address})
     message = challenge.json()["data"]["message"]
     nonce = challenge.json()["data"]["nonce"]
-    signature = "0x" + Account.sign_message(
-        encode_defunct(text=message), private_key=private_key
-    ).signature.hex()
+    signature = (
+        "0x"
+        + Account.sign_message(
+            encode_defunct(text=message), private_key=private_key
+        ).signature.hex()
+    )
 
     verify = client.post(
         "/v1/auth/wallet/verify",
@@ -457,7 +563,7 @@ def test_wallet_user_created_workspaces_do_not_receive_trial_credits(
 
     assert created.status_code == 201, created.text
     workspace_id = created.json()["data"]["id"]
-    assert STORE.get_credit_account(workspace_id).total_credits_microdollars == 0
+    assert live_credit_summary(workspace_id)["total_credits"] == 0
 
 
 def test_wallet_verify_rejects_wrong_address(client: TestClient) -> None:
@@ -467,9 +573,12 @@ def test_wallet_verify_rejects_wrong_address(client: TestClient) -> None:
     challenge = client.post("/v1/auth/wallet/challenge", json={"address": fake_address})
     message = challenge.json()["data"]["message"]
     nonce = challenge.json()["data"]["nonce"]
-    signature = "0x" + Account.sign_message(
-        encode_defunct(text=message), private_key=private_key
-    ).signature.hex()
+    signature = (
+        "0x"
+        + Account.sign_message(
+            encode_defunct(text=message), private_key=private_key
+        ).signature.hex()
+    )
     # Signed by `real_address`, but we tell the server it's `fake_address`.
     resp = client.post(
         "/v1/auth/wallet/verify",
@@ -543,6 +652,7 @@ def test_wallet_email_submit_returns_dev_verify_link_and_does_not_preverify(
 
 # ── Email verification ──────────────────────────────────────────────────────
 
+
 def test_email_verify_invalid_token_404s(client: TestClient) -> None:
     resp = client.get("/auth/verify-email?token=not-a-real-token", follow_redirects=False)
     assert resp.status_code == 400
@@ -568,9 +678,7 @@ def test_email_verify_marks_user_and_upgrades_session() -> None:
         verify_token, _ = STORE.create_verification_token(
             user_id=user.id, purpose="signup", ttl_seconds=3600
         )
-        resp = client.get(
-            f"/auth/verify-email?token={verify_token}", follow_redirects=False
-        )
+        resp = client.get(f"/auth/verify-email?token={verify_token}", follow_redirects=False)
     assert resp.status_code == 302
     assert resp.headers["location"] == "/console/welcome?first=1"
     refreshed = STORE.get_user(user.id)
@@ -578,6 +686,7 @@ def test_email_verify_marks_user_and_upgrades_session() -> None:
 
 
 # ── Console pages ───────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def console_session() -> tuple[TestClient, str]:
@@ -616,6 +725,8 @@ def test_console_pages_render_with_session(
     assert resp.status_code == 200
     assert marker in resp.text
     assert "Sign out" in resp.text
+    assert "/static/charter.css?v=" in resp.text
+    assert 'class="brand-mark"' in resp.text
 
 
 @pytest.mark.parametrize(
@@ -643,6 +754,104 @@ def test_console_root_redirects_to_api_keys(console_session: tuple[TestClient, s
     assert resp.headers["location"] == "/console/api-keys"
 
 
+def test_console_activity_renders_usage_panel(
+    console_session: tuple[TestClient, str],
+) -> None:
+    client, _ = console_session
+    resp = client.get("/console/activity")
+    console_css = (
+        Path(__file__).resolve().parents[1] / "src" / "trusted_router" / "static" / "console.css"
+    ).read_text(encoding="utf-8")
+
+    assert resp.status_code == 200
+    assert '<section class="panel usage-panel" data-usage-panel>' in resp.text
+    assert '<input type="radio" name="usage-range" value="1h">' in resp.text
+    assert '<input type="radio" name="usage-range" value="6h">' in resp.text
+    assert '<input type="radio" name="usage-range" value="24h">' in resp.text
+    assert '<input type="radio" name="usage-range" value="7d">' in resp.text
+    assert '<input type="radio" name="usage-range" value="30d" checked>' in resp.text
+    assert '<input type="radio" name="usage-range" value="90d">' in resp.text
+    assert 'name="usage-days"' not in resp.text
+    assert "<span>1h</span>" in resp.text
+    assert "<span>6h</span>" in resp.text
+    assert "<span>24h</span>" in resp.text
+    assert "<span>7d</span>" in resp.text
+    assert "<span>30d</span>" in resp.text
+    assert "<span>90d</span>" in resp.text
+    assert "data-usage-chart" in resp.text
+    assert "data-usage-breakdown" in resp.text
+    assert "/console/activity/usage.json" in resp.text
+    assert "range: state.range" in resp.text
+    assert 'by_model: "1"' in resp.text
+    assert 'setStatus("0 requests", "")' in resp.text
+    assert "No usage in ${rangeText.toLowerCase()}" in resp.text
+    assert "data-usage-empty-message" in resp.text
+    assert "data-usage-expand-range" in resp.text
+    assert 'const truncatedPrefix = data.truncated ? "≥" : "";' in resp.text
+    assert (
+        "Partial data — some rows were not scanned; narrow the range for an exact total"
+        in resp.text
+    )
+    assert "Spend" in resp.text
+    assert "Tokens" in resp.text
+    assert "Requests" in resp.text
+    assert resp.text.index("<h2>Usage</h2>") < resp.text.index("<h2>Recent activity</h2>")
+    assert ".usage-layout[hidden]" in console_css
+
+
+def test_console_activity_usage_endpoint_uses_range_param(
+    console_session: tuple[TestClient, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _USAGE_CACHE.clear()
+    client, _ = console_session
+    user = STORE.find_user_by_email("alice@example.com")
+    assert user is not None
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    calls: list[tuple[str, int, str, str | None, bool]] = []
+
+    def spy_usage_series(
+        self: InMemoryStore,
+        workspace_id: str,
+        *,
+        window_minutes: int,
+        granularity: str,
+        api_key_hash: str | None = None,
+        by_model: bool = False,
+    ) -> dict[str, Any]:
+        _ = self
+        calls.append((workspace_id, window_minutes, granularity, api_key_hash, by_model))
+        return {
+            "granularity": granularity,
+            "start_day": "2026-07-08",
+            "end_day": "2026-07-08",
+            "truncated": False,
+            "buckets": [],
+            "by_model": {"model-a": []} if by_model else {},
+        }
+
+    monkeypatch.setattr(InMemoryStore, "usage_series", spy_usage_series)
+
+    response = client.get("/console/activity/usage.json?range=1h&by_model=1&api_key_hash=key_a")
+
+    assert response.status_code == 200
+    assert response.json()["range"] == "1h"
+    assert response.json()["granularity"] == "minute"
+    assert calls == [(workspace.id, 60, "minute", "key_a", True)]
+
+
+def test_console_activity_usage_endpoint_rejects_invalid_range(
+    console_session: tuple[TestClient, str],
+) -> None:
+    _USAGE_CACHE.clear()
+    client, _ = console_session
+
+    response = client.get("/console/activity/usage.json?range=2h")
+
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == "invalid range"
+
+
 def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
     console_session: tuple[TestClient, str],
 ) -> None:
@@ -659,10 +868,30 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
 
     resp = client.get("/console/welcome?first=1", follow_redirects=False)
     assert resp.status_code == 200
-    assert fake_raw_key in resp.text, (
-        "expected the raw API key from tr_pending_reveal to be rendered "
-        "in the welcome page; instead got the 'already displayed' fallback"
+    assert resp.text.count(fake_raw_key) == 2, (
+        "the raw API key must appear in the direct reveal and the visible "
+        "Claude Code / Codex message"
     )
+    assert 'data-copy-secret="welcome-api-key"' in resp.text
+    assert 'data-copy-template-target="welcome-agent-message"' in resp.text
+    assert 'data-secret-source="welcome-api-key"' in resp.text
+    assert 'id="welcome-agent-message" data-copy-lines' in resp.text
+    agent_message = re.search(
+        r'<pre id="welcome-agent-message".*?</pre>', resp.text, re.DOTALL
+    )
+    assert agent_message is not None
+    assert fake_raw_key in agent_message.group(0)
+    assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
+    assert resp.text.index('id="welcome-agent-message"') < resp.text.index(
+        'id="welcome-api-key"'
+    )
+    assert "Run my first API request" in resp.text
+    assert 'data-endpoint="/chat-proxy/v1/chat/completions"' in resp.text
+    assert "Claude Code, Codex" in resp.text
+    assert "Python" in resp.text
+    assert "JavaScript" in resp.text
+    assert "curl" in resp.text
+    assert "https://trust.trustedrouter.com" in resp.text
     assert "already been displayed" not in resp.text
     # One-shot: cookie must be cleared on the response so a refresh
     # doesn't re-reveal the key.
@@ -675,6 +904,15 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
         or "Max-Age=0" in set_cookie
         or "max-age=0" in set_cookie
     ), f"expected tr_pending_reveal cookie to be cleared; got {set_cookie!r}"
+
+
+def test_console_specific_styles_load_after_shared_charter_styles() -> None:
+    layout = (
+        Path(__file__).resolve().parents[1]
+        / "src/trusted_router/templates/console/_layout.html"
+    ).read_text(encoding="utf-8")
+
+    assert layout.index("/static/charter.css") < layout.index("/static/console.css")
 
 
 def test_console_welcome_without_first_query_does_not_read_pending_reveal(
@@ -693,6 +931,7 @@ def test_console_welcome_without_first_query_does_not_read_pending_reveal(
     # The page renders the fallback message; the cookie is left for a
     # later legitimate `?first=1` request to consume.
     assert fake_raw_key not in resp.text
+    assert 'id="welcome-agent-message"' not in resp.text
     assert "already been displayed" in resp.text
     # Cookie not cleared — the response should NOT include a delete-cookie
     # header for tr_pending_reveal.
@@ -702,7 +941,7 @@ def test_console_welcome_without_first_query_does_not_read_pending_reveal(
     )
 
 
-def test_console_create_api_key_form_shows_raw_key_once(
+def test_console_create_api_key_form_repeats_raw_key_in_agent_message(
     console_session: tuple[TestClient, str],
 ) -> None:
     client, _ = console_session
@@ -715,13 +954,54 @@ def test_console_create_api_key_form_shows_raw_key_once(
     assert "console-created" in resp.text
     match = re.search(r"sk-tr-v1-[A-Za-z0-9_-]+", resp.text)
     assert match is not None
-    assert resp.text.count(match.group(0)) == 1
+    assert resp.text.count(match.group(0)) == 2
     assert 'data-copy-secret="created-api-key"' in resp.text
+    assert 'data-copy-template-target="created-agent-message"' in resp.text
+    assert 'data-secret-source="created-api-key"' in resp.text
+    assert 'id="created-agent-message" data-copy-lines' in resp.text
+    assert '<pre id="created-agent-message"' not in resp.text
+    agent_message = re.search(
+        r'<div class="agent-message" id="created-agent-message".*?</div>\s*</div>',
+        resp.text,
+        re.DOTALL,
+    )
+    assert agent_message is not None
+    assert match.group(0) in agent_message.group(0)
+    assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
+    assert (
+        "Paste this short message into a Claude Code, Codex, or your favorite agent chat."
+        in resp.text
+    )
+    assert "Paste this short message" not in agent_message.group(0)
+    assert resp.text.index('id="created-agent-message"') < resp.text.index(
+        'id="created-api-key"'
+    )
+    assert "stream the answer into this chat as it arrives" not in resp.text
+    assert "Keep this agent's model" not in resp.text
+    assert "Use it in memory for this request" not in resp.text
+    assert "stream=true" not in resp.text
     assert "Copied to clipboard." not in resp.text
     workspace_id = next(iter(STORE.workspaces))
     keys = STORE.list_keys(workspace_id)
     assert len(keys) == 1
     assert keys[0].limit_microdollars == 1
+
+
+def test_console_welcome_without_credits_routes_to_funding(
+    console_session: tuple[TestClient, str],
+) -> None:
+    client, _ = console_session
+    workspace = next(iter(STORE.workspaces.values()))
+    STORE.credit_money[workspace.id].total_credits_microdollars = 0
+    fake_raw_key = "sk-tr-v1-zero-credit-reveal"  # noqa: S105 - test fixture
+    client.cookies.set("tr_pending_reveal", fake_raw_key)
+
+    response = client.get("/console/welcome?first=1")
+
+    assert response.status_code == 200
+    assert "Add credits before the live check" in response.text
+    assert 'href="/console/credits"' in response.text
+    assert 'data-action="run-first-call"' not in response.text
 
 
 def test_console_create_api_key_uses_decimal_money_and_rejects_invalid_limit(
@@ -750,6 +1030,92 @@ def test_console_create_api_key_uses_decimal_money_and_rejects_invalid_limit(
     assert [key.name for key in STORE.list_keys(workspace_id)] == ["precise-limit"]
 
 
+def test_console_api_key_budget_can_be_edited_and_cleared(
+    console_session: tuple[TestClient, str],
+) -> None:
+    client, _ = console_session
+    created = client.post(
+        "/console/api-keys",
+        data={"name": "editable-budget", "limit": "1"},
+    )
+    assert created.status_code == 200
+    workspace_id = next(iter(STORE.workspaces))
+    key = STORE.list_keys(workspace_id)[0]
+
+    page = client.get("/console/api-keys")
+    assert page.status_code == 200
+    assert f'action="/console/api-keys/{key.hash}/limit"' in page.text
+    assert 'value="1"' in page.text
+
+    updated = client.post(
+        f"/console/api-keys/{key.hash}/limit",
+        data={"limit": "25.123456"},
+        follow_redirects=False,
+    )
+    assert updated.status_code == 303
+    assert updated.headers["location"] == "/console/api-keys?saved=limit"
+    refreshed = STORE.get_key_by_hash(key.hash)
+    assert refreshed is not None
+    assert refreshed.limit_microdollars == 25_123_456
+
+    updated_page = client.get("/console/api-keys")
+    assert 'value="25.123456"' in updated_page.text
+    assert "of $25.12" in updated_page.text  # "Used $X of $25.12" budget line
+
+    cleared = client.post(
+        f"/console/api-keys/{key.hash}/limit",
+        data={"limit": ""},
+        follow_redirects=False,
+    )
+    assert cleared.status_code == 303
+    refreshed = STORE.get_key_by_hash(key.hash)
+    assert refreshed is not None
+    assert refreshed.limit_microdollars is None
+
+
+def test_console_api_key_budget_rejects_invalid_and_wrong_workspace_keys(
+    console_session: tuple[TestClient, str],
+) -> None:
+    client, raw_token = console_session
+    session = STORE.get_auth_session_by_raw(raw_token)
+    assert session is not None
+    workspace_id = STORE.list_workspaces_for_user(session.user_id)[0].id
+    _, key = STORE.create_api_key(
+        workspace_id=workspace_id,
+        name="unchanged-budget",
+        creator_user_id=session.user_id,
+        limit_microdollars=12_000_000,
+    )
+
+    invalid = client.post(
+        f"/console/api-keys/{key.hash}/limit",
+        data={"limit": "not-a-number"},
+        follow_redirects=False,
+    )
+    assert invalid.status_code == 303
+    assert invalid.headers["location"] == "/console/api-keys?error=limit"
+    refreshed = STORE.get_key_by_hash(key.hash)
+    assert refreshed is not None
+    assert refreshed.limit_microdollars == 12_000_000
+
+    other_user = STORE.ensure_user("other@example.com", email="other@example.com")
+    other_workspace = STORE.create_workspace(owner_user_id=other_user.id, name="Other Workspace")
+    _, other_key = STORE.create_api_key(
+        workspace_id=other_workspace.id,
+        name="other-workspace-key",
+        creator_user_id=other_user.id,
+    )
+    blocked = client.post(
+        f"/console/api-keys/{other_key.hash}/limit",
+        data={"limit": "99"},
+        follow_redirects=False,
+    )
+    assert blocked.status_code == 404
+    other_refreshed = STORE.get_key_by_hash(other_key.hash)
+    assert other_refreshed is not None
+    assert other_refreshed.limit_microdollars is None
+
+
 def test_console_workspace_selector_persists_session_workspace(
     console_session: tuple[TestClient, str],
 ) -> None:
@@ -773,6 +1139,28 @@ def test_console_workspace_selector_persists_session_workspace(
     refreshed = STORE.get_auth_session_by_raw(raw_token)
     assert refreshed is not None
     assert refreshed.workspace_id == org.id
+
+    console_pages = (
+        "/console/api-keys",
+        "/console/byok",
+        "/console/custom-models",
+        "/console/routing",
+        "/console/activity",
+        "/console/broadcast",
+        "/console/settings",
+        "/console/credits",
+        "/console/account/verification",
+        "/console/account/preferences",
+    )
+    for path in console_pages:
+        workspace_page = client.get(path)
+        assert workspace_page.status_code == 200, path
+        assert f'<option value="{org.id}" selected>' in workspace_page.text, path
+        assert f'<option value="{personal.id}" selected>' not in workspace_page.text, path
+
+    credits_page = client.get("/console/credits")
+    normalized_credits = " ".join(credits_page.text.split())
+    assert "with an $0.80 minimum fee" in normalized_credits
 
     created = client.post(
         "/console/api-keys",
@@ -845,12 +1233,15 @@ def test_console_byok_raw_key_is_envelope_encrypted(
     assert config.key_hint == "sk-ant...4321"
     assert config.encrypted_secret is not None
     assert raw_key not in str(STORE.byok_store.providers)
-    assert decrypt_byok_secret(
-        config.encrypted_secret,
-        test_settings,
-        workspace_id=workspace_id,
-        provider="anthropic",
-    ) == raw_key
+    assert (
+        decrypt_byok_secret(
+            config.encrypted_secret,
+            test_settings,
+            workspace_id=workspace_id,
+            provider="anthropic",
+        )
+        == raw_key
+    )
 
 
 def test_console_activity_displays_microdollar_costs(
@@ -897,6 +1288,7 @@ def test_console_routing_credits_settings_and_preferences_show_operational_contr
 
     assert routing.status_code == 200
     assert 'model="trustedrouter/auto"' in routing.text
+    assert "trustedrouter/eu" in routing.text
     assert "us-central1" in routing.text
     assert "europe-west4" in routing.text
     assert "api-europe-west4.quillrouter.com" in routing.text
@@ -910,8 +1302,10 @@ def test_console_routing_credits_settings_and_preferences_show_operational_contr
     assert "Continue to checkout" in credits.text
 
     assert settings.status_code == 200
-    assert "Content storage" in settings.text
-    assert "does not log prompt or completion content" in settings.text
+    assert "Prompt and output handling" in settings.text
+    assert "never logged" in settings.text
+    assert "never logs prompt or output content" in settings.text
+    assert "opt-in Batch API" in settings.text
 
     assert preferences.status_code == 200
     assert "alice@example.com" in preferences.text
@@ -936,14 +1330,10 @@ def test_console_credits_shows_pending_stripe_setup_state(
 
 def test_console_checkbox_inputs_are_not_full_width() -> None:
     css = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "trusted_router"
-        / "static"
-        / "dashboard.css"
+        Path(__file__).resolve().parents[1] / "src" / "trusted_router" / "static" / "dashboard.css"
     ).read_text(encoding="utf-8")
 
-    assert ".checkbox-row input[type=\"checkbox\"]" in css
+    assert '.checkbox-row input[type="checkbox"]' in css
     assert "width:auto" in css
     assert "min-height:16px" in css
 
@@ -961,6 +1351,33 @@ def test_console_checkout_post_does_not_404_in_local_mock_mode(
 
     assert resp.status_code == 303
     assert resp.headers["location"] == "/console/credits?checkout=mock"
+
+
+def test_console_checkout_exposes_and_enforces_paypal_minimum(
+    console_session: tuple[TestClient, str],
+) -> None:
+    client, _ = console_session
+    page = client.get("/console/credits")
+
+    assert page.status_code == 200
+    assert 'data-paypal-minimum="10"' in page.text
+    assert "PayPal purchases have a $10 minimum." in page.text
+
+    too_small = client.post(
+        "/console/credits/checkout",
+        data={"amount": "9.99", "payment_method": "paypal"},
+        follow_redirects=False,
+    )
+    assert too_small.status_code == 303
+    assert too_small.headers["location"] == "/console/credits?error=invalid_checkout"
+
+    minimum = client.post(
+        "/console/credits/checkout",
+        data={"amount": "10", "payment_method": "paypal"},
+        follow_redirects=False,
+    )
+    assert minimum.status_code == 303
+    assert minimum.headers["location"] == "/console/credits?checkout=mock"
 
 
 def test_console_checkout_get_redirects_back_to_credits(
@@ -997,7 +1414,9 @@ def test_console_checkout_redirects_to_stripe_stablecoin_session(monkeypatch) ->
         captured.update(kwargs)
         return {"id": "cs_console", "url": "https://checkout.stripe.test/session"}
 
-    monkeypatch.setattr("trusted_router.services.stripe_billing.stripe.checkout.Session.create", create_session)
+    monkeypatch.setattr(
+        "trusted_router.services.stripe_billing.stripe.checkout.Session.create", create_session
+    )
 
     resp = client.post(
         "/console/credits/checkout",
@@ -1009,10 +1428,11 @@ def test_console_checkout_redirects_to_stripe_stablecoin_session(monkeypatch) ->
     assert resp.headers["location"] == "https://checkout.stripe.test/session"
     assert captured["payment_method_types"] == ["crypto"]
     assert captured["customer_email"] == "checkout@example.com"
-    assert captured["metadata"] == {
-        "workspace_id": workspace.id,
-        "payment_method": "stablecoin",
-    }
+    assert captured["metadata"]["workspace_id"] == workspace.id
+    assert captured["metadata"]["payment_method"] == "stablecoin"
+    assert captured["metadata"]["credit_amount_microdollars"] == "25000000"
+    assert captured["metadata"]["processing_fee_cents"] == "39"
+    assert captured["metadata"]["charge_amount_cents"] == "2539"
     assert captured["success_url"].endswith("/console/credits?checkout=success")
     assert captured["cancel_url"].endswith("/console/credits?checkout=cancel")
 
@@ -1035,9 +1455,10 @@ def test_console_add_payment_method_mock_saves_method(
     assert account.stripe_customer_id
     assert account.stripe_payment_method_id
     page = client.get("/console/credits")
+    details = client.get("/console/credits/stripe-details")
     assert "Replace card" in page.text
     assert "Manage in Stripe" in page.text
-    assert "Test card" in page.text
+    assert "Test card" in details.text
     assert "Remove" in page.text
 
 
@@ -1069,8 +1490,12 @@ def test_console_add_payment_method_redirects_to_stripe_setup_session(monkeypatc
         captured.update(kwargs)
         return {"id": "cs_setup_console", "url": "https://checkout.stripe.test/setup"}
 
-    monkeypatch.setattr("trusted_router.services.stripe_billing.stripe.Customer.create", create_customer)
-    monkeypatch.setattr("trusted_router.services.stripe_billing.stripe.checkout.Session.create", create_session)
+    monkeypatch.setattr(
+        "trusted_router.services.stripe_billing.stripe.Customer.create", create_customer
+    )
+    monkeypatch.setattr(
+        "trusted_router.services.stripe_billing.stripe.checkout.Session.create", create_session
+    )
 
     resp = client.post(
         "/console/credits/payment-methods/add",
@@ -1119,7 +1544,10 @@ def test_console_manage_payment_methods_redirects_to_stripe_portal(monkeypatch) 
         captured.update(kwargs)
         return {"url": "https://billing.stripe.test/portal"}
 
-    monkeypatch.setattr("trusted_router.services.stripe_billing.stripe.billing_portal.Session.create", create_session)
+    monkeypatch.setattr(
+        "trusted_router.services.stripe_billing.stripe.billing_portal.Session.create",
+        create_session,
+    )
 
     resp = client.post(
         "/console/credits/payment-methods/manage",
@@ -1168,15 +1596,20 @@ def test_console_credits_lists_saved_stripe_card(monkeypatch) -> None:
             },
         }
 
-    monkeypatch.setattr("trusted_router.services.stripe_billing.stripe.PaymentMethod.retrieve", retrieve)
+    monkeypatch.setattr(
+        "trusted_router.services.stripe_billing.stripe.PaymentMethod.retrieve", retrieve
+    )
 
     page = client.get("/console/credits")
+    details = client.get("/console/credits/stripe-details")
 
     assert page.status_code == 200
-    assert "Visa card" in page.text
-    assert "ending in 4242" in page.text
-    assert "expires 12/2031" in page.text
-    assert "id ...e_card" in page.text
+    assert details.status_code == 200
+    assert "Stripe card details are temporarily unavailable" in page.text
+    assert "Visa card" in details.text
+    assert "ending in 4242" in details.text
+    assert "expires 12/2031" in details.text
+    assert "id ...e_card" in details.text
     assert "Remove" in page.text
 
 
@@ -1214,7 +1647,9 @@ def test_console_remove_payment_method_detaches_and_clears(monkeypatch) -> None:
         detached.append(payment_method_id)
         return {"id": payment_method_id}
 
-    monkeypatch.setattr("trusted_router.services.stripe_billing.stripe.PaymentMethod.detach", detach)
+    monkeypatch.setattr(
+        "trusted_router.services.stripe_billing.stripe.PaymentMethod.detach", detach
+    )
 
     resp = client.post(
         "/console/credits/payment-methods/remove",
@@ -1258,7 +1693,9 @@ def test_console_remove_payment_method_keeps_local_state_when_stripe_fails(monke
     def detach(_payment_method_id: str) -> None:
         raise RuntimeError("stripe unavailable")
 
-    monkeypatch.setattr("trusted_router.services.stripe_billing.stripe.PaymentMethod.detach", detach)
+    monkeypatch.setattr(
+        "trusted_router.services.stripe_billing.stripe.PaymentMethod.detach", detach
+    )
 
     resp = client.post(
         "/console/credits/payment-methods/remove",
@@ -1283,7 +1720,24 @@ def test_logout_clears_cookie(console_session: tuple[TestClient, str]) -> None:
     assert "Max-Age=0" in set_cookie or "expires=" in set_cookie.lower()
 
 
+def test_browser_logout_redirects_instead_of_showing_raw_json(
+    console_session: tuple[TestClient, str],
+) -> None:
+    client, _ = console_session
+    resp = client.post(
+        "/auth/logout",
+        headers={"accept": "text/html,application/xhtml+xml"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/"
+    set_cookie = resp.headers.get("set-cookie", "")
+    assert "tr_session=" in set_cookie
+    assert "Max-Age=0" in set_cookie or "expires=" in set_cookie.lower()
+
+
 # ── Wallet auth helpers (unit tests) ────────────────────────────────────────
+
 
 def test_build_siwe_message_format() -> None:
     from trusted_router.wallet_auth import build_siwe_message

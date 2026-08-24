@@ -15,6 +15,11 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from trusted_router.content_handling import CONTENT_HANDLING_CLAIM
+from trusted_router.middleware import current_csp_nonce
+from trusted_router.provider_branding import provider_logo_url
+from trusted_router.seo_meta import seo_meta_description, seo_title
+
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
@@ -64,6 +69,13 @@ def _env() -> Environment:
     )
     env.filters["uptime_pct"] = _format_uptime
     env.filters["datetime_iso"] = _format_datetime_iso
+    env.filters["seo_title"] = seo_title
+    env.filters["seo_meta_description"] = seo_meta_description
+    env.globals["provider_logo_url"] = provider_logo_url
+    env.globals["content_handling_claim"] = CONTENT_HANDLING_CLAIM
+    # Callable, not a value: this env is lru_cached and shared across
+    # requests, so it must read the per-request ContextVar at render time.
+    env.globals["csp_nonce"] = current_csp_nonce
     return env
 
 

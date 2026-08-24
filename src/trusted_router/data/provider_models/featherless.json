@@ -1,0 +1,74 @@
+{
+  "provider": "featherless",
+  "models": [
+    {
+      "display_name": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "title": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "upstream_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "context_length": 262144,
+      "routable": true,
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 280000
+    },
+    {
+      "display_name": "moonshotai/Kimi-K3",
+      "title": "moonshotai/Kimi-K3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3",
+      "upstream_id": "moonshotai/Kimi-K3",
+      "context_length": 262144,
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "zai-org/GLM-5.2",
+      "title": "zai-org/GLM-5.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "zai-org/GLM-5.2",
+      "context_length": 262144,
+      "routable": true,
+      "input_token_price_per_m": 750000,
+      "output_token_price_per_m": 2400000
+    }
+  ],
+  "source": "https://api.featherless.ai/v1/models",
+  "pricing_source": "https://featherless.ai/pricing",
+  "generated_at": "2026-08-24T10:39:58Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 3
+}

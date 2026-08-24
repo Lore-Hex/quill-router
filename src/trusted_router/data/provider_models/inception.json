@@ -1,0 +1,41 @@
+{
+  "provider": "inception",
+  "models": [
+    {
+      "display_name": "Inception: Mercury 2",
+      "title": "mercury-2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "inception/mercury-2",
+      "upstream_id": "mercury-2",
+      "context_length": 128000,
+      "max_output_tokens": 50000,
+      "supported_features": [
+        "tools",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "stop"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 750000,
+      "cached_input_token_price_per_m": 25000
+    }
+  ],
+  "source": "https://api.inceptionlabs.ai/v1/models",
+  "generated_at": "2026-08-22T20:15:21Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 1
+}

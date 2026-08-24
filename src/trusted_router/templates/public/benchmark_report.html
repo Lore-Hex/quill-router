@@ -1,0 +1,44 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="public-proof-strip">
+  <div><strong>{{ report.row_count_label }}</strong><span>canonical benchmark rows</span></div>
+  <div><strong>{{ report.provider_count_label }}</strong><span>providers observed</span></div>
+  <div><strong>{{ report.model_count_label }}</strong><span>models observed</span></div>
+  <div><strong>{{ report.overall.availability_label }}</strong><span>measured provider availability</span></div>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><h2>{{ report.period_label }} at a glance</h2><a href="/benchmarks/reports/{{ report.period }}.json">Download JSON</a></div>
+  <div class="panel-body">
+    <p class="lead">TrustedRouter recorded {{ report.row_count_label }} privacy-safe route measurements during {{ report.period_label }}, spanning {{ report.provider_count_label }} providers and {{ report.model_count_label }} models.</p>
+    <p>Across provider-owned attempts, measured availability was <strong>{{ report.overall.availability_label }}</strong>. The median time to first token was <strong>{{ report.overall.p50_ttft_label }}</strong>, and p95 was <strong>{{ report.overall.p95_ttft_label }}</strong>. Configuration mistakes, unsupported model-provider pairs, customer errors, and TrustedRouter-owned failures are counted separately instead of being blamed on providers.</p>
+  </div>
+</section>
+
+<section class="model-catalog">
+  <div class="model-catalog-head"><div><span class="eyebrow">Providers</span><h2>Highest measured provider availability.</h2></div><p>Minimum 30 observations and three TTFT measurements. Ranking uses the 95% Wilson confidence floor, then latency.</p></div>
+  <div class="model-table-wrap"><table>
+    <thead><tr><th>Provider</th><th>Observations</th><th>Availability</th><th>p50 TTFT</th><th>p95 TTFT</th><th>Throughput</th></tr></thead>
+    <tbody>{% for row in report.top_providers %}<tr><td><a href="/providers/{{ row.provider }}"><strong>{{ row.provider }}</strong></a></td><td>{{ row.observation_count_label }}</td><td>{{ row.availability_label }}</td><td>{{ row.p50_ttft_label }}</td><td>{{ row.p95_ttft_label }}</td><td>{{ row.throughput_label }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+
+<section class="model-catalog">
+  <div class="model-catalog-head"><div><span class="eyebrow">Routes</span><h2>Highest measured model-route availability.</h2></div><p>One model can behave differently across providers. These rows keep that distinction visible.</p></div>
+  <div class="model-table-wrap"><table>
+    <thead><tr><th>Model route</th><th>Provider</th><th>Observations</th><th>Availability</th><th>p50 TTFT</th><th>p95 TTFT</th></tr></thead>
+    <tbody>{% for row in report.top_model_routes %}<tr><td><a href="/models/{{ row.model }}"><code>{{ row.model }}</code></a></td><td><a href="/providers/{{ row.provider }}">{{ row.provider }}</a></td><td>{{ row.observation_count_label }}</td><td>{{ row.availability_label }}</td><td>{{ row.p50_ttft_label }}</td><td>{{ row.p95_ttft_label }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+
+<section class="seo-two-col">
+  <div class="panel"><div class="panel-head"><h2>Methodology</h2></div><div class="panel-body"><ul class="plain-list">
+    <li>UTC calendar month over canonical production benchmark metadata.</li>
+    <li>Organic traffic observations and synthetic route probes are included; long throughput probes are excluded from availability.</li>
+    <li>Configuration, customer, unsupported-route, and TrustedRouter-owned failures are excluded from provider availability and reported separately.</li>
+    <li>p50 and p95 use exact nearest-rank percentiles. Rankings use the 95% Wilson confidence floor so a small perfect sample does not outrank a large reliable sample. Provider rows require 30 observations; model routes require 10; both require three TTFT measurements.</li>
+    <li>Prompt text, output text, API keys, workspace IDs, and customer identity are never present in this dataset.</li>
+  </ul></div></div>
+  <div class="panel"><div class="panel-head"><h2>How to use this report</h2></div><div class="panel-body"><p>This report measures route operation, not answer quality. Use it with model evaluations, current pricing, privacy posture, and your own workload test.</p><ul class="link-list"><li><a href="/leaderboard">Live leaderboard</a><span>Current balanced window</span></li><li><a href="/compare/models">Model comparisons</a><span>Price, context, routes, privacy, and speed</span></li><li><a href="/docs/evals">Evaluation guide</a><span>Test on your own task</span></li><li><a href="/providers">Provider directory</a><span>Policy and privacy sources</span></li></ul></div></div>
+</section>
+{% endblock %}

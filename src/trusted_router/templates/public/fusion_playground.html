@@ -1,0 +1,168 @@
+{% extends "public/_base.html" %}
+
+{% block hero %}{% endblock %}
+
+{% block body %}
+<link rel="stylesheet" href="/static/chat.css?v={{ static_version|default('local') }}">
+<link rel="stylesheet" href="/static/fusion.css?v={{ static_version|default('local') }}">
+
+<section class="fusion-shell" data-fusion-shell>
+  <aside class="fusion-sidebar" aria-label="Synth runs">
+    <div class="fusion-sidebar-head">
+      <button class="btn primary fusion-new" type="button" data-action="new-fusion">New Synth</button>
+      <span class="fusion-muted">Local history only. Prompts are not saved server-side.</span>
+    </div>
+    <div class="fusion-run-list" data-run-list>
+      <div class="fusion-empty">No runs yet.</div>
+    </div>
+  </aside>
+
+  <main class="fusion-main">
+    <header class="fusion-header">
+      <div>
+        <span class="fusion-kicker">OpenAI compatible API · trustedrouter/synth</span>
+        <h1>Synthesize many models into one perfect frontier answer.</h1>
+      </div>
+      <div class="fusion-header-actions">
+        <a class="btn" href="/docs/synth">Docs</a>
+        <a class="btn" href="https://trust.trustedrouter.com">Verify gateway</a>
+      </div>
+    </header>
+
+    <section class="fusion-grid">
+      <form class="fusion-composer" data-fusion-form>
+        <label class="fusion-field fusion-field-wide">
+          Prompt
+          <textarea data-fusion-prompt rows="8" placeholder="Ask a hard question where multiple model opinions help."></textarea>
+        </label>
+
+        <label class="fusion-field fusion-field-wide">
+          Preset
+          <select data-fusion-preset>
+            <option value="budget" selected>Iris 1.0 &mdash; budget</option>
+            <option value="quality">Prometheus 1.0 &mdash; quality</option>
+            <option value="frontier">Zeus 1.0 &mdash; frontier</option>
+          </select>
+          <span class="fusion-help" data-fusion-preset-help></span>
+        </label>
+
+        <details class="fusion-advanced">
+          <summary>
+            <span>Advanced settings</span>
+            <small>Models, prompts, fallbacks, tokens</small>
+          </summary>
+          <div class="fusion-advanced-body">
+            <label class="fusion-field fusion-field-wide">
+              Synthesis instructions
+              <textarea data-fusion-synthesis-prompt rows="3" maxlength="4000" placeholder="Optional final-answer instructions."></textarea>
+            </label>
+
+            <div class="fusion-model-set fusion-field-wide" data-fusion-model-set="panel">
+              <div class="fusion-model-set-head">
+                <span>Panel models</span>
+                <button class="fusion-model-reset" type="button" data-fusion-model-reset="panel">Reset</button>
+              </div>
+              <div class="fusion-model-cards chat-models-bar" data-fusion-model-cards="panel"></div>
+            </div>
+
+            <div class="fusion-row fusion-row-single">
+              <label class="fusion-field">
+                Max tokens
+                <input data-fusion-max-tokens type="number" min="64" max="8192" step="1" value="2048">
+              </label>
+            </div>
+
+            <div class="fusion-model-set fusion-field-wide" data-fusion-model-set="judges">
+              <div class="fusion-model-set-head">
+                <span>Judge and fallback judge</span>
+                <button class="fusion-model-reset" type="button" data-fusion-model-reset="judges">Reset</button>
+              </div>
+              <div class="fusion-model-cards chat-models-bar" data-fusion-model-cards="judges"></div>
+            </div>
+
+            <div class="fusion-model-set fusion-field-wide" data-fusion-model-set="finals">
+              <div class="fusion-model-set-head">
+                <span>Synthesizer and fallback synthesizer</span>
+                <button class="fusion-model-reset" type="button" data-fusion-model-reset="finals">Reset</button>
+              </div>
+              <div class="fusion-model-cards chat-models-bar" data-fusion-model-cards="finals"></div>
+            </div>
+
+            <div class="fusion-options">
+              <span class="fusion-option-pill">synthesize_non_refusals</span>
+              <span class="fusion-option-pill">raw thinking when returned</span>
+              <span class="fusion-option-pill">judge + final fallbacks</span>
+            </div>
+          </div>
+        </details>
+
+        <button class="btn primary fusion-run" type="submit" data-fusion-run>Run Synth</button>
+        <p class="fusion-error" data-fusion-error hidden></p>
+      </form>
+
+      <section class="fusion-output" aria-label="Synth output">
+        <div class="fusion-output-head">
+          <div>
+            <span class="fusion-kicker">Result</span>
+            <h2 data-result-title>Ready</h2>
+          </div>
+          <div class="fusion-output-actions">
+            <button class="btn" type="button" data-action="toggle-fusion-detail-layout" aria-pressed="false">Side-by-side</button>
+            <button class="btn" type="button" data-action="copy-code">Copy API call</button>
+          </div>
+        </div>
+        <pre class="fusion-answer" data-fusion-answer>Sign in, enter a prompt, then run Synth.</pre>
+        <section class="fusion-details" data-fusion-details hidden></section>
+        <div class="fusion-meta" data-fusion-meta></div>
+        <details class="fusion-code">
+          <summary>API request</summary>
+          <pre><code data-fusion-code></code></pre>
+        </details>
+      </section>
+    </section>
+  </main>
+</section>
+
+<script nonce="{{ csp_nonce() }}">
+  window.__TR_FUSION__ = {
+    apiBaseUrl: "{{ api_base_url }}",
+    issueKeyPath: "/internal/chat/issue-browser-key",
+    authSessionPath: "/auth/session",
+    keyCookieName: "tr_chat_key",
+    defaultPanel: [
+      "minimax/minimax-m3",
+      "moonshotai/kimi-k2.6",
+      "z-ai/glm-5.2",
+      "google/gemma-4-31b-it",
+      "deepseek/deepseek-v4-pro"
+    ],
+    budgetPanel: [
+      "minimax/minimax-m3",
+      "deepseek/deepseek-v4-flash",
+      "z-ai/glm-5.2"
+    ],
+    frontierPanel: [
+      "anthropic/claude-opus-4.8",
+      "openai/gpt-5.5",
+      "anthropic/claude-sonnet-4.8",
+      "google/gemini-3.1-pro",
+      "moonshotai/kimi-k2.6"
+    ],
+    defaultJudges: ["moonshotai/kimi-k2.6", "minimax/minimax-m3"],
+    defaultFinals: ["z-ai/glm-5.2", "minimax/minimax-m3"],
+    suggestedModels: [
+      "minimax/minimax-m3",
+      "deepseek/deepseek-v4-flash",
+      "deepseek/deepseek-v4-pro",
+      "z-ai/glm-5.2",
+      "google/gemma-4-31b-it",
+      "moonshotai/kimi-k2.6",
+      "moonshotai/kimi-k2.7-code",
+      "anthropic/claude-opus-4.8",
+      "anthropic/claude-sonnet-4.8"
+    ],
+  };
+</script>
+<script src="/static/model_catalog.js?v={{ static_version|default('local') }}" defer></script>
+<script src="/static/fusion.js?v={{ static_version|default('local') }}" defer></script>
+{% endblock %}

@@ -1,0 +1,65 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="Chinese AI models and where their routes run">
+  <div class="marketing-copy">
+    <span class="eyebrow">Chinese labs, and the operators who serve their weights</span>
+    <h2>A Chinese model does not mean China-bound traffic. Those are two different facts, and you choose the second one.</h2>
+    <p>{{ region.origin_model_count }} models in the TrustedRouter catalog were built by one of the {{ region.lab_count }} labs recorded as Chinese: {% for lab in region.labs %}{{ lab.lab_name }}{% if not loop.last %}, {% endif %}{% endfor %}. Every model below is grouped under the lab that built it, with its source.</p>
+    <p>Where your prompt goes is a separate decision, made per request. Most of these are open-weights models, so other companies serve them: {{ region.highlight_provider_count }} of the {{ region.catalog_provider_count }} providers in the catalog are US-headquartered, and the "{{ region.highlight_label }}" column below names the ones serving each model. Route to one of those and your prompt reaches that provider, not the lab. Route to the vendor's own API and it reaches a China-headquartered operator &mdash; {{ region.provider_count }} of the providers here.</p>
+    <p>The lab a model came from and the operator of each of its routes are recorded in separate catalog tables, and neither is derived from the other. Read both before deciding.</p>
+    <p><a class="btn primary" href="/chinese-ai-models-us-hosted">US-hosted Chinese models</a> <a class="btn" href="/models">Browse every route</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>us_hosted_chinese_model.py</span><span>Python</span></div>
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key="sk-tr-...",  # your TrustedRouter key
+)
+
+# Chinese-built weights, US-operated endpoint:
+# jurisdiction narrows routing to providers whose
+# recorded operator country is the United States,
+# and fails closed if none qualify.
+reply = client.chat.completions.create(
+    model="deepseek/deepseek-v4-pro",
+    messages=[{"role": "user",
+               "content": "Refactor this handler."}],
+    extra_body={"provider": {"jurisdiction": "us"}},
+)</code></pre>
+  </div>
+</section>
+
+<section class="compare-matrix" aria-label="Vendor endpoint compared with a US-operated route">
+  <div class="matrix-row matrix-head"><span></span><strong>The lab's own API</strong><strong>A US-operated route for the same weights</strong></div>
+  <div class="matrix-row"><span>Who built the model</span><span>The Chinese lab</span><span>The same Chinese lab. Routing does not change this.</span></div>
+  <div class="matrix-row"><span>Who operates the endpoint</span><span>A company whose operating home is China &mdash; named in its own policy where one is published, otherwise the group&rsquo;s own filing</span><span>A company headquartered in the United States, named in its own terms or filing</span></div>
+  <div class="matrix-row"><span>Where the request is sent</span><span>To the lab's operator</span><span>To that US provider. The request is not sent on to the originating lab.</span></div>
+  <div class="matrix-row"><span>How you select it</span><span>Call the vendor route directly</span><span>Set <span class="mono">provider.jurisdiction</span> to <span class="mono">us</span>, or pin operators with <span class="mono">provider.only</span></span></div>
+  <div class="matrix-row"><span>Retention posture</span><span>Whatever that vendor's policy says</span><span>A separate field per provider. Jurisdiction and retention are independent; the table below shows both.</span></div>
+  <div class="matrix-row"><span>What neither one proves</span><span>Which datacentre answered</span><span>Which datacentre answered. Operator country is a legal home, not a machine location.</span></div>
+</section>
+
+<section class="panel" aria-label="Cases where the brand and the operator differ">
+  <div class="panel-head"><h2>Where the brand and the operator come apart</h2><span class="pill warn">read the row, not the logo</span></div>
+  <div class="panel-body">
+    <p>The provider table below lists {{ region.provider_count }} providers operated from China. Some familiar Chinese AI brands are not among them, and that is the point of recording operators rather than brands.</p>
+    <ul class="link-list">
+      <li><a href="/providers/zai">Z.ai</a><span>The api.z.ai service is operated by a Singapore-registered company under Singapore law, per <a href="https://docs.z.ai/legal-agreement/terms-of-use" rel="nofollow noopener">Z.AI's own terms of use</a>, so it is recorded under Singapore. The GLM weights it serves come from a Beijing lab, and appear under Z.ai (GLM) in the lab sections below.</span></li>
+      <li><a href="/providers/kimi">Kimi</a><span>The Kimi OpenPlatform behind <span class="mono">api.moonshot.ai</span> is operated by MOONSHOT AI PTE. LTD. in Singapore, per <a href="https://platform.kimi.ai/docs/agreement/userprivacy" rel="nofollow noopener">the platform's own privacy policy</a>, which also states storage on servers in Singapore. Moonshot AI, the lab that trained the weights, is in Beijing and appears in the lab sections below.</span></li>
+      <li><a href="/providers/minimax">MiniMax</a><span>The MiniMax Open Platform behind <span class="mono">api.minimax.io</span> is operated by Nanonoble Pte. Ltd., Singapore, under Singapore law, per <a href="https://platform.minimax.io/protocol/terms-of-service" rel="nofollow noopener">its terms of service</a>. The lab is Chinese; the operator of the endpoint we route to is not.</span></li>
+      <li><a href="/providers/siliconflow">SiliconFlow</a><span>The api.siliconflow.com platform is operated by a Singapore-registered company under Singapore law, per <a href="https://docs.siliconflow.com/en/legals/terms-of-service" rel="nofollow noopener">its terms of service</a>. Its separate China platform is not the endpoint TrustedRouter routes to.</span></li>
+      <li><a href="/providers">Providers with no operator recorded</a><span>{{ region.unestablished_operator_count }} providers publish no operating entity TrustedRouter could establish. They are in no jurisdiction list on this site, and no request preference treats them as matching one, because the conservative reading of a missing country is that it does not match.</span></li>
+    </ul>
+  </div>
+</section>
+
+{% include "public/_model_region_directory.html" %}
+
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Quality</span><h3>Judge the weights on the weights.</h3><p>Benchmarks, price, and measured latency per route are on each model page and the <a href="/leaderboard">leaderboard</a>. Origin country belongs in a procurement review, not in a quality argument.</p></div>
+  <div class="marketing-card"><span class="card-label">Control</span><h3>Two preferences do the work.</h3><p><span class="mono">provider.jurisdiction</span> set to <span class="mono">us</span> restricts routing to US-operated providers. <span class="mono">provider.only</span> pins an exact allowlist. Both fail closed rather than falling back to something you did not approve.</p></div>
+  <div class="marketing-card"><span class="card-label">Limits</span><h3>What this page does not claim.</h3><p>No claim that a US operator stores nothing, that any route is certified, or that operator country tells you where the hardware sits. Retention posture is the <a href="/llm-zero-data-retention">ZDR</a> and <a href="/confidential-computing-llm">confidential compute</a> question, tracked separately.</p></div>
+</section>
+{% endblock %}

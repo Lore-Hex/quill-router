@@ -1,26 +1,49 @@
-"""Spanner-backed generation log + Bigtable activity index.
+"""Generation records plus ClickHouse delivery and legacy Bigtable mirroring.
 
-Sibling of InMemoryGenerations. add() runs:
+Sibling of InMemoryGenerations. The general ``add()`` path remains compatible
+with non-gateway callers and rolling legacy records:
   1. add_usage_to_key — roll cost into per-key counters (own txn).
   2. Spanner txn — generation row + workspace index entry.
-  3. Bigtable activity-index write (best-effort, repairable from Spanner).
-  4. Provider-benchmark sample (Bigtable, best-effort).
+  3. Durable ClickHouse outbox enqueue.
+  4. Optional Bigtable mirror during migration.
 
-The user-facing reads (activity, activity_events) come from the Bigtable
-index, not Spanner."""
+The high-volume gateway path does not call ``add()``. Billing settles in typed
+Spanner tables and atomically enqueues bounded ClickHouse metadata. Its durable
+settle outbox retains repair inputs until delivery durability is confirmed.
+User-facing reads prefer bounded families and fall back to legacy cells."""
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
+from collections.abc import Iterator
 from typing import Any, Protocol
 
-from trusted_router.storage_activity import generation_events, summarize_activity
+import trusted_router.storage_activity as storage_activity
+from trusted_router.storage_activity import (
+    ActivityResult,
+    filter_generations,
+    generation_events,
+    generation_matches_filter,
+    summarize_activity,
+    summarize_activity_result,
+)
 from trusted_router.storage_gcp_activity_index import (
     activity_generations as _bt_activity_generations,
 )
 from trusted_router.storage_gcp_activity_index import (
+    generation_by_id as _bt_generation_by_id,
+)
+from trusted_router.storage_gcp_activity_index import (
+    iter_activity_generations as _bt_iter_activity_generations,
+)
+from trusted_router.storage_gcp_activity_index import (
+    usage_series as _bt_usage_series,
+)
+from trusted_router.storage_gcp_activity_index import (
     write_generation as _bt_write_generation,
 )
+from trusted_router.storage_gcp_analytics_outbox import SpannerAnalyticsOutbox
 from trusted_router.storage_gcp_benchmark_index import (
     provider_benchmark_samples as _bt_provider_benchmark_samples,
 )
@@ -30,7 +53,14 @@ from trusted_router.storage_gcp_benchmark_index import (
 from trusted_router.storage_gcp_codec import (
     generation_workspace_id as _generation_workspace_id,
 )
+from trusted_router.storage_gcp_generation_records import (
+    read_generation_record,
+    upsert_generation_record,
+)
 from trusted_router.storage_gcp_io import SpannerIO
+from trusted_router.storage_gcp_operational_analytics_outbox import (
+    SpannerOperationalAnalyticsOutbox,
+)
 from trusted_router.storage_models import (
     Generation,
     ProviderBenchmarkSample,
@@ -38,6 +68,7 @@ from trusted_router.storage_models import (
 )
 
 log = logging.getLogger(__name__)
+ACTIVITY_SCAN_LIMIT = 5000
 
 
 class _AddUsageCallback(Protocol):
@@ -51,14 +82,41 @@ class SpannerGenerations:
         self,
         io: SpannerIO,
         *,
-        bt_table: Any,
-        generation_family: str,
+        bt_table: Any | None,
+        param_types: Any | None = None,
+        generation_records_enabled: bool = False,
+        bigtable_writes_enabled: bool = True,
+        generation_family: str | None = None,
+        activity_family: str | None = None,
+        benchmark_family: str | None = None,
+        legacy_family: str | None = None,
         add_usage_to_key: _AddUsageCallback,
+        analytics_outbox: SpannerAnalyticsOutbox | None = None,
+        operational_analytics_outbox: SpannerOperationalAnalyticsOutbox | None = None,
     ) -> None:
         self._io = io
         self._bt_table = bt_table
-        self._family = generation_family
+        self._param_types = param_types
+        self._generation_records_enabled = generation_records_enabled
+        self._bigtable_writes_enabled = bigtable_writes_enabled and bt_table is not None
+        legacy = legacy_family or generation_family or "m"
+        self._activity_family = activity_family or generation_family or legacy
+        self._benchmark_family = benchmark_family or generation_family or legacy
+        self._legacy_family = legacy
+        # Retain the historical attribute for internal test doubles and rolling
+        # code that still constructs this adapter with one shared family.
+        self._family = legacy
+        self._activity_read_families = _ordered_families(
+            self._activity_family,
+            legacy,
+        )
+        self._benchmark_read_families = _ordered_families(
+            self._benchmark_family,
+            legacy,
+        )
         self._add_usage_to_key = add_usage_to_key
+        self._analytics_outbox = analytics_outbox
+        self._operational_analytics_outbox = operational_analytics_outbox
 
     def add(self, generation: Generation) -> None:
         # Two separate transactions instead of one fused one. Per-key
@@ -81,13 +139,79 @@ class SpannerGenerations:
         self._io.database.run_in_transaction(txn)
         self.index_after_commit(generation)
 
-    def index_after_commit(self, generation: Generation) -> None:
-        # Spanner is the source of truth for billing and generation metadata.
-        # Bigtable is the activity index optimized for high-volume reads;
-        # this post-transaction write is intentionally idempotent and can
-        # be repaired from generation_by_workspace if the process crashes.
+    def index_after_commit(self, generation: Generation) -> bool:
+        """Repair durable delivery, then best-effort mirror legacy indexes.
+
+        New typed settlements enqueue activity in their billing transaction and
+        call ``mirror_after_commit`` instead. This method remains for an old
+        settlement replay whose original commit may predate the atomic outbox.
+        """
+        if self._operational_analytics_outbox is None:
+            activity_indexed = (
+                self._write_bigtable_activity(generation)
+                if self._bigtable_writes_enabled
+                else False
+            )
+            if generation.app != "TrustedRouter Synthetic":
+                self.record_benchmark(ProviderBenchmarkSample.from_generation(generation))
+            return activity_indexed
+        activity_queued = self._repair_durable_delivery(generation)
+        self.mirror_after_commit(generation)
+        return activity_queued
+
+    def mirror_after_commit(self, generation: Generation) -> None:
+        """Write migration-only mirrors without affecting settlement success."""
+        if self._bigtable_writes_enabled:
+            self._write_bigtable_activity(generation)
+        if generation.app != "TrustedRouter Synthetic":
+            self.record_benchmark(ProviderBenchmarkSample.from_generation(generation))
+
+    def _repair_durable_delivery(self, generation: Generation) -> bool:
+        outbox = self._operational_analytics_outbox
+        if outbox is None:
+            return False
         try:
-            _bt_write_generation(self._bt_table, self._family, generation)
+            now = dt.datetime.now(dt.UTC)
+
+            def txn(transaction: Any) -> None:
+                if self._generation_records_enabled:
+                    if self._param_types is None:
+                        raise RuntimeError("Spanner param types are not configured")
+                    upsert_generation_record(
+                        transaction,
+                        self._param_types,
+                        generation,
+                        terminal_at=now,
+                    )
+                outbox.enqueue_activity_tx(
+                    transaction,
+                    generation,
+                )
+
+            self._io.database.run_in_transaction(txn)
+        except Exception as exc:
+            log.exception(
+                "spanner.operational_analytics_activity_repair_failed",
+                extra={
+                    "request_id": generation.request_id,
+                    "generation_id": generation.id,
+                    "model": generation.model,
+                    "provider": generation.provider,
+                    "error_class": type(exc).__name__,
+                    "error_message": str(exc)[:500],
+                    "repairable_via": "settle_outbox",
+                },
+            )
+            return False
+        return True
+
+    def _write_bigtable_activity(self, generation: Generation) -> bool:
+        try:
+            _bt_write_generation(
+                self._bt_table,
+                self._activity_family,
+                generation,
+            )
         except Exception as exc:
             log.exception(
                 "bigtable.activity_index_write_failed",
@@ -103,27 +227,70 @@ class SpannerGenerations:
                     "repairable_via": "reconcile_activity()",
                 },
             )
-        if generation.app != "TrustedRouter Synthetic":
-            self.record_benchmark(ProviderBenchmarkSample.from_generation(generation))
+            return False
+        return True
 
     def get(self, generation_id: str) -> Generation | None:
-        return self._io.read_entity("generation", generation_id, Generation)
+        if self._generation_records_enabled:
+            if self._param_types is None:
+                raise RuntimeError("Spanner param types are not configured")
+            with self._io.database.snapshot() as snapshot:
+                generation = read_generation_record(
+                    snapshot,
+                    self._param_types,
+                    generation_id,
+                )
+            if generation is not None:
+                return generation
+        generation = self._io.read_entity("generation", generation_id, Generation)
+        if generation is not None:
+            return generation
+        if self._bt_table is None:
+            return None
+        return _bt_generation_by_id(
+            self._bt_table,
+            self._activity_families(),
+            generation_id,
+        )
 
     def record_benchmark(self, sample: ProviderBenchmarkSample) -> None:
+        if self._analytics_outbox is not None:
+            try:
+                # A separate transaction by construction. Do not move this into
+                # gateway settlement: analytics is best-effort; money is not.
+                self._analytics_outbox.enqueue(sample)
+            except Exception as exc:
+                log.exception(
+                    "spanner.analytics_outbox_enqueue_failed",
+                    extra={
+                        "event_id": sample.id,
+                        "model": sample.model,
+                        "provider": sample.provider,
+                        "status": sample.status,
+                        "error_class": type(exc).__name__,
+                        "error_message": str(exc)[:500],
+                        "loss_tolerated": True,
+                        "repairable_via": "provider analytics outbox replay",
+                    },
+                )
+        if not getattr(self, "_bigtable_writes_enabled", self._bt_table is not None):
+            return
         try:
-            _bt_write_provider_benchmark(self._bt_table, self._family, sample)
+            _bt_write_provider_benchmark(
+                self._bt_table,
+                self._benchmark_family,
+                sample,
+            )
         except Exception as exc:
             log.exception(
-                "bigtable.benchmark_index_write_failed",
+                "bigtable.benchmark_mirror_write_failed",
                 extra={
                     "model": sample.model,
                     "provider": sample.provider,
                     "status": sample.status,
                     "error_class": type(exc).__name__,
                     "error_message": str(exc)[:500],
-                    # Benchmarks are not repairable — they're loss-tolerant
-                    # observability data, not billing. Log and move on.
-                    "loss_tolerated": True,
+                    "migration_mirror_only": True,
                 },
             )
 
@@ -137,7 +304,7 @@ class SpannerGenerations:
     ) -> list[ProviderBenchmarkSample]:
         return _bt_provider_benchmark_samples(
             self._bt_table,
-            self._family,
+            self._benchmark_families(),
             date=date,
             provider=provider,
             model=model,
@@ -150,11 +317,96 @@ class SpannerGenerations:
         *,
         api_key_hash: str | None = None,
         date: str | None = None,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+        group_by_tag: str | None = None,
     ) -> list[dict[str, Any]]:
+        if tag_key is not None:
+            return self.activity_result(
+                workspace_id,
+                api_key_hash=api_key_hash,
+                date=date,
+                tag_key=tag_key,
+                tag_value=tag_value,
+                group_by_tag=group_by_tag,
+            ).data
         rows = self._activity_generations(
-            workspace_id, api_key_hash=api_key_hash, date=date, limit=5000
+            workspace_id, api_key_hash=api_key_hash, date=date, limit=ACTIVITY_SCAN_LIMIT
         )
-        return summarize_activity(rows)
+        rows = filter_generations(
+            rows,
+            workspace_id=workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            tag_key=tag_key,
+            tag_value=tag_value,
+        )
+        return summarize_activity(rows, group_by_tag=group_by_tag)
+
+    def activity_result(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None = None,
+        date: str | None = None,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+        group_by_tag: str | None = None,
+    ) -> ActivityResult:
+        if tag_key is not None:
+            cache_key = _activity_tag_cache_key(
+                workspace_id=workspace_id,
+                api_key_hash=api_key_hash,
+                date=date,
+                group_by=group_by_tag,
+                limit=None,
+                tag_key=tag_key,
+                tag_value=tag_value,
+            )
+            cached = storage_activity.ACTIVITY_TAG_CACHE.get(cache_key)
+            if cached is not None:
+                return cached
+            result = self._tagged_activity_result(
+                workspace_id,
+                api_key_hash=api_key_hash,
+                date=date,
+                tag_key=tag_key,
+                tag_value=tag_value,
+                group_by_tag=group_by_tag,
+            )
+            storage_activity.ACTIVITY_TAG_CACHE.put(cache_key, result)
+            return result
+
+        rows = self._activity_generations(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            limit=ACTIVITY_SCAN_LIMIT + 1,
+        )
+        truncated = len(rows) > ACTIVITY_SCAN_LIMIT
+        rows = rows[:ACTIVITY_SCAN_LIMIT]
+        scanned = len(rows)
+        rows = filter_generations(
+            rows,
+            workspace_id=workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            tag_key=tag_key,
+            tag_value=tag_value,
+        )
+        result = summarize_activity_result(
+            rows,
+            group_by_tag=group_by_tag,
+            truncated=truncated,
+            scan_limit=ACTIVITY_SCAN_LIMIT,
+        )
+        return ActivityResult(
+            data=result.data,
+            truncated=result.truncated,
+            groups_truncated=result.groups_truncated,
+            scanned=scanned,
+            scan_limit=result.scan_limit,
+        )
 
     def activity_events(
         self,
@@ -163,14 +415,115 @@ class SpannerGenerations:
         api_key_hash: str | None = None,
         date: str | None = None,
         limit: int = 100,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
     ) -> list[dict[str, Any]]:
+        if tag_key is not None:
+            return self.activity_events_result(
+                workspace_id,
+                api_key_hash=api_key_hash,
+                date=date,
+                limit=limit,
+                tag_key=tag_key,
+                tag_value=tag_value,
+            ).data
         rows = self._activity_generations(
             workspace_id,
             api_key_hash=api_key_hash,
             date=date,
-            limit=limit,
+            limit=ACTIVITY_SCAN_LIMIT if tag_key is not None else limit,
         )
-        return generation_events(rows)
+        rows = filter_generations(
+            rows,
+            workspace_id=workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            tag_key=tag_key,
+            tag_value=tag_value,
+        )
+        return generation_events(rows, limit=limit)
+
+    def activity_events_result(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None = None,
+        date: str | None = None,
+        limit: int = 100,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+    ) -> ActivityResult:
+        if tag_key is not None:
+            cache_key = _activity_tag_cache_key(
+                workspace_id=workspace_id,
+                api_key_hash=api_key_hash,
+                date=date,
+                group_by="events",
+                limit=limit,
+                tag_key=tag_key,
+                tag_value=tag_value,
+            )
+            cached = storage_activity.ACTIVITY_TAG_CACHE.get(cache_key)
+            if cached is not None:
+                return cached
+            result = self._tagged_activity_events_result(
+                workspace_id,
+                api_key_hash=api_key_hash,
+                date=date,
+                limit=limit,
+                tag_key=tag_key,
+                tag_value=tag_value,
+            )
+            storage_activity.ACTIVITY_TAG_CACHE.put(cache_key, result)
+            return result
+
+        scan_limit = ACTIVITY_SCAN_LIMIT if tag_key is not None else limit
+        rows = self._activity_generations(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            limit=scan_limit + 1,
+        )
+        truncated = len(rows) > scan_limit
+        rows = rows[:scan_limit]
+        scanned = len(rows)
+        rows = filter_generations(
+            rows,
+            workspace_id=workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            tag_key=tag_key,
+            tag_value=tag_value,
+        )
+        return ActivityResult(
+            data=generation_events(rows, limit=limit),
+            truncated=truncated,
+            scanned=scanned,
+            scan_limit=scan_limit,
+        )
+
+    def usage_series(
+        self,
+        workspace_id: str,
+        *,
+        start_day: str,
+        end_day: str,
+        granularity: str,
+        api_key_hash: str | None = None,
+        by_model: bool = False,
+        min_created_at: str | None = None,
+    ) -> dict[str, Any]:
+        return _bt_usage_series(
+            self._bt_table,
+            self._activity_families(),
+            workspace_id,
+            start_day=start_day,
+            end_day=end_day,
+            granularity=granularity,
+            api_key_hash=api_key_hash,
+            by_model=by_model,
+            min_created_at=min_created_at,
+        )
 
     def reconcile_activity(
         self,
@@ -186,8 +539,19 @@ class SpannerGenerations:
             generation = self.get(str(ref["generation_id"]))
             if generation is None:
                 continue
+            if self._operational_analytics_outbox is not None:
+                if not self._repair_durable_delivery(generation):
+                    continue
+                if self._bigtable_writes_enabled:
+                    self._write_bigtable_activity(generation)
+                repaired += 1
+                continue
             try:
-                _bt_write_generation(self._bt_table, self._family, generation)
+                _bt_write_generation(
+                    self._bt_table,
+                    self._activity_family,
+                    generation,
+                )
                 repaired += 1
             except Exception as exc:
                 log.exception(
@@ -216,9 +580,158 @@ class SpannerGenerations:
     ) -> list[Generation]:
         return _bt_activity_generations(
             self._bt_table,
-            self._family,
+            self._activity_families(),
             workspace_id,
             api_key_hash=api_key_hash,
             date=date,
             limit=limit,
         )
+
+    def _iter_activity_generations(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None,
+        date: str | None,
+        limit: int,
+    ) -> Iterator[Generation]:
+        return _bt_iter_activity_generations(
+            self._bt_table,
+            self._activity_families(),
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            limit=limit,
+        )
+
+    def _activity_families(self) -> tuple[str, ...]:
+        return getattr(
+            self,
+            "_activity_read_families",
+            (getattr(self, "_family", "m"),),
+        )
+
+    def _benchmark_families(self) -> tuple[str, ...]:
+        return getattr(
+            self,
+            "_benchmark_read_families",
+            (getattr(self, "_family", "m"),),
+        )
+
+    def _tagged_activity_result(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None,
+        date: str | None,
+        tag_key: str,
+        tag_value: str | None,
+        group_by_tag: str | None,
+    ) -> ActivityResult:
+        rows, truncated, scanned = self._tagged_activity_generations(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            tag_key=tag_key,
+            tag_value=tag_value,
+            stop_after_matches=None,
+        )
+        result = summarize_activity_result(
+            rows,
+            group_by_tag=group_by_tag,
+            truncated=truncated,
+            scan_limit=ACTIVITY_SCAN_LIMIT,
+        )
+        return ActivityResult(
+            data=result.data,
+            truncated=result.truncated,
+            groups_truncated=result.groups_truncated,
+            scanned=scanned,
+            scan_limit=result.scan_limit,
+        )
+
+    def _tagged_activity_events_result(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None,
+        date: str | None,
+        limit: int,
+        tag_key: str,
+        tag_value: str | None,
+    ) -> ActivityResult:
+        # Early-exit is only correct on the ws_recent (date=None) path, whose
+        # reverse-time keys stream newest-first, so the first `limit` matches
+        # are exactly the rows the full-scan-then-truncate would return. The
+        # date-scoped prefix streams OLDEST-first; early-exiting there would
+        # return the oldest matches of the day instead of the newest, so it
+        # scans the full bounded window and sorts downstream (old behavior).
+        rows, truncated, scanned = self._tagged_activity_generations(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            tag_key=tag_key,
+            tag_value=tag_value,
+            stop_after_matches=limit + 1 if date is None else None,
+        )
+        return ActivityResult(
+            data=generation_events(rows, limit=limit),
+            truncated=truncated,
+            scanned=scanned,
+            scan_limit=ACTIVITY_SCAN_LIMIT,
+        )
+
+    def _tagged_activity_generations(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None,
+        date: str | None,
+        tag_key: str,
+        tag_value: str | None,
+        stop_after_matches: int | None,
+    ) -> tuple[list[Generation], bool, int]:
+        rows: list[Generation] = []
+        scanned = 0
+        truncated = False
+        for generation in self._iter_activity_generations(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            limit=ACTIVITY_SCAN_LIMIT + 1,
+        ):
+            if scanned >= ACTIVITY_SCAN_LIMIT:
+                truncated = True
+                break
+            scanned += 1
+            if not generation_matches_filter(
+                generation,
+                workspace_id=workspace_id,
+                api_key_hash=api_key_hash,
+                date=date,
+                tag_key=tag_key,
+                tag_value=tag_value,
+            ):
+                continue
+            rows.append(generation)
+            if stop_after_matches is not None and len(rows) >= stop_after_matches:
+                truncated = True
+                break
+        return rows, truncated, scanned
+
+
+def _activity_tag_cache_key(
+    *,
+    workspace_id: str,
+    api_key_hash: str | None,
+    date: str | None,
+    group_by: str | None,
+    limit: int | None,
+    tag_key: str,
+    tag_value: str | None,
+) -> storage_activity.ActivityTagCacheKey:
+    return (workspace_id, api_key_hash, date, group_by, limit, tag_key, tag_value)
+
+
+def _ordered_families(primary: str, legacy: str) -> tuple[str, ...]:
+    return (primary,) if primary == legacy else (primary, legacy)

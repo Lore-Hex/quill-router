@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Request, Response
+from fastapi.responses import RedirectResponse
 
 from trusted_router.auth import (
     SESSION_COOKIE_NAME,
@@ -53,12 +54,17 @@ def register_auth_routes(router: APIRouter) -> None:
         # (browser console). Either may be present; the other is harmless.
         raw = get_authorization_bearer(request) or request.cookies.get(SESSION_COOKIE_NAME)
         deleted = STORE.delete_auth_session_by_raw(raw) if raw else False
-        response = Response(
+        accept = request.headers.get("accept", "")
+        if "text/html" in accept and "application/json" not in accept:
+            redirect_response = RedirectResponse(url="/", status_code=303)
+            clear_session_cookie(redirect_response, settings)
+            return redirect_response
+        json_response = Response(
             content=f'{{"data":{{"deleted":{str(deleted).lower()}}}}}',
             media_type="application/json",
         )
-        clear_session_cookie(response, settings)
-        return response
+        clear_session_cookie(json_response, settings)
+        return json_response
 
 
 def _userinfo_payload(user: User | None, workspace: Workspace) -> dict[str, Any]:

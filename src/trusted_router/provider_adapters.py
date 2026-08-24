@@ -4,10 +4,11 @@ import json
 import time
 import uuid
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
+from trusted_router.adapter import resolve_max_output_tokens
 from trusted_router.catalog import PROVIDERS, Model
 from trusted_router.provider_payloads import (
     anthropic_messages_payload,
@@ -16,6 +17,7 @@ from trusted_router.provider_payloads import (
     upstream_model_id,
 )
 from trusted_router.provider_streaming import (
+    gemini_finish_reason,
     openai_stream_chunk,
     record_anthropic_stream_payload,
     record_gemini_stream_payload,
@@ -37,6 +39,16 @@ OPENAI_COMPATIBLE_PASSTHROUGH_FIELDS = (
     # reasoning text that otherwise arrives as normal delta.content.
     "thinking",
     "chat_template_kwargs",
+    "response_format",
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+    "top_p",
+    "seed",
+    "frequency_penalty",
+    "presence_penalty",
+    "logit_bias",
+    "stop",
 )
 
 
@@ -48,12 +60,39 @@ def _openai_compatible_passthrough(request: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _openai_cached_input_tokens(usage: dict[str, Any]) -> int:
+    details = usage.get("prompt_tokens_details")
+    if isinstance(details, dict) and details.get("cached_tokens") is not None:
+        return int(details["cached_tokens"])
+    if usage.get("cached_tokens") is not None:
+        return int(usage["cached_tokens"])
+    return 0
+
+
+def _openai_reasoning_tokens(usage: dict[str, Any]) -> int:
+    details = usage.get("completion_tokens_details")
+    if isinstance(details, dict) and details.get("reasoning_tokens") is not None:
+        return int(details["reasoning_tokens"])
+    if usage.get("reasoning_tokens") is not None:
+        return int(usage["reasoning_tokens"])
+    return 0
+
+
+def _openai_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]] | None:
+    tool_calls = message.get("tool_calls")
+    if not isinstance(tool_calls, list):
+        return None
+    parsed = [cast(dict[str, Any], item) for item in tool_calls if isinstance(item, dict)]
+    return parsed or None
+
+
 async def openai_compatible_chat(
     model: Model,
     request: dict[str, Any],
     *,
     api_key: str,
     base_url: str,
+    extra_headers: dict[str, str] | None = None,
 ) -> ProviderResult:
     started = time.monotonic()
     payload = {
@@ -61,14 +100,16 @@ async def openai_compatible_chat(
         "messages": messages(request),
         "stream": False,
         "temperature": request.get("temperature"),
-        "max_tokens": request.get("max_tokens"),
+        "max_tokens": resolve_max_output_tokens(request),
     }
     payload.update(_openai_compatible_passthrough(request))
     payload = {k: v for k, v in payload.items() if v is not None}
     async with httpx.AsyncClient(timeout=120) as client:
+        headers = {"authorization": f"Bearer {api_key}"}
+        headers.update(extra_headers or {})
         resp = await client.post(
             f"{base_url}/chat/completions",
-            headers={"authorization": f"Bearer {api_key}"},
+            headers=headers,
             json=payload,
         )
     if resp.status_code >= 400:
@@ -78,15 +119,21 @@ async def openai_compatible_chat(
     message = choice.get("message") or {}
     usage = data.get("usage") or {}
     text = str(message.get("content") or "")
+    tool_calls = _openai_tool_calls(message)
     return ProviderResult(
         text=text,
-        input_tokens=int(usage.get("prompt_tokens") or estimate_tokens_from_messages(messages(request))),
+        input_tokens=int(
+            usage.get("prompt_tokens") or estimate_tokens_from_messages(messages(request))
+        ),
         output_tokens=int(usage.get("completion_tokens") or estimate_tokens_from_text(text)),
         finish_reason=str(choice.get("finish_reason") or "stop"),
         provider_name=PROVIDERS[model.provider].name,
         request_id=str(data.get("id") or f"req-{uuid.uuid4()}"),
         usage_estimated=not bool(usage),
         elapsed_seconds=max(time.monotonic() - started, 0.001),
+        cached_input_tokens=_openai_cached_input_tokens(usage),
+        reasoning_tokens=_openai_reasoning_tokens(usage),
+        tool_calls=tool_calls,
     )
 
 
@@ -97,6 +144,7 @@ async def openai_compatible_chat_stream(
     *,
     api_key: str,
     base_url: str,
+    extra_headers: dict[str, str] | None = None,
 ) -> AsyncIterator[bytes]:
     payload = {
         "model": upstream_model_id(model),
@@ -104,19 +152,23 @@ async def openai_compatible_chat_stream(
         "stream": True,
         "stream_options": {"include_usage": True},
         "temperature": request.get("temperature"),
-        "max_tokens": request.get("max_tokens"),
+        "max_tokens": resolve_max_output_tokens(request),
     }
     payload.update(_openai_compatible_passthrough(request))
     payload = {k: v for k, v in payload.items() if v is not None}
     async with httpx.AsyncClient(timeout=120) as client:
+        headers = {"authorization": f"Bearer {api_key}"}
+        headers.update(extra_headers or {})
         async with client.stream(
             "POST",
             f"{base_url}/chat/completions",
-            headers={"authorization": f"Bearer {api_key}"},
+            headers=headers,
             json=payload,
         ) as resp:
             if resp.status_code >= 400:
-                raise ProviderError(model.provider, resp.status_code, await safe_stream_error_message(resp))
+                raise ProviderError(
+                    model.provider, resp.status_code, await safe_stream_error_message(resp)
+                )
             async for line in resp.aiter_lines():
                 if not line:
                     continue
@@ -240,7 +292,7 @@ async def gemini_embeddings(
             json=body,
         )
     if resp.status_code >= 400:
-        raise ProviderError("gemini", resp.status_code, safe_error_message(resp))
+        raise ProviderError("google-ai-studio", resp.status_code, safe_error_message(resp))
     data = resp.json()
     vectors = [row.get("values") or [] for row in (data.get("embeddings") or [])]
     # Gemini's embed API does not report token usage; estimate from input.
@@ -300,11 +352,15 @@ async def anthropic_chat(
     if resp.status_code >= 400:
         raise ProviderError("anthropic", resp.status_code, safe_error_message(resp))
     data = resp.json()
-    text = "".join(part.get("text", "") for part in data.get("content", []) if part.get("type") == "text")
+    text = "".join(
+        part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"
+    )
     usage = data.get("usage") or {}
     return ProviderResult(
         text=text,
-        input_tokens=int(usage.get("input_tokens") or estimate_tokens_from_messages(messages(request))),
+        input_tokens=int(
+            usage.get("input_tokens") or estimate_tokens_from_messages(messages(request))
+        ),
         output_tokens=int(usage.get("output_tokens") or estimate_tokens_from_text(text)),
         finish_reason=str(data.get("stop_reason") or "stop"),
         provider_name="Anthropic",
@@ -334,7 +390,9 @@ async def anthropic_messages_stream(
             json=payload,
         ) as resp:
             if resp.status_code >= 400:
-                raise ProviderError("anthropic", resp.status_code, await safe_stream_error_message(resp))
+                raise ProviderError(
+                    "anthropic", resp.status_code, await safe_stream_error_message(resp)
+                )
             event_name = ""
             async for line in resp.aiter_lines():
                 if not line:
@@ -416,21 +474,32 @@ async def gemini_chat(model: Model, request: dict[str, Any], *, api_key: str) ->
             json=gemini_payload(request),
         )
     if resp.status_code >= 400:
-        raise ProviderError("gemini", resp.status_code, safe_error_message(resp))
+        raise ProviderError("google-ai-studio", resp.status_code, safe_error_message(resp))
     data = resp.json()
     candidate = (data.get("candidates") or [{}])[0]
-    parts = ((candidate.get("content") or {}).get("parts") or [])
+    parts = (candidate.get("content") or {}).get("parts") or []
     text = _gemini_parts_to_openai_content(parts)
     usage = data.get("usageMetadata") or {}
+    candidates_tokens = usage.get("candidatesTokenCount")
+    thoughts_tokens = int(usage.get("thoughtsTokenCount") or 0)
+    output_tokens = (
+        int(candidates_tokens) + thoughts_tokens
+        if candidates_tokens is not None
+        else estimate_tokens_from_text(text) + thoughts_tokens
+    )
     return ProviderResult(
         text=text,
-        input_tokens=int(usage.get("promptTokenCount") or estimate_tokens_from_messages(messages(request))),
-        output_tokens=int(usage.get("candidatesTokenCount") or estimate_tokens_from_text(text)),
-        finish_reason=str(candidate.get("finishReason") or "stop").lower(),
-        provider_name="Gemini",
+        input_tokens=int(
+            usage.get("promptTokenCount") or estimate_tokens_from_messages(messages(request))
+        ),
+        output_tokens=output_tokens,
+        finish_reason=gemini_finish_reason(str(candidate.get("finishReason") or "stop")),
+        provider_name="Google AI Studio",
         request_id=f"req-{uuid.uuid4()}",
         usage_estimated=not bool(usage),
         elapsed_seconds=max(time.monotonic() - started, 0.001),
+        cached_input_tokens=int(usage.get("cachedContentTokenCount") or 0),
+        reasoning_tokens=thoughts_tokens,
     )
 
 
@@ -455,7 +524,9 @@ def _gemini_parts_to_openai_content(parts: list[Any]) -> str:
         # Gemini's REST API has historically returned both spellings.
         inline = part.get("inline_data") or part.get("inlineData")
         if isinstance(inline, dict):
-            mime_type = inline.get("mime_type") or inline.get("mimeType") or "application/octet-stream"
+            mime_type = (
+                inline.get("mime_type") or inline.get("mimeType") or "application/octet-stream"
+            )
             body = inline.get("data")
             if isinstance(body, str) and body:
                 chunks.append(f"data:{mime_type};base64,{body}")
@@ -480,7 +551,9 @@ async def gemini_chat_stream(
             json=gemini_payload(request),
         ) as resp:
             if resp.status_code >= 400:
-                raise ProviderError("gemini", resp.status_code, await safe_stream_error_message(resp))
+                raise ProviderError(
+                    "google-ai-studio", resp.status_code, await safe_stream_error_message(resp)
+                )
             async for line in resp.aiter_lines():
                 if not line:
                     continue

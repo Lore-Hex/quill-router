@@ -1,0 +1,18 @@
+displayName: "TR Client Telemetry: invisible outage"
+combiner: OR
+enabled: true
+documentation:
+  mimeType: text/markdown
+  content: |
+    Client-observed TrustedRouter failures are elevated across multiple tenants
+    while the canonical router-core synthetic probes remain up. Investigate the
+    affected host's DNS, TLS, connection path, and client-visible streaming path.
+    Runbook: docs/client-telemetry.md.
+conditions:
+  - displayName: "Corroborated client failures while router core is up"
+    conditionMatchedLog:
+      filter: 'resource.type = "cloud_run_revision" AND resource.labels.service_name = "trusted-router" AND textPayload:"client_observed.invisible_outage"'
+alertStrategy:
+  notificationRateLimit:
+    period: 1800s
+  autoClose: 1800s

@@ -17,14 +17,6 @@
 {% endblock %}
 
 {% block body %}
-{# Inter is OpenRouter's body font and the most-recognizable element of
-   their visual identity. Loaded from Google Fonts CDN with display=swap
-   so the page renders immediately with system fallback and re-paints
-   when Inter arrives (avoids FOIT). Chunk 5 may vendor + preload for
-   first-paint perf. #}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="/static/chat.css?v={{ static_version|default('local') }}">
 
 <section class="chat-shell" data-chat-shell>
@@ -51,7 +43,7 @@
     <header class="chat-header">
       <button class="chat-hamburger" type="button" aria-label="Toggle sidebar" data-action="toggle-sidebar">&#9776;</button>
       <div class="chat-header-title">
-        <span class="chat-header-chat-title" data-chat-header-title></span>
+        <h1 class="chat-header-chat-title" data-chat-header-title>TrustedRouter Chat</h1>
         <span class="chat-header-chat-cost" data-chat-header-cost></span>
       </div>
       <div class="chat-models-bar" data-chat-models-bar>
@@ -60,6 +52,15 @@
       </div>
       <div class="chat-header-actions">
         <button class="btn chat-header-btn" type="button" data-action="toggle-system-prompt" title="System prompt">Sys</button>
+        <button class="btn chat-header-btn chat-header-btn-icon" type="button" data-action="clear-chat" title="Clear current chat" aria-label="Clear current chat">
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 4 H13" />
+            <path d="M6 4 V3 H10 V4" />
+            <path d="M5 6 L5.5 13 H10.5 L11 6" />
+            <path d="M7 7.5 V11.5" />
+            <path d="M9 7.5 V11.5" />
+          </svg>
+        </button>
         <button class="btn chat-header-btn chat-header-btn-icon" type="button" data-action="enter-voice-mode" title="Voice mode" aria-label="Voice mode">
           <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <rect x="6" y="2" width="4" height="8" rx="2" />
@@ -115,7 +116,7 @@
           data-action="attach-file"
           title="Attach image"
           aria-label="Attach image"
-        >📎</button>
+        >Add</button>
         <button
           type="button"
           class="chat-input-btn"
@@ -123,7 +124,7 @@
           data-action="voice-input"
           title="Voice input"
           aria-label="Voice input"
-        >🎙</button>
+        >Voice</button>
         <input
           type="file"
           accept="image/*"
@@ -151,25 +152,30 @@
 
 {# Inline config so chat.js doesn't need a second roundtrip just to
    know which API base URL to call. Mirrors the dashboard.js pattern. #}
-<script>
+<script nonce="{{ csp_nonce() }}">
   window.__TR_CHAT__ = {
-    apiBaseUrl: "{{ api_base_url }}",
+    apiBaseUrl: {{ api_base_url|tojson }},
     issueKeyPath: "/internal/chat/issue-browser-key",
+    authSessionPath: "/auth/session",
     keyCookieName: "tr_chat_key",
+    storageKey: {{ storage_key|default('tr_chat_state_v1')|tojson }},
+    lockedModelId: {{ locked_model_id|default('')|tojson }},
+    lockedModelLabel: {{ locked_model_label|default('Custom model')|tojson }},
   };
 </script>
 {# Markdown + code highlighting + XSS sanitization loaded from CDN.
    marked turns the assistant's content into HTML; highlight.js paints
-   code blocks; DOMPurify strips any <script> a model might emit
+   code blocks; DOMPurify strips any <script nonce="{{ csp_nonce() }}"> a model might emit
    before insertion. chunk 4 may vendor these locally for offline +
    subresource-integrity guarantees. #}
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark.min.css">
 <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/index.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/build/highlight.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 {# pako gzips the share-URL hash payload so longer chats fit in URL
    constraints. Optional — if it fails to load, share falls back to
    raw base64 which is bigger but still works for small chats. #}
 <script src="https://cdn.jsdelivr.net/npm/pako@2/dist/pako.min.js"></script>
+<script src="/static/model_catalog.js?v={{ static_version|default('local') }}" defer></script>
 <script src="/static/chat.js?v={{ static_version|default('local') }}" defer></script>
 {% endblock %}

@@ -1,0 +1,296 @@
+{% extends "public/_base.html" %}
+
+{% block hero %}
+<section class="public-hero marketing-hero">
+  <div>
+    <div class="kicker">Provider marketplace</div>
+    <h1>List your models on TrustedRouter.</h1>
+    <p class="lead">Send us your company and integration profile. We will review your privacy commitments, validate your routes, publish working models, monitor availability, and keep pricing current.</p>
+    <div class="hero-actions">
+      <a class="btn primary" href="mailto:providers@trustedrouter.com?subject=Provider%20marketplace%20application%20for%20%5Bcompany%5D">Email providers@trustedrouter.com</a>
+      <a class="btn" href="#integration-contract">View requirements <span aria-hidden="true">↓</span></a>
+      <form action="/provider" method="get">
+        <button class="btn" type="submit">Provider sign in</button>
+      </form>
+    </div>
+  </div>
+  <div class="public-hero-metrics" aria-label="Provider integration requirements">
+    <div><strong>Verified</strong><span>company profile</span></div>
+    <div><strong>1</strong><span>canonical catalog endpoint</span></div>
+    <div><strong>Separate</strong><span>secure key handoff</span></div>
+  </div>
+</section>
+{% endblock %}
+
+{% block body %}
+<section class="public-proof-strip" aria-label="Provider onboarding flow">
+  <div><strong>Apply</strong><span>Email your company and integration profile.</span></div>
+  <div><strong>Review</strong><span>We verify privacy, compliance, and API claims.</span></div>
+  <div><strong>Connect</strong><span>Exchange a restricted key through a separate secure channel.</span></div>
+  <div><strong>Publish</strong><span>We test, monitor, and list working routes.</span></div>
+</section>
+
+<section class="marketing-split" aria-labelledby="featured-neurometric-heading">
+  <div class="marketing-copy">
+    <span class="eyebrow">Featured partnership</span>
+    <h2 id="featured-neurometric-heading">Neurometric AI is live on TrustedRouter.</h2>
+    <p>Neurometric AI is a featured provider partner in the TrustedRouter marketplace. Its integration publishes a machine-readable catalog and gives developers one place to inspect callable models, exact pricing, capabilities, and the documented data-handling boundary.</p>
+    <p>TrustedRouter refreshes the catalog, runs live canaries, and monitors route availability through the same provider contract used across the marketplace.</p>
+    <div class="hero-actions">
+      <a class="btn primary" href="/providers/neurometric">View Neurometric AI models</a>
+      <a class="btn" href="https://www.neurometric.ai/" rel="noopener noreferrer">Visit Neurometric AI</a>
+    </div>
+  </div>
+  <div class="copy-terminal" aria-label="Neurometric AI integration summary">
+    <div class="code-head"><span>Featured provider</span><span>Live</span></div>
+    <pre><code>Provider: Neurometric AI
+Catalog: machine readable
+Pricing: exact decimal ingestion
+Availability: live canaries
+Content policy: no-store
+ZDR classification: not contractual
+Confidential compute: not claimed</code></pre>
+  </div>
+</section>
+
+<section class="marketing-split" id="integration-contract" aria-label="Provider integration contract">
+  <div class="marketing-copy">
+    <span class="eyebrow">Marketplace application</span>
+    <h2>Tell us who operates the service.</h2>
+    <p>Email <a href="mailto:providers@trustedrouter.com">providers@trustedrouter.com</a> from your company domain. The application must identify the legal entity, responsible contacts, privacy terms, and service being offered.</p>
+    <ul class="check-list">
+      <li><strong>Company identity.</strong> Legal name, brand or DBA, website, jurisdiction, entity type, and DUNS number.</li>
+      <li><strong>Company details.</strong> Registered address, operating address if different, business phone, company registration number, EIN or VAT ID, and DUNS number. Never send a personal tax identifier.</li>
+      <li><strong>Leadership.</strong> CEO name and title, authorized contract signer, and ownership or parent company where applicable.</li>
+      <li><strong>Primary contact.</strong> Name, title, company email, and direct business phone for the person responsible for the application.</li>
+      <li><strong>Operational contacts.</strong> Named technical, security and privacy, legal, billing, and incident-response contacts with titles, company email addresses, and phone numbers where available.</li>
+      <li><strong>Policies.</strong> Privacy policy, terms, DPA, subprocessor list, security or trust center, and compliance reports or certifications.</li>
+      <li><strong>Data handling.</strong> Retention period, training use, zero-retention terms, serving regions, data residency, and confidential-compute or attestation evidence.</li>
+    </ul>
+    <p class="small-copy"><strong>Do not email an API key or any other credential.</strong> After the application is reviewed, TrustedRouter will arrange a separate secure handoff for a dedicated, revocable inference key.</p>
+  </div>
+  <div class="copy-terminal" aria-label="Provider onboarding email template">
+    <div class="code-head"><span>Application email</span><span>No credentials</span></div>
+    <pre><code>Legal company name:
+Brand / DBA:
+Website:
+Jurisdiction and entity type:
+DUNS number:
+Company registration number:
+Registered address:
+Operating address:
+Business phone:
+EIN / VAT / corporate tax ID:
+CEO:
+Authorized contract signer:
+
+Primary contact name:
+Primary contact title:
+Primary contact email:
+Primary contact phone:
+
+Technical contact name / title / email / phone:
+Security contact name / title / email / phone:
+Privacy contact name / title / email / phone:
+Legal contact name / title / email / phone:
+Billing contact name / title / email / phone:
+Incident contact name / title / email / phone:
+
+Privacy policy:
+Terms of service:
+DPA:
+Subprocessor list:
+Security / trust center:
+Compliance reports:
+
+Data retention:
+Training use:
+ZDR terms:
+Serving regions / residency:
+Confidential compute evidence:
+
+API base URL:
+API documentation:
+Catalog endpoint:
+Deprecation feed or contact:
+
+API key: DO NOT INCLUDE</code></pre>
+  </div>
+</section>
+
+<section class="marketing-split" aria-label="Provider API requirements">
+  <div class="marketing-copy">
+    <span class="eyebrow">Integration profile</span>
+    <h2>Describe the API without sending secrets.</h2>
+    <ul class="check-list">
+      <li><strong>OpenAI-compatible base URL.</strong> One HTTPS base such as <code>https://api.provider.com/v1</code>.</li>
+      <li><strong>Authentication format.</strong> Describe bearer authentication and supported credential scopes without including a live key.</li>
+      <li><strong>Canonical catalog.</strong> Serve the exact response below from <code>GET /v1/models</code>.</li>
+      <li><strong>Chat inference.</strong> Serve OpenAI-compatible requests from <code>POST /v1/chat/completions</code>.</li>
+      <li><strong>Operational limits.</strong> Document rate limits, capacity tiers, timeout behavior, error contracts, maintenance notices, and support escalation.</li>
+    </ul>
+  </div>
+  <div class="marketing-copy">
+    <span class="eyebrow">Credential handoff</span>
+    <h2>Keys travel separately.</h2>
+    <p>The marketplace application is non-secret business and technical information. Once accepted, create a dedicated production credential restricted to model discovery and inference.</p>
+    <ul class="check-list">
+      <li>Use a revocable key created only for TrustedRouter.</li>
+      <li>Exclude account administration, billing, user management, and key creation permissions.</li>
+      <li>Deliver it only through the secure channel arranged during review.</li>
+      <li>Never place the key in email, support tickets, documents, chat, source code, or the catalog response.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="marketing-split" aria-labelledby="canonical-contract-heading">
+  <div class="marketing-copy">
+    <span class="eyebrow">Provider Reliability Contract v2</span>
+    <h2 id="canonical-contract-heading">Copy this output exactly.</h2>
+    <p>Do not design a custom catalog or pricing format. Return one unpaginated JSON document from <code>GET /v1/models</code>. Put capabilities, prices, lifecycle, model deadlines, regions, and overload semantics in the machine-readable response.</p>
+    <ul class="check-list">
+      <li><strong>Use exact decimal strings.</strong> Every price is USD per one million tokens. Use <code>"0.50"</code>, never a JSON float.</li>
+      <li><strong>Use <code>null</code> when a cache rate does not apply.</strong> Do not omit required fields.</li>
+      <li><strong>Use lowercase stable IDs.</strong> The format is <code>provider/model-name</code>. Never recycle an ID for a different model.</li>
+      <li><strong>Use UTC timestamps.</strong> Lifecycle timestamps use RFC 3339, for example <code>2026-08-05T00:00:00Z</code>.</li>
+      <li><strong>Use one row per billable tier.</strong> If rates or capabilities differ, publish a distinct stable model ID for that tier.</li>
+      <li><strong>Separate overload from account quota.</strong> Return <code>503</code> for temporary serving capacity, <code>429</code> for request rate limits, and a stable account-quota error code when TrustedRouter must provision more quota.</li>
+      <li><strong>Always send <code>Retry-After</code>.</strong> Fast, explicit backpressure lets TrustedRouter roll over immediately instead of letting requests hang.</li>
+      <li><strong>Publish model deadlines.</strong> First-token, completion, and stream-idle budgets are evaluated per model rather than with one global timeout.</li>
+    </ul>
+    <p><a href="/providers/marketplace/catalog.v2.schema.json">Download the v2 JSON Schema</a>. The <a href="/providers/marketplace/catalog.schema.json">v1 schema</a> remains supported for existing integrations.</p>
+  </div>
+  <div class="copy-terminal" aria-label="Canonical provider catalog response">
+    <div class="code-head"><span>GET /v1/models</span><span>application/json</span></div>
+    <pre><code>{{ provider_catalog_v2_example_json }}</code></pre>
+  </div>
+</section>
+
+<section class="marketing-split" aria-labelledby="provider-check-heading">
+  <div class="marketing-copy">
+    <span class="eyebrow">Open-source preflight</span>
+    <h2 id="provider-check-heading">Run the conformance suite before you apply.</h2>
+    <p>Run the <a href="https://github.com/Lore-Hex/trustedrouter-provider-check" target="_blank" rel="noopener noreferrer">TrustedRouter provider checker</a> against the same production API base you plan to submit. It tests catalog discovery, advertised model callability, chat completions, streaming, usage, tool calls, errors, and first-token behavior against the contract expected by TrustedRouter's attested gateway translator.</p>
+    <p>The suite is open source under Apache-2.0 and works with any conformant serving stack.</p>
+    <ul class="check-list">
+      <li><strong>Tiers 1&ndash;4 are the conformance gate.</strong> A hard failure exits with status <code>1</code>, so the checker works in CI.</li>
+      <li><strong>Credentials stay local.</strong> Use <code>TR_PROVIDER_API_KEY</code> to keep the key out of shell history. Reports recursively redact it.</li>
+      <li><strong>Checks make real requests.</strong> The model sweep and chat probes use real, billable completion calls. The default sweep is bounded to 25 advertised models.</li>
+      <li><strong>Keep the report.</strong> Attach the redacted JSON artifact to your application so failures can be reproduced quickly.</li>
+    </ul>
+    <div class="hero-actions">
+      <a class="btn primary" href="https://github.com/Lore-Hex/trustedrouter-provider-check" target="_blank" rel="noopener noreferrer">Open the provider checker <span aria-hidden="true">&nearr;</span></a>
+      <a class="btn" href="/docs/provider-conformance">Read the conformance guide</a>
+    </div>
+  </div>
+  <div class="copy-terminal" aria-label="Run the TrustedRouter provider checker">
+    <div class="code-head"><span>Provider preflight</span><span>uvx</span></div>
+    <pre><code>export TR_PROVIDER_API_KEY='your-provider-key'
+
+uvx trustedrouter-provider-check \
+  --base-url https://api.provider.com/v1 \
+  --model provider/model-name \
+  --tier 4 \
+  --json provider-report.json</code></pre>
+  </div>
+</section>
+
+<section class="marketing-split" aria-labelledby="validation-heading">
+  <div class="copy-terminal" aria-label="Provider contract validation requests">
+    <div class="code-head"><span>Two required requests</span><span>curl</span></div>
+    <pre><code>export PROVIDER_API_BASE="https://api.provider.com/v1"
+export PROVIDER_API_KEY="replace-me"
+
+curl --fail --silent --show-error \
+  "$PROVIDER_API_BASE/models" \
+  -H "Authorization: Bearer $PROVIDER_API_KEY"
+
+curl --fail --silent --show-error \
+  "$PROVIDER_API_BASE/chat/completions" \
+  -H "Authorization: Bearer $PROVIDER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "acme/atlas-70b",
+    "messages": [{"role": "user", "content": "Reply PONG"}],
+    "max_tokens": 8,
+    "stream": false
+  }'</code></pre>
+  </div>
+  <div class="marketing-copy">
+    <span class="eyebrow">Acceptance check</span>
+    <h2 id="validation-heading">These two calls must work.</h2>
+    <p>The catalog request must match the published schema. The chat request must return a normal OpenAI chat completion with nonzero token usage.</p>
+    <ul class="check-list">
+      <li>HTTP <code>200</code> with <code>Content-Type: application/json</code></li>
+      <li><code>choices[0].message.content</code> contains <code>PONG</code></li>
+      <li><code>usage.prompt_tokens</code>, <code>usage.completion_tokens</code>, and <code>usage.total_tokens</code> are integers</li>
+      <li>The response <code>model</code> identifies the model that actually ran</li>
+    </ul>
+    <p class="small-copy">If your API cannot implement this contract, email the same address with the incompatibility. Do not invent a second format.</p>
+    <p class="small-copy">Contract v1 covers chat-capable models. Include embeddings, image generation, audio, or other APIs in the email and we will map them separately.</p>
+  </div>
+</section>
+
+<section class="model-catalog" aria-labelledby="machine-readable-heading">
+  <div class="model-catalog-head">
+    <div>
+      <span class="eyebrow">Machine readable by design</span>
+      <h2 id="machine-readable-heading">Make launches and price changes automatic.</h2>
+    </div>
+    <p>Web pricing pages are useful for people. TrustedRouter also needs structured sources that software can ingest without guessing.</p>
+  </div>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
+      <span class="card-label">Inference</span>
+      <h3>A stable API base URL.</h3>
+      <p>OpenAI compatibility is preferred. Document chat, Responses, streaming, tools, vision, embeddings, timeouts, and rate-limit behavior where supported.</p>
+      <code>https://api.provider.com/v1</code>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Catalog</span>
+      <h3>A live models endpoint.</h3>
+      <p>Return the canonical unpaginated response above. TrustedRouter reads every model from the single document.</p>
+      <code>GET /v1/models</code>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Pricing</span>
+      <h3>Prices live with each model.</h3>
+      <p>Publish input, output, cache, and minimum request rates in each model row. No separate pricing endpoint is required.</p>
+      <code>pricing.unit = "per_1m_tokens"</code>
+    </div>
+  </div>
+</section>
+
+<section class="marketing-split" aria-label="What TrustedRouter does next">
+  <div class="marketing-copy">
+    <span class="eyebrow">After the email</span>
+    <h2>We verify before we list.</h2>
+    <ol class="plain-list">
+      <li>Validate authentication and retrieve the live model catalog.</li>
+      <li>Match model IDs to exact prices and supported capabilities.</li>
+      <li>Run non-streaming and streaming probes against representative models.</li>
+      <li>Publish provider and model pages only for callable routes.</li>
+      <li>Refresh availability and pricing automatically as your APIs change.</li>
+    </ol>
+  </div>
+  <div class="marketing-copy">
+    <span class="eyebrow">Also include</span>
+    <h2>Help developers choose your routes.</h2>
+    <ul class="check-list">
+      <li>Data retention, training, and zero-retention policy links</li>
+      <li>Confidential-compute or attestation documentation</li>
+      <li>Serving regions and data-residency constraints</li>
+      <li>Rate limits, capacity tiers, and expected error contracts</li>
+      <li>A machine-readable deprecation feed, or an operations contact</li>
+    </ul>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><h2>Ready to connect?</h2></div>
+  <div class="panel-body">
+    <p>Send the company and integration profile, without credentials, to <a href="mailto:providers@trustedrouter.com?subject=Provider%20marketplace%20application%20for%20%5Bcompany%5D">providers@trustedrouter.com</a>. We will reply with review questions and secure key-delivery instructions.</p>
+    <a class="btn primary" href="mailto:providers@trustedrouter.com?subject=Provider%20marketplace%20application%20for%20%5Bcompany%5D">Apply to the marketplace</a>
+  </div>
+</section>
+{% endblock %}

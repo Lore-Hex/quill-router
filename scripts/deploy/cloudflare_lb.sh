@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
-# Cloudflare Load Balancer for api.quillrouter.com — Stage 4f / AWS
-# Phase 5 of the multi-region expansion plan.
+# Cloudflare Load Balancer for api.quillrouter.com.
 #
-# Wires a Cloudflare LB with two pools so 99% of inference traffic
-# stays on GCP and 1% trickles to the AWS NLB. The 1% trickle keeps
-# the AWS path warmed under real production load: when GCP fails
-# health checks, Cloudflare drops it from rotation and 100% goes to
-# AWS within 30-60s. Steady-state cost: ~$15/mo (Cloudflare LB +
-# DNS plan).
+# GCP-only routing. The previous AWS warm-trickle pool has been
+# retired; this script keeps api.quillrouter.com pointed only at the
+# attested GCP Confidential Space gateway origin.
 #
 # Auth: API token + account ID read from ~/.quill_cloud_keys.private
 # via the same read_key_file_var helper the rest of the deploy uses.
@@ -27,9 +23,8 @@
 #   1. Verify the API token has the right scopes.
 #   2. Resolve the zone ID for ZONE_DOMAIN.
 #   3. Create/update the HTTPS health-check monitor on /healthz.
-#   4. Create/update the GCP origin pool (weight 99 in the LB).
-#   5. Create/update the AWS origin pool (weight 1 in the LB).
-#   6. Create/update the LB at api.${ZONE_DOMAIN} with both pools.
+#   4. Create/update the GCP origin pool.
+#   5. Create/update the LB at api.${ZONE_DOMAIN} with the GCP pool only.
 
 set -euo pipefail
 
@@ -48,18 +43,14 @@ LB_HOSTNAME="${LB_HOSTNAME:-api.${ZONE_DOMAIN}}"
 # stops needing to know about regions.
 GCP_ORIGIN_IP="${GCP_ORIGIN_IP:-34.61.11.3}"           # us-central1 enclave LB
 GCP_ORIGIN_LABEL="${GCP_ORIGIN_LABEL:-gcp-us-central1}"
-AWS_ORIGIN_HOST="${AWS_ORIGIN_HOST:-quill-enclave-nlb-df6a5999caabf334.elb.us-west-2.amazonaws.com}"
-AWS_ORIGIN_LABEL="${AWS_ORIGIN_LABEL:-aws-us-west-2}"
 
 GCP_POOL_NAME="${GCP_POOL_NAME:-quill-gcp-pool}"
-AWS_POOL_NAME="${AWS_POOL_NAME:-quill-aws-pool}"
 MONITOR_NAME="${MONITOR_NAME:-quill-https-healthz}"
 
-# Health check probes /healthz expecting 200. Both GCP enclave and
-# AWS NLB → enclave terminate TLS in the enclave, so we hit them
-# over HTTPS. expectedCodes=200 catches "TLS handshakes but doesn't
-# serve real HTTP" — that's exactly the failure mode AWS Phase 5 is
-# guarding against.
+# Health check probes /healthz expecting 200/401. The GCP enclave
+# terminates TLS inside the workload, so Cloudflare probes over HTTPS.
+# expectedCodes=200,401 catches "TLS handshakes but doesn't serve real
+# HTTP" without needing a Cloudflare-only API key.
 # Cloudflare LB plan tiers gate the minimum monitor interval. Free
 # Standard LB allows 60s+; lower-tier accounts surface this as a
 # cryptic 'interval is not in range [1, 1]: validation failed'.
@@ -67,11 +58,6 @@ MONITOR_INTERVAL_SECS="${MONITOR_INTERVAL_SECS:-60}"
 MONITOR_TIMEOUT_SECS="${MONITOR_TIMEOUT_SECS:-10}"
 MONITOR_RETRIES="${MONITOR_RETRIES:-2}"
 MONITOR_PATH="${MONITOR_PATH:-/healthz}"
-
-# Pool weights inside the LB. Plan: 99/1 to keep AWS continuously
-# warmed under ~1% of real load.
-GCP_WEIGHT="${GCP_WEIGHT:-0.99}"
-AWS_WEIGHT="${AWS_WEIGHT:-0.01}"
 
 DRY_RUN=1
 while [[ $# -gt 0 ]]; do
@@ -198,10 +184,10 @@ monitor_body=$(cat <<EOF
 EOF
 )
 
-# allow_insecure=true: the GCP-side enclave LBs and the AWS NLB both
-# present enclave-issued self-signed certs; without insecure, the
-# health check fails with cert-verify errors. The Host header pins
-# the SNI so the enclave returns the right cert variant.
+# allow_insecure=true: the GCP-side enclave LBs present enclave-issued
+# self-signed certs; without insecure, the health check fails with
+# cert-verify errors. The Host header pins the SNI so the enclave
+# returns the right cert variant.
 #
 # expected_codes "200,401": every route on the enclave gateway except
 # /attestation requires an API key, so /healthz returns 401 with
@@ -235,7 +221,7 @@ fi
 require_success "monitor upsert" "$resp"
 log "  monitor id: $MONITOR_ID"
 
-# ─── Phase 4 + 5: pools (GCP + AWS) ─────────────────────────────────────
+# ─── Phase 4: pool (GCP only) ───────────────────────────────────────────
 upsert_pool() {
   local pool_name="$1"
   local origin_label="$2"
@@ -287,39 +273,21 @@ GCP_POOL_ID=$(upsert_pool "$GCP_POOL_NAME" "$GCP_ORIGIN_LABEL" "$GCP_ORIGIN_IP" 
   "Quill GCP enclaves (Cloud Run + Confidential Space VMs)")
 log "  GCP pool id: $GCP_POOL_ID"
 
-AWS_POOL_ID=$(upsert_pool "$AWS_POOL_NAME" "$AWS_ORIGIN_LABEL" "$AWS_ORIGIN_HOST" \
-  "Quill AWS enclaves (Nitro on m5.xlarge in us-west-2)")
-log "  AWS pool id: $AWS_POOL_ID"
-
-# ─── Phase 6: load balancer at api.quillrouter.com ──────────────────────
+# ─── Phase 5: load balancer at api.quillrouter.com ──────────────────────
 log "=== load balancer: $LB_HOSTNAME ==="
 lb_body=$(cat <<EOF
 {
   "name": "$LB_HOSTNAME",
-  "description": "Quill multi-cloud failover (99% GCP / 1% AWS warm-trickle)",
+  "description": "Quill GCP-only attested gateway",
   "ttl": 60,
-  "default_pools": ["$GCP_POOL_ID", "$AWS_POOL_ID"],
+  "default_pools": ["$GCP_POOL_ID"],
   "fallback_pool": "$GCP_POOL_ID",
   "proxied": false,
-  "steering_policy": "random",
-  "random_steering": {
-    "default_weight": $GCP_WEIGHT,
-    "pool_weights": {
-      "$GCP_POOL_ID": $GCP_WEIGHT,
-      "$AWS_POOL_ID": $AWS_WEIGHT
-    }
-  }
+  "steering_policy": "off"
 }
 EOF
 )
 
-# steering_policy=random with random_steering: per the Cloudflare
-# docs, this yields a weighted distribution across pools. Each
-# request rolls a die against the weights — over thousands of
-# requests, ~99% land on GCP and ~1% on AWS. Combined with the
-# health-check, an unhealthy GCP pool drops to 0 weight and 100%
-# goes to AWS automatically.
-#
 # proxied=false: this is a passthrough record so the enclave's TLS
 # terminator handles the handshake. Cloudflare's edge can't proxy
 # traffic when TLS terminates in the origin (the cert wouldn't
@@ -353,8 +321,7 @@ log "  LB id: $LB_ID"
 # ─── Summary ────────────────────────────────────────────────────────────
 log ""
 log "Cloudflare LB ready."
-log "  api.quillrouter.com → 99% $GCP_ORIGIN_IP (GCP enclave us-central1)"
-log "                       → 1%  $AWS_ORIGIN_HOST (AWS NLB us-west-2)"
+log "  api.quillrouter.com → $GCP_ORIGIN_IP (GCP enclave us-central1)"
 log "  Health check: HTTPS GET $MONITOR_PATH every ${MONITOR_INTERVAL_SECS}s"
 log ""
 log "Verify resolution propagated (60s TTL):"
@@ -364,5 +331,4 @@ log "Watch real-time pool health:"
 log "  curl -sS -H \"Authorization: Bearer \$CF_API_TOKEN\" \\"
 log "    \"$CF_API/accounts/${CF_ACCOUNT_ID}/load_balancers/pools/${GCP_POOL_ID}/health\""
 log ""
-log "Next: Cloud DNS as secondary authoritative (DNS-vendor redundancy)"
-log "  — separate phase, see plan section 4f."
+log "AWS failover pool is retired; do not add it back without a new rollout plan."

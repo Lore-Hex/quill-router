@@ -198,8 +198,8 @@ def test_route_stream_failure_refunds_reserved_quota(
 
     monkeypatch.setattr(ProviderClient, "stream_chat", broken_stream)
     key = next(iter(STORE.api_keys.keys.values()))
-    account = STORE.credits[key.workspace_id]
-    before_credits = account.total_credits_microdollars
+    money = STORE.credit_money[key.workspace_id]
+    before_credits = money.total_credits_microdollars
 
     with pytest.raises(RuntimeError, match="provider stream broke"):
         with client.stream(
@@ -214,9 +214,9 @@ def test_route_stream_failure_refunds_reserved_quota(
         ) as response:
             _ = b"".join(response.iter_bytes())
 
-    assert account.total_credits_microdollars == before_credits
-    assert account.total_usage_microdollars == 0
-    assert account.reserved_microdollars == 0
+    assert money.total_credits_microdollars == before_credits
+    assert money.total_usage_microdollars == 0
+    assert money.reserved_microdollars == 0
     assert key.reserved_microdollars == 0
     assert STORE.generation_store.generations == {}
 
@@ -248,7 +248,7 @@ def test_empty_first_provider_stream_rolls_over_without_charge_or_generation(
 
     monkeypatch.setattr(ProviderClient, "stream_chat", route_stream)
     key = next(iter(STORE.api_keys.keys.values()))
-    account = STORE.credits[key.workspace_id]
+    money = STORE.credit_money[key.workspace_id]
 
     with client.stream(
         "POST",
@@ -269,7 +269,7 @@ def test_empty_first_provider_stream_rolls_over_without_charge_or_generation(
     assert len(generations) == 1
     assert generations[0].model == "meta-llama/llama-3.1-8b-instruct"
     assert generations[0].request_id == "second-provider-stream"
-    assert account.reserved_microdollars == 0
+    assert money.reserved_microdollars == 0
     assert key.reserved_microdollars == 0
     samples = STORE.provider_benchmark_samples(provider="openai")
     assert len(samples) == 1

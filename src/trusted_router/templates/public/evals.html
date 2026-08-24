@@ -22,7 +22,7 @@ def ask(model: str, prompt: str) -> str:
     )
     return response.choices[0].message.content or ""
 
-for model in ["trustedrouter/zdr", "trustedrouter/auto", "trustedrouter/cheap"]:
+for model in ["trustedrouter/zdr", "trustedrouter/eu", "trustedrouter/auto", "trustedrouter/cheap"]:
     print(model, ask(model, "Recommend 5 real albums for fans of Talk Talk."))</code></pre>
     </div>
   </div>
@@ -46,6 +46,7 @@ for model in ["trustedrouter/zdr", "trustedrouter/auto", "trustedrouter/cheap"]:
         <ul class="plain-list">
           <li><span class="mono">trustedrouter/zdr</span> for legal, medical, financial, and private customer data.</li>
           <li><span class="mono">trustedrouter/e2e</span> when the eval needs an end-to-end encrypted provider route.</li>
+          <li><span class="mono">trustedrouter/eu</span> for Europe-focused model and provider selection.</li>
           <li><span class="mono">trustedrouter/auto</span> for availability and broad fallback testing.</li>
           <li><span class="mono">trustedrouter/cheap</span> for wide sweeps where cost matters more than top quality.</li>
         </ul>
@@ -57,11 +58,24 @@ for model in ["trustedrouter/zdr", "trustedrouter/auto", "trustedrouter/cheap"]:
     <div class="panel-head"><h2>Cost discipline</h2><span class="pill">before large runs</span></div>
     <div class="panel-body">
       <p>Start each eval with a small model set and a hard token cap. Check the public leaderboard and model pages before widening the run.</p>
+      <pre><code>uv run python scripts/fusion_micro_eval.py \
+  --mode micro-hybrid \
+  --max-cost-usd 1.00</code></pre>
+      <p>The Synth micro runner estimates a deterministic 20-task tuning slice, keeps live search on a tiny smoke subset, and refuses runs that would exceed the hard cap.</p>
+      <pre><code>uv run python scripts/fusion_full_eval.py --pilot --fetch-draco
+uv run python scripts/fusion_live_eval.py \
+  --task-count 3 \
+  --config fusion_tr_budget \
+  --budget-usd 5.00 \
+  --execute</code></pre>
+      <p>The full DRACO reproduction estimator budgets 100 tasks, live search on generation calls, and three judge passes before any provider call runs. The live pilot fetches the public DRACO split, uses Exa with benchmark/rubric hostnames excluded, and writes local JSONL results. The hosted <span class="mono">trustedrouter/synth</span> API alias runs panel, judge, and final synthesis calls inside the attested gateway.</p>
       <div class="sdk-links">
         <a class="pill" href="/leaderboard">Leaderboard</a>
         <a class="pill" href="/models">Models</a>
         <a class="pill" href="/providers">Providers</a>
         <a class="pill" href="/docs/agent-setup">Agent setup</a>
+        <a class="pill" href="/blog/fusion-evals-open-source">Synth blog</a>
+        <a class="pill" href="https://github.com/Lore-Hex/quill-router/blob/main/docs/evals/fusion-draco.md">Open methodology</a>
       </div>
     </div>
   </div>

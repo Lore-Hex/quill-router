@@ -12,7 +12,7 @@ from trusted_router.routes.console._shared import ConsoleDep, render
 
 def register(app: FastAPI) -> None:
     @app.get("/console/routing")
-    async def console_routing(ctx: ConsoleDep, settings: SettingsDep) -> Response:
+    def console_routing(ctx: ConsoleDep, settings: SettingsDep) -> Response:
         regions = []
         for region in region_payload(settings):
             # Strip the scheme + /v1 from api_base_url so the routing
@@ -33,12 +33,11 @@ def register(app: FastAPI) -> None:
         return HTMLResponse(render(
             "console/routing.html",
             settings=settings,
-            user=ctx.user,
+            ctx=ctx,
             active="routing",
             page_title="Routing",
             page_subtitle="Auto-rollover order and regional endpoints.",
             auto_order=auto_order,
             regions=regions,
             configured_regions=configured_regions(settings),
-            api_base_url=settings.api_base_url,
         ))

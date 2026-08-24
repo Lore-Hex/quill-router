@@ -1,0 +1,20 @@
+[Unit]
+Description=TrustedRouter Bigtable to ClickHouse synthetic gap repair
+After=network-online.target clickhouse-server.service tr-clickhouse-operational-ingest.service
+Wants=network-online.target
+Requires=clickhouse-server.service
+
+[Service]
+Type=oneshot
+User=tr-clickhouse-ingest
+Group=tr-clickhouse-ingest
+WorkingDirectory=/opt/tr-clickhouse
+Environment=PYTHONPATH=/opt/tr-clickhouse/src
+EnvironmentFile=/etc/tr-clickhouse-ingest.env
+ExecStart=/opt/tr-clickhouse/venv/bin/python -m clickhouse.reconcile_synthetic_samples --apply
+TimeoutStartSec=10m
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/tr-clickhouse-ingest

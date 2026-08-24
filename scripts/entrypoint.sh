@@ -1,76 +1,43 @@
 #!/usr/bin/env bash
 # Container entrypoint for trusted-router.
 #
-# On AWS ECS Fargate (Stage 4D control plane), the GCP service-account key
-# we need for cross-cloud Spanner / Bigtable reads is stored
-# AWS-KMS-wrapped in Secrets Manager so the same secret can be unwrapped by
-# the Nitro enclave under attestation. ECS isn't an enclave, so this
-# entrypoint does the unwrap on container boot:
+# On GCP the SDK's default ADC chain finds the runtime service account from the
+# metadata server, and everything below is skipped.
 #
-#   1. If GCP_SA_KEY_KMS_WRAPPED is set, decode-base64 it and call AWS KMS
-#      Decrypt to recover the SA-key JSON.
-#   2. Write the JSON to /tmp/sa.json (in-memory tmpfs on Fargate).
-#   3. Set GOOGLE_APPLICATION_CREDENTIALS to that path so the GCP SDK's
-#      default-ADC chain finds it.
-#   4. Unset the wrapped env var so it doesn't leak into the app's logs
-#      or worker subprocesses.
+# Off GCP, a container that needs to reach a Google API has no metadata server
+# to ask. It proves its identity with Workload Identity Federation instead, and
+# the important property is that a WIF configuration is *not a secret*: it names
+# a pool, a provider and a service account to impersonate, and points the SDK at
+# the **local** cloud's instance metadata for the proof. No key material is
+# involved, so it travels as a plain environment variable and needs no secret
+# store.
 #
-# On GCP Cloud Run / GCE the env is unset and we just exec uvicorn — the
-# default-ADC chain finds the runtime SA from the metadata server. Same
-# image, no behavior change.
-#
-# Errors decrypting fail-closed: we exit before starting the app. A 503
-# from the LB beats a 200 from a service that silently has the wrong
-# credentials.
+# Note the narrow scope. Each cloud runs its own database (see
+# docs/storage-portability/multi-cloud-separation.md), so this is for
+# operational access — shared image registry, bootstrap, ops tooling — not for
+# application data. Same image, same entrypoint, no long-lived Google
+# credentials on any cloud.
 
 set -euo pipefail
 
-if [ -n "${GCP_SA_KEY_KMS_WRAPPED:-}" ]; then
-  echo "[entrypoint] GCP_SA_KEY_KMS_WRAPPED present; KMS-decrypting" >&2
-  if ! command -v aws >/dev/null 2>&1; then
-    echo "[entrypoint] FATAL: aws CLI not in PATH" >&2
-    exit 1
-  fi
+if [ -n "${TR_GOOGLE_EXTERNAL_CREDENTIAL_CONFIG:-}" ]; then
+  # Guard the seam. This path exists to REMOVE long-lived keys, so refuse to
+  # materialise a service-account key through it — otherwise the keyless
+  # design quietly degrades back into a key file the first time someone is in
+  # a hurry.
+  case "$TR_GOOGLE_EXTERNAL_CREDENTIAL_CONFIG" in
+    *'"private_key"'*|*'"service_account"'*)
+      echo "entrypoint: refusing a credential config that carries key material." >&2
+      echo "entrypoint: this variable takes a keyless external_account (Workload" >&2
+      echo "entrypoint: Identity Federation) config only." >&2
+      exit 1
+      ;;
+  esac
 
-  # base64-decode the wrapped value, pipe ciphertext to KMS Decrypt,
-  # base64-decode the response (aws CLI returns plaintext as base64).
-  #
-  # Region: the KMS CMK that wrapped this secret lives in the SAME
-  # region as the Secrets Manager that hosts it, by construction
-  # (see tools/deploy-aws-nitro.sh). That region is us-west-2 today.
-  # Don't fall back to $TR_AWS_REGION here — that one is the app's
-  # outbound AWS API region (SES in us-east-1, e.g.) and is NOT the
-  # KMS-key region. Prefer the AWS-defined env vars Fargate injects
-  # (AWS_REGION / AWS_DEFAULT_REGION) which match the running task,
-  # which is the same region as the wrapping CMK.
-  KMS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-west-2}}"
-  PLAINTEXT_JSON=$(
-    echo "$GCP_SA_KEY_KMS_WRAPPED" \
-      | base64 -d \
-      | aws kms decrypt \
-          --region "$KMS_REGION" \
-          --ciphertext-blob fileb:///dev/stdin \
-          --query Plaintext --output text \
-      | base64 -d
-  ) || {
-    echo "[entrypoint] FATAL: KMS decrypt failed" >&2
-    exit 1
-  }
-
-  if ! echo "$PLAINTEXT_JSON" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null; then
-    echo "[entrypoint] FATAL: KMS decrypt returned non-JSON output" >&2
-    exit 1
-  fi
-
-  CRED_PATH="${GCP_SA_KEY_PATH:-/tmp/sa.json}"
-  printf '%s' "$PLAINTEXT_JSON" > "$CRED_PATH"
-  chmod 600 "$CRED_PATH"
-  export GOOGLE_APPLICATION_CREDENTIALS="$CRED_PATH"
-  unset GCP_SA_KEY_KMS_WRAPPED
-  echo "[entrypoint] wrote credentials to $CRED_PATH" >&2
+  config_path="${TR_GOOGLE_EXTERNAL_CREDENTIAL_CONFIG_PATH:-/tmp/gcp-external-credential.json}"
+  (umask 077 && printf '%s' "$TR_GOOGLE_EXTERNAL_CREDENTIAL_CONFIG" > "$config_path")
+  export GOOGLE_APPLICATION_CREDENTIALS="$config_path"
 fi
 
-# Exec uvicorn (or whatever CMD the image specifies). Using exec replaces
-# this shell so signals (SIGTERM from ECS during rolling deploy) reach
-# uvicorn directly.
+# exec replaces this shell so signals reach uvicorn directly.
 exec "$@"

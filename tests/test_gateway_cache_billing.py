@@ -32,15 +32,24 @@ def _client_and_key() -> tuple[TestClient, dict]:
     return client, created.json()["data"]
 
 
-def _authorize(client: TestClient, key: dict, model: str) -> dict:
+def _authorize(
+    client: TestClient,
+    key: dict,
+    model: str,
+    *,
+    provider: dict | None = None,
+) -> dict:
+    body = {
+        "api_key_hash": key["hash"],
+        "model": model,
+        "estimated_input_tokens": 8_000,
+        "max_output_tokens": 1_000,
+    }
+    if provider is not None:
+        body["provider"] = provider
     authorize = client.post(
         "/v1/internal/gateway/authorize",
-        json={
-            "api_key_hash": key["hash"],
-            "model": model,
-            "estimated_input_tokens": 8_000,
-            "max_output_tokens": 1_000,
-        },
+        json=body,
     )
     assert authorize.status_code == 200, authorize.text
     return authorize.json()["data"]
@@ -96,9 +105,14 @@ def test_anthropic_cache_read_and_write_tokens_are_billed() -> None:
 
 def test_openai_compatible_cached_subset_is_normalized() -> None:
     client, key = _client_and_key()
-    auth = _authorize(client, key, "mistralai/mistral-small-3.2-24b-instruct")
+    auth = _authorize(
+        client,
+        key,
+        "z-ai/glm-5.2",
+        provider={"only": ["tinfoil"]},
+    )
     endpoint = endpoint_for_id(auth["endpoint_id"])
-    assert endpoint is not None and endpoint.provider != "anthropic"
+    assert endpoint is not None and endpoint.provider == "tinfoil"
 
     settle = client.post(
         "/v1/internal/gateway/settle",
@@ -117,7 +131,10 @@ def test_openai_compatible_cached_subset_is_normalized() -> None:
 
     prompt_price = endpoint.prompt_price_microdollars_per_million_tokens
     completion_price = endpoint.completion_price_microdollars_per_million_tokens
-    read_price, _ = cache_token_prices_microdollars(endpoint.provider, prompt_price)
+    read_price = (
+        endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
+    )
+    assert read_price is not None
     expected = (
         token_cost_microdollars(100, prompt_price)  # 1000 - 900 cached
         + token_cost_microdollars(50, completion_price)
@@ -128,6 +145,48 @@ def test_openai_compatible_cached_subset_is_normalized() -> None:
     generation = STORE.get_generation(data["generation_id"])
     assert generation is not None
     assert generation.tokens_prompt == 1_000
+
+
+def test_tinfoil_glm_52_uses_published_cached_input_rate() -> None:
+    client, key = _client_and_key()
+    auth = _authorize(
+        client,
+        key,
+        "z-ai/glm-5.2",
+        provider={"only": ["tinfoil"]},
+    )
+    endpoint = endpoint_for_id(auth["endpoint_id"])
+    assert endpoint is not None and endpoint.provider == "tinfoil"
+
+    settle = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": auth["authorization_id"],
+            "actual_input_tokens": 1_000,
+            "actual_output_tokens": 50,
+            "cache_read_input_tokens": 900,
+            "request_id": "gw-cache-tinfoil",
+            "elapsed_seconds": 1.0,
+        },
+    )
+    assert settle.status_code == 200, settle.text
+
+    tier = endpoint.price_tiers[0]
+    cached_price = tier.prompt_cached_price_microdollars_per_million_tokens
+    assert cached_price == 395_625
+    expected = (
+        token_cost_microdollars(
+            100, tier.prompt_price_microdollars_per_million_tokens
+        )
+        + token_cost_microdollars(
+            900,
+            cached_price,
+        )
+        + token_cost_microdollars(
+            50, tier.completion_price_microdollars_per_million_tokens
+        )
+    )
+    assert settle.json()["data"]["cost_microdollars"] == expected
 
 
 def test_settle_without_cache_fields_is_unchanged() -> None:
@@ -155,3 +214,39 @@ def test_settle_without_cache_fields_is_unchanged() -> None:
     generation = STORE.get_generation(data["generation_id"])
     assert generation is not None
     assert generation.tokens_prompt == 500
+    assert generation.cached_input_tokens == 0
+
+
+def test_settle_records_cache_reads_on_the_generation() -> None:
+    """The generation's cached_input_tokens must reflect the settle body.
+
+    Regression: `from_settle_body` only read the legacy `cached_input_tokens`
+    / `cached_tokens` aliases, but the attested gateway sends
+    `cache_read_input_tokens` (the name SettleRequest declares and billing
+    reads). Every attested generation therefore recorded 0 cached tokens —
+    across ~700k rows in production — making prompt-cache usage look
+    nonexistent. Billing was always correct; only this metric was blank.
+    """
+    client, key = _client_and_key()
+    auth = _authorize(
+        client,
+        key,
+        "z-ai/glm-5.2",
+        provider={"only": ["tinfoil"]},
+    )
+
+    settle = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": auth["authorization_id"],
+            "actual_input_tokens": 1_000,
+            "actual_output_tokens": 50,
+            "cache_read_input_tokens": 900,
+            "request_id": "gw-cache-metric",
+            "elapsed_seconds": 1.0,
+        },
+    )
+    assert settle.status_code == 200, settle.text
+    generation = STORE.get_generation(settle.json()["data"]["generation_id"])
+    assert generation is not None
+    assert generation.cached_input_tokens == 900

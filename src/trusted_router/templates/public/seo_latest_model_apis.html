@@ -1,0 +1,81 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Latest AI model APIs">
+  <div class="marketing-copy">
+    <span class="eyebrow">New model APIs</span>
+    <h2>Try the models developers are evaluating now.</h2>
+    <p>Kimi K3, GLM 5.2, DeepSeek V4, and Gemini 3.6 Flash share one OpenAI-compatible endpoint. Create one key, keep one SDK, and compare them on your own prompts.</p>
+    <p><button class="btn primary" type="button" data-action="open-signin">Create key and run a model</button> <a class="btn" href="/choose">Compare the catalog</a></p>
+    <p class="microcopy">New email signups receive starter credit. No card required.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Switch the model string</span><span>OpenAI SDK</span></div>
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key="sk-tr-v1-...",
+)
+
+response = client.chat.completions.create(
+    model="moonshotai/kimi-k3",
+    messages=[{"role": "user", "content": "Test this task"}],
+)
+
+# Try z-ai/glm-5.2 or deepseek/deepseek-v4-pro next.</code></pre>
+  </div>
+</section>
+
+<section class="marketing-grid four" aria-label="Highlighted new models">
+  <a class="marketing-card card-as-link" id="kimi-k3" href="/models/moonshotai/kimi-k3">
+    <span class="card-label">Kimi K3</span>
+    <h3>Long-context reasoning</h3>
+    <p>Compare every currently available Kimi K3 provider route, price, privacy label, and live performance.</p>
+    <span class="card-link">Open Kimi K3 <span aria-hidden="true">→</span></span>
+  </a>
+  <a class="marketing-card card-as-link" id="glm-5-2" href="/models/z-ai/glm-5.2">
+    <span class="card-label">GLM 5.2</span>
+    <h3>Open-weight frontier route</h3>
+    <p>Call GLM 5.2 through several providers and choose a route by cost, speed, region, or privacy.</p>
+    <span class="card-link">Open GLM 5.2 <span aria-hidden="true">→</span></span>
+  </a>
+  <a class="marketing-card card-as-link" id="deepseek-v4" href="/models/deepseek/deepseek-v4-pro">
+    <span class="card-label">DeepSeek V4</span>
+    <h3>Cost-efficient reasoning</h3>
+    <p>Use V4 Pro for quality or compare the Flash routes when throughput and price matter more.</p>
+    <span class="card-link">Open DeepSeek V4 <span aria-hidden="true">→</span></span>
+  </a>
+  <a class="marketing-card card-as-link" id="gemini-3-6-flash" href="/models/google/gemini-3.6-flash">
+    <span class="card-label">Gemini 3.6 Flash</span>
+    <h3>Fast multimodal work</h3>
+    <p>Compare Google AI Studio and Vertex routes without changing your application integration.</p>
+    <span class="card-link">Open Gemini 3.6 Flash <span aria-hidden="true">→</span></span>
+  </a>
+</section>
+
+<section class="quote-feature">
+  <div>
+    <span class="eyebrow">One integration</span>
+    <h2>Evaluate on your task, then ship the winner.</h2>
+  </div>
+  <div>
+    <p><strong>Same request shape.</strong> Keep one OpenAI-compatible client and switch the model ID instead of maintaining separate provider SDKs.</p>
+    <p><strong>Route evidence.</strong> Model pages publish providers, pricing, context, measured performance, retention posture, and verified confidential-compute status.</p>
+    <p><strong>Provider rollover.</strong> Models served by multiple providers can move to a healthy authorized route when the first provider returns a retryable failure.</p>
+    <p><strong>Privacy with proof.</strong> TrustedRouter keeps no prompt or output logs, always. Upstream guarantees differ and remain explicit on every route.</p>
+  </div>
+</section>
+
+<section class="cta-band" aria-label="Try a new model API">
+  <div>
+    <strong>One key. Hundreds of models.</strong>
+    <span>Run Kimi K3, GLM 5.2, DeepSeek V4, or Gemini 3.6 Flash with the SDK you already use.</span>
+  </div>
+  <div class="cta-band-actions">
+    <button class="btn primary" type="button" data-action="open-signin">Create my API key</button>
+  </div>
+  <span class="microcopy">No card required.</span>
+</section>
+
+{% endblock %}

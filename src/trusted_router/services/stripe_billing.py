@@ -5,10 +5,15 @@ from typing import Any, cast
 
 import stripe
 
+from trusted_router.acquisition import (
+    record_checkout_started,
+    record_payment_method_saved,
+)
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
-from trusted_router.money import dollars_to_cents, dollars_to_microdollars, money_pair
+from trusted_router.money import dollars_to_cents, money_pair
 from trusted_router.schemas import CheckoutRequest
+from trusted_router.services.stripe_fees import stripe_processing_fee
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
@@ -17,10 +22,11 @@ def create_checkout_session(
     *,
     body: CheckoutRequest,
     workspace_id: str,
+    initiating_user_id: str | None,
     customer_email: str | None,
+    customer_id: str | None,
     settings: Settings,
 ) -> dict[str, Any]:
-    amount_microdollars = dollars_to_microdollars(body.amount)
     workspace = STORE.get_workspace(workspace_id)
     if workspace is None:
         raise api_error(404, "Workspace not found", ErrorType.NOT_FOUND)
@@ -28,59 +34,120 @@ def create_checkout_session(
     success_url = body.success_url or f"https://{settings.trusted_domain}/billing/success"
     cancel_url = body.cancel_url or f"https://{settings.trusted_domain}/billing"
     amount_cents = dollars_to_cents(body.amount)
+    amount_microdollars = amount_cents * 10_000
     stablecoin_requested = body.payment_method in {"stablecoin", "crypto", "usdc"}
+    ach_requested = body.payment_method in {"ach", "bank", "us_bank_account"}
     if stablecoin_requested and not settings.stablecoin_checkout_enabled:
         raise api_error(400, "Stablecoin checkout is not enabled", ErrorType.BAD_REQUEST)
+    if ach_requested:
+        fee_basis_points = settings.stripe_ach_fee_basis_points
+        fee_fixed_cents = settings.stripe_ach_fee_fixed_cents
+        fee_max_cents: int | None = settings.stripe_ach_fee_max_cents
+        payment_method = "ach"
+    elif stablecoin_requested:
+        fee_basis_points = settings.stripe_stablecoin_fee_basis_points
+        fee_fixed_cents = settings.stripe_stablecoin_fee_fixed_cents
+        fee_max_cents = None
+        payment_method = "stablecoin"
+    else:
+        fee_basis_points = settings.stripe_card_fee_basis_points
+        fee_fixed_cents = settings.stripe_card_fee_fixed_cents
+        fee_minimum_cents = settings.checkout_card_fee_minimum_cents
+        fee_max_cents = None
+        payment_method = "card"
+    if ach_requested or stablecoin_requested:
+        fee_minimum_cents = 0
+    fee = stripe_processing_fee(
+        credit_amount_cents=amount_cents,
+        variable_basis_points=fee_basis_points,
+        fixed_fee_cents=fee_fixed_cents,
+        minimum_fee_cents=fee_minimum_cents,
+        max_fee_cents=fee_max_cents,
+    )
+    payment_metadata = fee.metadata(
+        workspace_id=workspace_id,
+        payment_method=payment_method,
+        initiating_user_id=initiating_user_id,
+    )
     if settings.stripe_secret_key:
         stripe.api_key = settings.stripe_secret_key
         session_args: dict[str, Any] = {
             "mode": "payment",
             "success_url": success_url,
             "cancel_url": cancel_url,
-            "line_items": [
-                {
-                    "price_data": {
-                        "currency": "usd",
-                        "product_data": {"name": "TrustedRouter credits"},
-                        "unit_amount": amount_cents,
-                    },
-                    "quantity": 1,
-                }
-            ],
-            "metadata": {
-                "workspace_id": workspace_id,
-                "payment_method": "stablecoin" if stablecoin_requested else "auto",
-            },
+            "line_items": fee.checkout_line_items(),
+            "metadata": payment_metadata,
         }
         if stablecoin_requested:
             session_args["payment_method_types"] = ["crypto"]
+            session_args["payment_intent_data"] = {"metadata": payment_metadata}
             if customer_email:
                 session_args["customer_email"] = customer_email
         else:
-            # Capture the customer + payment method on the card path so
-            # auto-refill can charge off-session later. Crypto checkouts
-            # don't support `setup_future_usage`, so we only set this on
-            # the card path.
-            session_args["customer_creation"] = "always"
-            session_args["payment_intent_data"] = {
-                "setup_future_usage": "off_session",
-                "metadata": {"workspace_id": workspace_id},
-            }
+            if customer_id:
+                session_args["customer"] = customer_id
+            else:
+                session_args["customer_creation"] = "always"
+                if customer_email:
+                    session_args["customer_email"] = customer_email
+            if ach_requested:
+                session_args["payment_method_types"] = ["us_bank_account"]
+                session_args["payment_method_options"] = {
+                    "us_bank_account": {"verification_method": "automatic"}
+                }
+                # ACH is a one-time top-up. Saved-card auto refill remains
+                # card-only because bank debits settle asynchronously.
+                session_args["payment_intent_data"] = {"metadata": payment_metadata}
+            else:
+                if body.payment_method == "card":
+                    session_args["payment_method_types"] = ["card"]
+                session_args["payment_intent_data"] = {
+                    "setup_future_usage": "off_session",
+                    "metadata": payment_metadata,
+                }
         session = stripe.checkout.Session.create(**session_args)
+        mode = (
+            "stripe_stablecoin"
+            if stablecoin_requested
+            else "stripe_ach"
+            if ach_requested
+            else "stripe"
+        )
+        record_checkout_started(
+            workspace_id,
+            amount_microdollars=amount_microdollars,
+            payment_method=payment_method,
+        )
         return {
             "id": session["id"],
             "url": session["url"],
             "workspace_id": workspace_id,
             **money_pair("amount", amount_microdollars),
-            "mode": "stripe_stablecoin" if stablecoin_requested else "stripe",
+            **money_pair("processing_fee", fee.processing_fee_microdollars),
+            **money_pair("total", fee.charge_amount_microdollars),
+            "mode": mode,
         }
 
+    mock_mode = (
+        "mock_stablecoin"
+        if stablecoin_requested
+        else "mock_ach"
+        if ach_requested
+        else "mock"
+    )
+    record_checkout_started(
+        workspace_id,
+        amount_microdollars=amount_microdollars,
+        payment_method=payment_method,
+    )
     return {
         "id": f"cs_test_{uuid.uuid4().hex}",
         "url": f"https://{settings.trusted_domain}/billing/mock-checkout",
         "workspace_id": workspace_id,
         **money_pair("amount", amount_microdollars),
-        "mode": "mock_stablecoin" if stablecoin_requested else "mock",
+        **money_pair("processing_fee", fee.processing_fee_microdollars),
+        **money_pair("total", fee.charge_amount_microdollars),
+        "mode": mock_mode,
     }
 
 
@@ -137,6 +204,7 @@ def create_payment_method_session(
         customer_id=mock_customer_id,
         payment_method_id=mock_payment_method_id,
     )
+    record_payment_method_saved(workspace_id, payment_method="stripe_card")
     return {
         "id": f"cs_setup_mock_{uuid.uuid4().hex}",
         "url": f"https://{settings.trusted_domain}/billing/mock-payment-method",
@@ -167,7 +235,14 @@ def describe_saved_payment_method(
     *,
     payment_method_id: str | None,
     settings: Settings,
+    raise_on_error: bool = False,
 ) -> dict[str, Any] | None:
+    """Return masked card display fields for a saved payment method.
+
+    Callers rendering a best-effort inline view keep the default fallback on
+    Stripe errors. Deferred loaders can request ``raise_on_error`` so they can
+    distinguish an empty value from a temporarily unavailable Stripe read.
+    """
     if not payment_method_id:
         return None
     fallback = {
@@ -190,6 +265,8 @@ def describe_saved_payment_method(
     try:
         payment_method = stripe.PaymentMethod.retrieve(payment_method_id)
     except Exception:
+        if raise_on_error:
+            raise
         return fallback
 
     data = (
@@ -242,6 +319,7 @@ def list_workspace_payments(
     workspace_id: str,
     settings: Settings,
     limit: int = 20,
+    raise_on_error: bool = False,
 ) -> list[dict[str, Any]]:
     """Return the recent Stripe payments for this workspace.
 
@@ -254,7 +332,7 @@ def list_workspace_payments(
     Why PaymentIntent search (not checkout.Session): Stripe's Search API
     is only enabled on certain resources — PaymentIntent yes, Charge yes,
     checkout.Session NO. Our `create_checkout_session()` stamps
-    `payment_intent_data.metadata.workspace_id` on every card-mode
+    `payment_intent_data.metadata.workspace_id` on every Stripe
     checkout, so the resulting PaymentIntent IS searchable by workspace.
 
     Returns up to `limit` rows newest-first, each with the shape:
@@ -262,18 +340,24 @@ def list_workspace_payments(
           "payment_intent": "pi_...",
           "created_at": <unix ts>,
           "amount_cents": int,
+          "credit_amount_cents": int | None,
+          "processing_fee_cents": int | None,
           "currency": "usd",
           "status": "succeeded" | "processing" | "requires_payment_method" | ...,
           "receipt_url": str | None,
+          "payment_method_type": "card" | "ach" | "stablecoin" | None,
           "card_brand": "visa" | "mastercard" | ... | None,
           "card_last4": "4242" | None,
+          "bank_name": str | None,
+          "bank_last4": "6789" | None,
         }
 
-    Failures (Stripe API down, missing key) return an empty list rather
-    than raising — the credits page falls back to "no payment history
+    Failures (Stripe API down, missing key) return an empty list by default
+    rather than raising — the credits page falls back to "no payment history
     yet" copy, which is the right UX in both legitimate-empty and
     transient-failure cases. The page still renders the balance section
-    so the page isn't blocked on Stripe API uptime.
+    so the page isn't blocked on Stripe API uptime. Deferred loaders can set
+    ``raise_on_error`` to distinguish an outage from a legitimate empty list.
     """
     if not settings.stripe_secret_key:
         return []
@@ -290,6 +374,8 @@ def list_workspace_payments(
             expand=["data.latest_charge"],
         )
     except Exception:
+        if raise_on_error:
+            raise
         # Stripe down, search quota exceeded, or the workspace has
         # never paid yet — all collapse to "no payments to show right
         # now." Page still renders the rest of credits view.
@@ -307,19 +393,34 @@ def list_workspace_payments(
             charge = None
         card_brand: str | None = None
         card_last4: str | None = None
+        bank_name: str | None = None
+        bank_last4: str | None = None
         receipt_url: str | None = None
         if isinstance(charge, dict):
             receipt_url = charge.get("receipt_url")
             pmd = charge.get("payment_method_details") or {}
             card = pmd.get("card") if isinstance(pmd, dict) else None
+            bank = pmd.get("us_bank_account") if isinstance(pmd, dict) else None
             if isinstance(card, dict):
                 card_brand = card.get("brand")
                 card_last4 = card.get("last4")
+            if isinstance(bank, dict):
+                bank_name = bank.get("bank_name")
+                bank_last4 = bank.get("last4")
+        metadata = pi_data.get("metadata")
         # PaymentIntent.amount is in cents already.
         out.append({
             "payment_intent": pi_data.get("id"),
             "created_at": pi_data.get("created"),
             "amount_cents": int(pi_data.get("amount") or 0),
+            "credit_amount_cents": _metadata_microdollars_to_cents(
+                metadata,
+                key="credit_amount_microdollars",
+            ),
+            "processing_fee_cents": _metadata_int(
+                metadata,
+                key="processing_fee_cents",
+            ),
             "currency": pi_data.get("currency") or "usd",
             "status": pi_data.get("status"),
             # Display-shaped synonym so the template doesn't need to know
@@ -329,7 +430,32 @@ def list_workspace_payments(
                 "paid" if pi_data.get("status") == "succeeded" else pi_data.get("status")
             ),
             "receipt_url": receipt_url,
+            "payment_method_type": (
+                metadata.get("payment_method") if isinstance(metadata, dict) else None
+            ),
             "card_brand": card_brand,
             "card_last4": card_last4,
+            "bank_name": bank_name,
+            "bank_last4": bank_last4,
         })
     return out
+
+
+def _metadata_int(metadata: Any, *, key: str) -> int | None:
+    if not isinstance(metadata, dict):
+        return None
+    raw = metadata.get(key)
+    if not isinstance(raw, str):
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value >= 0 else None
+
+
+def _metadata_microdollars_to_cents(metadata: Any, *, key: str) -> int | None:
+    value = _metadata_int(metadata, key=key)
+    if value is None or value % 10_000:
+        return None
+    return value // 10_000

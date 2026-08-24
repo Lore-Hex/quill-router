@@ -20,6 +20,13 @@ from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.services.auto_refill import AutoRefillOutcome, maybe_charge_after_settle
 from trusted_router.storage import STORE
+from trusted_router.typed_balance import live_credit_summary
+
+
+def _credit_summary(workspace_id: str) -> dict[str, int]:
+    summary = live_credit_summary(workspace_id)
+    assert summary is not None
+    return summary
 
 
 @pytest.fixture
@@ -66,6 +73,48 @@ def test_auto_refill_skips_when_above_threshold(
     assert outcome.reason == "above_threshold"
 
 
+def test_auto_refill_skips_when_exactly_at_threshold(
+    configured_workspace: str, stripe_settings: Settings
+) -> None:
+    # The UI promise is "when balance drops below", not "at or below".
+    # $10 trial - $5 settled usage = $5 available, exactly the threshold.
+    reservation = STORE.reserve(configured_workspace, "fake-key-hash", 5_000_000)
+    STORE.settle(reservation.id, 5_000_000)
+
+    with patch("stripe.PaymentIntent.create") as create:
+        outcome = maybe_charge_after_settle(configured_workspace, settings=stripe_settings)
+
+    assert outcome.fired is False
+    assert outcome.reason == "above_threshold"
+    create.assert_not_called()
+
+
+def test_auto_refill_skips_reported_fifteen_dollar_balance_against_ten_dollar_threshold(
+    stripe_settings: Settings,
+) -> None:
+    user = STORE.ensure_user("fifteen-above-threshold@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    STORE.credit_workspace_once(workspace.id, 5_000_000, "manual-extra-five")
+    STORE.set_stripe_customer(
+        workspace.id,
+        customer_id="cus_reported",
+        payment_method_id="pm_reported",
+    )
+    STORE.update_auto_refill_settings(
+        workspace.id,
+        enabled=True,
+        threshold_microdollars=10_000_000,
+        amount_microdollars=25_000_000,
+    )
+
+    with patch("stripe.PaymentIntent.create") as create:
+        outcome = maybe_charge_after_settle(workspace.id, settings=stripe_settings)
+
+    assert outcome.fired is False
+    assert outcome.reason == "above_threshold"
+    create.assert_not_called()
+
+
 def test_auto_refill_skips_without_payment_method(stripe_settings: Settings) -> None:
     user = STORE.ensure_user("nopayment@example.com")
     workspace = STORE.list_workspaces_for_user(user.id)[0]
@@ -97,21 +146,67 @@ def test_auto_refill_fires_below_threshold(
     assert outcome.payment_intent_id == "pi_test_abc"
     create.assert_called_once()
     kwargs = create.call_args.kwargs
-    # Convert microdollars to cents: $20 → 2000 cents.
-    assert kwargs["amount"] == 2000
+    # The user receives $20.00 in credits. The card charge separately
+    # includes the grossed-up 2.9% + 30c payment processing fee.
+    assert kwargs["amount"] == 2091
     assert kwargs["currency"] == "usd"
     assert kwargs["customer"] == "cus_test_123"
     assert kwargs["payment_method"] == "pm_test_456"
     assert kwargs["off_session"] is True
     assert kwargs["confirm"] is True
     assert kwargs["metadata"]["workspace_id"] == configured_workspace
+    workspace = STORE.get_workspace(configured_workspace)
+    assert workspace is not None
+    assert kwargs["metadata"]["initiating_user_id"] == workspace.owner_user_id
     assert kwargs["metadata"]["auto_refill"] == "true"
+    assert kwargs["metadata"]["amount_microdollars"] == "20000000"
+    assert kwargs["metadata"]["processing_fee_cents"] == "91"
+    assert kwargs["metadata"]["charge_amount_cents"] == "2091"
+    assert kwargs["amount_details"]["line_items"] == [
+        {
+            "product_name": "TrustedRouter credits",
+            "quantity": 1,
+            "unit_cost": 2000,
+        },
+        {
+            "product_name": "Payment processing fee",
+            "quantity": 1,
+            "unit_cost": 91,
+        },
+    ]
     assert "auto-refill" in kwargs.get("idempotency_key", "")
 
     # Status should be pending until the webhook lands.
     account = STORE.get_credit_account(configured_workspace)
     assert account is not None
     assert account.last_auto_refill_status == "pending"
+
+
+def test_small_auto_refill_applies_card_fee_floor(stripe_settings: Settings) -> None:
+    user = STORE.ensure_user("small-refill@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    STORE.set_stripe_customer(
+        workspace.id,
+        customer_id="cus_small",
+        payment_method_id="pm_small",
+    )
+    STORE.update_auto_refill_settings(
+        workspace.id,
+        enabled=True,
+        threshold_microdollars=2_000_000,
+        amount_microdollars=3_000_000,
+    )
+    STORE.settle(STORE.reserve(workspace.id, "small-key", 9_000_000).id, 9_000_000)
+
+    fake_intent = MagicMock(id="pi_small")
+    with patch("stripe.PaymentIntent.create", return_value=fake_intent) as create:
+        outcome = maybe_charge_after_settle(workspace.id, settings=stripe_settings)
+
+    assert outcome.fired is True
+    kwargs = create.call_args.kwargs
+    assert kwargs["amount"] == 380
+    assert kwargs["metadata"]["processing_fee_cents"] == "80"
+    assert kwargs["metadata"]["fee_minimum_cents"] == "80"
 
 
 def test_auto_refill_records_card_error(
@@ -181,9 +276,7 @@ def test_payment_intent_succeeded_webhook_credits_workspace(
                 }
             },
         }
-        before = STORE.get_credit_account(configured_workspace)
-        assert before is not None
-        before_credits = before.total_credits_microdollars
+        before_credits = _credit_summary(configured_workspace)["total_credits"]
         resp = client.post("/internal/stripe/webhook", json=event)
         next(client_iter)  # silence unused-iter warning.
     assert resp.status_code == 200
@@ -192,7 +285,7 @@ def test_payment_intent_succeeded_webhook_credits_workspace(
 
     after = STORE.get_credit_account(configured_workspace)
     assert after is not None
-    assert after.total_credits_microdollars == before_credits + 20_000_000
+    assert _credit_summary(configured_workspace)["total_credits"] == before_credits + 20_000_000
     assert after.last_auto_refill_status == "succeeded"
 
 
@@ -304,11 +397,7 @@ def test_auto_refill_exits_band_after_successful_credit(
 
     account = STORE.get_credit_account(configured_workspace)
     assert account is not None
-    available = (
-        account.total_credits_microdollars
-        - account.total_usage_microdollars
-        - account.reserved_microdollars
-    )
+    available = _credit_summary(configured_workspace)["available"]
     # $1 + $20 refill = $21, well above $5 threshold.
     assert available > account.auto_refill_threshold_microdollars
 
@@ -321,28 +410,22 @@ def test_auto_refill_exits_band_after_successful_credit(
     create.assert_not_called()
 
 
-def test_auto_refill_idempotency_key_blocks_double_charge_within_minute(
+def test_auto_refill_pending_payment_intent_blocks_duplicate_charge(
     configured_workspace: str, stripe_settings: Settings
 ) -> None:
-    """Two settles inside the same calendar minute that both drop below
-    threshold must hand the same idempotency key to Stripe so Stripe's
-    own dedupe absorbs the second call. We verify that by inspecting
-    the `idempotency_key` kwarg, not by faking Stripe's behaviour."""
+    """Once an auto-refill PaymentIntent is created, do not create a second
+    one while the first is waiting for the Stripe webhook to credit the
+    workspace. This is the high-value double-charge guard."""
     STORE.settle(STORE.reserve(configured_workspace, "k", 9_000_000).id, 9_000_000)
 
     fake_intent = MagicMock(id="pi_idem")
     with patch("stripe.PaymentIntent.create", return_value=fake_intent) as create:
         first = maybe_charge_after_settle(configured_workspace, settings=stripe_settings)
-        # Reset the rate-limit gate by simulating a fresh "pending" state.
-        STORE.record_auto_refill_outcome(configured_workspace, status="pending")
         second = maybe_charge_after_settle(configured_workspace, settings=stripe_settings)
     assert first.fired is True
-    # Even if the second goes through, the idempotency key must match.
-    if second.fired:
-        first_key = create.call_args_list[0].kwargs["idempotency_key"]
-        second_key = create.call_args_list[1].kwargs["idempotency_key"]
-        # Same workspace + same amount + same minute → same key.
-        assert first_key == second_key
+    assert second.fired is False
+    assert second.reason == "pending"
+    create.assert_called_once()
 
 
 def test_console_credits_refuses_to_enable_without_payment_method() -> None:

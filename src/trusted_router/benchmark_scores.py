@@ -24,7 +24,11 @@ from pathlib import Path
 from typing import Any
 
 _DATA_PATH = Path(__file__).parent / "data" / "benchmark_scores.json"
-_RENDERABLE_CLASSES = {"A", "B"}
+# A = first-party vendor card / paper. B = open leaderboard, permissive license.
+# T = TrustedRouter's own runs — first-party but fully reproducible (every score
+# links to the published per-item replay in trustedrouter-benchmarks). C
+# (Artificial Analysis / LMArena / LiveBench) stays excluded — ToS-restricted.
+_RENDERABLE_CLASSES = {"A", "B", "T"}
 
 
 @dataclass(frozen=True)
@@ -94,6 +98,14 @@ BENCHMARK_DEFS: dict[str, BenchmarkDef] = {
         "ifeval", "IFEval", "Instruction following", "percent",
         "https://github.com/google-research/google-research/tree/master/instruction_following_eval",
     ),
+    "gsm8k": BenchmarkDef(
+        "gsm8k", "GSM8K", "Math", "percent",
+        "https://github.com/openai/grade-school-math",
+    ),
+    "simpleqa_verified": BenchmarkDef(
+        "simpleqa_verified", "SimpleQA Verified", "Factuality", "percent",
+        "https://huggingface.co/datasets/google/simpleqa-verified",
+    ),
     "mmmu": BenchmarkDef(
         "mmmu", "MMMU", "Vision", "percent", "https://mmmu-benchmark.github.io/",
     ),
@@ -149,6 +161,8 @@ def scores_for_model(model_id: str) -> list[dict[str, Any]]:
                 "display": _display(row["score"], unit),
                 "source_name": row["source_name"],
                 "source_url": row["source_url"],
+                "source_class": row.get("source_class"),
+                "reproducible": row.get("source_class") == "T",
                 "as_of_date": row.get("as_of_date"),
                 "config_note": row.get("config_note"),
             }

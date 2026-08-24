@@ -5,12 +5,16 @@ from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from google.api_core import exceptions as gcp_exceptions
 
 from trusted_router.auth import ManagementPrincipal, SettingsDep
 from trusted_router.byok_crypto import encrypt_byok_secret
 from trusted_router.catalog import PROVIDERS
 from trusted_router.errors import api_error
+from trusted_router.key_management import KeyAccessDenied, KeyManagementError
+from trusted_router.provider_compat import (
+    byok_storage_provider_candidates,
+    canonical_byok_provider,
+)
 from trusted_router.schemas import UpsertByokRequest
 from trusted_router.security import key_label
 from trusted_router.serialization import byok_provider_shape
@@ -24,15 +28,25 @@ def register_byok_routes(router: APIRouter) -> None:
     @router.get("/byok/providers")
     async def byok_providers(principal: ManagementPrincipal) -> dict[str, list[dict[str, Any]]]:
         configs = STORE.list_byok_providers(principal.workspace.id)
-        return {"data": [byok_provider_shape(c) for c in configs]}
+        # Prefer a post-split row when both exist, and never expose the retired
+        # `gemini` storage key as a third public provider.
+        rows: dict[str, dict[str, Any]] = {}
+        for config in sorted(configs, key=lambda item: item.provider == "gemini"):
+            public_provider = canonical_byok_provider(config.provider)
+            shape = byok_provider_shape(config)
+            shape["provider"] = public_provider
+            rows.setdefault(public_provider, shape)
+        return {"data": list(rows.values())}
 
     @router.get("/byok/providers/{provider}")
     async def byok_provider(provider: str, principal: ManagementPrincipal) -> dict[str, Any]:
         slug = _require_byok_provider(provider)
-        config = STORE.get_byok_provider(principal.workspace.id, slug)
+        config = _get_byok_provider(principal.workspace.id, slug)
         if config is None:
             raise api_error(404, "BYOK provider is not configured", ErrorType.NOT_FOUND)
-        return {"data": byok_provider_shape(config)}
+        shape = byok_provider_shape(config)
+        shape["provider"] = slug
+        return {"data": shape}
 
     @router.put("/byok/providers/{provider}")
     async def upsert_byok_provider(
@@ -43,10 +57,9 @@ def register_byok_routes(router: APIRouter) -> None:
     ) -> JSONResponse:
         slug = _require_byok_provider(provider)
         if not settings.byok_registration_enabled:
-            # Replica nodes (e.g. the AWS control-plane) hold decrypt-only on
-            # the byok-envelope KMS key and are not the registration authority.
-            # Refuse the write cleanly here — before attempting a KMS encrypt
-            # that would be denied — and point callers at the primary endpoint.
+            # Read-only replicas are not the registration authority. Refuse
+            # the write cleanly here before attempting a KMS encrypt that
+            # would be denied, and point callers at the primary endpoint.
             raise api_error(
                 503,
                 "BYOK key registration is handled by the primary control plane. "
@@ -75,15 +88,12 @@ def register_byok_routes(router: APIRouter) -> None:
                     workspace_id=principal.workspace.id,
                     provider=slug,
                 )
-            except gcp_exceptions.PermissionDenied as exc:
-                # The BYOK envelope DEK is wrapped with the GCP KMS
-                # byok-envelope key, which ONLY the GCP control-plane SA
-                # (trusted-router-control-run@) may encrypt with — the
-                # AWS/cross-cloud SA is decrypt-only by design (it just
-                # unwraps keys at inference). So a management caller hitting a
-                # non-primary endpoint (e.g. the AWS control-plane directly)
-                # can't register a key. Return a clean, actionable 503 instead
-                # of an unhandled 500 + KMS stack trace.
+            except KeyAccessDenied as exc:
+                # The BYOK envelope DEK is wrapped with the configured
+                # envelope key, which only the primary control-plane
+                # principal may encrypt with. Return a clean, actionable 503 instead of
+                # an unhandled 500 + KMS stack trace if this endpoint lacks
+                # encrypt permission.
                 log.warning(
                     "byok.encrypt_permission_denied",
                     extra={"provider": slug, "workspace_id": principal.workspace.id},
@@ -94,8 +104,8 @@ def register_byok_routes(router: APIRouter) -> None:
                     "Register keys through the primary API at https://api.trustedrouter.com.",
                     ErrorType.SERVICE_UNAVAILABLE,
                 ) from exc
-            except gcp_exceptions.GoogleAPICallError as exc:
-                # Any other KMS/RPC failure (transient unavailability, timeout):
+            except KeyManagementError as exc:
+                # Any other key-service failure (unavailability, timeout):
                 # a best-effort retry-able error, not an unhandled 500.
                 log.error(
                     "byok.encrypt_failed",
@@ -124,7 +134,7 @@ def register_byok_routes(router: APIRouter) -> None:
                 ErrorType.BAD_REQUEST,
             )
 
-        created = STORE.get_byok_provider(principal.workspace.id, slug) is None
+        created = _get_byok_provider(principal.workspace.id, slug) is None
         config = STORE.upsert_byok_provider(
             workspace_id=principal.workspace.id,
             provider=slug,
@@ -143,13 +153,16 @@ def register_byok_routes(router: APIRouter) -> None:
         principal: ManagementPrincipal,
     ) -> dict[str, Any]:
         slug = _require_byok_provider(provider)
-        if not STORE.delete_byok_provider(principal.workspace.id, slug):
+        deleted = False
+        for storage_slug in byok_storage_provider_candidates(slug):
+            deleted = STORE.delete_byok_provider(principal.workspace.id, storage_slug) or deleted
+        if not deleted:
             raise api_error(404, "BYOK provider is not configured", ErrorType.NOT_FOUND)
         return {"data": {"deleted": True, "provider": slug}}
 
 
 def _require_byok_provider(provider: str) -> str:
-    slug = provider.strip().lower()
+    slug = canonical_byok_provider(provider)
     catalog_provider = PROVIDERS.get(slug)
     if catalog_provider is None or not catalog_provider.supports_byok:
         raise api_error(
@@ -158,6 +171,14 @@ def _require_byok_provider(provider: str) -> str:
             ErrorType.PROVIDER_NOT_SUPPORTED,
         )
     return slug
+
+
+def _get_byok_provider(workspace_id: str, provider: str) -> Any | None:
+    for storage_slug in byok_storage_provider_candidates(provider):
+        config = STORE.get_byok_provider(workspace_id, storage_slug)
+        if config is not None:
+            return config
+    return None
 
 
 def _default_byok_secret_ref(workspace_id: str, provider: str) -> str:

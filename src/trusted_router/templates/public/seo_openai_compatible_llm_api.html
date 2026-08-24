@@ -1,0 +1,53 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="OpenAI compatible LLM API">
+  <div class="marketing-copy">
+    <span class="eyebrow">Make your first API call</span>
+    <h2>Keep the SDK. Change the base URL.</h2>
+    <p>Use the OpenAI client you already have. Change <code>base_url</code>, create one key, and call hundreds of models through the same interface.</p>
+    <ul class="check-list">
+      <li>✓ Install the standard <code>openai</code> package</li>
+      <li>✓ Point it at <code>{{ api_base_url }}</code></li>
+      <li>✓ Start with <code>trustedrouter/cheap</code> or choose any model ID</li>
+    </ul>
+    <p><button class="btn primary" type="button" data-action="open-signin">Create my API key</button></p>
+    <p class="microcopy">No card required. Your existing OpenAI SDK keeps working.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>OpenAI SDK</span><button class="code-copy" type="button" data-action="copy-code" data-copy-target="openai-first-call">Copy</button></div>
+    <pre><code id="openai-first-call">import os
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+    base_url="{{ api_base_url }}",
+)
+
+response = client.chat.completions.create(
+    model="trustedrouter/cheap",
+    messages=[{"role": "user", "content": "Reply with PONG"}],
+)
+
+print(response.choices[0].message.content)</code></pre>
+  </div>
+</section>
+
+<section class="marketing-grid three">
+  <a class="marketing-card card-as-link" href="/leaderboard"><h3>Measured providers</h3><p>Use live TTFT, throughput, and uptime data instead of vendor claims.</p><span class="card-link">Open leaderboard</span></a>
+  <a class="marketing-card card-as-link" href="/providers"><h3>Policy-aware routing</h3><p>Compare ZDR, confidential compute, provider E2EE, and upstream policy sources.</p><span class="card-link">Open providers</span></a>
+  <a class="marketing-card card-as-link" href="https://trust.trustedrouter.com"><h3>Verify the gateway</h3><p>Check the running image, source commit, digest, and attestation path.</p><span class="card-link">Open trust</span></a>
+</section>
+
+<section class="cta-band" aria-label="Create an API key">
+  <div>
+    <strong>Make the first call with your existing SDK.</strong>
+    <span>Create one key, copy the quickstart, and get a real model response.</span>
+  </div>
+  <div class="cta-band-actions">
+    <button class="btn primary" type="button" data-action="open-signin">Create my API key</button>
+  </div>
+  <span class="microcopy">No card required.</span>
+</section>
+
+{% endblock %}

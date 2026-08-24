@@ -9,8 +9,8 @@ The "spend control" half of the in-memory store. Owns four dicts:
     the authorize call).
 
 Three of those dicts are owned outright; reservations need read+write access
-to the workspace credit ledger (CreditAccount.reserved/total_usage), so the
-class accepts the credits dict by reference at construction time. The
+to the workspace credit ledger (CreditMoney.reserved/total_usage), so the
+class accepts the money dict by reference at construction time. The
 parent InMemoryStore's lock is shared so reserve→credit-debit happens
 atomically.
 
@@ -35,9 +35,18 @@ from trusted_router.security import (
     new_key_id,
     verify_api_key,
 )
+from trusted_router.spend_windows import (
+    KeyWindowLimitExceeded,
+    enforced_window_limits,
+    utcnow,
+    window_floors,
+)
+from trusted_router.storage_errors import DeferredSettlementCapReached
 from trusted_router.storage_models import (
     ApiKey,
+    ApiKeyUsageSnapshot,
     CreditAccount,
+    CreditMoney,
     GatewayAuthorization,
     Reservation,
     _is_byok,
@@ -51,10 +60,12 @@ class InMemoryApiKeys:
         self,
         *,
         credits_by_workspace: dict[str, CreditAccount],
+        credit_money_by_workspace: dict[str, CreditMoney],
         lock: threading.RLock,
     ) -> None:
         self._lock = lock
         self._credits = credits_by_workspace
+        self._credit_money = credit_money_by_workspace
         self.keys: dict[str, ApiKey] = {}
         self.key_ids_by_lookup_hash: dict[str, str] = {}
         self.reservations: dict[str, Reservation] = {}
@@ -67,6 +78,13 @@ class InMemoryApiKeys:
         self.reservation_id_by_idempotency_key: dict[str, str] = {}
         self.gateway_authorizations: dict[str, GatewayAuthorization] = {}
         self.gateway_authorization_id_by_idempotency_key: dict[str, str] = {}
+        #: Deferred settlement: unsettled spend this plane has admitted on
+        #: credit at the home plane's ledger, per workspace.
+        self.deferred_outstanding: dict[str, int] = {}
+        # Per-key window usage: key_hash -> {window: [start_datetime, usage_micro]}.
+        # Same lazy fixed-UTC-window semantics as the typed tr_key_limit columns
+        # (spend_windows.py); lives beside the key so ApiKey stays a plain record.
+        self.window_usage: dict[str, dict[str, list]] = {}
 
     def reset(self) -> None:
         # Caller holds the parent lock during the global reset, so we
@@ -77,6 +95,7 @@ class InMemoryApiKeys:
         self.reservation_id_by_idempotency_key.clear()
         self.gateway_authorizations.clear()
         self.gateway_authorization_id_by_idempotency_key.clear()
+        self.window_usage.clear()
 
     # ── API key CRUD ────────────────────────────────────────────────────
     def create(
@@ -91,6 +110,11 @@ class InMemoryApiKeys:
         limit_reset: str | None = None,
         include_byok_in_limit: bool = True,
         expires_at: str | None = None,
+        limit_daily_microdollars: int | None = None,
+        limit_weekly_microdollars: int | None = None,
+        limit_monthly_microdollars: int | None = None,
+        budget_alert_only: bool = False,
+        tags: dict[str, str] | None = None,
     ) -> tuple[str, ApiKey]:
         with self._lock:
             key = raw_key or new_api_key()
@@ -112,6 +136,11 @@ class InMemoryApiKeys:
                 limit_reset=limit_reset,
                 include_byok_in_limit=include_byok_in_limit,
                 expires_at=expires_at,
+                limit_daily_microdollars=limit_daily_microdollars,
+                limit_weekly_microdollars=limit_weekly_microdollars,
+                limit_monthly_microdollars=limit_monthly_microdollars,
+                budget_alert_only=budget_alert_only,
+                tags=dict(tags or {}),
             )
             self.keys[key_id] = api_key
             self.key_ids_by_lookup_hash[lookup_hash] = key_id
@@ -144,6 +173,21 @@ class InMemoryApiKeys:
         with self._lock:
             return [key for key in self.keys.values() if key.workspace_id == workspace_id]
 
+    def list_with_usage_for_workspace(self, workspace_id: str) -> list[ApiKeyUsageSnapshot]:
+        """Atomically snapshot every key and its display counters."""
+        with self._lock:
+            keys = [key for key in self.keys.values() if key.workspace_id == workspace_id]
+            return [
+                ApiKeyUsageSnapshot(
+                    api_key=key,
+                    usage_microdollars=key.usage_microdollars,
+                    byok_usage_microdollars=key.byok_usage_microdollars,
+                    reserved_microdollars=key.reserved_microdollars,
+                    windows=self.window_usage_snapshot(key.hash),
+                )
+                for key in keys
+            ]
+
     def delete(self, key_hash: str) -> bool:
         with self._lock:
             key = self.keys.pop(key_hash, None)
@@ -168,12 +212,37 @@ class InMemoryApiKeys:
                 key.limit_microdollars = patch["limit_microdollars"]
             if "limit_reset" in patch:
                 key.limit_reset = patch["limit_reset"]
+            for window in ("daily", "weekly", "monthly"):
+                field = f"limit_{window}_microdollars"
+                if field in patch:
+                    setattr(key, field, patch[field])
             if "include_byok_in_limit" in patch:
                 key.include_byok_in_limit = bool(patch["include_byok_in_limit"])
+            if patch.get("budget_alert_only") is not None:
+                key.budget_alert_only = bool(patch["budget_alert_only"])
+            if "budget_alerted" in patch:
+                key.budget_alerted = dict(patch["budget_alerted"] or {})
+            if "tags" in patch:
+                key.tags = dict(patch["tags"] or {})
             key.updated_at = iso_now()
             return key
 
     # ── Per-key spend-cap lifecycle ─────────────────────────────────────
+    def window_usage_snapshot(self, key_hash: str) -> dict[str, int]:
+        """Current-window usage per window (micro), lazily zeroing stale windows.
+        Mirrors what the typed tr_key_limit row reports for a Spanner store."""
+        with self._lock:
+            floors = window_floors(utcnow())
+            state = self.window_usage.get(key_hash, {})
+            out: dict[str, int] = {}
+            for window in ("daily", "weekly", "monthly"):
+                entry = state.get(window)
+                if entry is None or entry[0] < floors[window]:
+                    out[window] = 0
+                else:
+                    out[window] = int(entry[1])
+            return out
+
     def reserve_limit(
         self,
         key_hash: str,
@@ -183,9 +252,18 @@ class InMemoryApiKeys:
     ) -> None:
         with self._lock:
             key = self.keys[key_hash]
-            if key.limit_microdollars is None:
-                return
             if _is_byok(usage_type) and not key.include_byok_in_limit:
+                return  # BYOK excluded from this key's caps (lifetime AND windows)
+            # Window limits are independent of the lifetime cap: check first,
+            # approximately (in-flight reserved is deliberately not counted —
+            # same semantics as the typed authorize check).
+            window_limits = enforced_window_limits(key)  # {} in alert mode → never blocks
+            if window_limits:
+                used_by_window = self.window_usage_snapshot(key_hash)
+                for window, limit in window_limits.items():
+                    if used_by_window[window] + amount_microdollars > limit:
+                        raise KeyWindowLimitExceeded(window)
+            if key.limit_microdollars is None:
                 return
             used = key.usage_microdollars
             if key.include_byok_in_limit:
@@ -241,6 +319,19 @@ class InMemoryApiKeys:
                 key.byok_usage_microdollars += cost_microdollars
             else:
                 key.usage_microdollars += cost_microdollars
+            # Window counters book by the cap semantics (BYOK only when the
+            # key includes it), lazily resetting stale windows — the InMemory
+            # twin of the typed release_key window bump.
+            if is_byok and not key.include_byok_in_limit:
+                return
+            floors = window_floors(utcnow())
+            state = self.window_usage.setdefault(key_hash, {})
+            for window, floor in floors.items():
+                entry = state.get(window)
+                if entry is None or entry[0] < floor:
+                    state[window] = [floor, cost_microdollars]
+                else:
+                    entry[1] += cost_microdollars
 
     # ── Credit reservations ─────────────────────────────────────────────
     def reserve(
@@ -262,7 +353,7 @@ class InMemoryApiKeys:
                 existing_id = self.reservation_id_by_idempotency_key.get(idempotency_key)
                 if existing_id is not None:
                     return self.reservations[existing_id]
-            account = self._credits[workspace_id]
+            account = self._credit_money[workspace_id]
             available = (
                 account.total_credits_microdollars
                 - account.total_usage_microdollars
@@ -288,9 +379,9 @@ class InMemoryApiKeys:
             reservation = self.reservations[reservation_id]
             if reservation.settled:
                 return
-            account = self._credits[reservation.workspace_id]
-            account.reserved_microdollars -= reservation.amount_microdollars
-            account.total_usage_microdollars += actual_microdollars
+            m = self._credit_money[reservation.workspace_id]
+            m.reserved_microdollars -= reservation.amount_microdollars
+            m.total_usage_microdollars += actual_microdollars
             reservation.settled = True
 
     def refund(self, reservation_id: str) -> None:
@@ -298,8 +389,8 @@ class InMemoryApiKeys:
             reservation = self.reservations[reservation_id]
             if reservation.settled:
                 return
-            account = self._credits[reservation.workspace_id]
-            account.reserved_microdollars -= reservation.amount_microdollars
+            m = self._credit_money[reservation.workspace_id]
+            m.reserved_microdollars -= reservation.amount_microdollars
             reservation.settled = True
 
     # ── Gateway authorizations ──────────────────────────────────────────
@@ -313,13 +404,27 @@ class InMemoryApiKeys:
         usage_type: UsageType | str,
         estimated_microdollars: int,
         credit_reservation_id: str | None,
+        authorization_id: str | None = None,
         requested_model_id: str | None = None,
         candidate_model_ids: list[str] | None = None,
         region: str | None = None,
         endpoint_id: str | None = None,
         candidate_endpoint_ids: list[str] | None = None,
         idempotency_key: str | None = None,
+        tags: dict[str, str] | None = None,
         idempotency_fingerprint: str | None = None,
+        custom_model_id: str | None = None,
+        custom_model_revision: int | None = None,
+        user_provided_model_id: str | None = None,
+        user_provided_model_revision: int | None = None,
+        user_model_prompt_price_microdollars_per_m: int | None = None,
+        user_model_completion_price_microdollars_per_m: int | None = None,
+        user_model_owner_user_id: str | None = None,
+        additional_cost_reservation_microdollars: int = 0,
+        native_batch_eligible: bool = False,
+        settlement: str = "local",
+        expires_at: str | None = None,
+        deferred_cap_microdollars: int | None = None,
     ) -> GatewayAuthorization:
         with self._lock:
             if idempotency_key is not None:
@@ -329,9 +434,20 @@ class InMemoryApiKeys:
                     )
                 )
                 if existing_id is not None:
+                    # A REPLAY writes no new authorization, so it must not
+                    # consume cap either — the same reason the Postgres store
+                    # does the counter move inside this method rather than
+                    # before it.
                     return self.gateway_authorizations[existing_id]
+            if deferred_cap_microdollars is not None:
+                held = self.deferred_outstanding.get(workspace_id, 0)
+                if held + estimated_microdollars > deferred_cap_microdollars:
+                    raise DeferredSettlementCapReached(
+                        f"deferred settlement cap reached for workspace {workspace_id}"
+                    )
+                self.deferred_outstanding[workspace_id] = held + estimated_microdollars
             authorization = GatewayAuthorization(
-                id=f"gwa-{uuid.uuid4().hex}",
+                id=authorization_id or f"gwa-{uuid.uuid4().hex}",
                 workspace_id=workspace_id,
                 key_hash=key_hash,
                 model_id=model_id,
@@ -345,7 +461,23 @@ class InMemoryApiKeys:
                 endpoint_id=endpoint_id,
                 candidate_endpoint_ids=list(candidate_endpoint_ids or []),
                 idempotency_key=idempotency_key,
+                tags=dict(tags or {}),
                 idempotency_fingerprint=idempotency_fingerprint,
+                custom_model_id=custom_model_id,
+                custom_model_revision=custom_model_revision,
+                user_provided_model_id=user_provided_model_id,
+                user_provided_model_revision=user_provided_model_revision,
+                user_model_prompt_price_microdollars_per_m=(
+                    user_model_prompt_price_microdollars_per_m
+                ),
+                user_model_completion_price_microdollars_per_m=(
+                    user_model_completion_price_microdollars_per_m
+                ),
+                user_model_owner_user_id=user_model_owner_user_id,
+                additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
+                native_batch_eligible=native_batch_eligible,
+                settlement=settlement,
+                expires_at=expires_at,
             )
             self.gateway_authorizations[authorization.id] = authorization
             if idempotency_key is not None:

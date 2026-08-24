@@ -10,7 +10,7 @@ Define how TrustedRouter handles prompts, outputs, model routing metadata, provi
 
 ## Policy
 
-- Prompt/output content is not stored by TrustedRouter by default.
+- TrustedRouter never logs or stores prompt/output content.
 - Prompt/output content must not be sent to Sentry, Axiom, Cloud Logging, Bigtable, Spanner, dashboard payloads, or durable status/benchmark rows.
 - Provider compute policies are separate from TrustedRouter's gateway posture and must be surfaced to users.
 - Legal and sensitive workloads should default to `trustedrouter/zdr` or `trustedrouter/e2e`.

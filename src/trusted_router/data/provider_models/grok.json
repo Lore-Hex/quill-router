@@ -1,0 +1,280 @@
+{
+  "provider": "grok",
+  "source": "https://api.x.ai/v1/language-models",
+  "generated_at": "2026-08-24T10:39:58Z",
+  "model_count": 7,
+  "_note": "xAI first-party OpenAI-compatible chat at api.x.ai/v1. Model IDs are verified against the authenticated xAI catalog; context and tiered prices come from xAI's official pricing table.",
+  "models": [
+    {
+      "id": "x-ai/grok-4.6",
+      "upstream_id": "grok-4.6",
+      "display_name": "grok-4.6",
+      "title": "grok-4.6",
+      "created": 1785974400,
+      "context_length": 500000,
+      "input_token_price_per_m": 2000000,
+      "cached_input_token_price_per_m": 500000,
+      "output_token_price_per_m": 6000000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 200000,
+          "input_token_price_per_m": 2000000,
+          "output_token_price_per_m": 6000000,
+          "cached_input_token_price_per_m": 500000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 4000000,
+          "output_token_price_per_m": 12000000,
+          "cached_input_token_price_per_m": 1000000
+        }
+      ],
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "x-ai/grok-4.5",
+      "upstream_id": "grok-4.5",
+      "display_name": "grok-4.5",
+      "title": "grok-4.5",
+      "created": 1782691200,
+      "context_length": 500000,
+      "input_token_price_per_m": 2000000,
+      "cached_input_token_price_per_m": 300000,
+      "output_token_price_per_m": 6000000,
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 200000,
+          "input_token_price_per_m": 2000000,
+          "output_token_price_per_m": 6000000,
+          "cached_input_token_price_per_m": 300000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 4000000,
+          "output_token_price_per_m": 12000000,
+          "cached_input_token_price_per_m": 600000
+        }
+      ]
+    },
+    {
+      "display_name": "grok-4.20-0309-non-reasoning",
+      "title": "grok-4.20-0309-non-reasoning",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "x-ai/grok-4.20",
+      "upstream_id": "grok-4.20-0309-non-reasoning",
+      "created": 1773014400,
+      "routable": true,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 2500000,
+      "cached_input_token_price_per_m": 200000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 200000,
+          "input_token_price_per_m": 1250000,
+          "output_token_price_per_m": 2500000,
+          "cached_input_token_price_per_m": 200000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 2500000,
+          "output_token_price_per_m": 5000000,
+          "cached_input_token_price_per_m": 400000
+        }
+      ]
+    },
+    {
+      "display_name": "grok-4.20-multi-agent-0309",
+      "title": "grok-4.20-multi-agent-0309",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "x-ai/grok-4.20-multi-agent",
+      "upstream_id": "grok-4.20-multi-agent-0309",
+      "created": 1773014400,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 2500000,
+      "cached_input_token_price_per_m": 200000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 200000,
+          "input_token_price_per_m": 1250000,
+          "output_token_price_per_m": 2500000,
+          "cached_input_token_price_per_m": 200000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 2500000,
+          "output_token_price_per_m": 5000000,
+          "cached_input_token_price_per_m": 400000
+        }
+      ]
+    },
+    {
+      "display_name": "grok-4.20-0309-reasoning",
+      "title": "grok-4.20-0309-reasoning",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "x-ai/grok-4.20-reasoning",
+      "upstream_id": "grok-4.20-0309-reasoning",
+      "created": 1773014400,
+      "routable": true,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 2500000,
+      "cached_input_token_price_per_m": 200000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 200000,
+          "input_token_price_per_m": 1250000,
+          "output_token_price_per_m": 2500000,
+          "cached_input_token_price_per_m": 200000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 2500000,
+          "output_token_price_per_m": 5000000,
+          "cached_input_token_price_per_m": 400000
+        }
+      ]
+    },
+    {
+      "display_name": "grok-4.3",
+      "title": "grok-4.3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "x-ai/grok-4.3",
+      "upstream_id": "grok-4.3",
+      "created": 1776384000,
+      "routable": true,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 2500000,
+      "cached_input_token_price_per_m": 200000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 200000,
+          "input_token_price_per_m": 1250000,
+          "output_token_price_per_m": 2500000,
+          "cached_input_token_price_per_m": 200000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 2500000,
+          "output_token_price_per_m": 5000000,
+          "cached_input_token_price_per_m": 400000
+        }
+      ]
+    },
+    {
+      "display_name": "grok-build-0.1",
+      "title": "grok-build-0.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "x-ai/grok-build-0.1",
+      "upstream_id": "grok-build-0.1",
+      "created": 1776297600,
+      "routable": true,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 2000000,
+      "cached_input_token_price_per_m": 200000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 200000,
+          "input_token_price_per_m": 1000000,
+          "output_token_price_per_m": 2000000,
+          "cached_input_token_price_per_m": 200000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 2000000,
+          "output_token_price_per_m": 4000000,
+          "cached_input_token_price_per_m": 400000
+        }
+      ]
+    }
+  ],
+  "price_scale": "microdollars_per_million"
+}

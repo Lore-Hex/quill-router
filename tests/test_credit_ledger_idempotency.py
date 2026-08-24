@@ -30,7 +30,7 @@ def _seed_credited_workspace(initial_credits_microdollars: int = 100_000_000) ->
     credit balance. Returns (workspace_id, key_hash)."""
     user = STORE.ensure_user("idempotency-test@example.com")
     workspace = STORE.list_workspaces_for_user(user.id)[0]
-    STORE.credits[workspace.id].total_credits_microdollars = initial_credits_microdollars
+    STORE.credit_money[workspace.id].total_credits_microdollars = initial_credits_microdollars
     _, api_key = STORE.create_api_key(
         workspace_id=workspace.id,
         name="idempotency-test",
@@ -55,9 +55,7 @@ def test_reserve_with_same_idempotency_key_returns_same_reservation() -> None:
     # Credit was only locked once. With $10M initial credit and one $3M
     # reservation, $7M should remain available (not $4M as it would be
     # if both reserve calls had debited).
-    account = STORE.get_credit_account(workspace_id)
-    assert account is not None
-    assert account.reserved_microdollars == 3_000_000
+    assert STORE.credit_money[workspace_id].reserved_microdollars == 3_000_000
 
 
 def test_reserve_without_idempotency_key_still_creates_distinct_reservations() -> None:
@@ -69,9 +67,7 @@ def test_reserve_without_idempotency_key_still_creates_distinct_reservations() -
     assert first.id != second.id
     assert first.idempotency_key is None
     assert second.idempotency_key is None
-    account = STORE.get_credit_account(workspace_id)
-    assert account is not None
-    assert account.reserved_microdollars == 6_000_000
+    assert STORE.credit_money[workspace_id].reserved_microdollars == 6_000_000
 
 
 def test_reserve_with_different_idempotency_keys_creates_distinct_reservations() -> None:
@@ -83,9 +79,7 @@ def test_reserve_with_different_idempotency_keys_creates_distinct_reservations()
     assert first.id != second.id
     assert first.idempotency_key == "req-1"
     assert second.idempotency_key == "req-2"
-    account = STORE.get_credit_account(workspace_id)
-    assert account is not None
-    assert account.reserved_microdollars == 4_000_000
+    assert STORE.credit_money[workspace_id].reserved_microdollars == 4_000_000
 
 
 def test_reserve_idempotency_returns_existing_even_when_amounts_differ() -> None:
@@ -110,6 +104,4 @@ def test_reserve_idempotency_returns_existing_even_when_amounts_differ() -> None
     assert first.id == second.id
     assert first.amount_microdollars == 1_000_000
     assert second.amount_microdollars == 1_000_000
-    account = STORE.get_credit_account(workspace_id)
-    assert account is not None
-    assert account.reserved_microdollars == 1_000_000
+    assert STORE.credit_money[workspace_id].reserved_microdollars == 1_000_000

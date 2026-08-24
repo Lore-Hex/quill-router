@@ -36,17 +36,63 @@ class UsageType(StrEnum):
         return self is UsageType.BYOK
 
 
+class IdentityVerificationStatus(StrEnum):
+    """Current state of a user's identity-verification attempt."""
+
+    NONE = "none"
+    PENDING = "pending"
+    APPROVED = "approved"
+    DECLINED = "declined"
+    RESUBMISSION_REQUESTED = "resubmission_requested"
+    EXPIRED = "expired"
+
+    @classmethod
+    def coerce(
+        cls, value: str | IdentityVerificationStatus
+    ) -> IdentityVerificationStatus:
+        if isinstance(value, cls):
+            return value
+        try:
+            return cls(str(value).strip().lower())
+        except ValueError:
+            return cls.NONE
+
+
 class ErrorType(StrEnum):
     """Stable error type strings shared across the API surface."""
 
     BAD_REQUEST = "bad_request"
     UNAUTHORIZED = "unauthorized"
     FORBIDDEN = "forbidden"
+    VERIFICATION_REQUIRED = "verification_required"
+    MODEL_OFF_THE_CLOCK = "model_off_the_clock"
+    USER_MODEL_TIMEOUT = "user_model_timeout"
     NOT_FOUND = "not_found"
     CONFLICT = "conflict"
     ALREADY_REGISTERED = "already_registered"
     KEY_LIMIT_EXCEEDED = "key_limit_exceeded"
+    KEY_WINDOW_LIMIT_EXCEEDED = "key_window_limit_exceeded"
     INSUFFICIENT_CREDITS = "insufficient_credits"
+    # A FEDERATED workspace with no spendable balance on THIS plane. Distinct
+    # from insufficient_credits because the customer is very likely not out of
+    # money — their credits are on the home plane and have not been
+    # transferred. Telling them "insufficient credits" would send them to top
+    # up an account that already has a balance.
+    CREDITS_NOT_ON_THIS_PLANE = "credits_not_on_this_plane"
+    # A peer plane already holds the maximum unsettled spend it will carry for
+    # this workspace while the home plane is unreachable. Distinct from both
+    # insufficient_credits (a statement about the customer's money) and
+    # credits_not_on_this_plane (a statement about where it lives): this one
+    # says the customer is fine and the PLANE is at its self-imposed limit,
+    # which clears as settlements are delivered. Retryable.
+    DEFERRED_SETTLEMENT_CAP = "deferred_settlement_cap"
+    # Federated settlement verdicts. Each is a STRUCTURED code the peer's
+    # forwarder keys on — a bare 404 or an unparseable body must read as an
+    # outage (deploy skew, a proxy default page, a rollback), never as one of
+    # these, or a home rollback silently dead-letters the whole backlog.
+    SETTLEMENT_TERMS_CONFLICT = "settlement_terms_conflict"
+    WORKSPACE_UNKNOWN = "workspace_unknown"
+    SETTLEMENT_CLAMPED = "settlement_clamped"
     MODEL_NOT_SUPPORTED = "model_not_supported"
     PROVIDER_AUTH_ERROR = "provider_auth_error"
     PROVIDER_ERROR = "provider_error"
@@ -61,3 +107,5 @@ class ErrorType(StrEnum):
     INTERNAL_ERROR = "internal_error"
     HTTP_ERROR = "http_error"
     SERVICE_UNAVAILABLE = "service_unavailable"
+    INVALID_TAGS = "invalid_tags"
+    INVALID_REQUEST_METADATA = "invalid_request_metadata"

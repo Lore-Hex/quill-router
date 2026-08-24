@@ -1,5 +1,781 @@
 {% extends "console/_layout.html" %}
+{% block scripts %}
+<script nonce="{{ csp_nonce() }}">
+(function () {
+  "use strict";
+
+  const ENDPOINT = "/console/activity/usage.json";
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const numberFormat = new Intl.NumberFormat("en-US");
+  const compactFormat = new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 1
+  });
+  const dollarsFormat = new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+  const modelColors = ["var(--blue)", "var(--green)", "var(--amber)", "var(--rust)", "var(--red)"];
+  const rangeLabels = {
+    "1h": "Last hour",
+    "6h": "Last 6 hours",
+    "24h": "Last 24 hours",
+    "7d": "Last 7 days",
+    "30d": "Last 30 days",
+    "90d": "Last 90 days"
+  };
+  const rangeDurations = {
+    "1h": 60 * 60 * 1000,
+    "6h": 6 * 60 * 60 * 1000,
+    "24h": 24 * 60 * 60 * 1000,
+    "7d": 7 * 24 * 60 * 60 * 1000,
+    "30d": 30 * 24 * 60 * 60 * 1000,
+    "90d": 90 * 24 * 60 * 60 * 1000
+  };
+  const granularityLabels = {
+    minute: "minute",
+    "5min": "5-minute",
+    hour: "hour",
+    day: "day"
+  };
+
+  function tokenTotal(bucket) {
+    return Number(bucket.prompt_tokens || 0) + Number(bucket.completion_tokens || 0);
+  }
+
+  const metrics = {
+    spend: {
+      label: "Spend",
+      value: (bucket) => Number(bucket.cost_micro || 0) / 1000000,
+      format: (value) => dollarsFormat.format(value),
+      tooltip: (value) => dollarsFormat.format(value),
+      axis: (value) => dollarsFormat.format(value)
+    },
+    tokens: {
+      label: "Tokens",
+      value: tokenTotal,
+      format: (value) => numberFormat.format(Math.round(value)),
+      tooltip: (value) => numberFormat.format(Math.round(value)),
+      axis: (value) => compactFormat.format(value)
+    },
+    requests: {
+      label: "Requests",
+      value: (bucket) => Number(bucket.requests || 0),
+      format: (value) => numberFormat.format(Math.round(value)),
+      tooltip: (value) => numberFormat.format(Math.round(value)),
+      axis: (value) => compactFormat.format(value)
+    }
+  };
+
+  let panel = null;
+  let chart = null;
+  let breakdown = null;
+  let empty = null;
+  let emptyMessage = null;
+  let expandRange = null;
+  let layout = null;
+  let message = null;
+  let status = null;
+  let totalValue = null;
+  let averageValue = null;
+  let rangeLabel = null;
+  let lastData = null;
+  let requestId = 0;
+
+  function svgNode(name, attrs, text) {
+    const node = document.createElementNS(SVG_NS, name);
+    Object.entries(attrs || {}).forEach(([key, value]) => {
+      node.setAttribute(key, String(value));
+    });
+    if (text !== undefined) {
+      node.textContent = text;
+    }
+    return node;
+  }
+
+  function selectedValue(name, fallback) {
+    const input = panel.querySelector(`input[name="${name}"]:checked`);
+    return input ? input.value : fallback;
+  }
+
+  function currentState() {
+    const range = selectedValue("usage-range", "30d");
+    const metric = selectedValue("usage-metric", "spend");
+    return {
+      range: rangeLabels[range] ? range : "30d",
+      metric: metrics[metric] ? metric : "spend"
+    };
+  }
+
+  function setStatus(text, tone) {
+    status.textContent = text;
+    status.classList.toggle("warn", tone === "warn");
+    status.classList.toggle("good", tone === "good");
+  }
+
+  function showMessage(text, tone) {
+    message.textContent = text;
+    message.hidden = !text;
+    message.classList.toggle("error", tone === "error");
+  }
+
+  function formatBucket(bucket, granularity) {
+    const value = String(bucket || "");
+    if (granularity === "minute" || granularity === "5min") {
+      const date = new Date(`${value}:00Z`);
+      return Number.isNaN(date.getTime()) ? value
+        : date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "UTC" });
+    }
+    const date = new Date(granularity === "hour" ? `${value}:00:00Z` : `${value}T00:00:00Z`);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+    if (granularity === "hour") {
+      return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", timeZone: "UTC" });
+    }
+    return date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+  }
+
+  function formatActivityTime(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+    return date.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short"
+    });
+  }
+
+  function rangeContaining(value) {
+    const timestamp = new Date(value).getTime();
+    if (Number.isNaN(timestamp)) {
+      return null;
+    }
+    const age = Math.max(0, Date.now() - timestamp);
+    return Object.keys(rangeDurations).find((range) => age <= rangeDurations[range]) || null;
+  }
+
+  function showRange(range) {
+    const input = panel.querySelector(`input[name="usage-range"][value="${range}"]`);
+    if (!input) {
+      return;
+    }
+    input.checked = true;
+    loadUsage();
+  }
+
+  function renderChart(series, metric, granularity, rangeText) {
+    chart.replaceChildren();
+    const width = Math.max(chart.clientWidth || 0, 640, series.length * 24);
+    const height = 280;
+    const margin = { top: 14, right: 18, bottom: 42, left: 58 };
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+    const maxValue = Math.max(...series.map((point) => point.value), 0);
+    const yMax = maxValue > 0 ? maxValue : 1;
+    const step = plotWidth / Math.max(series.length, 1);
+    const barWidth = Math.max(4, Math.min(22, step - 4));
+    const svg = svgNode("svg", {
+      class: "usage-chart-svg",
+      role: "img",
+      "aria-label": `${metric.label} usage over ${rangeText.toLowerCase()}`,
+      viewBox: `0 0 ${width} ${height}`,
+      width,
+      height
+    });
+
+    [0, 0.25, 0.5, 0.75, 1].forEach((ratio) => {
+      const y = margin.top + plotHeight - (plotHeight * ratio);
+      svg.appendChild(svgNode("line", {
+        class: "usage-chart-grid",
+        x1: margin.left,
+        x2: width - margin.right,
+        y1: y,
+        y2: y
+      }));
+      svg.appendChild(svgNode("text", {
+        class: "usage-chart-axis",
+        x: margin.left - 10,
+        y: y + 4,
+        "text-anchor": "end"
+      }, metric.axis(yMax * ratio)));
+    });
+
+    const barGroup = svgNode("g", { class: "usage-chart-bars" });
+    series.forEach((point, index) => {
+      const x = margin.left + (step * index) + ((step - barWidth) / 2);
+      const barHeight = maxValue > 0 ? (point.value / yMax) * plotHeight : 0;
+      const renderedBarHeight = Math.max(barHeight, point.value > 0 ? 2 : 0);
+      const y = margin.top + plotHeight - renderedBarHeight;
+      const group = svgNode("g", {
+        class: "usage-chart-bar-group",
+        tabindex: "0",
+        "aria-label": `${formatBucket(point.bucket, granularity)} ${metric.tooltip(point.value)}`
+      });
+      const rect = svgNode("rect", {
+        class: "usage-chart-bar",
+        x,
+        y,
+        width: barWidth,
+        height: renderedBarHeight,
+        rx: Math.min(4, barWidth / 2)
+      });
+      group.appendChild(rect);
+      group.appendChild(svgNode("title", {}, `${formatBucket(point.bucket, granularity)}: ${metric.tooltip(point.value)}`));
+      barGroup.appendChild(group);
+    });
+    svg.appendChild(barGroup);
+
+    const labelEvery = Math.max(1, Math.ceil(series.length / 6));
+    series.forEach((point, index) => {
+      if (index % labelEvery !== 0 && index !== series.length - 1) {
+        return;
+      }
+      const x = margin.left + (step * index) + (step / 2);
+      svg.appendChild(svgNode("text", {
+        class: "usage-chart-axis usage-chart-x-axis",
+        x,
+        y: height - 14,
+        "text-anchor": "middle"
+      }, formatBucket(point.bucket, granularity)));
+    });
+
+    chart.replaceChildren(svg);
+  }
+
+  function modelTotals(byModel) {
+    return Object.entries(byModel || {}).map(([model, buckets]) => {
+      const rows = Array.isArray(buckets) ? buckets : [];
+      return rows.reduce((total, bucket) => {
+        total.model = model;
+        total.spend += Number(bucket.cost_micro || 0);
+        total.requests += Number(bucket.requests || 0);
+        total.tokens += tokenTotal(bucket);
+        return total;
+      }, { model, spend: 0, requests: 0, tokens: 0 });
+    }).filter((row) => row.spend > 0 || row.requests > 0 || row.tokens > 0);
+  }
+
+  function renderBreakdown(byModel) {
+    breakdown.replaceChildren();
+    const rows = modelTotals(byModel).sort((a, b) => b.spend - a.spend || b.requests - a.requests).slice(0, 5);
+    if (rows.length === 0) {
+      const note = document.createElement("p");
+      note.className = "usage-breakdown-empty";
+      note.textContent = "No model usage in this range.";
+      breakdown.appendChild(note);
+      return;
+    }
+    const list = document.createElement("div");
+    list.className = "usage-model-list";
+    const maxSpend = Math.max(...rows.map((row) => row.spend), 1);
+    rows.forEach((row, index) => {
+      const item = document.createElement("article");
+      item.className = "usage-model-row";
+
+      const swatch = document.createElement("span");
+      swatch.className = "usage-model-swatch";
+      swatch.style.background = modelColors[index % modelColors.length];
+
+      const body = document.createElement("div");
+      const name = document.createElement("strong");
+      name.textContent = row.model;
+      const meta = document.createElement("span");
+      meta.textContent = `${dollarsFormat.format(row.spend / 1000000)} spend | ${numberFormat.format(row.requests)} requests | ${compactFormat.format(row.tokens)} tokens`;
+      body.append(name, meta);
+
+      const meter = document.createElement("span");
+      meter.className = "usage-model-meter";
+      const fill = document.createElement("span");
+      fill.className = "usage-model-meter-fill";
+      fill.style.width = `${Math.max(3, (row.spend / maxSpend) * 100)}%`;
+      fill.style.background = modelColors[index % modelColors.length];
+      meter.appendChild(fill);
+      body.appendChild(meter);
+
+      item.append(swatch, body);
+      list.appendChild(item);
+    });
+    breakdown.appendChild(list);
+  }
+
+  function renderUsage(data) {
+    const state = currentState();
+    const metric = metrics[state.metric];
+    const buckets = Array.isArray(data.buckets) ? data.buckets : [];
+    const rangeText = rangeLabels[state.range] || rangeLabels["30d"];
+    const granularity = data.granularity || "day";
+    rangeLabel.textContent = rangeText;
+
+    if (buckets.length === 0) {
+      layout.hidden = true;
+      empty.hidden = false;
+      chart.replaceChildren();
+      breakdown.replaceChildren();
+      setStatus("0 requests", "");
+      const latestActivityAt = String(data.latest_activity_at || "");
+      const containingRange = rangeContaining(latestActivityAt);
+      if (latestActivityAt) {
+        emptyMessage.textContent = `No usage in ${rangeText.toLowerCase()}. Most recent request: ${formatActivityTime(latestActivityAt)}.`;
+      } else {
+        emptyMessage.textContent = "No activity yet. Make a request with your API key to see it here.";
+      }
+      if (containingRange && containingRange !== state.range) {
+        expandRange.dataset.range = containingRange;
+        expandRange.textContent = `Show ${rangeLabels[containingRange].replace(/^Last /, "").toLowerCase()}`;
+        expandRange.hidden = false;
+      } else {
+        expandRange.hidden = true;
+        delete expandRange.dataset.range;
+      }
+      showMessage(data.truncated ? "Showing partial data." : "", "");
+      return;
+    }
+
+    const series = buckets.map((bucket) => ({
+      bucket: bucket.bucket,
+      value: metric.value(bucket)
+    }));
+    const total = series.reduce((sum, point) => sum + point.value, 0);
+    const truncatedPrefix = data.truncated ? "≥" : "";
+    totalValue.textContent = `${truncatedPrefix}${metric.format(total)}`;
+    if (data.truncated) {
+      totalValue.title = "Partial data — some rows were not scanned; narrow the range for an exact total";
+    } else {
+      totalValue.removeAttribute("title");
+    }
+    averageValue.textContent = `${truncatedPrefix}${metric.format(total / Math.max(series.length, 1))} avg / bucket`;
+    layout.hidden = false;
+    empty.hidden = true;
+    setStatus(`${buckets.length} ${granularityLabels[granularity] || granularity} buckets`, "good");
+    showMessage(data.truncated ? "Showing partial data; narrow the range if totals look lower than expected." : "", "");
+    renderChart(series, metric, granularity, rangeText);
+    renderBreakdown(data.by_model || {});
+  }
+
+  async function loadUsage() {
+    const state = currentState();
+    const token = ++requestId;
+    const params = new URLSearchParams({
+      range: state.range,
+      by_model: "1"
+    });
+    setStatus("loading", "");
+    showMessage("", "");
+    try {
+      const response = await fetch(`${ENDPOINT}?${params.toString()}`, {
+        headers: { Accept: "application/json" }
+      });
+      if (!response.ok) {
+        throw new Error(`usage endpoint returned ${response.status}`);
+      }
+      const data = await response.json();
+      if (token !== requestId) {
+        return;
+      }
+      lastData = data;
+      renderUsage(data);
+    } catch (error) {
+      if (token !== requestId) {
+        return;
+      }
+      setStatus("couldn't load", "warn");
+      showMessage("Couldn't load usage right now.", "error");
+      if (!lastData) {
+        layout.hidden = true;
+        empty.hidden = true;
+      }
+    }
+  }
+
+  function rerenderOnResize() {
+    if (lastData) {
+      renderUsage(lastData);
+    }
+  }
+
+  function initUsagePanel() {
+    panel = document.querySelector("[data-usage-panel]");
+    if (!panel) {
+      return;
+    }
+    chart = panel.querySelector("[data-usage-chart]");
+    breakdown = panel.querySelector("[data-usage-breakdown]");
+    empty = panel.querySelector("[data-usage-empty]");
+    emptyMessage = panel.querySelector("[data-usage-empty-message]");
+    expandRange = panel.querySelector("[data-usage-expand-range]");
+    layout = panel.querySelector("[data-usage-layout]");
+    message = panel.querySelector("[data-usage-message]");
+    status = panel.querySelector("[data-usage-status]");
+    totalValue = panel.querySelector("[data-usage-total]");
+    averageValue = panel.querySelector("[data-usage-average]");
+    rangeLabel = panel.querySelector("[data-usage-range-label]");
+
+    panel.querySelectorAll('input[name="usage-range"], input[name="usage-metric"]').forEach((input) => {
+      input.addEventListener("change", loadUsage);
+    });
+    expandRange.addEventListener("click", () => {
+      const range = expandRange.dataset.range;
+      if (range) {
+        showRange(range);
+      }
+    });
+    if ("ResizeObserver" in window) {
+      new ResizeObserver(rerenderOnResize).observe(chart);
+    } else {
+      window.addEventListener("resize", rerenderOnResize);
+    }
+    loadUsage();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initUsagePanel);
+  } else {
+    initUsagePanel();
+  }
+})();
+</script>
+<script nonce="{{ csp_nonce() }}">
+(function () {
+  "use strict";
+
+  const ENDPOINT = "/console/activity/client-reliability.json";
+  const numberFormat = new Intl.NumberFormat("en-US");
+  let panel = null;
+  let content = null;
+  let empty = null;
+  let message = null;
+  let topErrors = null;
+  let recentFailures = null;
+  let requestId = 0;
+
+  function selectedRange() {
+    const input = panel.querySelector('input[name="client-range"]:checked');
+    return input ? input.value : "24h";
+  }
+
+  function formatPercent(value) {
+    return value === null || value === undefined ? "—" : `${Number(value).toFixed(2)}%`;
+  }
+
+  function formatMilliseconds(value) {
+    return value === null || value === undefined ? "—" : `${numberFormat.format(value)} ms`;
+  }
+
+  function formatTime(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value || "—") : date.toLocaleString();
+  }
+
+  function setMetric(name, value, sub) {
+    panel.querySelector(`[data-client-${name}]`).textContent = value;
+    panel.querySelector(`[data-client-${name}-sub]`).textContent = sub || "";
+  }
+
+  function cell(text, code) {
+    const node = document.createElement("td");
+    if (code) {
+      const child = document.createElement("code");
+      child.textContent = text;
+      node.appendChild(child);
+    } else {
+      node.textContent = text;
+    }
+    return node;
+  }
+
+  function emptyRow(columns, text) {
+    const row = document.createElement("tr");
+    const item = cell(text, false);
+    item.className = "empty";
+    item.colSpan = columns;
+    row.appendChild(item);
+    return row;
+  }
+
+  function renderTopErrors(rows) {
+    topErrors.replaceChildren();
+    if (rows.length === 0) {
+      topErrors.appendChild(emptyRow(3, "No sampled failures in this range."));
+      return;
+    }
+    rows.forEach((item) => {
+      const row = document.createElement("tr");
+      row.append(
+        cell(item.error_class || "unknown", true),
+        cell(item.http_status === null ? "—" : String(item.http_status), false),
+        cell(numberFormat.format(item.count || 0), false)
+      );
+      topErrors.appendChild(row);
+    });
+  }
+
+  function renderFailures(rows) {
+    recentFailures.replaceChildren();
+    if (rows.length === 0) {
+      recentFailures.appendChild(emptyRow(10, "No sampled failures in this range."));
+      return;
+    }
+    rows.forEach((item) => {
+      const requestIds = Array.isArray(item.attempt_request_id) ? item.attempt_request_id : [];
+      const hosts = Array.isArray(item.attempt_host) ? item.attempt_host : [];
+      const row = document.createElement("tr");
+      row.append(
+        cell(formatTime(item.created_at), false),
+        cell(item.endpoint || "—", true),
+        cell(item.model || "—", true),
+        cell(hosts.join("→") || "—", true),
+        cell(numberFormat.format(item.attempt_count || 0), false),
+        cell(item.final_outcome || "—", true),
+        cell(item.final_http_status === null ? "—" : String(item.final_http_status), false),
+        cell(item.first_error_class || "—", true),
+        cell(requestIds.at(-1) || "—", true),
+        cell([item.sdk, item.sdk_version].filter(Boolean).join(" ") || "—", true)
+      );
+      recentFailures.appendChild(row);
+    });
+  }
+
+  function render(data, meta) {
+    if (!data) {
+      content.hidden = true;
+      empty.hidden = true;
+      message.textContent = meta.reason === "unavailable"
+        ? "Client telemetry is unavailable on this cloud."
+        : "Client telemetry is unavailable right now.";
+      message.hidden = false;
+      return;
+    }
+    const summary = data.summary || {};
+    const failures = Array.isArray(data.recent_failures) ? data.recent_failures : [];
+    const requests = Number(summary.requests || 0);
+    if (requests === 0 && failures.length === 0) {
+      content.hidden = true;
+      empty.hidden = false;
+      message.hidden = true;
+      return;
+    }
+
+    empty.hidden = true;
+    content.hidden = false;
+    message.textContent = meta.truncated
+      ? `Showing a partial server-latency scan across ${numberFormat.format(meta.scanned || 0)} rows.`
+      : `Scanned ${numberFormat.format(meta.scanned || 0)} rows · freshness ${numberFormat.format(meta.freshness_seconds || 0)}s.`;
+    message.hidden = false;
+    setMetric("requests", numberFormat.format(requests), "logical SDK calls observed");
+    if (summary.availability_percent === null || summary.availability_percent === undefined) {
+      setMetric(
+        "availability",
+        "—",
+        `${numberFormat.format(summary.successes || 0)} successes · ${numberFormat.format(summary.tr_fault || 0)} faults; percentage after 100 requests`
+      );
+    } else {
+      setMetric(
+        "availability",
+        `${Number(summary.availability_percent).toFixed(4)}%`,
+        `${numberFormat.format(summary.successes || 0)} successes · ${numberFormat.format(summary.tr_fault || 0)} faults`
+      );
+    }
+    setMetric("retried", formatPercent(summary.retried_percent), "requests with retry overhead");
+    setMetric("failover", formatPercent(summary.failover_percent), "requests that advanced host path");
+    setMetric(
+      "total",
+      `${formatMilliseconds(summary.p50_total_ms)} / ${formatMilliseconds(summary.p95_total_ms)}`,
+      "client total p50 / p95"
+    );
+    setMetric("ttft", formatMilliseconds(summary.p50_ttft_ms), "client p50 time to first token");
+    setMetric("server", formatMilliseconds(data.server_p50_elapsed_ms), "server p50 elapsed for the same window");
+    renderTopErrors(Array.isArray(data.top_errors) ? data.top_errors : []);
+    renderFailures(failures);
+  }
+
+  async function loadClientReliability() {
+    const token = ++requestId;
+    message.textContent = "Loading client telemetry…";
+    message.hidden = false;
+    try {
+      const params = new URLSearchParams({ range: selectedRange() });
+      const response = await fetch(`${ENDPOINT}?${params.toString()}`, {
+        headers: { Accept: "application/json" }
+      });
+      if (!response.ok) {
+        throw new Error(`client reliability endpoint returned ${response.status}`);
+      }
+      const payload = await response.json();
+      if (token === requestId) {
+        render(payload.data, payload.meta || {});
+      }
+    } catch (error) {
+      if (token === requestId) {
+        content.hidden = true;
+        empty.hidden = true;
+        message.textContent = "Couldn't load client telemetry right now.";
+        message.hidden = false;
+      }
+    }
+  }
+
+  function initClientReliabilityPanel() {
+    panel = document.querySelector("[data-client-panel]");
+    if (!panel) {
+      return;
+    }
+    content = panel.querySelector("[data-client-content]");
+    empty = panel.querySelector("[data-client-empty]");
+    message = panel.querySelector("[data-client-message]");
+    topErrors = panel.querySelector("[data-client-top-errors]");
+    recentFailures = panel.querySelector("[data-client-recent-failures]");
+    panel.querySelectorAll('input[name="client-range"]').forEach((input) => {
+      input.addEventListener("change", loadClientReliability);
+    });
+    loadClientReliability();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initClientReliabilityPanel);
+  } else {
+    initClientReliabilityPanel();
+  }
+})();
+</script>
+{% endblock %}
 {% block body %}
+<section class="panel usage-panel" data-usage-panel>
+  <div class="panel-head usage-panel-head">
+    <div>
+      <h2>Usage</h2>
+      <p class="panel-kicker">Spend, token, and request volume over time.</p>
+    </div>
+    <span class="pill" data-usage-status>loading</span>
+  </div>
+  <div class="panel-body">
+    <div class="usage-controls" aria-label="Usage chart controls">
+      <fieldset class="usage-segmented-control">
+        <legend>Range</legend>
+        <label>
+          <input type="radio" name="usage-range" value="1h">
+          <span>1h</span>
+        </label>
+        <label>
+          <input type="radio" name="usage-range" value="6h">
+          <span>6h</span>
+        </label>
+        <label>
+          <input type="radio" name="usage-range" value="24h">
+          <span>24h</span>
+        </label>
+        <label>
+          <input type="radio" name="usage-range" value="7d">
+          <span>7d</span>
+        </label>
+        <label>
+          <input type="radio" name="usage-range" value="30d" checked>
+          <span>30d</span>
+        </label>
+        <label>
+          <input type="radio" name="usage-range" value="90d">
+          <span>90d</span>
+        </label>
+      </fieldset>
+      <fieldset class="usage-segmented-control">
+        <legend>Metric</legend>
+        <label>
+          <input type="radio" name="usage-metric" value="spend" checked>
+          <span>Spend</span>
+        </label>
+        <label>
+          <input type="radio" name="usage-metric" value="tokens">
+          <span>Tokens</span>
+        </label>
+        <label>
+          <input type="radio" name="usage-metric" value="requests">
+          <span>Requests</span>
+        </label>
+      </fieldset>
+    </div>
+    <p class="usage-message" data-usage-message role="status" hidden></p>
+    <div class="usage-layout" data-usage-layout hidden>
+      <div class="usage-chart-card">
+        <div class="usage-chart-summary">
+          <div>
+            <span data-usage-range-label>Last 30 days</span>
+            <strong data-usage-total>$0.00</strong>
+          </div>
+          <span data-usage-average>$0.00 avg / bucket</span>
+        </div>
+        <div class="usage-chart-scroll" data-usage-chart></div>
+      </div>
+      <aside class="usage-breakdown" aria-labelledby="usage-breakdown-title">
+        <div class="usage-breakdown-head">
+          <h3 id="usage-breakdown-title">Model breakdown</h3>
+          <span>Top models by spend</span>
+        </div>
+        <div data-usage-breakdown></div>
+      </aside>
+    </div>
+    <div class="empty usage-empty-state" data-usage-empty role="status" aria-live="polite" hidden>
+      <p data-usage-empty-message>No activity yet. Make a request with your API key to see it here.</p>
+      <button class="btn" type="button" data-usage-expand-range hidden></button>
+    </div>
+  </div>
+</section>
+
+<section class="panel usage-panel" data-client-panel>
+  <div class="panel-head usage-panel-head">
+    <div>
+      <h2>Client-observed reliability</h2>
+      <p class="panel-kicker">What your applications saw after SDK retries and failover.</p>
+    </div>
+    <span class="pill">from your SDKs · content-free</span>
+  </div>
+  <div class="panel-body">
+    <div class="usage-controls" aria-label="Client reliability range">
+      <fieldset class="usage-segmented-control">
+        <legend>Range</legend>
+        <label><input type="radio" name="client-range" value="1h"><span>1h</span></label>
+        <label><input type="radio" name="client-range" value="6h"><span>6h</span></label>
+        <label><input type="radio" name="client-range" value="24h" checked><span>24h</span></label>
+        <label><input type="radio" name="client-range" value="7d"><span>7d</span></label>
+      </fieldset>
+    </div>
+    <p class="usage-message" data-client-message role="status">Loading client telemetry…</p>
+    <div data-client-content hidden>
+      <div class="metrics">
+        <div class="metric"><div class="label">Requests observed</div><div class="value" data-client-requests>—</div><div class="sub" data-client-requests-sub></div></div>
+        <div class="metric"><div class="label">Client availability</div><div class="value" data-client-availability>—</div><div class="sub" data-client-availability-sub></div></div>
+        <div class="metric"><div class="label">Retried</div><div class="value" data-client-retried>—</div><div class="sub" data-client-retried-sub></div></div>
+        <div class="metric"><div class="label">Failover</div><div class="value" data-client-failover>—</div><div class="sub" data-client-failover-sub></div></div>
+        <div class="metric"><div class="label">Total latency</div><div class="value" data-client-total>—</div><div class="sub" data-client-total-sub></div></div>
+        <div class="metric"><div class="label">Time to first token</div><div class="value" data-client-ttft>—</div><div class="sub" data-client-ttft-sub></div></div>
+        <div class="metric"><div class="label">Server elapsed</div><div class="value" data-client-server>—</div><div class="sub" data-client-server-sub></div></div>
+      </div>
+      <h3 style="margin:24px 0 10px">Top errors</h3>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Error class</th><th>Status</th><th>Count</th></tr></thead>
+          <tbody data-client-top-errors></tbody>
+        </table>
+      </div>
+      <h3 style="margin:24px 0 10px">Recent failures</h3>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Time</th><th>Endpoint</th><th>Model</th><th>Host path</th><th>Attempts</th><th>Outcome</th><th>Status</th><th>Error class</th><th>Request id</th><th>SDK</th></tr></thead>
+          <tbody data-client-recent-failures></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="empty usage-empty-state" data-client-empty role="status" aria-live="polite" hidden>
+      <p>No client telemetry yet. TrustedRouter SDKs ≥ py 0.6.0 send content-free reliability beacons by default; opt out with <code>telemetry=False</code>, <code>TRUSTEDROUTER_TELEMETRY=0</code>, or <code>DO_NOT_TRACK=1</code>. <a href="/docs/telemetry">Read the telemetry contract.</a></p>
+    </div>
+  </div>
+</section>
+
 <section class="panel">
   <div class="panel-head"><h2>Recent activity</h2><span class="pill">metadata only</span></div>
   <div class="panel-body">

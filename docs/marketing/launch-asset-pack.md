@@ -61,9 +61,8 @@ I'm Joseph. I built TrustedRouter because every LLM provider tells you
 they don't log your prompts and none of them lets you check.
 
 It's an OpenAI-compatible router (same shape as OpenRouter — change one
-base_url, keep your model IDs) that runs its gateway inside hardware
-enclaves: AWS Nitro in us-east-1, GCP Confidential VMs in us-central1
-and europe-west4. The CPU signs a measurement of the running binary.
+base_url, keep your model IDs) that runs its gateway inside GCP
+Confidential Space. The CPU signs a measurement of the running binary.
 You fetch /attestation?nonce=<yours>, get back a JWT signed by the
 hardware root key, and compare the image_digest to the hash published
 for the open-source build. If they match, the code handling your
@@ -86,8 +85,8 @@ state with physical access to the cloud host. Upstream providers handle
 prompts per their own policies — I publish each one's posture on the
 model pages so you can route deliberately.
 
-Happy to go deep on the enclave setup, the cross-cloud attestation
-chain, or why I think this should be table stakes for inference. Ask
+Happy to go deep on the enclave setup, the attestation chain, or why I
+think this should be table stakes for inference. Ask
 away.
 ```
 
@@ -103,17 +102,16 @@ the whole ballgame.
   hardware-attested, so you verify the code path instead of trusting it. Same
   API, same models. (Re: the Series B thread — the "prompts go to a training
   DB" worry is exactly what verification removes.)
-- *"Why not just use AWS/GCP confidential computing directly?"* → You can, for
+- *"Why not just use GCP confidential computing directly?"* → You can, for
   one provider, if you build all the routing/billing/fallback/attestation
   plumbing yourself. TR is that plumbing, open-source, verifiable, across 30+
   providers — so you're not locked to one cloud's models.
 - *"How do I actually trust the attestation / what stops you faking it?"* →
-  The JWT is signed by AWS/GCP's hardware root key, not by us. We can't forge
+  The JWT is signed by Google's hardware-backed attestation service, not by us. We can't forge
   that signature. The nonce you supply prevents replay. Exact commands: /security.
 - *"You still trust the chip vendor."* → True, and I say so. Attestation moves
   trust from "the operator's policy" to "the silicon vendor's root key." That's
-  a much smaller, better-studied surface. Cross-cloud (AWS + GCP) means a single
-  vendor compromise is detectable, not silent.
+  a much smaller, better-studied surface.
 - *"Confidential computing has existed for years with ~zero adoption."* → Right
   — because nobody put inference behind it and made it one-line easy. The
   overhead is now single-digit milliseconds. That's the bet: it should be table
@@ -162,7 +160,7 @@ The CPU signs the running binary. You compare the hash to the open-source build.
 ```
 How it works at TrustedRouter:
 
-→ AWS Nitro Enclaves + GCP Confidential VMs (cross-cloud)
+→ GCP Confidential Space
 → fetch /attestation?nonce=<yours>
 → get a JWT signed by the hardware root key
 → image_digest matches the published artifact
@@ -225,9 +223,9 @@ Body:
 Most hosted routers ask you to trust a privacy policy. I wanted one where
 you can check.
 
-TrustedRouter runs its gateway inside AWS Nitro Enclaves + GCP Confidential
-VMs. You hit /attestation?nonce=<yours> and get a JWT signed by the hardware
-root key; the image_digest matches the hash of the open-source build. So you
+TrustedRouter runs its gateway inside GCP Confidential Space. You hit
+/attestation?nonce=<yours> and get a JWT signed by the hardware-backed
+attestation service; the image_digest matches the hash of the open-source build. So you
 can verify the exact code that's handling your prompts, instead of trusting
 a policy.
 
@@ -264,8 +262,8 @@ hostile to product posts), r/OpenAI (low signal).
 Every LLM provider says they don't log your prompts. None of them lets you check.
 
 I built TrustedRouter to change that. It's an open-source, OpenAI-compatible
-LLM router whose gateway runs inside hardware enclaves (AWS Nitro + GCP
-Confidential VMs). You can cryptographically verify — with a nonce challenge
+LLM router whose gateway runs inside GCP Confidential Space. You can
+cryptographically verify — with a nonce challenge
 against the hardware root key — that the code processing your prompts is the
 open-source code we published, and that it never writes your prompts to disk.
 
@@ -330,7 +328,7 @@ These are not launch-day — they're the long tail. Highest leverage first.
 **Confidential Computing Consortium** (credibility + the exact niche room):
 - confidentialcomputing.io — get TR listed.
 - CCC Attestation SIG (`github.com/CCC-Attestation`) holds public fortnightly
-  meetings. Present there — it's literally the room where the Nitro/SEV/TDX
+  meetings. Present there — it's literally the room where confidential-computing
   attestation people are. Best credibility-per-hour available.
 
 **AI directories** (low effort, modest traffic): theresanaiforthat.com,

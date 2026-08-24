@@ -39,7 +39,7 @@ Status key:
 | TR-VULN-001 | Designed, evidence pending | CI runs tests, ruff, mypy, frontend checks, browser smoke, and coverage. Need dependency, secret, and container scanning evidence. | Workflow snapshot, vulnerability review. |
 | TR-VULN-002 | Designed, evidence pending | Remediation policy exists. Need tracker export or risk acceptance records for open findings. | Vulnerability policy, vulnerability review. |
 | TR-DATA-001 | Implemented | Data classification and retention policy exists. | Policy binder. |
-| TR-DATA-002 | Implemented | Tests and schemas support metadata-only storage by default. Need sampled production log evidence. | Test evidence, storage schemas, logging policy. |
+| TR-DATA-002 | Implemented | Tests and schemas enforce metadata-only storage with no prompt/output content. Need sampled production log evidence. | Test evidence, storage schemas, logging policy. |
 | TR-DATA-003 | Designed, evidence pending | BYOK encryption and secret handling are implemented in code/tests. Need KMS/envelope config evidence and per-secret access review. | Tests, Secret Manager inventory. |
 | TR-PRIV-001 | Designed, evidence pending | Security, providers, legal, SOC 2 readiness, HIPAA readiness, and subprocessor pages are live. Management approval and auditor review are still pending. | Production HTTP snapshot. |
 | TR-PRIV-002 | Implemented | Routing preferences, BYOK, provider filters, and content export toggles are covered by tests and code. | Local tests. |

@@ -43,7 +43,7 @@ headline to ≤ 7 words.
 | `claude-api-privacy.png` | Claude, through a path you can verify | Anthropic's posture + an open, attested router |
 | `litellm-alternative.png` | Self-host. And prove what it runs. | LiteLLM's freedom + hardware attestation |
 | `portkey-alternative.png` | Routing without logging every prompt | Usage metering, zero content logs |
-| `confidential-computing-llm.png` | Confidential computing for LLMs | Nitro + GCP CVMs · every provider · one API |
+| `confidential-computing-llm.png` | Confidential computing for LLMs | GCP Confidential Space · every provider · one API |
 | `tinfoil-alternative.png` | Verifiable privacy, every provider | Same bet as Tinfoil — applied as a router |
 
 ## Optional, higher-value cards (do these first if generating a subset)

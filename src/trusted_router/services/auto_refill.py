@@ -18,23 +18,34 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any, cast
 
 from trusted_router.config import Settings
+from trusted_router.services.stripe_fees import stripe_processing_fee
 from trusted_router.storage import STORE
 from trusted_router.storage_models import CreditAccount
+from trusted_router.typed_balance import live_credit_summary
 
 log = logging.getLogger(__name__)
 
-# Minimum interval between attempts so a single bad card can't generate
-# an infinite stream of declines. 5 minutes is a balance between "user
-# expects refill within seconds" and "Stripe's per-customer rate limit".
+# Minimum interval between failed attempts so a single bad card can't generate
+# an infinite stream of declines. 5 minutes is a balance between "user expects
+# refill within seconds" and "Stripe's per-customer rate limit".
 MIN_RETRY_INTERVAL_SECONDS = 5 * 60
+
+# A successfully created off-session PaymentIntent is marked pending until the
+# Stripe webhook credits the workspace. During that window, creating another
+# PaymentIntent can double-charge a customer even though the first charge is
+# merely waiting for webhook delivery, so block duplicate auto-refills while the
+# pending attempt is fresh. If the webhook is lost for long enough, allow a later
+# low-balance settle to try again instead of wedging auto-refill forever.
+PENDING_RETRY_INTERVAL_SECONDS = 30 * 60
 
 
 @dataclass(frozen=True)
 class AutoRefillOutcome:
     fired: bool
-    reason: str  # "charged" | "disabled" | "above_threshold" | "no_payment_method" | "rate_limited" | "stripe_error:<code>"
+    reason: str  # "charged" | "disabled" | "above_threshold" | "pending" | "rate_limited" | "stripe_error:<code>"
     payment_intent_id: str | None = None
 
 
@@ -49,6 +60,9 @@ def maybe_charge_after_settle(
     the decision. Never raises — Stripe / network failures are surfaced
     via `last_auto_refill_status` so retries are bounded by the next
     settle event."""
+    # Typed-aware: for a typed workspace the authoritative usage/reserved live in
+    # the typed table; reading stale JSON here would overstate available and the
+    # threshold would never trip → the card never charges (underbill).
     account = STORE.get_credit_account(workspace_id)
     if account is None:
         return AutoRefillOutcome(fired=False, reason="no_account")
@@ -56,17 +70,23 @@ def maybe_charge_after_settle(
         return AutoRefillOutcome(fired=False, reason="disabled")
     if account.auto_refill_amount_microdollars <= 0:
         return AutoRefillOutcome(fired=False, reason="disabled")
-    available = (
-        account.total_credits_microdollars
-        - account.total_usage_microdollars
-        - account.reserved_microdollars
-    )
-    if available > account.auto_refill_threshold_microdollars:
+    summary = live_credit_summary(workspace_id, store=STORE)
+    if summary is None:
+        return AutoRefillOutcome(fired=False, reason="no_account")
+    # Unclamped available (may be negative for an overdrawn balance) so the
+    # threshold comparison is byte-identical to the pre-C2b inline computation.
+    # summary["available"] is floored at 0 for display and must NOT be used here:
+    # at threshold 0 it would suppress a refill the overdraw was meant to cover.
+    available = summary["total_credits"] - summary["total_usage"] - summary["reserved"]
+    # The product promise is "when balance drops below the threshold".
+    # Equal-to-threshold is still not below, so do not charge yet.
+    if available >= account.auto_refill_threshold_microdollars:
         return AutoRefillOutcome(fired=False, reason="above_threshold")
     if not account.stripe_customer_id or not account.stripe_payment_method_id:
         return AutoRefillOutcome(fired=False, reason="no_payment_method")
-    if _too_soon_to_retry(account):
-        return AutoRefillOutcome(fired=False, reason="rate_limited")
+    recent_attempt_reason = _recent_attempt_block_reason(account)
+    if recent_attempt_reason is not None:
+        return AutoRefillOutcome(fired=False, reason=recent_attempt_reason)
     if not settings.stripe_secret_key:
         return AutoRefillOutcome(fired=False, reason="stripe_not_configured")
 
@@ -76,25 +96,48 @@ def maybe_charge_after_settle(
         return AutoRefillOutcome(fired=False, reason="stripe_not_installed")
 
     stripe.api_key = settings.stripe_secret_key
-    cents = max(50, account.auto_refill_amount_microdollars // 10_000)
+    credit_amount_cents = max(50, account.auto_refill_amount_microdollars // 10_000)
+    fee = stripe_processing_fee(
+        credit_amount_cents=credit_amount_cents,
+        variable_basis_points=settings.stripe_card_fee_basis_points,
+        fixed_fee_cents=settings.stripe_card_fee_fixed_cents,
+        minimum_fee_cents=settings.checkout_card_fee_minimum_cents,
+    )
     idempotency_key = (
-        f"auto-refill:{workspace_id}:{cents}:"
+        f"auto-refill:{workspace_id}:{fee.charge_amount_cents}:"
         f"{datetime.now(UTC).strftime('%Y%m%d%H%M')}"
+    )
+    metadata = fee.metadata(
+        workspace_id=workspace_id,
+        payment_method="card",
+        initiating_user_id=(
+            workspace.owner_user_id
+            if (workspace := STORE.get_workspace(workspace_id)) is not None
+            else None
+        ),
+    )
+    metadata.update(
+        {
+            "auto_refill": "true",
+            # Preserve the configured ledger principal even if a legacy
+            # account somehow contains a sub-cent value.
+            "amount_microdollars": str(account.auto_refill_amount_microdollars),
+        }
     )
     try:
         intent = stripe.PaymentIntent.create(
-            amount=cents,
+            amount=fee.charge_amount_cents,
             currency="usd",
             customer=account.stripe_customer_id,
             payment_method=account.stripe_payment_method_id,
             off_session=True,
             confirm=True,
             description="TrustedRouter auto-refill",
-            metadata={
-                "workspace_id": workspace_id,
-                "auto_refill": "true",
-                "amount_microdollars": str(account.auto_refill_amount_microdollars),
-            },
+            amount_details=cast(
+                Any,
+                {"line_items": fee.payment_intent_line_items()},
+            ),
+            metadata=metadata,
             idempotency_key=idempotency_key,
         )
     except stripe.CardError as exc:
@@ -110,18 +153,26 @@ def maybe_charge_after_settle(
     return AutoRefillOutcome(fired=True, reason="charged", payment_intent_id=intent.id)
 
 
-def _too_soon_to_retry(account: CreditAccount) -> bool:
-    """Skip if the last attempt failed less than MIN_RETRY_INTERVAL_SECONDS
-    ago. We don't gate successes the same way — those advance the credit
-    balance and naturally take the workspace out of the threshold band."""
+def _recent_attempt_block_reason(account: CreditAccount) -> str | None:
+    """Skip if a recent attempt is still pending or recently failed.
+
+    We don't gate successes the same way: the successful webhook advances the
+    credit balance and naturally takes the workspace out of the threshold band.
+    """
     if not account.last_auto_refill_at:
-        return False
-    if account.last_auto_refill_status and account.last_auto_refill_status.startswith("failed:"):
-        try:
-            last = datetime.fromisoformat(account.last_auto_refill_at.replace("Z", "+00:00"))
-        except ValueError:
-            return False
-        if last.tzinfo is None:
-            last = last.replace(tzinfo=UTC)
-        return (datetime.now(UTC) - last).total_seconds() < MIN_RETRY_INTERVAL_SECONDS
-    return False
+        return None
+    status = account.last_auto_refill_status or ""
+    if status != "pending" and not status.startswith("failed:"):
+        return None
+    try:
+        last = datetime.fromisoformat(account.last_auto_refill_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    age_seconds = (datetime.now(UTC) - last).total_seconds()
+    if status == "pending" and age_seconds < PENDING_RETRY_INTERVAL_SECONDS:
+        return "pending"
+    if status.startswith("failed:") and age_seconds < MIN_RETRY_INTERVAL_SECONDS:
+        return "rate_limited"
+    return None

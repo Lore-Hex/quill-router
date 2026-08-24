@@ -74,10 +74,15 @@ def test_shipped_benchmark_data_integrity() -> None:
     rows = bm._raw_scores()
     assert rows, "expected at least one shipped benchmark score"
     for row in rows:
-        assert row["source_class"] in {"A", "B"}, row
+        assert row["source_class"] in {"A", "B", "T"}, row
         assert str(row["source_url"]).startswith("http"), row
         assert row["benchmark_key"] in BENCHMARK_DEFS, row
         assert row["model_id"] in MODELS, f"score attached to unknown model: {row['model_id']}"
+        # Class "T" (TrustedRouter's own runs) must cite a published replay in
+        # the trustedrouter-benchmarks repo — that link is the reproducibility
+        # guarantee that justifies showing a first-party number.
+        if row["source_class"] == "T":
+            assert "trustedrouter-benchmarks" in row["source_url"], row
 
 
 def test_models_with_scores_are_all_in_catalog() -> None:

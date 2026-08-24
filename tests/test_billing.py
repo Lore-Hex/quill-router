@@ -3,31 +3,40 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.security import lookup_hash_api_key
 from trusted_router.storage import STORE
+from trusted_router.typed_balance import live_credit_summary
+
+
+def _credit_summary(workspace_id: str) -> dict[str, int]:
+    summary = live_credit_summary(workspace_id)
+    assert summary is not None
+    return summary
 
 
 def test_stripe_event_idempotency(user_headers: dict[str, str], client) -> None:
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
-    before = STORE.credits[workspace_id].total_credits_microdollars
+    before = STORE.credit_money[workspace_id].total_credits_microdollars
     assert STORE.credit_workspace_once(workspace_id, 5_000_000, "evt_1") is True
     assert STORE.credit_workspace_once(workspace_id, 5_000_000, "evt_1") is False
-    assert STORE.credits[workspace_id].total_credits_microdollars == before + 5_000_000
+    assert STORE.credit_money[workspace_id].total_credits_microdollars == before + 5_000_000
 
 
 def test_stripe_webhook_route_is_idempotent(user_headers: dict[str, str], client) -> None:
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
-    before = STORE.credits[workspace_id].total_credits_microdollars
+    before = STORE.credit_money[workspace_id].total_credits_microdollars
     event = {
         "id": "evt_checkout_1",
         "type": "checkout.session.completed",
         "data": {
             "object": {
                 "amount_total": 1200,
+                "payment_status": "paid",
                 "metadata": {"workspace_id": workspace_id},
             }
         },
@@ -38,7 +47,7 @@ def test_stripe_webhook_route_is_idempotent(user_headers: dict[str, str], client
     assert second.status_code == 200
     assert first.json()["data"]["credited"] is True
     assert second.json()["data"]["credited"] is False
-    assert STORE.credits[workspace_id].total_credits_microdollars == before + 12_000_000
+    assert STORE.credit_money[workspace_id].total_credits_microdollars == before + 12_000_000
 
 
 def test_billing_checkout_and_portal_mock_without_stripe_secret(user_headers: dict[str, str], client) -> None:
@@ -131,19 +140,9 @@ def test_setup_checkout_completed_marks_customer_pending_without_granting_trial(
     with no charge) can arrive before `setup_intent.succeeded`. The setup
     intent is the event that proves the reusable payment method exists.
     Checkout completion alone may know the customer but must not grant
-    trial credit or mark the card saved. The test resets the workspace credit
-    + dedup ledger entry to
-    a pre-card-attach state first to override the conftest
-    auto_credit_test_workspaces fixture (which simulates "card already
-    attached" for the rest of the suite)."""
+    starter credit or mark the card saved."""
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
-    # Force pre-card-attach state — undo the conftest test-only auto-credit.
-    # Clearing both the credit balance AND the per-workspace "trial" event-id
-    # in the dedup ledger so the webhook's idempotent credit_workspace_once
-    # actually fires (otherwise it'd see the conftest fixture's grant as a
-    # prior trial-grant and no-op).
-    STORE.credits[workspace_id].total_credits_microdollars = 0
-    STORE.stripe_events.discard(f"trial:{workspace_id}")
+    STORE.credit_money[workspace_id].total_credits_microdollars = 0
     event = {
         "id": "evt_checkout_setup_1",
         "type": "checkout.session.completed",
@@ -165,7 +164,7 @@ def test_setup_checkout_completed_marks_customer_pending_without_granting_trial(
     assert body["trial_credit_granted_microdollars"] == 0
     account = STORE.get_credit_account(workspace_id)
     assert account is not None
-    assert account.total_credits_microdollars == 0
+    assert _credit_summary(workspace_id)["total_credits"] == 0
     assert account.stripe_customer_id == "cus_checkout_setup"
     assert account.stripe_payment_method_id is None
 
@@ -174,10 +173,9 @@ def test_setup_intent_without_customer_does_not_grant_trial_or_save_method(
     user_headers: dict[str, str], client
 ) -> None:
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
-    STORE.credits[workspace_id].total_credits_microdollars = 0
+    STORE.credit_money[workspace_id].total_credits_microdollars = 0
     STORE.credits[workspace_id].stripe_customer_id = None
     STORE.credits[workspace_id].stripe_payment_method_id = None
-    STORE.stripe_events.discard(f"trial:{workspace_id}")
     event = {
         "id": "evt_setup_intent_missing_customer",
         "type": "setup_intent.succeeded",
@@ -196,9 +194,70 @@ def test_setup_intent_without_customer_does_not_grant_trial_or_save_method(
     assert resp.json()["data"]["ignored"] is True
     account = STORE.get_credit_account(workspace_id)
     assert account is not None
-    assert account.total_credits_microdollars == 0
+    assert _credit_summary(workspace_id)["total_credits"] == 0
     assert account.stripe_customer_id is None
     assert account.stripe_payment_method_id is None
+
+
+def test_setup_intent_never_grants_starter_credit(
+    user_headers: dict[str, str], client
+) -> None:
+    """Attaching a card saves it but cannot repeat account starter credit."""
+    workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
+    STORE.credit_money[workspace_id].total_credits_microdollars = 0
+    event = {
+        "id": "evt_setup_intent_no_trial",
+        "type": "setup_intent.succeeded",
+        "data": {
+            "object": {
+                "customer": "cus_no_trial",
+                "payment_method": "pm_no_trial",
+                "metadata": {"workspace_id": workspace_id},
+            }
+        },
+    }
+
+    resp = client.post("/v1/internal/stripe/webhook", json=event)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()["data"]
+    assert body["setup_saved"] is True
+    assert body["trial_credit_granted_microdollars"] == 0
+    account = STORE.get_credit_account(workspace_id)
+    assert account is not None
+    assert _credit_summary(workspace_id)["total_credits"] == 0
+    assert account.stripe_payment_method_id == "pm_no_trial"
+
+
+def test_setup_intent_does_not_reapply_configured_signup_credit(
+    user_headers: dict[str, str], client, monkeypatch
+) -> None:
+    """The signup amount is irrelevant after account creation."""
+    monkeypatch.setattr(
+        client.app.state.settings, "signup_trial_credit_microdollars", 5_000_000
+    )
+    workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
+    STORE.credit_money[workspace_id].total_credits_microdollars = 0
+    event = {
+        "id": "evt_setup_intent_enabled_trial",
+        "type": "setup_intent.succeeded",
+        "data": {
+            "object": {
+                "customer": "cus_enabled_trial",
+                "payment_method": "pm_enabled_trial",
+                "metadata": {"workspace_id": workspace_id},
+            }
+        },
+    }
+
+    resp = client.post("/v1/internal/stripe/webhook", json=event)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()["data"]
+    assert body["trial_credit_granted_microdollars"] == 0
+    account = STORE.get_credit_account(workspace_id)
+    assert account is not None
+    assert _credit_summary(workspace_id)["total_credits"] == 0
 
 
 def test_payment_intent_succeeded_from_checkout_saves_payment_method_without_crediting(
@@ -207,7 +266,7 @@ def test_payment_intent_succeeded_from_checkout_saves_payment_method_without_cre
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
     before = STORE.get_credit_account(workspace_id)
     assert before is not None
-    before_total = before.total_credits_microdollars
+    before_total = _credit_summary(workspace_id)["total_credits"]
     event = {
         "id": "evt_payment_intent_checkout_pm",
         "type": "payment_intent.succeeded",
@@ -226,7 +285,7 @@ def test_payment_intent_succeeded_from_checkout_saves_payment_method_without_cre
     assert resp.json()["data"]["payment_method_saved"] is True
     account = STORE.get_credit_account(workspace_id)
     assert account is not None
-    assert account.total_credits_microdollars == before_total
+    assert _credit_summary(workspace_id)["total_credits"] == before_total
     assert account.stripe_customer_id == "cus_checkout_pm"
     assert account.stripe_payment_method_id == "pm_checkout_saved"
 
@@ -299,9 +358,9 @@ def test_billing_checkout_validates_amount_and_workspace(user_headers: dict[str,
 def test_concurrent_reservations_do_not_overspend(user_headers: dict[str, str], client) -> None:
     key = client.post("/v1/keys", headers=user_headers, json={"name": "reserve"}).json()["data"]
     workspace_id = key["workspace_id"]
-    STORE.credits[workspace_id].total_credits_microdollars = 1_000_000
-    STORE.credits[workspace_id].total_usage_microdollars = 0
-    STORE.credits[workspace_id].reserved_microdollars = 0
+    STORE.credit_money[workspace_id].total_credits_microdollars = 1_000_000
+    STORE.credit_money[workspace_id].total_usage_microdollars = 0
+    STORE.credit_money[workspace_id].reserved_microdollars = 0
 
     def reserve_once() -> bool:
         try:
@@ -313,7 +372,7 @@ def test_concurrent_reservations_do_not_overspend(user_headers: dict[str, str], 
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(lambda _: reserve_once(), range(4)))
     assert results.count(True) == 1
-    assert STORE.credits[workspace_id].reserved_microdollars == 600_000
+    assert STORE.credit_money[workspace_id].reserved_microdollars == 600_000
 
 
 def test_internal_gateway_authorize_and_settle_records_metadata(
@@ -338,7 +397,7 @@ def test_internal_gateway_authorize_and_settle_records_metadata(
     assert auth_data["usage_type"] == "Credits"
     assert auth_data["credit_reservation_id"]
     assert auth_data["content_storage_enabled"] is False
-    assert STORE.credits[workspace_id].reserved_microdollars > 0
+    assert STORE.credit_money[workspace_id].reserved_microdollars > 0
 
     settle = client.post(
         "/v1/internal/gateway/settle",
@@ -358,8 +417,8 @@ def test_internal_gateway_authorize_and_settle_records_metadata(
     generation = STORE.generation_store.generations[generation_id]
     assert generation.request_id == "gw-req-1"
     assert generation.app == "attested-gateway-test"
-    assert STORE.credits[workspace_id].reserved_microdollars == 0
-    assert STORE.credits[workspace_id].total_usage_microdollars == generation.total_cost_microdollars
+    assert STORE.credit_money[workspace_id].reserved_microdollars == 0
+    assert STORE.credit_money[workspace_id].total_usage_microdollars == generation.total_cost_microdollars
 
     repeat = client.post(
         "/v1/internal/gateway/settle",
@@ -367,6 +426,202 @@ def test_internal_gateway_authorize_and_settle_records_metadata(
     )
     assert repeat.status_code == 200
     assert repeat.json()["data"]["already_settled"] is True
+    assert repeat.json()["data"]["generation_id"] == generation_id
+
+
+def test_settlement_over_reservation_emits_bounded_billing_warning(
+    user_headers: dict[str, str],
+    client,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    created = client.post("/v1/keys", headers=user_headers, json={"name": "overrun"}).json()
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": created["data"]["hash"],
+            "model": "anthropic/claude-haiku-4.5",
+            "estimated_input_tokens": 1,
+            "max_output_tokens": 1,
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    authorization_id = authorize.json()["data"]["authorization_id"]
+
+    with caplog.at_level(
+        "WARNING",
+        logger="trusted_router.routes.internal.gateway",
+    ):
+        settle = client.post(
+            "/v1/internal/gateway/settle",
+            json={
+                "authorization_id": authorization_id,
+                "actual_input_tokens": 1,
+                "actual_output_tokens": 1_000,
+                "request_id": "settlement-overrun",
+                "elapsed_seconds": 0.5,
+            },
+        )
+
+    assert settle.status_code == 200, settle.text
+    record = next(
+        record
+        for record in caplog.records
+        if record.msg == "billing.settlement_exceeded_reservation"
+    )
+    context = record.__dict__
+    assert context["authorization_id"] == authorization_id
+    assert context["actual_microdollars"] > context["estimated_microdollars"]
+    assert context["overrun_microdollars"] == (
+        context["actual_microdollars"] - context["estimated_microdollars"]
+    )
+    assert context["output_tokens"] == 1_000
+
+
+def test_web_search_additional_cost_is_reserved_and_settled_exactly_once(
+    user_headers: dict[str, str],
+    client,
+) -> None:
+    created = client.post("/v1/keys", headers=user_headers, json={"name": "web search"}).json()
+    key_hash = created["data"]["hash"]
+    workspace_id = created["data"]["workspace_id"]
+    reserve_microdollars = 300_000
+    actual_search_microdollars = 7_000
+
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key_hash,
+            "model": "anthropic/claude-opus-4.7",
+            "estimated_input_tokens": 20,
+            "max_output_tokens": 4,
+            "route_type": "responses.web_search.planner",
+            "additional_cost_reservation_microdollars": reserve_microdollars,
+            "idempotency_key": "web-search-cost-once",
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    auth_data = authorize.json()["data"]
+    authorization = STORE.get_gateway_authorization(auth_data["authorization_id"])
+    assert authorization is not None
+    assert authorization.additional_cost_reservation_microdollars == reserve_microdollars
+    assert auth_data["additional_cost_reservation_microdollars"] == reserve_microdollars
+    assert auth_data["estimated_cost_microdollars"] == authorization.estimated_microdollars
+    assert STORE.credit_money[workspace_id].reserved_microdollars == authorization.estimated_microdollars
+    assert all(route["usage_type"] == "Credits" for route in auth_data["route_candidates"])
+
+    settle = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": auth_data["authorization_id"],
+            "actual_input_tokens": 20,
+            "actual_output_tokens": 2,
+            "request_id": "web-search-cost-once",
+            "route_type": "responses.web_search.planner",
+            "additional_cost_microdollars": actual_search_microdollars,
+            "elapsed_seconds": 0.5,
+        },
+    )
+    assert settle.status_code == 200, settle.text
+    settled_cost = settle.json()["data"]["cost_microdollars"]
+    generation = STORE.generation_store.generations[settle.json()["data"]["generation_id"]]
+    assert settled_cost == generation.total_cost_microdollars
+    assert settled_cost >= actual_search_microdollars
+    assert STORE.credit_money[workspace_id].reserved_microdollars == 0
+    assert STORE.credit_money[workspace_id].total_usage_microdollars == settled_cost
+
+    replay = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": auth_data["authorization_id"],
+            "actual_input_tokens": 20,
+            "actual_output_tokens": 2,
+            "route_type": "responses.web_search.planner",
+            "additional_cost_microdollars": actual_search_microdollars,
+        },
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["data"]["already_settled"] is True
+    assert STORE.credit_money[workspace_id].total_usage_microdollars == settled_cost
+
+
+def test_web_search_additional_cost_fails_closed_outside_authorized_bound(
+    user_headers: dict[str, str],
+    client,
+) -> None:
+    created = client.post("/v1/keys", headers=user_headers, json={"name": "bounded search"}).json()
+    key_hash = created["data"]["hash"]
+
+    wrong_route = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key_hash,
+            "model": "anthropic/claude-opus-4.7",
+            "estimated_input_tokens": 20,
+            "max_output_tokens": 4,
+            "route_type": "chat.completions",
+            "additional_cost_reservation_microdollars": 10_000,
+        },
+    )
+    assert wrong_route.status_code == 400, wrong_route.text
+
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key_hash,
+            "model": "anthropic/claude-opus-4.7",
+            "estimated_input_tokens": 20,
+            "max_output_tokens": 4,
+            "route_type": "responses.web_search.planner",
+            "additional_cost_reservation_microdollars": 10_000,
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    auth_id = authorize.json()["data"]["authorization_id"]
+    over_settle = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": auth_id,
+            "actual_input_tokens": 20,
+            "actual_output_tokens": 2,
+            "route_type": "responses.web_search.planner",
+            "additional_cost_microdollars": 10_001,
+        },
+    )
+    assert over_settle.status_code == 400, over_settle.text
+    authorization = STORE.get_gateway_authorization(auth_id)
+    assert authorization is not None and authorization.settled is False
+    assert not STORE.generation_store.generations
+
+
+@pytest.mark.parametrize(
+    "provider",
+    (
+        {"data_collection": "deny"},
+        {"jurisdiction": "eu"},
+    ),
+)
+def test_web_search_additional_cost_rejects_private_provider_filters(
+    user_headers: dict[str, str],
+    client,
+    provider: dict[str, str],
+) -> None:
+    created = client.post("/v1/keys", headers=user_headers, json={"name": "private search"}).json()
+    response = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": created["data"]["hash"],
+            "model": "anthropic/claude-opus-4.7",
+            "estimated_input_tokens": 20,
+            "max_output_tokens": 4,
+            "route_type": "responses.web_search.planner",
+            "additional_cost_reservation_microdollars": 100_000,
+            "provider": provider,
+        },
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["message"] == (
+        "web_search is not available for this privacy tier"
+    )
 
 
 def test_internal_gateway_authorize_replays_same_idempotency_key_once(
@@ -390,7 +645,7 @@ def test_internal_gateway_authorize_replays_same_idempotency_key_once(
     )
     assert first.status_code == 200, first.text
     first_data = first.json()["data"]
-    first_reserved = STORE.credits[workspace_id].reserved_microdollars
+    first_reserved = STORE.credit_money[workspace_id].reserved_microdollars
 
     repeat = client.post(
         "/v1/internal/gateway/authorize",
@@ -402,7 +657,7 @@ def test_internal_gateway_authorize_replays_same_idempotency_key_once(
     assert repeat_data["authorization_id"] == first_data["authorization_id"]
     assert repeat_data["credit_reservation_id"] == first_data["credit_reservation_id"]
     assert repeat_data["idempotent_replay"] is True
-    assert STORE.credits[workspace_id].reserved_microdollars == first_reserved
+    assert STORE.credit_money[workspace_id].reserved_microdollars == first_reserved
 
 
 def test_internal_gateway_authorize_rejects_idempotency_key_body_mismatch(
@@ -455,7 +710,7 @@ def test_internal_gateway_byok_uses_configured_secret_ref_and_refunds_key_limit(
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": key_hash,
-            "model": "meta-llama/llama-3.1-8b-instruct",
+            "model": "openai/gpt-oss-120b",
             "provider": {"usage": "byok"},
             "estimated_input_tokens": 20,
             "max_output_tokens": 4,
@@ -502,7 +757,7 @@ def test_internal_gateway_byok_returns_envelope_for_uploaded_raw_key(
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": created["data"]["hash"],
-            "model": "meta-llama/llama-3.1-8b-instruct",
+            "model": "openai/gpt-oss-120b",
             "provider": {"usage": "byok"},
             "estimated_input_tokens": 20,
             "max_output_tokens": 4,
@@ -549,7 +804,7 @@ def test_internal_gateway_byok_cache_key_changes_on_rotation(
             "/v1/internal/gateway/authorize",
             json={
                 "api_key_hash": created["data"]["hash"],
-                "model": "meta-llama/llama-3.1-8b-instruct",
+                "model": "openai/gpt-oss-120b",
                 "provider": {"usage": "byok"},
                 "estimated_input_tokens": 1,
                 "max_output_tokens": 1,
@@ -575,7 +830,7 @@ def test_internal_gateway_byok_cache_key_changes_on_rotation(
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": created["data"]["hash"],
-            "model": "meta-llama/llama-3.1-8b-instruct",
+            "model": "openai/gpt-oss-120b",
             "provider": {"usage": "byok"},
             "estimated_input_tokens": 1,
             "max_output_tokens": 1,
@@ -652,7 +907,7 @@ def test_stripe_webhook_handles_stripe_object_from_construct_event(
     from trusted_router.routes.internal import webhook as webhook_module
 
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
-    before = STORE.credits[workspace_id].total_credits_microdollars
+    before = STORE.credit_money[workspace_id].total_credits_microdollars
 
     # Build a real stripe.Event so we exercise the actual StripeObject code
     # path that bit us in prod (rather than a fake "dict-without-.get"
@@ -718,7 +973,7 @@ def test_stripe_webhook_handles_stripe_object_from_construct_event(
     assert body["event_id"] == "evt_stripeobj_regression_1"
     # Verify the credit actually landed — the whole point of fixing this is
     # that real Stripe payments grant credit again.
-    after = STORE.credits[workspace_id].total_credits_microdollars
+    after = STORE.credit_money[workspace_id].total_credits_microdollars
     assert after - before == 100 * 10000, f"expected +$1.00 in microdollars, got {after-before}"
 
 
@@ -807,9 +1062,13 @@ def test_credits_page_renders_payment_history_section(monkeypatch) -> None:
     )
     client, _ = _console_client_for_test()
     resp = client.get("/console/credits")
+    details = client.get("/console/credits/stripe-details")
     assert resp.status_code == 200, resp.text[:300]
+    assert details.status_code == 200, details.text[:300]
     assert "Payment history" in resp.text
-    assert "No payments yet" in resp.text
+    assert "No payments yet" in details.text
+    assert "Bank account (ACH)" in resp.text
+    assert "credits appear" in details.text
 
 
 def test_credits_page_renders_payment_rows_when_present(monkeypatch) -> None:
@@ -826,7 +1085,9 @@ def test_credits_page_renders_payment_rows_when_present(monkeypatch) -> None:
         {
             "payment_intent": "pi_3TaPnB",
             "created_at": 1779582083,  # 2026-05-24 01:01 UTC
-            "amount_cents": 100,
+            "amount_cents": 134,
+            "credit_amount_cents": 100,
+            "processing_fee_cents": 34,
             "currency": "usd",
             "status": "succeeded",
             "payment_status": "paid",
@@ -845,6 +1106,22 @@ def test_credits_page_renders_payment_rows_when_present(monkeypatch) -> None:
             "card_brand": "mastercard",
             "card_last4": "8888",
         },
+        {
+            "payment_intent": "pi_ach_processing",
+            "created_at": 1779550000,
+            "amount_cents": 2_521,
+            "credit_amount_cents": 2_500,
+            "processing_fee_cents": 21,
+            "currency": "usd",
+            "status": "processing",
+            "payment_status": "processing",
+            "receipt_url": None,
+            "payment_method_type": "ach",
+            "bank_name": "Test Bank",
+            "bank_last4": "6789",
+            "card_brand": None,
+            "card_last4": None,
+        },
     ]
     monkeypatch.setattr(
         credits_module,
@@ -854,22 +1131,29 @@ def test_credits_page_renders_payment_rows_when_present(monkeypatch) -> None:
 
     client, _ = _console_client_for_test()
     resp = client.get("/console/credits")
+    details = client.get("/console/credits/stripe-details")
     assert resp.status_code == 200, resp.text[:300]
+    assert details.status_code == 200, details.text[:300]
     assert "Payment history" in resp.text
     # Amount formatted as dollars
-    assert "$1.00" in resp.text
-    assert "$5.00" in resp.text
+    assert "$1.00" in details.text
+    assert "$0.34 fee" in details.text
+    assert "$1.34" in details.text
+    assert "$5.00" in details.text
     # Card brand + last4 displayed
-    assert "visa" in resp.text.lower()
-    assert "4242" in resp.text
-    assert "mastercard" in resp.text.lower()
-    assert "8888" in resp.text
+    assert "visa" in details.text.lower()
+    assert "4242" in details.text
+    assert "mastercard" in details.text.lower()
+    assert "8888" in details.text
+    assert "Test Bank" in details.text
+    assert "6789" in details.text
+    assert ">processing<" in details.text or 'pill warn">processing' in details.text
     # Receipt links rendered
-    assert "https://pay.stripe.com/receipts/test-receipt" in resp.text
+    assert "https://pay.stripe.com/receipts/test-receipt" in details.text
     # `paid` status pill
-    assert ">paid<" in resp.text or 'pill good">paid' in resp.text
+    assert ">paid<" in details.text or 'pill good">paid' in details.text
     # Date formatted (UTC)
-    assert "2026-05-24" in resp.text
-    assert "2026-05-23" in resp.text
+    assert "2026-05-24" in details.text
+    assert "2026-05-23" in details.text
     # Empty-state copy NOT shown when payments exist
-    assert "No payments yet" not in resp.text
+    assert "No payments yet" not in details.text

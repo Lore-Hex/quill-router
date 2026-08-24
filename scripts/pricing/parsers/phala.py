@@ -1,6 +1,6 @@
 # LLM-MAINTAINED FILE — re-validated every hour by scripts/pricing/refresh.py.
 #
-# Parses red-pill.ai/ (Phala's marketing landing page) via Jina.
+# Parses a captured rendering of Phala's historical marketing page.
 # The page renders each model as a card with inline price text:
 #
 #   "Qwen: Qwen3.5-27B GPU TEE ... by phala|262K context|$0.30/M input|$2.40/M output Intel TDX NVIDIA CC"
@@ -8,7 +8,7 @@
 # Each card has a `[Display: model-id](https://red-pill.ai/models/<vendor>/<slug>)`
 # link, plus the pipe-delimited price stanza. We pull the link href
 # (which carries the canonical id) and the two $-amounts.
-"""Phala (RedPill) pricing parser (Jina-rendered markdown)."""
+"""Phala (RedPill) legacy captured-page parser used by fixture checks."""
 from __future__ import annotations
 
 import re

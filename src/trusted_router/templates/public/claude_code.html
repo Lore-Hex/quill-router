@@ -1,0 +1,94 @@
+{% extends "public/_base.html" %}
+
+{% block head_extra %}
+<link rel="preload" href="/static/claude-code-hero.png" as="image" type="image/png" fetchpriority="high">
+<link rel="stylesheet" href="/static/claude-code.css?v={{ static_version|default('local') }}">
+{% endblock %}
+
+{% block hero %}
+<section class="cc-hero" aria-labelledby="cc-hero-title">
+  <div class="cc-hero-inner">
+    <div class="cc-hero-copy">
+      <div class="kicker">For vibe coders</div>
+      <h1 id="cc-hero-title">Cut your AI bill in 10 seconds.</h1>
+      <p class="cc-hero-lead">Just paste one short message into a new Claude Code, Codex, or agent chat. Your agent calls DeepSeek through TrustedRouter and streams the answer into the same chat.</p>
+      <div class="cc-hero-flow" aria-labelledby="cc-hero-flow-title">
+        <span class="cc-hero-flow-label" id="cc-hero-flow-title">The 10-second flow</span>
+        <ol>
+          <li><span>01</span><strong>Create your key</strong></li>
+          <li><span>02</span><strong>Copy one short message</strong></li>
+          <li><span>03</span><strong>Paste into a new agent chat</strong></li>
+        </ol>
+      </div>
+      <div class="hero-actions">
+        <button class="btn primary cc-primary-cta" type="button" data-action="open-signin">Get my one-paste message</button>
+      </div>
+      <p class="cc-hero-note">Sign in once. Your complete key arrives inside the message, ready to paste.</p>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block body %}
+<section class="cc-section cc-paste-section" aria-labelledby="cc-paste-title">
+  <div class="cc-paste-copy">
+    <span class="eyebrow">What you paste</span>
+    <h2 id="cc-paste-title">Just paste one short message.</h2>
+    <p>After signup, TrustedRouter builds a short message with your complete key already inside it. Copy it once and watch the answer appear.</p>
+    <p>The message keeps your agent's current model, provider, settings, and project files exactly as they are. Your agent streams one TrustedRouter response directly into the chat.</p>
+    <div class="hero-actions">
+      <button class="btn primary cc-primary-cta" type="button" data-action="open-signin">Get my one-paste message</button>
+      <a class="btn ghost" href="/models">Browse models <span aria-hidden="true">&#8594;</span></a>
+    </div>
+  </div>
+  <div class="cc-prompt-tool" aria-label="Preview of the paste-ready Claude Code message">
+    <div class="cc-prompt-head"><span>ANY AGENT</span><span>ONE PASTE REQUEST</span></div>
+    <div class="cc-prompt-body">
+      <p>Please use TrustedRouter to ask DeepSeek: "What is the capital of France?"</p>
+      <dl>
+        <div><dt>Host agent</dt><dd>unchanged</dd></div>
+        <div><dt>Called model</dt><dd>DeepSeek</dd></div>
+        <div><dt>Response</dt><dd>live stream</dd></div>
+        <div><dt>API key</dt><dd><span class="cc-key-inserted">your complete key is inserted</span></dd></div>
+      </dl>
+      <p class="cc-prompt-command"><span aria-hidden="true">&#8250;</span> Keep my settings exactly as they are. Stream the answer into this chat.</p>
+      <div class="cc-prompt-result"><span class="cc-live-dot" aria-hidden="true"></span><strong>STREAMING</strong><span>Paris</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="cc-section cc-model-section" aria-labelledby="cc-model-title">
+  <div class="cc-section-heading">
+    <span class="eyebrow">Get a superpower</span>
+    <h2 id="cc-model-title">Every model. In seconds.</h2>
+    <p>One key can call hundreds of open and frontier models from the agent chat you already use. Each task can match the model it needs. Name a different model in your next request while your agent settings stay constant.</p>
+  </div>
+  <div class="cc-route-list" role="list">
+    <a href="/models/trustedrouter/cheap" role="listitem"><code>trustedrouter/cheap</code><span>Low-cost default for routine coding turns.</span><strong>START HERE</strong></a>
+    <a href="/models/trustedrouter/fast" role="listitem"><code>trustedrouter/fast</code><span>Prioritize first-token latency and throughput.</span><strong>GO FASTER</strong></a>
+    <a href="/models/trustedrouter/zdr" role="listitem"><code>trustedrouter/zdr</code><span>Require a zero-data-retention provider route.</span><strong>MORE PRIVATE</strong></a>
+    <a href="/models" role="listitem"><code>hundreds more</code><span>Pin an exact open or frontier model at any time.</span><strong>BROWSE</strong></a>
+  </div>
+</section>
+
+<section class="cc-section cc-moment" aria-labelledby="cc-moment-title">
+  <div class="cc-moment-mark" aria-hidden="true">10s</div>
+  <div>
+    <span class="eyebrow">The whole product moment</span>
+    <h2 id="cc-moment-title">Paste. Watch the answer stream. Smile.</h2>
+    <p>We watched a developer do exactly this. One message went into an agent chat, a cheaper model answered inside that same chat, and setup disappeared as a problem. That reaction is the page.</p>
+  </div>
+</section>
+
+<section class="cc-final" aria-label="Create a paste-ready TrustedRouter key">
+  <div>
+    <span class="eyebrow">Your next agent chat</span>
+    <h2>Delegate the expensive part.</h2>
+    <p>One short message. Instant streaming. Hundreds of models when you need them.</p>
+  </div>
+  <div class="cc-final-action">
+    <button class="btn primary cc-primary-cta" type="button" data-action="open-signin">Get my one-paste message</button>
+    <span>Same agent. Same settings. Extra models.</span>
+  </div>
+</section>
+{% endblock %}

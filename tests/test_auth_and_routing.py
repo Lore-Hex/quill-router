@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from trusted_router.catalog import MODELS
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.providers import ProviderClient, ProviderError, ProviderResult
+from trusted_router.routing_candidates import FAST_MODEL_ORDER, auto_candidate_models
 from trusted_router.storage import STORE
 
 
@@ -17,7 +19,9 @@ def test_stablecoin_checkout_uses_stripe_crypto_payment_method(monkeypatch) -> N
         captured.update(kwargs)
         return {"id": "cs_crypto", "url": "https://checkout.stripe.test/crypto"}
 
-    monkeypatch.setattr("trusted_router.services.stripe_billing.stripe.checkout.Session.create", create_session)
+    monkeypatch.setattr(
+        "trusted_router.services.stripe_billing.stripe.checkout.Session.create", create_session
+    )
 
     checkout = local_client.post(
         "/v1/billing/checkout",
@@ -30,7 +34,13 @@ def test_stablecoin_checkout_uses_stripe_crypto_payment_method(monkeypatch) -> N
     assert data["mode"] == "stripe_stablecoin"
     assert captured["payment_method_types"] == ["crypto"]
     assert captured["customer_email"] == "alice@example.com"
-    assert captured["metadata"] == {"workspace_id": data["workspace_id"], "payment_method": "stablecoin"}
+    metadata = captured["metadata"]
+    assert isinstance(metadata, dict)
+    assert metadata["workspace_id"] == data["workspace_id"]
+    assert metadata["payment_method"] == "stablecoin"
+    assert metadata["credit_amount_microdollars"] == "25000000"
+    assert metadata["processing_fee_cents"] == "39"
+    assert metadata["charge_amount_cents"] == "2539"
 
 
 def test_trustedrouter_auto_rolls_over_to_next_provider(
@@ -38,11 +48,17 @@ def test_trustedrouter_auto_rolls_over_to_next_provider(
     inference_headers: dict[str, str],
     monkeypatch,
 ) -> None:
+    # Derived from the ladder, never hardcoded. Naming the models here is what
+    # let auto's real leader drift away from the documented one unnoticed: the
+    # assertions kept passing against a model nobody had chosen on purpose.
+    ladder = [model.id for model in auto_candidate_models(None)]
+    first, second = ladder[0], ladder[1]
+
     attempts: list[str] = []
 
     async def fake_chat(_self, model, _body):
         attempts.append(model.id)
-        if model.id == "anthropic/claude-opus-4.7":
+        if model.id == first:
             raise ProviderError(model.provider, 503, "upstream unavailable")
         return ProviderResult(
             text="fallback ok",
@@ -67,12 +83,12 @@ def test_trustedrouter_auto_rolls_over_to_next_provider(
 
     assert resp.status_code == 200, resp.text
     payload = resp.json()
-    assert attempts[:2] == ["anthropic/claude-opus-4.7", "anthropic/claude-sonnet-4.6"]
-    assert payload["model"] == "anthropic/claude-sonnet-4.6"
+    assert attempts[:2] == [first, second]
+    assert payload["model"] == second
     assert payload["trustedrouter"]["requested_model"] == "trustedrouter/auto"
-    assert payload["trustedrouter"]["selected_model"] == "anthropic/claude-sonnet-4.6"
+    assert payload["trustedrouter"]["selected_model"] == second
     generation = next(iter(STORE.generation_store.generations.values()))
-    assert generation.model == "anthropic/claude-sonnet-4.6"
+    assert generation.model == second
 
 
 def test_models_array_rolls_over_and_provider_filters_apply(
@@ -275,17 +291,17 @@ def test_regions_endpoint_and_gateway_authorize_include_routing_metadata() -> No
     assert regions.json()["trustedrouter"]["primary_region"] == "europe-west4"
     assert authorize.status_code == 200, authorize.text
     data = authorize.json()["data"]
+    auto_leader = auto_candidate_models(None)[0].id
     assert data["requested_model"] == "trustedrouter/auto"
-    assert data["model"] == "anthropic/claude-opus-4.7"
+    assert data["model"] == auto_leader
     assert data["region"] == "asia-northeast1"
     assert len(data["route_candidates"]) >= 2
-    assert data["route_candidates"][0]["model"] == "anthropic/claude-opus-4.7"
+    assert data["route_candidates"][0]["model"] == auto_leader
     # The exact tail of the auto rollover depends on which providers are
     # configured at request time; assert that at least one non-primary
     # candidate is present so callers know fallback is wired up.
     fallback_models = [
-        item["model"] for item in data["route_candidates"]
-        if item["model"] != "anthropic/claude-opus-4.7"
+        item["model"] for item in data["route_candidates"] if item["model"] != auto_leader
     ]
     assert fallback_models, f"expected fallback candidates, got {data['route_candidates']}"
 
@@ -325,6 +341,59 @@ def test_gateway_authorize_honors_models_and_provider_filters() -> None:
         "mistralai/mistral-small-2603",
         "deepseek/deepseek-v4-flash",
     ]
+
+    pinned = local_client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": created["data"]["hash"],
+            "model": "openai/gpt-5.4-nano",
+            "models": ["mistralai/mistral-small-2603", "deepseek/deepseek-v4-flash"],
+            "provider": {"order": ["deepseek"], "usage": "byok", "allow_fallbacks": False},
+            "estimated_input_tokens": 10,
+            "max_output_tokens": 4,
+        },
+    )
+
+    assert pinned.status_code == 200, pinned.text
+    pinned_data = pinned.json()["data"]
+    assert pinned_data["model"] == "deepseek/deepseek-v4-flash"
+    assert pinned_data["provider"] == "deepseek"
+    assert [item["model"] for item in pinned_data["route_candidates"]] == [
+        "deepseek/deepseek-v4-flash",
+    ]
+
+
+def test_gateway_authorize_expands_fast_router_pool() -> None:
+    app = create_app(Settings(environment="test"))
+    local_client = TestClient(app)
+    created = local_client.post(
+        "/v1/keys",
+        headers={"x-trustedrouter-user": "alice@example.com"},
+        json={"name": "gateway"},
+    ).json()
+
+    authorize = local_client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": created["data"]["hash"],
+            "model": "trustedrouter/fast",
+            "estimated_input_tokens": 10,
+            "max_output_tokens": 4,
+        },
+    )
+
+    assert authorize.status_code == 200, authorize.text
+    data = authorize.json()["data"]
+    assert data["requested_model"] == "trustedrouter/fast"
+    route_candidates = data["route_candidates"]
+    expected_models = [model_id for model_id in FAST_MODEL_ORDER if model_id in MODELS]
+    assert expected_models
+    assert data["model"] == expected_models[0]
+    assert data["provider"] == route_candidates[0]["provider"]
+    assert [item["model"] for item in route_candidates] == expected_models
+    assert {item["provider"] for item in route_candidates} == {
+        MODELS[model_id].provider for model_id in expected_models
+    }
 
 
 def test_default_regions_only_list_actual_attested_deployments(client: TestClient) -> None:

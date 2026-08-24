@@ -1,9 +1,16 @@
 {% extends "public/_base.html" %}
+{% from "public/_provider_privacy_badges.html" import provider_privacy_badges %}
+{% from "public/_provider_identity.html" import provider_identity %}
 {% block body %}
 <section class="panel">
   <div class="panel-head">
     <h2><code>{{ model.id }}</code></h2>
-    <span class="pill good">{{ model.provider }}</span>
+    <div class="provider-chip-list">
+      {% if model.open_weights %}<span class="pill good">open weights</span>{% endif %}
+      {% if model.us_provider_available %}<span class="pill">US providers</span>{% endif %}
+      {% if model.eu_focused_provider_available %}<span class="pill">EU-focused</span>{% endif %}
+      <a class="pill provider-chip" href="/providers/{{ model.publisher_slug }}"><img class="provider-logo" src="{{ provider_logo_url(model.publisher_slug) }}" alt="{{ model.provider }} logo" aria-hidden="true" width="22" height="22"><span>{{ model.provider }}</span></a>
+    </div>
   </div>
   <div class="panel-body">
     <p><a href="/models">All models</a></p>
@@ -14,20 +21,61 @@
     </nav>
     <table>
       <tbody>
-        <tr><th>Publisher</th><td>{{ model.provider }} ({{ model.publisher_slug }})</td></tr>
+        <tr><th>Publisher</th><td>{{ provider_identity(model.publisher_slug, model.provider, "/providers/" ~ model.publisher_slug, subtitle=model.publisher_slug) }}</td></tr>
+        <tr><th>AI IQ</th><td>
+          {% if model.ai_iq %}
+          <a class="ai-iq-link" href="{{ model.ai_iq.url }}" rel="nofollow noopener">
+            <strong>IQ {{ model.ai_iq.iq }}</strong>
+            <span>#{{ model.ai_iq.rank }} on AI IQ</span>
+          </a>
+          {% else %}
+          <span class="muted-copy">No AI IQ profile matched yet.</span>
+          {% endif %}
+        </td></tr>
         <tr><th>Context</th><td>{{ model.context_length }} tokens</td></tr>
-        <tr><th>Providers</th><td>
+        {% if model.is_meta %}
+        <tr><th>Orchestration</th><td>
+          {% if model.orchestration_primitive %}<span class="pill">{{ model.orchestration_primitive }}</span>{% endif %}
+          {% if model.orchestration_role %}<span class="pill">{{ model.orchestration_role|replace('_', ' ') }}</span>{% endif %}
+          {% if model.canonical_model_id and model.canonical_model_id != model.id %}
+          <span class="muted-copy">Canonical: <a href="/models/{{ model.canonical_model_id }}"><code>{{ model.canonical_model_id }}</code></a></span>
+          {% endif %}
+        </td></tr>
+        {% endif %}
+        <tr><th>{% if model.is_meta %}Components{% else %}Providers{% endif %}</th><td>
+          {% if model.is_meta %}
+          {% if model.configuration_hidden %}
+          <span class="muted-copy">Configuration not published.</span>
+          {% else %}
           <div class="provider-chip-list">
-            {% for provider in model.providers %}
-            <a class="pill" href="/providers/{{ provider.slug }}" title="{{ provider.slug }}">{{ provider.name }}</a>
+            {% for candidate in model.candidate_models %}
+            <a class="pill" href="{{ candidate.detail_href }}" title="{{ candidate.id }}">{{ candidate.name }}</a>
             {% endfor %}
           </div>
+          {% endif %}
+          {% else %}
+          <div class="provider-chip-list">
+            {% for provider in model.providers %}
+            <a class="pill provider-chip" href="/providers/{{ provider.slug }}" title="{{ provider.slug }}"><img class="provider-logo" src="{{ provider.logo_url }}" alt="{{ provider.name }} logo" aria-hidden="true" width="22" height="22" loading="lazy" decoding="async"><span>{{ provider.name }}</span></a>
+            {% endfor %}
+          </div>
+          {% endif %}
         </td></tr>
         <tr><th>Endpoints</th><td>{{ model.endpoint_count }} endpoint{{ '' if model.endpoint_count == 1 else 's' }}</td></tr>
+        {% if model.fixed_price %}
+        <tr><th>Input price</th><td>{{ model.prompt_price }} tokens</td></tr>
+        <tr><th>Output price</th><td>{{ model.completion_price }} tokens</td></tr>
+        {% if model.minimum_charge %}
+        <tr><th>Minimum charge</th><td>{{ model.minimum_charge }} per successful request</td></tr>
+        {% endif %}
+        {% endif %}
         <tr><th>Modes</th><td>
           {% if model.supports_chat %}<span class="pill">chat</span>{% endif %}
           {% if model.supports_messages %}<span class="pill">messages</span>{% endif %}
           {% if model.supports_embeddings %}<span class="pill">embeddings</span>{% endif %}
+          {% if model.open_weights %}<span class="pill good">open weights</span>{% endif %}
+          {% if model.us_provider_available %}<span class="pill">US providers</span>{% endif %}
+          {% if model.eu_focused_provider_available %}<span class="pill">EU-focused</span>{% endif %}
         </td></tr>
         <tr><th>Routes</th><td>
           {% if model.prepaid %}<span class="pill good">prepaid</span>{% endif %}
@@ -38,15 +86,76 @@
   </div>
 </section>
 
-<section class="panel">
-  <div class="panel-head"><h2>Providers serving this model</h2></div>
+{% if not model.is_meta %}
+<section class="panel" aria-label="Current {{ model.name }} route evidence">
+  <div class="panel-head"><h2>Current route evidence</h2><a href="/leaderboard">Live leaderboard</a></div>
   <div class="panel-body">
+    <div class="public-proof-strip">
+      <div><strong>{{ route_evidence.lowest_prompt_price }}</strong><span>Lowest prepaid input price</span></div>
+      <div><strong>{{ route_evidence.lowest_completion_price }}</strong><span>Lowest prepaid output price</span></div>
+      <div><strong>{{ route_evidence.fastest_ttft }}</strong><span>Fastest measured p50 TTFT{% if route_evidence.fastest_ttft_provider %} via <a href="/providers/{{ route_evidence.fastest_ttft_provider }}">{{ route_evidence.fastest_ttft_provider }}</a>{% endif %}</span></div>
+      <div><strong>{{ route_evidence.fastest_throughput }}</strong><span>Highest measured throughput{% if route_evidence.fastest_throughput_provider %} via <a href="/providers/{{ route_evidence.fastest_throughput_provider }}">{{ route_evidence.fastest_throughput_provider }}</a>{% endif %}</span></div>
+    </div>
+    <p class="muted-copy">Recent provider-route uptime spans {{ route_evidence.uptime_range }} across {{ route_evidence.route_count }} route{{ '' if route_evidence.route_count == 1 else 's' }} and {{ route_evidence.provider_count }} provider{{ '' if route_evidence.provider_count == 1 else 's' }}. Price comes from the current prepaid catalog. Speed and uptime come from routed probes rather than vendor claims.</p>
+    <div class="mini-links">
+      {% if model.pricing_href %}<a href="{{ model.pricing_href }}">All route prices</a>{% endif %}
+      {% if model.providers_href %}<a href="{{ model.providers_href }}">All providers</a>{% endif %}
+      {% if model.performance_href %}<a href="{{ model.performance_href }}">Performance details</a>{% endif %}
+      {% if model.uptime_href %}<a href="{{ model.uptime_href }}">Uptime details</a>{% endif %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-head"><h2>{% if model.is_meta and model.configuration_hidden %}Configuration{% elif model.is_meta %}Models used by this orchestration{% else %}Providers serving this model{% endif %}</h2></div>
+  <div class="panel-body">
+    {% if model.is_meta and model.configuration_hidden %}
+    <p style="color:var(--muted);font-size:14px">
+      This TrustedRouter model uses an attested orchestration preset. The internal
+      model graph and prompts are intentionally not published.
+    </p>
+    {% elif model.is_meta %}
+    <p style="color:var(--muted);font-size:14px">
+      This TrustedRouter model is an orchestration preset. The gateway routes
+      through the component models below inside the attested prompt path, using
+      the preset's worker, advisor, judge, or synthesizer roles.
+    </p>
+    <div class="model-table-wrap">
+    <table data-sortable="true">
+      <thead>
+        <tr>
+          <th>Component</th>
+          <th>Provider</th>
+          <th>Prompt</th>
+          <th>Completion</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for candidate in model.candidate_models %}
+        <tr>
+          <td><a href="{{ candidate.detail_href }}">{{ candidate.id }}</a>{% if candidate.open_weights %} <span class="pill good">open weights</span>{% endif %}<br><span class="muted-copy">{{ candidate.name }}</span></td>
+          <td>{{ provider_identity(candidate.publisher_slug, candidate.provider, "/providers/" ~ candidate.publisher_slug) }}</td>
+          <td>{{ candidate.prompt_price }}</td>
+          <td>{{ candidate.completion_price }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
     <p style="color:var(--muted);font-size:14px">
       Sorted by lowest combined prompt and completion price. Use
       <code>"provider": {"sort": "throughput"}</code> in the request body
       (or append <code>:nitro</code> to the model id) to route to the
       fastest provider instead.
     </p>
+    <p style="color:var(--muted);font-size:14px">
+      <strong>Trust boundary:</strong> TR router attestation verifies the
+      TrustedRouter gateway only. Provider policy separately describes the
+      upstream model host's retention, confidential compute, and E2EE posture.
+    </p>
+    <div class="model-table-wrap">
     <table data-sortable="true">
       <thead>
         <tr>
@@ -54,33 +163,43 @@
           <th>Usage</th>
           <th>Prompt</th>
           <th>Completion</th>
-          <th>Attested</th>
-          <th>TR stores content</th>
+          <th>TR router attested</th>
           <th>Provider policy</th>
         </tr>
       </thead>
       <tbody>
         {% for endpoint in model.endpoints %}
         <tr>
-          <td><a href="{{ endpoint.provider_href }}">{{ endpoint.provider }}</a> <code>({{ endpoint.provider_slug }})</code></td>
+          <td>{{ provider_identity(endpoint.provider_slug, endpoint.provider, endpoint.provider_href, subtitle=endpoint.provider_slug) }}</td>
           <td>{{ endpoint.usage_type }}</td>
           <td>{{ endpoint.prompt_price }}</td>
           <td>{{ endpoint.completion_price }}</td>
           <td>{% if endpoint.attested_gateway %}<span class="pill good">yes</span>{% else %}no{% endif %}</td>
-          <td>{% if endpoint.stores_content %}<span class="pill warn">yes</span>{% else %}<span class="pill good">no</span>{% endif %}</td>
           <td>
-            {% if endpoint.provider_e2ee %}<span class="pill good">provider E2EE</span>{% endif %}
-            {% if endpoint.provider_confidential_compute %}<span class="pill good">confidential</span>{% endif %}
-            {% if endpoint.provider_zero_data_retention %}<span class="pill good">ZDR</span>{% endif %}
-            {% if not endpoint.provider_e2ee and not endpoint.provider_confidential_compute and not endpoint.provider_zero_data_retention %}<span class="pill warn">upstream varies</span>{% endif %}
+            {{ provider_privacy_badges(endpoint) }}
           </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
+    </div>
     <p class="signup-foot">
       Endpoint JSON: <span class="mono">{{ api_base_url }}/models/{{ model.id }}/endpoints</span>
     </p>
+    {% endif %}
   </div>
 </section>
+
+{% if related_comparisons %}
+<section class="panel" aria-label="Compare {{ model.name }} with other models">
+  <div class="panel-head"><h2>Compare {{ model.name }}</h2><a href="/compare/models">All comparisons</a></div>
+  <div class="panel-body">
+    <ul class="link-list">
+      {% for related in related_comparisons %}
+      <li><a href="{{ related.href }}">{{ related.label }}</a><span>{{ related.route_count }} combined provider routes</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+</section>
+{% endif %}
 {% endblock %}

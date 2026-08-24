@@ -1,0 +1,323 @@
+{
+  "provider": "databricks",
+  "source": "https://docs.databricks.com/aws/en/machine-learning/foundation-model-apis/supported-models",
+  "pricing_source": "https://www.databricks.com/product/pricing/foundation-model-serving",
+  "price_scale": "microdollars_per_million",
+  "models": [
+    {
+      "display_name": "Gemma 3 12B",
+      "title": "Gemma 3 12B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-3-12b-it",
+      "upstream_id": "databricks-gemma-3-12b",
+      "context_length": 131072,
+      "supported_features": [
+        "chat",
+        "completion"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Llama 3.1 8B Instruct",
+      "title": "Llama 3.1 8B Instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-3.1-8b-instruct",
+      "upstream_id": "databricks-meta-llama-3-1-8b-instruct",
+      "context_length": 131072,
+      "supported_features": [
+        "chat",
+        "completion"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 450000
+    },
+    {
+      "display_name": "Llama 3.3 70B Instruct",
+      "title": "Llama 3.3 70B Instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-3.3-70b-instruct",
+      "upstream_id": "databricks-meta-llama-3-3-70b-instruct",
+      "context_length": 131072,
+      "supported_features": [
+        "chat",
+        "completion"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 1500000
+    },
+    {
+      "display_name": "Llama 4 Maverick",
+      "title": "Llama 4 Maverick",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-4-maverick",
+      "upstream_id": "databricks-llama-4-maverick",
+      "context_length": 1048576,
+      "supported_features": [
+        "chat",
+        "completion"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 1500000
+    },
+    {
+      "display_name": "Kimi K3",
+      "title": "Kimi K3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3",
+      "upstream_id": "databricks-kimi-k3",
+      "context_length": 1048576,
+      "supported_features": [
+        "chat",
+        "completion",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "account_rate_limit_request": {
+        "tier": 2,
+        "status": "submitted",
+        "submitted_on": "2026-08-19",
+        "input_tokens_per_minute": 1000000,
+        "output_tokens_per_minute": 100000
+      },
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 300000
+    },
+    {
+      "display_name": "GPT OSS 120B",
+      "title": "GPT OSS 120B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-oss-120b",
+      "upstream_id": "databricks-gpt-oss-120b",
+      "context_length": 131072,
+      "supported_features": [
+        "chat",
+        "completion",
+        "reasoning"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 600000
+    },
+    {
+      "display_name": "GPT OSS 20B",
+      "title": "GPT OSS 20B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-oss-20b",
+      "upstream_id": "databricks-gpt-oss-20b",
+      "context_length": 131072,
+      "supported_features": [
+        "chat",
+        "completion",
+        "reasoning"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 70000,
+      "output_token_price_per_m": 300000
+    },
+    {
+      "display_name": "Qwen3 Next 80B A3B Instruct",
+      "title": "Qwen3 Next 80B A3B Instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-next-80b-a3b-instruct",
+      "upstream_id": "databricks-qwen3-next-80b-a3b-instruct",
+      "context_length": 262144,
+      "supported_features": [
+        "chat",
+        "completion"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 1200000
+    },
+    {
+      "display_name": "Qwen 3.5 122B A10B",
+      "title": "Qwen 3.5 122B A10B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-122b-a10b",
+      "upstream_id": "databricks-qwen35-122b-a10b",
+      "context_length": 262144,
+      "supported_features": [
+        "chat",
+        "completion",
+        "reasoning"
+      ],
+      "routable": true,
+      "max_output_tokens": 25000,
+      "input_token_price_per_m": 220000,
+      "output_token_price_per_m": 2200000
+    },
+    {
+      "display_name": "Inkling",
+      "title": "Inkling",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "thinkingmachines/inkling",
+      "upstream_id": "databricks-inkling",
+      "context_length": 1048576,
+      "supported_features": [
+        "chat",
+        "completion",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "account_rate_limit_request": {
+        "tier": 2,
+        "status": "submitted",
+        "submitted_on": "2026-08-19",
+        "input_tokens_per_minute": 1000000,
+        "output_tokens_per_minute": 100000
+      },
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 4050000,
+      "cached_input_token_price_per_m": 170000
+    },
+    {
+      "display_name": "GLM 5.2",
+      "title": "GLM 5.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "databricks-glm-5-2",
+      "context_length": 1048576,
+      "supported_features": [
+        "chat",
+        "completion",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "account_rate_limit_request": {
+        "tier": 2,
+        "status": "submitted",
+        "submitted_on": "2026-08-19",
+        "input_tokens_per_minute": 1000000,
+        "output_tokens_per_minute": 100000
+      },
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000
+    }
+  ],
+  "generated_at": "2026-08-24T10:39:58Z",
+  "model_count": 11
+}

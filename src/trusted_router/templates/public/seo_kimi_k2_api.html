@@ -1,0 +1,53 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Kimi K2 API">
+  <div class="marketing-copy">
+    <span class="eyebrow">Kimi API</span>
+    <h2>Kimi K2 with provider fallback and measured routes.</h2>
+    <p>Use Kimi K2.7 Code, Kimi K2.6, and earlier Kimi routes through the same OpenAI-compatible API you use for every other model. TrustedRouter exposes every serving provider, route price, privacy posture, and live measurement in one place.</p>
+    <ul class="check-list">
+      <li>✓ Kimi model pages list all serving providers</li>
+      <li>✓ Public image URLs are normalized by the attested gateway when the route supports images</li>
+      <li>✓ Structured output and tool-call shapes are routed through the Responses API where supported</li>
+      <li>✓ Fallback can move around provider 429s and 5xx responses</li>
+    </ul>
+    <p>
+      <a class="btn primary" href="/models/moonshotai/kimi-k2.7-code">Kimi K2.7 Code routes</a>
+      <a class="btn" href="/models/moonshotai/kimi-k2.7-code/performance">Kimi performance</a>
+    </p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Kimi quickstart</span><span>Responses API</span></div>
+    <pre><code>response = client.responses.create(
+    model="moonshotai/kimi-k2.7-code",
+    input="Return a JSON plan for migrating an app.",
+    text={"format": {"type": "json_object"}},
+)</code></pre>
+  </div>
+</section>
+
+<section class="seo-two-col">
+  <div class="panel">
+    <div class="panel-head"><h2>Route checks</h2></div>
+    <div class="panel-body">
+      <ul class="link-list">
+        <li><a href="/models/moonshotai/kimi-k2.7-code/providers">Kimi providers</a><span>Serving routes and privacy posture</span></li>
+        <li><a href="/models/moonshotai/kimi-k2.7-code/pricing">Kimi pricing</a><span>Prompt and completion rates</span></li>
+        <li><a href="/leaderboard">Provider leaderboard</a><span>Measured TTFT and uptime</span></li>
+      </ul>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h2>Alternatives</h2></div>
+    <div class="panel-body">
+      <ul class="link-list">
+        <li><a href="/models/z-ai/glm-4.7">GLM 4.7</a><span>Fast reasoning alternative</span></li>
+        <li><a href="/models/deepseek/deepseek-v4-pro">DeepSeek V4 Pro</a><span>Cost-sensitive coding and reasoning</span></li>
+        <li><a href="/models/minimax/minimax-m3">MiniMax M3</a><span>Long-context alternative</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+{% endblock %}

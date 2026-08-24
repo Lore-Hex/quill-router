@@ -3,13 +3,14 @@
 [![CI](https://github.com/Lore-Hex/quill-router/actions/workflows/ci.yml/badge.svg)](https://github.com/Lore-Hex/quill-router/actions/workflows/ci.yml)
 [![Deploy](https://github.com/Lore-Hex/quill-router/actions/workflows/deploy.yml/badge.svg)](https://github.com/Lore-Hex/quill-router/actions/workflows/deploy.yml)
 [![Prod smoke](https://github.com/Lore-Hex/quill-router/actions/workflows/prod-smoke.yml/badge.svg)](https://github.com/Lore-Hex/quill-router/actions/workflows/prod-smoke.yml)
+[![Trust drift](https://github.com/Lore-Hex/quill-router/actions/workflows/trust-drift.yml/badge.svg)](https://github.com/Lore-Hex/quill-router/actions/workflows/trust-drift.yml)
 [![Status](https://img.shields.io/website?url=https%3A%2F%2Fstatus.trustedrouter.com&label=status)](https://status.trustedrouter.com)
 [![Verifiable trust](https://img.shields.io/website?url=https%3A%2F%2Ftrust.trustedrouter.com&label=trust)](https://trust.trustedrouter.com)
 [![JavaScript SDK](https://img.shields.io/npm/v/@lore-hex/trusted-router?label=JS%20SDK&logo=npm)](https://www.npmjs.com/package/@lore-hex/trusted-router)
 [![Python SDK](https://img.shields.io/pypi/v/trusted-router-py?label=Python%20SDK&logo=pypi)](https://pypi.org/project/trusted-router-py/)
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
 
-# End-to-end encrypted LLMs. One API. Provable privacy.
+# End-to-end encrypted LLMs. One API. Privacy with proof.
 
 Stop worrying about who can see your prompts. Tell your coding agent to move
 your project over, pick how private you want to be, pick a model, drop in a
@@ -27,9 +28,9 @@ Migrate this project to TrustedRouter, a privacy-first LLM router
 Anthropic SDK), read the key from the TRUSTEDROUTER_API_KEY env var, and keep
 all my existing calls working.
 
-For maximum privacy, add the routing preference
-{"provider": {"data_collection": "deny"}} so only zero-retention providers
-are used.
+For a hard provider-side confidential-compute and end-to-end-encryption
+requirement, add {"provider": {"min_privacy": "confidential"}}. TrustedRouter
+fails closed when the selected model or provider cannot satisfy both controls.
 
 Then tell me to sign up at trustedrouter.com, add a card, and paste my sk-tr
 key into TRUSTEDROUTER_API_KEY.
@@ -37,9 +38,13 @@ key into TRUSTEDROUTER_API_KEY.
 
 Then:
 
-1. **Pick your privacy level** — start sensitive workloads with
-   `trustedrouter/zdr`, use `trustedrouter/e2e` for confidential + E2EE
-   routes, or set `{"provider": {"data_collection": "deny"}}` yourself.
+1. **Pick your privacy level or region** — use
+   `{"provider": {"min_privacy": "zdr"}}` for a hard zero-retention floor, or
+   `{"provider": {"min_privacy": "confidential"}}` for the stronger hard
+   confidential-compute + E2EE floor. The convenient `trustedrouter/zdr` and
+   `trustedrouter/e2e` (`trustedrouter/confidential`) aliases select those
+   pools. Use `trustedrouter/eu` with
+   `https://api-europe-west4.quillrouter.com/v1` for EU-focused routing.
 2. **Pick a model** — any of hundreds, or `trustedrouter/auto` for automatic
    fallback when provider breadth matters more than the strictest privacy
    filter.
@@ -67,6 +72,8 @@ client = OpenAI(base_url="https://api.trustedrouter.com/v1", api_key="sk-tr-v1-.
 - **Get a key / take my money:** https://trustedrouter.com
 - **Try it first (no signup):** https://trustedrouter.com/chat
 - **The technical details (for the nerds):** https://trustedrouter.com/security
+- **Generate images:** [docs/image-generation.md](docs/image-generation.md)
+- **Generate video:** [docs/video-generation.md](docs/video-generation.md)
 - **Why we built it:** https://jperla.com/blog/attestation-is-all-you-need
 
 ---
@@ -74,8 +81,8 @@ client = OpenAI(base_url="https://api.trustedrouter.com/v1", api_key="sk-tr-v1-.
 <details>
 <summary><strong>For the nerds: how the privacy is provable</strong></summary>
 
-TrustedRouter's gateway runs inside hardware enclaves (AWS Nitro Enclaves + GCP
-Confidential VMs). The CPU signs a measurement of the running binary; you
+TrustedRouter's gateway runs inside GCP Confidential Space. The platform signs
+a measurement of the running binary; you
 compare that hash to this repo. If they match, you *know* — not assume — that
 the code handling your prompts is the code you can read here, and that it never
 writes your prompts to disk.
@@ -102,8 +109,8 @@ curl -s "https://api.trustedrouter.com/attestation?nonce=$NONCE" | jq .
 Honest scope: attestation proves the running binary is the published binary on
 hardware you can challenge with a nonce. It does not defeat a nation-state with
 physical host access, and it does not prove the open-source binary is bug-free.
-The trust anchor is the chip vendor's root key; cross-cloud (AWS + GCP) narrows
-that dependency without eliminating it. Upstream providers handle prompts per
+The trust anchor is Google Confidential Computing's hardware-backed attestation
+chain. Upstream providers handle prompts per
 their own policies — each provider's posture is published on the model pages.
 
 </details>
@@ -113,8 +120,8 @@ their own policies — each provider's posture is published on the model pages.
 ## Repository layout
 
 This repo implements the control-plane contract: route coverage, auth/key
-management, billing ledger semantics, usage metadata, no prompt/output storage,
-Sentry scrubbers, and provider abstractions. The attested gateway
+management, billing ledger semantics, usage metadata, prompt/output logging
+prohibitions, Sentry scrubbers, and provider abstractions. The attested gateway
 implementation lives in `quill-cloud-proxy`.
 
 Trust boundary: `api.trustedrouter.com` is the attested prompt path and must
@@ -173,13 +180,20 @@ account Vertex permissions instead.
 
 ## License
 
-Apache License 2.0. This is the right default for TrustedRouter because it is
-commercially permissive, familiar to infrastructure buyers, and includes an
-explicit patent grant.
+Business Source License 1.1. The source is public so anyone can read, build,
+and verify the exact code behind TrustedRouter's privacy and attestation
+claims (https://trust.trustedrouter.com) — that is what it is here for.
+Non-production use (security review, audit, local evaluation) is free.
+Production use requires a commercial license from Lore Hex Corp:
+licensing@trustedrouter.com. Each version converts to the Apache License 2.0
+four years after publication. Code published before July 3, 2026 remains
+Apache-2.0.
 
 ## Security Defaults
 
-- Prompt and output content are never stored.
+- Prompt and output content is never logged. Ordinary synchronous and streaming
+  inference does not retain it. The opt-in Batch API temporarily retains
+  enclave-encrypted artifacts for up to 30 days.
 - Usage logs contain metadata only.
 - API keys are stored as salted SHA-256 hashes with opaque key IDs.
 - User-submitted BYOK provider keys are stored as envelope-encrypted ciphertext
@@ -226,6 +240,10 @@ public attested API, and store only metadata. The monitor model aliases are:
 - `trustedrouter/free`: OpenRouter-style free pool. Useful for users, not an
   SLA signal.
 - `trustedrouter/cheap`: cheapest paid pool with provider diversity.
+- `trustedrouter/eu`: EU-focused provider pool. It prefers European,
+  EU-regionable, and privacy-forward providers, especially when paired with
+  `https://api-europe-west4.quillrouter.com/v1`. This is a routing policy, not
+  a blanket data-residency guarantee.
 - `trustedrouter/monitor`: internal uptime pool for PONG and fallback checks.
   It is visible in the catalog for transparency, but authorization requires
   the configured `TR_SYNTHETIC_MONITOR_API_KEY`; normal API keys receive 403.
@@ -235,20 +253,35 @@ Workers should run from `us-central1` and `europe-west4`, using a dedicated
 auto-refill. Raw samples are append-only Bigtable rows; public status pages
 read compact rollups exposed at `/status`, `/status.json`, and
 `/status/history?window=5m|24h|daily`. Synthetic generations use the
-`TrustedRouter Synthetic` app label and are excluded from public provider
-benchmark/ranking samples so uptime probes do not pollute customer analytics.
+`TrustedRouter Synthetic` app label and are excluded from customer/app
+analytics.
 
-Status separates three SLO classes instead of blending them:
+Provider measurement uses two independent probe classes:
+
+- Short PONG probes randomly cover the full active catalog and measure uptime,
+  TTFB, TTFT, and upstream API drift.
+- A sustained 512-token stream covers the 200 most important provider/model
+  routes in deterministic rotation from `us-central1`. It measures output
+  tokens per second after the first token. It runs in a separate Cloud Run Job,
+  so slow streams cannot delay uptime probes. Long-probe failures never count
+  against provider uptime or API-drift alerts.
+
+The current two-minute schedule gives each sustained route about 25 samples per
+week and 108 per 30 days. CI calculates a full-cap spend estimate from the live
+catalog and fails if it exceeds the reviewed monthly ceiling.
+
+Status separates two service SLO classes instead of blending them with
+upstream-provider behavior:
 
 - `router_core`: attested API reachable, key authorization works, route
   candidates/fallback are available, and settle/refund is durable.
-- `provider_effective`: a full model response succeeds after provider fallback.
 - `control_plane`: dashboard, billing UI, keys, credits, docs, trust, and
   status surfaces.
 
 Deploy watchdogs and internal burn-rate alerts default to `router_core`.
-Provider-only failures should degrade `provider_effective` without consuming
-the router-core error budget when fallback remains available.
+Provider-only failures are measured per provider on `/status` and
+`/leaderboard`; they do not consume the router-core error budget when fallback
+remains available.
 
 ## Public Positioning
 
@@ -256,12 +289,16 @@ the router-core error budget when fallback remains available.
   floating point dollars, so tiny token costs remain auditable in the ledger.
 - Uptime target: `trustedrouter/auto` is a real chat model alias in local/test
   control-plane inference and rolls to the next configured provider on upstream
-  provider failures. `trustedrouter/zdr` forces a zero-retention provider floor
-  with Anthropic first, and `trustedrouter/e2e` forces confidential + E2EE
-  routes with Tinfoil first. Chat requests also honor OpenRouter-style `models`
-  and `provider` routing filters (`order`, `only`, `ignore`, `allow_fallbacks`,
-  `data_collection`, and `sort`) so clients can request explicit fallback
-  chains or provider preferences.
+  provider failures. `trustedrouter/eu` prefers the EU-focused provider pool,
+  `trustedrouter/zdr` forces a zero-retention provider floor with Anthropic
+  first, and `trustedrouter/e2e` forces confidential + E2EE routes with
+  Tinfoil first. Chat requests also honor OpenRouter-style `models` and
+  `provider` routing filters (`order`, `only`, `ignore`, `allow_fallbacks`,
+  `min_privacy`, `data_collection`, and `sort`) so clients can request explicit
+  fallback chains or provider preferences. `min_privacy="confidential"` is a
+  hard provider-side confidential-compute + E2EE requirement and fails closed;
+  the request-value aliases `e2e` and `e2ee` select the same tier
+  rather than falling back to a weaker route.
 - Billing: prepaid credits and BYOK first; no subscription is required.
 - Trust: hosted open source, with the running API's source commit, image
   reference, image digest, and attestation policy published at
@@ -282,11 +319,10 @@ The goal is to support OpenRouter-class scale:
 - Global routing overhead competitive with edge-deployed routers.
 
 The current production deployment does **not** meet that target yet. It runs
-the control plane in 10 GCP regions behind a global LB with per-region
-Serverless NEGs, and a single live prompt gateway until additional attested
-regional pools are deployed. Capacity scales horizontally as more attested
-pools come online; correctness, trust, billing, and SDK compatibility are
-in steady-state.
+the control plane in four GCP regions behind a global LB with per-region
+Serverless NEGs and four live attested API regions. Capacity scales
+horizontally as more attested pools come online; correctness, trust, billing,
+and SDK compatibility are in steady-state.
 
 Request volume depends heavily on average generation size. At 1 trillion
 tokens/day:
@@ -328,10 +364,12 @@ stateless:
   They authorize, reserve, and settle through the control plane, but prompt
   bytes never leave the attested path.
 - Spanner stores strongly consistent control-plane and billing state: users,
-  workspaces, keys, BYOK metadata, Stripe event idempotency, reservations, and
-  spend limits.
-- Bigtable stores high-volume generation metadata rows keyed by workspace/date.
-  Prompt and output content are still not stored.
+  workspaces, keys, BYOK metadata, payment event idempotency, balances,
+  aggregates, active reservations, and a 30-day terminal request audit window.
+- Bigtable stores bounded high-volume activity metadata keyed by workspace and
+  date. Activity and provider benchmarks retain 30 days, raw synthetic samples
+  retain 14 days, and compact status rollups retain 24 months. Prompt, output,
+  and tool-call arguments are not stored.
 - API-key verification uses a high-entropy lookup hash for point reads; it does
   not scan keys.
 - Rate limits are enforced before route handlers and use the configured store,
@@ -347,24 +385,27 @@ gateway replicas before public traffic is allowed to ramp.
 Multi-region is feasible while preserving the trust boundary, but it has to be
 done carefully:
 
-- Run independent warm attested gateway pools in at least `us-central1`,
-  `us-east4`, and `europe-west4`. Add one exercised non-GCP pool next
-  (initially AWS Nitro with a tiny real-traffic trickle), then Asia once the
-  first three regions are boring.
+- Run independent warm attested gateway pools in `us-central1`, `us-east4`,
+  `europe-west4`, and `southamerica-east1`, then add Asia after the four-region
+  fleet is operationally boring.
 - Keep TLS private keys inside each regional Confidential Space workload.
-- Move ACME from TLS-ALPN-01 to DNS-01 or another challenge flow that works
-  with multiple regional endpoints for the same hostname. The current
-  TLS-ALPN-01 flow is fine for one region, but a global DNS record can route
-  challenges to the wrong replica.
+- Keep certificate issuance inside the attested workload. Certificates are
+  shared between replicas through the encrypted cache. A first regional
+  hostname is exposed to one node only after every node passes canonical
+  attestation and a settled PONG; it is expanded only after the regional
+  certificate and the same gates pass on every node.
 - Keep regional hostnames such as `api-us-central1.quillrouter.com`,
-  `api-us-east4.quillrouter.com`, `api-europe-west4.quillrouter.com`, and the
-  future `api-aws-us-west-2.quillrouter.com` for deterministic attestation,
+  `api-us-east4.quillrouter.com`, `api-europe-west4.quillrouter.com`, and
+  `api-southamerica-east1.quillrouter.com` for deterministic attestation,
   smoke tests, and SDK failover.
 - Put `api.trustedrouter.com` behind latency/geo DNS or TCP passthrough that does
   not terminate TLS. Cloudflare orange-cloud proxying remains incompatible
   with the prompt-path trust claim.
 - Authorize through regional quota leases, not a synchronous global Spanner
-  transaction for every request.
+  counter mutation for every request. New workspaces and keys start with 16
+  exact billing shards; eligible allowlisted traffic can additionally use 16
+  independently fenced regional escrow rows whose combined grant is already
+  reserved in Spanner.
 - Write generation metadata to regional Bigtable clusters, then aggregate into
   global activity views asynchronously.
 - Keep provider routing regional, with provider-specific circuit breakers,
@@ -374,12 +415,12 @@ The key design rule: a regional outage can fail closed or route to another
 attested region, but it must never silently degrade to a non-attested prompt
 handler.
 
-## Router-Core 5 9s Roadmap
+## Router-Core Four-Nines Target
 
-The first target is an internal SLO, not a public contractual SLA. 99.999%
-allows about 5 minutes 15 seconds of downtime per year, so the public product
-copy should stay at 99.9% until at least 30-60 days of measured 99.99%+
-router-core uptime exists.
+The target is an internal SLO, not a contractual SLA. 99.99% allows about
+52 minutes 36 seconds of downtime per year. Public status labels this number
+as a target until at least 30-60 days of measured 99.99% router-core uptime
+exists.
 
 Router-core availability means:
 
@@ -392,19 +433,20 @@ Router-core availability means:
 The code paths that support this roadmap today are:
 
 - `/status.json` exports `slo_classes.router_core`,
-  `slo_classes.provider_effective`, `slo_classes.control_plane`, and burn-rate
-  alerts for 5m, 1h, 6h, and 24h windows.
+  `slo_classes.control_plane`, and burn-rate alerts for 5m, 1h, 6h, and 24h
+  windows.
 - The deploy watchdog reads `router_core` by default, so provider-only outages
   do not automatically roll back a control-plane deploy.
 - SDKs are expected to retry connection failures and 502/503/504 across
   regional attested endpoints before surfacing failure.
-- Bigtable activity writes are repairable from Spanner generation records via
-  `/v1/internal/reconcile/generation-activity`.
+- Bigtable activity writes are repairable from the durable settlement outbox.
+  Settlement uses deterministic generation IDs, so retries overwrite the same
+  index rows and cannot double charge or duplicate activity.
 
-Before making a public 5 9s claim, require three warm GCP attested regions, one
-exercised non-GCP failover pool, tested paging, router-core chaos tests, staged
-regional deploys with rollback gates, and 30 days of measured router-core
-uptime at or above 99.99%.
+Before describing four nines as measured availability rather than a target,
+require three warm GCP attested regions, tested paging, router-core chaos
+tests, staged regional deploys with rollback gates, and at least 30 days of
+measured router-core uptime at or above 99.99%.
 
 ## Internal Gateway Contract
 
@@ -443,10 +485,18 @@ wires the current GCP trust metadata into the trust page.
 `POST /v1/billing/checkout` creates a Stripe Checkout session when
 `TR_STRIPE_SECRET_KEY` is configured and otherwise returns a deterministic local
 mock response. Stripe webhooks credit workspaces idempotently using the
-workspace ID in Checkout metadata. `POST /v1/billing/portal` follows the same
+workspace ID in Checkout metadata. Card payments settle immediately. ACH
+payments use `{"payment_method":"ach"}` and are credited only after Stripe sends
+`checkout.session.async_payment_succeeded`; Checkout completion while the debit
+is processing never grants credits. `POST /v1/billing/portal` follows the same
 Stripe-or-mock pattern for billing management.
 
 For stablecoin checkout, send `{"payment_method":"stablecoin"}`. When
 `TR_STABLECOIN_CHECKOUT_ENABLED=true`, the Checkout session is created with
 Stripe's `crypto` payment method and still credits the workspace from the signed
 `checkout.session.completed` webhook.
+
+ACH uses Stripe Checkout's `us_bank_account` payment method. The default
+processing schedule is 0.8% capped at $5 and can be overridden with
+`TR_STRIPE_ACH_FEE_BASIS_POINTS`, `TR_STRIPE_ACH_FEE_FIXED_CENTS`, and
+`TR_STRIPE_ACH_FEE_MAX_CENTS`. Saved-card auto refill remains card-only.

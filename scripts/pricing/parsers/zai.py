@@ -1,9 +1,9 @@
 # LLM-MAINTAINED FILE — re-validated every hour by scripts/pricing/refresh.py.
 #
-# Parses docs.z.ai/guides/overview/pricing as rendered by r.jina.ai.
+# Parses the official docs.z.ai pricing Markdown table.
 # Captured fixture lives at tests/fixtures/pricing/zai.html.
 #
-# Page format: Jina returns a clean markdown table.
+# Page format: the provider returns a clean Markdown table.
 #
 #   | Model | Input | Cached Input | Cached Input Storage | Output |
 #   | --- | --- | --- | --- | --- |
@@ -13,13 +13,14 @@
 #
 # Z.AI's GLM family is single-tier (no context conditioning), so we
 # emit flat ModelPrice rows.
-"""Z.AI / Zhipu pricing parser (Jina-rendered markdown)."""
+"""Z.AI / Zhipu official pricing Markdown parser."""
 from __future__ import annotations
 
 import re
 
 # Display name on docs.z.ai → OR-canonical id.
 _NAME_TO_OR_ID = {
+    "GLM-5.2": "z-ai/glm-5.2",
     "GLM-5.1": "z-ai/glm-5.1",
     "GLM-5": "z-ai/glm-5",
     "GLM-5-Turbo": "z-ai/glm-5-turbo",
@@ -43,6 +44,16 @@ _NAME_TO_OR_ID = {
     "GLM-4.6V": "z-ai/glm-4.6v",
     "GLM-4.5V": "z-ai/glm-4.5v",
 }
+
+
+def _canonical_id(name: str) -> str | None:
+    mapped = _NAME_TO_OR_ID.get(name)
+    if mapped is not None:
+        return mapped
+    normalized = name.strip().casefold()
+    if not normalized.startswith("glm-"):
+        return None
+    return f"z-ai/{normalized}"
 
 
 _DOLLAR_RE = re.compile(r"\$([\d.]+)")
@@ -72,7 +83,7 @@ def parse(md: str) -> dict:
         if not cells:
             continue
         name = cells[0]
-        or_id = _NAME_TO_OR_ID.get(name)
+        or_id = _canonical_id(name)
         if or_id is None:
             continue
         if or_id in out:

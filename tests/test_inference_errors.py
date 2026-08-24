@@ -81,18 +81,20 @@ def test_provider_error_type_classification(status: int, expected: str) -> None:
         ("anthropic", "env://ANTHROPIC_API_KEY"),
         ("openai", "env://OPENAI_API_KEY"),
         ("gemini", "env://GEMINI_API_KEY"),
+        ("google-ai-studio", "env://GEMINI_API_KEY"),
+        ("google-vertex", "env://VERTEX_ACCESS_TOKEN"),
         ("cerebras", "env://CEREBRAS_API_KEY"),
         ("deepseek", "env://DEEPSEEK_API_KEY"),
         ("mistral", "env://MISTRAL_API_KEY"),
         ("kimi", "env://KIMI_API_KEY"),
+        ("fireworks", "env://FIREWORKS_API_KEY"),
+        ("thinkingmachines", "env://THINKING_MACHINES_API_KEY"),
         ("vertex", "env://VERTEX_ACCESS_TOKEN"),
         # Unknown providers fall back to UPPER + _API_KEY.
         ("nebula", "env://NEBULA_API_KEY"),
     ],
 )
-def test_default_provider_secret_ref_known_and_fallback(
-    provider: str, expected_ref: str
-) -> None:
+def test_default_provider_secret_ref_known_and_fallback(provider: str, expected_ref: str) -> None:
     assert default_provider_secret_ref(provider) == expected_ref
 
 
@@ -101,6 +103,7 @@ def test_vertex_uses_access_token_not_api_key() -> None:
     from metadata/ADC, not a long-lived API key. If this regresses to
     `VERTEX_API_KEY`, every Vertex call breaks in the enclave."""
     assert default_provider_secret_ref("vertex") == "env://VERTEX_ACCESS_TOKEN"
+    assert default_provider_secret_ref("google-vertex") == "env://VERTEX_ACCESS_TOKEN"
 
 
 # ── is_rollover_http_error ─────────────────────────────────────────────

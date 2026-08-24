@@ -2,12 +2,17 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
+import pytest
 from fastapi.testclient import TestClient
 
+from trusted_router.catalog import FAST_MODEL_ORDER, MODELS, PROVIDER_JURISDICTION_US, PROVIDERS
+from trusted_router.spend_windows import KeyWindowLimitExceeded
 from trusted_router.storage import STORE
 
 
-def test_key_create_list_and_one_time_reveal(client: TestClient, user_headers: dict[str, str]) -> None:
+def test_key_create_list_and_one_time_reveal(
+    client: TestClient, user_headers: dict[str, str]
+) -> None:
     create = client.post("/v1/keys", headers=user_headers, json={"name": "alpha"})
     assert create.status_code == 201
     data = create.json()
@@ -27,7 +32,43 @@ def test_key_create_list_and_one_time_reveal(client: TestClient, user_headers: d
     assert isinstance(credit_data["available_microdollars"], int)
 
 
-def test_inference_key_cannot_call_management_api(client: TestClient, inference_headers: dict[str, str]) -> None:
+def test_api_key_budgets_default_to_hard_limit_and_alert_only_is_opt_in(
+    client: TestClient,
+    user_headers: dict[str, str],
+) -> None:
+    hard_response = client.post(
+        "/v1/keys",
+        headers=user_headers,
+        json={"name": "hard by default", "limit_daily": "0.001"},
+    )
+    assert hard_response.status_code == 201, hard_response.text
+    hard = STORE.get_key_by_hash(hard_response.json()["data"]["hash"])
+    assert hard is not None
+    assert hard.budget_alert_only is False
+    STORE.api_keys.add_usage(hard.hash, 1_000, is_byok=False)
+    with pytest.raises(KeyWindowLimitExceeded):
+        STORE.reserve_key_limit(hard.hash, 1, usage_type="Credits")
+
+    alert_response = client.post(
+        "/v1/keys",
+        headers=user_headers,
+        json={
+            "name": "explicit email alert",
+            "limit_daily": "0.001",
+            "budget_alert_only": True,
+        },
+    )
+    assert alert_response.status_code == 201, alert_response.text
+    alert = STORE.get_key_by_hash(alert_response.json()["data"]["hash"])
+    assert alert is not None
+    assert alert.budget_alert_only is True
+    STORE.api_keys.add_usage(alert.hash, 1_000, is_byok=False)
+    STORE.reserve_key_limit(alert.hash, 1, usage_type="Credits")
+
+
+def test_inference_key_cannot_call_management_api(
+    client: TestClient, inference_headers: dict[str, str]
+) -> None:
     resp = client.get("/v1/keys", headers=inference_headers)
     assert resp.status_code == 403
     assert resp.json()["error"]["type"] == "forbidden"
@@ -100,12 +141,17 @@ def test_chat_activity_generation_and_no_content_storage(
     assert sample.provider_name == "Cerebras"
     assert sample.elapsed_milliseconds is not None
     assert sample.total_cost_microdollars == generation_data["total_cost_microdollars"]
-    assert "workspace_id" not in safe_sample
+    # `workspace_id` IS carried, deliberately. ClickHouse keeps these rows for
+    # 400 days while Spanner's tr_generation deletes after 30, so this is the
+    # only durable per-customer usage record. The table is VPC-internal; the
+    # public surfaces that read these samples aggregate them and must never
+    # project the tenant id — pinned by tests/test_analytics_workspace_id.py.
+    assert safe_sample["workspace_id"], "sample must carry tenant attribution"
+    # Credential material and prompt bodies remain excluded — those guarantees
+    # are unchanged and are the ones that actually matter here.
     assert "key_hash" not in safe_sample
     # `app` is the caller's public, opt-in self-reported title (X-Title): it
-    # powers the /apps directory and is NOT tenant / credential / prompt data.
-    # It is intentionally carried on the benchmark sample; the real privacy
-    # guarantees below (no workspace, no key, no prompt body) still hold.
+    # powers the /apps directory and is NOT credential / prompt data.
     assert isinstance(safe_sample["app"], str)
     assert prompt not in str(safe_sample)
 
@@ -196,6 +242,7 @@ def test_malformed_json_and_bad_messages_are_stable_errors(
     )
     assert malformed.status_code == 400
     assert malformed.json()["error"]["type"] == "bad_request"
+    assert malformed.json()["error"]["source"] == "router"
 
     bad_role = client.post(
         "/v1/chat/completions",
@@ -227,6 +274,96 @@ def test_malformed_json_and_bad_messages_are_stable_errors(
     )
     assert bad_max_tokens.status_code == 400
     assert bad_max_tokens.json()["error"]["type"] == "bad_request"
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        (
+            "/v1/chat/completions",
+            {
+                "model": "openai/gpt-5.4-nano",
+                "max_tokens": "a lot",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        ),
+        (
+            "/v1/messages",
+            {
+                "model": "anthropic/claude-sonnet-4.6",
+                "max_tokens": "a lot",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        ),
+        (
+            "/v1/responses",
+            {
+                "model": "openai/gpt-5.4-nano",
+                "max_output_tokens": "a lot",
+                "input": "hello",
+            },
+        ),
+    ],
+)
+def test_non_integer_output_token_limits_return_bad_request(
+    client: TestClient,
+    inference_headers: dict[str, str],
+    path: str,
+    payload: dict[str, object],
+) -> None:
+    resp = client.post(path, headers=inference_headers, json=payload)
+
+    assert resp.status_code == 400
+    assert resp.json()["error"]["type"] == "bad_request"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        (
+            "/v1/chat/completions",
+            {
+                "model": "openai/gpt-5.4-nano",
+                "max_completion_tokens": "a lot",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        ),
+        (
+            "/v1/messages",
+            {
+                "model": "anthropic/claude-sonnet-4.6",
+                "max_completion_tokens": "a lot",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        ),
+        (
+            "/v1/responses",
+            {
+                "model": "openai/gpt-5.4-nano",
+                "max_completion_tokens": "a lot",
+                "input": "hello",
+            },
+        ),
+    ],
+)
+def test_non_integer_max_completion_tokens_returns_bad_request_before_dispatch(
+    client: TestClient,
+    inference_headers: dict[str, str],
+    path: str,
+    payload: dict[str, object],
+    stream: bool,
+) -> None:
+    resp = client.post(
+        path,
+        headers=inference_headers,
+        json={**payload, "stream": stream},
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["error"]["type"] == "bad_request"
+    assert resp.json()["error"]["source"] == "router"
+    assert resp.json()["error"]["message"] == "max_completion_tokens must be an integer"
 
 
 def test_key_limit_validation_uses_stable_errors(
@@ -264,6 +401,7 @@ def test_provider_errors_map_to_openrouter_style_errors(
     )
     assert resp.status_code == 429
     assert resp.json()["error"]["type"] == "provider_rate_limited"
+    assert resp.json()["error"]["source"] == "provider"
 
 
 def test_provider_errors_do_not_echo_prompt_or_create_generation(
@@ -291,12 +429,13 @@ def test_provider_errors_do_not_echo_prompt_or_create_generation(
     )
 
     assert resp.status_code == 502
+    assert resp.json()["error"]["source"] == "provider"
     assert prompt not in resp.text
     assert STORE.generation_store.generations == {}
     key = next(iter(STORE.api_keys.keys.values()))
-    account = STORE.credits[key.workspace_id]
-    assert account.total_usage_microdollars == 0
-    assert account.reserved_microdollars == 0
+    money = STORE.credit_money[key.workspace_id]
+    assert money.total_usage_microdollars == 0
+    assert money.reserved_microdollars == 0
     assert key.reserved_microdollars == 0
 
 
@@ -376,7 +515,9 @@ def test_anthropic_messages_stream_uses_provider_stream_without_materializing(
     assert generations[0].finish_reason == "end_turn"
 
 
-def test_embeddings_and_model_endpoints(client: TestClient, inference_headers: dict[str, str]) -> None:
+def test_embeddings_and_model_endpoints(
+    client: TestClient, inference_headers: dict[str, str]
+) -> None:
     # A chat-only model is not a valid embeddings target.
     not_embeddings = client.post(
         "/v1/embeddings",
@@ -419,8 +560,12 @@ def test_embeddings_and_model_endpoints(client: TestClient, inference_headers: d
     rows = models.json()["data"]
     embedding_ids = {row["id"] for row in rows}
     assert {"openai/text-embedding-3-large", "cohere/embed-v4.0"} <= embedding_ids
-    # OpenAI, Gemini, Together, and Cohere are all represented.
-    assert {"openai", "gemini", "together", "cohere"} <= {
+    # OpenAI, AI Studio, Together, and Cohere are all represented. Vertex
+    # remains absent until its native embedding adapter is implemented.
+    assert {"openai", "google-ai-studio", "together", "cohere"} <= {
+        row["trustedrouter"]["provider"] for row in rows
+    }
+    assert "google-vertex" not in {
         row["trustedrouter"]["provider"] for row in rows
     }
     assert all(row["trustedrouter"]["supports_embeddings"] for row in rows)
@@ -447,7 +592,10 @@ def test_embeddings_and_model_endpoints(client: TestClient, inference_headers: d
         "Credits",
         "BYOK",
     ]
-    assert {item["provider"] for item in kimi.json()["data"]} >= {"kimi", "together"}
+    # The first-party Moonshot route is the stable contract. Secondary
+    # providers are discovered from their live serverless catalogs and may
+    # legitimately add or remove Kimi K2.6 without a code change.
+    assert "kimi" in {item["provider"] for item in kimi.json()["data"]}
 
     # gpt-5.5 is OpenAI's served flagship (Credits + BYOK on the openai
     # provider). NB: the GPT-5.4 line and the "-pro" tiers are dropped from
@@ -466,6 +614,31 @@ def test_embeddings_and_model_endpoints(client: TestClient, inference_headers: d
         for item in openai_endpoints
         if item["provider"] == "openai"
     ] == ["Credits", "BYOK"]
+    openai_by_usage = {
+        item["trustedrouter"]["usage_type"]: item["trustedrouter"]
+        for item in openai_endpoints
+        if item["provider"] == "openai"
+    }
+    assert openai_by_usage["Credits"]["provider_zero_data_retention"] is True
+    assert (
+        openai_by_usage["Credits"]["zero_data_retention_scope"]
+        == "trustedrouter_prepaid"
+    )
+    assert openai_by_usage["BYOK"]["provider_zero_data_retention"] is False
+    assert openai_by_usage["BYOK"]["zero_data_retention_scope"] is None
+
+    us_filtered = client.get(
+        "/v1/models/z-ai/glm-5.2/endpoints",
+        params={"provider[jurisdiction]": "us"},
+    )
+    assert us_filtered.status_code == 200
+    us_rows = us_filtered.json()["data"]
+    assert us_rows
+    assert all(row["trustedrouter"]["provider_us_based"] is True for row in us_rows)
+    assert all(
+        PROVIDERS[row["provider"]].provider_headquarters_country == PROVIDER_JURISDICTION_US
+        for row in us_rows
+    )
 
     missing = client.get("/v1/models/nope/missing/endpoints")
     assert missing.status_code == 200
@@ -508,7 +681,7 @@ def test_prepaid_insufficient_credits_blocks_before_provider_call(
     from trusted_router.storage import STORE
 
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
-    STORE.credits[workspace_id].total_credits_microdollars = 0
+    STORE.credit_money[workspace_id].total_credits_microdollars = 0
     resp = client.post(
         "/v1/chat/completions",
         headers=inference_headers,
@@ -580,7 +753,12 @@ def test_disabled_deleted_and_expired_keys_reject(
     created = client.post("/v1/keys", headers=user_headers, json={"name": "disabled"}).json()
     key_hash = created["data"]["hash"]
     headers = {"authorization": f"Bearer {created['key']}"}
-    assert client.patch(f"/v1/keys/{key_hash}", headers=user_headers, json={"disabled": True}).status_code == 200
+    assert (
+        client.patch(
+            f"/v1/keys/{key_hash}", headers=user_headers, json={"disabled": True}
+        ).status_code
+        == 200
+    )
     disabled = client.post(
         "/v1/chat/completions",
         headers=headers,
@@ -624,9 +802,273 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     models = client.get("/v1/models").json()["data"]
     model_ids = {model["id"] for model in models}
     assert models
-    assert {"trustedrouter/auto", "trustedrouter/zdr", "trustedrouter/e2e"}.issubset(
-        model_ids
+    assert {
+        "trustedrouter/auto",
+        "trustedrouter/fast",
+        "trustedrouter/eu",
+        "trustedrouter/zdr",
+        "trustedrouter/e2e",
+        "trustedrouter/iris",
+        "trustedrouter/prometheus",
+        "trustedrouter/zeus",
+        "trustedrouter/aristotle",
+        "trustedrouter/aristotle-1.0",
+        "trustedrouter/aristotle-1.1",
+        "trustedrouter/aristotle-2.0",
+        "trustedrouter/plato",
+        "trustedrouter/plato-1.0",
+        "trustedrouter/plato-3.0",
+        "trustedrouter/plato-pro",
+        "trustedrouter/plato-pro-1.0",
+        "trustedrouter/plato-pro-2.0",
+        "trustedrouter/socrates-1.1",
+        "trustedrouter/socrates-2.0",
+        "trustedrouter/socrates-pro",
+        "trustedrouter/socrates-pro-1.0",
+        "trustedrouter/socrates-pro-plus",
+        "trustedrouter/socrates-pro-plus-1.0",
+        "trustedrouter/iris-1.0",
+        "trustedrouter/iris-2.0",
+        "trustedrouter/iris-3.0",
+        "trustedrouter/prometheus-1.0",
+        "trustedrouter/prometheus-1.0-1m",
+        "trustedrouter/prometheus-2.0",
+        "trustedrouter/prometheus-3.0",
+        "trustedrouter/zeus-1.0",
+        "trustedrouter/zeus-1.0-mini",
+        "trustedrouter/zeus-2.0",
+        "trustedrouter/iris-code",
+        "trustedrouter/prometheus-code",
+        "trustedrouter/zeus-code",
+        "trustedrouter/iris-code-1.0",
+        "trustedrouter/prometheus-code-1.0",
+        "trustedrouter/zeus-code-1.0",
+        "trustedrouter/openpatcher-g1",
+        "trustedrouter/openpatcher-g2",
+        "trustedrouter/openpatcher-g3",
+        "trustedrouter/openpatcher-s2",
+        "trustedrouter/openpatcher-s3",
+        "trustedrouter/athena",
+        "trustedrouter/athena-1.0",
+        "trustedrouter/athena-2.0",
+        "trustedrouter/selector",
+        "trustedrouter/mapreduce",
+        "trustedrouter/liberty-1.0",
+        "trustedrouter/liberty-1.0-1m",
+        "trustedrouter/liberty-2.0",
+        "trustedrouter/liberty-3.0",
+        "thinkingmachines/inkling",
+        "thinkingmachines/inkling-1m",
+        "google/gemini-3.1-flash-image-preview",
+    }.issubset(model_ids)
+    models_by_id = {model["id"]: model for model in models}
+    fast_meta = models_by_id["trustedrouter/fast"]["trustedrouter"]
+    assert fast_meta["route_kind"] == "fast_pool"
+    assert fast_meta["auto_candidates"]
+    assert fast_meta["auto_candidates"] == [
+        model_id for model_id in FAST_MODEL_ORDER if model_id in MODELS
+    ]
+    plato_meta = models_by_id["trustedrouter/plato"]["trustedrouter"]
+    plato_3_meta = models_by_id["trustedrouter/plato-3.0"]["trustedrouter"]
+    assert models_by_id["trustedrouter/plato"]["context_length"] == 1_048_576
+    assert plato_meta["canonical_model_id"] == "trustedrouter/plato-3.0"
+    assert plato_meta["auto_candidates"] == plato_3_meta["auto_candidates"]
+    assert plato_meta["auto_candidates"] == [
+        "deepseek/deepseek-v4-pro-0813",
+        "trustedrouter/prometheus-3.0",
+    ]
+    plato_pro_2_meta = models_by_id["trustedrouter/plato-pro-2.0"]["trustedrouter"]
+    assert models_by_id["trustedrouter/plato-pro"]["trustedrouter"]["canonical_model_id"] == (
+        "trustedrouter/plato-pro-2.0"
     )
+    assert models_by_id["trustedrouter/plato-pro"]["trustedrouter"]["auto_candidates"] == [
+        "z-ai/glm-5.2",
+        "trustedrouter/prometheus-2.0",
+    ]
+    assert plato_pro_2_meta["auto_candidates"] == [
+        "z-ai/glm-5.2",
+        "trustedrouter/prometheus-2.0",
+    ]
+    iris_meta = models_by_id["trustedrouter/iris"]["trustedrouter"]
+    assert iris_meta["route_kind"] == "fusion_panel"
+    assert iris_meta["canonical_model_id"] == "trustedrouter/iris-3.0"
+    assert models_by_id["trustedrouter/iris"]["context_length"] == 1_048_576
+    assert iris_meta["auto_candidates"] == [
+        "minimax/minimax-m3",
+        "moonshotai/kimi-k3",
+        "deepseek/deepseek-v4-pro-0813",
+    ]
+    assert models_by_id["trustedrouter/iris-1.0"]["trustedrouter"]["auto_candidates"] == [
+        "minimax/minimax-m3",
+        "moonshotai/kimi-k2.6",
+        "deepseek/deepseek-v4-pro-0423",
+    ]
+    prometheus_code_meta = models_by_id["trustedrouter/prometheus-code"]["trustedrouter"]
+    assert prometheus_code_meta["route_kind"] == "fusion_panel"
+    assert "moonshotai/kimi-k2.7-code" in prometheus_code_meta["auto_candidates"]
+    assert models_by_id["trustedrouter/prometheus-code-1.0"]["trustedrouter"][
+        "auto_candidates"
+    ][-1] == "deepseek/deepseek-v4-pro-0423"
+    assert prometheus_code_meta["auto_candidates"][-1] == "deepseek/deepseek-v4-pro-0813"
+    prometheus_2_meta = models_by_id["trustedrouter/prometheus-2.0"]["trustedrouter"]
+    prometheus_3_meta = models_by_id["trustedrouter/prometheus-3.0"]["trustedrouter"]
+    assert models_by_id["trustedrouter/prometheus"]["context_length"] == 1_048_576
+    assert models_by_id["trustedrouter/prometheus-2.0"]["context_length"] == 1_048_576
+    assert models_by_id["trustedrouter/prometheus"]["trustedrouter"]["canonical_model_id"] == (
+        "trustedrouter/prometheus-3.0"
+    )
+    assert prometheus_2_meta["auto_candidates"] == [
+        "minimax/minimax-m3",
+        "moonshotai/kimi-k3",
+        "z-ai/glm-5.2",
+        "deepseek/deepseek-v4-pro-0423",
+        "xiaomi/mimo-v2.5-pro",
+    ]
+    assert prometheus_3_meta["auto_candidates"] == [
+        "minimax/minimax-m3",
+        "moonshotai/kimi-k3",
+        "z-ai/glm-5.2",
+        "deepseek/deepseek-v4-pro-0813",
+        "xiaomi/mimo-v2.5-pro",
+    ]
+    zeus_meta = models_by_id["trustedrouter/zeus"]["trustedrouter"]
+    assert models_by_id["trustedrouter/zeus"]["context_length"] == 1_048_576
+    assert models_by_id["trustedrouter/zeus-1.0"]["context_length"] == 1_048_576
+    assert models_by_id["trustedrouter/zeus-1.0-mini"]["context_length"] == 1_048_576
+    assert zeus_meta["auto_candidates"] == [
+        "anthropic/claude-opus-4.8",
+        "openai/gpt-5.5",
+        "google/gemini-3.1-pro-preview",
+        "google/gemini-3.5-flash",
+        "minimax/minimax-m3",
+        "z-ai/glm-5.2",
+        "xiaomi/mimo-v2.5-pro",
+        "deepseek/deepseek-v4-pro-0813",
+    ]
+    assert zeus_meta["canonical_model_id"] == "trustedrouter/zeus-2.0"
+    assert models_by_id["trustedrouter/zeus-1.0"]["trustedrouter"]["auto_candidates"][-1] == (
+        "deepseek/deepseek-v4-pro-0423"
+    )
+    assert models_by_id["trustedrouter/zeus-1.0-mini"]["trustedrouter"]["auto_candidates"] == [
+        "google/gemini-3.1-pro-preview",
+        "google/gemini-3.5-flash",
+        "minimax/minimax-m3",
+        "z-ai/glm-5.2",
+        "xiaomi/mimo-v2.5-pro",
+        "deepseek/deepseek-v4-pro-0423",
+    ]
+    aristotle_10_meta = models_by_id["trustedrouter/aristotle-1.0"]["trustedrouter"]
+    aristotle_11_meta = models_by_id["trustedrouter/aristotle-1.1"]["trustedrouter"]
+    aristotle_meta = models_by_id["trustedrouter/aristotle"]["trustedrouter"]
+    assert aristotle_10_meta["route_kind"] == "advisor_orchestration"
+    assert aristotle_10_meta["auto_candidates"][:2] == [
+        "deepseek/deepseek-v4-flash",
+        "anthropic/claude-opus-4.8",
+    ]
+    assert models_by_id["trustedrouter/aristotle-1.1"]["context_length"] == 1_048_576
+    assert models_by_id["trustedrouter/aristotle"]["context_length"] == 1_048_576
+    assert aristotle_meta["canonical_model_id"] == "trustedrouter/aristotle-2.0"
+    assert aristotle_11_meta["auto_candidates"] == [
+        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.2",
+        "trustedrouter/zeus-1.0",
+    ]
+    assert aristotle_meta["auto_candidates"] == [
+        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.2",
+        "trustedrouter/zeus-2.0",
+    ]
+    socrates_pro_plus_meta = models_by_id["trustedrouter/socrates-pro-plus-1.0"]["trustedrouter"]
+    assert socrates_pro_plus_meta["auto_candidates"] == [
+        "xiaomi/mimo-v2.5-pro-ultraspeed",
+        "minimax/minimax-m3",
+        "z-ai/glm-5.2-fast",
+        "deepseek/deepseek-v4-flash",
+        "trustedrouter/zeus-1.0",
+    ]
+    assert (
+        models_by_id["trustedrouter/socrates-1.1"]["trustedrouter"]["auto_candidates"]
+        == (socrates_pro_plus_meta["auto_candidates"])
+    )
+    openpatcher_g1_meta = models_by_id["trustedrouter/openpatcher-g1"]["trustedrouter"]
+    assert openpatcher_g1_meta["route_kind"] == "advisor_orchestration"
+    assert openpatcher_g1_meta["auto_candidates"] == [
+        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.2",
+        "moonshotai/kimi-k2.7-code",
+        "trustedrouter/prometheus-1.0-1m",
+    ]
+    openpatcher_g2_meta = models_by_id["trustedrouter/openpatcher-g2"]["trustedrouter"]
+    assert openpatcher_g2_meta["route_kind"] == "advisor_orchestration"
+    assert openpatcher_g2_meta["auto_candidates"] == [
+        "moonshotai/kimi-k3",
+        "google/gemma-4-31b-it",
+        "trustedrouter/prometheus-2.0",
+    ]
+    openpatcher_g3_meta = models_by_id["trustedrouter/openpatcher-g3"]["trustedrouter"]
+    assert openpatcher_g3_meta["route_kind"] == "advisor_orchestration"
+    assert openpatcher_g3_meta["auto_candidates"] == [
+        "moonshotai/kimi-k3",
+        "google/gemma-4-31b-it",
+        "trustedrouter/prometheus-3.0",
+    ]
+    openpatcher_s2_meta = models_by_id["trustedrouter/openpatcher-s2"]["trustedrouter"]
+    assert openpatcher_s2_meta["route_kind"] == "fusion_panel"
+    assert openpatcher_s2_meta["auto_candidates"] == [
+        "moonshotai/kimi-k3",
+        "z-ai/glm-5.2",
+    ]
+    openpatcher_s3_meta = models_by_id["trustedrouter/openpatcher-s3"]["trustedrouter"]
+    assert openpatcher_s3_meta["route_kind"] == "fusion_panel"
+    assert openpatcher_s3_meta["auto_candidates"] == [
+        "z-ai/glm-5.2",
+        "deepseek/deepseek-v4-pro-0813",
+    ]
+    athena_meta = models_by_id["trustedrouter/athena"]["trustedrouter"]
+    assert athena_meta["route_kind"] == "private_orchestration"
+    assert athena_meta["configuration_hidden"] is True
+    assert athena_meta["auto_candidates"] is None
+    selector_meta = models_by_id["trustedrouter/selector"]["trustedrouter"]
+    mapreduce_meta = models_by_id["trustedrouter/mapreduce"]["trustedrouter"]
+    assert selector_meta["route_kind"] == "selector_orchestration"
+    assert "moonshotai/kimi-k2.7-code" in selector_meta["auto_candidates"]
+    assert mapreduce_meta["route_kind"] == "mapreduce_orchestration"
+    assert mapreduce_meta["auto_candidates"][:3] == [
+        "deepseek/deepseek-v4-flash",
+        "minimax/minimax-m3",
+        "cerebras/gpt-oss-120b",
+    ]
+    liberty_1 = models_by_id["trustedrouter/liberty-1.0"]
+    liberty_1_1m = models_by_id["trustedrouter/liberty-1.0-1m"]
+    liberty_2 = models_by_id["trustedrouter/liberty-2.0"]
+    liberty_3 = models_by_id["trustedrouter/liberty-3.0"]
+    assert liberty_1["context_length"] == 262_144
+    assert liberty_1["trustedrouter"]["route_kind"] == "fusion_panel"
+    assert liberty_1["trustedrouter"]["auto_candidates"] == [
+        "thinkingmachines/inkling",
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        "google/gemma-4-31b-it",
+    ]
+    assert liberty_1_1m["context_length"] == 1_048_576
+    assert liberty_1_1m["trustedrouter"]["route_kind"] == "fusion_panel"
+    assert liberty_1_1m["trustedrouter"]["auto_candidates"] == [
+        "thinkingmachines/inkling-1m",
+        "nvidia/nemotron-3-ultra-550b-a55b",
+    ]
+    assert liberty_2["context_length"] == 262_144
+    assert liberty_2["trustedrouter"]["auto_candidates"] == [
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        "trustedrouter/liberty-1.0-1m",
+        "trustedrouter/liberty-1.0",
+    ]
+    assert liberty_3["context_length"] == 1_048_576
+    assert liberty_3["trustedrouter"]["auto_candidates"] == [
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        "google/gemma-4-31b-it",
+        "openai/gpt-oss-120b",
+        "trustedrouter/liberty-1.0-1m",
+        "thinkingmachines/inkling",
+    ]
     # Probe one model from each TR-keyed provider that actually appears
     # in the ingest snapshot. Vertex is intentionally absent — TR doesn't
     # have GCP quota for Anthropic-on-Vertex / Gemini-on-Vertex yet.
@@ -634,37 +1076,110 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "anthropic/claude-opus-4.7",
         "openai/gpt-5.4-nano",
         "google/gemini-2.5-flash",
+        "anthropic/claude-fable-5",
         "deepseek/deepseek-v4-flash",
         "moonshotai/kimi-k2.6",
         "mistralai/mistral-small-2603",
         "z-ai/glm-4.6",
+        "z-ai/glm-5.2",
     }.issubset(model_ids)
     assert client.get("/v1/models/count").json()["data"]["count"] >= 5
+    open_weight_models = client.get("/v1/models", params={"open_weights": "true"})
+    assert open_weight_models.status_code == 200
+    open_weight_rows = open_weight_models.json()["data"]
+    assert open_weight_rows
+    assert all(row["trustedrouter"]["open_weights"] is True for row in open_weight_rows)
+    assert "trustedrouter/prometheus-1.0" in {row["id"] for row in open_weight_rows}
+    assert "trustedrouter/zeus-1.0" not in {row["id"] for row in open_weight_rows}
+    us_models = client.get("/v1/models", params={"provider[jurisdiction]": "us"})
+    assert us_models.status_code == 200
+    us_rows = us_models.json()["data"]
+    assert us_rows
+    assert all(row["trustedrouter"]["us_provider_available"] is True for row in us_rows)
+    assert "trustedrouter/athena" in {row["id"] for row in us_rows}
+    eu_models = client.get("/v1/models", params={"provider[region]": "eu"})
+    assert eu_models.status_code == 200
+    eu_rows = eu_models.json()["data"]
+    assert eu_rows
+    assert all(row["trustedrouter"]["eu_focused_provider_available"] is True for row in eu_rows)
+    assert "trustedrouter/eu" in {row["id"] for row in eu_rows}
+    assert client.get("/v1/models/count", params={"open_weights": "true"}).json()["data"][
+        "count"
+    ] == len(open_weight_rows)
     providers = client.get("/v1/providers").json()["data"]
     provider_flags = {provider["id"]: provider for provider in providers}
-    assert [provider["id"] for provider in providers[:2]] == ["tinfoil", "venice"]
-    assert {"anthropic", "openai", "gemini", "deepseek", "kimi", "mistral", "zai"}.issubset(
-        provider_flags
+    assert all(
+        not provider["provider_zero_data_retention"] or provider["stores_content"] is False
+        for provider in providers
     )
+    assert [provider["id"] for provider in providers[:2]] == ["trustedrouter", "tinfoil"]
+    assert {
+        "anthropic",
+        "openai",
+        "google-ai-studio",
+        "google-vertex",
+        "deepseek",
+        "kimi",
+        "mistral",
+        "zai",
+        "alibaba",
+    }.issubset(provider_flags)
     assert provider_flags["openai"]["supports_prepaid"] is True
+    assert provider_flags["alibaba"]["supports_prepaid"] is True
+    assert provider_flags["alibaba"]["supports_byok"] is False
     assert provider_flags["deepseek"]["supports_byok"] is True
     assert provider_flags["kimi"]["supports_byok"] is True
     assert provider_flags["mistral"]["supports_byok"] is True
     assert provider_flags["zai"]["supports_byok"] is True
     assert provider_flags["tinfoil"]["provider_e2ee"] is True
     assert provider_flags["phala"]["provider_confidential_compute"] is True
-    assert provider_flags["anthropic"]["provider_zero_data_retention"] is True
+    assert provider_flags["phala"]["provider_e2ee"] is False
+    assert provider_flags["anthropic"]["provider_zero_data_retention"] is False
     assert provider_flags["cerebras"]["provider_zero_data_retention"] is True
+    assert provider_flags["cerebras"]["stores_content"] is False
     assert provider_flags["together"]["provider_zero_data_retention"] is True
     assert provider_flags["nebius"]["provider_zero_data_retention"] is True
-    assert provider_flags["venice"]["provider_zero_data_retention"] is True
-    # Venice runs TEE + E2EE inference — it's confidential, not merely no-logs.
-    assert provider_flags["venice"]["provider_confidential_compute"] is True
-    assert provider_flags["venice"]["provider_e2ee"] is True
-    # DeepInfra is memory-only / no-training — earns ZDR with a citation.
-    assert provider_flags["deepinfra"]["provider_zero_data_retention"] is True
-    assert provider_flags["openai"]["provider_zero_data_retention"] is True
-    assert provider_flags["gemini"]["provider_zero_data_retention"] is True
+    assert provider_flags["parasail"]["provider_zero_data_retention"] is True
+    # Venice privacy is model-specific. Current TR routes use its ordinary
+    # OpenAI-compatible protocol, never the separate tee-* / e2ee-* protocol.
+    assert provider_flags["venice"]["provider_zero_data_retention"] is False
+    assert provider_flags["venice"]["stores_content"] is True
+    assert provider_flags["venice"]["provider_confidential_compute"] is False
+    assert provider_flags["venice"]["provider_e2ee"] is False
+    # DeepInfra is normally memory-only, but reserves limited content logging
+    # for debugging/security and therefore must not satisfy strict ZDR routing.
+    assert provider_flags["deepinfra"]["provider_zero_data_retention"] is False
+    assert provider_flags["openai"]["provider_zero_data_retention"] is False
+    assert provider_flags["openai"]["prepaid_zero_data_retention"] is True
+    assert provider_flags["openai"]["prepaid_zero_data_retention_effective_on"] == ("2026-07-28")
+    assert (
+        provider_flags["openai"]["zero_data_retention_scope"]
+        == "trustedrouter_prepaid"
+    )
+    assert provider_flags["google-ai-studio"]["provider_zero_data_retention"] is False
+    assert provider_flags["google-ai-studio"]["supports_byok"] is True
+    assert provider_flags["google-vertex"]["provider_zero_data_retention"] is False
+    assert provider_flags["google-vertex"]["prepaid_zero_data_retention"] is True
+    assert provider_flags["google-vertex"][
+        "prepaid_zero_data_retention_effective_on"
+    ] == ("2026-07-28")
+    assert (
+        provider_flags["google-vertex"]["zero_data_retention_scope"]
+        == "trustedrouter_prepaid"
+    )
+    assert provider_flags["google-vertex"]["supports_byok"] is False
+    assert "Not currently marked ZDR" in provider_flags["anthropic"]["provider_policy"]
+    assert "Contracted Zero Data Retention" in provider_flags["openai"]["provider_policy"]
+    assert "July 28, 2026" in provider_flags["openai"]["provider_policy"]
+    assert "verified on July 29, 2026" in provider_flags["openai"]["provider_policy"]
+    assert "customer BYOK" in provider_flags["openai"]["provider_policy"]
+    assert "Not currently marked ZDR" in provider_flags["google-ai-studio"]["provider_policy"]
+    assert "contractual Zero Data Retention" in provider_flags["google-vertex"][
+        "provider_policy"
+    ]
+    assert "Google AI Studio is classified separately" in provider_flags["google-vertex"][
+        "provider_policy"
+    ]
     # GMI runs VPC isolation, NOT an attested TEE — must NOT claim confidential.
     assert provider_flags["gmi"]["provider_confidential_compute"] is None
     assert provider_flags["deepseek"]["provider_zero_data_retention"] is False
@@ -675,36 +1190,62 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert providers_without_policy_source == []
     expected_policy_sources = {
         "tinfoil": "https://tinfoil.sh/security-and-privacy-faq",
-        "venice": "https://docs.venice.ai/overview/privacy",
+        "venice": "https://venice.ai/privacy",
         "anthropic": "https://platform.claude.com/docs/en/api/data-retention",
+        "cerebras": "https://inference-docs.cerebras.ai/capabilities/prompt-caching",
         "together": "https://docs.together.ai/docs/privacy-and-security",
         "deepinfra": "https://docs.deepinfra.com/account/data-privacy",
         "nebius": "https://docs.studio.nebius.com/legal/legal-quick-guide",
+        "parasail": (
+            "https://docs.parasail.io/parasail-docs/security-and-account-management/"
+            "data-privacy-retention"
+        ),
+        "alibaba": "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
         "deepseek": (
-            "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html"
-            "?locale=en_US"
+            "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html?locale=en_US"
         ),
     }
     for provider, source in expected_policy_sources.items():
         assert provider_flags[provider]["provider_policy_url"] == source
     zdr = client.get("/v1/endpoints/zdr").json()["data"]
     assert zdr
+    for endpoint in zdr:
+        if (
+            endpoint["provider_zero_data_retention"] is not True
+            and endpoint["prepaid_zero_data_retention"] is not True
+        ):
+            assert endpoint["zero_data_retention_scope"] is None
     zdr_providers = {item["provider"] for item in zdr}
     assert {
         "trustedrouter",
-        "anthropic",
         "cerebras",
-        "gemini",
-        "deepinfra",
         "nebius",
-        "openai",
+        "parasail",
         "phala",
         "tinfoil",
         "together",
-        "venice",
     }.issubset(zdr_providers)
+    assert "venice" not in zdr_providers
+    assert "anthropic" not in zdr_providers
+    assert "google-ai-studio" not in zdr_providers
+    assert "google-vertex" in zdr_providers
+    assert "openai" in zdr_providers
     assert "deepseek" not in zdr_providers
     assert "gmi" not in zdr_providers
+    vertex_zdr = [item for item in zdr if item["provider"] == "google-vertex"]
+    assert vertex_zdr
+    assert all(item["prepaid_zero_data_retention"] is True for item in vertex_zdr)
+    assert all(
+        item["zero_data_retention_scope"] == "trustedrouter_prepaid"
+        for item in vertex_zdr
+    )
+    openai_zdr = [item for item in zdr if item["provider"] == "openai"]
+    assert openai_zdr
+    assert all(item["prepaid_zero_data_retention"] is True for item in openai_zdr)
+    assert all(
+        item["zero_data_retention_scope"] == "trustedrouter_prepaid"
+        for item in openai_zdr
+    )
     credits = client.get("/v1/credits", headers=user_headers)
     assert credits.status_code == 200
     assert credits.json()["data"]["total_credits"] >= 0
@@ -732,19 +1273,26 @@ def test_byok_provider_config_never_stores_or_returns_raw_key(
     assert payload["secret_storage"] == "envelope"  # noqa: S105 - storage kind, not a secret.
     assert raw_key not in str(payload)
     assert raw_key not in str(STORE.byok_store.providers)
-    config = STORE.get_byok_provider(payload["workspace_id"], "cerebras") if "workspace_id" in payload else None
+    config = (
+        STORE.get_byok_provider(payload["workspace_id"], "cerebras")
+        if "workspace_id" in payload
+        else None
+    )
     if config is None:
         workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
         config = STORE.get_byok_provider(workspace_id, "cerebras")
     assert config is not None
     assert config.encrypted_secret is not None
     assert config.secret_ref == payload["secret_ref"]
-    assert decrypt_byok_secret(
-        config.encrypted_secret,
-        test_settings,
-        workspace_id=config.workspace_id,
-        provider=config.provider,
-    ) == raw_key
+    assert (
+        decrypt_byok_secret(
+            config.encrypted_secret,
+            test_settings,
+            workspace_id=config.workspace_id,
+            provider=config.provider,
+        )
+        == raw_key
+    )
 
     listed = client.get("/v1/byok/providers", headers=user_headers)
     assert listed.status_code == 200
@@ -764,17 +1312,34 @@ def test_byok_provider_config_returns_503_when_kms_encrypt_denied(
     monkeypatch,
 ) -> None:
     # A management caller can land on a control-plane node whose GCP SA can't
-    # encrypt with the byok-envelope KMS key (e.g. the AWS/cross-cloud SA is
-    # decrypt-only by design). That must return a clean 503 — never an
+    # encrypt with the byok-envelope KMS key. That must return a clean 503 — never an
     # unhandled 500 + KMS stack trace (prod 2026-06-08).
+    # Fault-inject at the KMS boundary rather than mid-chain: this exercises
+    # the real path (KMS PermissionDenied -> key_management translates it to
+    # KeyAccessDenied -> the route maps that to 503), so a break anywhere along
+    # it fails this test.
     from google.api_core import exceptions as gcp_exceptions
 
-    import trusted_router.routes.byok as byok_routes
+    import trusted_router.byok_crypto as byok_crypto
+    from trusted_router.key_management import GcpKmsKeyWrapper
 
-    def _denied(*_args: object, **_kwargs: object) -> object:
-        raise gcp_exceptions.PermissionDenied("useToEncrypt denied on byok-envelope")
+    class _DeniedKmsClient:
+        def encrypt(self, *, request: dict) -> object:
+            raise gcp_exceptions.PermissionDenied(
+                "useToEncrypt denied on byok-envelope"
+            )
 
-    monkeypatch.setattr(byok_routes, "encrypt_byok_secret", _denied)
+    monkeypatch.setattr(
+        "google.cloud.kms_v1.KeyManagementServiceClient", _DeniedKmsClient
+    )
+    monkeypatch.setattr(
+        byok_crypto,
+        "key_wrapper_for",
+        lambda _settings: GcpKmsKeyWrapper(
+            "projects/p/locations/l/keyRings/r/cryptoKeys/byok"
+        ),
+    )
+
     resp = client.put(
         "/v1/byok/providers/cerebras",
         headers=user_headers,
@@ -785,16 +1350,13 @@ def test_byok_provider_config_returns_503_when_kms_encrypt_denied(
 
 
 def test_byok_registration_refused_when_disabled_on_replica() -> None:
-    # Replica nodes (byok_registration_enabled=False, e.g. the AWS control
-    # plane which holds decrypt-only on byok-envelope) refuse BYOK
+    # Replica nodes (byok_registration_enabled=False) refuse BYOK
     # registration with a clean 503 BEFORE any KMS attempt — a direct hit to a
-    # decrypt-only node never 500s.
+    # read-only node never 500s.
     from trusted_router.config import Settings
     from trusted_router.main import create_app
 
-    replica = TestClient(
-        create_app(Settings(environment="test", byok_registration_enabled=False))
-    )
+    replica = TestClient(create_app(Settings(environment="test", byok_registration_enabled=False)))
     resp = replica.put(
         "/v1/byok/providers/cerebras",
         headers={"x-trustedrouter-user": "alice@example.com"},
@@ -817,6 +1379,14 @@ def test_byok_provider_config_rejects_unsupported_and_raw_secret_refs(
     assert unsupported.status_code == 400
     assert unsupported.json()["error"]["type"] == "provider_not_supported"
 
+    explicit_vertex = client.put(
+        "/v1/byok/providers/google-vertex",
+        headers=user_headers,
+        json={"secret_ref": "env://VERTEX_API_KEY"},
+    )
+    assert explicit_vertex.status_code == 400
+    assert explicit_vertex.json()["error"]["type"] == "provider_not_supported"
+
     raw_ref = client.put(
         "/v1/byok/providers/openai",
         headers=user_headers,
@@ -824,6 +1394,27 @@ def test_byok_provider_config_rejects_unsupported_and_raw_secret_refs(
     )
     assert raw_ref.status_code == 400
     assert raw_ref.json()["error"]["type"] == "bad_request"
+
+
+def test_legacy_gemini_byok_route_canonicalizes_to_ai_studio(
+    client: TestClient,
+    user_headers: dict[str, str],
+) -> None:
+    create = client.put(
+        "/v1/byok/providers/gemini",
+        headers=user_headers,
+        json={"secret_ref": "env://GEMINI_API_KEY", "key_hint": "AIza...1234"},
+    )
+    assert create.status_code == 201, create.text
+    assert create.json()["data"]["provider"] == "google-ai-studio"
+
+    listed = client.get("/v1/byok/providers", headers=user_headers)
+    assert [row["provider"] for row in listed.json()["data"]] == [
+        "google-ai-studio"
+    ]
+    fetched = client.get("/v1/byok/providers/gemini", headers=user_headers)
+    assert fetched.status_code == 200
+    assert fetched.json()["data"]["provider"] == "google-ai-studio"
 
 
 def test_byok_provider_config_can_use_secret_ref_and_delete(

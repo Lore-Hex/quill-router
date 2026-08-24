@@ -2,12 +2,22 @@ from __future__ import annotations
 
 from typing import Any
 
-from trusted_router.adapter import chat_to_anthropic, chat_to_gemini
+from trusted_router.adapter import chat_to_anthropic, chat_to_gemini, resolve_max_output_tokens
 from trusted_router.catalog import Model
+
+ANTHROPIC_MESSAGES_PASSTHROUGH_FIELDS = (
+    "top_p",
+    "stop_sequences",
+    "top_k",
+    "thinking",
+    "metadata",
+)
+# TODO(tool-schema-translation, see #130): translate OpenAI chat tools/tool_choice
+# to Anthropic tools/input_schema instead of forwarding raw chat schemas.
 
 
 def anthropic_messages_payload(model: Model, request: dict[str, Any], *, stream: bool) -> dict[str, Any]:
-    base = chat_to_anthropic(messages(request), max_tokens=request.get("max_tokens") or 1024)
+    base = chat_to_anthropic(messages(request), max_tokens=resolve_max_output_tokens(request) or 1024)
     payload: dict[str, Any] = {
         "model": upstream_model_id(model),
         "stream": stream,
@@ -15,18 +25,26 @@ def anthropic_messages_payload(model: Model, request: dict[str, Any], *, stream:
     }
     if request.get("temperature") is not None:
         payload["temperature"] = request["temperature"]
+    for field in ANTHROPIC_MESSAGES_PASSTHROUGH_FIELDS:
+        if request.get(field) is not None:
+            payload[field] = request[field]
     return payload
 
 
 def gemini_payload(request: dict[str, Any]) -> dict[str, Any]:
     payload: dict[str, Any] = {"contents": chat_to_gemini(messages(request))}
     generation_config: dict[str, Any] = {}
-    if request.get("max_tokens") is not None:
-        generation_config["maxOutputTokens"] = request["max_tokens"]
+    # TODO(tool-schema-translation, see #130): translate OpenAI chat tools/tool_choice
+    # to Gemini functionDeclarations/toolConfig instead of forwarding raw chat schemas.
+    max_output_tokens = resolve_max_output_tokens(request)
+    if max_output_tokens is not None:
+        generation_config["maxOutputTokens"] = max_output_tokens
     if request.get("temperature") is not None:
         generation_config["temperature"] = request["temperature"]
     if request.get("top_p") is not None:
         generation_config["topP"] = request["top_p"]
+    if thinking_config := _gemini_thinking_config(str(request.get("model") or "")):
+        generation_config["thinkingConfig"] = thinking_config
 
     # Translate OpenAI's `response_format` to Gemini's
     # `responseMimeType` / `responseSchema`. forty.news's StoryDraftNode
@@ -95,6 +113,15 @@ def _gemini_response_schema(schema: dict[str, Any]) -> dict[str, Any]:
         else:
             out[key] = value
     return out
+
+
+def _gemini_thinking_config(model_id: str) -> dict[str, Any] | None:
+    normalized = model_id.lower()
+    if "gemini" not in normalized or "flash" not in normalized or "image" in normalized:
+        return None
+    if "gemini-2.5" in normalized:
+        return {"thinkingBudget": 0}
+    return {"thinkingLevel": "minimal"}
 
 
 def messages(request: dict[str, Any]) -> list[dict[str, Any]]:

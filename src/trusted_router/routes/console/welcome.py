@@ -6,21 +6,21 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, Response
 
 from trusted_router.auth import SettingsDep
-from trusted_router.routes.console._shared import ConsoleDep, money, render
+from trusted_router.routes.console._shared import ConsoleDep, render
 from trusted_router.routes.oauth import PENDING_REVEAL_COOKIE
-from trusted_router.storage import STORE
+from trusted_router.typed_balance import live_credit_summary
 
 
 def register(app: FastAPI) -> None:
     @app.get("/console/welcome")
-    async def console_welcome(
+    def console_welcome(
         request: Request,
         ctx: ConsoleDep,
         settings: SettingsDep,
         first: int | None = None,
     ) -> Response:
-        credit = STORE.get_credit_account(ctx.workspace.id)
-        trial_microdollars = credit.total_credits_microdollars if credit else 0
+        summary = live_credit_summary(ctx.workspace.id)
+        trial_microdollars = summary["total_credits"] if summary else 0
         # `tr_pending_reveal` is the short-lived one-shot cookie set by
         # the OAuth callback right before its 302 here. It carries the
         # raw API key minted during STORE.signup(). We read it ONCE,
@@ -39,21 +39,16 @@ def register(app: FastAPI) -> None:
         response = HTMLResponse(render(
             "console/welcome.html",
             settings=settings,
-            user=ctx.user,
+            ctx=ctx,
             active="api-keys",
-            page_title="Welcome",
-            page_subtitle="Save your API key — it won't be shown again.",
+            page_title="Make your first API call",
+            page_subtitle="Save your key, confirm it works, then connect your app.",
             revealed_key=revealed_key,
             workspace_name=ctx.workspace.name,
-            # `trial_credit` is the formatted display value; the matching
-            # raw amount is exposed too so the template can show the
-            # "add a card to unlock the trial" CTA when the workspace
-            # is still at $0 (the new default — see storage.py
-            # create_workspace + routes/internal/webhook.py for the
-            # card-attach grant flow).
-            trial_credit=money(trial_microdollars),
+            # The raw amount selects the appropriate next step without
+            # advertising the account-creation grant.
             trial_credit_microdollars=trial_microdollars,
-            api_base_url=settings.api_base_url,
+            can_run_first_call=trial_microdollars > 0,
         ))
         if clear_pending_reveal:
             # Delete cookie with the same path it was set with — otherwise
@@ -62,7 +57,7 @@ def register(app: FastAPI) -> None:
             response.delete_cookie(
                 key=PENDING_REVEAL_COOKIE,
                 path="/console/welcome",
-                secure=settings.environment.lower() == "production",
+                secure=settings.environment.lower() not in {"local", "test"},
                 samesite="lax",
             )
         return response

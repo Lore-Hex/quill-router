@@ -37,6 +37,7 @@ def test_aggregate_ranks_named_apps_and_buckets_direct() -> None:
         _s("TrustedRouter Gateway"),  # default -> Direct
         _s("TrustedRouter Synthetic"),  # monitor name -> excluded
         _s("Probe", source="synthetic"),  # synthetic source -> excluded
+        _s("Throughput", source="synthetic_throughput"),
     ]
     result = aggregate_apps(samples)
     assert [a["name"] for a in result["apps"]] == ["Acme Chat", "Beta Bot"]

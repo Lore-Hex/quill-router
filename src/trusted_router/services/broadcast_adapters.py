@@ -215,6 +215,8 @@ def otlp_generation_payload(
     ]
     for key, value in trace.items():
         attributes.append(_attr(f"trace.metadata.{key}", _scalar(value)))
+    for key, value in generation.tags.items():
+        attributes.append(_attr(f"trustedrouter.tag.{key}", value))
     if include_content:
         attributes.append(_attr("gen_ai.prompt", json.dumps(input_messages or [])))
         attributes.append(_attr("gen_ai.completion", json.dumps(output_choices or [])))
@@ -282,6 +284,8 @@ def _posthog_properties(
         "trustedrouter_region": generation.region,
         "trustedrouter_usage_type": generation.usage_type.value,
     }
+    for key, value in generation.tags.items():
+        properties[f"trustedrouter.tag.{key}"] = value
     if generation.first_token_milliseconds is not None:
         properties["$ai_time_to_first_token"] = generation.first_token_milliseconds / 1000
     if input_messages is not None:

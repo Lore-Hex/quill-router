@@ -1,7 +1,8 @@
-"""Tests for /internal/gateway/fetch-image — the AWS Nitro enclave's
-remote-image proxy. The endpoint is the server-side equivalent of the
-GCP-direct enclave's safeImageDialContext: same SSRF rejection rules
-(loopback / RFC1918 / link-local), same size cap, same redirect cap.
+"""Tests for /internal/gateway/fetch-image — the control-plane image
+fetch proxy used by legacy/local gateway paths. The endpoint is the
+server-side equivalent of the GCP-direct enclave's safeImageDialContext:
+same SSRF rejection rules (loopback / RFC1918 / link-local), same size
+cap, same redirect cap.
 
 We test through the FastAPI route, not the helpers, so the auth gate
 + schema validation + httpx mocking all exercise the real path the
@@ -114,18 +115,17 @@ def test_rejects_private_resolved_ip(
     assert "private address" in resp.json()["error"]["message"]
 
 
-def test_rejects_link_local_aws_metadata(
+def test_rejects_link_local_metadata(
     fetch_image_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The 169.254.0.0/16 range covers AWS instance metadata
-    (169.254.169.254). Allowing it would let an enclave-side request
-    exfiltrate IAM credentials from the parent. allowedImageIP rejects
-    the entire /16; this mirrors that."""
+    """The 169.254.0.0/16 range covers cloud instance metadata services.
+    Allowing it would let a gateway-side request exfiltrate workload
+    credentials. The fetcher rejects the entire /16; this mirrors that."""
 
-    def aws_metadata_getaddrinfo(host: str, *args: Any, **kwargs: Any) -> list[Any]:
+    def metadata_getaddrinfo(host: str, *args: Any, **kwargs: Any) -> list[Any]:
         return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("169.254.169.254", 0))]
 
-    monkeypatch.setattr(socket, "getaddrinfo", aws_metadata_getaddrinfo)
+    monkeypatch.setattr(socket, "getaddrinfo", metadata_getaddrinfo)
     resp = fetch_image_client.post(
         "/v1/internal/gateway/fetch-image",
         headers=_internal_headers(),

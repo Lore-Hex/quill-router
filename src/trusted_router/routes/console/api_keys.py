@@ -1,77 +1,224 @@
-"""/console/api-keys — list, create, and reveal API keys for the current
-workspace. POST creates a new key and renders the same page with the
-raw key one-shot revealed in the response."""
+"""/console/api-keys — list, create, and manage API keys for the current
+workspace: one-shot reveal on create, budgets (lifetime + daily/weekly/monthly
+windows), disable/enable, and delete (disabled keys only — disabling first
+stops new authorizes so in-flight typed holds drain before the row goes away).
+All mutations are form POSTs -> 303 redirects with ?saved=/?error= flash params
+(the console's no-JS pattern)."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI, Form
+from fastapi import FastAPI, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from trusted_router.auth import SettingsDep
-from trusted_router.money import dollars_to_microdollars
+from trusted_router.errors import assert_workspace_billing_active
+from trusted_router.money import dollars_to_microdollars, microdollars_to_decimal
 from trusted_router.routes.console._shared import ConsoleDep, money, render
-from trusted_router.storage import STORE, ApiKey
+from trusted_router.spend_windows import WINDOWS, suggested_window_limits
+from trusted_router.storage import STORE, ApiKey, ApiKeyUsageSnapshot
+
+_FLASH = {
+    "saved:limit": ("success", "Budgets saved."),
+    "saved:disabled": ("success", "Key disabled — it can no longer authorize requests."),
+    "saved:enabled": ("success", "Key enabled."),
+    "saved:deleted": ("success", "Key deleted."),
+    "error:limit": ("error", "Budgets must be non-negative dollar amounts."),
+    "error:delete-active": ("error", "Disable the key first, then delete it."),
+}
 
 
 def register(app: FastAPI) -> None:
-    @app.get("/console/api-keys")
-    async def console_api_keys(ctx: ConsoleDep, settings: SettingsDep) -> Response:
-        keys = [_key_view(k) for k in STORE.list_keys(ctx.workspace.id)]
+    def _render_page(
+        ctx: Any,
+        settings: Any,
+        *,
+        created_key: str | None = None,
+        saved: str | None = None,
+        error: str | None = None,
+    ) -> Response:
+        keys = [_key_view(snapshot) for snapshot in STORE.list_api_keys_with_usage(ctx.workspace.id)]
+        flash = None
+        if saved:
+            flash = _FLASH.get(f"saved:{saved}")
+        elif error:
+            flash = _FLASH.get(f"error:{error}")
+        # Suggested (not applied) window budgets, shown as input placeholders so
+        # users who opt in start from coherent values ($20/$100/$200); empty
+        # inputs still mean "no limit".
+        suggested = {
+            window: microdollars_to_decimal(micro)
+            for window, micro in suggested_window_limits().items()
+        }
         return HTMLResponse(render(
             "console/api_keys.html",
             settings=settings,
-            user=ctx.user,
+            ctx=ctx,
             active="api-keys",
             page_title="API Keys",
             page_subtitle="Long-lived keys for your applications.",
             keys=keys,
-            created_key=None,
-            api_base_url=settings.api_base_url,
+            created_key=created_key,
+            flash=flash,
+            suggested=suggested,
         ))
 
+    @app.get("/console/api-keys")
+    def console_api_keys(
+        ctx: ConsoleDep,
+        settings: SettingsDep,
+        saved: str | None = None,
+        error: str | None = None,
+    ) -> Response:
+        return _render_page(ctx, settings, saved=saved, error=error)
+
     @app.post("/console/api-keys")
-    async def console_create_api_key(
+    def console_create_api_key(
         ctx: ConsoleDep,
         settings: SettingsDep,
         name: str = Form("API key", min_length=1, max_length=120),
         limit: str = Form(""),
+        limit_daily: str = Form(""),
+        limit_weekly: str = Form(""),
+        limit_monthly: str = Form(""),
+        budget_alert_only: str = Form(""),
     ) -> Response:
-        limit_microdollars = None
-        if limit:
-            try:
-                limit_microdollars = dollars_to_microdollars(limit)
-            except ValueError:
-                return RedirectResponse(url="/console/api-keys?error=limit", status_code=303)
-            if limit_microdollars < 0:
-                return RedirectResponse(url="/console/api-keys?error=limit", status_code=303)
+        try:
+            limit_microdollars = _parse_limit(limit)
+            daily_micro = _parse_limit(limit_daily)
+            weekly_micro = _parse_limit(limit_weekly)
+            monthly_micro = _parse_limit(limit_monthly)
+        except ValueError:
+            return RedirectResponse(url="/console/api-keys?error=limit", status_code=303)
+        assert_workspace_billing_active(ctx.workspace)  # quiesce: no new keys while paused
         raw, _ = STORE.create_api_key(
             workspace_id=ctx.workspace.id,
             name=name,
             creator_user_id=ctx.user.id,
             management=False,
             limit_microdollars=limit_microdollars,
+            limit_daily_microdollars=daily_micro,
+            limit_weekly_microdollars=weekly_micro,
+            limit_monthly_microdollars=monthly_micro,
+            # Omitted checkbox = the shared hard-limit default. Alert-only must be
+            # selected explicitly.
+            budget_alert_only=_checkbox(budget_alert_only),
         )
-        keys = [_key_view(k) for k in STORE.list_keys(ctx.workspace.id)]
-        return HTMLResponse(render(
-            "console/api_keys.html",
-            settings=settings,
-            user=ctx.user,
-            active="api-keys",
-            page_title="API Keys",
-            page_subtitle="Long-lived keys for your applications.",
-            keys=keys,
-            created_key=raw,
-            api_base_url=settings.api_base_url,
-        ))
+        return _render_page(ctx, settings, created_key=raw)
+
+    @app.post("/console/api-keys/{key_hash}/limit")
+    def console_update_api_key_limit(
+        ctx: ConsoleDep,
+        key_hash: str,
+        limit: str = Form(""),
+        limit_daily: str = Form(""),
+        limit_weekly: str = Form(""),
+        limit_monthly: str = Form(""),
+        budget_alert_only: str = Form(""),
+    ) -> Response:
+        _require_key(ctx, key_hash)
+        try:
+            patch: dict[str, Any] = {
+                "limit_microdollars": _parse_limit(limit),
+                "budget_alert_only": _checkbox(budget_alert_only),
+            }
+            for window, value in (
+                ("daily", limit_daily), ("weekly", limit_weekly), ("monthly", limit_monthly),
+            ):
+                # Empty input = clear the window limit (explicit None).
+                patch[f"limit_{window}_microdollars"] = _parse_limit(value)
+        except ValueError:
+            return RedirectResponse(url="/console/api-keys?error=limit", status_code=303)
+        try:
+            STORE.update_key(key_hash, patch)
+        except ValueError:
+            return RedirectResponse(
+                url="/console/api-keys?error=consolidate_key_usage",
+                status_code=303,
+            )
+        return RedirectResponse(url="/console/api-keys?saved=limit", status_code=303)
+
+    @app.post("/console/api-keys/{key_hash}/disable")
+    def console_disable_api_key(ctx: ConsoleDep, key_hash: str) -> Response:
+        _require_key(ctx, key_hash, manage=True)
+        STORE.update_key(key_hash, {"disabled": True})
+        return RedirectResponse(url="/console/api-keys?saved=disabled", status_code=303)
+
+    @app.post("/console/api-keys/{key_hash}/enable")
+    def console_enable_api_key(ctx: ConsoleDep, key_hash: str) -> Response:
+        _require_key(ctx, key_hash, manage=True)
+        STORE.update_key(key_hash, {"disabled": False})
+        return RedirectResponse(url="/console/api-keys?saved=enabled", status_code=303)
+
+    @app.post("/console/api-keys/{key_hash}/delete")
+    def console_delete_api_key(ctx: ConsoleDep, key_hash: str) -> Response:
+        key = _require_key(ctx, key_hash, manage=True)
+        # Disable-first, then delete: an ACTIVE key may have in-flight typed
+        # holds; deleting it mid-flight strands them (issue #29). Disabling
+        # stops new authorizes and the holds settle/drain, making the delete
+        # safe in practice.
+        if not key.disabled:
+            return RedirectResponse(url="/console/api-keys?error=delete-active", status_code=303)
+        STORE.delete_key(key_hash)
+        return RedirectResponse(url="/console/api-keys?saved=deleted", status_code=303)
 
 
-def _key_view(key: ApiKey) -> dict[str, Any]:
+def _require_key(ctx: Any, key_hash: str, *, manage: bool = False) -> ApiKey:
+    """Ownership check for every mutating route; `manage=True` additionally
+    requires owner/manager role (codex #94: disable/enable/delete are
+    destructive — a plain workspace member must not kill another member's
+    keys; budget edits keep the console's pre-existing member-level access)."""
+    key = STORE.get_key_by_hash(key_hash)
+    if key is None or key.workspace_id != ctx.workspace.id:
+        raise HTTPException(status_code=404, detail="API key not found")
+    if manage and not STORE.user_can_manage(ctx.user.id, ctx.workspace.id):
+        raise HTTPException(status_code=403, detail="Requires workspace manager role")
+    return key
+
+
+def _parse_limit(value: str) -> int | None:
+    """'' -> None (no limit); a dollar string -> microdollars; negative raises."""
+    normalized = value.strip()
+    if not normalized:
+        return None
+    micro = dollars_to_microdollars(normalized)
+    if micro < 0:
+        raise ValueError("limit must be non-negative")
+    return micro
+
+
+def _checkbox(value: str) -> bool:
+    """An HTML checkbox posts 'on' when checked, nothing when cleared. The
+    budget forms render the Alert-only box checked by default, so a submitted
+    form carries 'on' (alert) unless the user unchecks it (hard limit)."""
+    return value == "on"
+
+
+def _key_view(snapshot: ApiKeyUsageSnapshot) -> dict[str, Any]:
+    key = snapshot.api_key
     limit_display = "none" if key.limit_microdollars is None else money(key.limit_microdollars)
+    window_views = []
+    for window in WINDOWS:
+        limit_value = getattr(key, f"limit_{window}_microdollars", None)
+        window_views.append({
+            "name": window,
+            "input": "" if limit_value is None else microdollars_to_decimal(limit_value),
+            "limit_display": None if limit_value is None else money(limit_value),
+            "used_display": (
+                money(snapshot.windows.get(window, 0)) if limit_value is not None else None
+            ),
+        })
     return {
+        "hash": key.hash,
         "name": key.name,
         "label": key.label,
         "limit_display": limit_display,
+        "limit_input": (
+            "" if key.limit_microdollars is None else microdollars_to_decimal(key.limit_microdollars)
+        ),
+        "usage_display": money(snapshot.usage_microdollars),
+        "windows": window_views,
+        "budget_alert_only": key.budget_alert_only,
         "disabled": key.disabled,
     }

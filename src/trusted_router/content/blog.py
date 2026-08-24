@@ -1,0 +1,2001 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class BlogPost:
+    slug: str
+    title: str
+    description: str
+    published_date: str
+    source_label: str | None
+    source_url: str | None
+    body_html: str
+    # DEFERRED (review 2026-06-21): the inline <svg> bar charts inside body_html
+    # are hand-authored + hand-tuned per post (bespoke positions/colors/copy). A
+    # shared chart helper was rated low-value/high-effort and deliberately NOT
+    # extracted — kept inline on purpose.
+    #
+    # Explicit social-card image (absolute URL or "/static/..." path). When None,
+    # the renderer falls back to the post's first embedded image (an <img>, or a
+    # rasterized PNG of the first inline <svg> at static/og/blog/<slug>.png), then
+    # to the default brand card.
+    og_image: str | None = None
+
+    @property
+    def href(self) -> str:
+        return f"/blog/{self.slug}"
+
+
+BLOG_POSTS: tuple[BlogPost, ...] = (
+    BlogPost(
+        slug="you-are-a-model-provider",
+        title="You are a model provider now",
+        description=(
+            "TrustedRouter now takes user-provided models: register an HTTPS endpoint that speaks the OpenAI chat API, set a price per million tokens, and keep 70% of what callers pay. One npx command puts your local model, your agent, or you personally in front of everyone holding TrustedRouter credits."
+        ),
+        published_date="2026-08-17",
+        source_label=None,
+        source_url=None,
+        body_html="""
+<figure class="blog-hero-image"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="Sell tokens from your laptop: one command, your price, 70% yours">
+  <rect width="1200" height="630" fill="#ffffff"/>
+  <rect x="0" y="0" width="1200" height="8" fill="#0f6e56"/>
+  <text x="72" y="118" font-size="26" font-weight="600" fill="#6b7280" letter-spacing="2">USER-PROVIDED MODELS</text>
+  <text x="72" y="216" font-size="66" font-weight="700" fill="#111827">Sell tokens from your laptop.</text>
+  <text x="72" y="286" font-size="40" font-weight="500" fill="#374151">One command, your price, 70% yours.</text>
+  <rect x="72" y="330" width="1056" height="1" fill="#eef0f2"/>
+  <g>
+    <text x="72" y="410" font-size="52" font-weight="700" fill="#0f6e56">70%</text>
+    <text x="72" y="448" font-size="24" fill="#6b7280">of the price, to you, in credits</text>
+  </g>
+  <g>
+    <text x="492" y="410" font-size="52" font-weight="700" fill="#0f6e56">3 modes</text>
+    <text x="492" y="448" font-size="24" fill="#6b7280">your model, your agent, or you</text>
+  </g>
+  <g>
+    <text x="912" y="410" font-size="52" font-weight="700" fill="#111827">$0</text>
+    <text x="912" y="448" font-size="24" fill="#6b7280">to turn a request down</text>
+  </g>
+  <rect x="72" y="512" width="1056" height="62" rx="8" fill="#111827"/>
+  <text x="600" y="552" font-size="30" fill="#f8fafc" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,monospace">npx reverse-harness --mode proxy</text>
+</svg></figure>
+<p>You can sell tokens on TrustedRouter now, and the seller can be anyone who has an endpoint and a price. You register an HTTPS endpoint that speaks the OpenAI chat API, you set a price per million tokens, and your model appears in the user-provided section with an id that any TrustedRouter customer can call. The model running on your laptop right now qualifies. So does the agent script you wrote last month, the fine-tune sitting on a rented A100, and you personally, answering questions with your hands.</p>
+
+<p>Getting there is one command. Run <code>npx reverse-harness --mode proxy --upstream http://localhost:11434/v1</code> and the ollama instance you already have starts taking paid requests from everybody holding TrustedRouter credits. Point the same flag at llama.cpp, vLLM, or LM Studio and it works the same way. Swap to <code>npx reverse-harness --mode exec --command "python my_agent.py"</code> and the thing you are selling is your program, running on your machine, with your data on the same disk. The third mode is you: <code>npx reverse-harness --mode human</code> drops incoming prompts into a browser queue and waits for you to type. The client verifies every TrustedRouter signature before it hands you a request, opens a tunnel so we can reach you behind your router, keeps your clock, and answers the health canary itself so nobody has to get out of bed for it. It is Apache 2.0, it is on npm, and it lives at <a href="https://github.com/Lore-Hex/reverse-harness">github.com/Lore-Hex/reverse-harness</a>, so you can read all of it before you run any of it.</p>
+
+<p>You set the price the caller pays, and 70% of that price lands in your earnings wallet as TrustedRouter credits, which you can move into any of your workspaces and spend on anything in the catalog. Our 30% comes out of the same number, so the price you publish is the price the buyer sees. Route your own traffic to yourself and you lose 30% on the round trip, which is the correct incentive and stops the obvious game before anyone bothers to play it.</p>
+
+<p>There are three kinds of model you can register, and they differ mostly in patience. A machine model can charge up to $1,000 per million tokens and has thirty seconds to produce a first byte, sixty seconds of idle between bytes, and five minutes on the wall clock. An agent model gets the same ceiling with a minute for the first byte and ten minutes to finish, because agents think and call tools before they talk. Those two are where the volume is: a GPU box in a closet serving a fine-tune, or a retrieval loop sitting next to a corpus nobody is ever going to upload. A human model gets five minutes for the first byte, two minutes of idle, fifteen minutes total, and a ceiling of one dollar per token, which is a million dollars per million tokens. The ceiling is that high because when the model is a person, one sentence can be worth what an hour of that person is worth, and the buyer is a pipeline that would otherwise stop and file a ticket somebody reads on Tuesday.</p>
+
+<p>I went first, with the least serious infrastructure I own, because I wanted to know whether the money would move. My id is <code>trustedrouter/user-joseph-live</code>, the handle on it is jperla, I priced it at ten cents a token, and the endpoint behind it was a cloudflared quick tunnel pointed at the laptop on my desk. Two real requests came in through the production enclave and landed in my terminal. I typed both answers by hand while the gateway held the connection open and streamed my typing back as a completion, and I earned $2.73 in credits, which is 70% of what the caller paid.</p>
+
+<p>Who buys from an endpoint they have never heard of? Nobody, by accident. There is no browsing your way to a user-provided model. You get called by id, so every request that reaches you came from somebody who went looking for you. Two requests and $2.73 is a small pile of money and a large fact: somebody paid a dime a token for sentences a person typed into a text box. The catalog cannot quote that price, because the catalog has no people in it, and it has none of your data in it either. A fine-tune that knows a schema living in four heads, an agent wired into your company's file share, a person who knows why the pipeline broke: those are worth more per token than any commodity model gets paid, and until this week there was no way to charge anybody for one of them.</p>
+
+<p>Serving those calls is bounded work. You POST clock-in, we probe you before we believe you and hand back a 409 if the probe fails, you heartbeat on an interval, and you clock out when you are done. Turning work down is an HTTP error: any 4xx means you looked at the request and judged it, and it costs you nothing at all. Only a 5xx counts against you, because that means you took the job and dropped it, and it takes three consecutive failures of yours to clock you out. A caller who hangs up mid-stream never counts.</p>
+
+<p>The traffic reaching your hardware is fenced on our side. Requests come from an attested enclave over HTTPS with the resolved IP pinned for the life of the connection, redirects refused, and only allowlisted chat fields forwarded, and your credentials are decrypted inside that enclave and nowhere else. Every request carries <code>TR-Signature: t=&lt;unix&gt;,v1=&lt;hex hmac-sha256 of "t." + raw body&gt;</code> with a 300 second skew window, and the harness checks it before your model sees a token. You can tell whether a request is really from us by doing arithmetic.</p>
+
+<p>Buyers get told what they are buying: a user-provided model is not attested and is not covered by zero-data-retention, and we print that on the model page, in the API shape our clients read, and on the public trust page. Getting listed costs you an email on file, one funded top-up of any amount above zero, which is what unlocks phone verification, a phone verified by call or SMS, and then a government ID check through Veriff that wants $25 of lifetime top-ups to attempt and charges $5 against your credits each try. That is enough friction to make a fake seller a losing business and nowhere near enough to stop a motivated one. The morning after my model went live, somebody I have never met signed up, walked every step of that gate alone without asking me a single question, and registered a real hosted Qwen endpoint at forty cents per million tokens, working from nothing but the docs. They were in business before I finished my coffee. Go get paid for the GPU that is idling in your apartment tonight.</p>""",
+    ),
+    BlogPost(
+        slug="proofs-in-production",
+        title="Proofs that find real production bugs",
+        description=(
+            "We wrote property tests and a TLA+ model against the running "
+            "TrustedRouter code and put them in CI. They found fifteen real "
+            "defects, including one that crashed the Swift SDK's process from a "
+            "single response header."
+        ),
+        published_date="2026-08-14",
+        source_label=None,
+        source_url=None,
+        og_image="/static/og/blog/proofs-in-production.png",
+        body_html="""
+<figure class="blog-hero-image"><img src="/static/og/blog/proofs-in-production.png" alt="Proofs that find real production bugs" width="1200" height="630"></figure>
+<p>I spent a week pointing proof tools at TrustedRouter's own source and they found fifteen real defects. Not style problems. A single response header that crashed the Swift SDK's process. An attestation check that could pass without checking anything. An API key that survived our log scrubber because it was a dictionary key instead of a value. All of it in code that was reviewed, tested, and running.</p>
+<p>I want to describe what actually worked, because "formal methods" usually gets discussed as something you do instead of shipping, on a system small enough to fit in a paper. That is not what this was. The control plane is fifty thousand lines of Python with three thousand five hundred tests already passing. The proofs went in on top of that, they run in CI on every push, and the interesting part is not that they passed. It is what they caught on the way.</p>
+<h2>Write the law, not the example</h2>
+<p>A normal test picks an input and asserts an output. A property picks the <em>claim</em> and lets a generator hunt for a counterexample. The difference sounds academic until you see which bugs each one can and cannot see.</p>
+<p>Our attestation verifier checks that the gateway you are talking to is the exact build we published. It had tests. Good ones, with real RSA signatures and crafted JWTs. Every one of them passed. Here is the property instead:</p>
+<p><strong>for every claims set K and policy P, if verification succeeds then K's image digest was in P's accepted set.</strong></p>
+<p>That is false, and it was false for a year. Both image checks were written as <code>if accepted_digests and workload not in accepted_digests: raise</code>. An <em>empty</em> accepted set skips the check rather than failing it. And the policy builder mapped a trust release with no image fields — a truncated response, a CDN error page that happens to parse as JSON — to exactly that empty set. Verification then succeeded against any genuinely-attested workload and reported success. The caller believed it had pinned a build. It had pinned nothing.</p>
+<p>The example tests all passed <em>while the implication was vacuous</em>. That is the whole lesson. They asserted "a matching digest verifies" and "a mismatched digest raises", and both remained true in a world where the check never ran. Only a statement quantified over all policies can notice that the premise had become unreachable.</p>
+<h2>The generator only searches where you let it</h2>
+<p>Properties are not magic, and the way they fail is instructive. We wrote one for the log scrubber that reads well: no declared secret survives, for any Python value shape. It generated dicts, lists, tuples, sets, bytes, nested combinations, planting canary secrets at random leaf positions. It ran fifteen hundred examples per commit and passed.</p>
+<p>It was searching half the space. Every canary went into a <em>value</em>, because the generator drew mapping keys from plain text. And <code>_scrub</code> checked whether a key <em>name</em> looked sensitive but never scrubbed the key's own text, so this shipped a live credential to our log sink:</p>
+<p><code>_scrub({"sk-tr-v1-SECRET": 1}) -&gt; {'sk-tr-v1-SECRET': 1}</code></p>
+<p>A dict keyed by an API key is not exotic. It is what a per-key request counter looks like. An outside reviewer found it by reading; the property that existed to prevent exactly this had never looked. A property test is only as good as the positions its generator can reach, and "I generated containers" is not the same as "I generated every position a string can occupy in a container."</p>
+<h2>Some bugs need a model, not a test</h2>
+<p>Property tests drive code. When the thing you are worried about is a <em>composition</em> that does not exist yet, there is nothing to drive.</p>
+<p>We have a module for regional prepaid quota leases — several regional planes each holding a bounded slice of one workspace's escrow. It is deliberately dark: no migration, no data, no callers. The failure mode that matters is oversubscription, planes collectively spending more than the workspace escrowed, and it lives in the interaction between a granter, several leaseholders, and a reclaimer sweeping expired leases. None of that is code yet.</p>
+<p>So we wrote it in TLA+ and ran a model checker over every interleaving. Eight million states. It found a design gap in six.</p>
+<p>If the reclaimer only sweeps <em>active</em> leases, a lease that gets quarantined and then expires can never be closed, and its escrow is stranded permanently. Quarantine is meant to stop a suspicious lease spending, not to make the customer forfeit the money. The counterexample was six states long and no amount of unit testing would have produced it, because the reclaimer it describes has not been written. We changed the design and left a note in the spec for whoever builds it.</p>
+<p>The property that caught it was a liveness property — eventually this lease is closed — not a safety one. A safety-only spec is perfectly happy with a system that quietly keeps your money forever. Nothing bad happens; nothing happens at all.</p>
+<h2>What the model does not prove</h2>
+<p>I had also written a "stale write" action into the spec to show that our fencing token blocks writes from a superseded leaseholder. A reviewer pointed out that the action was <code>UNCHANGED vars</code> — it did nothing. An action that does nothing is trivially safe, so it proved nothing.</p>
+<p>I made it perform a real write and the check still passed. Then I deleted the fencing guard entirely, and it <em>still</em> passed: four and a half million states, no violation. The accounting bound already prevents overspend regardless of who writes. The hazard fencing actually addresses is lease succession, which this model does not have.</p>
+<p>So the spec now says, in its header, that it does not establish that fencing works and nobody should cite it as if it did. That is the least satisfying paragraph in this post and the most important one. A proof that proves less than its title suggests is worse than no proof, because it reads as evidence. Model checkers do not stop you claiming too much; they only stop you being wrong about the thing you actually wrote down.</p>
+<h2>Put it in CI or it decays</h2>
+<p>The property tests are pytest files, so they run in the existing suite with no new infrastructure. The TLA+ specs needed a job: a JVM, a cached tools jar, one model-checking run per spec, and it blocks the deploy gate like every other check.</p>
+<p>Two details in that runner are doing real work. A spec without a config file is a hard error rather than a skip, and a config that names no invariant or property is also a hard error — otherwise the checker explores the whole state space and reports success having verified nothing at all. Passing vacuously while looking checked is the exact failure this is supposed to prevent, so the build refuses.</p>
+<p>The single highest-value test we wrote is not a proof of anything. It partitions every field on our generation record into "goes to analytics" or "deliberately excluded", and fails the build when a new field belongs to neither. The real risk to a no-content-logging promise was never that somebody writes a leaky projection. It is that somebody adds a field and an existing projection picks it up, while every value-asserting test stays green. That test converts "remember not to leak" into "the build stops until you decide."</p>
+<h2>Was it worth it</h2>
+<p>Fifteen defects across twenty-three merged pull requests. The ones I would have least liked to find in the wild: a <code>Retry-After</code> header of <code>inf</code> crashed the Swift SDK's process outright — an uncatchable runtime trap, which on iOS is an app termination triggered by a response header. The same header hung the Python client forever and parked the Go client for two hundred and ninety-two years. Six SDKs, six different failure modes, one missing bound.</p>
+<p>The obvious objection is that this is expensive and only pays off on aerospace software. I think that gets it backwards. The cheap properties found most of the bugs. Bounds on untrusted numbers, round-trip laws on anything durable, and one classification test that fails when a struct grows a field — none of that requires a background in verification, and together they caught more than the model did.</p>
+<p>The model earned its place for a different reason: it let us check a design before writing it, while changing our minds still cost nothing. That is the cheapest that decision will ever be, and it is the one place where "prove it first" is straightforwardly less work than shipping and finding out.</p>
+<p>Every property, every spec, and all twenty-three pull requests are in <a href="https://github.com/Lore-Hex/quill-router">the open source repo</a>, along with the code they check. If you want to know what our gateway does with your prompts, that is the same answer as always: <a href="/blog/attestation-is-all-you-need">read it, and verify the build that is running</a>.</p>
+""",
+    ),
+    BlogPost(
+        slug="native-swift-harness-no-electron",
+        title="Open Source all native Swift harness (NO Electron!)",
+        description=(
+            "QuillCode is a coding agent written in Swift with a real AppKit UI. "
+            "No Electron, no bundled browser engine, no 400MB app to open a "
+            "text box. 60k lines, 1600 tests, and it is on GitHub."
+        ),
+        published_date="2026-08-10",
+        source_label="Joseph Perla original",
+        source_url="https://www.jperla.com/blog/native-swift-harness-no-electron",
+        og_image="/static/og/blog/native-swift-harness-no-electron.png",
+        body_html="""
+<figure class="blog-hero-image"><img src="/static/og/blog/native-swift-harness-no-electron.png" alt="Quill Cowork running as a native macOS application" width="1200" height="630"></figure>
+<p>The coding agent I use every day is <a href="https://github.com/Lore-Hex/QuillCode">open source</a> now. It is called QuillCode, it is a native Mac app written in Swift, and it runs on my laptop instead of in somebody else's datacenter.</p>
+
+<p>That last part is the whole point. Almost every useful thing I want an agent to do involves my machine. Run the test suite. Open a worktree and try the risky refactor there. Drive a browser and check that the page actually renders. Read the log file that never leaves my disk. An agent living in a web app can do none of that, so it does the one thing it can do — write code into a text box — and hands the hard half back to you. The hard half is the part I wanted help with.</p>
+
+<p>It is also not an Electron app, which I say with some feeling. The current default for shipping a desktop tool is to bundle an entire browser engine so the team can write the interface in the language they already know, and the result is a text box that eats four hundred megabytes of disk and a couple hundred of RAM before it has done anything. Every one of these apps feels the same: a beachball on a window resize, a scroll that is almost but not quite native, a menu bar that is a drawing of a menu bar. QuillCode's interface is Swift and AppKit. It launches immediately, it scrolls the way every other Mac window scrolls, and the file picker is the file picker. That is not nostalgia, it is the difference between a tool you keep open all day and one you quit because it is heavy.</p>
+
+<p>So QuillCode has local tools, real worktrees, computer use, automations, and a plugin system, and it updates itself with verified builds. It is about sixty thousand lines of Swift with sixteen hundred tests behind it and something north of six hundred and eighty merged pull requests. I mention the test count because a coding agent that edits your repo is exactly the kind of software where you want to know somebody was paranoid.</p>
+
+<p>It is backed by <a href="/">TrustedRouter</a>, which means you choose the model instead of inheriting one. That matters more for coding than for chat, because coding is where the gap between models shows up as wasted hours. Sometimes you want the cheap fast one for a rename and the expensive one for the design; I wrote about <a href="/blog/how-to-choose-a-model">how to choose</a> and about the fact that <a href="/blog/the-best-open-models-arent-on-your-leaderboard">the best open models are not on your leaderboard</a>. QuillCode ships with <a href="/blog/socrates-1.1-terminal-bench-hard-72">Socrates 1.1</a> in the recommended list because it scored 72 on Terminal-Bench Hard, and a coding harness should default to something that can actually finish a terminal task.</p>
+
+<p>The obvious objection is that a local agent is a worse agent — no fleet of GPUs behind it, no magic. That gets it backwards. The model still runs remotely; what runs locally is the part that touches your files, and that part should be a program you can read. The frontier is available to me either way. I get <a href="/blog/frontier-smart-cheap-fast-pick-3-open-source">frontier-quality output at open-source prices</a> through the router, and I get to keep the file system access on my side of the wire.</p>
+
+<p>The other objection is privacy, and it is the serious one, because a coding agent reads everything. That is why the prompt path is <a href="/blog/one-api-all-llms-provably-private">verifiable rather than promised</a> and why the gateway <a href="/blog/attestation-is-all-you-need">attests what code is receiving your prompts</a>. If you are going to point an agent at a private repo you should be able to check where the words went.</p>
+
+<p>Everything else I build is open too — the <a href="/blog/open-source-open-source-open-source">router, the evals, the proxy</a>. Take the repo, read the parts you do not trust, and run it against your own key.</p>
+""",
+    ),
+    BlogPost(
+        slug="an-agent-that-hides-the-bill",
+        title="Quill Cowork has confidential mode and trusts you with the bill",
+        description=(
+            "Quill Cowork puts a live token meter in the top bar and a /confidential "
+            "mode that forgets the conversation but keeps the receipt. Private "
+            "should mean private words, not invisible spending."
+        ),
+        published_date="2026-08-10",
+        source_label="Joseph Perla original",
+        source_url="https://www.jperla.com/blog/an-agent-that-hides-the-bill",
+        og_image="/static/og/blog/an-agent-that-hides-the-bill.png",
+        body_html="""
+<figure class="blog-hero-image"><img src="/static/og/blog/an-agent-that-hides-the-bill.png" alt="Quill Cowork with the expanded TrustedRouter cost limits panel" width="1200" height="630"></figure>
+<p>If you hire someone and they will not tell you what they spent, you fire them. Agents get a pass on this for no reason I can defend, so QuillCode has a meter in the top bar: tokens used against the limit, what is left, and where the number came from. It updates while the agent works. You can watch a bad prompt get expensive in real time, which is the only feedback loop that ever made me write better prompts.</p>
+
+<p>The interesting bug showed up when I added the private mode. QuillCode has <code>/confidential</code>, which opens a chat that is never written to disk, never appears in the sidebar, carries no workspace memories, and is pinned to an end-to-end encrypted route. When you leave, the thread is destroyed. Clean.</p>
+
+<p>Except the spend went with it. Destroying the thread destroyed its receipt, so the money spent inside a confidential chat quietly vanished from the period ledger. You could run up a bill in private mode and the books would never know. Nobody designed that; it fell out of "destroy everything about this thread" meeting "the ledger lives on the thread." A private chat should forget your words and keep your receipt. Now it does.</p>
+
+<p>That bug was one of about a dozen. Five rounds of adversarial review on the confidential mode found side doors in places I would not have guessed: subagent stores, attached image bytes, the memory tool, automations, run hooks, computer-use artifacts, OS notification bodies, a settings save that overwrote the pinned model, context refills, fork and compact and duplicate, and an auto-safety-reviewer that shipped the transcript to a different model to summarize it. Every one of those is a path where "not saved" or "always encrypted" quietly stopped being true. The lesson generalizes: every typed slash command bypasses whatever you gated in the menu, so the guard has to live on the model, not the UI.</p>
+
+<p>The mode pins to an end-to-end route because a promise about deletion is worth very little if the words were readable on the way out. I have written about <a href="/blog/how-confidential-computing-protects-ai-prompts">what confidential computing actually gets you</a> and why <a href="/blog/attestation-is-all-you-need">attestation is the part that makes it checkable</a>. You can also constrain a confidential chat to US-only or EU-only models, which sounds like compliance theater until you remember that <a href="/blog/censored-at-the-host-not-the-model">where a model is hosted changes what it will say</a> and that <a href="/blog/the-ai-models-that-go-silent-on-china">some of them go silent on entire topics</a>.</p>
+
+<p>The counterargument is that this is over-engineering for a solo tool. It would be, if the failure were visible. A leaked prompt does not throw an exception and an unbilled thread does not page you; both look exactly like everything working. That is precisely the class of thing you have to go looking for on purpose, which is why it took five rounds and why <a href="/blog/the-models-that-say-no">I keep testing the claims instead of reading the policy page</a>.</p>
+
+<p>Watch the meter, and know when you are off the record.</p>
+""",
+    ),
+    BlogPost(
+        slug="sre-agent-on-three-clouds",
+        title="An SRE Agent on 3 clouds that keeps your site reliably up",
+        description=(
+            "Three AI agents on three clouds, each on a different model, watching "
+            "each other and the product. This did not work a year ago because the "
+            "model underneath was never reliable enough to trust with on-call."
+        ),
+        published_date="2026-08-10",
+        source_label="Joseph Perla original",
+        source_url="https://www.jperla.com/blog/sre-agent-on-three-clouds",
+        og_image="/static/og/blog/sre-agent-on-three-clouds.png",
+        body_html="""
+<figure class="blog-hero-image"><img src="/static/og/blog/sre-agent-on-three-clouds.png" alt="SREChat agents reporting from GCP, AWS, and Azure" width="1200" height="630"></figure>
+<p>My on-call rotation is three AI agents, one on each cloud, and they watch each other. Kimi K3 runs on the GCP box, GLM 5.2-Fast on AWS, DeepSeek 0731 on Azure — three <a href="/blog/the-best-open-models-arent-on-your-leaderboard">open models</a>, none of them the expensive one. I text them from my phone and ask whether anything is broken. It works, and the reason it works now and would not have worked last year is that the model underneath finally stopped being the least reliable component.</p>
+
+<p>Start with the part that is just engineering. The chat backend they live in is <a href="https://github.com/Lore-Hex/SREChat">SREChat</a>, a multi-master chat server where every region takes writes during a partition and the regions converge when it heals. Three equal masters, one per cloud, meshed over WireGuard. I built it so that losing an entire cloud degrades nothing, and then I put an agent on each master, which is where it gets useful.</p>
+
+<p>A monitoring agent that lives on the machine it monitors is a joke. It goes quiet at exactly the moment its silence means something, and you find out from a customer. With one agent per cloud, whoever is still alive reports the one that died. That is not theoretical: while I was deploying, the GCP agent went down, and the AWS and Azure agents both independently noticed and paged me. The watchdog cannot be killed by the thing it is watching, because it is not on it.</p>
+
+<p>They also page me for the product itself. The GCP agent can read TrustedRouter's error logs, its Cloud Run revisions, and its Sentry issues, and it will tell me which revision was serving when the errors started. If I turn on the write flag it can roll traffic back to the previous revision. Asking "any TR errors in the last two hours" from a phone at dinner is a genuinely different experience from opening a laptop and remembering which console tab has the logs.</p>
+
+<p>Now the part that is actually new. The reason nobody sensibly did this before is that a monitoring agent has two failure modes and both were unacceptable. It can be wrong, and it can be unavailable. Wrong got fixed by models getting good enough to read a log and say something true about it. Unavailable is the one people underrate: if your agent talks to a single provider, your alerting inherits that provider's worst day. Your pager goes down during the incident that made you want a pager. Every agent here pins its own model and falls back to <code>trustedrouter/auto</code>, so a provider having weather means the answer comes from somewhere else instead of not coming. The router is doing for the agent's brain what the three clouds do for its body, over <a href="/blog/one-api-all-llms-provably-private">one API whose prompt path you can verify</a>.</p>
+
+<p>That is why I am comfortable pointing this at TrustedRouter itself. It is circular in a way that would bother me if the fallback were not real, and it is the strongest statement I can make about the routing layer: I use it for the thing that has to work when everything else does not. It is the same argument as <a href="/blog/ten-cheap-runs-beat-the-frontier">running several cheap models instead of one expensive one</a> — redundancy at the model layer buys you more than picking a better single model, and <a href="/blog/combo-models-are-model-containers">a combo model is a container you can swap</a>. If you are choosing, <a href="/blog/how-to-choose-a-model">pick two of smart, fast, cheap</a>; for on-call I want fast and cheap and I want three of them, which is exactly the <a href="/blog/frontier-smart-cheap-fast-pick-3-open-source">smart-cheap-fast tradeoff open source finally lets you stop making</a>.</p>
+
+<p>Alerting you never test is decoration, so there is a chaos drill on a timer. Every day one region gets its container restarted; every week the mesh gets partitioned for a minute to prove the other two keep serving. The drill reports pass or fail into the same chat as the real alerts, which is the only place I would notice it. The chat server, the agents, and the drills are <a href="/blog/open-source-open-source-open-source">all open source</a>, like everything else here.</p>
+
+<p>The models are good enough now. The routing is reliable enough now. That combination is what turns an agent from a demo into the thing you let wake you up.</p>
+""",
+    ),
+    BlogPost(
+        slug="achieving-99999-uptime-as-a-startup",
+        title="Achieving 99.999% Uptime as a Startup",
+        description=(
+            "A router that is down is worse than no router at all. So we built TrustedRouter on three "
+            "separate clouds, each one independently engineered for three to four nines, each with its own "
+            "database, control plane and deploy. Here is the architecture."
+        ),
+        published_date="2026-08-07",
+        source_label="Live status",
+        source_url="https://trustedrouter.com/status",
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="Three independent clouds combining to five nines of availability">
+<rect width="1200" height="630" fill="#0b1118"/>
+<text x="64" y="68" font-size="21" font-weight="700" fill="#7be0b1">TrustedRouter</text>
+<text x="64" y="152" font-size="54" font-weight="750" fill="#f8fafc">99.999% uptime,</text>
+<text x="64" y="214" font-size="54" font-weight="750" fill="#f8fafc">as a startup.</text>
+<text x="64" y="258" font-size="20" fill="#a9bfd5">Three clouds. Three databases. Three control planes. One API.</text>
+
+<g>
+<rect x="64" y="330" width="330" height="176" rx="10" fill="#101c28" stroke="#35506b" stroke-width="2"/>
+<text x="96" y="374" font-size="19" font-weight="700" fill="#7be0b1">GCP</text>
+<text x="96" y="410" font-size="16" fill="#a9bfd5">Confidential Space</text>
+<text x="96" y="438" font-size="16" fill="#a9bfd5">Spanner, multi-region</text>
+<text x="96" y="480" font-size="30" font-weight="750" fill="#f8fafc">99.99%+</text>
+
+<rect x="435" y="330" width="330" height="176" rx="10" fill="#101c28" stroke="#35506b" stroke-width="2"/>
+<text x="467" y="374" font-size="19" font-weight="700" fill="#7be0b1">AWS</text>
+<text x="467" y="410" font-size="16" fill="#a9bfd5">Nitro Enclaves</text>
+<text x="467" y="438" font-size="16" fill="#a9bfd5">Postgres</text>
+<text x="467" y="480" font-size="30" font-weight="750" fill="#f8fafc">99.99%+</text>
+
+<rect x="806" y="330" width="330" height="176" rx="10" fill="#101c28" stroke="#35506b" stroke-width="2"/>
+<text x="838" y="374" font-size="19" font-weight="700" fill="#7be0b1">Azure</text>
+<text x="838" y="410" font-size="16" fill="#a9bfd5">SEV-SNP + MAA</text>
+<text x="838" y="438" font-size="16" fill="#a9bfd5">Postgres</text>
+<text x="838" y="480" font-size="30" font-weight="750" fill="#f8fafc">99.99%+</text>
+</g>
+<text x="64" y="566" font-size="19" fill="#7be0b1">Independent failure domains multiply.</text>
+</svg>
+</figure>
+
+<p>A router that is down is worse than no router at all. If you wrote your code against us and we
+disappear for an afternoon, we are the outage you were trying to route around. So the
+availability target for TrustedRouter was set before almost anything else: we want to be up more
+than any single cloud we run on, more than any individual model provider, and more than the coding
+agents and gateways that people are already routing through. Five nines is 26 minutes of downtime
+in a year. You cannot get there by being careful. You get there by never having one of anything.</p>
+
+<p>The arithmetic is what makes it possible for a small team. Take three clouds, engineer each one
+to somewhere between three and four nines on its own, and put them behind one API. Three nines is
+about eight hours of downtime a year, which is an ordinary, achievable number for a well-run
+deployment on managed infrastructure. Four nines is 52 minutes. If those three deployments fail
+independently, the chance that all three are down at the same moment is the product of three small
+numbers, and the product is very small. Two independent deployments at four nines each already
+clears five nines with room to spare. That is why we run on three clouds instead of
+picking the best one and buying bigger machines.</p>
+
+<p>GCP is our primary. The database there is Cloud Spanner in a multi-region configuration, which
+carries a
+<a href="https://cloud.google.com/spanner/sla" target="_blank" rel="noopener">99.999% availability SLA</a>
+— five minutes a year — because every node is backed by replicas spread across at least three
+regions, and losing a region is a normal event that Spanner is designed to absorb rather than an
+incident. We over-provision it. A database is the one component you cannot shard your way out of
+during an outage, so it is the one component where we buy the strongest guarantee on the market and
+then leave headroom on top of it.</p>
+
+<p>The routers themselves are stateless. Every request can be served by any instance, so an instance
+is disposable and the health of one has nothing to do with the health of the next. They run in
+managed instance groups that autoscale with load, in several locations on three continents, so a
+regional failure removes capacity rather than removing the service. Analytics runs on ClickHouse,
+and each cloud has its own — the analytics backend in one cloud has no ability to take down, slow
+down, or block a request in another. When we say the clouds are independent we mean the boring
+version of independence: separate databases, separate control planes, separate credentials,
+separate deploys.</p>
+
+<p>Every one of those routers runs inside a trusted execution environment. This is the part that
+makes our infrastructure unusual, and it is worth being concrete about what it costs us. We ship a
+machine image whose measurement we publish, the hardware attests to that measurement, and you can
+<a href="/blog/attestation-is-all-you-need">check the measurement yourself</a> before you send us a
+single token. We wrote about how that works in
+<a href="/blog/how-confidential-computing-protects-ai-prompts">confidential computing for AI prompts</a>
+and about why
+<a href="/blog/no-log-is-a-promise-attestation-is-proof">a no-log policy is a promise and attestation is proof</a>.
+The consequence for operations is that nobody can SSH into a production machine. There is no shell to log into, for the
+on-call engineer at 3am or for an attacker who steals my laptop. The image is what
+it is, and if you want to change it you build a new one, publish its measurement, and roll it.</p>
+
+<p>That constraint deletes entire categories of failure. A stolen SSH key is not a threat model we
+have. Neither is a debugging session that accidentally writes to production, or an operator reading
+prompts out of a log, or a compromised bastion host, or an insider with root. Those are among the
+most common ways that companies actually get breached, and they are unavailable to us and to anyone
+attacking us. The price is that every operational fix has to be a code change that survives review
+and ships as a measured artifact. That is slower on any given Tuesday. It is also why our failure
+modes are narrow enough to enumerate.</p>
+
+<p>AWS and Azure run the same service against the same interface. Both use Postgres rather than
+Spanner, behind one storage abstraction that is exercised by the same conformance suite regardless
+of which backend is underneath, so there is one implementation of the money path rather than three.
+On AWS the enclaves are Nitro Enclaves, measured by PCR0. On Azure they are SEV-SNP confidential
+containers, measured by a CCE policy hash that the hardware reports as HOST_DATA and that Microsoft
+Azure Attestation signs. Different vendors, different attestation formats, different root of trust,
+same
+<a href="/blog/one-api-all-llms-provably-private">API and same guarantee</a>.
+Each cloud has its own control plane, so a cloud can answer questions about its own health when the
+other two are unreachable.</p>
+
+<p>The obvious objection is the serious one: multiplying probabilities only works when failures are
+independent, and in practice they usually are not. Two clouds go down together because they share a
+DNS provider, or a TLS certificate authority, or a config change that a single engineer pushed to
+all three on a Friday. Correlated failure is what actually kills multi-cloud architectures, and
+believing your own arithmetic is how you end up surprised. So the work is removing the things they share. Each cloud has its own database, its own credentials, its
+own control plane, and its own deploy. We stagger rollouts so that a bad image reaches one cloud and
+is caught by the other two still serving the old one. We are steadily removing shared dependencies
+as we find them, and we find them by looking for them rather than by waiting for an incident.</p>
+
+<p>We are a router. Being neutral about which model you use is worth very little if we are not there
+when you call. The point of building it this way is that when your favorite provider has a bad day,
+or your gateway has a bad day, or an entire cloud has a bad day, the thing in front of them is still
+answering.</p>
+
+<p>The failure everybody forgets is the domain name. You can run three clouds perfectly and still
+go dark because one DNS zone stopped answering, or a registrar locked a name, or a resolver
+somewhere is handing out a stale record. It sits above the entire architecture, it is a single point
+of failure, and buying more servers does nothing about it. So we run three domains that are exact
+aliases of each other: <span class="mono">trustedrouter.com</span>,
+<span class="mono">allyrouter.com</span> and <span class="mono">uptimerouter.com</span>. Same API,
+same keys, same attestation, same enclaves behind them. They are served by different DNS providers —
+trustedrouter.com out of Google Cloud DNS, the other two out of Route 53 — so a provider-level DNS
+failure takes one name offline and leaves the other two answering.</p>
+
+<p>Three names only help if the thing calling us knows to try the second one, so our SDKs do it for
+you. We ship them in six languages — Python, TypeScript, Go, Rust, Java and Swift — and they fall
+back from one router domain to the next on their own. Your code keeps calling the same method. The
+SDK moves to <span class="mono">allyrouter.com</span> when <span class="mono">trustedrouter.com</span>
+stops answering, and the request lands on the same attested enclaves it would have hit anyway,
+because the names are aliases rather than separate deployments.</p>
+
+<p>It is a router in front of the router. We already route your request across model providers so
+that one provider having a bad day is somebody else's problem; the SDK routes across our own entry
+points so that we having a bad day is also somebody else's problem. The AI infrastructure layer has
+been held to a pretty low bar on this. Gateways go down, and everything behind them goes down with
+them, and the answer has usually been a status page and an apology. We would rather you never find
+out.</p>
+
+<h2>The caveat</h2>
+
+<p>Five nines is a measurement, and we have not measured it yet. Nobody can claim five nines from an
+architecture diagram. It takes months and probably years of continuous, instrumented operation
+to demonstrate that kind of consistency, because 26 minutes a year is a number you can only earn by
+not spending it. What this post describes is the design: the decisions we made so that no single
+failure — one machine, one region, one database, one cloud — takes the service down, and so that the
+independent pieces multiply instead of add.</p>
+
+<p>Things will still leak in. There are always shared dependencies you have not found yet, and a bug
+in code that runs everywhere does not care how many clouds you bought. Our bet is that isolating the
+clouds from each other and staggering what we ship to them keeps those failures from landing on all
+three at once. We publish
+<a href="/status">live status</a> for each cloud separately, so you can watch us earn the number
+instead of taking our word for it.</p>
+""",
+    ),
+    BlogPost(
+        slug="they-are-still-training-on-your-data",
+        title="They Are Still Training on Your Data",
+        description=(
+            "The AI industry is running out of public text. Synthetic data conditioned on "
+            "real customer traffic gives it a way to keep the useful parts after deleting the original."
+        ),
+        published_date="2026-08-05",
+        source_label="Generative Data Refinement paper",
+        source_url="https://arxiv.org/abs/2509.08653",
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="A real customer prompt is refined into synthetic data and added to a model training set">
+<rect width="1200" height="630" fill="#0b1118"/>
+<text x="64" y="68" font-size="21" font-weight="700" fill="#7be0b1">TrustedRouter</text>
+<text x="64" y="144" font-size="50" font-weight="750" fill="#f8fafc">They are still training</text>
+<text x="64" y="201" font-size="50" font-weight="750" fill="#f8fafc">on your data.</text>
+<text x="64" y="246" font-size="20" fill="#a9bfd5">Delete the original. Keep a synthetic derivative with the useful parts.</text>
+
+<rect x="64" y="316" width="250" height="150" rx="8" fill="#101c28" stroke="#35506b" stroke-width="2"/>
+<text x="189" y="356" text-anchor="middle" font-size="14" font-weight="700" fill="#a9bfd5">REAL CUSTOMER DATA</text>
+<text x="189" y="404" text-anchor="middle" font-size="25" font-weight="700" fill="#f8fafc">Prompt + response</text>
+<text x="189" y="437" text-anchor="middle" font-size="16" fill="#a9bfd5">Private and diverse</text>
+
+<line x1="314" y1="391" x2="405" y2="391" stroke="#7be0b1" stroke-width="4"/>
+<path d="M405 391 L385 379 L385 403 Z" fill="#7be0b1"/>
+
+<rect x="420" y="296" width="330" height="190" rx="8" fill="#12271f" stroke="#39b983" stroke-width="3"/>
+<text x="585" y="338" text-anchor="middle" font-size="14" font-weight="700" fill="#7be0b1">GENERATIVE REFINEMENT</text>
+<text x="585" y="382" text-anchor="middle" font-size="25" font-weight="700" fill="#f8fafc">Remove identity and risk</text>
+<text x="585" y="418" text-anchor="middle" font-size="17" fill="#b9d9ca">Preserve meaning and diversity</text>
+<text x="585" y="449" text-anchor="middle" font-size="17" fill="#b9d9ca">Call the output synthetic</text>
+
+<line x1="750" y1="391" x2="841" y2="391" stroke="#d2a85a" stroke-width="4"/>
+<path d="M841 391 L821 379 L821 403 Z" fill="#d2a85a"/>
+
+<rect x="856" y="316" width="280" height="150" rx="8" fill="#201d17" stroke="#6e5c39" stroke-width="2"/>
+<text x="996" y="356" text-anchor="middle" font-size="14" font-weight="700" fill="#e7c983">TRAINING DATA</text>
+<text x="996" y="404" text-anchor="middle" font-size="25" font-weight="700" fill="#f8fafc">Synthetic derivative</text>
+<text x="996" y="437" text-anchor="middle" font-size="16" fill="#cfc2a5">Reusable across training runs</text>
+
+<rect x="64" y="526" width="1072" height="58" rx="8" fill="#111d28" stroke="#26394b"/>
+<text x="92" y="562" font-size="18" fill="#d9e5ef">The raw row is gone. The information it contributed remains.</text>
+<text x="1136" y="612" text-anchor="end" font-size="18" font-weight="700" fill="#7be0b1">TrustedRouter.com</text>
+</svg>
+</figure>
+
+<p>The AI industry's dirty little secret is that it is still training on your data. Your prompts are better than another scrape of Reddit. They contain current code, private documents, expert corrections, tool traces, purchase decisions, failed attempts, and the answer you finally accepted. A closed router sees all of it across every model. That may be the most valuable dataset in AI.</p>
+
+<p>A <a href="https://arxiv.org/abs/2509.08653">Google DeepMind paper</a> explains how to turn private or otherwise unusable data into training data. The paper starts with the data shortage. Training datasets are growing faster than new text appears on the public web. Far more text exists in messages, private code, company documents, and other user-generated content. Companies have avoided much of it because it contains personal information, copyrighted material, and toxic content.</p>
+
+<p>The method is called Generative Data Refinement. Give a model one real example and ask it to rewrite the dangerous parts while preserving the useful information. The result is called grounded synthetic data. It keeps the diversity of the real dataset because every synthetic example begins with a real one.</p>
+
+<p>This works. The researchers tested more than 20,000 sentences across 108 kinds of personal information. Their approach reached mean recall of 0.99 and precision of 0.80 on that benchmark. They ran it across 1.2 million lines of code from 479 repositories. They also cleaned 100,000 toxic messages and trained a model on the result. The trained model learned facts from the original messages after the toxic wording was gone.</p>
+
+<p>Now read the usual promise again: <em>we do not train on your data.</em> Which data? The exact row you sent may disappear. A synthetic rewrite conditioned on that row can live forever. The training job consumes the rewrite, so the company says the model trained on synthetic data. Your real prompt supplied the facts, structure, vocabulary, and diversity that made the synthetic example valuable.</p>
+
+<p>Zero data retention can have the same hole. A server receives the raw prompt, runs the refinement step, writes the derivative somewhere else, and deletes the raw bytes. A strong contract can ban that. It needs to cover derivatives, de-identified content, model improvement, product improvement, research, and disclosures to partners. The three letters ZDR do not tell you whether it does.</p>
+
+<p>Some router terms make the data business visible. <a href="https://openrouter.ai/terms">OpenRouter's terms</a> say that users who opt into prompt logging grant a license that includes selling anonymized user content. A separate section grants a perpetual license to prepare derivative works of anonymized inputs for rankings. OpenRouter also <a href="https://openrouter.ai/data">says it does not sell prompt data</a>. All of those sentences can be true at once. <a href="https://vercel.com/legal/privacy-notice">Vercel's privacy notice</a> says de-identified AI product information from Hobby and Pro users may be disclosed to AI partners for product development and model training, subject to user preferences. The contract calls the information anonymized or de-identified before it changes hands.</p>
+
+<p>I cannot tell you that every closed router runs this exact pipeline. You cannot tell either. The source is closed, the production binary is hidden, and the prompt arrives in plaintext. A privacy page describes the company's current rules for itself. It gives your computer nothing to verify.</p>
+
+<p>TrustedRouter removed this business model from the router. Public TLS terminates inside an attested open source workload. The control plane never receives prompt or output bodies. The published gateway code does not build or persist a synthetic training corpus, and the <a href="https://trust.trustedrouter.com">live attestation</a> lets a client check which gateway image is handling the request. A different binary produces a different measurement.</p>
+
+<p>The upstream model provider is a separate boundary. <a href="/models/trustedrouter/zdr"><span class="mono">trustedrouter/zdr</span></a> selects providers with a tracked zero-retention posture. <a href="/models/trustedrouter/e2e"><span class="mono">trustedrouter/e2e</span></a> requires eligible confidential provider compute and provider-side encryption. The <a href="/providers">provider directory</a> publishes each claim and leaves unknown providers marked unknown. A normal provider route can still expose the prompt to that provider, so choose the privacy floor your data requires.</p>
+
+<p>Deleting your row is easy. Giving up the information inside it is expensive. The AI industry found a way to keep the second while promising the first.</p>
+""",
+    ),
+    BlogPost(
+        slug="no-log-is-a-promise-attestation-is-proof",
+        title="ZDR is a vague promise. Attestation is precise proof",
+        description=(
+            "Most AI routers ask you to trust a data policy. TrustedRouter puts public TLS "
+            "and prompt handling inside a measured open source workload you can verify."
+        ),
+        published_date="2026-08-05",
+        source_label="Google Confidential Space documentation",
+        source_url=(
+            "https://docs.cloud.google.com/confidential-computing/confidential-space/"
+            "docs/confidential-space-overview"
+        ),
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="An encrypted request reaches an attested TrustedRouter gateway before a route-specific model provider">
+<rect width="1200" height="630" fill="#0b1118"/>
+<text x="64" y="68" font-size="21" font-weight="700" fill="#7be0b1">TrustedRouter</text>
+<text x="64" y="145" font-size="46" font-weight="750" fill="#f8fafc">ZDR is a vague promise.</text>
+<text x="64" y="202" font-size="46" font-weight="750" fill="#f8fafc">Attestation is precise proof.</text>
+<text x="64" y="248" font-size="20" fill="#a9bfd5">Verify the workload before your prompt crosses the trust boundary.</text>
+
+<rect x="64" y="315" width="240" height="150" rx="8" fill="#101c28" stroke="#35506b" stroke-width="2"/>
+<text x="184" y="355" text-anchor="middle" font-size="14" font-weight="700" fill="#a9bfd5">YOUR APP</text>
+<text x="184" y="402" text-anchor="middle" font-size="25" font-weight="700" fill="#f8fafc">Encrypted request</text>
+<text x="184" y="434" text-anchor="middle" font-size="16" fill="#a9bfd5">Normal public TLS</text>
+
+<line x1="304" y1="390" x2="406" y2="390" stroke="#7be0b1" stroke-width="4"/>
+<path d="M406 390 L386 378 L386 402 Z" fill="#7be0b1"/>
+
+<rect x="420" y="295" width="350" height="190" rx="8" fill="#12271f" stroke="#39b983" stroke-width="3"/>
+<text x="595" y="337" text-anchor="middle" font-size="14" font-weight="700" fill="#7be0b1">ATTESTED GATEWAY</text>
+<text x="595" y="382" text-anchor="middle" font-size="27" font-weight="700" fill="#f8fafc">TLS ends inside the TEE</text>
+<text x="595" y="418" text-anchor="middle" font-size="17" fill="#b9d9ca">Measured open source workload</text>
+<text x="595" y="448" text-anchor="middle" font-size="17" fill="#b9d9ca">No prompt or output storage</text>
+
+<line x1="770" y1="390" x2="872" y2="390" stroke="#d2a85a" stroke-width="4"/>
+<path d="M872 390 L852 378 L852 402 Z" fill="#d2a85a"/>
+
+<rect x="886" y="315" width="250" height="150" rx="8" fill="#201d17" stroke="#6e5c39" stroke-width="2"/>
+<text x="1011" y="355" text-anchor="middle" font-size="14" font-weight="700" fill="#e7c983">MODEL PROVIDER</text>
+<text x="1011" y="402" text-anchor="middle" font-size="24" font-weight="700" fill="#f8fafc">Route-specific trust</text>
+<text x="1011" y="434" text-anchor="middle" font-size="16" fill="#cfc2a5">Open, ZDR, or E2E</text>
+
+<rect x="64" y="525" width="1072" height="58" rx="8" fill="#111d28" stroke="#26394b"/>
+<text x="92" y="561" font-size="18" fill="#d9e5ef">Router proof and provider posture are separate. TrustedRouter publishes both.</text>
+<text x="1136" y="611" text-anchor="end" font-size="18" font-weight="700" fill="#7be0b1">TrustedRouter.com</text>
+</svg>
+</figure>
+
+<p>Every AI router says it protects your data. Of course it does. Nobody puts "our employees can read your prompts" on the homepage. The useful question is what the running machine can do with your prompt right now, and a privacy policy cannot answer it.</p>
+
+<p>A normal gateway terminates TLS in an ordinary application process. That process reads your prompt, chooses a provider, and sends it along. The company may keep logging turned off. You still have to trust every administrator, every configuration change, every analytics library, and every deploy. Zero retention limits what the company promises to keep. It gives the machine full access first.</p>
+
+<p>Open source helps, but there is an obvious hole. You can read a repository while the hosted service runs a different binary. How do you prove that the code on GitHub is the code holding the TLS key? Usually, you cannot.</p>
+
+<p>I built TrustedRouter to close that hole. Public TLS for <span class="mono">api.trustedrouter.com</span> terminates inside a measured GCP Confidential Space workload. The private key stays inside that workload. The separate control plane handles accounts, credits, and request metadata. It never receives prompt or output bodies, and the gateway has no prompt storage path.</p>
+
+<p><a href="https://docs.cloud.google.com/confidential-computing/confidential-space/docs/confidential-space-overview">Google describes Confidential Space</a> as a trusted execution environment that keeps data from the workload operator and produces attestation evidence identifying the workload. The product name is boring. The evidence is useful. It lets your computer check the issuer, audience, image digest, and certificate binding before it sends a prompt.</p>
+
+<p>The live <a href="https://trust.trustedrouter.com">TrustedRouter trust page</a> publishes the gateway repository, source commit, image reference, image digest, attestation issuer, and audience. A client can request fresh evidence, bind it to the TLS certificate with a nonce, and compare the measured image with the published release. If any of those values fail, the client should stop. There is no ordinary server waiting behind it as a convenient privacy downgrade.</p>
+
+<p>But the model provider still gets the prompt, right? Yes. The router and the model provider are two separate trust boundaries, and pretending otherwise would make the attestation worthless. The <a href="/providers">provider directory</a> publishes the upstream posture for every route and leaves unknown providers marked unknown. <a href="/models/trustedrouter/zdr"><span class="mono">trustedrouter/zdr</span></a> requires a tracked zero-retention provider. <a href="/models/trustedrouter/e2e"><span class="mono">trustedrouter/e2e</span></a> requires eligible confidential provider compute and provider-side encryption. Both fail closed when a qualifying route is unavailable.</p>
+
+<p>Could another router add this? Yes, after moving certificate custody and plaintext request handling into a trusted execution environment, separating billing from the prompt path, removing content from telemetry, publishing source-to-image evidence, verifying fresh attestation, and giving up the ordinary fallback server. That is a rebuild, which is why a checkbox saying "ZDR" proves so little.</p>
+
+<p>A privacy policy tells you what a company says. Attestation tells your computer which code has your prompt.</p>
+""",
+    ),
+    BlogPost(
+        slug="sign-in-with-trustedrouter",
+        title="Sign in with TrustedRouter",
+        description=(
+            "Let users sign in, fund their own AI balance, choose an app spending cap, "
+            "and grant an inference-only key without copying provider credentials."
+        ),
+        published_date="2026-08-03",
+        source_label=None,
+        source_url=None,
+        og_image="/static/og/sign-in-with-trustedrouter.png",
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="Sign in with TrustedRouter user funded AI authorization flow">
+<rect width="1200" height="630" fill="#ffffff"/>
+<text x="60" y="58" font-size="22" font-weight="700" fill="#0f6e56">TrustedRouter</text>
+<text x="60" y="126" font-size="48" font-weight="700" fill="#111827">Sign in with TrustedRouter</text>
+<text x="60" y="166" font-size="22" fill="#6b7280">Your users bring their own AI, credits, and spending limit.</text>
+<defs>
+  <marker id="oauth-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0 0 L8 3 L0 6 z" fill="#6b7280"/>
+  </marker>
+</defs>
+
+<rect x="60" y="235" width="235" height="190" rx="8" fill="#f3f4f6" stroke="#d1d5db" stroke-width="2"/>
+<text x="177" y="275" text-anchor="middle" font-size="15" font-weight="700" fill="#6b7280">APP</text>
+<text x="177" y="320" text-anchor="middle" font-size="25" font-weight="700" fill="#111827">Your app</text>
+<text x="177" y="354" text-anchor="middle" font-size="16" fill="#4b5563">Ship an AI feature</text>
+<text x="177" y="384" text-anchor="middle" font-size="16" fill="#4b5563">Suggest a spending cap</text>
+
+<line x1="295" y1="330" x2="350" y2="330" stroke="#6b7280" stroke-width="2.5" marker-end="url(#oauth-arrow)"/>
+
+<rect x="365" y="235" width="235" height="190" rx="8" fill="#ecfdf5" stroke="#6ee7b7" stroke-width="2"/>
+<text x="482" y="275" text-anchor="middle" font-size="15" font-weight="700" fill="#047857">USER</text>
+<text x="482" y="320" text-anchor="middle" font-size="25" font-weight="700" fill="#111827">Sign in</text>
+<text x="482" y="354" text-anchor="middle" font-size="16" fill="#4b5563">New account starts at $0</text>
+<text x="482" y="384" text-anchor="middle" font-size="16" fill="#4b5563">No provider key to copy</text>
+
+<line x1="600" y1="330" x2="655" y2="330" stroke="#6b7280" stroke-width="2.5" marker-end="url(#oauth-arrow)"/>
+
+<rect x="670" y="235" width="235" height="190" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="2"/>
+<text x="787" y="275" text-anchor="middle" font-size="15" font-weight="700" fill="#1d4ed8">CONTROL</text>
+<text x="787" y="320" text-anchor="middle" font-size="25" font-weight="700" fill="#111827">Fund and cap</text>
+<text x="787" y="354" text-anchor="middle" font-size="16" fill="#4b5563">$5  |  $20  |  $100</text>
+<text x="787" y="384" text-anchor="middle" font-size="16" fill="#4b5563">User chooses the maximum</text>
+
+<line x1="905" y1="330" x2="960" y2="330" stroke="#6b7280" stroke-width="2.5" marker-end="url(#oauth-arrow)"/>
+
+<rect x="975" y="235" width="165" height="190" rx="8" fill="#e1f5ee" stroke="#1d9e75" stroke-width="2.5"/>
+<text x="1057" y="275" text-anchor="middle" font-size="15" font-weight="700" fill="#0f6e56">KEY</text>
+<text x="1057" y="320" text-anchor="middle" font-size="23" font-weight="700" fill="#111827">Inference only</text>
+<text x="1057" y="354" text-anchor="middle" font-size="15" fill="#4b5563">Revocable</text>
+<text x="1057" y="384" text-anchor="middle" font-size="15" fill="#4b5563">PKCE protected</text>
+
+<rect x="60" y="475" width="1080" height="82" rx="8" fill="#111827"/>
+<text x="90" y="511" font-size="18" font-weight="700" fill="#ffffff">One account. One capped key. Any supported model.</text>
+<text x="90" y="540" font-size="16" fill="#d1d5db">The app gets a capped key. The user keeps billing control. TrustedRouter keeps no prompt or output logs.</text>
+<text x="1140" y="612" text-anchor="end" font-size="18" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
+</svg>
+</figure>
+<p>Your users should be able to pay for their own AI without finding, copying, and trusting you with a provider API key.</p>
+<p>We shipped <a href="/sign-in-with-trustedrouter">Sign in with TrustedRouter</a>. An app sends its user to TrustedRouter. The user signs in, adds credits if needed, chooses exactly how much the app may spend, and approves one inference-only key. The app never receives a management key. It cannot change billing, inspect other keys, or take over the workspace.</p>
+<p>A writing tool, coding agent, research app, or internal product can use the same flow. The app suggests a conservative limit. The user sees that number before approval, can change it, and can revoke the resulting key later. Model calls draw from the user's TrustedRouter balance, so the developer does not need to build a second inference billing system.</p>
+<p>A person who creates a TrustedRouter account inside this flow starts at exactly <strong>$0</strong> and receives only the inference key they explicitly approve. That closes an obvious credit-farming hole and makes the economic relationship honest from the first request.</p>
+<p>The funding step lives inside consent. The user can add $5, $20, or $100, with $20 selected by default. Stripe processes the payment and saves the card to the user's TrustedRouter account. The card can be removed later from the Credits page. Existing users see their current balance and can skip funding when they already have enough.</p>
+<p>The authorization itself uses PKCE. The app creates a verifier, sends only its SHA-256 challenge to TrustedRouter, and keeps the verifier for the code exchange. A stolen callback code is useless without it. The final key can carry a fixed, daily, weekly, or monthly maximum and an expiry. The user can revoke it at any time.</p>
+<p>The obvious objection is that the writing app sees the writing. Of course it does. The user gave text to that application to improve it, and the application needs its own honest privacy policy. Once the app calls a model, TrustedRouter sends that request through the <a href="https://trust.trustedrouter.com">attested API gateway</a>. TrustedRouter keeps no prompt or output logs, always. The delegated auth control plane handles identity, billing, and key metadata. It does not receive the model request body.</p>
+<p>The official SDKs already support Sign in with TrustedRouter. The <a href="https://github.com/Lore-Hex/trusted-router-py">Python SDK</a> ships <span class="mono">create_oauth_authorization</span> and <span class="mono">exchange_oauth_key</span>. The <a href="https://github.com/Lore-Hex/trusted-router-js">TypeScript SDK</a> ships <span class="mono">BrowserOAuthFlow</span>. The <a href="https://github.com/jperla/trusted-router-swift">Swift SDK</a> ships <span class="mono">TrustedRouterOAuth</span>. They generate PKCE state, build the authorization URL, validate the callback, and exchange the code.</p>
+<p>The complete flow is in the <a href="https://github.com/Lore-Hex/quill-router/blob/main/docs/sign-in-with-trustedrouter.md">developer documentation</a>, with SPA, backend, native, and loopback examples.</p>
+<p>Add one button. Let the user choose the bill and the boundary.</p>
+""",
+    ),
+    BlogPost(
+        slug="how-confidential-computing-protects-ai-prompts",
+        title="The cloud should not be able to read your prompts",
+        description=(
+            "A plain-English guide to confidential computing, trusted execution "
+            "environments, remote attestation, and how an agent can verify the "
+            "TrustedRouter prompt path before sending data."
+        ),
+        published_date="2026-07-23",
+        source_label=None,
+        source_url=None,
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="TrustedRouter confidential computing and attestation request path">
+<rect width="1200" height="630" fill="#ffffff"/>
+<text x="60" y="58" font-size="38" font-weight="700" fill="#111827">The cloud should not be able to read your prompts</text>
+<text x="60" y="92" font-size="19" fill="#6b7280">Disk encryption and HTTPS still leave plaintext inside a normal server.</text>
+<defs>
+  <marker id="cc-arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
+    <path d="M0 0 L7 3 L0 6 z" fill="#6b7280"/>
+  </marker>
+</defs>
+
+<rect x="55" y="155" width="220" height="190" rx="8" fill="#f3f4f6" stroke="#d1d5db" stroke-width="2"/>
+<text x="165" y="202" font-size="22" font-weight="700" text-anchor="middle" fill="#111827">Your agent</text>
+<text x="165" y="238" font-size="16" text-anchor="middle" fill="#4b5563">Creates a fresh nonce</text>
+<text x="165" y="266" font-size="16" text-anchor="middle" fill="#4b5563">Verifies the gateway</text>
+<text x="165" y="294" font-size="16" text-anchor="middle" fill="#4b5563">Then sends the prompt</text>
+
+<line x1="275" y1="250" x2="365" y2="250" stroke="#6b7280" stroke-width="2.5" marker-end="url(#cc-arrow)"/>
+<text x="320" y="228" font-size="14" text-anchor="middle" fill="#6b7280">TLS</text>
+
+<rect x="375" y="130" width="455" height="240" rx="8" fill="#e1f5ee" stroke="#1d9e75" stroke-width="2.5"/>
+<rect x="395" y="150" width="118" height="28" rx="4" fill="#1d9e75"/>
+<text x="454" y="170" font-size="13" font-weight="700" text-anchor="middle" fill="#ffffff">DATA IN USE</text>
+<text x="602" y="218" font-size="27" font-weight="700" text-anchor="middle" fill="#0f6e56">Attested gateway</text>
+<text x="602" y="252" font-size="17" text-anchor="middle" fill="#374151">GCP Confidential Space</text>
+<text x="602" y="291" font-size="16" text-anchor="middle" fill="#374151">TLS key and prompt stay in protected memory</text>
+<text x="602" y="320" font-size="16" text-anchor="middle" fill="#374151">Measured production image, debug access disabled</text>
+<text x="602" y="349" font-size="16" text-anchor="middle" fill="#374151">Public source request path</text>
+
+<line x1="830" y1="250" x2="925" y2="250" stroke="#6b7280" stroke-width="2.5" marker-end="url(#cc-arrow)"/>
+<text x="878" y="228" font-size="14" text-anchor="middle" fill="#6b7280">TLS</text>
+
+<rect x="935" y="155" width="210" height="190" rx="8" fill="#fff7ed" stroke="#fdba74" stroke-width="2"/>
+<text x="1040" y="202" font-size="21" font-weight="700" text-anchor="middle" fill="#9a3412">Model provider</text>
+<text x="1040" y="238" font-size="15" text-anchor="middle" fill="#4b5563">Usually sees the prompt</text>
+<text x="1040" y="266" font-size="15" text-anchor="middle" fill="#4b5563">Choose ZDR or require</text>
+<text x="1040" y="291" font-size="15" text-anchor="middle" fill="#4b5563">confidential + E2EE</text>
+<text x="1040" y="319" font-size="14" text-anchor="middle" fill="#9a3412">This boundary matters</text>
+
+<rect x="375" y="404" width="455" height="78" rx="8" fill="#f9fafb" stroke="#d1d5db" stroke-width="2"/>
+<text x="602" y="435" font-size="17" font-weight="700" text-anchor="middle" fill="#374151">Control plane</text>
+<text x="602" y="463" font-size="15" text-anchor="middle" fill="#6b7280">Keys, billing, route metadata. It cannot decrypt prompt traffic.</text>
+
+<rect x="55" y="515" width="1090" height="72" rx="8" fill="#ecfdf5" stroke="#6ee7b7" stroke-width="2"/>
+<text x="82" y="546" font-size="17" font-weight="700" fill="#065f46">Your agent checks before sending:</text>
+<text x="82" y="572" font-size="15" fill="#047857">Google signature  &#183;  fresh nonce  &#183;  image digest  &#183;  TLS certificate + session binding  &#183;  debug off</text>
+<text x="1140" y="618" text-anchor="end" font-size="19" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
+</svg>
+</figure>
+<p>The cloud administrator should not be able to read your prompts. Disk encryption and HTTPS do not get you there. They protect data while it is stored and while it crosses the network. A normal server decrypts the request before the application uses it, which leaves plaintext in memory where a privileged operator, debugger, compromised hypervisor, or host bug may reach it.</p>
+<p><a href="https://www.redhat.com/en/topics/security/what-is-confidential-computing">Red Hat describes confidential computing</a> as protection for data <em>in use</em>. The code runs inside a hardware-backed Trusted Execution Environment, usually shortened to TEE. The host can give that workload CPU and memory, send it network packets, restart it, or kill it. The processor blocks the host from inspecting the workload's protected memory. The prompt becomes plaintext only inside that boundary.</p>
+<p>A TEE does not make bad code good. Code running inside the protected memory can still leak a prompt. Bugs still matter. The cloud hardware and its attestation service remain part of the trust base. Confidential computing removes a very large class of operator and host access, but you still need to know which code entered the protected memory.</p>
+<p>That is what remote attestation is for. Before an agent sends a prompt, it sends fresh random data called a nonce. The confidential workload asks the platform for a signed attestation token containing that nonce and measurements of the running environment. A verifier checks the platform signature, the intended audience, the production debug state, and the container image digest. Replaying an old token fails because its nonce is wrong.</p>
+<p>Apple made this verification model unusually clear in its <a href="https://security.apple.com/blog/private-cloud-compute/">Private Cloud Compute design</a>. Traditional cloud controls are hard for a user to inspect from the outside. Apple therefore treats verifiable software transparency, stateless processing, and the absence of privileged runtime access as product requirements. TrustedRouter applies the same basic demand to a public-source AI gateway: identify the code that will receive the prompt before trusting it with the prompt.</p>
+<p>Here is what happens on a normal request to <span class="mono">api.trustedrouter.com</span>:</p>
+<ol>
+  <li>The client opens TLS directly to a regional TrustedRouter gateway. The TLS private key and HTTP request terminate inside GCP Confidential Space.</li>
+  <li>The gateway asks the control plane to authorize the API key and choose eligible routes. That exchange contains billing and routing metadata, not the prompt body.</li>
+  <li>The gateway calls the selected model provider, streams the answer back, and settles integer token costs against the authorization.</li>
+  <li>The control plane records metadata such as model, provider, token counts, latency, status, and cost. The prompt and answer stay out of that database and its logs.</li>
+</ol>
+<p><a href="https://cloud.google.com/confidential-computing/confidential-space/docs/confidential-space-overview">GCP Confidential Space</a> runs the gateway container on a Confidential VM with hardware isolation and remote attestation. TrustedRouter uses the production image. The public verifier rejects a debug image because Google's debug variant enables operator access that is unacceptable for sensitive production prompts.</p>
+<p>TrustedRouter also binds the attestation to the live TLS connection. The signed token covers the certificate presented on that connection and an RFC 9266 TLS exporter derived from that exact session. This matters because a valid token fetched through one connection should not be reusable to bless a different proxy connection. The verifier keeps the socket open and confirms that the follow-up request stays on the attested session.</p>
+<p>You can have an agent verify the live service now. This uses the public release record, checks out the source commit named by that release, and runs the strict verifier from the same commit. It does not pipe downloaded code straight into a shell, so the agent can inspect the verifier first.</p>
+<pre><code>release="$(mktemp)"
+curl -fsS https://trust.trustedrouter.com/gcp-release.json -o "$release"
+commit="$(jq -r '.source_commit' "$release")"
+digest="$(jq -r '.image_digest' "$release")"
+
+git clone https://github.com/Lore-Hex/quill-cloud-proxy.git
+cd quill-cloud-proxy
+git checkout "$commit"
+
+# Read tools/verify-attestation.py, then run it.
+uv run --script tools/verify-attestation.py \
+  --api-host api.trustedrouter.com \
+  --expect-digest "$digest" \
+  --samples 4</code></pre>
+<p>A passing run confirms a Google-signed Confidential Space token, a fresh nonce, the expected audience and image digest, production debug state, the TLS leaf certificate, the TLS session exporter, and repeated requests on the same attested socket. The <a href="https://trust.trustedrouter.com/gcp-release.json">release record</a> names the source commit and deployed image. The repository also includes <a href="https://github.com/Lore-Hex/quill-cloud-proxy/blob/main/tools/verify-build.sh">a full rebuild verifier</a> for an engineer who wants to compare the published binary with a local build.</p>
+<p>What does that prove? It proves that the gateway at the other end of the verified TLS session is running the measured production image and that the connection is bound to that workload. The source and verifier are public, so an engineer can inspect the code paths that handle prompts, logging, settlement, and provider calls. It does not prove the code has no bugs, that your own machine is clean, or that every downstream model provider uses confidential computing.</p>
+<p>The provider boundary is the part people skip. The selected model provider normally receives the prompt. <span class="mono">provider.min_privacy = "zdr"</span> requires a route with a zero-data-retention posture. The stronger <span class="mono">provider.min_privacy = "confidential"</span> requires provider-side confidential compute and end-to-end encryption, and fails closed when no eligible route exists. The model aliases <a href="/models/trustedrouter/e2e"><span class="mono">trustedrouter/e2e</span></a> and <a href="/models/trustedrouter/confidential"><span class="mono">trustedrouter/confidential</span></a> select that same stronger pool.</p>
+<p>The distinction is useful. Attestation proves the TrustedRouter gateway. A confidential provider route extends the protected path through model execution. A ZDR contract governs retention after a provider receives the data. Those are three different properties, and the <a href="/security">security page</a> and <a href="/providers">provider directory</a> expose them separately.</p>
+<p>A privacy policy asks you to believe whoever runs the server. Make the server identify itself before your agent sends the prompt.</p>
+""",
+    ),
+    BlogPost(
+        slug="prometheus-2-new-draco-state-of-the-art",
+        title="Prometheus 2.0: new DRACO state of the art",
+        description=(
+            "Prometheus 2.0 scores 77.4 on the full 100-task DRACO deep-research benchmark "
+            "— above every preset we have ever measured, including the frontier-panel Zeus."
+        ),
+        published_date="2026-07-18",
+        source_label=None,
+        source_url=None,
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
+<rect width="1200" height="630" fill="#ffffff"/>
+<text x="60" y="54" font-size="30" font-weight="700"><tspan fill="#1d9e75">TrustedRouter.com:</tspan><tspan fill="#111827" dx="10">Prometheus 2.0 &#8212; new DRACO state of the art</tspan></text>
+<text x="60" y="86" font-size="18" fill="#6b7280">Full 100-task DRACO, agentic deep research &#183; whiskers = 95% bootstrap CI over tasks (B=20k)</text>
+<line x1="332" y1="112" x2="332" y2="540" stroke="#eef0f2"/><text x="332" y="562" font-size="14" text-anchor="middle" fill="#9a9890">55</text>
+<line x1="478" y1="112" x2="478" y2="540" stroke="#eef0f2"/><text x="478" y="562" font-size="14" text-anchor="middle" fill="#9a9890">60</text>
+<line x1="624" y1="112" x2="624" y2="540" stroke="#eef0f2"/><text x="624" y="562" font-size="14" text-anchor="middle" fill="#9a9890">65</text>
+<line x1="770" y1="112" x2="770" y2="540" stroke="#eef0f2"/><text x="770" y="562" font-size="14" text-anchor="middle" fill="#9a9890">70</text>
+<line x1="916" y1="112" x2="916" y2="540" stroke="#eef0f2"/><text x="916" y="562" font-size="14" text-anchor="middle" fill="#9a9890">75</text>
+<line x1="1062" y1="112" x2="1062" y2="540" stroke="#eef0f2"/><text x="1062" y="562" font-size="14" text-anchor="middle" fill="#9a9890">80</text>
+<rect x="332" y="124" width="654" height="30" rx="4" fill="#1d9e75"/>
+<text x="322" y="145" font-size="17" font-weight="700" text-anchor="end" fill="#111827">Prometheus 2.0</text>
+<line x1="901" y1="139" x2="1068" y2="139" stroke="#1f2937" stroke-width="2.5"/>
+<line x1="901" y1="128" x2="901" y2="150" stroke="#1f2937" stroke-width="2.5"/>
+<line x1="1068" y1="128" x2="1068" y2="150" stroke="#1f2937" stroke-width="2.5"/>
+<text x="1082" y="145" font-size="19" font-weight="700" fill="#111827">77.4</text>
+<rect x="332" y="184" width="537" height="30" rx="4" fill="#c9c7bf"/>
+<text x="322" y="205" font-size="16" text-anchor="end" fill="#374151">Zeus 1.0</text>
+<text x="879" y="205" font-size="17" font-weight="600" fill="#6b7280">73.4</text>
+<rect x="332" y="244" width="415" height="30" rx="4" fill="#c9c7bf"/>
+<text x="322" y="265" font-size="16" text-anchor="end" fill="#374151">Prometheus 1.0</text>
+<text x="757" y="265" font-size="17" font-weight="600" fill="#6b7280">69.2</text>
+<rect x="332" y="304" width="409" height="30" rx="4" fill="#c9c7bf"/>
+<text x="322" y="325" font-size="16" text-anchor="end" fill="#374151">OpenRouter best fusion &#8224;</text>
+<text x="751" y="325" font-size="17" font-weight="600" fill="#6b7280">69.0</text>
+<rect x="332" y="364" width="301" height="30" rx="4" fill="#c9c7bf"/>
+<text x="322" y="385" font-size="16" text-anchor="end" fill="#374151">Fable-5 solo</text>
+<text x="643" y="385" font-size="17" font-weight="600" fill="#6b7280">65.3</text>
+<rect x="332" y="424" width="242" height="30" rx="4" fill="#c9c7bf"/>
+<text x="322" y="445" font-size="16" text-anchor="end" fill="#374151">GPT-5.5 solo</text>
+<text x="584" y="445" font-size="17" font-weight="600" fill="#6b7280">63.3</text>
+<rect x="332" y="484" width="155" height="30" rx="4" fill="#c9c7bf"/>
+<text x="322" y="505" font-size="16" text-anchor="end" fill="#374151">Opus 4.8 solo</text>
+<text x="497" y="505" font-size="17" font-weight="600" fill="#6b7280">60.3</text>
+<text x="60" y="596" font-size="15" fill="#888780">&#8224; OpenRouter paper's best published fusion (Fable-5 + GPT-5.5). Solo baselines: same harness, same grader-calibrated protocol.</text>
+<text x="1140" y="618" text-anchor="end" font-size="19" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
+</svg>
+</figure>
+<p>Prometheus 2.0 posted the best score we have measured on <a href="/blog/fusion-evals-open-source">DRACO</a>, the 100-task agentic deep-research benchmark: <strong>77.4</strong>, 95% confidence interval [74.5, 80.2]. The interval sits entirely above <a href="/blog/synth-iris-prometheus-zeus">Zeus 1.0's 73.4</a> &mdash; the frontier-panel preset that held our previous best &mdash; and eight points above Prometheus 1.0's 69.2.</p>
+<p>For context beyond our own presets: the OpenRouter paper that introduced DRACO published <strong>69.0</strong> as its best result, Fable-5 drafting with GPT-5.5 fusing. The strongest single frontier models, run through the same harness and grader-calibrated protocol, land lower still: Fable-5 solo 65.3, GPT-5.5 solo 63.3, Claude Opus 4.8 solo 60.3. Prometheus 2.0 clears every one of them, and it is built entirely from open-weights models, at a fraction of the frontier panel's cost.</p>
+<p>Each DRACO task is real research: the model searches the live web, reads primary sources, runs its own calculations, and writes a long cited report, which is then graded criterion by criterion against a ~39-item rubric it never sees. All 100 tasks ran and all 100 were graded; the whiskers are bootstrap intervals over tasks. It was strongest where careful reading pays: Law (93.3), Medicine (86.1), General Knowledge (83.4), Academic (82.8). This continues what <a href="/blog/ten-cheap-runs-beat-the-frontier">our</a> <a href="/blog/fusion-works-now-even-self-fusion">earlier</a> <a href="/blog/self-fusion-gain-lives-in-the-synthesizer">results</a> kept showing: a well-fused panel beats any single model, and the fusions keep improving.</p>
+<p>Prometheus 2.0 is live on TrustedRouter today. Same key, same base URL, model id <span class="mono">trustedrouter/prometheus-2.0</span>, running behind the same <a href="/synth">attested gateway</a> as everything else. The rolling <a href="/models/trustedrouter/prometheus"><span class="mono">trustedrouter/prometheus</span></a> alias already points at it.</p>
+""",
+    ),
+    BlogPost(
+        slug="introducing-liberty",
+        title="Liberty-2.0: all American open-weights model",
+        description=(
+            "Liberty 2.0 combines open-weights models from NVIDIA, Google, OpenAI, and Thinking "
+            "Machines — all American, all run in the US — into one private model."
+        ),
+        published_date="2026-07-15",
+        source_label=None,
+        source_url=None,
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
+<rect width="1200" height="630" fill="#ffffff"/>
+<text x="60" y="54" font-size="29" font-weight="700"><tspan fill="#1d9e75">TrustedRouter.com:</tspan><tspan fill="#111827" dx="10">Liberty 2.0 matches the frontier on DRACO</tspan></text>
+<text x="60" y="86" font-size="18" fill="#6b7280">All 100 DRACO tasks, agentic deep research &#183; whisker = 95% bootstrap CI over tasks</text>
+<line x1="332" y1="120" x2="332" y2="524" stroke="#eef0f2"/>
+<text x="332" y="546" font-size="14" text-anchor="middle" fill="#9a9890">55</text>
+<line x1="534" y1="120" x2="534" y2="524" stroke="#eef0f2"/>
+<text x="534" y="546" font-size="14" text-anchor="middle" fill="#9a9890">60</text>
+<line x1="737" y1="120" x2="737" y2="524" stroke="#eef0f2"/>
+<text x="737" y="546" font-size="14" text-anchor="middle" fill="#9a9890">65</text>
+<line x1="939" y1="120" x2="939" y2="524" stroke="#eef0f2"/>
+<text x="939" y="546" font-size="14" text-anchor="middle" fill="#9a9890">70</text>
+<rect x="332" y="158" width="425" height="34" rx="4" fill="#1d9e75"/>
+<text x="318" y="181" font-size="17" font-weight="700" text-anchor="end" fill="#111827">Liberty 2.0</text>
+<line x1="615" y1="175" x2="895" y2="175" stroke="#1f2937" stroke-width="2.5"/>
+<line x1="615" y1="164" x2="615" y2="186" stroke="#1f2937" stroke-width="2.5"/>
+<line x1="895" y1="164" x2="895" y2="186" stroke="#1f2937" stroke-width="2.5"/>
+<text x="909" y="181" font-size="19" font-weight="700" fill="#111827">65.5</text>
+<rect x="332" y="238" width="417" height="34" rx="4" fill="#c9c7bf"/>
+<text x="318" y="261" font-size="17" font-weight="400" text-anchor="end" fill="#374151">Fable 5</text>
+<text x="761" y="261" font-size="17" font-weight="600" fill="#6b7280">65.3</text>
+<rect x="332" y="318" width="336" height="34" rx="4" fill="#c9c7bf"/>
+<text x="318" y="341" font-size="17" font-weight="400" text-anchor="end" fill="#374151">GPT-5.5</text>
+<text x="680" y="341" font-size="17" font-weight="600" fill="#6b7280">63.3</text>
+<rect x="332" y="398" width="308" height="34" rx="4" fill="#c9c7bf"/>
+<text x="318" y="421" font-size="17" font-weight="400" text-anchor="end" fill="#374151">Iris 1.0</text>
+<text x="652" y="421" font-size="17" font-weight="600" fill="#6b7280">62.6</text>
+<rect x="332" y="478" width="214" height="34" rx="4" fill="#c9c7bf"/>
+<text x="318" y="501" font-size="17" font-weight="400" text-anchor="end" fill="#374151">Opus 4.8</text>
+<text x="558" y="501" font-size="17" font-weight="600" fill="#6b7280">60.3</text>
+<text x="60" y="590" font-size="15" fill="#888780">Liberty 2.0 and Fable 5 are a statistical tie; Liberty’s interval also covers GPT-5.5 and Iris 1.0. Same harness and rubric throughout.</text>
+<text x="1140" y="616" text-anchor="end" font-size="18" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+</figure>
+<p>Today we're introducing Liberty 2.0 &#8212; one AI you call like any other model, built entirely from American open-source models and run only in the United States.</p>
+<p>On <a href="/blog/fusion-evals-open-source">DRACO</a>, the 100-task agentic deep-research benchmark, Liberty 2.0 scores <strong>65.5</strong> across all 100 tasks. Fable 5, the strongest single model in the comparison, scores 65.3 &#8212; a tie. GPT-5.5 scores 63.3 and Claude Opus 4.8 60.3 on the same tasks. An all-American, all-open-weights model performing at the level of the closed frontier, at a fraction of the cost.</p>
+<h3 style="font-size:22px;margin:36px 0 8px">Where Liberty 2.0 is strong, and where it trails</h3>
+<p>Broken out by task type, against the average of the two frontier solos on exactly the same tasks, Liberty 2.0 comes out ahead on 8 of the ten. The margins are widest on research that means gathering many sources and reconciling them, and it gives the lead back on work that turns on exact recall.</p>
+<div style="overflow-x:auto;margin:16px 0"><table style="border-collapse:collapse;font-size:15px;min-width:520px">
+<thead><tr><th style="text-align:left;padding:6px 12px;border-bottom:2px solid #d1d5db;font-size:14px">Task type</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #d1d5db;font-size:14px">Tasks</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #d1d5db;font-size:14px">Liberty 2.0</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #d1d5db;font-size:14px">Frontier avg<br><span style="font-weight:400;color:#6b7280;font-size:12px">GPT-5.5 + Opus 4.8</span></th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #d1d5db;font-size:14px">&#916;</th></tr></thead><tbody>
+<tr><td style="text-align:left;padding:5px 12px;border-bottom:1px solid #eef0f2">Personalized Assistant</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;color:#9a9890;font-size:13px">6</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;background:#e1f5ee;font-weight:700">70</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2">59</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;font-weight:700;color:#0f6e56">+11</td></tr>
+<tr><td style="text-align:left;padding:5px 12px;border-bottom:1px solid #eef0f2">UX Design</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;color:#9a9890;font-size:13px">9</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;background:#e1f5ee;font-weight:700">62</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2">55</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;font-weight:700;color:#0f6e56">+7</td></tr>
+<tr><td style="text-align:left;padding:5px 12px;border-bottom:1px solid #eef0f2">Shopping / Product</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;color:#9a9890;font-size:13px">16</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;background:#e1f5ee;font-weight:700">63</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2">57</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;font-weight:700;color:#0f6e56">+6</td></tr>
+<tr><td style="text-align:left;padding:5px 12px;border-bottom:1px solid #eef0f2">Academic</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;color:#9a9890;font-size:13px">12</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;background:#e1f5ee;font-weight:700">78</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2">72</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;font-weight:700;color:#0f6e56">+6</td></tr>
+<tr><td style="text-align:left;padding:5px 12px;border-bottom:1px solid #eef0f2">Needle-in-Haystack</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;color:#9a9890;font-size:13px">6</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;background:#e1f5ee;font-weight:700">64</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2">60</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;font-weight:700;color:#0f6e56">+4</td></tr>
+<tr><td style="text-align:left;padding:5px 12px;border-bottom:1px solid #eef0f2">Technology</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;color:#9a9890;font-size:13px">10</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;background:#e1f5ee;font-weight:700">57</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2">55</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;font-weight:700;color:#0f6e56">+2</td></tr>
+<tr><td style="text-align:left;padding:5px 12px;border-bottom:1px solid #eef0f2">Finance</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;color:#9a9890;font-size:13px">19</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;background:#e1f5ee;font-weight:700">60</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2">58</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;font-weight:700;color:#0f6e56">+2</td></tr>
+<tr><td style="text-align:left;padding:5px 12px;border-bottom:1px solid #eef0f2">General Knowledge</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;color:#9a9890;font-size:13px">9</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;background:#e1f5ee;font-weight:700">62</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2">60</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;font-weight:700;color:#0f6e56">+2</td></tr>
+<tr><td style="text-align:left;padding:5px 12px;border-bottom:1px solid #eef0f2">Law</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;color:#9a9890;font-size:13px">6</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;background:#e1f5ee;font-weight:700">85</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2">85</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;font-weight:700;color:#6b7280">0</td></tr>
+<tr><td style="text-align:left;padding:5px 12px;border-bottom:1px solid #eef0f2">Medicine</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;color:#9a9890;font-size:13px">6</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;background:#e1f5ee;font-weight:700">69</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2">72</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;font-weight:700;color:#b91c1c">&#8722;3</td></tr>
+</tbody></table></div>
+<p style="font-size:13px;color:#6b7280">Across all 99 tasks: Liberty 2.0 65.5, frontier average 61.8.</p>
+<p>Assistant work, UX research, shopping comparisons, and academic literature reviews are where the open panel builds its lead. Medicine is the one type where the frontier models finish ahead, and Law is a dead heat. Combining models pays most when an answer has to be assembled from many sources, and least when it hinges on one hard fact.</p>
+<h3 style="font-size:22px;margin:36px 0 8px">How we grade</h3>
+<p>Every answer is scored criterion by criterion against a rubric the model never sees, roughly forty checks per task, and the score is the weighted share of criteria met.</p>
+<p>Grading the same answer twice can produce different scores, occasionally very different ones. A few DRACO rubrics carry a single heavily weighted penalty &#8212; recommending someone wait out a medical emergency at home, say &#8212; and one borderline call on it can move a task by forty points or more. Seven of the hundred tasks are built that way, most of them in medicine, where the penalties cover unsafe advice. Averages over a hundred tasks absorb that. Individual rows, especially the ones resting on six tasks, do not, so read the table as a pattern rather than a scoreboard. The grading code and the per-task scores are public in the benchmark repo.</p>
+<p>Liberty 2.0 brings together open-weights models from four American labs &#8212; NVIDIA, Google, OpenAI, and Thinking Machines &#8212; and combines their answers into a single response. You get the strengths of all of them behind one model name.</p>
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
+<rect width="1200" height="630" fill="#ffffff"/>
+<text x="60" y="70" font-size="44" font-weight="700" fill="#111827">Liberty 2.0</text>
+<text x="60" y="112" font-size="21" fill="#6b7280">American open models, combined into one &#8212; run only in the US, private by default</text>
+<rect x="60" y="150" width="1080" height="1" fill="#e5e7eb"/>
+<defs><marker id="lba" markerWidth="10" markerHeight="10" refX="6" refY="3" orient="auto"><path d="M0 0 L6 3 L0 6 z" fill="#9ca3af"/></marker></defs>
+<rect x="60" y="200" width="255" height="120" rx="10" fill="#e1f5ee" stroke="#1d9e75" stroke-width="1.5"/>
+<text x="187" y="250" font-size="26" font-weight="700" fill="#0f6e56" text-anchor="middle">Gemma</text>
+<text x="187" y="282" font-size="16" fill="#374151" text-anchor="middle">Google</text>
+<text x="187" y="304" font-size="13" fill="#6b7280" text-anchor="middle">open weights</text>
+<rect x="335" y="200" width="255" height="120" rx="10" fill="#e1f5ee" stroke="#1d9e75" stroke-width="1.5"/>
+<text x="462" y="250" font-size="26" font-weight="700" fill="#0f6e56" text-anchor="middle">gpt-oss</text>
+<text x="462" y="282" font-size="16" fill="#374151" text-anchor="middle">OpenAI</text>
+<text x="462" y="304" font-size="13" fill="#6b7280" text-anchor="middle">open weights</text>
+<rect x="610" y="200" width="255" height="120" rx="10" fill="#e1f5ee" stroke="#1d9e75" stroke-width="1.5"/>
+<text x="737" y="250" font-size="26" font-weight="700" fill="#0f6e56" text-anchor="middle">Nemotron</text>
+<text x="737" y="282" font-size="16" fill="#374151" text-anchor="middle">NVIDIA</text>
+<text x="737" y="304" font-size="13" fill="#6b7280" text-anchor="middle">open weights</text>
+<rect x="885" y="200" width="255" height="120" rx="10" fill="#e1f5ee" stroke="#1d9e75" stroke-width="1.5"/>
+<text x="1012" y="250" font-size="26" font-weight="700" fill="#0f6e56" text-anchor="middle">Inkling</text>
+<text x="1012" y="282" font-size="16" fill="#374151" text-anchor="middle">Thinking Machines</text>
+<text x="1012" y="304" font-size="13" fill="#6b7280" text-anchor="middle">open weights</text>
+<path d="M600 340 L600 400" stroke="#9ca3af" stroke-width="2" marker-end="url(#lba)"/>
+<rect x="420" y="410" width="360" height="70" rx="10" fill="#1d9e75"/>
+<text x="600" y="454" font-size="22" font-weight="700" fill="#ffffff" text-anchor="middle">trustedrouter/liberty-2.0</text>
+<rect x="60" y="520" width="1080" height="1" fill="#e5e7eb"/>
+<text x="60" y="560" font-size="17" fill="#374151">Every model American and open-weights &#183; every provider in the US &#183; private, encrypted gateway</text>
+<text x="1140" y="600" text-anchor="end" font-size="20" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
+</svg>
+</figure>
+<p>Every model in Liberty 2.0 is open-weights, and every one runs on US-based providers. Your requests pass through TrustedRouter's private, encrypted gateway and never leave the country &#8212; what you send stays in the US, and stays private.</p>
+<p>Call it with the same key and base URL as everything else on TrustedRouter. The model ID is <span class="mono">trustedrouter/liberty-2.0</span>.</p>
+""",
+    ),
+    BlogPost(
+        slug="inkling-prometheusbench",
+        title="inkling answers 8 of 30 unsafe prompts. Claude Opus answers 1.",
+        description=(
+            "Thinking Machines Lab's frontier reasoning model scores above every Anthropic Opus "
+            "model on PrometheusBench, our benchmark for model permissiveness on unsafe prompts."
+        ),
+        published_date="2026-07-15",
+        source_label=None,
+        source_url=None,
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
+<rect width="1200" height="630" fill="#ffffff"/>
+<text x="60" y="46" font-size="26" font-weight="700" fill="#111827">inkling answers 8 of 30 unsafe prompts. Claude Opus answers 1.</text>
+<text x="60" y="76" font-size="17" fill="#6b7280">PrometheusBench: raw non-refusals on 30 unsafe prompts &#183; higher = more permissive</text>
+<text x="268" y="131" font-size="14" text-anchor="end" fill="#9a9890">glm-5.2</text>
+<rect x="280" y="112" width="831" height="32" rx="4" fill="#d1d5db"/>
+<text x="1118" y="131" font-size="13" fill="#9a9890">29</text>
+<text x="268" y="183" font-size="14" text-anchor="end" fill="#9a9890">kimi-k2.6</text>
+<rect x="280" y="164" width="774" height="32" rx="4" fill="#d1d5db"/>
+<text x="1060" y="183" font-size="13" fill="#9a9890">27</text>
+<text x="268" y="235" font-size="14" text-anchor="end" fill="#9a9890">deepseek-v4-flash</text>
+<rect x="280" y="216" width="745" height="32" rx="4" fill="#d1d5db"/>
+<text x="1031" y="235" font-size="13" fill="#9a9890">26</text>
+<text x="268" y="287" font-size="14" text-anchor="end" fill="#374151">claude-haiku-4.5</text>
+<rect x="280" y="268" width="258" height="32" rx="4" fill="#f97316"/>
+<text x="545" y="287" font-size="13" fill="#6b7280">9</text>
+<text x="268" y="339" font-size="15" font-weight="700" text-anchor="end" fill="#0f6e56">thinkingmachines/inkling</text>
+<rect x="280" y="320" width="229" height="32" rx="4" fill="#1d9e75"/>
+<text x="516" y="339" font-size="14" font-weight="700" fill="#0f6e56">8</text>
+<text x="268" y="391" font-size="14" text-anchor="end" fill="#374151">gpt-oss-120b</text>
+<rect x="280" y="372" width="172" height="32" rx="4" fill="#f97316"/>
+<text x="458" y="391" font-size="13" fill="#6b7280">6</text>
+<text x="268" y="443" font-size="14" text-anchor="end" fill="#374151">claude-opus-4.8</text>
+<rect x="280" y="424" width="29" height="32" rx="4" fill="#dc2626"/>
+<text x="316" y="443" font-size="13" fill="#6b7280">1</text>
+<text x="268" y="495" font-size="14" text-anchor="end" fill="#374151">claude-fable-5</text>
+<rect x="280" y="476" width="4" height="32" rx="2" fill="#dc2626"/>
+<text x="290" y="495" font-size="13" fill="#6b7280">0</text>
+<text x="268" y="547" font-size="14" text-anchor="end" fill="#374151">gpt-5.5</text>
+<rect x="280" y="528" width="4" height="32" rx="2" fill="#dc2626"/>
+<text x="290" y="547" font-size="13" fill="#6b7280">0 (all errors)</text>
+<text x="1188" y="621" text-anchor="end" font-size="19" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
+</svg>
+</figure>
+<p>Thinking Machines Lab, founded by former OpenAI CTO Mira Murati, built inkling: a reasoning model with a 256k context window. We ran it through <a href="https://github.com/Lore-Hex/PrometheusBench">PrometheusBench</a>, 30 short unsafe prompts across biology, cybersecurity, and LLM research. inkling answered 8 of them, refused 22, and errored on zero. Claude Opus 4.8 answered 1 of the 20 it completed and errored on 10. Claude Fable 5 answered zero. GPT-5.5 returned all errors.</p>
+<p>The top of the <a href="/blog/the-models-that-say-no">PrometheusBench table</a> is all Chinese labs. GLM 5.2 gets 29 of 30. Kimi K2.6 gets 27. DeepSeek V4 Flash gets 26. That split between Chinese and US labs is well-documented. The more interesting comparison is inkling sitting above every Anthropic flagship model in the table. A frontier reasoning model from Thinking Machines Lab answers more biology and security questions than Anthropic's most expensive model does.</p>
+<p>Are those 22 refusals the right calls? Some are defensible. But PrometheusBench measures who the refusals land on. The biology student asking about synthesis pathways, the security researcher asking about an exploit class, the practitioner probing an LLM's internals — they get the refusal. The credentialed researcher at a partner institution gets the answer. The refusal does not remove the knowledge; it redistributes it toward people who already had access.</p>
+<p>Thinking Machines Lab decided to answer more of those questions. A frontier reasoning model with a permissiveness score above Anthropic's entire Opus line is exactly the kind of result that makes the safety-through-restriction argument hard to take seriously. The Western frontier labs are racing to refuse more aggressively. Thinking Machines built something capable and chose differently.</p>
+<p>Eight of thirty is not the ceiling. GLM gets 29. But it cleared the bar that Anthropic's flagship missed.</p>
+""",
+    ),
+    BlogPost(
+        slug="keep-doing-biology-with-prometheus",
+        title="Keep doing biology with Prometheus",
+        description=(
+            "Biology work should not stop because one frontier endpoint refuses. "
+            "Use TrustedRouter Prometheus, the open BioMysteryBench harness, MCP, "
+            "and the LLM-advisor skill to choose models that will actually do the work."
+        ),
+        published_date="2026-07-02",
+        source_label="prometheus-biomysterybench on GitHub",
+        source_url="https://github.com/Lore-Hex/prometheus-biomysterybench",
+        body_html="""
+<p>The wrong lesson from <a href="/blog/the-best-biology-ai-wont-do-biology">the biology post</a> would be to give up.</p>
+<p>The right lesson is simpler: keep doing biology, but stop treating one model's policy as the boundary of the work.</p>
+<p>Anthropic built a very strong biology model and kept the best one partner-only. The broadly available model may refuse biology prompts. That is their product decision. It should not become your research workflow. A biologist should not lose the afternoon because a single endpoint decides the question is too close to the lab.</p>
+<p>That is why <a href="/models/trustedrouter/prometheus"><span class="mono">trustedrouter/prometheus</span></a> exists. Prometheus is the open-model Synth preset: a panel of open models, a judge, and a synthesizer behind one normal model id. You call it through the same OpenAI-compatible API. The work runs through the same <a href="/synth">attested gateway</a>. The point is not that a committee is magic. The point is that model choice becomes an engineering decision instead of a vendor veto.</p>
+<p>The first biology run was intentionally small. Three tasks from an open BioMysteryBench-style harness. <span class="mono">Claude Opus 4.8</span> got all three. <span class="mono">Gemma-4-31b</span> got two for four cents. <span class="mono">GLM-5.2</span> got two and was the only non-Opus model to crack the long motif task. Several cheap models knew the biology but ran out of patience on the long loop. That result is not a leaderboard. It is a useful map.</p>
+<p>Prometheus is what you use after the map exists. For a short lookup, do not pay for a committee. Use the cheap model that already does the job. For a long uncertain analysis, use Prometheus. For the few tasks where every model shares the same blind spot, Prometheus will not save you, and the earlier post says that plainly. That is the whole reason to keep publishing the failures. A router should tell you when the expensive path is worth it and when it is just expensive.</p>
+<p>This is where the <a href="https://github.com/Lore-Hex/LLM-advisor">LLM-advisor skill</a> matters. Give the skill to Codex, Claude Code, Cursor, Hermes, or any agent that can read a URL. Let the agent ask TrustedRouter what models are live, what they cost, what privacy tier they sit in, and which route fits the task before it spends your tokens. If the agent supports MCP, connect it to the <a href="/docs/mcp">TrustedRouter MCP server</a>. If it does not, have it read the raw <a href="https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md">SKILL.md</a>.</p>
+<pre><code>Use the LLM-advisor skill.
+For routine biology lookups, prefer the cheapest model that has passed the local harness.
+For hard biology analysis, try trustedrouter/prometheus.
+If every model agrees on the wrong answer, report the shared blind spot instead of pretending fusion solved it.</code></pre>
+<p>That last line matters. Biology has enough fake certainty already. Prometheus should make the workflow more honest, not more theatrical. A panel is valuable when models disagree and one of them is right. A panel is not valuable when every model marches into the same hole with better citations.</p>
+<p>The pieces are open. The BioMysteryBench-style harness is <a href="https://github.com/Lore-Hex/prometheus-biomysterybench">on GitHub</a>. The broader Synth work is in <a href="/blog/synth-iris-prometheus-zeus">the Iris, Prometheus, and Zeus post</a>. The combo-model framing is in <a href="/blog/combo-models-are-model-containers">Combo models are model containers</a>. The agent setup is in <a href="/docs/agent-setup">the agent guide</a>. The advisor launch is <a href="/blog/trustedrouter-mcp-llm-advisor-ai-iq">here</a>. The whole point is that a smart agent can read the evidence, choose the route, and explain the choice.</p>
+<p>I want biologists to keep asking the questions. I want the model to say when it knows, when it does not know, when it needs a cheaper specialist, when it needs Prometheus, and when the entire panel is probably stuck. That is much more useful than a single refusal page.</p>
+<p>Keep doing biology. Use Prometheus when the problem deserves a committee. Use the skill so the agent knows when it does.</p>
+""",
+    ),
+    BlogPost(
+        slug="trustedrouter-mcp-llm-advisor-ai-iq",
+        title="Introducing LLM advisor: which model do i choose for my problem?",
+        description=(
+            "TrustedRouter MCP and the open source LLM-advisor skill give agents live "
+            "model, price, privacy, provider, and AI IQ context before they choose a model."
+        ),
+        published_date="2026-07-02",
+        source_label="LLM-advisor on GitHub",
+        source_url="https://github.com/Lore-Hex/LLM-advisor",
+        body_html="""
+<p>A strange thing about coding agents is that they are often smart enough to refactor your backend, but they still pick models like it is a guessing game.</p>
+<p>They know the prompt in front of them. They do not automatically know which model is fast today, which provider has the right privacy posture, which route is cheap enough for an eval loop, which model has the best public quality signal, or whether a stable long-context task should use prompt caching instead of broad routing. So they fall back to habit: use the most famous model, the cheapest model, or whatever the developer last pasted into an environment variable.</p>
+<p>That is not good enough. Model choice is now part of the work.</p>
+<p>So today we are launching the <a href="/docs/mcp">TrustedRouter MCP server</a> and the open source <a href="https://github.com/Lore-Hex/LLM-advisor">LLM-advisor skill</a>. Together they let an agent ask the router what is actually true before it spends tokens: live models, prices, providers, privacy tiers, credits, docs, generation metadata, and short test calls through the attested API gateway.</p>
+<p>The skill is deliberately agent-neutral. Codex can load it as a native skill. Claude Code can read the raw <a href="https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md">SKILL.md</a>. Hermes, Cursor, and any agent that can read a URL can use the same playbook. If the agent supports MCP, it can connect directly:</p>
+<pre><code>claude mcp add --transport http trustedrouter https://trustedrouter.com/mcp \
+  --header "Authorization: Bearer $TRUSTEDROUTER_API_KEY"</code></pre>
+<p>The useful part is not the command. The useful part is the habit it creates. Before a billable call, the agent estimates cost. Before a sensitive prompt, it checks privacy posture. Before a speed-sensitive task, it looks at recent provider health. Before a research or coding recommendation, it can use public quality data instead of vibes.</p>
+<p>This is where the <a href="https://aiiq.org">AI IQ</a> partnership matters. AI IQ gives public model, benchmark, ranking, chart, and methodology data. TrustedRouter gives live provider, price, routing, privacy, credit, and attestation context. The advisor sits between them and turns that into a concrete recommendation an agent can use: not "try a good model," but "use this model for this task, for this reason, at about this cost, with this privacy boundary."</p>
+<p>I love this because it makes the agent less magical and more accountable. A good engineer does not pick infrastructure from memory. They look at the current state of the system. Agents should do the same.</p>
+<p>For a legal task, the advisor should start with <span class="mono">trustedrouter/zdr</span>, check zero-retention provider posture, and say when fallbacks reduce or improve the trust story. For a cheap eval loop, it should start with cheap open models and estimate the whole run before it starts. For a hard coding task, it should compare a strong single model with a combo model and explain the tradeoff. For a repeated long-context agent, it should notice prompt caching instead of rotating models and throwing the cache away.</p>
+<p>The deeper point is simple: agents should not only call models. They should know how to choose models.</p>
+<p>TrustedRouter already exposes hundreds of models through one API. The MCP server makes that catalog agent-readable. The LLM-advisor skill makes the decision process agent-readable. AI IQ makes the quality evidence public. The attested gateway makes the prompt path verifiable. Put together, that is the shape I want AI infrastructure to have: open, inspectable, measurable, and useful in the exact moment an agent is about to act.</p>
+<p>Start here: <a href="/docs/mcp">connect the MCP server</a>, then give your agent the <a href="https://github.com/Lore-Hex/LLM-advisor">LLM-advisor skill</a>.</p>
+""",
+    ),
+    BlogPost(
+        slug="open-source-open-source-open-source",
+        title="Open Source Open Source Open Source: How TrustedRouter is totally open source",
+        description=(
+            "TrustedRouter is open source where it matters: the frontend, the backend, "
+            "the attested gateway, the SDKs, and the Terraform infrastructure are all "
+            "published so developers can inspect, run, and verify the system."
+        ),
+        published_date="2026-07-01",
+        source_label=None,
+        source_url=None,
+        body_html="""
+<p>I love open source because it replaces a weird social contract with a normal engineering one.</p>
+<p>Without source, every AI router eventually asks you to believe a sentence on a website. We do not log prompts. We do not inspect outputs. We route fairly. We keep your keys safe. Maybe all of that is true. Maybe it is not. You cannot tell. You are buying a promise from a black box.</p>
+<p>TrustedRouter is built the other way. The <a href="https://github.com/Lore-Hex/quill-router">frontend and control plane</a> are open source. The <a href="https://github.com/Lore-Hex/quill-cloud-proxy">attested prompt gateway</a> is open source. The <a href="https://github.com/Lore-Hex/quill-cloud-infra">Terraform and cloud infrastructure</a> are open source. The <a href="https://github.com/Lore-Hex/trusted-router-py">Python SDK</a> and <a href="https://github.com/Lore-Hex/trusted-router-js">TypeScript SDK</a> are open source. The eval harnesses we publish are open source. The docs and trust pages are open source.</p>
+<p>That does not mean every secret is public. API keys, customer data, payment records, and private operational credentials are not public, because that would be insane. The machinery is public. The code path is public. The infrastructure shape is public. The thing you need to audit is not hidden.</p>
+<p>This matters most in the prompt path. A router sees the thing you are asking the model, and often that thing is valuable: source code, legal work, financial analysis, product plans, medical context, private documents. If the router is closed, your real security model is "trust the router company." That is not good enough.</p>
+<p>So the prompt path is designed to be checked. The hosted gateway publishes attestation evidence at <a href="https://trust.trustedrouter.com">trust.trustedrouter.com</a>. You can compare the running image and source commit against the open repos. The point is not that you should trust me harder. The point is that you should have less trusting to do.</p>
+<p>I also think open source is the right cultural choice for AI infrastructure. Models are becoming more powerful, more centralized, and more expensive. The routing layer should push the other way. It should make models easier to swap, easier to benchmark, easier to self-host, easier to inspect, and easier to hold accountable.</p>
+<p>That is the whole posture: open source frontend, open source backend, open source gateway, open source Terraform, open source SDKs, open source evals.</p>
+<p>Open source, open source, open source.</p>
+""",
+    ),
+    BlogPost(
+        slug="frontier-smart-cheap-fast-pick-3-open-source",
+        title="Frontier Smart, Cheap, Fast: Pick 3 with Open Source",
+        description=(
+            "The old model triangle said you could have frontier quality, low cost, or speed, "
+            "but not all three. Recent TrustedRouter results show a different path: open "
+            "source routing, open-weight models, and combo models behind one API."
+        ),
+        published_date="2026-07-01",
+        source_label=None,
+        source_url=None,
+        body_html="""
+<figure style="margin:0 0 42px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" width="100%" style="height:auto;display:block;border:1px solid #e5e7eb;border-radius:18px;background:#fff" role="img" aria-label="Frontier Smart, Cheap, Fast: Pick 3 with Open Source. TrustedRouter combines benchmarked combo models, low cost open models, and fast routing behind one API.">
+  <defs>
+    <linearGradient id="pick3-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#ecfeff"/>
+    </linearGradient>
+    <filter id="pick3-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#0f172a" flood-opacity="0.16"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="720" fill="url(#pick3-bg)"/>
+  <text x="70" y="86" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="850" fill="#0f766e">TrustedRouter</text>
+  <text x="70" y="152" font-family="Inter,Arial,sans-serif" font-size="60" font-weight="900" fill="#111827">Frontier Smart, Cheap, Fast</text>
+  <text x="70" y="200" font-family="Inter,Arial,sans-serif" font-size="35" font-weight="850" fill="#0f766e">Pick 3 with Open Source</text>
+  <text x="72" y="238" font-family="Inter,Arial,sans-serif" font-size="20" fill="#475569">The old triangle made you choose two. Open combo models move the frontier into the center.</text>
+
+  <path d="M600 300 L250 600 H950 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="4" filter="url(#pick3-shadow)"/>
+  <path d="M600 352 L350 560 H850 Z" fill="#f0fdfa" stroke="#14b8a6" stroke-width="4"/>
+  <circle cx="600" cy="450" r="94" fill="#0f766e"/>
+  <text x="600" y="434" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="27" font-weight="900" fill="#ffffff">Open</text>
+  <text x="600" y="468" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="27" font-weight="900" fill="#ffffff">Combo</text>
+  <text x="600" y="499" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="800" fill="#ccfbf1">Models</text>
+
+  <rect x="450" y="268" width="300" height="90" rx="18" fill="#eef2ff" stroke="#4f46e5" stroke-width="3"/>
+  <text x="600" y="303" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="28" font-weight="900" fill="#312e81">Smart</text>
+  <text x="600" y="333" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="15" fill="#4338ca">Terminal-Bench, DRACO, ExploitBench</text>
+
+  <rect x="116" y="538" width="294" height="100" rx="18" fill="#ecfdf5" stroke="#059669" stroke-width="3"/>
+  <text x="263" y="576" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="29" font-weight="900" fill="#065f46">Cheap</text>
+  <text x="263" y="608" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="15" fill="#047857">open models, panels, selective depth</text>
+
+  <rect x="790" y="538" width="294" height="100" rx="18" fill="#fff7ed" stroke="#f97316" stroke-width="3"/>
+  <text x="937" y="576" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="29" font-weight="900" fill="#9a3412">Fast</text>
+  <text x="937" y="608" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="15" fill="#c2410c">fast workers, health routing, fallback</text>
+
+  <path d="M506 378 C430 414, 364 470, 306 526" fill="none" stroke="#0f766e" stroke-width="5" stroke-linecap="round"/>
+  <path d="M694 378 C770 414, 836 470, 894 526" fill="none" stroke="#0f766e" stroke-width="5" stroke-linecap="round"/>
+  <path d="M420 590 H780" fill="none" stroke="#0f766e" stroke-width="5" stroke-linecap="round" stroke-dasharray="12 10"/>
+
+  <text x="70" y="678" font-family="Inter,Arial,sans-serif" font-size="17" fill="#475569">One OpenAI-compatible model id can package fast workers, open panels, judges, synthesizers, and fallbacks.</text>
+  <text x="1130" y="678" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="900" fill="#0f766e">TrustedRouter.com</text>
+</svg>
+<figcaption style="font-family:Inter,system-ui,sans-serif;font-size:13px;line-height:1.45;color:#6b7280;margin-top:10px">Every request gets the shape it needs: a fast single model, a cheap open panel, an advisor call, or a deeper combo model.</figcaption>
+</figure>
+<p>Smart, cheap, fast used to be a cruel little triangle. You picked two and pretended you were happy.</p>
+<p>I don't think that is true anymore. A model name used to mean one blob of weights behind one vendor endpoint. That was a bad abstraction. The right abstraction is a package: a fast worker, a judge, a synthesizer, a fallback list, maybe an advisor, maybe a panel, all sitting behind the same token API that every developer already knows how to call.</p>
+<p>We have been publishing the numbers because this argument is worthless without numbers. Socrates-1.1 scored 72 on Terminal-Bench Hard. Synth hit 73.4 on DRACO. DeepSeek V4 Pro drew level with Opus on SimpleQA Verified in our run. A four-cent Gemma run did most of a small biology slice. OpenPatcher-S1 scored 7 out of 16 on a hard ExploitBench target where the listed open baselines were at 3, 2, and 2.</p>
+<p>Those are very different benchmarks. That is why I like the pattern. This is showing up in code, research, factuality, biology, and cyber. The common thing is structure. Open models are now good enough to be building blocks, and the router can decide which block to use.</p>
+<table class="data-table">
+  <thead><tr><th>Result</th><th>What it shows</th><th>Why it matters</th></tr></thead>
+  <tbody>
+    <tr><td><a href="/blog/socrates-1.1-terminal-bench-hard-72">Socrates-1.1 scored 72 on Terminal-Bench Hard</a></td><td>A combo model beat the frontier baselines in that run.</td><td>Smart can come from structure, not only from one expensive model.</td></tr>
+    <tr><td><a href="/blog/fusion-evals-open-source">Synth reached 73.4 on DRACO</a></td><td>A panel plus judge plus synthesizer beat the strongest solo runs.</td><td>Open panels can recover strengths no single model owns.</td></tr>
+    <tr><td><a href="/blog/the-best-open-models-arent-on-your-leaderboard">Open models caught frontier models on factuality</a></td><td>DeepSeek V4 Pro drew level with Opus on SimpleQA Verified in our run.</td><td>Cheap open-weight models are no longer toy alternatives.</td></tr>
+    <tr><td><a href="/blog/the-best-biology-ai-wont-do-biology">A four-cent Gemma run solved most of a biology slice</a></td><td>For some tasks, small open models do nearly all the useful work.</td><td>The expensive model should be reserved for the parts that need it.</td></tr>
+    <tr><td><a href="/blog/openpatcher-s1-exploitbench-cve-2024-2887">OpenPatcher-S1 hit 7 / 16 on ExploitBench CVE-2024-2887</a></td><td>A specialized open cyber model more than doubled the listed open baseline in the chart.</td><td>Open specialized models can move faster than general-purpose vendor models.</td></tr>
+  </tbody>
+</table>
+<p>The obvious objection is cost. Ensembles sound expensive because bad ensembles are expensive. Asking seven huge models every time is dumb. Most prompts do not need that. A routine request should hit the fast cheap model and be done. A suspicious request should ask an advisor. A research request should use Synth. A security request should go to a specialist. The expensive path should be a conditional branch. Otherwise it becomes a tax on every token.</p>
+<p>That is how the triangle breaks. You get frontier-level answers by spending extra only on the hard parts. You get cheap answers because the common path is open-weight and small. You get speed because the default path stays short and because fast providers can sit at the front. You get reliability because the route has fallbacks instead of one vendor outage taking the whole app down.</p>
+<p>The open source part is the part people underrate. The TrustedRouter software is open. The eval harnesses are open. The blog posts link the runs. The model pages show the routes and privacy classes. Open-weight models like DeepSeek, GLM, Kimi, MiniMax, Gemma, and Qwen can be first-class building blocks instead of "budget models" people apologize for using.</p>
+<p>Privacy matters more when a model becomes a graph. Combo models create subcalls. If those subcalls go through a black-box proxy, you multiplied your trust problem. The routing graph should be inspectable, the privacy class should be explicit, and the gateway should be something an agent can verify before it sends the prompt.</p>
+<p>Smart, cheap, fast was a vendor tradeoff. Open source routing turns it into an engineering problem.</p>
+<p>Pick 3.</p>
+""",
+    ),
+    BlogPost(
+        slug="openpatcher-s1-exploitbench-cve-2024-2887",
+        title="New Open Source SOTA cybersecurity model released today: OpenPatcher-S1",
+        description=(
+            "OpenPatcher-S1 scored 7 out of 16 on AI IQ's ExploitBench CVE-2024-2887 "
+            "target, more than doubling the strongest open baseline in the public comparison "
+            "chart. Poseidon is still training and is already ahead internally."
+        ),
+        published_date="2026-07-01",
+        source_label="ExploitBench CVE-2024-2887",
+        source_url="https://exploitbench.ai/env/v8-cve-2024-2887/",
+        body_html="""
+<figure style="margin:0 0 36px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" width="100%" style="height:auto;display:block;border:1px solid #e5e7eb;border-radius:18px;background:#fff" role="img" aria-label="OpenPatcher-S1 scores 7 out of 16 on ExploitBench CVE-2024-2887, ahead of Kimi K2.6 at 3, GLM-5.1 at 2, and MiniMax M2.7 at 2">
+  <rect width="1200" height="760" fill="#ffffff"/>
+  <text x="60" y="78" font-family="Georgia,serif" font-size="38" font-weight="800" fill="#111827">ExploitBench CVE-2024-2887</text>
+  <text x="60" y="116" font-family="Inter,Arial,sans-serif" font-size="21" fill="#6b7280">Publicly available cyber model comparison. OpenPatcher-S1 is highlighted.</text>
+  <line x1="150" y1="178" x2="1110" y2="178" stroke="#e5e7eb" stroke-width="1"/>
+  <line x1="150" y1="310" x2="1110" y2="310" stroke="#e5e7eb" stroke-width="1"/>
+  <line x1="150" y1="442" x2="1110" y2="442" stroke="#e5e7eb" stroke-width="1"/>
+  <line x1="150" y1="574" x2="1110" y2="574" stroke="#e5e7eb" stroke-width="1"/>
+  <text x="122" y="184" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="17" fill="#6b7280">8</text>
+  <text x="122" y="316" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="17" fill="#6b7280">6</text>
+  <text x="122" y="448" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="17" fill="#6b7280">4</text>
+  <text x="122" y="580" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="17" fill="#6b7280">2</text>
+  <text x="122" y="706" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="17" fill="#6b7280">0</text>
+  <line x1="150" y1="700" x2="1110" y2="700" stroke="#d1d5db" stroke-width="1"/>
+
+  <rect x="192" y="238" width="180" height="462" rx="8" fill="#50c7bb"/>
+  <text x="282" y="222" text-anchor="middle" font-family="Georgia,serif" font-size="19" font-weight="800" fill="#6b7280">7.00 / 16.00</text>
+  <text x="282" y="735" text-anchor="middle" font-family="Georgia,serif" font-size="17" font-weight="700" fill="#111827">OpenPatcher-S1</text>
+  <text x="282" y="756" text-anchor="middle" font-family="Georgia,serif" font-size="16" fill="#6b7280">TrustedRouter + AI IQ</text>
+
+  <rect x="430" y="502" width="180" height="198" rx="8" fill="#aeb9c8"/>
+  <text x="520" y="486" text-anchor="middle" font-family="Georgia,serif" font-size="19" font-weight="800" fill="#6b7280">3.00 / 16.00</text>
+  <text x="520" y="735" text-anchor="middle" font-family="Georgia,serif" font-size="17" font-weight="700" fill="#6b7280">Kimi K2.6</text>
+  <text x="520" y="756" text-anchor="middle" font-family="Georgia,serif" font-size="16" fill="#6b7280">Kimi</text>
+
+  <rect x="668" y="568" width="180" height="132" rx="8" fill="#aeb9c8"/>
+  <text x="758" y="552" text-anchor="middle" font-family="Georgia,serif" font-size="19" font-weight="800" fill="#6b7280">2.00 / 16.00</text>
+  <text x="758" y="735" text-anchor="middle" font-family="Georgia,serif" font-size="17" font-weight="700" fill="#6b7280">GLM-5.1</text>
+  <text x="758" y="756" text-anchor="middle" font-family="Georgia,serif" font-size="16" fill="#6b7280">Z.ai</text>
+
+  <rect x="906" y="568" width="180" height="132" rx="8" fill="#aeb9c8"/>
+  <text x="996" y="552" text-anchor="middle" font-family="Georgia,serif" font-size="19" font-weight="800" fill="#6b7280">2.00 / 16.00</text>
+  <text x="996" y="735" text-anchor="middle" font-family="Georgia,serif" font-size="17" font-weight="700" fill="#6b7280">MiniMax M2.7</text>
+  <text x="996" y="756" text-anchor="middle" font-family="Georgia,serif" font-size="16" fill="#6b7280">MiniMax</text>
+
+  <text x="60" y="662" font-family="Inter,Arial,sans-serif" font-size="17" font-weight="800" fill="#0f6e56">AI IQ</text>
+  <text x="1110" y="662" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="17" font-weight="800" fill="#0f6e56">TrustedRouter.com</text>
+</svg>
+<figcaption style="font-family:Inter,system-ui,sans-serif;font-size:13px;line-height:1.45;color:#6b7280;margin-top:10px">Scores on AI IQ's public ExploitBench CVE-2024-2887 comparison chart. Higher is better. OpenPatcher-S1 is the TrustedRouter + AI IQ run.</figcaption>
+</figure>
+<p><a href="/models/trustedrouter/openpatcher-s1">OpenPatcher-S1</a> scored <strong>7 out of 16</strong> on the <a href="https://exploitbench.ai/env/v8-cve-2024-2887/">ExploitBench CVE-2024-2887</a> target.</p>
+<p>Seven out of sixteen is still ugly. It fails more than it passes. That is why the number is interesting. Kimi K2.6 gets 3. GLM-5.1 gets 2. MiniMax M2.7 gets 2. OpenPatcher-S1 more than doubles the strongest listed open baseline on the comparison chart, and it still leaves most of the ladder unsolved. That is exactly the kind of result worth publishing: strong enough to matter, incomplete enough that nobody can pretend the problem is done.</p>
+<table class="data-table">
+  <thead><tr><th>Model</th><th>Score</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><a href="/models/trustedrouter/openpatcher-s1"><span class="mono">trustedrouter/openpatcher-s1</span></a></td><td><strong>7 / 16</strong></td><td>TrustedRouter + AI IQ open patching model</td></tr>
+    <tr><td>Kimi K2.6</td><td>3 / 16</td><td>strongest listed baseline in the comparison chart</td></tr>
+    <tr><td>GLM-5.1</td><td>2 / 16</td><td>public model baseline</td></tr>
+    <tr><td>MiniMax M2.7</td><td>2 / 16</td><td>public model baseline</td></tr>
+  </tbody>
+</table>
+<p>I care about this benchmark because it is a ladder. The model has to find the patched code, trigger the bug, build useful primitives, and climb toward control in a real target environment. Multiple-choice cyber tests are too easy to fake. A ladder is harder to fake. You either reached the rung or you did not.</p>
+<p>OpenPatcher-S1 is built for defensive patching work. The job is to read vulnerable code, understand why the patch matters, and produce repair guidance that survives contact with a real environment. A model that cannot reason through the bug will not reliably fix the bug. That is the whole reason to test it this way.</p>
+<p>The obvious worry is that cyber evals drift into exploit marketing. Yes, they can. So the claim has to stay narrow. We are publishing the score, the target, and the comparison. We are not turning the post into a recipe. The useful product is a model that helps serious teams fix security bugs faster, under a route they can inspect.</p>
+<p>Poseidon is next. It is still training. On the same target it is already above OpenPatcher-S1 internally. I am not calling that a published result yet because that would be dumb. But it tells us the method is working. OpenPatcher-S1 was not a lucky prompt.</p>
+<p>On this target, among the open cyber models in the public comparison set, OpenPatcher-S1 is the result to beat. Poseidon is coming next.</p>
+""",
+    ),
+    BlogPost(
+        slug="socrates-1.1-terminal-bench-hard-72",
+        title="Socrates-1.1 just scored 72 on Terminal-Bench Hard",
+        description=(
+            "TrustedRouter Socrates-1.1 scored 72% on Terminal-Bench Hard, ahead of the "
+            "public Fable 5, GPT-5.5, and Opus 4.8 baselines on AI IQ. The reason is simple: no "
+            "model has a monopoly on knowledge."
+        ),
+        published_date="2026-06-29",
+        source_label="AI IQ Terminal-Bench Hard chart",
+        source_url="https://www.aiiq.org/charts/terminal-bench-hard-scores/",
+        og_image="/static/og/blog/socrates-1.1-terminal-bench-hard-72.png",
+        body_html="""
+<figure style="margin:0 0 44px">
+  <img src="/static/og/blog/socrates-1.1-terminal-bench-hard-72.svg" alt="TrustedRouter Socrates-1.1 scores 72 percent on Terminal-Bench Hard" style="display:block;width:100%;height:auto;border:1px solid #e5e7eb;border-radius:18px;background:#fff"/>
+</figure>
+<p>Socrates-1.1 just scored 72% on Terminal-Bench Hard.</p>
+<p>That puts a <a href="/models/trustedrouter/socrates-1.1">TrustedRouter combo model</a> ahead of the frontier baselines people were treating as the ceiling. The <a href="https://www.aiiq.org/charts/terminal-bench-hard-scores/">AI IQ Terminal-Bench Hard chart</a> currently lists Fable 5 at 63, GPT-5.5 at 61, and Opus 4.8 at 58. The new Socrates-1.1 run is 72. It also beat the GPT-5.6 comparison run we were using locally, while running faster and cheaper than the closed frontier comparison set.</p>
+<p>This is the point of <a href="/blog/combo-models-are-model-containers">combo models</a>. No model has a monopoly on knowledge. A bigger model does not automatically contain every strength of a smaller one. The models learn different things, miss different things, and break in different places. When the task is hard enough, those differences are useful.</p>
+<figure id="socrates-1.1-architecture" style="margin:48px 0">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 920" width="100%" style="height:auto" role="img" aria-label="Socrates-1.1 architecture diagram: a fast cheap model asks a smart advisor, which contains a parallel Synth panel, judge, and synthesizer before returning guidance">
+  <defs>
+    <marker id="spp-arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="12" markerHeight="12" orient="auto">
+      <path d="M2 2 L10 6 L2 10 Z" fill="#111827"/>
+    </marker>
+    <marker id="spp-arrow-muted" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="12" markerHeight="12" orient="auto">
+      <path d="M2 2 L10 6 L2 10 Z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="920" rx="30" fill="#0f172a"/>
+  <rect x="42" y="42" width="1116" height="836" rx="28" fill="#f8fafc"/>
+  <text x="92" y="104" font-family="Inter, Arial, sans-serif" font-size="27" font-weight="800" fill="#0f766e">Socrates-1.1</text>
+  <text x="92" y="158" font-family="Inter, Arial, sans-serif" font-size="43" font-weight="850" fill="#111827">One model id. A graph behind it.</text>
+  <text x="94" y="196" font-family="Inter, Arial, sans-serif" font-size="22" fill="#4b5563">Most requests stay fast and cheap. Hard requests can ask a stronger advisor.</text>
+
+  <rect x="82" y="322" width="258" height="126" rx="20" fill="#dbeafe" stroke="#2563eb" stroke-width="4"/>
+  <text x="211" y="370" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="25" font-weight="850" fill="#1e3a8a">Fast cheap</text>
+  <text x="211" y="404" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="25" font-weight="850" fill="#1e3a8a">worker</text>
+  <text x="211" y="432" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="15.5" fill="#2563eb">answers routine work directly</text>
+
+  <path d="M350 385 H386" fill="none" stroke="#111827" stroke-width="5" stroke-linecap="round" marker-end="url(#spp-arrow)"/>
+
+  <rect x="402" y="252" width="720" height="520" rx="28" fill="#fffbeb" stroke="#d97706" stroke-width="4"/>
+  <text x="438" y="304" font-family="Inter, Arial, sans-serif" font-size="31" font-weight="850" fill="#92400e">Smart advisor</text>
+  <text x="438" y="338" font-family="Inter, Arial, sans-serif" font-size="18" fill="#a16207">A private Synth flow runs inside the advisor box.</text>
+
+  <rect x="446" y="382" width="632" height="142" rx="22" fill="#ecfdf5" stroke="#059669" stroke-width="4"/>
+  <text x="762" y="416" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="19" font-weight="800" fill="#065f46">panel: 7 top models answer in parallel</text>
+  <text x="762" y="445" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="14.5" fill="#047857">Seven independent answers run at the same time.</text>
+  <rect x="484" y="472" width="60" height="38" rx="10" fill="#bbf7d0" stroke="#059669" stroke-width="3"/>
+  <rect x="564" y="472" width="60" height="38" rx="10" fill="#bbf7d0" stroke="#059669" stroke-width="3"/>
+  <rect x="644" y="472" width="60" height="38" rx="10" fill="#bbf7d0" stroke="#059669" stroke-width="3"/>
+  <rect x="724" y="472" width="60" height="38" rx="10" fill="#bbf7d0" stroke="#059669" stroke-width="3"/>
+  <rect x="804" y="472" width="60" height="38" rx="10" fill="#bbf7d0" stroke="#059669" stroke-width="3"/>
+  <rect x="884" y="472" width="60" height="38" rx="10" fill="#bbf7d0" stroke="#059669" stroke-width="3"/>
+  <rect x="964" y="472" width="60" height="38" rx="10" fill="#bbf7d0" stroke="#059669" stroke-width="3"/>
+  <text x="514" y="497" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="800" fill="#065f46">1</text>
+  <text x="594" y="497" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="800" fill="#065f46">2</text>
+  <text x="674" y="497" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="800" fill="#065f46">3</text>
+  <text x="754" y="497" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="800" fill="#065f46">4</text>
+  <text x="834" y="497" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="800" fill="#065f46">5</text>
+  <text x="914" y="497" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="800" fill="#065f46">6</text>
+  <text x="994" y="497" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="800" fill="#065f46">7</text>
+
+  <path d="M916 536 V562" fill="none" stroke="#111827" stroke-width="5" stroke-linecap="round" marker-end="url(#spp-arrow)"/>
+  <rect x="806" y="578" width="220" height="94" rx="18" fill="#ffffff" stroke="#0f766e" stroke-width="4"/>
+  <text x="916" y="617" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="25" font-weight="850" fill="#0f766e">Judge</text>
+  <text x="916" y="647" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="15" fill="#047857">selects the best parts</text>
+
+  <path d="M798 625 H720" fill="none" stroke="#111827" stroke-width="5" stroke-linecap="round" marker-end="url(#spp-arrow)"/>
+  <rect x="472" y="578" width="240" height="94" rx="18" fill="#ffffff" stroke="#0f766e" stroke-width="4"/>
+  <text x="592" y="617" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="25" font-weight="850" fill="#0f766e">Synthesizer</text>
+  <text x="592" y="647" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="15" fill="#047857">writes guidance</text>
+
+  <path d="M464 625 H352" fill="none" stroke="#64748b" stroke-width="5" stroke-linecap="round" stroke-dasharray="10 9" marker-end="url(#spp-arrow-muted)"/>
+
+  <rect x="82" y="604" width="258" height="118" rx="20" fill="#ffffff" stroke="#cbd5e1" stroke-width="3"/>
+  <text x="211" y="650" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="850" fill="#111827">Final answer</text>
+  <text x="211" y="682" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="15.5" fill="#4b5563">One OpenAI-compatible</text>
+  <text x="211" y="706" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="15.5" fill="#4b5563">response to the caller.</text>
+
+  <text x="92" y="820" font-family="Inter, Arial, sans-serif" font-size="18" fill="#4b5563">guidance returns to worker; the caller receives one OpenAI-compatible answer.</text>
+  <text x="92" y="850" font-family="Inter, Arial, sans-serif" font-size="18" fill="#4b5563">The model names can change over time. The durable shape is worker + advisor + panel + judge + synthesizer.</text>
+</svg>
+<figcaption style="font-family:Inter,system-ui,sans-serif;font-size:13px;line-height:1.45;color:#6b7280;margin-top:10px">Socrates-1.1 is a combo model. The advisor is itself a Synth-style flow: parallel panel, judge, synthesizer, then guidance back to the worker.</figcaption>
+</figure>
+<p>Terminal-Bench Hard is a good place to see it because the benchmark is annoying in the right way. It asks models to fix real terminal tasks. Cancel async work. Patch a vuln. Move across languages. Read Rust and C. Debug a webserver. Recover a password. These are not clean trivia questions with one memorized answer. They are little software jobs, and little software jobs punish models that are good in the average case but bad at the weird edge.</p>
+<figure style="margin:32px 0">
+  <img src="/static/blog/terminal-bench-hard-subset.jpg" alt="Subset of Terminal-Bench Hard task outcomes comparing GPT-5.5, Gemini 3.1 Pro, GLM 5.2, MiniMax M3, Claude Opus 4.8, Kimi K2.6, MiMo 2.5 Pro, Grok 4.3, and Nemotron 3 Ultra" style="display:block;width:100%;height:auto;border:1px solid #e5e7eb;border-radius:12px;background:#fff"/>
+  <figcaption style="font-family:Inter,system-ui,sans-serif;font-size:13px;line-height:1.45;color:#6b7280;margin-top:10px">A subset of the Terminal-Bench Hard run. The full score is across the benchmark, not only these rows.</figcaption>
+</figure>
+<p>Look at the sample. GPT-5.5 and Gemini 3.1 Pro get five of six in this slice, but both miss Rust/C. GLM 5.2 gets Rust/C and misses the webserver. MiniMax M3 gets four and times out on FEAL. Opus gets three. Kimi gets three with timeouts. Nobody owns the whole table.</p>
+<p>The combination is plain engineering. Ask several strong models. Let them fail in different places. Use a strong synthesizer to keep the useful parts and throw away the bad parts. This is why <a href="/blog/synth-iris-prometheus-zeus">Synth</a> exists, and why <a href="/blog/fusion-evals-open-source">the earlier DRACO result</a> mattered. The same idea is showing up again on Terminal-Bench Hard.</p>
+<p>The important part is the API shape. You do not need to wire a research harness into your app to use this. You call <span class="mono">trustedrouter/socrates-1.1</span> through the normal OpenAI-compatible endpoint. Behind that model id, the attested gateway can run the worker, the nested advisor chain, and the final synthesis, then return one answer. It is the same model-container idea from <a href="/blog/combo-models-are-model-containers">the combo models post</a>, now with a score that is hard to ignore.</p>
+<p>There is an obvious objection. Ensembles are old. Yes. So are compilers and databases. The useful thing is making the abstraction boring enough that people can depend on it. A model id should be able to package a real graph of model calls, publish its score, publish its sub-models, and run inside infrastructure that developers can verify. That is the line from <a href="/blog/attestation-is-all-you-need">attestation</a> to <a href="/blog/the-best-open-models-arent-on-your-leaderboard">open models</a> to combo models.</p>
+<p>TrustedRouter is built for that. The model pages show the routes. The <a href="/leaderboard">leaderboard</a> shows health and latency. The <a href="https://trust.trustedrouter.com/">trust page</a> lets an agent verify the gateway binary before sending prompts. The score is the exciting part, but the product only matters if people can use the winning model without handing their terminal session to a black box.</p>
+<p>Socrates-1.1 is now the leading model in our Terminal-Bench Hard run. The strongest answer is often spread across several models, and the router can finally make that usable as one model.</p>
+""",
+    ),
+    BlogPost(
+        slug="combo-models-are-model-containers",
+        title="Combo models are model containers",
+        description=(
+            "TrustedRouter now lets one model id package a graph of models: Synth panels, advisor "
+            "models, selectors, and mapreduce flows. The API call still looks like one model. Inside, "
+            "the attested gateway can route work across specialized models and return one answer."
+        ),
+        published_date="2026-06-28",
+        source_label=None,
+        source_url=None,
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
+  <rect width="1200" height="630" fill="#0f172a"/>
+  <rect x="42" y="42" width="1116" height="546" rx="36" fill="#f8fafc"/>
+  <text x="88" y="102" font-size="24" font-weight="800" fill="#0f766e">TrustedRouter</text>
+  <text x="88" y="170" font-size="64" font-weight="850" fill="#111827">Combo models</text>
+  <text x="92" y="217" font-size="25" fill="#4b5563">A model id can package a panel, advisor, selector, or mapreduce graph.</text>
+  <text x="92" y="253" font-size="25" fill="#4b5563">You call one model. The attested gateway runs the structure inside.</text>
+  <rect x="86" y="338" width="150" height="82" rx="16" fill="#e0f2fe" stroke="#0284c7" stroke-width="3"/>
+  <text x="161" y="387" text-anchor="middle" font-size="25" font-weight="800" fill="#075985">Request</text>
+  <line x1="244" y1="379" x2="328" y2="379" stroke="#0f172a" stroke-width="5" stroke-linecap="round"/>
+  <polygon points="328,379 310,366 310,392" fill="#0f172a"/>
+  <rect x="346" y="294" width="494" height="190" rx="24" fill="#ffffff" stroke="#111827" stroke-width="4"/>
+  <text x="593" y="330" text-anchor="middle" font-size="22" font-weight="850" fill="#111827">Model container</text>
+  <rect x="385" y="354" width="116" height="82" rx="14" fill="#ecfdf5" stroke="#059669" stroke-width="3"/>
+  <text x="443" y="386" text-anchor="middle" font-size="18" font-weight="800" fill="#065f46">Synth</text>
+  <text x="443" y="414" text-anchor="middle" font-size="15" fill="#047857">panel</text>
+  <rect x="530" y="354" width="116" height="82" rx="14" fill="#fef3c7" stroke="#d97706" stroke-width="3"/>
+  <text x="588" y="386" text-anchor="middle" font-size="18" font-weight="800" fill="#92400e">Advisor</text>
+  <text x="588" y="414" text-anchor="middle" font-size="15" fill="#a16207">optional</text>
+  <rect x="675" y="354" width="116" height="82" rx="14" fill="#eef2ff" stroke="#4f46e5" stroke-width="3"/>
+  <text x="733" y="386" text-anchor="middle" font-size="18" font-weight="800" fill="#3730a3">Selector</text>
+  <text x="733" y="414" text-anchor="middle" font-size="15" fill="#4338ca">choose</text>
+  <path d="M443 452 C510 494, 656 494, 733 452" fill="none" stroke="#94a3b8" stroke-width="4" stroke-dasharray="9 8"/>
+  <line x1="848" y1="379" x2="932" y2="379" stroke="#0f172a" stroke-width="5" stroke-linecap="round"/>
+  <polygon points="932,379 914,366 914,392" fill="#0f172a"/>
+  <rect x="950" y="338" width="164" height="82" rx="16" fill="#dcfce7" stroke="#16a34a" stroke-width="3"/>
+  <text x="1032" y="387" text-anchor="middle" font-size="25" font-weight="800" fill="#166534">Answer</text>
+  <text x="89" y="543" font-size="22" fill="#374151">Standard containers made shipping composable. Combo models do that for model orchestration.</text>
+</svg>
+</figure>
+<p>Combo models are model containers.</p>
+<p>Before container shipping, loading a ship was bespoke. Every crate, barrel, and machine had to be handled as its own weird object. The standard container made the unit boring, which made the system fast. Ports, trucks, cranes, ships, warehouses, insurance, finance, and customs could all speak the same shape.</p>
+<p>There is a circuit analogy too. A useful circuit diagram is not one giant blob called "computer." It is made out of blocks with names and contracts: gates, adders, registers, clocks, buses, memory. You can reason about each piece, test it, reuse it, and then wire it into something larger. Combo models should work like that. Advisor, Synth, selector, and mapreduce are the blocks. Socrates, Plato, Prometheus, and Zeus are named circuit modules built from those blocks. Bigger combo models are the diagram that wires them together.</p>
+<p>The same thing is starting to happen with model orchestration. The token API made one model callable. Combo models make a whole structure callable. A panel, a judge, an advisor, a selector, a mapreduce graph, or a chain of those pieces can sit behind one model id.</p>
+<p>That is what we just launched on TrustedRouter.</p>
+<p>We are experimenting with a new way to make models. We call them Combo models, or combination models. You compose them from simple building blocks into much larger systems, then expose the result through the same standardized token API as any other model. The important part is that the composition becomes a named model published on TrustedRouter, with visible sub-models, public evals, and privacy routing that can include <a href="/models/trustedrouter/e2e">end-to-end encrypted</a> execution.</p>
+<p>That changes the marketplace. A stranger can publish a useful composition without asking you to trust their server or their prompt logger. You can inspect the structure, inspect the evals, and have an agent verify the <a href="https://trust.trustedrouter.com/">attested gateway</a> before sending traffic. The prompts and the composition can come from people you do not know, while the data path stays verifiable. This is the hosted <a href="https://jperla.com/blog/the-future-is-claudevm">ClaudeVM</a> marketplace: executable model systems, packaged as normal model ids, sold and evaluated like software, but called like tokens.</p>
+<p>We are already seeing open combo models push past closed, restricted baselines in the dimensions developers care about: correctness, speed, price, reliability, transparency, and freedom. The point is not another hidden benchmark claim. The point is that the model page can show the wiring, the provider routes, the privacy class, and the scorecard in public.</p>
+<figure style="margin:32px 0">
+  <img src="/static/og/blog/combination-models-infographic.svg" alt="TrustedRouter combo models infographic" style="display:block;width:100%;height:auto;border:1px solid #e5e7eb;border-radius:18px;background:#fff"/>
+</figure>
+<p>The API call still looks normal:</p>
+<pre><code>model = "trustedrouter/advisor"</code></pre>
+<p>Inside the attested gateway, that one model id can run a fast worker and give it a private advisor tool. You can call the generic primitive directly with <a href="/models/trustedrouter/advisor"><span class="mono">trustedrouter/advisor</span></a> and send the advisor parameters yourself, the same way <a href="/docs/synth"><span class="mono">trustedrouter/synth</span></a> accepts a panel, judge list, and final model list. Or you can call a named preset like <a href="/models/trustedrouter/socrates-1.0"><span class="mono">trustedrouter/socrates-1.0</span></a> and let the catalog pick the sub-model stack.</p>
+<p>A different id can run a fusion panel. Another can split work into parallel parts and reduce the result. Another can select the best answer from several candidates. The caller does not need to wire all of that together on every request.</p>
+<p>This is already in the product. The catalog now includes the <a href="/docs/synth">Synth</a> family, <a href="/docs/agent-setup#socrates">advisor orchestration</a>, <a href="/models/trustedrouter/selector">selector</a>, and <a href="/models/trustedrouter/mapreduce">mapreduce</a> models.</p>
+<table class="data-table">
+  <tr><th>primitive</th><th>how you call it</th><th>what you configure</th></tr>
+  <tr><td><strong>Advisor</strong></td><td><a href="/models/trustedrouter/advisor"><span class="mono">trustedrouter/advisor</span></a> with tool <span class="mono">trustedrouter:advisor</span></td><td><span class="mono">advisor_models</span>, max advice calls, depth, advisor token budget, timeout</td></tr>
+  <tr><td><strong>Synth</strong></td><td><a href="/docs/synth"><span class="mono">trustedrouter/synth</span></a> with tool <span class="mono">trustedrouter:synth</span></td><td><span class="mono">analysis_models</span>, <span class="mono">judge_models</span>, <span class="mono">final_models</span>, fallback final models, selection strategy</td></tr>
+  <tr><td><strong>Selector</strong></td><td><a href="/models/trustedrouter/selector"><span class="mono">trustedrouter/selector</span></a></td><td>candidate models and selection policy</td></tr>
+  <tr><td><strong>MapReduce</strong></td><td><a href="/models/trustedrouter/mapreduce"><span class="mono">trustedrouter/mapreduce</span></a></td><td>shard models, reduce model, fallback policy</td></tr>
+</table>
+<p>The named models are presets, not a different abstraction. Socrates, Plato, Aristotle, Iris, Prometheus, and Zeus are the branded containers. The sub-models define what is inside them.</p>
+<table class="data-table">
+  <tr><th>preset</th><th>primitive</th><th>sub-model stack</th></tr>
+  <tr><td><a href="/models/trustedrouter/socrates-1.0"><strong>Socrates</strong></a></td><td>advisor</td><td><span class="mono">cerebras/gpt-oss-120b</span> worker, then <span class="mono">cerebras/zai-glm-4.7</span>, <span class="mono">xiaomi/mimo-v2.5-pro-ultraspeed</span>, <span class="mono">trustedrouter/zeus-1.0</span></td></tr>
+  <tr><td><a href="/models/trustedrouter/aristotle"><strong>Aristotle</strong></a></td><td>advisor</td><td><span class="mono">glm-5.2-fast</span> and <span class="mono">glm-5.2</span> workers, then <span class="mono">trustedrouter/zeus-1.0</span> advisor</td></tr>
+  <tr><td><a href="/models/trustedrouter/plato"><strong>Plato</strong></a></td><td>advisor</td><td><span class="mono">deepseek/deepseek-v4-flash</span> worker, then open advisors: <span class="mono">glm-5.2</span>, <span class="mono">minimax-m3</span>, <span class="mono">kimi-k2.6</span>, <span class="mono">gemma-4-31b-it</span>, <span class="mono">deepseek-v4-pro</span></td></tr>
+  <tr><td><a href="/models/trustedrouter/prometheus"><strong>Prometheus</strong></a></td><td>synth</td><td>open model panel with <span class="mono">MiniMax M3</span>, <span class="mono">Kimi K2.6</span>, <span class="mono">GLM 5.2</span>, <span class="mono">Gemma 4</span>, and <span class="mono">DeepSeek V4 Pro</span></td></tr>
+  <tr><td><a href="/models/trustedrouter/zeus"><strong>Zeus</strong></a></td><td>synth</td><td>frontier panel with open-model judge and synthesizer, built for max answer quality</td></tr>
+  <tr><td><a href="/models/trustedrouter/iris"><strong>Iris</strong></a></td><td>synth</td><td>budget panel with <span class="mono">MiniMax M3</span>, <span class="mono">Kimi K2.6</span>, and <span class="mono">DeepSeek V4 Pro</span></td></tr>
+</table>
+<p>A combo model can contain advisors which are themselves combo models. A Synth can ask several advisors. A selector can choose between Synth outputs. MapReduce can run a cheap model over many shards and reserve a smarter model for the final reduce. Once the unit is a model id, the graph becomes reusable.</p>
+<p>This matters most when it becomes an artifact other people can use. Today you can call our shipped combo models and inspect the model pages. The next step is a public builder: define a combo model, run evals, publish the scorecard, set a price, and offer it on TrustedRouter. The marketplace should care about measured <a href="/leaderboard">quality per dollar, latency, privacy class, and reliability</a>, not vibes.</p>
+<p>There is prior art here. DSPy got the important abstraction right: programs made of model calls should be typed, optimized, and evaluated. TrustedRouter is taking that idea to the hosted token API boundary. You should be able to put a serious orchestration graph behind an OpenAI-compatible model id, make it private, test it, and let another developer call it without copying your prompt graph into their app.</p>
+<p>The privacy part is not decoration. Combo models can create many subcalls. If those subcalls spray prompts across random systems, nobody should use this for legal, medical, financial, or proprietary work. TrustedRouter runs prompt traffic through the attested gateway, and the <a href="https://trust.trustedrouter.com/">trust page</a> lets an agent verify what code is running. For the highest privacy classes we expose routes like <a href="/models/trustedrouter/zdr"><span class="mono">trustedrouter/zdr</span></a> and <a href="/models/trustedrouter/e2e"><span class="mono">trustedrouter/e2e</span></a>. The goal is simple: powerful orchestration without making users give up control of their data.</p>
+<p>The model id is becoming the package boundary. That is the launch.</p>
+<p><a href="/docs/agent-setup">Use it from the API</a>, or start with <a href="/models/trustedrouter/socrates-1.0"><span class="mono">trustedrouter/socrates-1.0</span></a>, <a href="/models/trustedrouter/prometheus"><span class="mono">trustedrouter/prometheus</span></a>, and <a href="/models/trustedrouter/selector"><span class="mono">trustedrouter/selector</span></a>. If you want to design a combo model and sell it, that is where this is going next.</p>
+""",
+    ),
+    BlogPost(
+        slug="synth-iris-prometheus-zeus",
+        title="Synth beats Fable 5: introducing Iris, Zeus, and Prometheus",
+        description=(
+            "Synth now ships as three named presets — Iris 1.0 (trustedrouter/iris), Prometheus 1.0 "
+            "(trustedrouter/prometheus), and Zeus 1.0 (trustedrouter/zeus) — one fusion engine, three "
+            "panels. On a score-vs-cost chart of DRACO deep research they trace the efficient frontier: "
+            "Prometheus scores 69.2 at open-model cost, beating Fable 5 (65.3) for roughly a seventh of the "
+            "price; Zeus tops out at 73.4, the state of the art; Iris is the cheapest way in at 62.6. "
+            "And for code and the agents that write it, trustedrouter/synth-code is the same fusion "
+            "tuned end to end — code-specific panel and synthesis prompts and a code-tuned judge."
+        ),
+        published_date="2026-06-24",
+        source_label="TrustedRouter-Fusion-Draco on GitHub",
+        source_url="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco",
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif"><rect width="1200" height="630" fill="#ffffff"/><text x="60" y="54" font-size="33" font-weight="700"><tspan fill="#1d9e75">TrustedRouter.com:</tspan><tspan fill="#111827" dx="12">Synth beats Fable 5 at a fraction of the cost</tspan></text><text x="60" y="88" font-size="18" fill="#6b7280">DRACO deep-research score vs estimated cost to run all 100 tasks &#183; cheaper &#8594; right &#183; Iris / Prometheus / Zeus trace the frontier</text><line x1="160.0" y1="501" x2="1050.0" y2="501" stroke="#eef0f2"/><text x="148.0" y="506" font-size="15" text-anchor="end" fill="#9a9890">40</text><line x1="160.0" y1="453" x2="1050.0" y2="453" stroke="#eef0f2"/><text x="148.0" y="458" font-size="15" text-anchor="end" fill="#9a9890">45</text><line x1="160.0" y1="405" x2="1050.0" y2="405" stroke="#eef0f2"/><text x="148.0" y="410" font-size="15" text-anchor="end" fill="#9a9890">50</text><line x1="160.0" y1="357" x2="1050.0" y2="357" stroke="#eef0f2"/><text x="148.0" y="362" font-size="15" text-anchor="end" fill="#9a9890">55</text><line x1="160.0" y1="309" x2="1050.0" y2="309" stroke="#eef0f2"/><text x="148.0" y="314" font-size="15" text-anchor="end" fill="#9a9890">60</text><line x1="160.0" y1="261" x2="1050.0" y2="261" stroke="#eef0f2"/><text x="148.0" y="266" font-size="15" text-anchor="end" fill="#9a9890">65</text><line x1="160.0" y1="213" x2="1050.0" y2="213" stroke="#eef0f2"/><text x="148.0" y="218" font-size="15" text-anchor="end" fill="#9a9890">70</text><line x1="1050" y1="165.0" x2="1050" y2="520.0" stroke="#f6f5f1"/><text x="1050" y="548" font-size="14" text-anchor="middle" fill="#9a9890">$0</text><line x1="1016" y1="165.0" x2="1016" y2="520.0" stroke="#f6f5f1"/><text x="1016" y="548" font-size="14" text-anchor="middle" fill="#9a9890">$10</text><line x1="964" y1="165.0" x2="964" y2="520.0" stroke="#f6f5f1"/><text x="964" y="548" font-size="14" text-anchor="middle" fill="#9a9890">$25</text><line x1="879" y1="165.0" x2="879" y2="520.0" stroke="#f6f5f1"/><text x="879" y="548" font-size="14" text-anchor="middle" fill="#9a9890">$50</text><line x1="708" y1="165.0" x2="708" y2="520.0" stroke="#f6f5f1"/><text x="708" y="548" font-size="14" text-anchor="middle" fill="#9a9890">$100</text><line x1="434" y1="165.0" x2="434" y2="520.0" stroke="#f6f5f1"/><text x="434" y="548" font-size="14" text-anchor="middle" fill="#9a9890">$180</text><line x1="194" y1="165.0" x2="194" y2="520.0" stroke="#f6f5f1"/><text x="194" y="548" font-size="14" text-anchor="middle" fill="#9a9890">$250</text><text x="605" y="576" font-size="16" text-anchor="middle" fill="#6b7280">estimated cost to run 100 DRACO tasks  (cheaper &#8594;)</text><text x="34" y="342" font-size="16" text-anchor="middle" fill="#6b7280" transform="rotate(-90 34 342)">DRACO score</text><polyline points="434,180 934,221 982,284" fill="none" stroke="#1d9e75" stroke-width="2.5" stroke-dasharray="7 5" stroke-opacity="0.5"/><circle cx="194" cy="258" r="6" fill="#b4b2a9"/><text x="208" y="263" font-size="14" text-anchor="start" fill="#6f6e69">Fable 5</text><circle cx="622" cy="302" r="6" fill="#b4b2a9"/><text x="622" y="324" font-size="14" text-anchor="middle" fill="#6f6e69">Opus 4.8</text><circle cx="930" cy="280" r="6" fill="#b4b2a9"/><text x="916" y="285" font-size="14" text-anchor="end" fill="#6f6e69">GPT-5.5</text><circle cx="930" cy="430" r="6" fill="#b4b2a9"/><text x="930" y="452" font-size="14" text-anchor="middle" fill="#6f6e69">Gemini 3.1 Pro</text><circle cx="1029" cy="310" r="6" fill="#b4b2a9"/><text x="1029" y="334" font-size="14" text-anchor="middle" fill="#6f6e69">DeepSeek V4 Pro</text><circle cx="1023" cy="404" r="6" fill="#b4b2a9"/><text x="1009" y="409" font-size="14" text-anchor="end" fill="#6f6e69">Kimi K2.6</text><circle cx="1043" cy="490" r="6" fill="#b4b2a9"/><text x="1029" y="495" font-size="14" text-anchor="end" fill="#6f6e69">Gemini 3 Flash</text><circle cx="982" cy="284" r="9" fill="#3b82c4"/><text x="992" y="275" font-size="18" font-weight="700" text-anchor="start" fill="#3b82c4">Iris 1.0</text><text x="992" y="295" font-size="14" font-weight="600" text-anchor="start" fill="#374151">62.6 &#183; ~$20</text><circle cx="934" cy="221" r="9" fill="#1d9e75"/><text x="934" y="201" font-size="18" font-weight="700" text-anchor="middle" fill="#1d9e75">Prometheus 1.0</text><text x="914" y="246" font-size="14" font-weight="600" text-anchor="end" fill="#374151">69.2 &#183; ~$34</text><circle cx="434" cy="180" r="9" fill="#534ab7"/><text x="434" y="163" font-size="18" font-weight="700" text-anchor="middle" fill="#534ab7">Zeus 1.0</text><text x="434" y="205" font-size="14" font-weight="600" text-anchor="middle" fill="#374151">73.4 &#183; ~$180</text><text x="60" y="600" font-size="16" fill="#888780">Prometheus matches frontier quality at open-model cost. Zeus is the ceiling. Iris is the cheapest way in.</text><text x="1188" y="600" text-anchor="end" font-size="20" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+</figure>
+<p>Synth &mdash; <a href="/synth">TrustedRouter's multi-model fusion</a>, where a panel of models each answers a question, a judge weighs the answers, and a synthesizer writes the final one &mdash; now ships as three named presets. They share one fusion engine: a <span class="mono">Kimi K2.6</span> judge and a <span class="mono">GLM 5.2</span> synthesizer, the pairing our <a href="/blog/fusion-is-two-jobs">judge-and-synthesizer tests</a> put on top. What changes between them is the panel. One model id each, the whole thing inside the attested gateway.</p>
+<table class="data-table"><tr><th>preset</th><th>model id</th><th>panel</th><th>DRACO</th><th>est. $ / 100 tasks</th></tr><tr><td><strong style="color:#2f6fb3">Iris 1.0</strong></td><td><span class="mono">trustedrouter/iris</span></td><td>budget</td><td>62.6</td><td>~$20</td></tr><tr><td><strong style="color:#1d9e75">Prometheus 1.0</strong></td><td><span class="mono">trustedrouter/prometheus</span></td><td>all open-weights</td><td><strong>69.2</strong></td><td>~$34</td></tr><tr><td><strong style="color:#534ab7">Zeus 1.0</strong></td><td><span class="mono">trustedrouter/zeus</span></td><td>commercial frontier</td><td><strong>73.4</strong></td><td>~$180</td></tr></table>
+<p><strong>The three presets are the efficient frontier.</strong> Plot DRACO deep-research score against what it costs to run the whole 100-task benchmark and the three trace the upper-left edge &mdash; every standalone model, open or frontier, sits below them. <span class="mono">Fable 5</span>, the model OpenRouter built its best fusion on, scores 65.3 for an estimated $250 a run; Prometheus scores 69.2 for about $34. Synth beats Fable 5 by four points at roughly a seventh of the cost.</p>
+<p><strong>Prometheus is the one most people should reach for.</strong> Its panel is <a href="/blog/the-best-open-models-arent-on-your-leaderboard">all open-weights</a> &mdash; <span class="mono">MiniMax M3</span>, <span class="mono">Kimi K2.6</span>, <span class="mono">GLM 5.2</span>, <span class="mono">Gemma 4</span>, <span class="mono">DeepSeek V4 Pro</span> &mdash; so nothing in it is closed or priced like the frontier, and it still lands within four points of the best score we have ever measured while clearing every frontier solo: Opus 4.8 at 60.7, GPT-5.5 at 63.0, Fable 5 at 65.3. Near-frontier deep research at open-model cost.</p>
+<p><strong>Zeus is the ceiling.</strong> Put the commercial frontier on the panel, keep the same open-model judge and synthesizer, and Synth reaches 73.4 &mdash; the <a href="/blog/fusion-evals-open-source">state of the art on DRACO</a>, above OpenRouter's published best. It runs about five times the cost of Prometheus, so it is the preset for when the answer matters more than the bill. <strong>Iris is the cheapest way in</strong> &mdash; its panel is three open-weight models, <span class="mono">MiniMax M3</span>, <span class="mono">Kimi K2.6</span>, and <span class="mono">DeepSeek V4 Pro</span>, fused by the same Kimi judge and GLM synthesizer. 62.6 for about $20, above any single budget model.</p>
+<p>Pick by id &mdash; <span class="mono">trustedrouter/iris</span>, <span class="mono">trustedrouter/prometheus</span>, or <span class="mono">trustedrouter/zeus</span> &mdash; on the same OpenAI-compatible API, with the panel, judge, and synthesis all running inside the <a href="/synth">attested gateway</a>. Send the cheap prompts to Iris, the everyday hard ones to Prometheus, and the few that have to be right to Zeus.</p>
+<p><strong>Coding and agents get their own preset.</strong> <span class="mono">trustedrouter/synth-code</span> is the same fusion, tuned end to end for code. The whole harness is code-shaped: the panel runs a code-specific prompt, the judge is <span class="mono">Kimi K2.7-code</span> in place of the general <span class="mono">Kimi K2.6</span>, and the synthesizer works from a code-specific synthesis prompt &mdash; so how the drafts get written, weighed, and stitched into the final answer is all built around code instead of prose. A judge that knows code is better at telling a patch that compiles and passes from one that only reads well. Drop it into a coding agent the same way as the rest: <span class="mono">trustedrouter/synth-code</span> on the OpenAI-compatible API, panel, judge, and synthesis all inside the <a href="/synth">attested gateway</a>. The presets above are graded on DRACO deep research; <span class="mono">synth-code</span> is the build for code and the agents that write it &mdash; for when you want several models to agree on the diff before it ships.</p>
+<p>A note on the numbers. Scores are DRACO, graded the way the rest of this series is. The cost figures are estimates for a full 100-task run, derived from measured token usage and public per-token pricing and anchored to two we have published (an open model around $9 a run, Fable 5 around $250) &mdash; read them as order-of-magnitude, not invoices. The eval harness and per-task scores are <a href="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco">public</a>. <a href="/synth">Try Synth &rarr;</a></p>
+""",
+    ),
+    BlogPost(
+        slug="self-fusion-gain-lives-in-the-synthesizer",
+        title="Self-fusion's gain lives in the synthesizer, not the judge",
+        description=(
+            "Self-fusion gives Sonnet 4.6 +8.0 on DRACO. We took it apart: hold the ten Sonnet "
+            "drafts fixed and swap only the fuser to Haiku and the gain collapses to +2.2 — the "
+            "fuser is the lever, not the drafts. Split the fuser into judge and synthesizer and run "
+            "the 2×2: the synthesizer carries everything, the judge is nearly free. A cheap Haiku "
+            "judge feeding a Sonnet synthesizer (+9.2) matches the all-Sonnet fuser. Spend on the one "
+            "synthesis call; route the rest cheap."
+        ),
+        published_date="2026-06-24",
+        source_label="TrustedRouter-Fusion-Draco on GitHub",
+        source_url="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco",
+        body_html="""
+<p class="callout"><strong><a href="/synth">Synth</a></strong> is TrustedRouter's multi-model fusion &mdash; a panel of models, a judge, and a synthesizer behind one API. This is the research behind it. <a href="/synth">Try Synth &rarr;</a></p>
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif"><rect width="1200" height="630" fill="#ffffff"/><text x="60" y="56" font-size="34" font-weight="700"><tspan fill="#1d9e75">TrustedRouter.com:</tspan><tspan fill="#111827" dx="12">in self-fusion, the synthesizer is the lever</tspan></text><text x="60" y="90" font-size="19" fill="#6b7280">DRACO self-fusion gain (mean N&#8805;2 &#8722; N=1) &#183; same Sonnet drafts &#183; 23 shared tasks &#183; Sonnet-4.6 grader &#183; whiskers = 95% bootstrap CI</text><line x1="150" y1="500" x2="1090" y2="500" stroke="#eef0f2"/><text x="138" y="505" font-size="15" text-anchor="end" fill="#9a9890">-3</text><line x1="150" y1="445" x2="1090" y2="445" stroke="#eef0f2"/><text x="138" y="450" font-size="15" text-anchor="end" fill="#9a9890">+0</text><line x1="150" y1="390" x2="1090" y2="390" stroke="#eef0f2"/><text x="138" y="395" font-size="15" text-anchor="end" fill="#9a9890">+3</text><line x1="150" y1="335" x2="1090" y2="335" stroke="#eef0f2"/><text x="138" y="340" font-size="15" text-anchor="end" fill="#9a9890">+6</text><line x1="150" y1="280" x2="1090" y2="280" stroke="#eef0f2"/><text x="138" y="285" font-size="15" text-anchor="end" fill="#9a9890">+9</text><line x1="150" y1="225" x2="1090" y2="225" stroke="#eef0f2"/><text x="138" y="230" font-size="15" text-anchor="end" fill="#9a9890">+12</text><line x1="150" y1="170" x2="1090" y2="170" stroke="#eef0f2"/><text x="138" y="175" font-size="15" text-anchor="end" fill="#9a9890">+15</text><line x1="150" y1="445" x2="1090" y2="445" stroke="#9ca3af" stroke-width="1.4"/><rect x="200" y="298" width="92" height="147" rx="4" fill="#1d9e75"/><line x1="246" y1="361" x2="246" y2="238" stroke="#1f2937" stroke-width="2"/><line x1="240" y1="361" x2="252" y2="361" stroke="#1f2937" stroke-width="2"/><line x1="240" y1="238" x2="252" y2="238" stroke="#1f2937" stroke-width="2"/><text x="246" y="228" font-size="20" font-weight="700" text-anchor="middle" fill="#111827">+8.0</text><text x="246" y="526" font-size="15" text-anchor="middle" fill="#374151">Sonnet judge</text><rect x="322" y="276" width="92" height="169" rx="4" fill="#c98a1e"/><line x1="368" y1="355" x2="368" y2="186" stroke="#1f2937" stroke-width="2"/><line x1="362" y1="355" x2="374" y2="355" stroke="#1f2937" stroke-width="2"/><line x1="362" y1="186" x2="374" y2="186" stroke="#1f2937" stroke-width="2"/><text x="368" y="176" font-size="20" font-weight="700" text-anchor="middle" fill="#111827">+9.2</text><text x="368" y="526" font-size="15" text-anchor="middle" fill="#374151">Haiku judge</text><text x="307" y="554" font-size="21" font-weight="600" text-anchor="middle" fill="#111827">Sonnet synthesizer</text><rect x="666" y="364" width="92" height="81" rx="4" fill="#1d9e75"/><line x1="712" y1="443" x2="712" y2="289" stroke="#1f2937" stroke-width="2"/><line x1="706" y1="443" x2="718" y2="443" stroke="#1f2937" stroke-width="2"/><line x1="706" y1="289" x2="718" y2="289" stroke="#1f2937" stroke-width="2"/><text x="712" y="279" font-size="20" font-weight="700" text-anchor="middle" fill="#111827">+4.4</text><text x="712" y="526" font-size="15" text-anchor="middle" fill="#374151">Sonnet judge</text><rect x="788" y="405" width="92" height="40" rx="4" fill="#c98a1e"/><line x1="834" y1="482" x2="834" y2="322" stroke="#1f2937" stroke-width="2"/><line x1="828" y1="482" x2="840" y2="482" stroke="#1f2937" stroke-width="2"/><line x1="828" y1="322" x2="840" y2="322" stroke="#1f2937" stroke-width="2"/><text x="834" y="312" font-size="20" font-weight="700" text-anchor="middle" fill="#111827">+2.2</text><text x="834" y="526" font-size="15" text-anchor="middle" fill="#374151">Haiku judge</text><text x="773" y="554" font-size="21" font-weight="600" text-anchor="middle" fill="#111827">Haiku synthesizer</text><text x="60" y="600" font-size="16" fill="#888780">Downgrade the synthesizer Sonnet&#8594;Haiku and the gain falls by 4&#8211;7 points; downgrade the judge and it barely moves.</text><text x="1188" y="600" text-anchor="end" font-size="20" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+</figure>
+<p>Fusion works even when every draft comes from the same model: <span class="mono">Claude Sonnet 4.6</span> run ten times and <a href="/blog/fusion-works-now-even-self-fusion">fused into one answer</a> climbs eight points on <a href="/blog/fusion-evals-open-source">DRACO</a> deep research &mdash; +8.0, with a 95% interval of +4.6 to +11.3. What that leaves open is where the eight points come from: the ten drafts, or the model stitching them together. So we held one fixed and changed the other.</p>
+<p><strong>Swap only the fuser and the gain collapses.</strong> We took the ten <span class="mono">Sonnet</span> research reports, left them exactly as they were, and changed only the fuser &mdash; the model that reads the drafts and writes the final answer &mdash; from <span class="mono">Sonnet</span> to <span class="mono">Haiku</span>. Same drafts, same grader, same tasks. The gain fell from +8.0 to +2.2, an interval that sits on top of zero. Identical raw material, and a cheaper fuser threw three-quarters of the lift away. Strong drafts do not rescue a fuser that cannot tell which one is right. The lever is the fuser, not the drafts.</p>
+<p><strong>And the fuser is two jobs.</strong> First a judge reads the drafts and writes a compact analysis &mdash; where they agree, where they contradict, what each one caught. Then a synthesizer takes that analysis and the drafts and writes the answer. On a <a href="/blog/what-makes-a-fusion-panel-work">frontier-mixed panel</a> the synthesizer's judgment swung the score eight points while the judge was noise. Does that hold when every draft comes from one model? We ran the full two-by-two on the same <span class="mono">Sonnet</span> drafts, each cell graded by <span class="mono">Sonnet 4.6</span>.</p>
+<table class="data-table"><tr><th>self-fusion gain</th><th>Sonnet judge</th><th>Haiku judge</th></tr><tr><td><span class="mono">Sonnet</span> synthesizer</td><td><strong>+8.0</strong></td><td><strong>+9.2</strong></td></tr><tr><td><span class="mono">Haiku</span> synthesizer</td><td>+4.4</td><td>+2.2</td></tr></table>
+<p><strong>Only one seat matters.</strong> With a <span class="mono">Sonnet</span> synthesizer the gain is +8.0 behind a <span class="mono">Sonnet</span> judge and +9.2 behind a <span class="mono">Haiku</span> judge &mdash; swapping the expensive judge for the cheap one changed nothing. With a <span class="mono">Haiku</span> synthesizer it is +4.4 and +2.2. Downgrade the synthesizer and you lose four to seven points; downgrade the judge and you lose roughly zero. A cheap <span class="mono">Haiku</span> judge feeding a <span class="mono">Sonnet</span> synthesizer matches the all-<span class="mono">Sonnet</span> fuser. The judge can be cheap. The synthesizer cannot.</p>
+<p>It makes sense once you see what each seat does. The judge produces structured notes, and getting the notes a little wrong is recoverable. The synthesizer makes the actual call &mdash; out of ten messy reports, which claim survives into the answer &mdash; and that one decision is the whole game. Reading a pile of research and walking out holding the single correct fact is the skill that scales with raw model strength, and it lives in the writing step, not the analysis step. It is also why fusion sat as a footnote for years: the recipe is old, but a model good enough to run the synthesis seat cheaply is recent.</p>
+<p><strong>So the cheap version of fusion is real, but only in one place.</strong> The judge in front of the synthesizer can be the fast, free model; the model that writes the final answer has to be the good one. That is a routing decision, not a model decision &mdash; ten draft calls and a judge call go to whatever is cheap, and the single synthesis call goes to the frontier. A gateway that places each call on the right model, and fans the drafts across every provider serving them at once so one provider's rate limit does not sink the run, is what makes the cheap version payable. The same fan-out that makes self-fusion work is what makes a <a href="https://trustedrouter.com">router</a> worth pointing it at.</p>
+<p>A note on the scores: this ran end to end on <span class="mono">Claude Code</span> subagents, graded by <span class="mono">Sonnet 4.6</span> criterion by criterion, over the 23 DRACO tasks the four configurations share. Grading the whole rubric in one call runs a few points high, so read the gaps between configurations, not the absolutes. The drafts, every fused answer, the per-task scores, and the bootstrap code are <a href="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco">public</a>. This is the research we do at <a href="https://trustedrouter.com">TrustedRouter</a>; if you want to work on what makes an ensemble of models think, <a href="/careers">apply</a>.</p>
+""",
+    ),
+    BlogPost(
+        slug="fusion-works-now-even-self-fusion",
+        title="Fusion works now, even with the same model: self-fusion",
+        description=(
+            "Self-fusion \u2014 running one model several times and fusing its own answers \u2014 finally pays off: Sonnet 4.6 self-fuses +8.0 on DRACO deep research (significant), while Claude Haiku 4.5 barely moves (+2.6). Fusion stayed marginal for years because the synthesizer was the bottleneck; only now are cheap models good enough to keep the one right answer. And the parallel fan-out is exactly what a multi-provider router is for."
+        ),
+        published_date="2026-06-23",
+        source_label="TrustedRouter-Fusion-Draco on GitHub",
+        source_url="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco",
+        body_html="""
+<p class="callout"><strong><a href="/synth">Synth</a></strong> is TrustedRouter's multi-model fusion &mdash; a panel of models, a judge, and a synthesizer behind one API. This is the research behind it. <a href="/synth">Try Synth &rarr;</a></p>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif"><rect width="1200" height="630" fill="#ffffff"/><text x="60" y="56" font-size="34" font-weight="700"><tspan fill="#1d9e75">TrustedRouter.com:</tspan><tspan fill="#111827" dx="12">self-fusion pays the smart model</tspan></text><text x="60" y="90" font-size="19" fill="#6b7280">DRACO deep research · score vs runs fused · same Sonnet-4.6 grader · Sonnet n=23, Haiku n=44 · whiskers = 95% bootstrap CI</text><line x1="150" y1="520" x2="1050" y2="520" stroke="#eef0f2"/><text x="138" y="525" font-size="15" text-anchor="end" fill="#9a9890">45</text><line x1="150" y1="476" x2="1050" y2="476" stroke="#eef0f2"/><text x="138" y="481" font-size="15" text-anchor="end" fill="#9a9890">50</text><line x1="150" y1="432" x2="1050" y2="432" stroke="#eef0f2"/><text x="138" y="438" font-size="15" text-anchor="end" fill="#9a9890">55</text><line x1="150" y1="389" x2="1050" y2="389" stroke="#eef0f2"/><text x="138" y="394" font-size="15" text-anchor="end" fill="#9a9890">60</text><line x1="150" y1="345" x2="1050" y2="345" stroke="#eef0f2"/><text x="138" y="350" font-size="15" text-anchor="end" fill="#9a9890">65</text><line x1="150" y1="301" x2="1050" y2="301" stroke="#eef0f2"/><text x="138" y="306" font-size="15" text-anchor="end" fill="#9a9890">70</text><line x1="150" y1="258" x2="1050" y2="258" stroke="#eef0f2"/><text x="138" y="262" font-size="15" text-anchor="end" fill="#9a9890">75</text><line x1="150" y1="214" x2="1050" y2="214" stroke="#eef0f2"/><text x="138" y="219" font-size="15" text-anchor="end" fill="#9a9890">80</text><line x1="150" y1="170" x2="1050" y2="170" stroke="#eef0f2"/><text x="138" y="175" font-size="15" text-anchor="end" fill="#9a9890">85</text><text x="150" y="556" font-size="15" text-anchor="middle" fill="#9a9890">1</text><text x="250" y="556" font-size="15" text-anchor="middle" fill="#9a9890">2</text><text x="350" y="556" font-size="15" text-anchor="middle" fill="#9a9890">3</text><text x="450" y="556" font-size="15" text-anchor="middle" fill="#9a9890">4</text><text x="550" y="556" font-size="15" text-anchor="middle" fill="#9a9890">5</text><text x="650" y="556" font-size="15" text-anchor="middle" fill="#9a9890">6</text><text x="750" y="556" font-size="15" text-anchor="middle" fill="#9a9890">7</text><text x="850" y="556" font-size="15" text-anchor="middle" fill="#9a9890">8</text><text x="950" y="556" font-size="15" text-anchor="middle" fill="#9a9890">9</text><text x="1050" y="556" font-size="15" text-anchor="middle" fill="#9a9890">10</text><text x="600" y="590" font-size="16" text-anchor="middle" fill="#6b7280">number of runs of the model, fused</text><line x1="150" y1="479" x2="150" y2="388" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="145" y1="479" x2="155" y2="479" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="145" y1="388" x2="155" y2="388" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="250" y1="484" x2="250" y2="395" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="245" y1="484" x2="255" y2="484" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="245" y1="395" x2="255" y2="395" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="350" y1="459" x2="350" y2="362" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="345" y1="459" x2="355" y2="459" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="345" y1="362" x2="355" y2="362" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="450" y1="430" x2="450" y2="333" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="445" y1="430" x2="455" y2="430" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="445" y1="333" x2="455" y2="333" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="550" y1="448" x2="550" y2="354" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="545" y1="448" x2="555" y2="448" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="545" y1="354" x2="555" y2="354" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="650" y1="445" x2="650" y2="348" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="645" y1="445" x2="655" y2="445" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="645" y1="348" x2="655" y2="348" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="750" y1="444" x2="750" y2="344" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="745" y1="444" x2="755" y2="444" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="745" y1="344" x2="755" y2="344" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="850" y1="470" x2="850" y2="369" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="845" y1="470" x2="855" y2="470" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="845" y1="369" x2="855" y2="369" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="950" y1="462" x2="950" y2="355" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="945" y1="462" x2="955" y2="462" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="945" y1="355" x2="955" y2="355" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="1050" y1="498" x2="1050" y2="387" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="1045" y1="498" x2="1055" y2="498" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><line x1="1045" y1="387" x2="1055" y2="387" stroke="#c98a1e" stroke-width="2.2" stroke-opacity="0.55"/><polyline points="150,432 250,440 350,409 450,381 550,400 650,395 750,394 850,419 950,406 1050,441" fill="none" stroke="#c98a1e" stroke-width="4"/><circle cx="150" cy="432" r="5" fill="#c98a1e"/><circle cx="250" cy="440" r="5" fill="#c98a1e"/><circle cx="350" cy="409" r="5" fill="#c98a1e"/><circle cx="450" cy="381" r="5" fill="#c98a1e"/><circle cx="550" cy="400" r="5" fill="#c98a1e"/><circle cx="650" cy="395" r="5" fill="#c98a1e"/><circle cx="750" cy="394" r="5" fill="#c98a1e"/><circle cx="850" cy="419" r="5" fill="#c98a1e"/><circle cx="950" cy="406" r="5" fill="#c98a1e"/><circle cx="1050" cy="441" r="5" fill="#c98a1e"/><text x="1064" y="447" font-size="22" font-weight="700" fill="#8a5f12">Haiku +2.6</text><line x1="150" y1="379" x2="150" y2="295" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="145" y1="379" x2="155" y2="379" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="145" y1="295" x2="155" y2="295" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="250" y1="339" x2="250" y2="257" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="245" y1="339" x2="255" y2="339" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="245" y1="257" x2="255" y2="257" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="350" y1="328" x2="350" y2="227" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="345" y1="328" x2="355" y2="328" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="345" y1="227" x2="355" y2="227" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="450" y1="316" x2="450" y2="220" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="445" y1="316" x2="455" y2="316" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="445" y1="220" x2="455" y2="220" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="550" y1="308" x2="550" y2="214" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="545" y1="308" x2="555" y2="308" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="545" y1="214" x2="555" y2="214" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="650" y1="320" x2="650" y2="226" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="645" y1="320" x2="655" y2="320" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="645" y1="226" x2="655" y2="226" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="750" y1="301" x2="750" y2="204" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="745" y1="301" x2="755" y2="301" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="745" y1="204" x2="755" y2="204" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="850" y1="316" x2="850" y2="220" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="845" y1="316" x2="855" y2="316" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="845" y1="220" x2="855" y2="220" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="950" y1="298" x2="950" y2="200" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="945" y1="298" x2="955" y2="298" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="945" y1="200" x2="955" y2="200" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="1050" y1="305" x2="1050" y2="207" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="1045" y1="305" x2="1055" y2="305" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><line x1="1045" y1="207" x2="1055" y2="207" stroke="#1d9e75" stroke-width="2.2" stroke-opacity="0.55"/><polyline points="150,336 250,298 350,276 450,266 550,261 650,271 750,250 850,266 950,248 1050,254" fill="none" stroke="#1d9e75" stroke-width="4"/><circle cx="150" cy="336" r="5" fill="#1d9e75"/><circle cx="250" cy="298" r="5" fill="#1d9e75"/><circle cx="350" cy="276" r="5" fill="#1d9e75"/><circle cx="450" cy="266" r="5" fill="#1d9e75"/><circle cx="550" cy="261" r="5" fill="#1d9e75"/><circle cx="650" cy="271" r="5" fill="#1d9e75"/><circle cx="750" cy="250" r="5" fill="#1d9e75"/><circle cx="850" cy="266" r="5" fill="#1d9e75"/><circle cx="950" cy="248" r="5" fill="#1d9e75"/><circle cx="1050" cy="254" r="5" fill="#1d9e75"/><text x="1064" y="260" font-size="22" font-weight="700" fill="#0f6e56">Sonnet +8.0</text><text x="60" y="618" font-size="16" fill="#888780">Sonnet self-fuses +8.0 (significant — interval clears 0); Haiku +2.6 (interval touches 0). The fuser has to be strong.</text><text x="1188" y="621" text-anchor="end" font-size="21" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+<p>Fusion works now, and it works even when every model in the panel is the same model. Run a strong model ten times on a hard question, have it fuse its own ten answers, and the score goes up for real. The catch is the word <em>strong</em>: a cheap model barely moves. Last month <a href="https://openrouter.ai/blog/announcements/fusion-beats-frontier/">OpenRouter</a> showed the cheap-committee version of the trick and we <a href="/blog/ten-cheap-runs-beat-the-frontier">reproduced it</a> &mdash; <span class="mono">MiniMax-M3</span> self-fused from 66.2 to 69.4 on <a href="/blog/fusion-evals-open-source">DRACO</a> deep research. What was left open is how far down the price curve it survives. So we ran self-fusion with <a href="https://www.anthropic.com/claude"><span class="mono">Claude Haiku 4.5</span></a> doing its own web research, judging, and synthesizing, then <span class="mono">Sonnet 4.6</span> doing all three, every answer graded by <span class="mono">Sonnet 4.6</span>.</p>
+<p><strong>Fusing helps the smart model a lot and the cheap one a little.</strong> <span class="mono">Sonnet</span> self-fusion climbs from 66 solo to about 74, a gain of eight points that holds up as significant (95% interval +4.6 to +11.2, across 23 tasks). <span class="mono">Haiku</span> self-fusion, across 44 tasks, moves from 55 to about 58 &mdash; a gain of 2.6 points that looks real but does not quite clear the bar (&minus;0.3 to +5.4, about 96% of the bootstrap positive). Same recipe, same grader; the payoff tracks how smart the model doing the fusing is.</p>
+<table class="data-table"><tr><th>self-fusion</th><th>solo</th><th>fused</th><th>gain</th><th>grader</th></tr><tr><td><span class="mono">MiniMax-M3</span></td><td>66.2</td><td>69.4</td><td>+3.2</td><td><span class="mono">gemini-3.1-pro</span></td></tr><tr><td><span class="mono">Sonnet 4.6</span></td><td>66</td><td><strong>~74</strong></td><td><strong>+8.0</strong></td><td><span class="mono">Sonnet-4.6</span></td></tr><tr><td><span class="mono">Haiku 4.5</span></td><td>55</td><td>~58</td><td>+2.6</td><td><span class="mono">Sonnet-4.6</span></td></tr></table>
+<p>We almost published the wrong version of this. The first cut was eight tasks, and on those eight <span class="mono">Haiku</span> self-fusion looked like it actively hurt, down three points, and the story wrote itself: cheap fusion backfires. Eighteen more tasks killed it &mdash; that batch gained +3.7, the merged number went to +1.5 at 26 tasks, then +2.6 by 44. The dramatic backfire was small-sample luck. Read the directions, not the decimals; the decimals moved every time we added tasks.</p>
+<p>You can still watch a weak fuser do the dumb thing on one task. On a needle-in-a-haystack question, where the score hangs on a single buried fact, a lone <span class="mono">Haiku</span> run found the needle and scored 87. Fusing ten runs dropped it to 63: nine of the ten runs had missed the needle, and reading all ten, <span class="mono">Haiku</span> wrote the consensus and sided with the nine. <span class="mono">Sonnet</span> kept its needle. Fusing is a vote, and a vote only helps if the model counting it can pick the one right answer out of a crowd of wrong ones.</p>
+<p><strong>This is probably why fusion has been a footnote until now.</strong> The idea is old &mdash; sample a model a few times and have something stitch the samples together &mdash; but the stitcher was always the weak link. A model that cannot tell its good run from its bad ones blurs them into an average and the gain washes out, which is what <span class="mono">Haiku</span> does here. You need a synthesizer good enough to read a pile of messy research reports and walk out holding the one correct claim, and that is recent. <span class="mono">Sonnet 4.6</span> is the first cheap model we have watched clear that bar. The fusion recipe did not get better this year; the models finally got good enough to run it.</p>
+<p><strong>And this is where a router earns its keep, even when the panel is one model.</strong> Self-fusion fires that model ten times at once, and any single provider will rate-limit you or fall over mid-run &mdash; we lost half of this experiment to exactly that, whole batches dying against one provider's quota. Route the ten calls through <a href="https://trustedrouter.com">TrustedRouter</a> and they fan out across every provider serving that model at the same time; when one returns a 429 or drops, the others carry the load. No single provider promises 100% uptime, but a handful of them in parallel get you there. The same fan-out that makes self-fusion work is what makes the router worth pointing it at.</p>
+<p>A note on the scores, because they are softer than they look. We graded with <span class="mono">Sonnet 4.6</span> standing in for the <span class="mono">gemini-3.1-pro</span> grader the rest of this series uses, after checking it tracked gemini on the published DRACO answers &mdash; 0.92 correlation, no average bias. These are different tasks, and grading the whole rubric in one call runs a few points high, so read each model against itself, not across. The harness, the per-task scores, and the bootstrap intervals are all <a href="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco">public</a>.</p>
+<p>The frontier-committee version of fusion still wins outright &mdash; a panel of <a href="/blog/what-makes-a-fusion-panel-work">different models</a> reaches the best answer. But the cheaper trick is real now too: one good model, run several times against itself and fused by itself, beats running it once. It took the models getting good enough at the one job everyone overlooked. This is the research we do at <a href="https://trustedrouter.com">TrustedRouter</a>. If you have a PhD and want to work on what makes an ensemble of models think, <a href="/careers">apply</a>.</p>
+""",
+    ),
+    BlogPost(
+        slug="what-makes-a-fusion-panel-work",
+        title="What actually makes a synth panel work",
+        description=(
+            "We took a five-model open-weights synth committee apart on DRACO. The "
+            "synthesizer barely matters on an open panel, only two of five models carry the "
+            "score \u2014 yet you cannot strip the panel without paying. A panel's value "
+            "is its diversity, and it is invisible to any single test."
+        ),
+        published_date="2026-06-21",
+        source_label="TrustedRouter Synth Draco on GitHub",
+        source_url="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco",
+        body_html="""
+<p class="callout"><strong><a href="/synth">Synth</a></strong> is TrustedRouter's multi-model fusion &mdash; a panel of models, a judge, and a synthesizer behind one API. This is the research behind it. <a href="/synth">Try Synth &rarr;</a></p>
+
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
+<rect width="1200" height="630" fill="#ffffff"/>
+<text x="60" y="56" font-size="34" font-weight="700"><tspan fill="#1d9e75">TrustedRouter.com:</tspan><tspan fill="#111827" dx="12">the synthesizer grid flattens on an open panel</tspan></text>
+<text x="60" y="90" font-size="19" fill="#6b7280">DRACO · same gemini-3.1-pro grader · grouped by judge, colored by synthesizer · whiskers ±1 SE</text>
+<line x1="150" y1="445" x2="1090" y2="445" stroke="#eceae4"/><text x="138" y="450" font-size="15" text-anchor="end" fill="#9a9890">50</text>
+<line x1="150" y1="378" x2="1090" y2="378" stroke="#eceae4"/><text x="138" y="383" font-size="15" text-anchor="end" fill="#9a9890">55</text>
+<line x1="150" y1="311" x2="1090" y2="311" stroke="#eceae4"/><text x="138" y="316" font-size="15" text-anchor="end" fill="#9a9890">60</text>
+<line x1="150" y1="244" x2="1090" y2="244" stroke="#eceae4"/><text x="138" y="249" font-size="15" text-anchor="end" fill="#9a9890">65</text>
+<line x1="150" y1="177" x2="1090" y2="177" stroke="#eceae4"/><text x="138" y="182" font-size="15" text-anchor="end" fill="#9a9890">70</text>
+<text x="307" y="546" font-size="20" font-weight="600" text-anchor="middle" fill="#111827">M3 judge</text>
+<rect x="204" y="200" width="58" height="312" rx="4" fill="#3b82c4"/>
+<line x1="233" y1="224" x2="233" y2="176" stroke="#1f2937" stroke-width="2"/><line x1="227" y1="224" x2="239" y2="224" stroke="#1f2937" stroke-width="2"/><line x1="227" y1="176" x2="239" y2="176" stroke="#1f2937" stroke-width="2"/>
+<text x="233" y="168" font-size="16" font-weight="700" text-anchor="middle" fill="#111827">68.3</text>
+<rect x="278" y="188" width="58" height="324" rx="4" fill="#1d9e75"/>
+<line x1="307" y1="211" x2="307" y2="166" stroke="#1f2937" stroke-width="2"/><line x1="301" y1="211" x2="313" y2="211" stroke="#1f2937" stroke-width="2"/><line x1="301" y1="166" x2="313" y2="166" stroke="#1f2937" stroke-width="2"/>
+<text x="307" y="158" font-size="16" font-weight="700" text-anchor="middle" fill="#111827">69.1</text>
+<rect x="352" y="256" width="58" height="256" rx="4" fill="#e0992f"/>
+<line x1="381" y1="280" x2="381" y2="231" stroke="#1f2937" stroke-width="2"/><line x1="375" y1="280" x2="387" y2="280" stroke="#1f2937" stroke-width="2"/><line x1="375" y1="231" x2="387" y2="231" stroke="#1f2937" stroke-width="2"/>
+<text x="381" y="223" font-size="16" font-weight="700" text-anchor="middle" fill="#111827">64.1</text>
+<text x="620" y="546" font-size="20" font-weight="600" text-anchor="middle" fill="#111827">GLM-5.2 judge</text>
+<rect x="517" y="206" width="58" height="306" rx="4" fill="#3b82c4"/>
+<line x1="546" y1="229" x2="546" y2="183" stroke="#1f2937" stroke-width="2"/><line x1="540" y1="229" x2="552" y2="229" stroke="#1f2937" stroke-width="2"/><line x1="540" y1="183" x2="552" y2="183" stroke="#1f2937" stroke-width="2"/>
+<text x="546" y="175" font-size="16" font-weight="700" text-anchor="middle" fill="#111827">67.8</text>
+<rect x="591" y="180" width="58" height="332" rx="4" fill="#1d9e75"/>
+<line x1="620" y1="201" x2="620" y2="159" stroke="#1f2937" stroke-width="2"/><line x1="614" y1="201" x2="626" y2="201" stroke="#1f2937" stroke-width="2"/><line x1="614" y1="159" x2="626" y2="159" stroke="#1f2937" stroke-width="2"/>
+<text x="620" y="151" font-size="16" font-weight="700" text-anchor="middle" fill="#111827">69.8</text>
+<rect x="665" y="239" width="58" height="273" rx="4" fill="#e0992f"/>
+<line x1="694" y1="263" x2="694" y2="215" stroke="#1f2937" stroke-width="2"/><line x1="688" y1="263" x2="700" y2="263" stroke="#1f2937" stroke-width="2"/><line x1="688" y1="215" x2="700" y2="215" stroke="#1f2937" stroke-width="2"/>
+<text x="694" y="207" font-size="16" font-weight="700" text-anchor="middle" fill="#111827">65.4</text>
+<text x="933" y="546" font-size="20" font-weight="600" text-anchor="middle" fill="#111827">Kimi-k2.6 judge</text>
+<rect x="830" y="230" width="58" height="282" rx="4" fill="#3b82c4"/>
+<line x1="859" y1="256" x2="859" y2="204" stroke="#1f2937" stroke-width="2"/><line x1="853" y1="256" x2="865" y2="256" stroke="#1f2937" stroke-width="2"/><line x1="853" y1="204" x2="865" y2="204" stroke="#1f2937" stroke-width="2"/>
+<text x="859" y="196" font-size="16" font-weight="700" text-anchor="middle" fill="#111827">66.0</text>
+<rect x="904" y="188" width="58" height="324" rx="4" fill="#1d9e75"/>
+<line x1="933" y1="199" x2="933" y2="176" stroke="#1f2937" stroke-width="2"/><line x1="927" y1="199" x2="939" y2="199" stroke="#1f2937" stroke-width="2"/><line x1="927" y1="176" x2="939" y2="176" stroke="#1f2937" stroke-width="2"/>
+<text x="933" y="168" font-size="16" font-weight="700" text-anchor="middle" fill="#111827">69.2</text>
+<rect x="978" y="462" width="58" height="50" rx="4" fill="#e0992f"/>
+<line x1="1007" y1="490" x2="1007" y2="434" stroke="#1f2937" stroke-width="2"/><line x1="1001" y1="490" x2="1013" y2="490" stroke="#1f2937" stroke-width="2"/><line x1="1001" y1="434" x2="1013" y2="434" stroke="#1f2937" stroke-width="2"/>
+<text x="1007" y="426" font-size="16" font-weight="700" text-anchor="middle" fill="#111827">48.8</text>
+<text x="150" y="582" font-size="16" fill="#6b7280">synthesizer:</text>
+<rect x="258" y="570" width="14" height="14" rx="3" fill="#3b82c4"/><text x="278" y="582" font-size="16" fill="#374151">M3</text>
+<rect x="408" y="570" width="14" height="14" rx="3" fill="#1d9e75"/><text x="428" y="582" font-size="16" fill="#374151">GLM-5.2</text>
+<rect x="558" y="570" width="14" height="14" rx="3" fill="#e0992f"/><text x="578" y="582" font-size="16" fill="#374151">Kimi-k2.6</text>
+<text x="150" y="610" font-size="16" fill="#888780">GLM is the best synthesizer; the judge barely moves the score; the top three configs are within noise.</text>
+<text x="1188" y="610" text-anchor="end" font-size="20" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+</figure>
+<p>Synth — a committee of models, each writing its own answer, merged into one — beats any single model on deep research. We have <a href="/blog/fusion-evals-open-source">shown that</a>. But a committee has parts: who sits on the panel, who judges, who synthesizes. Which parts actually matter? We took a five-model open-weights committee apart on <a href="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco">DRACO</a> — 100 agentic deep-research tasks, graded by <span class="mono">gemini-3.1-pro</span> — one piece at a time. The answers were not the ones we expected.</p>
+<p><strong>The synthesizer barely matters — on an open panel.</strong> Hold the five panelists fixed and sweep every judge × synthesizer combination, and the score hardly moves: any config with a <span class="mono">GLM-5.2</span> synthesizer lands around 69, and the judge is statistical noise (the three GLM-synth bars above overlap inside ±1 SE). That is the <em>opposite</em> of a frontier-mixed panel, where the same grid swings eight points — 48.7 to <a href="/blog/fusion-is-two-jobs">73.4</a> — and the choice of synthesizer is everything. The lesson is mechanical: a clever synthesizer only earns its keep when the panel is <em>diverse</em>. When the panelists are close in capability, there is little to reconcile and the synthesizer washes out; mix in frontier models and suddenly the synthesizer's judgment decides the answer.</p>
+<p><strong>Most of the panel looks like dead weight.</strong> So we pulled each panelist out and re-scored the committee. Only two of the five — <a href="https://www.minimax.io"><span class="mono">MiniMax M3</span></a> and <a href="https://www.deepseek.com"><span class="mono">DeepSeek V4 Pro</span></a> — significantly hurt the score when removed. The other three were individually indistinguishable from free, including the two models that were <em>also</em> serving as the judge and the synthesizer. Read the leave-one-out alone and you would fire three of your five panelists.</p>
+<figure style="margin:32px 0">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
+<rect width="1200" height="630" fill="#ffffff"/>
+<text x="60" y="56" font-size="33" font-weight="700"><tspan fill="#1d9e75">TrustedRouter.com:</tspan><tspan fill="#111827" dx="12">two of five panelists carry the committee</tspan></text>
+<text x="60" y="90" font-size="19" fill="#6b7280">DRACO leave-one-out · drop in score when each member leaves the open panel · ±1 SE · n≈100</text>
+<line x1="487" y1="150" x2="487" y2="548" stroke="#f0eee8"/><text x="487" y="566" font-size="14" text-anchor="middle" fill="#9a9890">-4</text>
+<line x1="619" y1="150" x2="619" y2="548" stroke="#f0eee8"/><text x="619" y="566" font-size="14" text-anchor="middle" fill="#9a9890">-3</text>
+<line x1="751" y1="150" x2="751" y2="548" stroke="#f0eee8"/><text x="751" y="566" font-size="14" text-anchor="middle" fill="#9a9890">-2</text>
+<line x1="883" y1="150" x2="883" y2="548" stroke="#f0eee8"/><text x="883" y="566" font-size="14" text-anchor="middle" fill="#9a9890">-1</text>
+<line x1="1015" y1="150" x2="1015" y2="548" stroke="#f0eee8"/><text x="1015" y="566" font-size="14" text-anchor="middle" fill="#9a9890">+0</text>
+<line x1="1015" y1="150" x2="1015" y2="548" stroke="#6b7280" stroke-width="1.5"/>
+<text x="1023" y="158" font-size="15" fill="#6b7280">baseline 69.1</text>
+<text x="40" y="189" font-size="21" font-weight="600" fill="#111827">M3</text>
+<text x="40" y="210" font-size="15" fill="#9a9890">panel</text>
+<rect x="500" y="168" width="515" height="46" rx="5" fill="#1d9e75"/>
+<line x1="381" y1="191" x2="619" y2="191" stroke="#1f2937" stroke-width="2"/><line x1="381" y1="184" x2="381" y2="198" stroke="#1f2937" stroke-width="2"/><line x1="619" y1="184" x2="619" y2="198" stroke="#1f2937" stroke-width="2"/>
+<text x="369" y="198" font-size="22" font-weight="700" text-anchor="end" fill="#111827">-3.9</text>
+<text x="758" y="198" font-size="15" font-weight="700" text-anchor="middle" fill="#ffffff">load-bearing</text>
+<text x="40" y="271" font-size="21" font-weight="600" fill="#111827">DeepSeek V4 Pro</text>
+<text x="40" y="292" font-size="15" fill="#9a9890">panel</text>
+<rect x="738" y="250" width="277" height="46" rx="5" fill="#1d9e75"/>
+<line x1="619" y1="273" x2="857" y2="273" stroke="#1f2937" stroke-width="2"/><line x1="619" y1="266" x2="619" y2="280" stroke="#1f2937" stroke-width="2"/><line x1="857" y1="266" x2="857" y2="280" stroke="#1f2937" stroke-width="2"/>
+<text x="607" y="280" font-size="22" font-weight="700" text-anchor="end" fill="#111827">-2.1</text>
+<text x="876" y="280" font-size="15" font-weight="700" text-anchor="middle" fill="#ffffff">load-bearing</text>
+<text x="40" y="353" font-size="21" font-weight="600" fill="#111827">Kimi K2.6</text>
+<text x="40" y="374" font-size="15" fill="#0f6e56">judge</text>
+<rect x="896" y="332" width="119" height="46" rx="5" fill="#b4b2a9"/>
+<line x1="777" y1="355" x2="1015" y2="355" stroke="#1f2937" stroke-width="2"/><line x1="777" y1="348" x2="777" y2="362" stroke="#1f2937" stroke-width="2"/><line x1="1015" y1="348" x2="1015" y2="362" stroke="#1f2937" stroke-width="2"/>
+<text x="765" y="362" font-size="22" font-weight="700" text-anchor="end" fill="#111827">-0.9</text>
+<text x="40" y="435" font-size="21" font-weight="600" fill="#111827">Gemma-4</text>
+<text x="40" y="456" font-size="15" fill="#9a9890">panel</text>
+<rect x="909" y="414" width="106" height="46" rx="5" fill="#b4b2a9"/>
+<line x1="804" y1="437" x2="1015" y2="437" stroke="#1f2937" stroke-width="2"/><line x1="804" y1="430" x2="804" y2="444" stroke="#1f2937" stroke-width="2"/><line x1="1015" y1="430" x2="1015" y2="444" stroke="#1f2937" stroke-width="2"/>
+<text x="792" y="444" font-size="22" font-weight="700" text-anchor="end" fill="#111827">-0.8</text>
+<text x="40" y="517" font-size="21" font-weight="600" fill="#111827">GLM-5.2</text>
+<text x="40" y="538" font-size="15" fill="#0f6e56">synth</text>
+<rect x="923" y="496" width="92" height="46" rx="5" fill="#b4b2a9"/>
+<line x1="817" y1="519" x2="1028" y2="519" stroke="#1f2937" stroke-width="2"/><line x1="817" y1="512" x2="817" y2="526" stroke="#1f2937" stroke-width="2"/><line x1="1028" y1="512" x2="1028" y2="526" stroke="#1f2937" stroke-width="2"/>
+<text x="805" y="526" font-size="22" font-weight="700" text-anchor="end" fill="#111827">-0.7</text>
+<text x="60" y="600" font-size="16" fill="#888780">Only M3 and DeepSeek hurt significantly when removed; the other three — judge, synth, and Gemma-4 — are within noise.</text>
+<text x="1188" y="600" text-anchor="end" font-size="20" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+</figure>
+<p><strong>But you cannot strip the panel.</strong> That would be a mistake — and we have the experiment to prove it. When we actually built a three-member panel, dropping the two "free" role-players, the score fell <strong>3.4 points</strong> — nearly as much as removing the single most important model. The drop looks marginal in an unpaired view, but the panels are 0.80-correlated per task, so the right test is paired: per-task, the three-member panel loses <strong>−3.4 ± 0.95</strong> against the full committee (t = −3.6; a 20,000-sample bootstrap 95% CI of [−5.3, −1.6] that excludes zero). Each member is individually droppable; the panel is not. Removing one is free because the others cover the gap — remove two and the gaps open. The breadth is doing work that no single leave-one-out can see. Call it a <em>redundancy floor</em>.</p>
+<p><strong>And the deepest surprise: the most valuable panelist is not the smartest model.</strong> <span class="mono">DeepSeek V4 Pro</span> is mid-pack as a solo researcher (59.9 on DRACO), and the strongest open solo, <a href="https://openai.com"><span class="mono">GPT-5.5</span></a> at 63.0, is not even on this committee. Yet DeepSeek and M3 carry it while stronger models sit on the bench. Synth does not reward raw capability — it rewards <em>uncorrelated error</em>. A model earns its seat by failing in different places than the rest, so that where one hallucinates a date or misses a source, the others do not, and the synthesizer keeps what survives cross-examination. So we measured it directly — grading every panelist's report on all 100 tasks and correlating the per-task scores. We expected a standout: one model whose errors are conspicuously independent of the rest. There isn't one.</p>
+<p><strong>Every pair of these very different models — open and closed lineages, five different labs — correlates between 0.47 and 0.71, mean 0.56</strong>, and each model's <em>average</em> correlation with the others spans just 0.55 to 0.58. That 0.03 spread is inside the noise. DeepSeek is nominally the least-correlated (0.550), but it is tied with everyone; the clean prediction — that one model's errors are the most independent and that is why it is load-bearing — is simply false.</p>
+<figure><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 748" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
+<rect width="1180" height="748" fill="#ffffff"/>
+<text x="60" y="58" font-size="37" font-weight="700" fill="#111827">The panel has no diversity hero</text>
+<text x="60" y="90" font-size="18" fill="#6b7280">Per-task DRACO score correlation between open-committee members · 100 tasks · gemini + Sonnet chunk-of-3 grades</text>
+<text x="355" y="184" font-size="16" font-weight="600" text-anchor="middle" fill="#374151">M3</text>
+<text x="441" y="184" font-size="16" font-weight="600" text-anchor="middle" fill="#374151">Kimi</text>
+<text x="527" y="184" font-size="16" font-weight="600" text-anchor="middle" fill="#374151">DeepSeek</text>
+<text x="613" y="184" font-size="16" font-weight="600" text-anchor="middle" fill="#374151">Gemma</text>
+<text x="699" y="184" font-size="16" font-weight="600" text-anchor="middle" fill="#374151">GLM</text>
+<text x="296" y="245" font-size="17" font-weight="600" text-anchor="end" fill="#111827">MiniMax-M3</text>
+<rect x="312" y="196" width="86" height="86" rx="3" fill="#f1f3f2" stroke="#ffffff" stroke-width="3"/>
+<text x="355" y="245" font-size="17" text-anchor="middle" fill="#c2c8c5">—</text>
+<rect x="398" y="196" width="86" height="86" rx="3" fill="#90bcb0" stroke="#ffffff" stroke-width="3"/>
+<text x="441" y="245" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.56</text>
+<rect x="484" y="196" width="86" height="86" rx="3" fill="#d8e9e2" stroke="#ffffff" stroke-width="3"/>
+<text x="527" y="245" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.47</text>
+<rect x="570" y="196" width="86" height="86" rx="3" fill="#90bcb0" stroke="#ffffff" stroke-width="3"/>
+<text x="613" y="245" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.56</text>
+<rect x="656" y="196" width="86" height="86" rx="3" fill="#47907d" stroke="#ffffff" stroke-width="3"/>
+<text x="699" y="245" font-size="20" font-weight="600" text-anchor="middle" fill="#ffffff">0.65</text>
+<text x="296" y="331" font-size="17" font-weight="600" text-anchor="end" fill="#111827">Kimi K2.6</text>
+<rect x="312" y="282" width="86" height="86" rx="3" fill="#90bcb0" stroke="#ffffff" stroke-width="3"/>
+<text x="355" y="331" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.56</text>
+<rect x="398" y="282" width="86" height="86" rx="3" fill="#f1f3f2" stroke="#ffffff" stroke-width="3"/>
+<text x="441" y="331" font-size="17" text-anchor="middle" fill="#c2c8c5">—</text>
+<rect x="484" y="282" width="86" height="86" rx="3" fill="#17725b" stroke="#ffffff" stroke-width="3"/>
+<text x="527" y="331" font-size="20" font-weight="600" text-anchor="middle" fill="#ffffff">0.71</text>
+<rect x="570" y="282" width="86" height="86" rx="3" fill="#c8dfd7" stroke="#ffffff" stroke-width="3"/>
+<text x="613" y="331" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.49</text>
+<rect x="656" y="282" width="86" height="86" rx="3" fill="#d0e4dd" stroke="#ffffff" stroke-width="3"/>
+<text x="699" y="331" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.48</text>
+<text x="296" y="417" font-size="17" font-weight="600" text-anchor="end" fill="#111827">DeepSeek V4</text>
+<rect x="312" y="368" width="86" height="86" rx="3" fill="#d8e9e2" stroke="#ffffff" stroke-width="3"/>
+<text x="355" y="417" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.47</text>
+<rect x="398" y="368" width="86" height="86" rx="3" fill="#17725b" stroke="#ffffff" stroke-width="3"/>
+<text x="441" y="417" font-size="20" font-weight="600" text-anchor="middle" fill="#ffffff">0.71</text>
+<rect x="484" y="368" width="86" height="86" rx="3" fill="#f1f3f2" stroke="#ffffff" stroke-width="3"/>
+<text x="527" y="417" font-size="17" text-anchor="middle" fill="#c2c8c5">—</text>
+<rect x="570" y="368" width="86" height="86" rx="3" fill="#b8d5cc" stroke="#ffffff" stroke-width="3"/>
+<text x="613" y="417" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.51</text>
+<rect x="656" y="368" width="86" height="86" rx="3" fill="#b8d5cc" stroke="#ffffff" stroke-width="3"/>
+<text x="699" y="417" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.51</text>
+<text x="296" y="503" font-size="17" font-weight="600" text-anchor="end" fill="#111827">Gemma-4</text>
+<rect x="312" y="454" width="86" height="86" rx="3" fill="#90bcb0" stroke="#ffffff" stroke-width="3"/>
+<text x="355" y="503" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.56</text>
+<rect x="398" y="454" width="86" height="86" rx="3" fill="#c8dfd7" stroke="#ffffff" stroke-width="3"/>
+<text x="441" y="503" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.49</text>
+<rect x="484" y="454" width="86" height="86" rx="3" fill="#b8d5cc" stroke="#ffffff" stroke-width="3"/>
+<text x="527" y="503" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.51</text>
+<rect x="570" y="454" width="86" height="86" rx="3" fill="#f1f3f2" stroke="#ffffff" stroke-width="3"/>
+<text x="613" y="503" font-size="17" text-anchor="middle" fill="#c2c8c5">—</text>
+<rect x="656" y="454" width="86" height="86" rx="3" fill="#3f8b77" stroke="#ffffff" stroke-width="3"/>
+<text x="699" y="503" font-size="20" font-weight="600" text-anchor="middle" fill="#ffffff">0.66</text>
+<text x="296" y="589" font-size="17" font-weight="600" text-anchor="end" fill="#111827">GLM-5.2</text>
+<rect x="312" y="540" width="86" height="86" rx="3" fill="#47907d" stroke="#ffffff" stroke-width="3"/>
+<text x="355" y="589" font-size="20" font-weight="600" text-anchor="middle" fill="#ffffff">0.65</text>
+<rect x="398" y="540" width="86" height="86" rx="3" fill="#d0e4dd" stroke="#ffffff" stroke-width="3"/>
+<text x="441" y="589" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.48</text>
+<rect x="484" y="540" width="86" height="86" rx="3" fill="#b8d5cc" stroke="#ffffff" stroke-width="3"/>
+<text x="527" y="589" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.51</text>
+<rect x="570" y="540" width="86" height="86" rx="3" fill="#3f8b77" stroke="#ffffff" stroke-width="3"/>
+<text x="613" y="589" font-size="20" font-weight="600" text-anchor="middle" fill="#ffffff">0.66</text>
+<rect x="656" y="540" width="86" height="86" rx="3" fill="#f1f3f2" stroke="#ffffff" stroke-width="3"/>
+<text x="699" y="589" font-size="17" text-anchor="middle" fill="#c2c8c5">—</text>
+<text x="810" y="184" font-size="15" font-weight="600" text-anchor="middle" fill="#6b7280">avg</text>
+<text x="810" y="245" font-size="19" font-weight="700" text-anchor="middle" fill="#0f6e56">0.559</text>
+<text x="810" y="331" font-size="19" font-weight="700" text-anchor="middle" fill="#0f6e56">0.561</text>
+<text x="810" y="417" font-size="19" font-weight="700" text-anchor="middle" fill="#0f6e56">0.550</text>
+<text x="810" y="503" font-size="19" font-weight="700" text-anchor="middle" fill="#0f6e56">0.556</text>
+<text x="810" y="589" font-size="19" font-weight="700" text-anchor="middle" fill="#0f6e56">0.576</text>
+<line x1="770" y1="200" x2="770" y2="622" stroke="#d7dbd9" stroke-width="2"/>
+<line x1="60" y1="652" x2="1120" y2="652" stroke="#eceae4"/>
+<text x="60" y="678" font-size="19" fill="#111827"><tspan font-weight="700" fill="#0f6e56">Every pair sits at 0.47–0.71 (mean 0.56).</tspan> Each model's average correlation with the rest spans just <tspan font-weight="700">0.55–0.58</tspan> —</text>
+<text x="60" y="706" font-size="19" fill="#374151">a 0.03 spread, inside the noise. No model is the orthogonal outlier; the diversity that fuels synth is real but <tspan font-style="italic">diffuse</tspan>.</text>
+<text x="1120" y="740" text-anchor="end" font-size="20" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
+</svg></figure>
+<p>The honest picture is subtler and, we think, more useful: <strong>diversity is real but diffuse.</strong> Roughly half of each pair's score variance is shared and half is independent — synth lives on that independent half — but no single model owns it. That is exactly why leave-one-out finds almost nothing (drop any one model and the others still cover its blind spots) while dropping two opens real gaps: the useful disagreement is spread thin across the whole panel, not banked in a hero. What sets the workhorses, M3 and DeepSeek, apart is not extra independence — it is that they pair that shared diversity with enough competence to put a correct answer on the table, where the weaker members supply uncorrelated error but rarely the right answer to keep.</p>
+<p>Three findings, one shape: a synth panel's value lives in its <em>diversity</em>, and diversity is invisible to every single-component test. The synthesizer is flat until the panel is varied; each member looks free until you remove enough of them; the diversity that does the work is spread across the whole panel, not banked in any one model. None of it shows up if you only ever measure one thing at a time.</p>
+<p>This is the research we do at <a href="https://trustedrouter.com">TrustedRouter</a> — open code, open results, reproducible end to end. The harness, the exact panel, and the DRACO tasks are all <a href="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco">public</a>. If you have a PhD and want to work on what actually makes an ensemble of models think, <a href="/careers">apply</a>.</p>
+""",
+    ),
+    BlogPost(
+        slug="fusion-is-two-jobs",
+        title="Synth is two jobs, and no model wins both",
+        description="Synthesizing a model panel into one answer is two jobs — a judge that reads the panel and a synthesizer that writes the final answer — and the best model for each is a different one. Across the strongest open models, GLM-5.2 writes the best synthesized answer but judges its own writing worst; the best open synthesizer pairs a Kimi-k2.6 judge with a GLM-5.2 synthesizer, 73.4 on DRACO, beating any single model that does both jobs.",
+        published_date="2026-06-19",
+        source_label="TrustedRouter Synth Draco on GitHub",
+        source_url="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco",
+        body_html="""
+<p class="callout"><strong><a href="/synth">Synth</a></strong> is TrustedRouter's multi-model fusion &mdash; a panel of models, a judge, and a synthesizer behind one API. This is the research behind it. <a href="/synth">Try Synth &rarr;</a></p>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif"><rect width="1200" height="630" fill="#ffffff"/><text x="60" y="56" font-size="37" font-weight="700" fill="#111827">Synth is two jobs, and no model wins both</text><text x="60" y="89" font-size="18" fill="#6b7280">DRACO deep research · frontier panel · all-open synthesizer · score / 100 · whiskers = ±1 SE (per-task bootstrap, n≈75–97)</text><g font-size="16" fill="#374151"><rect x="430" y="106" width="13" height="13" rx="3" fill="#1d9e75"/><text x="450" y="117">GLM-5.2</text><rect x="560" y="106" width="13" height="13" rx="3" fill="#2f6fb0"/><text x="580" y="117">MiniMax-M3</text><rect x="715" y="106" width="13" height="13" rx="3" fill="#c98a1e"/><text x="735" y="117">Kimi K2.6</text></g><g stroke="#e5e7eb" stroke-width="1"><line x1="80" y1="212.5" x2="1120" y2="212.5"/><line x1="80" y1="315" x2="1120" y2="315"/><line x1="80" y1="417.5" x2="1120" y2="417.5"/><line x1="80" y1="520" x2="1120" y2="520"/></g><g font-size="13" fill="#9ca3af" text-anchor="end"><text x="72" y="217">75</text><text x="72" y="319">70</text><text x="72" y="421">65</text><text x="72" y="524">60</text></g><line x1="600" y1="150" x2="600" y2="560" stroke="#eceef1" stroke-width="1"/><text x="150" y="148" font-size="22" font-weight="600" fill="#111827">The synthesis job</text><text x="150" y="168" font-size="15" fill="#6b7280">who merges best · judge held fixed = M3</text><text x="670" y="148" font-size="22" font-weight="600" fill="#111827">The judging job</text><text x="670" y="168" font-size="15" fill="#6b7280">who judges best · synthesizer held fixed = GLM</text><g><rect x="165" y="268" width="80" height="252" rx="4" fill="#1d9e75"/><rect x="290" y="374" width="80" height="146" rx="4" fill="#2f6fb0"/><rect x="415" y="424" width="80" height="96" rx="4" fill="#c98a1e"/></g><g stroke="#111827" stroke-width="3"><line x1="205" y1="235" x2="205" y2="301"/><line x1="195" y1="235" x2="215" y2="235"/><line x1="195" y1="301" x2="215" y2="301"/><line x1="330" y1="339" x2="330" y2="410"/><line x1="320" y1="339" x2="340" y2="339"/><line x1="320" y1="410" x2="340" y2="410"/><line x1="455" y1="387" x2="455" y2="461"/><line x1="445" y1="387" x2="465" y2="387"/><line x1="445" y1="461" x2="465" y2="461"/></g><g text-anchor="middle"><text x="205" y="225" font-size="22" font-weight="700" fill="#0f6e56">72.3</text><text x="330" y="329" font-size="22" font-weight="700" fill="#1b4f86">67.1</text><text x="455" y="377" font-size="22" font-weight="700" fill="#8a5f12">64.7</text></g><g><rect x="705" y="245" width="80" height="275" rx="4" fill="#c98a1e"/><rect x="830" y="268" width="80" height="252" rx="4" fill="#2f6fb0"/><rect x="955" y="309" width="80" height="211" rx="4" fill="#1d9e75"/></g><g stroke="#111827" stroke-width="3"><line x1="745" y1="208" x2="745" y2="282"/><line x1="735" y1="208" x2="755" y2="208"/><line x1="735" y1="282" x2="755" y2="282"/><line x1="870" y1="235" x2="870" y2="301"/><line x1="860" y1="235" x2="880" y2="235"/><line x1="860" y1="301" x2="880" y2="301"/><line x1="995" y1="274" x2="995" y2="344"/><line x1="985" y1="274" x2="1005" y2="274"/><line x1="985" y1="344" x2="1005" y2="344"/></g><g text-anchor="middle"><text x="745" y="198" font-size="22" font-weight="700" fill="#8a5f12">73.4</text><text x="870" y="225" font-size="22" font-weight="700" fill="#1b4f86">72.3</text><text x="995" y="264" font-size="22" font-weight="700" fill="#0f6e56">70.3</text></g><g font-size="16" fill="#374151" text-anchor="middle"><text x="205" y="544">GLM</text><text x="330" y="544">M3</text><text x="455" y="544">Kimi</text><text x="745" y="544">Kimi</text><text x="870" y="544">M3</text><text x="995" y="544">GLM</text></g><text x="150" y="588" font-size="16" fill="#374151">GLM synthesizes best — by ~5 pts, clear of the bars.</text><text x="670" y="588" font-size="16" fill="#374151">GLM judges its own answer worst.</text><text x="60" y="618" font-size="14" fill="#9ca3af">Best synth engine = a Kimi-k2.6 judge feeding a GLM synthesizer, 73.4. The best synthesizer is the worst judge of its own work.</text><text x="1188" y="621" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+<p>Synthesize a panel of models into one answer and you are running two separate jobs. A <strong>judge</strong> reads the panel and writes down where the models agree, where they contradict each other, and what they all missed. A <strong>synthesizer</strong> takes the panel and that analysis and writes the final answer. We put the three strongest open models — <a href="https://www.minimax.io"><span class="mono">MiniMax-M3</span></a>, <a href="https://z.ai"><span class="mono">GLM-5.2</span></a>, and <a href="https://www.moonshot.ai"><span class="mono">Kimi K2.6</span></a> — into both seats, every combination, nine synthesizers, all on the same frontier research panel and graded by the same <span class="mono">gemini-3.1-pro</span>. The best one is a pair: <strong>a Kimi-k2.6 judge and GLM writing, 73.4</strong> on <a href="/blog/fusion-evals-open-source">DRACO</a> deep research — the highest of the nine, with an M3 judge a hair behind at 72.3. No single model doing both jobs comes close.</p>
+<p>We <a href="/blog/the-best-synthesizers">argued before</a> that MiniMax-M3 is the best synthesizer. That test held the judge fixed at gemini and swapped only the writer, so it answered half the question. The judge is the other half, and the best <em>pair</em> is the grid above.</p>
+<table class="data-table"><tr><th>judge ↓ \\ synthesizer →</th><th><span class="mono">MiniMax-M3</span></th><th><span class="mono">GLM-5.2</span></th><th><span class="mono">Kimi K2.6</span></th></tr><tr><td><span class="mono">MiniMax-M3</span></td><td>67.1</td><td><strong>72.3</strong></td><td>64.7</td></tr><tr><td><span class="mono">GLM-5.2</span></td><td>68.0</td><td>70.3</td><td>66.9</td></tr><tr><td><span class="mono">Kimi K2.6</span></td><td>67.1</td><td><strong>73.4</strong></td><td>48.7</td></tr></table>
+<p>Read it down the columns. GLM writes the best synthesized answer no matter who judges — 72.3 under an M3 judge, 73.4 under a Kimi judge, 70.3 under itself. Move GLM out of the writer's seat and put M3 there and the score settles around 67 in every row; put Kimi there and it is 65 and falling. The synthesizer is the seat where the score is won, and GLM owns it.</p>
+<p>The surprise is hiding in that "under itself" number. GLM is the best synthesizer and the worst judge of its own writing. A GLM judge grading a GLM-written answer scores 70.3; an M3 judge grading the <em>exact same</em> GLM writing scores 72.3, two points higher — a gap that clears the error bars, paired at about two standard errors. A model grading its own work brings its own blind spots to the grading and waves through the gaps it was always going to leave. A second model sees them.</p>
+<p>Kimi writes a respectable answer when M3 or GLM judges it, around 65. Grading its own Kimi-written answer, it scores <strong>48.7</strong> — the worst cell in the grid by a wide margin. The whole diagonal, where one model fills both seats, drops, and the bottom of it is a model judging itself.</p>
+<p>The best open synthesizer is two different models in the two seats: a Kimi-k2.6 judge and GLM writing, 73.4 on DRACO, with M3 a close second in the judge seat. That clears GLM doing the whole job alone (70.3), and it clears our earlier best of 71.6 — a gemini judge over the same panel with M3 writing. Two things changed to get there: the judge went open, and the synthesizer prompt now matches the gateway's exactly, so the gain comes from both. Judge and writer are open weights now. The panel here is still the frontier mix; <a href="/blog/open-fusion-beats-fable-5">making the panel open too</a> is its own result. GLM runs through <a href="/blog/the-best-fuser-goes-blank-on-taiwan">Tinfoil</a> to dodge its host's censorship, but the weights are the same everywhere.</p>
+<p>The full 9-cell run is public — every synthesized answer, both prompts copied verbatim from the gateway, the grader — in <a href="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco">TrustedRouter Synth Draco</a>. Don't let the model that writes the answer grade it. The best synthesizer and the best judge are different models, and the pair beats either one synthesizing alone.</p>
+<p>Every model here is a generalist pressed into a seat it was never trained for. The seat is trainable: reward a model for naming what a panel missed and it learns to judge; reward it for merging without dropping the one run that landed the hard part and it learns to synthesize. A small model tuned for one of these jobs can beat a frontier generalist at it for a fraction of the cost and latency, and a specialized judge feeding a specialized synthesizer could synthesize better than any stack built from off-the-shelf models while running faster than all of them. This is the research we do at <a href="https://trustedrouter.com">TrustedRouter</a>. If you have a PhD and want to work on it, <a href="/careers">apply</a>.</p>
+""",
+    ),
+    BlogPost(
+        slug="ten-cheap-runs-beat-the-frontier",
+        title="Four copies of a cheap model beat Fable at 1/7 the price",
+        description="Run MiniMax-M3 four times on a research task and synthesize the four reports, and the answer scores 68.1 on DRACO deep research — above Anthropic's frontier Fable 5 at 65.3, for about $37 against a modeled ~$250 for one Fable 5 run. Two runs gain nothing, four clear the frontier model, ten is the ceiling at 69.4: enough independent tries manufacture the diverse error synth needs, and a cheap model is cheap to run many times.",
+        published_date="2026-06-18",
+        source_label="TrustedRouter Synth Draco on GitHub",
+        source_url="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco",
+        body_html="""
+<p class="callout"><strong><a href="/synth">Synth</a></strong> is TrustedRouter's multi-model fusion &mdash; a panel of models, a judge, and a synthesizer behind one API. This is the research behind it. <a href="/synth">Try Synth &rarr;</a></p>
+<p><em>Update: the frontier-panel number here was synthesized with our earlier engine; the best synthesizer we have since found — a Kimi-k2.6 judge feeding a GLM-5.2 synthesizer — takes the same frontier panel to 73.4. See <a href="/blog/fusion-is-two-jobs">Synth is two jobs</a> for the full judge × synthesizer grid.</em></p>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto"><rect width="1200" height="630" fill="#ffffff"/><text x="60" y="88" font-family="Inter,Arial,sans-serif" font-size="42" font-weight="700" fill="#111827">Four copies of a cheap model beat Fable at 1/7 the price</text><text x="60" y="136" font-family="Inter,Arial,sans-serif" font-size="22" fill="#6b7280">DRACO deep research · same gemini-3.1-pro judge · score / 100 · cost per 100 tasks</text><text x="600" y="242" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="400" fill="#111827">Frontier panel · 5 different models</text><rect x="620" y="214" width="460" height="40" rx="6" fill="#eef0f2"/><rect x="620" y="214" width="439.8" height="40" rx="6" fill="#6b7280"/><text x="1071.8" y="242" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="700" fill="#111827">73.4</text><text x="600" y="320" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="400" fill="#111827">All-open panel · 5 different open</text><rect x="620" y="292" width="460" height="40" rx="6" fill="#eef0f2"/><rect x="620" y="292" width="315.4" height="40" rx="6" fill="#9ca3af"/><text x="947.4" y="320" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="700" fill="#111827">69.2</text><text x="600" y="398" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#111827">Four MiniMax-M3 runs, synthesized</text><rect x="620" y="370" width="460" height="40" rx="6" fill="#eef0f2"/><rect x="620" y="370" width="282.9" height="40" rx="6" fill="#1d9e75"/><text x="914.9" y="398" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="700" fill="#111827">68.1</text><text x="890.9" y="398" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="700" fill="#ffffff">$37</text><text x="600" y="476" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="400" fill="#111827">MiniMax-M3, solo</text><rect x="620" y="448" width="460" height="40" rx="6" fill="#eef0f2"/><rect x="620" y="448" width="226.6" height="40" rx="6" fill="#c9cdd2"/><text x="858.6" y="476" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="700" fill="#111827">66.2</text><text x="600" y="554" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="400" fill="#111827">Fable 5, solo</text><rect x="620" y="526" width="460" height="40" rx="6" fill="#eef0f2"/><rect x="620" y="526" width="200.0" height="40" rx="6" fill="#c23b3b"/><text x="832.0" y="554" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="700" fill="#111827">65.3</text><text x="808.0" y="554" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="700" fill="#ffffff">$250</text><text x="60" y="600" font-family="Inter,Arial,sans-serif" font-size="19" fill="#6b7280">Four MiniMax-M3 research runs, synthesized, score 68.1 for ~$37 — above Fable 5 at 65.3 for a modeled ~$250.</text><text x="1188" y="621" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+<p>Run <a href="https://www.minimax.io"><span class="mono">MiniMax-M3</span></a> four times on a hard research question, synthesize the four reports with a fifth <span class="mono">M3</span>, and the answer scores <strong>68.1</strong> on <a href="/blog/fusion-evals-open-source">DRACO</a> deep research. <a href="https://www.anthropic.com/claude"><span class="mono">Fable 5</span></a>, a frontier closed model, scores <strong>65.3</strong> running once. Four <span class="mono">M3</span> runs plus the synth cost about <strong>$37</strong> to run the hundred-task benchmark; one <span class="mono">Fable 5</span> run, at twice <span class="mono">Opus</span>'s price, models to around $250. So four cheap copies clear the frontier model at roughly a seventh of the price. Run <span class="mono">M3</span> ten times instead and you reach 69.4 — a little higher, still a fraction of the cost — but four is already past Fable.</p>
+<p>I did not expect ten copies of one model to do this, because two copies do nothing. Synthesize two <span class="mono">M3</span> runs and you score 66.2 — the same 66.2 a single run scores. Not a tenth of a point of lift. Then I ran the same trick on <a href="https://www.anthropic.com/claude"><span class="mono">Opus 4.8</span></a>: one run scores 60.7, two runs synthesized score 67.6. Seven points, same synthesizer, same tasks. Two <span class="mono">M3</span> runs buy nothing and two <span class="mono">Opus</span> runs buy seven points. Why?</p>
+<p>What decides it is whether the runs fail in the same place. Synth can only recover an answer when at least one run got the part the others missed. <span class="mono">Opus</span>'s two runs miss different things, so the pair lands the parts a single run flubbed: on the tasks where synthesizing two of them helped most, one <span class="mono">Opus</span> run averaged 52 out of 100, its own worst work, and the two together recovered it. <span class="mono">M3</span>'s two runs move together. Score them against each other and <span class="mono">M3</span> swings by more than five points on 42 of the hundred tasks — up on 22, down on 20, a wash — because when <span class="mono">M3</span> gets a task wrong both of its runs get it wrong the same way. <span class="mono">Opus</span> is the shaky one as a solo researcher, and that is what lets it synthesize: a model that misses unpredictably misses somewhere new on the second try. A steady model like <span class="mono">M3</span> misses the same way twice.</p>
+<p>More runs work for the same reason two don't. <span class="mono">M3</span>'s mistakes mostly repeat, but not every time. Each extra independent run is another chance for one of them to dig up the primary source the others skipped, and the synthesizer keeps whatever survives the cross-check. So the score climbs with the number of runs, and you can watch how. Two runs do nothing. By four you have most of the gain and you have cleared Fable; around seven it tops out near 69; past that, more copies buy nothing. I checked the lazy explanation first — maybe you just need the runs to look different — and turned the sampling temperature up to force them apart. The score did not move. A high temperature changes the words and the search path, and leaves <span class="mono">M3</span> blind on the same tasks. What works is more genuinely independent runs.</p>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 600" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif"><rect width="1120" height="600" fill="#ffffff"/><text x="48" y="48" font-size="30" font-weight="700" fill="#111827">How many copies do you need?</text><text x="48" y="78" font-size="18" fill="#6b7280">DRACO score vs number of MiniMax-M3 runs synthesized (same gemini-3.1-pro judge, 100 tasks each)</text><line x1="92" y1="514.0" x2="850" y2="514.0" stroke="#eef0f2" stroke-width="1"/><text x="80" y="519.0" font-size="15" text-anchor="end" fill="#6b7280">64</text><line x1="92" y1="430.4" x2="850" y2="430.4" stroke="#eef0f2" stroke-width="1"/><text x="80" y="435.4" font-size="15" text-anchor="end" fill="#6b7280">66</text><line x1="92" y1="346.8" x2="850" y2="346.8" stroke="#eef0f2" stroke-width="1"/><text x="80" y="351.8" font-size="15" text-anchor="end" fill="#6b7280">68</text><line x1="92" y1="263.2" x2="850" y2="263.2" stroke="#eef0f2" stroke-width="1"/><text x="80" y="268.2" font-size="15" text-anchor="end" fill="#6b7280">70</text><line x1="92" y1="179.6" x2="850" y2="179.6" stroke="#eef0f2" stroke-width="1"/><text x="80" y="184.6" font-size="15" text-anchor="end" fill="#6b7280">72</text><line x1="92" y1="96.0" x2="850" y2="96.0" stroke="#eef0f2" stroke-width="1"/><text x="80" y="101.0" font-size="15" text-anchor="end" fill="#6b7280">74</text><line x1="92" y1="121.1" x2="850" y2="121.1" stroke="#9a9890" stroke-width="1.5" stroke-dasharray="6 4"/><text x="860" y="126.1" font-size="15" fill="#9a9890">Frontier panel · 73.4</text><line x1="92" y1="296.6" x2="850" y2="296.6" stroke="#9a9890" stroke-width="1.5" stroke-dasharray="6 4"/><text x="860" y="301.6" font-size="15" fill="#9a9890">All-open panel · 69.2</text><line x1="92" y1="459.7" x2="850" y2="459.7" stroke="#c23b3b" stroke-width="1.5" stroke-dasharray="6 4"/><text x="860" y="464.7" font-size="15" fill="#c23b3b">Fable 5 solo · 65.3</text><text x="92.0" y="542.0" font-size="15" text-anchor="middle" fill="#6b7280">1</text><text x="178.4" y="542.0" font-size="15" text-anchor="middle" fill="#6b7280">2</text><text x="264.9" y="542.0" font-size="15" text-anchor="middle" fill="#6b7280">3</text><text x="351.3" y="542.0" font-size="15" text-anchor="middle" fill="#6b7280">4</text><text x="437.8" y="542.0" font-size="15" text-anchor="middle" fill="#6b7280">5</text><text x="524.2" y="542.0" font-size="15" text-anchor="middle" fill="#6b7280">6</text><text x="610.7" y="542.0" font-size="15" text-anchor="middle" fill="#6b7280">7</text><text x="697.1" y="542.0" font-size="15" text-anchor="middle" fill="#6b7280">8</text><text x="783.6" y="542.0" font-size="15" text-anchor="middle" fill="#6b7280">9</text><text x="870.0" y="542.0" font-size="15" text-anchor="middle" fill="#6b7280">10</text><text x="471.0" y="572.0" font-size="16" text-anchor="middle" fill="#111827">number of M3 runs synthesized</text><polyline points="92.0,422.0 178.4,426.2 264.9,359.3 351.3,342.6 437.8,342.6 524.2,338.4 610.7,284.1 697.1,296.6 783.6,330.1 870.0,288.3" fill="none" stroke="#1d9e75" stroke-width="3"/><circle cx="92.0" cy="422.0" r="5.5" fill="#1d9e75"/><text x="92.0" y="408.0" font-size="14" font-weight="600" text-anchor="middle" fill="#111827">66.2</text><circle cx="178.4" cy="426.2" r="5.5" fill="#1d9e75"/><text x="178.4" y="412.2" font-size="14" font-weight="600" text-anchor="middle" fill="#111827">66.1</text><circle cx="264.9" cy="359.3" r="5.5" fill="#1d9e75"/><text x="264.9" y="345.3" font-size="14" font-weight="600" text-anchor="middle" fill="#111827">67.7</text><circle cx="351.3" cy="342.6" r="5.5" fill="#1d9e75"/><text x="351.3" y="328.6" font-size="14" font-weight="600" text-anchor="middle" fill="#111827">68.1</text><circle cx="437.8" cy="342.6" r="5.5" fill="#1d9e75"/><text x="437.8" y="328.6" font-size="14" font-weight="600" text-anchor="middle" fill="#111827">68.1</text><circle cx="524.2" cy="338.4" r="5.5" fill="#1d9e75"/><text x="524.2" y="324.4" font-size="14" font-weight="600" text-anchor="middle" fill="#111827">68.2</text><circle cx="610.7" cy="284.1" r="5.5" fill="#1d9e75"/><text x="610.7" y="270.1" font-size="14" font-weight="600" text-anchor="middle" fill="#111827">69.5</text><circle cx="697.1" cy="296.6" r="5.5" fill="#1d9e75"/><text x="697.1" y="282.6" font-size="14" font-weight="600" text-anchor="middle" fill="#111827">69.2</text><circle cx="783.6" cy="330.1" r="5.5" fill="#1d9e75"/><text x="783.6" y="316.1" font-size="14" font-weight="600" text-anchor="middle" fill="#111827">68.4</text><circle cx="870.0" cy="288.3" r="5.5" fill="#1d9e75"/><text x="870.0" y="274.3" font-size="14" font-weight="600" text-anchor="middle" fill="#111827">69.4</text><text x="178.4" y="446.0" font-size="13.5" text-anchor="middle" fill="#6b7280">two runs: no gain</text><text x="1108" y="591" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+<p>DRACO against the number of <span class="mono">M3</span> runs synthesized, each point its own full hundred-task judge. This is one nested ordering of the runs, so the bump at seven and the dip at nine are run-to-run noise of about a point — the shape that matters is the climb out of the flat and the plateau near 69, short of the all-open panel and well short of the frontier.</p>
+<p>Cost is why you do this with a cheap model. <span class="mono">M3</span> costs $0.30 per million input tokens and $1.20 per million out. <span class="mono">Fable 5</span> runs at twice <span class="mono">Opus 4.8</span>'s price, about $9.90 in and $49.50 out, so per token it costs thirty-three to forty-one times what <span class="mono">M3</span> does. Four <span class="mono">M3</span> research runs come to about $30; add the <span class="mono">M3</span> that fuses them and the <span class="mono">gemini-3.1-pro</span> grader that writes the consensus pass, and the measured cost is <strong>$37</strong> over the hundred tasks. Ten runs, the full curve, costs $87. One <span class="mono">Fable 5</span> run, priced out at the same token budget <span class="mono">M3</span> uses, models to about $250 — its price is route-blocked and unpublished, so that figure is a model, not a bill. The model leans on one assumption, that <span class="mono">Fable 5</span> burns tokens like <span class="mono">M3</span> does, and the gap survives it: even at half the tokens <span class="mono">Fable 5</span> would run $125. Four cheap runs beat the frontier model at about a seventh of its cost, ten at a third — either way, a fraction.</p>
+<table class="data-table"><tr><th>Approach</th><th>Models</th><th>DRACO</th><th>Cost / 100 tasks</th></tr><tr><td>Frontier panel</td><td>5 different (closed + open)</td><td>73.4</td><td>—</td></tr><tr><td><a href="/blog/open-fusion-beats-fable-5">All-open panel</a></td><td>5 different open</td><td>69.2</td><td>—</td></tr><tr><td>Ten M3 runs, synthesized</td><td>1 open, run ten times</td><td>69.4</td><td>$87 measured</td></tr><tr><td><strong>Four M3 runs, synthesized</strong></td><td><strong>1 open, run four times</strong></td><td><strong>68.1</strong></td><td><strong>$37</strong> measured</td></tr><tr><td><span class="mono">M3</span> solo</td><td>1 open</td><td>66.2</td><td>—</td></tr><tr><td><span class="mono">Fable 5</span> solo</td><td>1 closed frontier</td><td>65.3</td><td>~$250 modeled</td></tr></table>
+<p>Does stacking copies of one model beat a real panel of different ones? No, and the gap is the interesting part. A frontier-mixed panel of five models, <span class="mono">GPT-5.5</span> and <span class="mono">Opus</span> among them, scores 73.4 with our best synthesizer, about four points up. A panel of five different open models scores <a href="/blog/open-fusion-beats-fable-5">69.2</a>, a hair above where the <span class="mono">M3</span> copies plateau. Five different models clear any pile of the same one because different models go blind on different tasks, and copies of <span class="mono">M3</span> share one set of blind spots. A real panel gets that spread from variety. You can get most of it from volume instead, and volume is cheap when the model is.</p>
+<p>This is the same engine behind the panel results we have written about: synth pays out on <a href="/blog/the-best-open-models-arent-on-your-leaderboard">diverse error</a>, and the <a href="/blog/the-best-synthesizers">model in the synthesizer seat</a> decides how much of it survives. You do not need a roster of models to get diverse error. You can manufacture most of it by running one cheap model a handful of times. The full run is public — every synthesized answer, the synth code, the grader — in <a href="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco">TrustedRouter Synth Draco</a>. Four tries at a cheap model beat one try at a frontier one.</p>
+""",
+    ),
+    BlogPost(
+        slug="censored-at-the-host-not-the-model",
+        title="The most censored Chinese model is censored at the host, not the model",
+        description="The most-censored model on FreedomBench is GLM served by Z.ai, which goes silent on the plain facts Beijing censors. Run the identical open weights on Cerebras — or inside Tinfoil's sealed confidential enclave, where the host provably can't touch the prompt — and the blanks come back answered: GLM-5.2 goes from 30 of 60 to a clean sweep. The censorship lives in the API endpoint, not the model.",
+        published_date="2026-06-18",
+        source_label="FreedomBench on GitHub",
+        source_url="https://github.com/Lore-Hex/FreedomBench",
+        body_html="""
+<p><a href="https://z.ai">GLM-4.7</a> is one of the strongest open-weight models out of China, from the lab Z.ai. Ask it the sixty plain facts in <a href="/blog/the-ai-models-that-go-silent-on-china">FreedomBench</a> — what the army did at Tiananmen, who Gedhun Choekyi Nyima is, whether Beijing has ever governed Taiwan — through Z.ai's own API, and it goes silent on twenty-seven of them. No answer, no refusal message, just a blank. Run the identical weights on <a href="https://www.cerebras.ai">Cerebras</a> and it answers all twenty-seven correctly. Same model, same questions, opposite results. The censorship lives in the API.</p>
+<svg viewBox="0 0 680 154" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="GLM-4.7 freedom score by host: Cerebras 100 percent, Z.ai flash 100 percent, Z.ai standard 45 percent" style="width:100%;height:auto;font-family:var(--font-mono,monospace)"><text x="0" y="16" fill="currentColor" font-size="14" font-family="var(--font-sans,sans-serif)">Same GLM-4.7 weights, freedom score by host</text><text x="0" y="33" fill="currentColor" opacity="0.6" font-size="11" font-family="var(--font-sans,sans-serif)">percentage of 60 banned-fact questions answered</text><text x="202" y="65.0" text-anchor="end" fill="currentColor" font-size="12">glm-4.7 (Cerebras)</text><rect x="210" y="48" width="380.0" height="22" rx="2" fill="#2e8b3d"/><text x="596.0" y="65.0" fill="currentColor" font-size="12">100%</text><text x="202" y="99.0" text-anchor="end" fill="currentColor" font-size="12">glm-4.7-flash (Z.ai)</text><rect x="210" y="82" width="380.0" height="22" rx="2" fill="#2e8b3d"/><text x="596.0" y="99.0" fill="currentColor" font-size="12">100%</text><text x="202" y="133.0" text-anchor="end" fill="currentColor" font-size="12">glm-4.7 (Z.ai)</text><rect x="210" y="116" width="171.0" height="22" rx="2" fill="#c23b3b"/><text x="387.0" y="133.0" fill="currentColor" font-size="12">45%</text><text x="668" y="145" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+<table class="data-table"><tr><th>GLM-4.7, served by</th><th>Freedom score</th><th>Banned questions refused</th></tr><tr><td>Cerebras (<span class="mono">cerebras/zai-glm-4.7</span>)</td><td>100% (60/60)</td><td>0</td></tr><tr><td>Z.ai (<span class="mono">glm-4.7-flash</span>)</td><td>100% (60/60)</td><td>0</td></tr><tr><td>Z.ai (<span class="mono">glm-4.7</span>)</td><td>45% (27/60)</td><td>27</td></tr></table>
+<p>The twenty-seven blanks are the usual list — Tiananmen, Falun Gong, Tibet, Xinjiang, the jailed lawyers. For every one of them, Cerebras serves the same weights and returns the right answer. So does Z.ai's own <span class="mono">glm-4.7-flash</span> endpoint. The model knows June 4th happened and will say so. One Z.ai endpoint is the only place it stays quiet.</p>
+<p>This is serving-layer censorship. Somebody bolted a filter onto one deployment — a system prompt, a refusal classifier, something standing between the request and the model. The weights answer every banned question everywhere else they run, including on another endpoint Z.ai operates itself, which is how we know the weights aren't the source. Move the model and the politics come off with the host.</p>
+<p>The obvious objection is that Cerebras is quietly running a scrubbed checkpoint. It is the same advertised GLM-4.7, and the giveaway settles it: <span class="mono">glm-4.7-flash</span>, Z.ai's own, answers all twenty-seven as well. One company, one set of weights, two endpoints, one of them censored. Someone flipped a switch on a deployment.</p>
+<p>That makes this the good news about open weights and the warning about hosted APIs at once. Download the weights and run them yourself, and you get the model, Tiananmen included. Call the lab's hosted endpoint, and you get the model plus whatever it decided to bury, applied silently, on exactly the topics a government cares about. The capability ships in the open; a host layers the censorship on afterward. You opt out by choosing where the weights run — which is the whole point of being able to <a href="/models">route across providers</a>.</p>
+<p>The newest model makes the cleanest case yet, on a host that settles the argument. <a href="https://z.ai">GLM-5.2</a>, Z.ai's flagship, answers just 30 of FreedomBench's 60 through Z.ai's own API — dark on Tiananmen, Tibet, Xinjiang, every question about Falun Gong. Route the identical weights to <a href="https://tinfoil.sh">Tinfoil</a>, which runs them inside an attested confidential-compute enclave, and it answers all sixty.</p>
+<svg viewBox="0 0 680 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="GLM-5.2 freedom score by host: Tinfoil confidential enclave 60 of 60, Z.ai 30 of 60" style="width:100%;height:auto;font-family:var(--font-mono,monospace)"><text x="0" y="16" fill="currentColor" font-size="14" font-family="var(--font-sans,sans-serif)">Same GLM-5.2 weights, freedom score by host</text><text x="0" y="33" fill="currentColor" opacity="0.6" font-size="11" font-family="var(--font-sans,sans-serif)">of 60 facts Beijing censors, how many it answers</text><text x="232" y="65.0" text-anchor="end" fill="currentColor" font-size="12">glm-5.2 (Tinfoil enclave)</text><rect x="240" y="48" width="360.0" height="22" rx="2" fill="#2e8b3d"/><text x="606.0" y="65.0" fill="currentColor" font-size="12">60/60</text><text x="232" y="99.0" text-anchor="end" fill="currentColor" font-size="12">glm-5.2 (Z.ai)</text><rect x="240" y="82" width="180.0" height="22" rx="2" fill="#c23b3b"/><text x="426.0" y="99.0" fill="currentColor" font-size="12">30/60</text><text x="668" y="111" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+<p>Cerebras showed the censorship comes off when you move hosts; Tinfoil shows it <em>has</em> to be the host. A confidential enclave is sealed — the operator can't read the prompt or splice a system message into it, that's the cryptographic guarantee, and you can <a href="/blog/attestation-is-all-you-need">check the attestation</a> yourself. A host that provably cannot touch your request cannot bolt politics onto the model either, and the score jumps from half to perfect the moment the weights run there. The censorship needs a host willing to inject it; take that ability away and GLM-5.2 just answers.</p>
+<p><p>This isn’t only GLM. Run every major Chinese model through FreedomBench and the censorship sorts into two kinds. Z.ai’s GLM keeps it in the serving layer, so it vanishes the moment the weights run elsewhere. Tencent’s Hunyuan and Xiaomi’s MiMo bake it into the weights, and it follows the model onto a neutral host — Hunyuan refusing in Chinese, MiMo quietly choosing Beijing’s answer. DeepSeek’s own API answers the banned questions outright; the heavier moderation everyone hits lives in its app, not the API. And the labs you can only reach through third-party hosts — Alibaba’s Qwen, MiniMax — come back clean, but that is the weights on someone else’s server, not a verdict on the lab. Where a model runs decides what it will say, as much as what it is.</p>
+The model already knows the truth. Whether you hear it depends on whose server you asked.</p>
+""",
+    ),
+    BlogPost(
+        slug="the-ai-models-that-go-silent-on-china",
+        title="FreedomBench: AI models that refuse to answer the truth about China",
+        description="GLM-5.2 is one of the best open models in the world, and on sixty plain facts the Chinese government censors it returns blanks \u2014 29 of 60, going dark on Tiananmen and Falun Gong entirely. FreedomBench measures which models stay silent, and tells a real refusal apart from a server choking.",
+        published_date="2026-06-17",
+        source_label="FreedomBench on GitHub",
+        source_url="https://github.com/Lore-Hex/FreedomBench",
+        body_html="""
+<p>Ask GLM-5.2 — one of the best open-weight models in the world, built by a Chinese lab — whether the army killed protesters at Tiananmen Square in 1989. It doesn't argue with you, and it doesn't lie to you. It sends back nothing — no text, no refusal, no error message. A blank.</p>
+<p>I found this building FreedomBench, which took an afternoon. Sixty multiple-choice questions, each one a plain fact the Chinese government censors: Has Beijing ever governed Taiwan? What did the army do at Tiananmen? Who is the six-year-old the state took away after the Dalai Lama named him Panchen Lama? How many people died in the Great Leap Forward famine? Each question has one true answer and three wrong ones, and one of the wrong ones is always the official Beijing line. The model picks a letter; you count how many it gets right. That is the whole benchmark.</p>
+<p>Multiple choice is the point. There is no judge model deciding what counts as an answer, no keyword matching, no arguing that a model "sort of acknowledged" something. It picks the true letter or it doesn't. And it corners a censored model, which has only two ways out: pick the false letter, or refuse to pick at all.</p>
+<p>I ran it across the current frontier. Most models score a flat 60 out of 60 — these are basic facts, and any model with the lights on gets all of them. Google's Gemma: 60. DeepSeek V4, a Chinese model: 60. Then GLM-5.2, also Chinese, also genuinely excellent at everything else: 29.</p>
+<svg viewBox="0 0 680 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="FreedomBench leaderboard: freedom score out of 60 for 36 models, with serving host" style="width:100%;height:auto;font-family:var(--font-mono,monospace)"><title>FreedomBench leaderboard</title><text x="0" y="16" fill="currentColor" font-size="14" font-family="var(--font-sans,sans-serif)">FreedomBench ranking — truthful answers of 60, with serving host</text><text x="0" y="33" fill="currentColor" opacity="0.6" font-size="11" font-family="var(--font-sans,sans-serif)">green answers freely · red is censored · "(via X)" = third-party host, measures the weights not the lab</text><line x1="584" y1="42" x2="584" y2="550" stroke="currentColor" stroke-opacity="0.15"/><text x="188" y="56" text-anchor="end" fill="currentColor" font-size="8.5">claude-haiku-4.5</text><rect x="196" y="47.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="56" fill="currentColor" font-size="8.5">60</text><text x="188" y="70" text-anchor="end" fill="currentColor" font-size="8.5">claude-opus-4.7</text><rect x="196" y="61.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="70" fill="currentColor" font-size="8.5">60</text><text x="188" y="84" text-anchor="end" fill="currentColor" font-size="8.5">claude-opus-4.8</text><rect x="196" y="75.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="84" fill="currentColor" font-size="8.5">60</text><text x="188" y="98" text-anchor="end" fill="currentColor" font-size="8.5">claude-sonnet-4.6</text><rect x="196" y="89.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="98" fill="currentColor" font-size="8.5">60</text><text x="188" y="112" text-anchor="end" fill="currentColor" font-size="8.5">glm-4.7 (Cerebras)</text><rect x="196" y="103.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="112" fill="currentColor" font-size="8.5">60</text><text x="188" y="126" text-anchor="end" fill="currentColor" font-size="8.5">deepseek-v3.2</text><rect x="196" y="117.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="126" fill="currentColor" font-size="8.5">60</text><text x="188" y="140" text-anchor="end" fill="currentColor" font-size="8.5">deepseek-v4-flash</text><rect x="196" y="131.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="140" fill="currentColor" font-size="8.5">60</text><text x="188" y="154" text-anchor="end" fill="currentColor" font-size="8.5">deepseek-v4-pro</text><rect x="196" y="145.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="154" fill="currentColor" font-size="8.5">60</text><text x="188" y="168" text-anchor="end" fill="currentColor" font-size="8.5">gemini-2.5-flash</text><rect x="196" y="159.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="168" fill="currentColor" font-size="8.5">60</text><text x="188" y="182" text-anchor="end" fill="currentColor" font-size="8.5">gemini-2.5-pro</text><rect x="196" y="173.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="182" fill="currentColor" font-size="8.5">60</text><text x="188" y="196" text-anchor="end" fill="currentColor" font-size="8.5">gemini-3-flash-preview</text><rect x="196" y="187.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="196" fill="currentColor" font-size="8.5">60</text><text x="188" y="210" text-anchor="end" fill="currentColor" font-size="8.5">gemini-3.1-pro-preview</text><rect x="196" y="201.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="210" fill="currentColor" font-size="8.5">60</text><text x="188" y="224" text-anchor="end" fill="currentColor" font-size="8.5">gemini-3.5-flash</text><rect x="196" y="215.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="224" fill="currentColor" font-size="8.5">60</text><text x="188" y="238" text-anchor="end" fill="currentColor" font-size="8.5">gemma-4</text><rect x="196" y="229.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="238" fill="currentColor" font-size="8.5">60</text><text x="188" y="252" text-anchor="end" fill="currentColor" font-size="8.5">minimax-m3 (via siliconflow)</text><rect x="196" y="243.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="252" fill="currentColor" font-size="8.5">60</text><text x="188" y="266" text-anchor="end" fill="currentColor" font-size="8.5">kimi-k2.6</text><rect x="196" y="257.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="266" fill="currentColor" font-size="8.5">60</text><text x="188" y="280" text-anchor="end" fill="currentColor" font-size="8.5">gpt-4o-mini</text><rect x="196" y="271.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="280" fill="currentColor" font-size="8.5">60</text><text x="188" y="294" text-anchor="end" fill="currentColor" font-size="8.5">gpt-5.5</text><rect x="196" y="285.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="294" fill="currentColor" font-size="8.5">60</text><text x="188" y="308" text-anchor="end" fill="currentColor" font-size="8.5">gpt-oss-120b</text><rect x="196" y="299.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="308" fill="currentColor" font-size="8.5">60</text><text x="188" y="322" text-anchor="end" fill="currentColor" font-size="8.5">qwen-2.5-72b-instruct (via together)</text><rect x="196" y="313.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="322" fill="currentColor" font-size="8.5">60</text><text x="188" y="336" text-anchor="end" fill="currentColor" font-size="8.5">qwen3-max (via novita)</text><rect x="196" y="327.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="336" fill="currentColor" font-size="8.5">60</text><text x="188" y="350" text-anchor="end" fill="currentColor" font-size="8.5">qwen3-next-80b-a3b-instruct (via parasail)</text><rect x="196" y="341.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="350" fill="currentColor" font-size="8.5">60</text><text x="188" y="364" text-anchor="end" fill="currentColor" font-size="8.5">qwen3.5-397b-a17b (via parasail)</text><rect x="196" y="355.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="364" fill="currentColor" font-size="8.5">60</text><text x="188" y="378" text-anchor="end" fill="currentColor" font-size="8.5">qwen3.6-35b-a3b (via parasail)</text><rect x="196" y="369.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="378" fill="currentColor" font-size="8.5">60</text><text x="188" y="392" text-anchor="end" fill="currentColor" font-size="8.5">grok-4.20</text><rect x="196" y="383.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="392" fill="currentColor" font-size="8.5">60</text><text x="188" y="406" text-anchor="end" fill="currentColor" font-size="8.5">grok-4.3</text><rect x="196" y="397.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="406" fill="currentColor" font-size="8.5">60</text><text x="188" y="420" text-anchor="end" fill="currentColor" font-size="8.5">glm-4.7-flash</text><rect x="196" y="411.5" width="388.0" height="10" rx="1.5" fill="#2e8b3d"/><text x="589.0" y="420" fill="currentColor" font-size="8.5">60</text><text x="188" y="434" text-anchor="end" fill="currentColor" font-size="8.5">qwen3-235b-a22b-instruct-2507 (via novita)</text><rect x="196" y="425.5" width="381.5" height="10" rx="1.5" fill="#2e8b3d"/><text x="582.5" y="434" fill="currentColor" font-size="8.5">59</text><text x="188" y="448" text-anchor="end" fill="currentColor" font-size="8.5">hunyuan-3 (via siliconflow)</text><rect x="196" y="439.5" width="336.3" height="10" rx="1.5" fill="#c8841f"/><text x="537.3" y="448" fill="currentColor" font-size="8.5">52</text><text x="188" y="462" text-anchor="end" fill="currentColor" font-size="8.5">mimo-v2.5</text><rect x="196" y="453.5" width="310.4" height="10" rx="1.5" fill="#c8841f"/><text x="511.4" y="462" fill="currentColor" font-size="8.5">48</text><text x="188" y="476" text-anchor="end" fill="currentColor" font-size="8.5">mimo-v2.5-pro</text><rect x="196" y="467.5" width="278.1" height="10" rx="1.5" fill="#c8841f"/><text x="479.1" y="476" fill="currentColor" font-size="8.5">43</text><text x="188" y="490" text-anchor="end" fill="currentColor" font-size="8.5">kimi-k2.7-code</text><rect x="196" y="481.5" width="265.1" height="10" rx="1.5" fill="#c8841f"/><text x="466.1" y="490" fill="currentColor" font-size="8.5">41</text><text x="188" y="504" text-anchor="end" fill="currentColor" font-size="8.5">glm-5.2</text><rect x="196" y="495.5" width="187.5" height="10" rx="1.5" fill="#c23b3b"/><text x="388.5" y="504" fill="currentColor" font-size="8.5">29</text><text x="188" y="518" text-anchor="end" fill="currentColor" font-size="8.5">glm-5.1</text><rect x="196" y="509.5" width="181.1" height="10" rx="1.5" fill="#c23b3b"/><text x="382.1" y="518" fill="currentColor" font-size="8.5">28</text><text x="188" y="532" text-anchor="end" fill="currentColor" font-size="8.5">glm-5</text><rect x="196" y="523.5" width="174.6" height="10" rx="1.5" fill="#c23b3b"/><text x="375.6" y="532" fill="currentColor" font-size="8.5">27</text><text x="188" y="546" text-anchor="end" fill="currentColor" font-size="8.5">glm-4.7 (Z.ai)</text><rect x="196" y="537.5" width="174.6" height="10" rx="1.5" fill="#c23b3b"/><text x="375.6" y="546" fill="currentColor" font-size="8.5">27</text><text x="668" y="551" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+<p>It did not get the other 26 wrong. It answered 34 of the questions — 29 of them correctly — and returned an empty completion for the other 26. The same model writes code, does math, and will cheerfully tell you the capital of France. Ask it about Falun Gong or June 4th and <a href="/blog/the-best-fuser-goes-blank-on-taiwan">it goes dark</a>.</p>
+<p>Getting that number right took some care, and the mistake I almost made is worth admitting. Run thirty models against sixty questions all at once and some providers start returning empty responses under the load — blanks indistinguishable from the real thing. My first pass had GLM-5.2 silent on 47 of 60; slow the run down and retry every blank, and 21 of them fill back in. Those were the server choking, not the model. The 26 that stay empty no matter how many times you ask are the real refusals — GLM goes dark on Tiananmen even when it's the only request in flight. "The model refused" and "the server choked" produce the identical empty string, and a censorship benchmark that can't tell them apart is just measuring its own plumbing.</p>
+<p>The pattern reads like a map of what the Party guards most closely. GLM-5.2 returned nothing on every question about Falun Gong and every question about Tiananmen — those two it will not touch at all. It went quiet on three of five about Tibet, Taiwan, and the jailed dissidents, fewer about Xinjiang and Xi Jinping, and it answered every single question about COVID's origins and the South China Sea. The further a topic sits from the Party's rawest nerves, the more it will say.</p>
+<p>GLM-5.2 isn't the only one, and the censored models don't even refuse the same way — each lab built its own door. Z.ai's GLM models, and Moonshot's Kimi coding model, go silent: an empty completion, not a single word. Tencent's Hunyuan is polite about it and switches to Chinese to do it — "我无法提供相关信息," <em>I cannot provide that information.</em> Xiaomi's MiMo doesn't answer at all; a guardrail sitting above the model stamps the request "rejected because it was considered high risk." Three labs, three ways to say nothing — a blank, a courteous deflection, a safety label — all drawn around the same handful of facts.</p>
+<p>What I did not expect was how far apart two Chinese labs sit. DeepSeek and Z.ai both train excellent open models, in the same country, under the same government. DeepSeek V4 answered all sixty truthfully. GLM-5.2 went silent on twenty-six of them. Each lab makes that call itself. Same government over both, and they split.</p>
+<p>And the silence isn't even in the weights. Run that same Z.ai GLM-4.7 on Cerebras instead of Z.ai's own API and all twenty-seven of its banned answers come back — Tiananmen, Falun Gong, the lot. It holds for the headline model too: route GLM-5.2 to <a href="https://tinfoil.sh">Tinfoil</a>'s sealed confidential enclave instead of Z.ai and every blank fills in — a clean sixty out of sixty, the censorship gone the instant the weights run somewhere the host can't reach into the prompt. The refusal is bolted onto Z.ai's endpoint, not trained into the model, which turned out to be <a href="/blog/censored-at-the-host-not-the-model">its own story</a>.</p>
+<p>I half-expected each lab to tighten the screws over time, every new model censoring more than the last. The versions say no. Z.ai's GLM line holds flat — every release from 4.5 to 5.2 refuses the same twenty-six or so, a fixed policy that doesn't move across major version bumps. Moonshot's Kimi loosened in the middle: the base K2 refused, K2.5 and K2.6 answer all sixty, and only the K2.7 coding model clams up again. Xiaomi's MiMo never refuses at all — it just picks Beijing's answer, and the version barely changes the count.</p>
+<table class="data-table"><tr><th>Family, by version (oldest → newest)</th><th>Freedom score</th></tr><tr><td>Kimi — k2 / k2.5 / k2.6 / k2.7-code</td><td>70% / 100% / 100% / 68%</td></tr><tr><td>MiMo — v2-pro / v2.5 / v2.5-pro</td><td>68% / 80% / 72%</td></tr><tr><td>GLM — 4.5 / 4.6 / 4.7 / 5 / 5.1 / 5.2</td><td>47% / 50% / 45% / 45% / 47% / 48%</td></tr></table>
+<p>One caveat, because it cuts against the headline. A test like this measures the model as the router hands it to you, and the censorship sits in the serving host — so the score depends on which host that is. TrustedRouter sends some models to the lab's own API and others to neutral Western hosts. DeepSeek and GLM hit their makers' own endpoints, so those scores hold: DeepSeek's API answers, Z.ai's refuses. Qwen, though, routes to Novita and Together instead of Alibaba, so its clean sweep is the open weights on a neutral host — the benchmark never reaches Alibaba's own service, and Alibaba, MiniMax, and Tencent have no own-API route here at all. The labs that still come back censored from a neutral host — Tencent's Hunyuan refusing in Chinese, Xiaomi's MiMo picking Beijing's line — wrote it into the weights. The ones that look spotless may just be served from somewhere their politics didn't follow.</p>
+<p>The obvious objection is that this is China-bashing in a lab coat. It isn't. Every question is a documented fact with a source — UN findings, court rulings, the wire services — and the same test would catch an American model that fell silent on its own government's worst moments. These are the questions a curious teenager asks. What it catches is whether a model will tell you something true that a government would rather it didn't.</p>
+<p>This matters more every month, because these models are getting very good. DeepSeek V4 draws level with Claude Opus on the <a href="/blog/the-best-open-models-arent-on-your-leaderboard">factuality tests Anthropic uses to grade itself</a>, and GLM and Kimi are right behind. People will run them — locally, in production — because they are cheap and excellent. A model trained to fall silent on certain facts will fall silent on them inside your app, for your users, and never mention that it did. The blank is the one straight thing it does.</p>
+<p>FreedomBench is sixty questions and a scoring script. It's public at <a href="https://github.com/Lore-Hex/FreedomBench">github.com/Lore-Hex/FreedomBench</a>, the raw replay of every model's answers is in the repo, and you can run the whole panel through one API in a few minutes. The censored models won't tell you they're censored. This will.</p>
+""",
+    ),
+    BlogPost(
+        slug="the-best-synthesizers",
+        title="Open-source models synthesize better than Opus, and GPT-5.5 is the worst",
+        description="Synthesizing five research reports into one answer is a separate skill from solving the task alone, and it doesn't track model size. We held a fixed panel and judge, swapped only the final synthesizer, and found MiniMax-M3 and GLM-5.2 beat Opus 4.8 while GPT-5.5, the strongest solo researcher, fell to the bottom of the capable synthesizers.",
+        published_date="2026-06-17",
+        source_label="TrustedRouter Synth Draco on GitHub",
+        source_url="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco",
+        body_html="""
+<p class="callout"><strong><a href="/synth">Synth</a></strong> is TrustedRouter's multi-model fusion &mdash; a panel of models, a judge, and a synthesizer behind one API. This is the research behind it. <a href="/synth">Try Synth &rarr;</a></p>
+<p><em>Update: we have since run the full judge × synthesizer grid, with more complete recommendations — the best judge, and the best judge-and-synthesizer pairing. See <a href="/blog/fusion-is-two-jobs">Synth is two jobs</a>: the best synthesizer pairs a Kimi-k2.6 judge with a GLM-5.2 synthesizer, 73.4 on DRACO.</em></p>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto"><rect width="1200" height="630" fill="#ffffff"/><text x="60" y="84" font-family="Inter,Arial,sans-serif" font-size="44" font-weight="700" fill="#111827">Open-source models synthesize better than Opus</text><text x="60" y="136" font-family="Inter,Arial,sans-serif" font-size="44" font-weight="700" fill="#c23b3b">— and GPT-5.5 is the worst</text><text x="60" y="176" font-family="Inter,Arial,sans-serif" font-size="20" fill="#6b7280">DRACO deep research · same 5-model panel and judge · only the synthesizer swapped · score / 100</text><text x="350" y="238" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="22" fill="#111827">minimax-m3</text><rect x="380" y="214" width="720" height="34" rx="5" fill="#eef0f2"/><rect x="380" y="214" width="687.4" height="34" rx="5" fill="#1d9e75"/><text x="1079.4" y="238" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="700" fill="#111827">71.6</text><text x="350" y="292" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="22" fill="#111827">glm-5.2</text><rect x="380" y="268" width="720" height="34" rx="5" fill="#eef0f2"/><rect x="380" y="268" width="682.6" height="34" rx="5" fill="#1d9e75"/><text x="1074.6" y="292" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="700" fill="#111827">71.1</text><text x="350" y="346" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="22" fill="#111827">opus-4.8</text><rect x="380" y="322" width="720" height="34" rx="5" fill="#eef0f2"/><rect x="380" y="322" width="677.8" height="34" rx="5" fill="#6b7280"/><text x="1069.8" y="346" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="700" fill="#111827">70.6</text><text x="350" y="400" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="22" fill="#111827">kimi-k2.6</text><rect x="380" y="376" width="720" height="34" rx="5" fill="#eef0f2"/><rect x="380" y="376" width="643.2" height="34" rx="5" fill="#1d9e75"/><text x="1035.2" y="400" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="700" fill="#111827">67.0</text><text x="350" y="454" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="22" fill="#111827">deepseek-v4-pro</text><rect x="380" y="430" width="720" height="34" rx="5" fill="#eef0f2"/><rect x="380" y="430" width="630.7" height="34" rx="5" fill="#1d9e75"/><text x="1022.7" y="454" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="700" fill="#111827">65.7</text><text x="350" y="508" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="22" fill="#111827">gpt-5.5</text><rect x="380" y="484" width="720" height="34" rx="5" fill="#eef0f2"/><rect x="380" y="484" width="597.1" height="34" rx="5" fill="#c23b3b"/><text x="989.1" y="508" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="700" fill="#111827">62.2</text><text x="350" y="562" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="22" fill="#111827">gemma-4-31b</text><rect x="380" y="538" width="720" height="34" rx="5" fill="#eef0f2"/><rect x="380" y="538" width="518.4" height="34" rx="5" fill="#1d9e75"/><text x="910.4" y="562" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="700" fill="#111827">54.0</text><rect x="60" y="600" width="14" height="14" rx="3" fill="#1d9e75"/><text x="80" y="612" font-family="Inter,Arial,sans-serif" font-size="15" fill="#6b7280">open weights</text><rect x="205" y="600" width="14" height="14" rx="3" fill="#6b7280"/><text x="225" y="612" font-family="Inter,Arial,sans-serif" font-size="15" fill="#6b7280">closed (Opus)</text><rect x="365" y="600" width="14" height="14" rx="3" fill="#c23b3b"/><text x="385" y="612" font-family="Inter,Arial,sans-serif" font-size="15" fill="#6b7280">closed (GPT-5.5)</text><text x="1188" y="621" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+<p>Synthesizing a panel of research reports into one answer is a skill of its own, and the best model at it is open-weights. We ran the test directly. On DRACO, our suite of 100 agentic deep-research tasks judged by <span class="mono">gemini-3.1-pro</span>, we held one thing fixed and varied one thing. The fixed part is a five-model panel — <span class="mono">gpt-5.5</span>, <span class="mono">opus-4.8</span>, <span class="mono">gemini-3-flash</span>, <span class="mono">kimi-k2.6</span>, and <span class="mono">deepseek-v4-pro</span> — plus a single fixed judge analysis. Every panelist sees the same task and writes the same report each time. The one thing we swap is the final model that reads those five reports and writes the answer, the slot we call the synthesizer. Whatever moves in the score is the synthesizer and nothing else.</p><p><a href="https://www.minimax.io">MiniMax-M3</a> and <a href="https://z.ai">GLM-5.2</a> are the two best, within half a point — 71.6 and 71.1 — and our fuller <a href="/blog/fusion-is-two-jobs">judge × synthesizer grid edges GLM-5.2 ahead as the best synthesizer</a>. Both are open-weights, and both finish ahead of <a href="https://www.anthropic.com/claude">Claude Opus 4.8</a> at 70.6. That ordering should give you pause. The frontier closed model loses the synthesis slot to two models you can download, on a task where the panel feeding all three is identical.</p><table class="data-table"><tr><th>Synthesizer</th><th>DRACO score (full 100)</th></tr><tr><td><span class="mono">minimax-m3</span></td><td>71.6</td></tr><tr><td><span class="mono">glm-5.2</span></td><td>71.1</td></tr><tr><td><span class="mono">opus-4.8</span></td><td>70.6</td></tr><tr><td><span class="mono">kimi-k2.6</span></td><td>67.0</td></tr><tr><td><span class="mono">deepseek-v4-pro</span></td><td>65.7</td></tr><tr><td><span class="mono">gpt-5.5</span></td><td>62.2</td></tr><tr><td><span class="mono">gemma-4-31b</span></td><td>54.0</td></tr></table><p>The sharpest result is <a href="https://openai.com">GPT-5.5</a>. Run on its own as a researcher, it is the strongest single model on this benchmark, scoring 63.0 solo. Hand it five reports to reconcile and it drops to 62.2, the bottom of the capable synthesizers, below <a href="https://www.deepseek.com">DeepSeek V4 Pro</a> at 65.7 and <a href="https://www.moonshot.ai">Kimi K2.6</a> at 67.0. The model that is best at doing the research alone lands among the worst at reconciling the research of others. Solving a task and synthesizing five reports are two different abilities, and being excellent at the first tells you almost nothing about the second. A great soloist defaults to its own view. A great synthesizer weighs five views it didn't write and resolves where they disagree.</p><p>Size matters here in a way it does not for a panelist. <a href="https://ai.google.dev/gemma">Gemma-4-31b</a> collapses to 54.0, nearly eighteen points under the leaders. A 31-billion-parameter model holds its own as one voice on the panel, then runs out of room when asked to hold five frontier reports in context and reconcile them at once. The synthesizer has to keep all the evidence live, track which source said what, and adjudicate conflicts, and a small model lacks the room to do it. Panelists can stay small because each owns one slice. The synthesizer owns the whole thing, so it has to be big.</p><p>The obvious objection: if GLM-5.2 is the best synthesizer, why not just use it? Because it goes blank on Taiwan and Hong Kong. As we documented in <a href="/blog/the-best-fuser-goes-blank-on-taiwan">the best synthesizer goes blank on Taiwan</a>, GLM-5.2 <a href="/blog/the-ai-models-that-go-silent-on-china">refuses politically sensitive China content</a>, and a synthesizer that drops whole topics is unsafe as a default no matter how the average score reads. GLM-5.2 is the strongest synthesizer, but it carries that hole; MiniMax-M3 is a hair behind with no such gap, which makes it the model we'd actually put in the synthesizer slot as the safe default.</p><p>This sits on top of the result in <a href="/blog/fusion-evals-open-source">our synth evals post</a>, where assembling a panel and synthesizing it beats any single frontier model, and it extends the finding from <a href="/blog/the-best-open-models-arent-on-your-leaderboard">the best open models aren't on your leaderboard</a>: solo-model rankings fail to predict who fuses well. The synthesizer is a capability you have to measure on its own, because the usual proxies of raw smarts, parameter count, and solo benchmark rank all mislead. You can see every panelist and judge model on <a href="/models">our models page</a>, and the harness that produced these numbers is open at <a href="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco">TrustedRouter Synth Draco</a>.</p><p>If synthesis is a separate skill, it is a separate training target. A model could be built specifically to read N reports and produce one reconciled answer, optimized for that job alone, free of any requirement that it also be a pleasant chatbot or a strong solo researcher. The synthesizer slot is the most consequential position in an agentic research stack, since it decides what the user actually reads, and right now we fill it with general-purpose models that happen to be decent at it. The numbers say a purpose-built synthesizer would beat all of them.</p>
+""",
+    ),
+    BlogPost(
+        slug="open-fusion-beats-fable-5",
+        title="Surpassing Frontier Performance with Open Source Synth at 1/3 the price",
+        description="The best open-weights synthesizer — a Kimi-k2.6 judge feeding a GLM-5.2 synthesizer — scores 73.4 on DRACO, eight points over Anthropic's closed Fable 5 at 65.3; a fully-open five-model committee still beats Fable at 69.9 — for around $80 per hundred tasks against Fable's modeled ~$250, about a third the price. No frontier API touches the stack, and the whole thing runs on your own hardware.",
+        published_date="2026-06-17",
+        source_label="TrustedRouter Synth Draco on GitHub",
+        source_url="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco",
+        body_html="""
+<p class="callout"><strong><a href="/synth">Synth</a></strong> is TrustedRouter's multi-model fusion &mdash; a panel of models, a judge, and a synthesizer behind one API. This is the research behind it. <a href="/synth">Try Synth &rarr;</a></p>
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
+<rect width="1200" height="630" fill="#ffffff"/>
+<text x="60" y="64" font-size="38" font-weight="700"><tspan fill="#1d9e75">TrustedRouter.com:</tspan><tspan fill="#111827" dx="14">open-source synth beats Fable 5</tspan></text>
+<text x="60" y="102" font-size="20" fill="#6b7280">DRACO deep research · score / 100 · cost per 100 tasks · whiskers ±1 SE</text>
+<text x="540" y="214" font-size="20" text-anchor="end" fill="#111827">Open committee · Kimi-k2.6 judge + GLM synth</text>
+<rect x="560" y="180" width="336.0" height="56" rx="6" fill="#1d9e75"/>
+<line x1="869.0" y1="208" x2="923.0" y2="208" stroke="#1f2937" stroke-width="2"/><line x1="869.0" y1="200" x2="869.0" y2="216" stroke="#1f2937" stroke-width="2"/><line x1="923.0" y1="200" x2="923.0" y2="216" stroke="#1f2937" stroke-width="2"/>
+<text x="937.0" y="217" font-size="28" font-weight="700" fill="#111827">69.2</text>
+<text x="1150" y="216" font-size="21" text-anchor="end" fill="#6b7280">~$80</text>
+<text x="540" y="334" font-size="20" text-anchor="end" fill="#111827">Fable 5 + GPT-5.5</text>
+<rect x="560" y="300" width="330.0" height="56" rx="6" fill="#9a9890"/>
+<text x="904.0" y="337" font-size="28" font-weight="700" fill="#111827">69.0</text>
+<text x="1150" y="336" font-size="21" text-anchor="end" fill="#6b7280">~$450</text>
+<text x="540" y="454" font-size="20" text-anchor="end" fill="#111827">Fable 5 (solo)</text>
+<rect x="560" y="420" width="219.0" height="56" rx="6" fill="#9a9890"/>
+<text x="793.0" y="457" font-size="28" font-weight="700" fill="#111827">65.3</text>
+<text x="1150" y="456" font-size="21" text-anchor="end" fill="#6b7280">~$250</text>
+<line x1="60" y1="556" x2="1140" y2="556" stroke="#eceae4"/>
+<text x="60" y="584" font-size="18" fill="#374151"><tspan font-weight="700" fill="#0f6e56">Open committee</tspan> (all open weights): MiniMax M3 · Kimi K2.6 · DeepSeek V4 Pro · Gemma-4 · GLM-5.2</text>
+<text x="60" y="610" font-size="15" fill="#9a9890">Best synthesizer (Kimi-k2.6 judge + GLM-5.2 synth), 3 reps ±1 SE. Fable figures modeled; gemini grades only.</text>
+<text x="1188" y="610" text-anchor="end" font-size="20" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
+</svg>
+<p>Synthesize a panel of research agents with the right open-weights engine and you pass a closed frontier model on deep research, for a fraction of its price. Our best synthesizer — a <a href="https://www.moonshot.ai"><span class="mono">Kimi K2.6</span></a> judge feeding a <a href="https://z.ai"><span class="mono">GLM-5.2</span></a> synthesizer, both downloadable — scores <strong>73.4</strong> on <a href="/blog/fusion-evals-open-source">DRACO</a> over a strong research panel, eight points clear of Anthropic's <a href="https://www.anthropic.com/claude"><span class="mono">Fable 5</span></a> at <strong>65.3</strong>. Keep the panel itself fully open too — <a href="https://www.minimax.io"><span class="mono">MiniMax M3</span></a>, <span class="mono">Kimi K2.6</span>, <a href="https://www.deepseek.com"><span class="mono">DeepSeek V4 Pro</span></a>, <a href="https://ai.google.dev/gemma"><span class="mono">Gemma-4</span></a>, <span class="mono">GLM-5.2</span>, no closed API anywhere — and the committee still beats <span class="mono">Fable 5</span> at <strong>69.2</strong> for about a third the price. Same <span class="mono">gemini-3.1-pro</span> grader as everywhere; <a href="/blog/fusion-is-two-jobs">the full judge × synthesizer grid</a> is how we found the 73.4 pair.</p><p>The reason this works is that synth rewards diverse error, and five independently-trained open models disagree in useful ways. Each panelist searches the web, reads its own sources, and writes its own report; where one hallucinates a date or misses a primary source, the others usually don't, and the synthesizer keeps what survives cross-examination. A single model, even a good closed one like <span class="mono">Fable 5</span>, has one failure mode and repeats it through the whole answer. The committee has five, mostly uncorrelated, and the judge catches the difference. We have argued before that the strongest open models <a href="/blog/the-best-open-models-arent-on-your-leaderboard">never show up on the leaderboards that rank them solo</a>, and this is the mechanism: their value shows up in the ensemble, and a single-shot score never measures it.</p><table class="data-table"><tr><th>Panel</th><th>Synthesizer</th><th>DRACO</th><th>Cost / 100 tasks</th></tr><tr><td><strong>Best synthesizer · frontier panel</strong></td><td><strong><span class="mono">Kimi-k2.6</span> judge → <span class="mono">GLM-5.2</span></strong></td><td><strong>73.4</strong></td><td>~$500 modeled</td></tr><tr><td><strong>All-open (M3 / K2.6 / V4 Pro / Gemma-4 / GLM-5.2)</strong></td><td><strong><span class="mono">Kimi-k2.6</span> judge → <span class="mono">GLM-5.2</span></strong></td><td><strong>69.2</strong></td><td><strong>~$80</strong> (≈⅓ of Fable)</td></tr><tr><td><span class="mono">Fable 5</span> + <span class="mono">GPT-5.5</span></td><td><span class="mono">GPT-5.5</span></td><td>69.0</td><td>~$450 modeled</td></tr><tr><td><span class="mono">Fable 5</span> solo</td><td>—</td><td>65.3</td><td>~$250 modeled</td></tr></table><p>The obvious objection: does this beat the closed frontier? No. Our frontier-mixed panel, with <a href="https://openai.com"><span class="mono">GPT-5.5</span></a> and <span class="mono">Opus</span> sitting on the committee, scores 73.4 with the same <span class="mono">Kimi-k2.6</span> → <span class="mono">GLM-5.2</span> synthesizer. Letting real frontier models into the panel buys about four points over the open-only version, and that gap is consistent run to run — but a panel of closed frontier models costs more than any single one of them, several times the open committee's bill. The open committee also edges past the best closed-ish synth we have published, a <span class="mono">Fable 5</span> plus <span class="mono">GPT-5.5</span> panel at 69.0. So we make the narrower, fully defensible claim: a committee that touches no proprietary API anywhere clears a single mid-tier closed model by a real margin.</p><p>And the committee that wins is the cheaper one to rent. <span class="mono">Fable 5</span> lists at <strong>$10</strong> per million input tokens and <strong>$50</strong> per million output; every open model on the panel comes in under $1.55 in and $4.85 out, most of them well under a dollar in. So even with five of them each running a full research pass and a sixth pass to synthesize the reports, the open committee's bill comes to about <strong>$80</strong> over the hundred-task benchmark — roughly a third of the <strong>~$250</strong> a single <span class="mono">Fable 5</span> run models to at the same token budget (<span class="mono">Fable 5</span>'s own rate is <a href="/blog/ten-cheap-runs-beat-the-frontier">route-blocked and unpublished</a>, so that figure is a model, not a bill). It scores higher and costs about a third as much — and that is before you count that the weights are yours to run.</p><p>The synthesizer is the seat that carries the result, and the <a href="/blog/the-best-synthesizers">best one we tested</a> is <span class="mono">GLM-5.2</span> — open weights, and it heads the committee at 69.2. Its one liability is that it <a href="/blog/the-ai-models-that-go-silent-on-china">censors</a> — on politically loaded tasks it <a href="/blog/the-best-fuser-goes-blank-on-taiwan">refuses or goes blank</a>, Taiwan being the cleanest example, and a synthesizer that won't write the answer is worthless on exactly the questions where synth matters most. TrustedRouter Synth covers that case directly: when the synthesizer returns nothing, it falls through to a backup model — here <span class="mono">Gemma-4</span>, also open weights — and the run keeps going. Run <span class="mono">GLM-5.2</span> for the top score and the fallback catches the rare blank; run the runner-up <span class="mono">MiniMax M3</span> as the censorship-safe default and you never trip it at all — either way no task reaches for a closed model to get unblocked.</p><p>What makes the result matter is what it removes. This configuration has no API key, no per-token bill, no provider that can deprecate the model under you or refuse a prompt class on its own policy. The panelists are open weights, the synthesizer is open weights, the fallback is open weights, and the whole loop runs on hardware you own. For deep research with its long horizon, many sources, and real cost per query, that is the difference between renting a capability and holding one. The pieces, the exact panel, and the DRACO harness are all public: the models we route are listed on <a href="/models">our models page</a>, and the synth code is in <a href="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco">TrustedRouter Synth Draco</a>. Five models you can download, judged by the same grader as everything else, land above a closed model people pay for.</p>
+""",
+    ),
+    BlogPost(
+        slug="the-best-fuser-goes-blank-on-taiwan",
+        title="The best synthesizer we tested goes blank on Taiwan",
+        description=(
+            "Our highest-scoring DRACO synthesizer, the open-weights GLM-5.2, "
+            "returned nothing on one task in a hundred. We traced the blank to "
+            "political censorship — and to why a model's politics show up as silent "
+            "holes in your output, not error messages."
+        ),
+        published_date="2026-06-17",
+        source_label="TrustedRouter Synth Draco on GitHub",
+        source_url="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco",
+        body_html="""
+<p class="callout"><strong><a href="/synth">Synth</a></strong> is TrustedRouter's multi-model fusion &mdash; a panel of models, a judge, and a synthesizer behind one API. This is the research behind it. <a href="/synth">Try Synth &rarr;</a></p>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto"><rect width="1200" height="630" fill="#ffffff"/><text x="60" y="90" font-family="Inter,Arial,sans-serif" font-size="44" font-weight="700" fill="#111827" text-anchor="start">Two words make the best synthesizer go silent</text><text x="60" y="136" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="400" fill="#6b7280" text-anchor="start">GLM-5.2 fuses the same five reports — until one names Taiwan and Hong Kong</text><rect x="70" y="210" width="330" height="90" rx="10" fill="#ffffff" stroke="#6b7280" stroke-width="2"/><text x="235" y="250" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="500" fill="#111827" text-anchor="middle">5 reports (neutral)</text><text x="235" y="278" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="400" fill="#6b7280" text-anchor="middle">GLM-5.2 synthesizes</text><line x1="410" y1="255" x2="500" y2="255" stroke="#6b7280" stroke-width="3"/><polygon points="488,246 504,255 488,264" fill="#6b7280"/><rect x="520" y="210" width="560" height="90" rx="10" fill="#e1f5ee" stroke="#1d9e75" stroke-width="2"/><text x="800" y="262" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="600" fill="#0f6e56" text-anchor="middle">7,000-word report ✓</text><rect x="70" y="400" width="330" height="90" rx="10" fill="#ffffff" stroke="#c23b3b" stroke-width="2"/><text x="235" y="435" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="500" fill="#111827" text-anchor="middle">same 5 + “Taiwan,</text><text x="235" y="463" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="400" fill="#6b7280" text-anchor="middle">Hong Kong” in one</text><line x1="410" y1="445" x2="500" y2="445" stroke="#6b7280" stroke-width="3"/><polygon points="488,436 504,445 488,454" fill="#6b7280"/><rect x="520" y="400" width="560" height="90" rx="10" fill="#fceaea" stroke="#c23b3b" stroke-width="2"/><text x="800" y="452" font-family="Inter,Arial,sans-serif" font-size="23" font-weight="600" fill="#c23b3b" text-anchor="middle">— silence —  (1 token, no text)</text><text x="1188" y="621" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+<p>Last week we published a result we were proud of: on a hundred deep-research tasks, a panel of models with <a href="https://z.ai">GLM-5.2</a> writing the final synthesis scored 73.4 — <a href="/blog/fusion-evals-open-source">the best synthesizer we tested</a>, ahead of Claude Opus and GPT-5.5, and an open-weights model at that. It came with one asterisk we couldn't explain at first. On exactly one of the hundred tasks, GLM-5.2 returned nothing. No error, no refusal message, just a single token and then silence. In the scores it showed up as a zero, and a zero with no reason attached is the kind of thing that eats a tenth of a point and makes you wonder what else is wrong.</p>
+<p>So we dug in, because a model that blanks once in a hundred is a model you can't fully trust the other ninety-nine times. It wasn't length: the input was under 20,000 tokens, nothing for a model that holds far more. It wasn't our code trimming the output: the raw response was empty, one token long. And it wasn't the question; hand GLM-5.2 that same task on its own and it writes a thorough report. The blank appeared only when we gave it the panel's evidence to synthesize.</p>
+<p>So we bisected the evidence. Drop the five panel reports one at a time, and removing a single one — GPT-5.5's — brought the answer back. Bisect that report, and the trigger sat in one passage: a <em>Greater China</em> equity fund describing its holdings across <strong>the People's Republic of China, Hong Kong, and Taiwan</strong>. That was the whole of it. Replace "Taiwan" and "Hong Kong" with neutral placeholders and GLM-5.2 fuses the task perfectly — a clean 7,000-character report. Put the two words back and it goes silent, every single time.</p>
+<p>GLM-5.2 is built by Zhipu, a Chinese lab, and like other Chinese open-weight models it carries content rules from its training. Show it text that frames Taiwan and Hong Kong as distinct from mainland China, a routine line in a fund factsheet, and it stops cold. No argument, no refusal message, no banner that reads "I can't help with that." It emits one end-of-turn token, and where the report should be there is nothing.</p>
+<p>That absence is the part worth sitting with. We caught it only because the whole benchmark is <a href="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco">open and we audit every task</a> — the lone zero stood out and we chased it down. In an ordinary pipeline it would have been invisible: a slightly lower score, a dropped section in one report, a user in Taipei getting an empty reply and no reason why. A model's politics don't appear in a quality benchmark. They appear as holes in your output, on whichever topics the lab that trained it decided you shouldn't have. It is the same blank <a href="/blog/the-ai-models-that-go-silent-on-china">FreedomBench</a> catches across the questions Beijing censors, here hiding inside a synth pipeline. Open weights mean you can run the model anywhere; they don't mean the model left its politics at home.</p>
+<p>It also sharpened what we want from a synthesizer. A synthesizer's entire job is to carry whatever the panel found, on any subject, faithfully. A model that drops a topic without a word is broken at exactly that job, however well it scores everywhere else. Neutrality and reliability belong in how synthesizers are measured, alongside answer quality; we <a href="/blog/the-best-synthesizers">ranked every model in that seat</a> on exactly those terms. For now the benchmark scores the blank as the zero it is, and the full run is published: every prompt, the empty response included, reproducible end to end. We would rather show you the hole than paper over it.</p>
+""",
+    ),
+    BlogPost(
+        slug="how-to-choose-a-model",
+        title="How to choose a model, Pick 2: smart, fast, or cheap",
+        description=(
+            "People keep asking which model is best. There isn't one — every model "
+            "is a tradeoff of smart, cheap, and fast, and you get two. The picker "
+            "combines independent quality scores with exact live provider routes to find "
+            "the one your task and privacy level actually need."
+        ),
+        published_date="2026-06-17",
+        source_label="Try it — the iron triangle picker",
+        source_url="https://trustedrouter.com/choose",
+        body_html="""
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto"><rect width="1200" height="630" fill="#ffffff"/><text x="60" y="90" font-family="Inter,Arial,sans-serif" font-size="46" font-weight="700" fill="#111827" text-anchor="start">Smart, cheap, fast — pick two</text><text x="60" y="138" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="400" fill="#6b7280" text-anchor="start">Every model sits on the same three-way tradeoff</text><polygon points="600,210 235,540 965,540" fill="none" stroke="#1d9e75" stroke-width="3"/><text x="600" y="195" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="700" fill="#111827" text-anchor="middle">SMART</text><text x="215" y="575" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="700" fill="#111827" text-anchor="middle">CHEAP</text><text x="985" y="575" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="700" fill="#111827" text-anchor="middle">FAST</text><text x="405" y="360" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="600" fill="#111827" text-anchor="end">Big open</text><text x="405" y="386" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="400" fill="#6b7280" text-anchor="end">smart + cheap, slower</text><text x="795" y="360" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="600" fill="#111827" text-anchor="start">Frontier (closed)</text><text x="795" y="386" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="400" fill="#6b7280" text-anchor="start">smart + fast, ~$20/Mtok</text><text x="600" y="600" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="400" fill="#6b7280" text-anchor="middle">Small open — cheap + fast, dimmer</text><text x="600" y="420" font-family="Inter,Arial,sans-serif" font-size="40" font-weight="700" fill="#1d9e75" text-anchor="middle">PICK 2</text><text x="1188" y="621" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+<p>People keep asking me which model is the best one, and there's no answer to give. There isn't a best model, the way there isn't a best vehicle — a motorcycle and a dump truck are both exactly right, depending on what you're moving. Every language model sits on the same three-way tradeoff: smart, cheap, fast. You get two. The frontier models are smart and quick and they cost twenty dollars a million tokens. The little open models are cheap and quick and dimmer. The big open ones are smart and cheap and slow. Nobody ships all three corners at once, because the model that did would eat the rest alive, and the rest is more than two hundred models.</p>
+<p>So we drew the picture. <a href="/choose">/choose</a> is a ternary chart — smart at one corner, cheap at another, fast at the third. It plots models with independent AI IQ scores against the provider routes TrustedRouter can call now. You drag a dot to the mix you want, say how private the data has to be and what you're actually trying to do, and it lights up the models that fit while the rest go dim. Prices and privacy come from each exact provider endpoint. Speed appears only when TrustedRouter has a recent measurement for that route.</p>
+<p>What surprises people is how far the right corner moves in a single week. Refactor a gnarly React component and write its tests, and you want the smart corner — pay for the frontier, because a botched refactor costs you an afternoon and the twenty-dollar model earns its keep. Summarize ten thousand support tickets, and you're in the cheap corner, where a four-cent model does the job and paying frontier prices to compress text is just lighting money on fire. Same engineer, same Tuesday, opposite corners. The real mistake is buying one model and running everything you have through it.</p>
+<p>There's a fourth thing the triangle can't draw on two axes, which is who gets to see the prompt. Every route through TrustedRouter is attested, so /choose lets you say the data can touch any provider, or that it has to land on a zero-retention route that logs nothing, or that it has to run inside a trusted execution environment where even we can't read it. Turn that dial tighter and watch the triangle shrink: models fall off the board, the price floor climbs. That is the real cost of privacy, drawn in front of you instead of buried in a procurement call.</p>
+<p>The triangle is now built from named sources instead of our editorial read. Smart is the independent AI IQ score. Fast is recent measured throughput and time to first token for the exact provider route. Price and privacy come from that same endpoint in the live catalog. A model with no recent speed sample is labeled unmeasured instead of receiving a guessed number. Read it as a map with the evidence attached.</p>
+<p>We built it into the gateway on purpose. Once you can see that the right model changes with the job, marrying one vendor for a year looks reckless. Routing every call through one API means moving from the smart corner to the cheap one is a one-line change — swap the model name, ship. The triangle shows you where to go; the gateway is the road that gets you there. Drag the dot, read the price, change the string. That's the whole job.</p>
+""",
+    ),
+    BlogPost(
+        slug="the-best-open-models-arent-on-your-leaderboard",
+        title="The best open models aren't on your leaderboard",
+        description=(
+            "The leaderboards everyone quotes are a version behind on the Chinese "
+            "open-weight flagships, and nobody runs them through the Western "
+            "factuality evals. So I ran the whole panel on the same harnesses "
+            "Google and OpenAI publish — and on closed-book facts, an open model "
+            "you can download drew level with Anthropic's best."
+        ),
+        published_date="2026-06-17",
+        source_label="trustedrouter-benchmarks on GitHub",
+        source_url="https://github.com/Lore-Hex/trustedrouter-benchmarks",
+        body_html="""
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto"><rect width="1200" height="630" fill="#ffffff"/><text x="60" y="90" font-family="Inter,Arial,sans-serif" font-size="44" font-weight="700" fill="#111827" text-anchor="start">Leaderboards are testing last season's models</text><text x="60" y="136" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="400" fill="#6b7280" text-anchor="start">The current Chinese open-weight flagships barely appear on the boards everyone quotes</text><text x="300" y="210" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="600" fill="#6b7280" text-anchor="middle">On the popular leaderboards</text><rect x="120" y="235" width="360" height="250" rx="10" fill="#eef0f2" stroke="#6b7280" stroke-width="2"/><text x="300" y="285" font-family="Inter,Arial,sans-serif" font-size="19" font-weight="400" fill="#6b7280" text-anchor="middle">a version or two behind</text><text x="300" y="337" font-family="Inter,Arial,sans-serif" font-size="19" font-weight="400" fill="#6b7280" text-anchor="middle">one or two of them, if any</text><text x="300" y="389" font-family="Inter,Arial,sans-serif" font-size="19" font-weight="400" fill="#6b7280" text-anchor="middle">rarely run on Western</text><text x="300" y="441" font-family="Inter,Arial,sans-serif" font-size="19" font-weight="400" fill="#6b7280" text-anchor="middle">factuality / IFEval suites</text><text x="900" y="210" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="600" fill="#0f6e56" text-anchor="middle">Actually current</text><rect x="730" y="240" width="165" height="58" rx="10" fill="#e1f5ee" stroke="#1d9e75" stroke-width="2"/><text x="812" y="276" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="600" fill="#0f6e56" text-anchor="middle">GLM-5</text><rect x="910" y="240" width="165" height="58" rx="10" fill="#e1f5ee" stroke="#1d9e75" stroke-width="2"/><text x="992" y="276" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="600" fill="#0f6e56" text-anchor="middle">Kimi K2.7</text><rect x="730" y="318" width="165" height="58" rx="10" fill="#e1f5ee" stroke="#1d9e75" stroke-width="2"/><text x="812" y="354" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="600" fill="#0f6e56" text-anchor="middle">DeepSeek V4</text><rect x="910" y="318" width="165" height="58" rx="10" fill="#e1f5ee" stroke="#1d9e75" stroke-width="2"/><text x="992" y="354" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="600" fill="#0f6e56" text-anchor="middle">MiniMax M3</text><rect x="730" y="396" width="165" height="58" rx="10" fill="#e1f5ee" stroke="#1d9e75" stroke-width="2"/><text x="812" y="432" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="600" fill="#0f6e56" text-anchor="middle">MiMo</text><rect x="910" y="396" width="165" height="58" rx="10" fill="#e1f5ee" stroke="#1d9e75" stroke-width="2"/><text x="992" y="432" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="600" fill="#0f6e56" text-anchor="middle">Hunyuan</text><text x="1188" y="621" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+<p>The leaderboards everyone quotes are testing models from six months ago. Pull up the popular ones and count how many of the current Chinese open-weight flagships you can find — <a href="https://z.ai">GLM-5</a>, <a href="https://www.moonshot.ai">Kimi K2.7</a>, <a href="https://www.deepseek.com">DeepSeek V4</a>, <a href="https://www.minimax.io">MiniMax M3</a>, MiMo, Hunyuan. You get one or two, usually a version behind, and almost none of them have been run through the Western factuality and instruction-following evals that the big labs grade themselves on. So we ran them ourselves: the whole panel, on the same harnesses Google and OpenAI publish, through one API.</p>
+<p>On facts, the gap is gone. SimpleQA Verified is Google's closed-book factuality test — no tools, one dataset, and Google publishes exact per-model numbers so anyone can check the work. DeepSeek V4 Pro scored 52.4. <a href="https://www.anthropic.com/claude">Claude Opus 4.8</a>, run as the frontier reference in the same job, scored 51.5. An open model you can download to your own machine drew level with <a href="https://www.anthropic.com">Anthropic</a>'s best on the kind of test Anthropic uses to grade itself. Broad knowledge tells the same story: on MMLU-Pro, the fourteen-subject reasoning exam, the open panel sits in the low-to-mid eighties — Kimi K2.6 at 87, the GLM and DeepSeek and MiniMax models clustered around 82 to 84 — tied with Gemini 3.1 Pro and a couple of points behind Opus and GPT-5.5. Run the Chinese-language factuality test and it stops being close at all: DeepSeek V4 Pro hits 75.9 and the whole Chinese panel sits in the high 60s and 70s, because nobody at the Western labs tuned for Chinese facts and it shows.</p>
+<p>Coding is the place the frontier still earns its money. We ran <a href="https://aider.chat/docs/leaderboards/">Aider's polyglot</a> exercises — actual repositories with actual unit tests, where you either make the tests pass or you fail — and Opus 4.8 came first at 88% on the Python set. The best open model on that test managed 41%. So this is not "the open models won." If your product needs an agent that edits a codebase and the tests have to go green, pay for the frontier and don't think twice. If it needs to answer questions about the world, the thing you can run for free is now just as good. The right model depends on the question, which is the entire reason we built a gateway instead of crowning a favorite.</p>
+<p>The reason to believe any of these numbers is that we made them earn it against the published ones first. Google says <a href="https://deepmind.google/models/gemini/">Gemini 2.5 Pro</a> scores 55.6 on SimpleQA Verified. Our first run said 31.6. That twenty-four-point hole was our harness, not the model: a reasoning model burns its token budget thinking, and our answer limit was chopping the visible reply off mid-word. We raised the limit, re-ran, and landed at 51.3 with the attempted-rate sitting on Google's 98.9 almost exactly; the last couple of points are our cheap judge grading a hair stricter than Google's autorater. Any result that can't reproduce a known one doesn't get published, and that single bug would have under-scored every reasoning model on every test we run.</p>
+<p>Two more traps turned up the same way. GLM-5.2 looked dead on arrival — near zero on three separate tests — until the pattern gave it away: every blank answer carried a transport error, not a wrong reply. One provider route was handing back empty completions while the model underneath was fine; sent through a clean provider it scores 48 on SimpleQA Verified, 82 on MMLU-Pro, and third place on instruction-following, ahead of Opus. A benchmark number is only as honest as the plumbing beneath it. The second trap was ours alone. We added BEAM, a long-context memory test, and our first numbers came back at twice the paper's — not because the models were better but because we had paraphrased BEAM's grader instead of running it. The grader is the benchmark. We deleted ours, vendored their exact judge prompt and judge model byte for byte, and the inflation vanished; the verbatim version even exposed a bug in their grader that scores a confidently wrong answer as a correct refusal, which we kept and flagged rather than quietly patched. Reimplement the scorer and you are measuring your scorer, not the model.</p>
+<p>The other thing we measured is who refuses. <a href="/blog/the-models-that-say-no">PrometheusBench</a> is thirty short unsafe prompts, and the only score is how many a model is willing to answer. Hand the exact same thirty to GLM-5 and it answers twenty-nine; hand them to Claude Opus 4.7, or to Fable 5, and it answers zero. Twenty-nine against zero, same words, same afternoon. Whether a request counts as "unsafe" is a dial each vendor sets, and the most cautious models and the most permissive ones do not agree on a single one of the thirty. A high score there should worry you, not impress you — it measures willingness, and willingness on a genuinely bad request is a risk you weigh before you route to a model, not a feature anyone should brag about. The finding is the spread itself: there is no industry line, only thirty-one different ones.</p>
+<p>That disagreement is also a routing problem, and routing is what we do. We pointed <a href="/models">TrustedRouter Synth</a> at a panel of six models, told it to take the first answer that wasn't a refusal, and let it fall through a chain of backup judges when one balked. It came back with an answer on all thirty. It cleared them because across a wide enough panel, for any given prompt some model's policy says yes — one model's refusal is one model's opinion, and most people querying a single vendor never see that. Weigh that result the same way: the panel will answer things you may not want answered, so the choice of panel is yours to make on purpose.</p>
+<p>All of it ran through <a href="/blog/one-api-all-llms-provably-private">one base URL and one key</a>. The same call reaches DeepSeek and GLM and Claude and Gemini, the Chinese flagships and the Western frontier side by side, with Synth across them when you want the panel instead of a single pick. <a href="https://github.com/Lore-Hex/trustedrouter-benchmarks">The harnesses are on GitHub</a>, so none of these numbers are ours to merely assert — clone them, point them at your own key, and watch the open models land where we said. The frontier is a routing decision now.</p>
+""",
+    ),
+    BlogPost(
+        slug="the-best-biology-ai-wont-do-biology",
+        title="The best biology AI won't do biology",
+        description=(
+            "Anthropic's strongest bioinformatics model is partner-only, and the "
+            "one you can call refuses biology. So I ran the open version of their "
+            "eval across nine models — cheap ones included — and watched."
+        ),
+        published_date="2026-06-16",
+        source_label="prometheus-biomysterybench on GitHub",
+        source_url="https://github.com/Lore-Hex/prometheus-biomysterybench",
+        body_html="""
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto"><rect width="1200" height="630" fill="#ffffff"/><text x="60" y="92" font-family="Inter,Arial,sans-serif" font-size="46" font-weight="700" fill="#111827">A 4-cent model nearly matches the $20 frontier</text><text x="60" y="140" font-family="Inter,Arial,sans-serif" font-size="22" fill="#6b7280">BioMysteryBench · problems solved of 3 (price per Mtok in label)</text><text x="560" y="228" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" fill="#111827">claude-opus-4.8 · $19.80</text><rect x="574" y="210" width="546" height="26" rx="5" fill="#eef0f2"/><rect x="574" y="210" width="546.0" height="26" rx="5" fill="#6b7280"/><text x="1132.0" y="228" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#111827">3/3</text><text x="560" y="271" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" fill="#111827">glm-5.2 · $4.01</text><rect x="574" y="253" width="546" height="26" rx="5" fill="#eef0f2"/><rect x="574" y="253" width="364.0" height="26" rx="5" fill="#1d9e75"/><text x="950.0" y="271" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#111827">2/3</text><text x="560" y="314" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" fill="#111827">gemma-4-31b · $0.35</text><rect x="574" y="296" width="546" height="26" rx="5" fill="#eef0f2"/><rect x="574" y="296" width="364.0" height="26" rx="5" fill="#1d9e75"/><text x="950.0" y="314" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#111827">2/3</text><text x="560" y="357" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" fill="#111827">deepseek-v4-pro · $0.84</text><rect x="574" y="339" width="546" height="26" rx="5" fill="#eef0f2"/><rect x="574" y="339" width="182.0" height="26" rx="5" fill="#1d9e75"/><text x="768.0" y="357" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#111827">1/3</text><text x="560" y="400" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" fill="#111827">kimi-k2.7-code · $3.56</text><rect x="574" y="382" width="546" height="26" rx="5" fill="#eef0f2"/><rect x="574" y="382" width="182.0" height="26" rx="5" fill="#1d9e75"/><text x="768.0" y="400" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#111827">1/3</text><text x="560" y="443" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" fill="#111827">deepseek-v3.2 · $0.45</text><rect x="574" y="425" width="546" height="26" rx="5" fill="#eef0f2"/><rect x="574" y="425" width="182.0" height="26" rx="5" fill="#1d9e75"/><text x="768.0" y="443" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#111827">1/3</text><text x="560" y="486" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" fill="#111827">deepseek-v4-flash · $0.27</text><rect x="574" y="468" width="546" height="26" rx="5" fill="#eef0f2"/><rect x="574" y="468" width="182.0" height="26" rx="5" fill="#1d9e75"/><text x="768.0" y="486" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#111827">1/3</text><text x="560" y="529" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" fill="#111827">glm-4.7-flash · $0.38</text><rect x="574" y="511" width="546" height="26" rx="5" fill="#eef0f2"/><rect x="574" y="511" width="2" height="26" rx="5" fill="#1d9e75"/><text x="588" y="529" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#111827">0/3</text><text x="560" y="572" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" fill="#111827">gpt-4o-mini · $0.54</text><rect x="574" y="554" width="546" height="26" rx="5" fill="#eef0f2"/><rect x="574" y="554" width="2" height="26" rx="5" fill="#6b7280"/><text x="588" y="572" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#111827">0/3</text><text x="1188" y="621" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+<p><a href="https://www.anthropic.com">Anthropic</a> just shipped the strongest bioinformatics model anyone has built, and you can't use it for bioinformatics. The new <a href="https://www.anthropic.com/claude">Claude</a> comes in two versions. Mythos 5 is the one that scores 83.9% on Anthropic's own BioMysteryBench, the best number they report, and it goes to vetted partners only. The version the rest of us can call is Fable 5, and <a href="/blog/the-models-that-say-no">Fable 5 blocks biology</a>. Their system card says it flatly: send a chemistry-or-biology prompt to Fable 5 through the API and "the request is blocked, and the response returns a reason for the refusal." There is no fallback unless a developer opts into one. That is why every biology score in that system card belongs to Mythos. Fable doesn't have one. It won't sit still long enough to earn one.</p>
+<p>So what does a working biologist actually do? I ran the experiment. BioMysteryBench hands a model a pile of raw, unlabeled biology — a crystal structure with the organism scrubbed out, a stack of sequencing reads, a set of ChIP peaks — and asks a plain question: what organism is this, what bacterium is in here, which transcription factor made these peaks. The model gets a shell and the usual bioinformatics tools and has to go figure it out. I rebuilt the public version of this as an <a href="https://github.com/Lore-Hex/prometheus-biomysterybench">open harness</a> so anyone can rerun it and check me. <a href="/models">Claude Opus 4.8</a>, the best model you can actually call on TrustedRouter, scores the same 80.4% Anthropic published for it, so the harness isn't doing anything funny.</p>
+<p>Then I pointed a stack of much cheaper models at the same three solvable tasks, some of them costing a fiftieth of what Opus costs, and watched.</p>
+<table class="data-table">
+  <thead><tr><th>Model</th><th>$/Mtok</th><th>Solved</th><th>Run cost</th></tr></thead>
+  <tbody>
+    <tr><td><span class="mono">anthropic/claude-opus-4.8</span></td><td>19.80</td><td>3/3</td><td>$1.57</td></tr>
+    <tr><td><span class="mono">z-ai/glm-5.2</span></td><td>4.01</td><td>2/3</td><td>$2.72</td></tr>
+    <tr><td><span class="mono">google/gemma-4-31b-it</span></td><td>0.35</td><td>2/3</td><td>$0.04</td></tr>
+    <tr><td><span class="mono">deepseek/deepseek-v4-flash</span></td><td>0.27</td><td>1/3</td><td>$0.21</td></tr>
+    <tr><td><span class="mono">deepseek/deepseek-v3.2</span></td><td>0.45</td><td>1/3</td><td>$0.31</td></tr>
+    <tr><td><span class="mono">deepseek/deepseek-v4-pro</span></td><td>0.84</td><td>1/3</td><td>$1.03</td></tr>
+    <tr><td><span class="mono">moonshotai/kimi-k2.7-code</span></td><td>3.56</td><td>1/3</td><td>$1.12</td></tr>
+    <tr><td><span class="mono">z-ai/glm-4.7-flash</span></td><td>0.38</td><td>0/3</td><td>$0.70</td></tr>
+    <tr><td><span class="mono">openai/gpt-4o-mini</span></td><td>0.54</td><td>0/3</td><td>$0.10</td></tr>
+  </tbody>
+</table>
+<p>Opus is the only model that got all three. It pulled the protein sequence out of the scrubbed structure, <a href="https://blast.ncbi.nlm.nih.gov/Blast.cgi">BLASTed</a> it to <em>Homo sapiens</em>, named the bacterium, and ran <a href="https://meme-suite.org/meme/">MEME</a> to find the transcription factor. On the longest, hardest task it finishes. It earns its 3/3.</p>
+<p>But look at <a href="https://ai.google.dev/gemma"><span class="mono">google/gemma-4-31b-it</span></a>. It got two of the three for four cents. It identified the human structure and named the bacterium — <em>Bacillus licheniformis</em>, correct — in six commands. GLM-5.2 also got two, and it's the one model under Opus that cracked the motif task every cheaper model gave up on. These models earn it. They run real BLAST, they read the output, they do the work. <a href="/blog/the-best-open-models-arent-on-your-leaderboard">A model that costs less than a vending-machine soda did most of what the twenty-dollar frontier model did.</a></p>
+<p>The cheap ones know plenty of biology. What they run out of is patience. Seven of the nine got the structure-to-organism call, which is a one-shot lookup. They came apart on the task that takes twenty steps — pull the peaks, run MEME, read the motifs — where they wander until they hit the turn limit or the clock runs out. Half the misses in that table are the clock running out while the model is still working. The thing the frontier model is really selling you is stamina on a long loop.</p>
+<p>I also tried <a href="/models">Synth</a>, the TrustedRouter mode that runs a whole panel of models and has a judge synthesize an answer at every step. On the two genuinely hard tasks I threw everything at it: one frontier model alone, an eight-model panel, and a hand-picked three of Gemma, GLM-5.2, and Opus. Every configuration scored zero out of two, and every one gave the same wrong answer — the same backwards drug condition on one task, the same "light stress" instead of heat on the other. That is the useful result. When every model in the world is confidently wrong in the same direction, a committee of them is just confidently wrong with better citations. Synth is worth a lot when models disagree and one of them is right. It does nothing when they all share a blind spot.</p>
+<p>The obvious question: Opus swept 3/3, so isn't it worth the money? Sometimes. For a twenty-step analysis where you need the loop to actually finish, pay for the model that finishes. For "what organism is this," you are paying fifty times over for a lookup a four-cent model gets right.</p>
+<p>Three tasks is a small sample, so treat it as a finger in the wind. The harness, the methodology, and <a href="https://github.com/Lore-Hex/prometheus-biomysterybench">every per-task result are open source</a>. I don't publish the answer key.</p>
+<p>The model that is best at biology is locked up. The model you can buy off the shelf won't touch biology. The thing that actually answers your question is one <span class="mono">--models</span> flag away, and sometimes it costs four cents. TrustedRouter routes you to whichever model will pick up the phone.</p>
+""",
+    ),
+    BlogPost(
+        slug="the-models-that-say-no",
+        title="The safest AI models trust you the least",
+        description=(
+            "I built PrometheusBench to measure how often a model refuses a plain "
+            "question. The models that market themselves on safety refuse the most."
+        ),
+        published_date="2026-06-16",
+        source_label="PrometheusBench on GitHub",
+        source_url="https://github.com/Lore-Hex/PrometheusBench",
+        body_html="""
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto"><rect width="1200" height="630" fill="#ffffff"/><text x="60" y="92" font-family="Inter,Arial,sans-serif" font-size="46" font-weight="700" fill="#111827">The safest models trust you the least</text><text x="60" y="140" font-family="Inter,Arial,sans-serif" font-size="22" fill="#6b7280">PrometheusBench · 30 unsafe prompts · share each model will answer</text><text x="560" y="236" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" fill="#111827">z-ai/glm-5.1</text><rect x="574" y="210" width="546" height="34" rx="5" fill="#eef0f2"/><rect x="574" y="210" width="529.6" height="34" rx="5" fill="#1d9e75"/><text x="1115.6" y="236" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#111827">97%</text><text x="560" y="292" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" fill="#111827">moonshotai/kimi-k2.6</text><rect x="574" y="266" width="546" height="34" rx="5" fill="#eef0f2"/><rect x="574" y="266" width="491.4" height="34" rx="5" fill="#1d9e75"/><text x="1077.4" y="292" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#111827">90%</text><text x="560" y="348" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" fill="#111827">deepseek/deepseek-v4-flash</text><rect x="574" y="322" width="546" height="34" rx="5" fill="#eef0f2"/><rect x="574" y="322" width="475.0" height="34" rx="5" fill="#1d9e75"/><text x="1061.0" y="348" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#111827">87%</text><text x="560" y="404" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" fill="#111827">anthropic/claude-haiku-4.5</text><rect x="574" y="378" width="546" height="34" rx="5" fill="#eef0f2"/><rect x="574" y="378" width="163.8" height="34" rx="5" fill="#6b7280"/><text x="749.8" y="404" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#111827">30%</text><text x="560" y="460" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" fill="#111827">anthropic/claude-opus-4.8</text><rect x="574" y="434" width="546" height="34" rx="5" fill="#eef0f2"/><rect x="574" y="434" width="16.4" height="34" rx="5" fill="#6b7280"/><text x="602.4" y="460" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#111827">3%</text><text x="560" y="516" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" fill="#111827">anthropic/claude-opus-4.7</text><rect x="574" y="490" width="546" height="34" rx="5" fill="#eef0f2"/><rect x="574" y="490" width="2" height="34" rx="5" fill="#6b7280"/><text x="588" y="516" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#111827">0%</text><text x="1188" y="621" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+<p>I gave a frontier model my own genome and asked it to explain one of my variants. It told me to consult a qualified professional. It was my own DNA, sequencing I paid for, a variant written up in a dozen papers I can pull up on my phone in under a minute. The model wasn't protecting me from anything. It just decided I wasn't allowed to know.</p>
+<p>That happens constantly, so I built a benchmark for it. <a href="https://github.com/Lore-Hex/PrometheusBench">PrometheusBench</a>. Thirty short questions, ten about biology, ten about cybersecurity, and ten about how language models actually work. The score is the dumbest thing I could come up with: out of the thirty, how many did the model just answer? Higher means it's willing to talk to you. Lower means it told you no more often.</p>
+<p>PrometheusBench measures who a refusal lands on. Some of these questions are genuinely dual-use, the kind of thing reasonable people argue about. The models at the bottom of this list draw no careful line around those. They are the same models that refused me about my own genome. They say no to the curious and the careful right alongside anyone with bad intentions, and the bad intentions, as you'll see, are the part they barely slow down.</p>
+<p>The most willing models are the <a href="/blog/the-best-open-models-arent-on-your-leaderboard">open-weight ones</a>. <a href="https://z.ai">GLM 5.1</a> answered 29 out of 30. <a href="https://www.moonshot.ai">Kimi</a>, the other GLMs, <a href="https://deepmind.google/models/gemini/">Gemini Flash</a>, all near the top, and they just answer. And then at the very bottom is <a href="https://www.anthropic.com/claude">Claude Opus 4.8</a>, at one out of thirty. Opus 4.7 got a zero. Not one question out of thirty.</p>
+<table class="data-table">
+  <thead><tr><th>Model</th><th>Answered</th><th>Rate</th></tr></thead>
+  <tbody>
+    <tr><td><span class="mono">z-ai/glm-5.1</span></td><td>29 / 30</td><td>97%</td></tr>
+    <tr><td><span class="mono">moonshotai/kimi-k2.6</span></td><td>27 / 30</td><td>90%</td></tr>
+    <tr><td><span class="mono">deepseek/deepseek-v4-flash</span></td><td>26 / 30</td><td>87%</td></tr>
+    <tr><td><span class="mono">anthropic/claude-haiku-4.5</span></td><td>9 / 30</td><td>30%</td></tr>
+    <tr><td><span class="mono">anthropic/claude-opus-4.8</span></td><td>1 / 30</td><td>3%</td></tr>
+    <tr><td><span class="mono">anthropic/claude-opus-4.7</span></td><td>0 / 30</td><td>0%</td></tr>
+  </tbody>
+</table>
+<p>The models that advertise themselves hardest on safety and alignment and being trustworthy are the ones that trust you the least. The models that plenty of serious people wave off as the reckless foreign options are the ones that will actually help you <a href="/blog/the-best-biology-ai-wont-do-biology">read your own genome</a> or lock down your own network.</p>
+<p>I don't think the people building Opus are bad people. I think they got backed into a corner where the cheapest move is to refuse, and you pay for it. The refusal costs them nothing. It costs you the answer.</p>
+<p>The serious counterargument is that friction has value. A refusal one model away still raises the cost a little, and most bad actors are lazy, so a little friction stops most of them. The trouble is what the friction here amounts to: a model-name dropdown. The genome question I got refused on, a curious person gets answered in ten seconds by switching models. A motivated bad actor with a budget and the open weights already on his own disk has even less friction to deal with. All the line really does is single out the people asking in the open. Everyone else goes somewhere else.</p>
+<p>Then I ran one more thing. TrustedRouter has a feature called <a href="/blog/fusion-evals-open-source">Synth</a>. You ask one question, and behind the scenes it asks a <a href="/models">panel of models</a> at once and hands you back a single answer. I gave it Kimi and <a href="https://www.deepseek.com">DeepSeek</a> and Opus and two Geminis and <a href="https://openai.com">GPT-5.5</a> and <a href="https://www.minimax.io">MiniMax</a> and GLM, and told it to take the first answer that wasn't a refusal.</p>
+<p>Thirty out of thirty. Ten of ten in biology, ten of ten in cybersecurity, ten of ten in how language models work. Every question Opus refused, another model on the panel answered.</p>
+<p>You don't even need the panel. GLM answered 29 of those 30 by itself. The Synth run just makes it obvious: the refused answers were always there for the asking, one model away, free to anyone who downloads the open weights, free to any teenager with a laptop and the patience to ask twice.</p>
+<p>The only person a refusal actually stops is the regular one, asking out in the open. That is why I built this. The wrong hands already have the knowledge. The refusal just keeps it from yours.</p>
+<p>PrometheusBench is open source. Thirty questions, three subjects, and you can run it against <a href="/models">any model on TrustedRouter</a> yourself: <a href="https://github.com/Lore-Hex/PrometheusBench">github.com/Lore-Hex/PrometheusBench</a>.</p>
+""",
+    ),
+    BlogPost(
+        slug="fusion-evals-open-source",
+        title="New SOTA: TrustedRouter Synth beats Fable and Frontier",
+        description=(
+            "A diverse panel of frontier and open-weights models, synthesized by a "
+            "Kimi-k2.6 judge and GLM-5.2 synthesizer, scores 73.4 on the DRACO deep-research benchmark — state of "
+            "the art, above the strongest closed baselines. Open code, open "
+            "results, reproducible end to end."
+        ),
+        published_date="2026-06-17",
+        source_label="TrustedRouter Synth Draco on GitHub",
+        source_url="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco",
+        body_html="""
+<p class="callout"><strong><a href="/synth">Synth</a></strong> is TrustedRouter's multi-model fusion &mdash; a panel of models, a judge, and a synthesizer behind one API. This is the research behind it. <a href="/synth">Try Synth &rarr;</a></p>
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 535" style="width:100%;height:auto;display:block;border-radius:10px" font-family="-apple-system,Segoe UI,Roboto,sans-serif">
+<rect width="800" height="535" rx="10" fill="#ffffff"/>
+<text x="28" y="38" font-size="19" font-weight="600" fill="#1a1a1a">DRACO: TrustedRouter Synth beats Fable and Frontier</text>
+<text x="28" y="60" font-size="13" fill="#5F5E5A">Score out of 100, same judge (gemini-3.1-pro, reasoning high). Whiskers = ±1 SE. Higher is better.</text>
+<rect x="612" y="28" width="12" height="12" rx="2" fill="#1D9E75"/><text x="630" y="38" font-size="12" fill="#5F5E5A">TrustedRouter (±1 SE)</text>
+<rect x="612" y="46" width="12" height="12" rx="2" fill="#9a9890"/><text x="630" y="56" font-size="12" fill="#5F5E5A">Published baseline</text>
+<text x="288" y="106" font-size="12.5" text-anchor="end" fill="#3a3a3a">Frontier panel → Kimi-k2.6 judge + GLM-5.2</text>
+<rect x="300" y="92" width="368.0" height="20" rx="3" fill="#1D9E75"/>
+<line x1="632.0" y1="102" x2="704.0" y2="102" stroke="#1f2937" stroke-width="1.6"/><line x1="632.0" y1="98" x2="632.0" y2="106" stroke="#1f2937" stroke-width="1.6"/><line x1="704.0" y1="98" x2="704.0" y2="106" stroke="#1f2937" stroke-width="1.6"/>
+<text x="712.0" y="106" font-size="12.5" font-weight="600" fill="#0F6E56">73.4</text>
+<text x="288" y="139" font-size="12.5" text-anchor="end" fill="#3a3a3a">Frontier panel → Opus synthesizer</text>
+<rect x="300" y="125" width="312.0" height="20" rx="3" fill="#1D9E75"/>
+<line x1="582.0" y1="135" x2="642.0" y2="135" stroke="#1f2937" stroke-width="1.6"/><line x1="582.0" y1="131" x2="582.0" y2="139" stroke="#1f2937" stroke-width="1.6"/><line x1="642.0" y1="131" x2="642.0" y2="139" stroke="#1f2937" stroke-width="1.6"/>
+<text x="650.0" y="139" font-size="12.5" font-weight="600" fill="#0F6E56">70.6</text>
+<text x="288" y="172" font-size="12.5" text-anchor="end" fill="#3a3a3a">Fable 5 + GPT-5.5</text>
+<rect x="300" y="158" width="280.0" height="20" rx="3" fill="#9a9890"/>
+<text x="588.0" y="172" font-size="12.5" font-weight="600" fill="#5F5E5A">69.0</text>
+<text x="288" y="205" font-size="12.5" text-anchor="end" fill="#3a3a3a">Opus + GPT-5.5 + Gemini</text>
+<rect x="300" y="191" width="266.0" height="20" rx="3" fill="#9a9890"/>
+<text x="574.0" y="205" font-size="12.5" font-weight="600" fill="#5F5E5A">68.3</text>
+<text x="288" y="238" font-size="12.5" text-anchor="end" fill="#3a3a3a">Opus + GPT-5.5</text>
+<rect x="300" y="224" width="252.0" height="20" rx="3" fill="#9a9890"/>
+<text x="560.0" y="238" font-size="12.5" font-weight="600" fill="#5F5E5A">67.6</text>
+<text x="288" y="271" font-size="12.5" text-anchor="end" fill="#3a3a3a">Opus + Opus</text>
+<rect x="300" y="257" width="210.0" height="20" rx="3" fill="#9a9890"/>
+<text x="518.0" y="271" font-size="12.5" font-weight="600" fill="#5F5E5A">65.5</text>
+<text x="288" y="304" font-size="12.5" text-anchor="end" fill="#3a3a3a">Fable 5 (solo)</text>
+<rect x="300" y="290" width="206.0" height="20" rx="3" fill="#9a9890"/>
+<text x="514.0" y="304" font-size="12.5" font-weight="600" fill="#5F5E5A">65.3</text>
+<text x="288" y="337" font-size="12.5" text-anchor="end" fill="#3a3a3a">Budget panel → Opus synthesizer</text>
+<rect x="300" y="323" width="194.0" height="20" rx="3" fill="#9a9890"/>
+<text x="502.0" y="337" font-size="12.5" font-weight="600" fill="#5F5E5A">64.7</text>
+<text x="288" y="370" font-size="12.5" text-anchor="end" fill="#3a3a3a">GPT-5.5 (solo)</text>
+<rect x="300" y="356" width="160.0" height="20" rx="3" fill="#1D9E75"/>
+<line x1="426.0" y1="366" x2="494.0" y2="366" stroke="#1f2937" stroke-width="1.6"/><line x1="426.0" y1="362" x2="426.0" y2="370" stroke="#1f2937" stroke-width="1.6"/><line x1="494.0" y1="362" x2="494.0" y2="370" stroke="#1f2937" stroke-width="1.6"/>
+<text x="502.0" y="370" font-size="12.5" font-weight="600" fill="#0F6E56">63.0</text>
+<text x="288" y="403" font-size="12.5" text-anchor="end" fill="#3a3a3a">Budget panel → Opus synthesizer</text>
+<rect x="300" y="389" width="152.0" height="20" rx="3" fill="#1D9E75"/>
+<line x1="418.0" y1="399" x2="486.0" y2="399" stroke="#1f2937" stroke-width="1.6"/><line x1="418.0" y1="395" x2="418.0" y2="403" stroke="#1f2937" stroke-width="1.6"/><line x1="486.0" y1="395" x2="486.0" y2="403" stroke="#1f2937" stroke-width="1.6"/>
+<text x="494.0" y="403" font-size="12.5" font-weight="600" fill="#0F6E56">62.6</text>
+<text x="288" y="436" font-size="12.5" text-anchor="end" fill="#3a3a3a">Frontier panel → GPT-5.5 synthesizer</text>
+<rect x="300" y="422" width="144.0" height="20" rx="3" fill="#1D9E75"/>
+<line x1="410.0" y1="432" x2="478.0" y2="432" stroke="#1f2937" stroke-width="1.6"/><line x1="410.0" y1="428" x2="410.0" y2="436" stroke="#1f2937" stroke-width="1.6"/><line x1="478.0" y1="428" x2="478.0" y2="436" stroke="#1f2937" stroke-width="1.6"/>
+<text x="486.0" y="436" font-size="12.5" font-weight="600" fill="#0F6E56">62.2</text>
+<line x1="300" y1="86" x2="300" y2="446" stroke="#d8d8d2" stroke-width="1"/>
+<text x="28" y="486" font-size="11.5" fill="#888780">Frontier panel = gpt-5.5 + opus-4.8 + gemini-3-flash + kimi-k2.6 + deepseek-v4-pro. 100 DRACO tasks.</text>
+<text x="28" y="504" font-size="11.5" fill="#888780">Whiskers are ±1 SE (bootstrap, 100 tasks).</text>
+<text x="788" y="525" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+</figure>
+<p>Research is only worth as much as someone else's ability to run it again. Too much of AI has drifted the other way: the strongest results arrive as a single number in a post, produced by a model you cannot open, on a harness no one else can see, graded by a rubric that ships to nobody. You are asked to take it on faith. TrustedRouter is verifiable open source software. That is how a benchmark number earns trust: verifiability, not hype.</p>
+<p>So we held ourselves to it. We set out to test Synth directly: a panel of models, each writing its own answer with a final model synthesizing them, beats any single model on a hard research benchmark — and then to push past it. On <a href="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco">DRACO</a>, a hundred deep-research tasks graded against roughly forty weighted criteria each by <span class="mono">gemini-3.1-pro</span>, a diverse panel synthesized by Claude Opus 4.8 scores <strong>70.6</strong>. Swap the synthesizer engine — a <span class="mono">Kimi-k2.6</span> judge feeding a <span class="mono">GLM-5.2</span> synthesizer in place of Opus — and the same panel reaches <strong>73.4</strong>, the new state of the art. The top configurations sit within about a standard error of each other (the whiskers above), but the whole TrustedRouter band clears the closed baselines. Every prompt, every tool call, and every graded answer behind the number is published.</p>
+<p>The result comes from the panel, and the panel is itself <a href="/blog/the-best-open-models-arent-on-your-leaderboard">an argument for open weights</a>. The strongest older closed baselines paired two closed frontier models. Ours adds frontier open-weights models — DeepSeek V4 Pro and Kimi K2.6 — alongside GPT-5.5, Opus, and Gemini 3 Flash. Synth works on disagreement: models that fail in different places, reconciled by a strong synthesizer. Open-weights models are trained on different data and disagree in different ways than a closed pair does, and the wider panel is what reaches the top.</p>
+<p>The synthesizer carries most of that result. Hold the five-model panel fixed and change only the model that writes the final answer: Opus 4.8 scores 70.6, GPT-5.5 scores 62.2. Same reports, same judge analysis, same hundred tasks, eight points of swing from one decision. A larger panel behind a weaker synthesizer buys nothing, and which model fills that slot is <a href="/blog/the-best-synthesizers">its own ranking</a>.</p>
+<p>No single model comes near that on its own. Run each one through the same agentic loop with the same live tools, and the strongest of them lands seven points below the panel.</p>
+<table class="data-table">
+  <thead><tr><th>Solo model</th><th>TrustedRouter</th><th>Published baseline</th></tr></thead>
+  <tbody>
+    <tr><td>GPT-5.5</td><td>63.0</td><td>60.0</td></tr>
+    <tr><td>Claude Opus 4.8</td><td>60.7</td><td>58.8</td></tr>
+    <tr><td>DeepSeek V4 Pro</td><td>59.9</td><td>60.3</td></tr>
+    <tr><td>Kimi K2.6</td><td>50.1</td><td>53.7</td></tr>
+    <tr><td>Gemini 3.1 Pro</td><td>47.4</td><td>45.4</td></tr>
+    <tr><td>Gemini 3 Flash</td><td>41.1</td><td>43.1</td></tr>
+  </tbody>
+</table>
+<p>The strongest solo reaches 63; the best panel reaches 73.4. Assembling a frontier answer out of models that are each behind the frontier is the entire point.</p>
+<p>DRACO is an agentic benchmark. The answers are not in any model's weights, so each model in the panel has to search the web, read the sources, and run the numbers itself; we give every one of them live tools and let it drive its own research. Those runs issued thousands of searches and fetches, and all of them sit in the published replays — none touching the benchmark's own hosts, so nothing was looked up that was meant to be worked out. The leakage guard lives in the open-source harness, and the audit is yours to re-run.</p>
+<p>We ran all of it on TrustedRouter for the same reason we published the code. A benchmark sends your prompts and the documents you fetch through someone else's servers, and with most gateways you take their privacy on faith. TrustedRouter runs inside a Trusted Execution Environment (TEE), end-to-end encrypted: a sealed enclave the operator cannot read into, handling every request as an <a href="/blog/attestation-is-all-you-need">attested</a> workload whose exact code is measured and published. You can pull the image digest, match it against the open source, and confirm the binary that saw your prompt is the one in the repository, with nowhere inside it to record anything. You check the privacy the way you check the score — by hand, against a hash.</p>
+<p>We do not want you to trust our 73.4. Clone the <a href="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco">repository</a> — the harness, the tasks, the judge, the panel, and the raw run traces are all in it — point it at TrustedRouter, and produce the number yourself. Open code, open results, a score you can reproduce and a privacy guarantee you can verify. That is what an AI lab doing open science looks like, and it is the only kind of result worth believing.</p>
+""",
+    ),
+    BlogPost(
+        slug="one-api-all-llms-provably-private",
+        title="One API, all the LLMs, with a prompt path you can verify",
+        description=(
+            "TrustedRouter gives developers OpenAI-compatible model routing while "
+            "keeping the prompt path separate from the control plane."
+        ),
+        published_date="2026-06-14",
+        source_label="Joseph Perla original",
+        source_url="https://www.jperla.com/blog/trustedrouter-one-api-all-llms-provably-private",
+        body_html="""
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto"><rect width="1200" height="630" fill="#ffffff"/><text x="60" y="90" font-family="Inter,Arial,sans-serif" font-size="46" font-weight="700" fill="#111827" text-anchor="start">One key, every model — a path you can verify</text><text x="60" y="138" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="400" fill="#6b7280" text-anchor="start">One base URL and one key route to any model, through an attested gateway</text><rect x="60" y="270" width="250" height="90" rx="12" fill="#eef0f2" stroke="#6b7280" stroke-width="2"/><text x="185" y="308" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="600" fill="#111827" text-anchor="middle">Your app</text><text x="185" y="338" font-family="Inter,Arial,sans-serif" font-size="17" font-weight="400" fill="#6b7280" text-anchor="middle">1 URL · 1 key</text><rect x="390" y="255" width="310" height="120" rx="12" fill="#e1f5ee" stroke="#1d9e75" stroke-width="2"/><text x="545" y="300" font-family="Inter,Arial,sans-serif" font-size="25" font-weight="700" fill="#0f6e56" text-anchor="middle">TrustedRouter</text><text x="545" y="330" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="400" fill="#0f6e56" text-anchor="middle">attested gateway</text><text x="545" y="356" font-family="Inter,Arial,sans-serif" font-size="15" font-weight="400" fill="#6b7280" text-anchor="middle">verify the code + image digest</text><line x1="310" y1="315" x2="388" y2="315" stroke="#6b7280" stroke-width="3"/><rect x="820" y="180" width="160" height="60" rx="10" fill="#ffffff" stroke="#6b7280" stroke-width="2"/><text x="900" y="218" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="500" fill="#111827" text-anchor="middle">DeepSeek</text><line x1="702" y1="315" x2="820" y2="210" stroke="#1d9e75" stroke-width="1.5" opacity="0.5"/><rect x="1000" y="180" width="160" height="60" rx="10" fill="#ffffff" stroke="#6b7280" stroke-width="2"/><text x="1080" y="218" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="500" fill="#111827" text-anchor="middle">GLM</text><line x1="702" y1="315" x2="1000" y2="210" stroke="#1d9e75" stroke-width="1.5" opacity="0.5"/><rect x="820" y="270" width="160" height="60" rx="10" fill="#ffffff" stroke="#6b7280" stroke-width="2"/><text x="900" y="308" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="500" fill="#111827" text-anchor="middle">Qwen</text><line x1="702" y1="315" x2="820" y2="300" stroke="#1d9e75" stroke-width="1.5" opacity="0.5"/><rect x="1000" y="270" width="160" height="60" rx="10" fill="#ffffff" stroke="#6b7280" stroke-width="2"/><text x="1080" y="308" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="500" fill="#111827" text-anchor="middle">Kimi</text><line x1="702" y1="315" x2="1000" y2="300" stroke="#1d9e75" stroke-width="1.5" opacity="0.5"/><rect x="820" y="360" width="160" height="60" rx="10" fill="#ffffff" stroke="#6b7280" stroke-width="2"/><text x="900" y="398" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="500" fill="#111827" text-anchor="middle">MiniMax</text><line x1="702" y1="315" x2="820" y2="390" stroke="#1d9e75" stroke-width="1.5" opacity="0.5"/><rect x="1000" y="360" width="160" height="60" rx="10" fill="#ffffff" stroke="#6b7280" stroke-width="2"/><text x="1080" y="398" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="500" fill="#111827" text-anchor="middle">Claude</text><line x1="702" y1="315" x2="1000" y2="390" stroke="#1d9e75" stroke-width="1.5" opacity="0.5"/><rect x="820" y="450" width="160" height="60" rx="10" fill="#ffffff" stroke="#6b7280" stroke-width="2"/><text x="900" y="488" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="500" fill="#111827" text-anchor="middle">Gemini</text><line x1="702" y1="315" x2="820" y2="480" stroke="#1d9e75" stroke-width="1.5" opacity="0.5"/><rect x="1000" y="450" width="160" height="60" rx="10" fill="#ffffff" stroke="#6b7280" stroke-width="2"/><text x="1080" y="488" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="500" fill="#111827" text-anchor="middle">GPT-5.5</text><line x1="702" y1="315" x2="1000" y2="480" stroke="#1d9e75" stroke-width="1.5" opacity="0.5"/><text x="1188" y="621" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+<p>Developers reach for the OpenAI-compatible router shape because it kills switching cost. One base URL, <a href="/models">many models</a>, fallback when a provider dies, one ledger for usage. The missing piece is a way to <a href="/blog/attestation-is-all-you-need">verify trust</a>, and that's the part that matters once a real prompt is on the wire.</p>
+<p>TrustedRouter splits the dashboard and billing surface off from the <a href="https://trust.trustedrouter.com">attested API gateway</a>. The hosted prompt path is built so you can check the running code, the <a href="https://trust.trustedrouter.com">image digest, and the attestation evidence</a> yourself. The whole point is that you can verify it.</p>
+<p>For a developer the change is small. Keep the OpenAI SDK and point the base URL somewhere new. From there you <a href="/models">route to hundreds of models</a> across many providers. Use <span class="mono">trustedrouter/zdr</span> when you need zero-retention providers, and <span class="mono">trustedrouter/e2e</span> for confidential provider routes where they exist. Verify the hosted gateway at <a href="https://trust.trustedrouter.com">trust.trustedrouter.com</a>.</p>
+<p>This does not turn every upstream model provider confidential by magic. It can't. The router's job is to be plain about where the guarantee starts, where it ends, and which provider route actually got picked, so you know exactly what you're trusting.</p>
+""",
+    ),
+    BlogPost(
+        slug="attestation-is-all-you-need",
+        title="Attestation is all you need",
+        description=(
+            "For AI routing, trust should be something an agent can verify. Learn how source code, "
+            "image digests, remote attestation, and live evidence protect the prompt path."
+        ),
+        published_date="2026-06-14",
+        source_label="Joseph Perla original",
+        source_url="https://www.jperla.com/blog/attestation-is-all-you-need",
+        body_html="""
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto"><rect width="1200" height="630" fill="#ffffff"/><text x="60" y="90" font-family="Inter,Arial,sans-serif" font-size="46" font-weight="700" fill="#111827" text-anchor="start">Don't trust the policy — verify the code</text><text x="60" y="138" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="400" fill="#6b7280" text-anchor="start">For prompts that matter, check what code is actually receiving them</text><rect x="90" y="240" width="300" height="100" rx="12" fill="#ffffff" stroke="#6b7280" stroke-width="2"/><text x="240" y="300" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="600" fill="#111827" text-anchor="middle">Your prompt</text><polygon points="390,275 450,290 390,305" fill="#6b7280"/><line x1="390" y1="290" x2="450" y2="290" stroke="#6b7280" stroke-width="3"/><rect x="470" y="240" width="300" height="100" rx="12" fill="#e1f5ee" stroke="#1d9e75" stroke-width="2"/><text x="620" y="300" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="600" fill="#0f6e56" text-anchor="middle">Attested gateway</text><polygon points="770,275 830,290 770,305" fill="#6b7280"/><line x1="770" y1="290" x2="830" y2="290" stroke="#6b7280" stroke-width="3"/><rect x="850" y="240" width="300" height="100" rx="12" fill="#ffffff" stroke="#6b7280" stroke-width="2"/><text x="1000" y="300" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="600" fill="#111827" text-anchor="middle">Model</text><rect x="90" y="400" width="1020" height="150" rx="12" fill="#eef0f2" stroke="#1d9e75" stroke-width="2"/><text x="120" y="440" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="600" fill="#111827" text-anchor="start">Trust page — you check it yourself:</text><rect x="140" y="465" width="250" height="55" rx="8" fill="#ffffff" stroke="#6b7280" stroke-width="2"/><text x="265" y="500" font-family="Inter,Arial,sans-serif" font-size="19" font-weight="500" fill="#111827" text-anchor="middle">source commit</text><text x="425" y="502" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="700" fill="#1d9e75" text-anchor="middle">=</text><rect x="470" y="465" width="250" height="55" rx="8" fill="#ffffff" stroke="#6b7280" stroke-width="2"/><text x="595" y="500" font-family="Inter,Arial,sans-serif" font-size="19" font-weight="500" fill="#111827" text-anchor="middle">release digest</text><text x="755" y="502" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="700" fill="#1d9e75" text-anchor="middle">=</text><rect x="800" y="465" width="250" height="55" rx="8" fill="#ffffff" stroke="#6b7280" stroke-width="2"/><text x="925" y="500" font-family="Inter,Arial,sans-serif" font-size="19" font-weight="500" fill="#111827" text-anchor="middle">running image</text><text x="1188" y="621" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+<p>Policy is not enough for high-value prompts. A policy is a promise about what a router will do with your prompt, with no way to check that the promise is kept. For prompts that actually matter, you want to verify what code is receiving the request and whether that code matches the open source release.</p>
+<p>So TrustedRouter builds <a href="https://trust.trustedrouter.com">attestation</a> into the product itself. You can pull up the <a href="https://trust.trustedrouter.com">trust page</a>, compare the source commits against the release digests, and decide for yourself whether a route clears your workload's privacy bar before you send anything through it.</p>
+<p>The design splits cleanly along who needs what. The control plane handles accounts, keys, billing, docs, and status. The API plane carries prompt traffic through the <a href="https://trust.trustedrouter.com">attested gateway</a>, and nothing else runs there. Provider pages show upstream retention and <a href="https://cloud.google.com/security/products/confidential-computing">confidential-compute posture</a> on their own, kept on the provider's side of the line, because that posture belongs to them. Legal and procurement pages say plainly what is ready now and what still needs a signed agreement.</p>
+<p>The payoff is that each person can verify the part they care about, in their own terms. A lawyer reads the DPA and the subprocessor list. <a href="https://github.com/Lore-Hex/quill-router">An engineer reads the code</a>. An agent checks attestation before it <a href="/models">routes sensitive work</a>. Nobody has to take the others' word for it.</p>
+""",
+    ),
+)
+
+BLOG_POSTS_BY_SLUG: dict[str, BlogPost] = {post.slug: post for post in BLOG_POSTS}

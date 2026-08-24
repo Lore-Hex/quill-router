@@ -1,0 +1,132 @@
+{% extends "console/_layout.html" %}
+{% block head_extra %}
+<link rel="stylesheet" href="/static/chat.css?v={{ static_version|default('local') }}">
+{% endblock %}
+{% block scripts %}
+<script defer src="/static/model_catalog.js?v={{ static_version|default('local') }}"></script>
+<script defer src="/static/custom_models.js?v={{ static_version|default('local') }}"></script>
+{% endblock %}
+{% block body %}
+{% if flash %}
+<div class="console-flash {{ flash.type }}">{{ flash.text }}{% if flash.href %} <a href="{{ flash.href }}">{{ flash.link_text }}</a>{% endif %}</div>
+{% endif %}
+{% if not verification.met %}
+<section class="panel">
+  <div class="panel-head"><h2>Verification required</h2><span class="pill warn">action needed</span></div>
+  <div class="panel-body">
+    <p>Complete account verification before creating or editing custom models.</p>
+    <p class="muted">Missing: {{ verification.missing_requirements|join(', ') }}</p>
+    <a class="btn primary" href="{{ verification.url }}">Complete verification</a>
+  </div>
+</section>
+{% endif %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>Create custom model</h2>
+    <span class="pill">{{ models|length }} / {{ limit }}</span>
+  </div>
+  <div class="panel-body">
+    <form class="form" method="post" action="/console/custom-models">
+      <fieldset class="form-gate" {% if not verification.met %}disabled{% endif %}>
+      <label>Name
+        <input name="name" required maxlength="120" placeholder="Legal reviewer">
+      </label>
+      <label>Slug
+        <span class="custom-model-slug-input">
+          <span>trustedrouter/user-</span>
+          <input name="slug" maxlength="64" pattern="[a-z0-9][a-z0-9-]{1,62}[a-z0-9]" placeholder="legal-reviewer">
+        </span>
+      </label>
+      <label>Base model
+        {% set default_base = base_models[0] if base_models else none %}
+        <div class="custom-model-picker" data-base-model-picker data-current-model="{{ default_base.id if default_base else '' }}">
+          <input data-base-model-input type="hidden" name="base_model_id" required value="{{ default_base.id if default_base else '' }}">
+          <button class="custom-model-picker-button" data-base-model-button type="button">
+            <span data-base-model-name>{{ default_base.name if default_base else 'Choose a model' }}</span>
+            <code data-base-model-id>{{ default_base.id if default_base else '' }}</code>
+          </button>
+        </div>
+        <span class="form-hint">Direct chat models, routing aliases, and orchestration models such as Socrates, Prometheus, Zeus, Selector, and MapReduce are supported.</span>
+      </label>
+      <label>Hidden prompt
+        <textarea name="hidden_prompt" rows="8" maxlength="{{ prompt_limit }}" placeholder="Instructions prepended inside the attested gateway. Callers cannot see this text."></textarea>
+      </label>
+      <label class="inline-check">
+        <input name="enabled" type="checkbox" value="true" checked>
+        Published
+      </label>
+      <button class="btn primary" type="submit">Create model</button>
+      </fieldset>
+    </form>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Your custom models</h2>
+    <span class="pill">{{ models|length }} saved</span>
+  </div>
+  <div class="panel-body">
+    {% if models %}
+      <div class="custom-model-list">
+        {% for model in models %}
+        <article class="custom-model-card" data-copy-secret-scope>
+          <div class="custom-model-card-head">
+            <div>
+              <h3>{{ model.name }}</h3>
+              <div class="secret-row">
+                <code id="custom-model-{{ loop.index }}">{{ model.id }}</code>
+                <button class="btn secret-copy-btn" type="button" data-copy-secret="custom-model-{{ loop.index }}">Copy</button>
+              </div>
+            </div>
+            <div class="custom-model-actions">
+              {% if model.enabled %}<span class="pill good">published</span>{% else %}<span class="pill warn">unpublished</span>{% endif %}
+              <a class="btn" href="{{ model.test_url }}">Test</a>
+            </div>
+          </div>
+          <form class="form" method="post" action="/console/custom-models/{{ model.id }}">
+            <fieldset class="form-gate" {% if not verification.met %}disabled{% endif %}>
+            <label>Name
+              <input name="name" required maxlength="120" value="{{ model.name }}">
+            </label>
+            <label>Slug
+              <span class="custom-model-slug-input">
+                <span>trustedrouter/user-</span>
+                <input name="slug" required maxlength="64" pattern="[a-z0-9][a-z0-9-]{1,62}[a-z0-9]" value="{{ model.slug }}">
+              </span>
+              <span class="form-hint">Changing the slug changes the callable model ID. Existing callers must update.</span>
+            </label>
+            <label>Base model
+              <div class="custom-model-picker" data-base-model-picker data-current-model="{{ model.base_model_id }}">
+                <input data-base-model-input type="hidden" name="base_model_id" required value="{{ model.base_model_id }}">
+                <button class="custom-model-picker-button" data-base-model-button type="button">
+                  <span data-base-model-name>{{ model.base_model_name }}</span>
+                  <code data-base-model-id>{{ model.base_model_id }}</code>
+                </button>
+              </div>
+            </label>
+            <label>Hidden prompt
+              <textarea name="hidden_prompt" rows="8" maxlength="{{ prompt_limit }}">{{ model.hidden_prompt }}</textarea>
+            </label>
+            <label class="inline-check">
+              <input name="enabled" type="checkbox" value="true" {{ 'checked' if model.enabled else '' }}>
+              Published
+            </label>
+            <div class="row-actions">
+              <button class="btn primary" type="submit">Save</button>
+              <span class="muted">Base: <code>{{ model.base_model_id }}</code> · revision {{ model.revision }}</span>
+            </div>
+            </fieldset>
+          </form>
+          <form method="post" action="/console/custom-models/{{ model.id }}/delete">
+            <button class="btn danger" type="submit">Delete</button>
+          </form>
+        </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="empty">No custom models yet. Create one above.</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}
