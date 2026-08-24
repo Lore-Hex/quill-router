@@ -1,4 +1,5 @@
 {% extends "public/_base.html" %}
+{% from "public/_provider_identity.html" import provider_identity %}
 
 {% block hero %}
 <section class="status-hero">
@@ -15,6 +16,7 @@
 {% endblock %}
 
 {% block body %}
+{% set router_slo = snapshot.slo_classes["router_core"] %}
 <section class="status-page">
   <div class="status-banner status-{{ snapshot.overall_status_class }}">
     <div>
@@ -22,11 +24,12 @@
       <p>{{ snapshot.summary.detail }}</p>
     </div>
     <div class="status-banner-metrics">
-      <span>{{ snapshot.overall_status_label }}</span>
-      <strong>{% if snapshot.headline_metrics.in_region_gateway_overhead_p50_milliseconds %}{{ snapshot.headline_metrics.in_region_gateway_overhead_p50_milliseconds }} ms{% else %}n/a{% endif %}</strong>
-      <small>In region gateway overhead p50, {{ snapshot.headline_metrics.window }}</small>
+      <span>{{ snapshot.overall_status_label }} · Router Core</span>
+      <strong>{{ router_slo.target_uptime_percent }}%</strong>
+      <small>Availability target</small>
+      <small>In region gateway overhead p50: {% if snapshot.headline_metrics.in_region_gateway_overhead_p50_milliseconds %}{{ snapshot.headline_metrics.in_region_gateway_overhead_p50_milliseconds }} ms{% else %}n/a{% endif %}</small>
       {% if snapshot.headline_metrics.global_gateway_overhead_p50_milliseconds %}
-      <small>Global observed p50 {{ snapshot.headline_metrics.global_gateway_overhead_p50_milliseconds }} ms</small>
+      <small>Global observed gateway p50: {{ snapshot.headline_metrics.global_gateway_overhead_p50_milliseconds }} ms</small>
       {% endif %}
       {% if snapshot.monitor_freshness.latest_sample_at %}
       <small>Latest synthetic sample {{ snapshot.monitor_freshness.latest_sample_at }}</small>
@@ -59,22 +62,149 @@
     {% endfor %}
   </section>
 
+  {% if public_client_observed_enabled and snapshot.client_observed is defined %}
+  {% set client_observed = snapshot.client_observed %}
+  {% if client_observed.reason != 'insufficient_real_data' %}
+  <section class="status-section" id="client-observed">
+    {% if client_observed.available %}
+    <div class="status-section-head">
+      <div>
+        <h2>Client-observed availability</h2>
+        {% if client_observed.gated_available %}
+        <p>Logical requests reported from inside customer processes.</p>
+        {% else %}
+        <p>Calibration only; no customer traffic has been measured yet.</p>
+        {% endif %}
+      </div>
+      <span class="component-status status-{{ 'up' if client_observed.state == 'published' else 'degraded' }}">{{ client_observed.state }}</span>
+    </div>
+    <div class="component-list">
+      {% if client_observed.gated_available %}
+      <div class="component-row">
+        <div class="slo-grid" aria-label="Client-observed availability windows">
+          {% for name in ["5m", "1h", "24h", "7d", "30d"] %}
+          {% set window = client_observed.windows[name] %}
+          <article class="slo-card">
+            <div class="slo-card-head">
+              <div>
+                <h3>{{ name }}</h3>
+                <p>{{ window.requests }} requests · {{ window.successes }} successes · {{ window.tr_fault }} faults</p>
+              </div>
+            </div>
+            <div class="slo-metrics">
+              {% if window.availability_percent is not none %}
+              <span>Availability <strong>{{ '%.4f'|format(window.availability_percent) }}%</strong></span>
+              {% else %}
+              <span>Availability <strong>insufficient data — {{ window.requests }} requests from {{ window.distinct_tenants }} tenants</strong></span>
+              {% endif %}
+              <span>Coverage <strong>{% if window.coverage is not none %}{{ '%.1f'|format(window.coverage * 100) }}%{% else %}n/a{% endif %}</strong></span>
+            </div>
+          </article>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+      {% if client_observed.all_traffic %}
+      {% set all_traffic_24h = client_observed.all_traffic.windows["24h"] %}
+      <div class="component-row" data-calibration-view>
+        <div class="component-main">
+          <div>
+            <h3>24h all traffic</h3>
+            <p>calibration view — includes synthetic canary traffic; not the published number</p>
+          </div>
+          <span class="component-status status-unknown">calibration</span>
+        </div>
+        <div class="slo-metrics" aria-label="Client-observed all-traffic calibration view, 24h">
+          <span>Availability <strong>{% if all_traffic_24h.availability_percent is not none %}{{ '%.4f'|format(all_traffic_24h.availability_percent) }}%{% else %}n/a{% endif %}</strong></span>
+          <span>Requests <strong>{{ all_traffic_24h.requests }}</strong></span>
+          <span>p50 total <strong>{% if all_traffic_24h.p50_total_ms is not none %}{{ all_traffic_24h.p50_total_ms }} ms{% else %}n/a{% endif %}</strong></span>
+          <span>p95 total <strong>{% if all_traffic_24h.p95_total_ms is not none %}{{ all_traffic_24h.p95_total_ms }} ms{% else %}n/a{% endif %}</strong></span>
+        </div>
+      </div>
+      {% endif %}
+      {% if client_observed.by_host_24h %}
+      <div class="component-row">
+        <div class="component-main">
+          <div>
+            <h3>24h host paths</h3>
+            <p>Attempt-level faults are diagnostic and do not change the logical-request availability above.</p>
+          </div>
+        </div>
+        <div class="burn-list">
+          {% for host, row in client_observed.by_host_24h.items() %}
+          <div class="burn-row">
+            <strong>{{ host|replace('_', '-') }}</strong>
+            <span><meter min="0" max="{{ row.attempts if row.attempts else 1 }}" value="{{ row.attempt_tr_fault }}">{{ row.attempt_tr_fault }} / {{ row.attempts }}</meter></span>
+            <small>{{ row.attempt_tr_fault }} faults / {{ row.attempts }} attempts{% if client_observed.state == 'published' and row.rate is not none %} · {{ '%.2f'|format(row.rate * 100) }}%{% endif %}</small>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+      <div class="component-row">
+        <p class="muted">Not part of the 99.99 % Router Core SLO. Reported by TrustedRouter SDKs from inside customer processes; counts logical requests after SDK retries; excludes 4xx and caller aborts; includes client-side network failures TrustedRouter cannot otherwise see; sampled diagnostics, exact counters. Opt out: see the <a href="/docs/telemetry">client telemetry contract</a>.</p>
+      </div>
+    </div>
+    {% else %}
+    <div class="status-section-head">
+      <div>
+        <h2>Client-observed availability: {% if client_observed.reason == 'stale' %}stale{% else %}no data yet{% endif %}</h2>
+      </div>
+      <span class="component-status status-unknown">{% if client_observed.reason == 'stale' %}stale{% else %}no data{% endif %}</span>
+    </div>
+    {% endif %}
+  </section>
+  {% endif %}
+  {% endif %}
+
+  {% if snapshot.headline_metrics.latency_anatomy %}
+  <section class="status-section">
+    <div class="status-section-head">
+      <div>
+        <h2>Gateway latency anatomy</h2>
+        <p>Fresh connections include DNS, TCP, and TLS setup. Reused connections show the request path after that setup is paid once.</p>
+      </div>
+    </div>
+    <div class="leaderboard-table-wrap">
+      <table class="activity-table status-table">
+        <thead><tr><th>Connection</th><th>Endpoint</th><th>Region path</th><th>Total p50</th><th>DNS</th><th>TCP</th><th>TLS</th><th>Gateway</th><th>Samples</th></tr></thead>
+        <tbody>
+          {% for row in snapshot.headline_metrics.latency_anatomy %}
+          <tr>
+            <td>{% if row.probe_type == "gateway_reused_path" %}Reused connection{% else %}Fresh connection{% endif %}</td>
+            <td>{{ row.target_label }}</td>
+            <td>{{ row.region_pair }}</td>
+            <td>{% if row.p50_latency_milliseconds is not none %}{{ row.p50_latency_milliseconds }} ms{% else %}n/a{% endif %}</td>
+            <td>{% if row.p50_dns_milliseconds is not none %}{{ row.p50_dns_milliseconds }} ms{% else %}paid once{% endif %}</td>
+            <td>{% if row.p50_tcp_connect_milliseconds is not none %}{{ row.p50_tcp_connect_milliseconds }} ms{% else %}paid once{% endif %}</td>
+            <td>{% if row.p50_tls_handshake_milliseconds is not none %}{{ row.p50_tls_handshake_milliseconds }} ms{% else %}paid once{% endif %}</td>
+            <td>{% if row.p50_gateway_processing_milliseconds == 0 %}&lt;1 ms{% elif row.p50_gateway_processing_milliseconds is not none %}{{ row.p50_gateway_processing_milliseconds }} ms{% else %}n/a{% endif %}</td>
+            <td>{{ row.sample_count }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
   {% if provider_health %}
   <section class="status-section">
     <div class="status-section-head">
       <div>
         <h2>Upstream provider health</h2>
-        <p>Continuously measured per provider from the rotation probe and real traffic over the {{ provider_health_window or "recent live window" }}. Unsupported route and probe-configuration rows are shown separately, not counted as provider downtime. This is an informational provider watch — a flaky upstream model does NOT count against router-core uptime above. <a href="/leaderboard">Full leaderboard</a>.</p>
+        <p>Continuously measured per provider from the rotation probe and real traffic over the {{ provider_health_window or "recent live window" }}. Ranked by success rate, then p50 TTFT. Unsupported route and probe-configuration rows are shown separately, not counted as provider downtime. This is an informational provider watch — a flaky upstream model does NOT count against router-core uptime above. <a href="/leaderboard">Full leaderboard</a>.</p>
       </div>
     </div>
     <div class="leaderboard-table-wrap">
       <table class="leaderboard-table">
-        <thead><tr><th>Provider</th><th>Success</th><th>Error rate</th><th>Top error</th><th>Config excluded</th><th>Samples</th></tr></thead>
+        <thead><tr><th>Provider</th><th>Success</th><th>p50 TTFT</th><th>Error rate</th><th>Top error</th><th>Config excluded</th><th>Samples</th></tr></thead>
         <tbody>
           {% for p in provider_health %}
           <tr>
-            <td><a href="/providers/{{ p.provider }}">{{ p.provider }}</a></td>
+            <td>{{ provider_identity(p.provider, p.provider, "/providers/" ~ p.provider) }}</td>
             <td>{{ '%.2f'|format(p.uptime * 100) }}%</td>
+            <td>{% if p.p50_ttft_ms is not none %}{{ p.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
             <td>{% if p.error_rate and p.error_rate > 0 %}<span class="pill warn">{{ '%.1f'|format(p.error_rate * 100) }}%</span>{% else %}0%{% endif %}</td>
             <td>{% if p.top_error %}<code>{{ p.top_error }}</code>{% else %}—{% endif %}</td>
             <td>{% if p.excluded_count %}{{ p.excluded_count }}{% if p.top_excluded %} <code>{{ p.top_excluded }}</code>{% endif %}{% else %}—{% endif %}</td>
@@ -92,14 +222,14 @@
     <div class="status-section-head">
       <div>
         <h2>Error budget burn</h2>
-        <p>Burn rate means how quickly failures are spending the allowed error budget. Router Core is the paging signal. Provider Effective is an upstream provider quality watch and is not counted as router core downtime.</p>
+        <p>Burn rate means how quickly failures are spending the allowed error budget. Router Core is the paging signal. Upstream reliability is measured separately for every provider above.</p>
       </div>
     </div>
     <div class="burn-list">
       {% for alert in snapshot.burn_rate_alerts %}
       <div class="burn-row burn-{{ alert.level }}">
         <strong>{{ alert.level|title }}</strong>
-        <span>{{ alert.slo_name }} · {{ alert.window }} · {{ alert.burn_rate }}x burn{% if alert.slo_class != "router_core" %} · provider watch{% endif %}</span>
+        <span>{{ alert.slo_name }} · {{ alert.window }} · {{ alert.burn_rate }}x burn</span>
         <small>{{ alert.bad_count }} bad / {{ alert.sample_count }} samples</small>
       </div>
       {% endfor %}
@@ -140,8 +270,8 @@
         <div class="component-breakdown" aria-label="{{ component.name }} latency breakdown">
           {% for breakdown in component.latency_breakdown_5m %}
           <span>
-            {{ breakdown.probe_type }} · {{ breakdown.region_pair }}
-            <strong>{% if breakdown.p50_latency_milliseconds %}p50 {{ breakdown.p50_latency_milliseconds }} ms{% else %}p50 n/a{% endif %}</strong>
+            {{ breakdown.probe_type }} · {{ breakdown.route_label }}
+            <strong>{% if breakdown.p50_latency_milliseconds is not none %}p50 {{ breakdown.p50_latency_milliseconds }} ms{% else %}p50 n/a{% endif %}</strong>
           </span>
           {% endfor %}
         </div>
@@ -156,7 +286,7 @@
                 <span>Uptime <strong>{{ bucket.uptime_percent | uptime_pct(2) }}</strong></span>
                 <span>Samples <strong>{{ bucket.sample_count }}</strong></span>
                 {% for breakdown in bucket.latency_breakdown %}
-                  <span>{{ breakdown.probe_type }} · {{ breakdown.region_pair }} <strong>{% if breakdown.p50_latency_milliseconds %}p50 {{ breakdown.p50_latency_milliseconds }} ms{% else %}p50 n/a{% endif %}</strong></span>
+                  <span>{{ breakdown.probe_type }} · {{ breakdown.route_label }} <strong>{% if breakdown.p50_latency_milliseconds is not none %}p50 {{ breakdown.p50_latency_milliseconds }} ms{% else %}p50 n/a{% endif %}</strong></span>
                 {% endfor %}
                 {% if bucket.top_error %}<span class="err">Top error <strong>{{ bucket.top_error }}</strong></span>{% endif %}
               {% else %}
@@ -175,8 +305,8 @@
     <div class="status-section">
       <div class="status-section-head">
         <div>
-          <h2>Uptime</h2>
-          <p>Precomputed public rollups from metadata samples.</p>
+          <h2>Router Core uptime</h2>
+          <p>Precomputed Router Core rollups. Control Plane and upstream providers are measured separately.</p>
         </div>
       </div>
       <table class="activity-table status-table">
@@ -193,7 +323,7 @@
         </tbody>
       </table>
       {% if snapshot.monthly %}
-      <h3 class="status-subhead">Monthly reliability</h3>
+      <h3 class="status-subhead">Monthly Router Core reliability</h3>
       <table class="activity-table status-table">
         <thead><tr><th>Month</th><th>Status</th><th>Uptime</th><th>Samples</th></tr></thead>
         <tbody>
@@ -224,7 +354,7 @@
           <span class="component-status status-{{ event.status_class }}">{{ event.status_label }}</span>
           <div>
             <strong>{{ event.component }}</strong>
-            <p>{{ event.created_at }} · {{ event.probe_type }} · {{ event.monitor_region }}{% if event.error_type %} · {{ event.error_type }}{% endif %}</p>
+            <p>{{ event.created_at }} · {{ event.probe_type }} · {{ event.monitor_region }}{% if event.aggregate %} · hourly rollup · {{ event.failure_count }} failed / {{ event.sample_count }}{% endif %}{% if event.error_type %} · {{ event.error_type }}{% endif %}</p>
           </div>
         </div>
         {% endfor %}

@@ -1,0 +1,39 @@
+displayName: "TR Spanner: request latency"
+combiner: OR
+enabled: true
+documentation:
+  mimeType: text/markdown
+  content: |
+    Production Spanner server-side p99 latency is elevated. Check CPU,
+    transaction aborts, lock waits, and the serving region. Runbook:
+    docs/spanner-reliability.md.
+conditions:
+  - displayName: "Commit p99 exceeds 1.5 seconds for 10 minutes"
+    conditionThreshold:
+      filter: 'resource.type = "spanner_instance" AND resource.labels.instance_id = "trusted-router-nam6" AND metric.type = "spanner.googleapis.com/api/request_latencies" AND metric.labels.method = "Commit"'
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_PERCENTILE_99
+          crossSeriesReducer: REDUCE_MAX
+      comparison: COMPARISON_GT
+      thresholdValue: 1.5
+      duration: 600s
+      trigger:
+        count: 1
+  - displayName: "Any request p99 exceeds 3 seconds for 10 minutes"
+    conditionThreshold:
+      filter: 'resource.type = "spanner_instance" AND resource.labels.instance_id = "trusted-router-nam6" AND metric.type = "spanner.googleapis.com/api/request_latencies"'
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_PERCENTILE_99
+          crossSeriesReducer: REDUCE_MAX
+      comparison: COMPARISON_GT
+      thresholdValue: 3
+      duration: 600s
+      trigger:
+        count: 1
+alertStrategy:
+  autoClose: 86400s
+  notificationPrompts:
+    - OPENED
+    - CLOSED

@@ -1,0 +1,6 @@
+{% macro provider_identity(slug, name, href=None, size='default', subtitle=None) -%}
+{% if href %}<a class="provider-identity provider-identity-{{ size }}" href="{{ href }}">{% else %}<span class="provider-identity provider-identity-{{ size }}">{% endif %}
+  <img class="provider-logo" src="{{ provider_logo_url(slug) }}" alt="{{ name }} logo" aria-hidden="true" width="32" height="32" loading="lazy" decoding="async">
+  <span class="provider-identity-copy"><strong>{{ name }}</strong>{% if subtitle %}<small>{{ subtitle }}</small>{% endif %}</span>
+{% if href %}</a>{% else %}</span>{% endif %}
+{%- endmacro %}

@@ -15,7 +15,8 @@
       <li>✓ Use <code>trustedrouter/openpatcher-g2</code> for a Kimi K3 worker with parallel Gemma 4 and Prometheus 2.0 advisors</li>
       <li>✓ Use <code>trustedrouter/plato-pro-2.0</code> for GLM 5.2 advised by Prometheus 2.0</li>
       <li>✓ Use <code>trustedrouter/iris-code-1.0</code>, <code>trustedrouter/prometheus-code-1.0</code>, or <code>trustedrouter/zeus-code-1.0</code> for code-tuned Synth presets</li>
-      <li>✓ Add <code>provider.data_collection = "deny"</code> for zero-retention routing</li>
+      <li>✓ Add <code>provider.min_privacy = "zdr"</code> for a hard zero-retention floor</li>
+      <li>✓ Add <code>provider.min_privacy = "confidential"</code> to require confidential compute + provider E2EE</li>
     </ul>
     <a class="btn" href="/docs/migrate-from-openrouter">Migration guide →</a>
   </div>
@@ -33,17 +34,48 @@ const r = await client.chat.completions.create({
   </div>
 </section>
 
+<section style="margin-top:48px" id="privacy-filters">
+  <h2 class="section-center">Fail-closed privacy filters</h2>
+  <div class="marketing-grid two">
+    <div class="marketing-card">
+      <h3>Require zero retention</h3>
+      <pre><code>{
+  "model": "your/model",
+  "provider": {"min_privacy": "zdr"}
+}</code></pre>
+      <p>This is a hard minimum. If no endpoint for the selected model and provider filters has a tracked ZDR guarantee, the request fails before inference.</p>
+    </div>
+    <div class="marketing-card">
+      <h3>Require confidential + E2EE</h3>
+      <pre><code>{
+  "model": "your/model",
+  "provider": {"min_privacy": "confidential"}
+}</code></pre>
+      <p>This stronger hard minimum requires both provider-side confidential compute and end-to-end encryption. <code>e2e</code> and <code>e2ee</code> are accepted value aliases. Unsupported model/provider combinations fail closed.</p>
+    </div>
+  </div>
+  <p class="muted" style="margin-top:14px"><code>trustedrouter/e2e</code> and <code>trustedrouter/confidential</code> select the same confidential + E2EE pool. <code>provider.data_collection = "deny"</code> remains an OpenRouter-compatible routing preference; use <code>min_privacy</code> when the privacy floor must never be relaxed.</p>
+</section>
+
 <section style="margin-top:48px">
   <h2 class="section-center">Guides</h2>
   <div class="marketing-grid three">
+    <a class="marketing-card card-as-link" href="/for-developers"><h3>60-second quickstart</h3><p>Make one request, inspect the catalog, and verify the live prompt path.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/agent-setup"><h3>Agent setup</h3><p>Point Codex, Claude Code, Hermes, Cursor, or any OpenAI-compatible client at TrustedRouter.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/mcp"><h3>MCP server</h3><p>Let agents inspect live models, pricing, provider posture, credits, docs, and quick test messages.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/agent-setup#codex-skill"><h3>Agent skill</h3><p>Help Codex, Claude Code, Hermes, and other agents choose models using speed, cost, AI IQ, privacy, context length, and prompt-cache fit.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/migrate-from-openrouter"><h3>Migrate from OpenRouter</h3><p>Swap one base_url and keep your existing calls working.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/tagging"><h3>Request tagging</h3><p>Allocate cost and usage with AWS style tags while keeping metadata out of model prompts.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/telemetry"><h3>Client reliability telemetry</h3><p>See the content-free fields TrustedRouter SDKs report, the retention policy, and every opt-out.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/prompt-caching"><h3>Prompt caching</h3><p>Reuse stable prompt prefixes, inspect cache hits, and keep the router itself free of prompt storage.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/batch"><h3>Batch API</h3><p>Submit OpenRouter-compatible inline batches and poll encrypted results through the attested gateway.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/web-search"><h3>Responses web search</h3><p>Search the live web inside the attested gateway and return source citations through the OpenAI Responses API.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/video"><h3>Video generation</h3><p>Generate video with Seedance, Veo, Sora, Runway, Kling, Wan, Vidu, PixVerse, LTX, Gemini Omni, and Hailuo 3 through asynchronous jobs with exact quoted billing.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/evals"><h3>Evals</h3><p>Run eval suites across providers through one API.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/provider-conformance"><h3>Provider conformance</h3><p>Check an OpenAI-compatible provider endpoint against the production gateway contract before applying.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/synth"><h3>Synth</h3><p>Run Iris, Prometheus, Zeus, and code-tuned Synth presets inside the attested gateway.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/agent-setup#socrates"><h3>Socrates</h3><p>Run the advisor preset, or configure the generic advisor primitive directly.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/user-models"><h3>User-provided models</h3><p>List your own endpoint — a machine, an agent, or yourself typing — at a price you set, and keep 70% in credits.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/x402"><h3>x402 stablecoin funding</h3><p>Let agents add prepaid credits automatically without changing the prompt path.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/eu"><h3>EU routing</h3><p>Use the Europe West attested gateway and the EU-focused model alias.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/sign-in-with-trustedrouter"><h3>Sign in with TrustedRouter</h3><p>Let your users bring their own account and credits.</p><span class="card-link">Open →</span></a>
@@ -57,7 +89,12 @@ const r = await client.chat.completions.create({
   <div class="repo-grid">
     <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-py"><span class="mono">trusted-router-py</span><span class="repo-sub">Python SDK</span></a>
     <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-js"><span class="mono">trusted-router-js</span><span class="repo-sub">TypeScript SDK</span></a>
-    <a class="repo-card" href="https://github.com/jperla/trusted-router-swift"><span class="mono">trusted-router-swift</span><span class="repo-sub">Swift SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-go"><span class="mono">trusted-router-go</span><span class="repo-sub">Go SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-rust"><span class="mono">trusted-router-rust</span><span class="repo-sub">Rust SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-swift"><span class="mono">trusted-router-swift</span><span class="repo-sub">Swift SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-java"><span class="mono">trusted-router-java</span><span class="repo-sub">Java SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trustedrouter-ai-sdk-provider"><span class="mono">trustedrouter-ai-sdk-provider</span><span class="repo-sub">Vercel AI SDK provider</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trustedrouter-provider-check"><span class="mono">trustedrouter-provider-check</span><span class="repo-sub">Provider conformance suite</span></a>
     <a class="repo-card" href="https://github.com/Lore-Hex/quill-router"><span class="mono">quill-router</span><span class="repo-sub">Open-source router</span></a>
   </div>
   <div class="public-proof-strip" style="margin-top:18px">
@@ -78,6 +115,7 @@ const r = await client.chat.completions.create({
         <li><code>POST /v1/chat/completions</code></li>
         <li><code>POST /v1/responses</code></li>
         <li><code>POST /v1/embeddings</code></li>
+        <li><code>POST /v1/videos</code></li>
         <li><code>GET /v1/models</code></li>
       </ul>
       <p style="margin-top:14px"><a class="card-link" href="/api/reference">Interactive API reference →</a></p>
@@ -93,10 +131,61 @@ const r = await client.chat.completions.create({
         <li><a href="https://github.com/Lore-Hex/LLM-advisor">trustedrouter-model-advisor</a> — source repo and <a href="https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md">raw playbook</a> for agent installation</li>
         <li><a href="/docs/agent-setup#socrates">Socrates</a> — advisor orchestration guide</li>
         <li><a href="/docs/synth">/docs/synth</a> — Synth model panel guide</li>
+        <li><a href="/docs/user-models">/docs/user-models</a> — post your own endpoint as a priced model; verification, dispatch, payouts</li>
+        <li><a href="/docs/prompt-caching">/docs/prompt-caching</a> — provider cache behavior, usage fields, billing, and routing tradeoffs</li>
+        <li><a href="/docs/batch">/docs/batch</a> — inline Batch API quickstart, response contract, limits, and encrypted retention</li>
+        <li><a href="/docs/web-search">/docs/web-search</a> — Responses API web search, citations, controls, and privacy boundaries</li>
+        <li><a href="/docs/provider-conformance">/docs/provider-conformance</a> — public provider contract checks, result meanings, and production parity</li>
+        <li><a href="/docs/video">/docs/video</a> — asynchronous video generation, models, billing, and retention boundaries</li>
         <li><a href="https://github.com/Lore-Hex/quill-router">GitHub</a> — source + issues</li>
         <li><a href="/openai-compatible-llm-api">OpenAI-compatible API</a> — SDK migration surface</li>
         <li><a href="/llm-provider-latency-benchmarks">Latency benchmarks</a> — measured provider data</li>
       </ul>
+    </div>
+  </div>
+</section>
+
+<section style="margin-top:48px" id="rate-limit-headers">
+  <h2 class="section-center">Spend-window rate limits</h2>
+  <p>A key with a hard daily, weekly, or monthly spend limit gets the governing window on every response. Values are integer microdollars, the same unit used by the key-limit API. Keys without a hard spend window do not get fabricated rate-limit headers.</p>
+  <div class="marketing-grid two">
+    <div class="marketing-card">
+      <h3>Response headers</h3>
+      <ul class="check-list">
+        <li><code>RateLimit-Limit</code> — configured spend limit for the governing window</li>
+        <li><code>RateLimit-Remaining</code> — settled spend headroom observed by this request</li>
+        <li><code>RateLimit-Reset</code> — whole seconds until the fixed UTC window resets</li>
+        <li><code>Retry-After</code> — also present on <code>429</code>; the reset delay rounded up, with a minimum of one second</li>
+      </ul>
+      <p>Window checks are approximate by design: in-flight holds are not included. Use <code>RateLimit-Remaining</code> to slow down before rejection, and treat <code>Retry-After</code> as authoritative after a <code>429</code>.</p>
+    </div>
+    <div class="copy-terminal">
+      <div class="code-head"><span>Agent backoff loop</span><span>Python</span></div>
+      <pre><code>import math
+import time
+import httpx
+
+jobs = [{"model": "trustedrouter/auto", "messages": [...]}]
+next_budget_microdollars = 50_000
+
+with httpx.Client() as client:
+    while jobs:
+        response = client.post(API_URL, headers=AUTH, json=jobs[0])
+        reset = max(1, math.ceil(float(
+            response.headers.get("RateLimit-Reset", "1")
+        )))
+
+        if response.status_code == 429:
+            time.sleep(max(1, int(response.headers["Retry-After"])))
+            continue
+
+        response.raise_for_status()
+        jobs.pop(0)
+        remaining = int(response.headers.get(
+            "RateLimit-Remaining", next_budget_microdollars
+        ))
+        if jobs and remaining &lt; next_budget_microdollars:
+            time.sleep(reset)</code></pre>
     </div>
   </div>
 </section>

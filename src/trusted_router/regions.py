@@ -20,12 +20,22 @@ class RegionGeo:
     lat: float
     lng: float
     cloud: str = "gcp"
+    label_dx: float = 12.0
+    label_dy: float = -8.0
+    label_anchor: str = "start"
 
 
 # GCP region locations — the cities Cloud Run actually runs in. Keep in
 # sync with https://cloud.google.com/about/locations when adding rows.
 GCP_REGION_GEO: dict[str, RegionGeo] = {
-    "us-central1": RegionGeo("us-central1", "Iowa", 41.262, -95.860),
+    "us-central1": RegionGeo(
+        "us-central1",
+        "Iowa",
+        41.262,
+        -95.860,
+        label_dx=-12,
+        label_anchor="end",
+    ),
     "us-east1": RegionGeo("us-east1", "S. Carolina", 33.836, -81.163),
     "us-east4": RegionGeo("us-east4", "N. Virginia", 39.045, -77.487),
     "us-west1": RegionGeo("us-west1", "Oregon", 45.523, -122.676),
@@ -35,7 +45,9 @@ GCP_REGION_GEO: dict[str, RegionGeo] = {
     "europe-west1": RegionGeo("europe-west1", "Belgium", 50.503, 4.469),
     "europe-west2": RegionGeo("europe-west2", "London", 51.507, -0.128),
     "europe-west3": RegionGeo("europe-west3", "Frankfurt", 50.111, 8.682),
-    "europe-west4": RegionGeo("europe-west4", "Netherlands", 52.379, 4.900),
+    "europe-west4": RegionGeo(
+        "europe-west4", "Netherlands", 52.379, 4.900, label_dy=-14
+    ),
     "europe-west6": RegionGeo("europe-west6", "Zürich", 47.376, 8.541),
     "me-west1": RegionGeo("me-west1", "Tel Aviv", 32.085, 34.781),
     "africa-south1": RegionGeo("africa-south1", "Johannesburg", -26.204, 28.047),
@@ -52,8 +64,102 @@ GCP_REGION_GEO: dict[str, RegionGeo] = {
 
 
 def _lookup_region_geo(region: str) -> RegionGeo | None:
-    """Return geo info for a configured GCP region."""
-    return GCP_REGION_GEO.get(region)
+    """Return geo info for a configured region on any cloud."""
+    return GCP_REGION_GEO.get(region) or MULTICLOUD_REGION_GEO.get(region)
+
+
+# Standalone deployments on other clouds. These are SEPARATE TrustedRouter
+# products — own database, own credits, own status page (see
+# docs/storage-portability/multi-cloud-separation.md) — so their ids are
+# namespaced by cloud rather than pretending to be GCP regions. A dot here
+# must correspond to a deployment that actually serves; the live/staged
+# split is settings.external_live_regions, not this table.
+MULTICLOUD_REGION_GEO: dict[str, RegionGeo] = {
+    "aws-eu-west-1": RegionGeo(
+        "aws-eu-west-1",
+        "Dublin",
+        53.349,
+        -6.260,
+        cloud="aws",
+        label_dx=-12,
+        label_dy=4,
+        label_anchor="end",
+    ),
+    "aws-eu-west-3": RegionGeo(
+        "aws-eu-west-3",
+        "Paris",
+        48.857,
+        2.352,
+        cloud="aws",
+        label_dy=18,
+    ),
+    # Stockholm is the DSQL replication peer of the AWS-EU deployment. It
+    # holds live data but no compute yet, so it defaults to "staged" on the
+    # map until compute lands there.
+    "aws-eu-north-1": RegionGeo(
+        "aws-eu-north-1", "Stockholm", 59.329, 18.068, cloud="aws", label_dy=-14
+    ),
+    "azure-australiaeast": RegionGeo(
+        "azure-australiaeast",
+        "Sydney",
+        -33.868,
+        151.209,
+        cloud="azure",
+        label_dx=-12,
+        label_anchor="end",
+    ),
+}
+
+#: Cloud a bare, un-namespaced region id belongs to. GCP was here first, so its
+#: regions are spelled `us-central1` rather than `gcp-us-central1`.
+DEFAULT_REGION_CLOUD = "gcp"
+
+
+def cloud_region_namespaces() -> frozenset[str]:
+    """Prefixes that are allowed to name a cloud inside a region id.
+
+    Derived from `MULTICLOUD_REGION_GEO` at CALL time rather than written down
+    a second time: that table is what makes `aws-`/`azure-` mean anything, so a
+    cloud added there is recognised everywhere at once, and a prefix that is
+    not there cannot become a cloud just because somebody typed it.
+    """
+    return frozenset(geo.cloud for geo in MULTICLOUD_REGION_GEO.values())
+
+
+def cloud_for_region(region: str) -> str | None:
+    """Which cloud a configured region id names, or `None` when nothing can say.
+
+    Three answers, in order: the multi-cloud table; the GCP table (GCP was here
+    first, so its ids are bare — `us-central1`, not `gcp-us-central1`); and a
+    `<cloud>-<native id>` namespace whose prefix is already a KNOWN cloud, which
+    is what lets a new region on an existing cloud (`aws-eu-west-2`) be
+    attributed without a table edit.
+
+    Everything else is `None`, and that is the point. An earlier revision
+    returned the bare prefix for any hyphenated id, which minted a CLOUD out of
+    an ordinary GCP geography: a real GCP region missing from `GCP_REGION_GEO`
+    — that table is hand-maintained and Google keeps shipping regions — made
+    `europe-west12` resolve to a cloud named "europe", and the fleet-coverage
+    check in `trusted_router.operational_analytics_fleet` then failed CI
+    demanding a drain-freshness endpoint for a cloud that does not exist.
+
+    Guessing GCP instead would be the opposite failure and a worse one: a
+    genuinely new cloud (`oracle-eu-frankfurt-1`) added to a settings list and
+    nowhere else would silently read as GCP, i.e. as already covered, which is
+    the "configured, healthy, and empty" shape the whole freshness registry
+    exists to make impossible. So an id nobody can attribute is `None`, and the
+    caller reports it as something a human has to resolve — by adding the row
+    that says which cloud it is.
+    """
+    geo = MULTICLOUD_REGION_GEO.get(region)
+    if geo is not None:
+        return geo.cloud
+    if region in GCP_REGION_GEO:
+        return DEFAULT_REGION_CLOUD
+    prefix, _, remainder = region.partition("-")
+    if remainder and prefix in cloud_region_namespaces():
+        return prefix
+    return None
 
 
 def configured_regions(settings: Settings) -> list[str]:
@@ -148,6 +254,16 @@ def region_map_payload(settings: Settings) -> list[dict[str, Any]]:
     intentionally trivial so unit tests can re-derive it."""
     primary = choose_region(settings)
     serving_regions = set(configured_regions(settings))
+    # Standalone deployments on other clouds serve their own traffic, so the
+    # GCP serving list can't know about them. They are declared live
+    # explicitly — and must only be listed once their own smoke
+    # (scripts/deploy/verify_deployment.sh) passes, because this flag is the
+    # difference between a "live" and a "staged" dot on the marketing page.
+    serving_regions |= {
+        item.strip()
+        for item in settings.external_live_regions.split(",")
+        if item.strip()
+    }
     out: list[dict[str, Any]] = []
     for region in configured_marketing_regions(settings):
         geo = _lookup_region_geo(region)
@@ -166,6 +282,9 @@ def region_map_payload(settings: Settings) -> list[dict[str, Any]]:
                 "cloud": geo.cloud,
                 "serving": serving,
                 "status_label": "live" if serving else "edge",
+                "label_dx": geo.label_dx,
+                "label_dy": geo.label_dy,
+                "label_anchor": geo.label_anchor,
             }
         )
     return out

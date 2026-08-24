@@ -9,14 +9,34 @@ from pydantic import ValidationError
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.og import OG_DESCRIPTION, OG_TITLE, og_image_svg
+from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
+from trusted_router.og import (
+    OG_DESCRIPTION,
+    OG_TITLE,
+    og_image_svg,
+    pricing_og_image_svg,
+)
+from trusted_router.routes.workspaces import MAX_WORKSPACE_MEMBER_MUTATIONS
 from trusted_router.secrets import LocalKeyFile
 from trusted_router.sentry_config import before_send
-from trusted_router.storage import STORE
+from trusted_router.storage import STORE, InMemoryStore
+from trusted_router.typed_balance import live_credit_summary
 
 TEST_BYOK_KMS_KEY_NAME = (
     "projects/test/locations/us-central1/keyRings/trusted-router/cryptoKeys/byok-envelope"
 )
+
+
+def test_signup_credit_defaults_stay_aligned() -> None:
+    assert DEFAULT_SIGNUP_CREDIT_MICRODOLLARS == 300_000
+    assert Settings(environment="test").signup_trial_credit_microdollars == 300_000
+
+
+TEST_SES_SETTINGS = {
+    "aws_access_key_id": "test-access-key",
+    "aws_secret_access_key": "test-secret-key",
+    "ses_from_email": "noreply@example.com",
+}
 
 
 def test_stubbed_endpoints_are_explicit(client: TestClient) -> None:
@@ -34,7 +54,9 @@ def test_stubbed_endpoints_are_explicit(client: TestClient) -> None:
         assert resp.json()["error"]["type"] == type_
 
 
-def test_content_storage_cannot_be_enabled(client: TestClient, user_headers: dict[str, str]) -> None:
+def test_content_storage_cannot_be_enabled(
+    client: TestClient, user_headers: dict[str, str]
+) -> None:
     workspaces = client.get("/v1/workspaces", headers=user_headers).json()["data"]
     workspace_id = workspaces[0]["id"]
     resp = client.patch(
@@ -76,7 +98,9 @@ def test_users_cannot_select_another_users_workspace(client: TestClient) -> None
     assert resp.json()["error"]["type"] == "forbidden"
 
 
-def test_management_keys_are_pinned_to_their_workspace(client: TestClient, user_headers: dict[str, str]) -> None:
+def test_management_keys_are_pinned_to_their_workspace(
+    client: TestClient, user_headers: dict[str, str]
+) -> None:
     personal_key = client.post("/v1/keys", headers=user_headers, json={"name": "personal"}).json()
     personal_workspace_id = personal_key["data"]["workspace_id"]
     org = client.post("/v1/workspaces", headers=user_headers, json={"name": "Org"}).json()["data"]
@@ -88,7 +112,9 @@ def test_management_keys_are_pinned_to_their_workspace(client: TestClient, user_
     ).json()["key"]
     management_headers = {"authorization": f"Bearer {org_management_key}"}
 
-    workspace_resp = client.get(f"/v1/workspaces/{personal_workspace_id}", headers=management_headers)
+    workspace_resp = client.get(
+        f"/v1/workspaces/{personal_workspace_id}", headers=management_headers
+    )
     assert workspace_resp.status_code == 403
     assert workspace_resp.json()["error"]["type"] == "forbidden"
 
@@ -113,7 +139,9 @@ def test_management_keys_are_pinned_to_their_workspace(client: TestClient, user_
     assert checkout_resp.json()["error"]["type"] == "forbidden"
 
 
-def test_users_have_uuid_ids_not_email_identifiers(client: TestClient, user_headers: dict[str, str]) -> None:
+def test_users_have_uuid_ids_not_email_identifiers(
+    client: TestClient, user_headers: dict[str, str]
+) -> None:
     org = client.post("/v1/workspaces", headers=user_headers, json={"name": "Org"}).json()["data"]
     org_headers = {**user_headers, "x-trustedrouter-workspace": org["id"]}
     add = client.post(
@@ -134,6 +162,139 @@ def test_users_have_uuid_ids_not_email_identifiers(client: TestClient, user_head
     assert remove.status_code == 200
     members = client.get("/v1/organization/members", headers=org_headers).json()["data"]
     assert all(item["email"] != "bob@example.com" for item in members)
+
+
+@pytest.mark.parametrize(
+    ("suffix", "field_name"),
+    [("add", "emails"), ("remove", "user_ids")],
+)
+def test_workspace_member_mutations_reject_oversized_batches_before_member_store_work(
+    client: TestClient,
+    user_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    suffix: str,
+    field_name: str,
+) -> None:
+    workspace = client.post(
+        "/v1/workspaces",
+        headers=user_headers,
+        json={"name": "Bounded membership"},
+    ).json()["data"]
+    headers = {**user_headers, "x-trustedrouter-workspace": workspace["id"]}
+    member_store_calls: list[str] = []
+
+    def unexpected_member_store_work(*_args: object, **_kwargs: object) -> None:
+        member_store_calls.append("called")
+        raise AssertionError("oversized membership mutation reached Store work")
+
+    monkeypatch.setattr(InMemoryStore, "find_user_by_email", unexpected_member_store_work)
+    monkeypatch.setattr(InMemoryStore, "add_members", unexpected_member_store_work)
+    monkeypatch.setattr(InMemoryStore, "remove_members", unexpected_member_store_work)
+
+    response = client.post(
+        f"/v1/workspaces/{workspace['id']}/members/{suffix}",
+        headers=headers,
+        json={field_name: ["duplicate@example.com"] * (MAX_WORKSPACE_MEMBER_MUTATIONS + 1)},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["type"] == "bad_request"
+    assert member_store_calls == []
+
+
+def test_workspace_member_mutations_deduplicate_before_store(
+    client: TestClient,
+    user_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = client.post(
+        "/v1/workspaces",
+        headers=user_headers,
+        json={"name": "Deduplicated membership"},
+    ).json()["data"]
+    headers = {**user_headers, "x-trustedrouter-workspace": workspace["id"]}
+    added: list[str] = []
+    removed: list[str] = []
+
+    def capture_add(
+        _store: InMemoryStore,
+        _workspace_id: str,
+        emails: list[str],
+        role: str = "member",
+    ) -> list[object]:
+        assert role == "member"
+        added.extend(emails)
+        return []
+
+    def capture_remove(
+        _store: InMemoryStore,
+        _workspace_id: str,
+        identifiers: list[str],
+    ) -> None:
+        removed.extend(identifiers)
+
+    monkeypatch.setattr(InMemoryStore, "add_members", capture_add)
+    monkeypatch.setattr(InMemoryStore, "remove_members", capture_remove)
+
+    add_response = client.post(
+        f"/v1/workspaces/{workspace['id']}/members/add",
+        headers=headers,
+        json={
+            "emails": [
+                " Alice@Example.com ",
+                "alice@example.com",
+                "BOB@example.com",
+            ]
+        },
+    )
+    remove_response = client.post(
+        f"/v1/workspaces/{workspace['id']}/members/remove",
+        headers=headers,
+        json={"user_ids": [" User-1 ", "user-1", "User-2"]},
+    )
+
+    assert add_response.status_code == 200
+    assert added == ["alice@example.com", "bob@example.com"]
+    assert remove_response.status_code == 200
+    assert removed == ["User-1", "User-2"]
+    assert remove_response.json()["data"]["removed"] == 2
+
+
+@pytest.mark.parametrize(
+    "role",
+    ["owner", "x" * 100_000],
+    ids=["privilege-escalation", "oversized"],
+)
+def test_workspace_member_add_rejects_invalid_role_before_member_store_work(
+    client: TestClient,
+    user_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    role: str,
+) -> None:
+    workspace = client.post(
+        "/v1/workspaces",
+        headers=user_headers,
+        json={"name": "Role validation"},
+    ).json()["data"]
+    headers = {**user_headers, "x-trustedrouter-workspace": workspace["id"]}
+    member_store_calls: list[str] = []
+
+    def unexpected_member_store_work(*_args: object, **_kwargs: object) -> None:
+        member_store_calls.append("called")
+        raise AssertionError("invalid role reached member Store work")
+
+    monkeypatch.setattr(InMemoryStore, "find_user_by_email", unexpected_member_store_work)
+    monkeypatch.setattr(InMemoryStore, "add_members", unexpected_member_store_work)
+
+    response = client.post(
+        f"/v1/workspaces/{workspace['id']}/members/add",
+        headers=headers,
+        json={"emails": ["member@example.com"], "role": role},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["type"] == "bad_request"
+    assert member_store_calls == []
 
 
 def test_api_key_secrets_are_salted(client: TestClient, user_headers: dict[str, str]) -> None:
@@ -179,11 +340,15 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert "Get API key" in dashboard.text
     assert "End-to-End Encrypted AI gateway" in dashboard.text
     assert "ATTESTED GATEWAY" in dashboard.text  # routing-diagram hero
-    assert "Live regions" in dashboard.text  # reliability stats
+    assert "3 clouds" in dashboard.text
+    assert "GCP · AWS · Azure" in dashboard.text
+    assert "GCP, AWS, and Azure" in dashboard.text
+    assert "world-map.svg" not in dashboard.text
     assert "trustedrouter/auto" in dashboard.text  # routing model
     assert "$25 USDC" not in dashboard.text
     assert "Stripe Crypto" not in dashboard.text
-    assert "https://quill.lorehex.co" in dashboard.text
+    assert "Quill Feather" not in dashboard.text
+    assert "https://quill.lorehex.co" not in dashboard.text
     assert 'href="/status"' in dashboard.text
     assert "https://github.com/Lore-Hex/trusted-router-py" in dashboard.text
     assert 'href="/providers"' in dashboard.text
@@ -222,14 +387,30 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert providers_json.status_code == 200
     assert providers_json.headers["content-type"].startswith("application/json")
     provider_rows = providers_json.json()["data"]
-    assert [item["id"] for item in provider_rows[:2]] == ["tinfoil", "venice"]
+    assert [item["id"] for item in provider_rows[:2]] == ["trustedrouter", "tinfoil"]
+    display_groups = [
+        0
+        if item["id"] == "trustedrouter"
+        else 1
+        if item["provider_confidential_compute"] is True and item["provider_e2ee"] is True
+        else 2
+        if item["provider_zero_data_retention"] is True
+        or item["prepaid_zero_data_retention"] is True
+        else 3
+        for item in provider_rows
+    ]
+    assert display_groups == sorted(display_groups)
     tinfoil = next(item for item in provider_rows if item["id"] == "tinfoil")
     assert tinfoil["provider_e2ee"] is True
     openai = next(item for item in provider_rows if item["id"] == "openai")
     assert openai["provider_zero_data_retention"] is False
     assert openai["provider_confidential_compute"] is None
-    gemini = next(item for item in provider_rows if item["id"] == "gemini")
-    assert gemini["provider_zero_data_retention"] is False
+    google_ai_studio = next(item for item in provider_rows if item["id"] == "google-ai-studio")
+    google_vertex = next(item for item in provider_rows if item["id"] == "google-vertex")
+    assert google_ai_studio["provider_zero_data_retention"] is False
+    assert google_ai_studio["supports_byok"] is True
+    assert google_vertex["provider_zero_data_retention"] is False
+    assert google_vertex["supports_byok"] is False
     anthropic = next(item for item in provider_rows if item["id"] == "anthropic")
     assert anthropic["provider_zero_data_retention"] is False
     together = next(item for item in provider_rows if item["id"] == "together")
@@ -246,6 +427,9 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert "/v1/auth/wallet/challenge" in js.text
     assert "/v1/auth/wallet/verify" in js.text
     assert "eth_requestAccounts" in js.text
+    assert 'trackFunnelEvent("landing_engaged")' in js.text
+    assert 'document.visibilityState !== "visible"' in js.text
+    assert 'fetch("/analytics/events"' in js.text
     assert "alert(" not in js.text
 
     css = client.get("/static/dashboard.css")
@@ -262,7 +446,8 @@ def test_signup_creates_management_key_and_rejects_duplicate_email(client: TestC
     assert data["email"] == "alpha@example.com"
     assert data["management"] is True
     assert data["user_id"] != "alpha@example.com"
-    assert isinstance(data["trial_credit_microdollars"], int)
+    assert data["trial_credit_microdollars"] == 300_000
+    assert live_credit_summary(data["workspace_id"])["total_credits"] == 300_000
 
     headers = {"authorization": f"Bearer {data['key']}"}
     workspaces = client.get("/v1/workspaces", headers=headers)
@@ -272,6 +457,7 @@ def test_signup_creates_management_key_and_rejects_duplicate_email(client: TestC
     duplicate = client.post("/v1/signup", json={"email": "alpha@example.com"})
     assert duplicate.status_code == 409
     assert duplicate.json()["error"]["type"] == "already_registered"
+    assert live_credit_summary(data["workspace_id"])["total_credits"] == 300_000
 
 
 def test_signup_validates_email(client: TestClient) -> None:
@@ -280,13 +466,74 @@ def test_signup_validates_email(client: TestClient) -> None:
     assert resp.json()["error"]["type"] == "bad_request"
 
 
+def test_email_signup_closed_when_flag_off(test_settings: Settings) -> None:
+    # Default posture in prod: plain-email signup is closed to stop
+    # credit-farming via disposable addresses. Google/GitHub/wallet unaffected.
+    closed = test_settings.model_copy(update={"email_signup_enabled": False})
+    closed_client = TestClient(create_app(closed, init_observability=False))
+    resp = closed_client.post("/v1/signup", json={"email": "farm@gonebox.email"})
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["error"]["type"] == "forbidden"
+
+
+def test_signup_credit_can_be_disabled_explicitly() -> None:
+    app = create_app(
+        Settings(
+            environment="test",
+            signup_trial_credit_microdollars=0,
+            email_signup_enabled=True,
+        ),
+        init_observability=False,
+    )
+    with TestClient(app) as zero_credit_client:
+        created = zero_credit_client.post(
+            "/v1/signup",
+            json={"email": "no-starter@example.com"},
+        )
+
+    assert created.status_code == 201, created.text
+    data = created.json()["data"]
+    assert data["trial_credit_microdollars"] == 0
+    assert live_credit_summary(data["workspace_id"])["total_credits"] == 0
+
+
+def test_negative_signup_credit_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="cannot be negative"):
+        Settings(signup_trial_credit_microdollars=-1)
+
+
+def test_secondary_workspace_does_not_repeat_signup_credit(
+    client: TestClient,
+) -> None:
+    signup = client.post(
+        "/v1/signup",
+        json={"email": "secondary-workspace@example.com"},
+    )
+    assert signup.status_code == 201, signup.text
+    signup_data = signup.json()["data"]
+    headers = {"x-trustedrouter-user": signup_data["email"]}
+
+    created = client.post(
+        "/v1/workspaces",
+        headers=headers,
+        json={"name": "Second workspace"},
+    )
+
+    assert created.status_code == 201, created.text
+    second_id = created.json()["data"]["id"]
+    assert live_credit_summary(signup_data["workspace_id"])["total_credits"] == 300_000
+    assert live_credit_summary(second_id)["total_credits"] == 0
+
+
 def test_production_dashboard_does_not_default_to_dev_user_header() -> None:
     from trusted_router.dashboard import dashboard_html
 
     html = dashboard_html(
         Settings(
+            **TEST_SES_SETTINGS,
             environment="production",
-            internal_gateway_token="internal-prod-token",  # noqa: S106
+            service_surface="control",
+            attribution_cookie_secret="attribution-cookie-" + "a" * 32,
             stripe_webhook_secret="whsec_test",  # noqa: S106
             stripe_secret_key="sk_test",  # noqa: S106
             sentry_dsn="https://example@example.ingest.sentry.io/1",
@@ -334,6 +581,16 @@ def test_og_svg_copy_matches_current_positioning() -> None:
     assert "api.trustedrouter.com" not in svg
 
 
+def test_pricing_og_svg_matches_five_point_five_percent_policy() -> None:
+    svg = pricing_og_image_svg(Settings())
+
+    assert "5.5% markup" in svg
+    assert "on prepaid model cost" in svg
+    assert "OpenRouter credit fee" in svg
+    assert "5.5%" in svg
+    assert "10%" not in svg
+
+
 def test_og_image_route_serves_png(client: TestClient) -> None:
     response = client.get("/og.png")
     assert response.status_code == 200
@@ -352,6 +609,7 @@ def test_og_image_route_serves_png(client: TestClient) -> None:
     assert "https://github.com/Lore-Hex/quill-cloud-infra" in trust.text
     assert "https://github.com/Lore-Hex/quill" in trust.text
     assert "https://github.com/Lore-Hex/trusted-router-js" in trust.text
+    assert "https://github.com/Lore-Hex/trustedrouter-provider-check" in trust.text
 
 
 def test_favicon_assets_are_served(client: TestClient) -> None:
@@ -379,8 +637,29 @@ def test_favicon_assets_are_served(client: TestClient) -> None:
     release = client.get("/trust/gcp-release.json")
     assert release.status_code == 200
     assert release.json()["platform"] == "gcp-confidential-space"
-    assert release.json()["source_repositories"]["control_plane"] == "https://github.com/Lore-Hex/quill-router"
-    assert release.json()["source_repositories"]["attested_gateway"] == "https://github.com/Lore-Hex/quill-cloud-proxy"
+    assert release.json()["source_repositories"]["control_plane"] == (
+        "https://github.com/Lore-Hex/quill-router"
+    )
+    assert release.json()["source_repositories"]["attested_gateway"] == (
+        "https://github.com/Lore-Hex/quill-cloud-proxy"
+    )
+    assert release.json()["source_repositories"]["provider_check"] == (
+        "https://github.com/Lore-Hex/trustedrouter-provider-check"
+    )
+
+
+def test_static_fonts_force_woff2_media_type(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Some minimal Linux images do not register WOFF2 in /etc/mime.types.
+    # Simulate that production environment so the application owns the
+    # browser-facing contract instead of relying on the host image.
+    monkeypatch.setattr("starlette.responses.guess_type", lambda _path: ("text/plain", None))
+
+    font = client.get("/static/fonts/archivo-latin.woff2")
+
+    assert font.status_code == 200
+    assert font.headers["content-type"] == "font/woff2"
 
 
 def test_read_only_blocks_writes_but_lets_reads_through() -> None:
@@ -427,21 +706,8 @@ def test_read_only_default_off_lets_writes_through() -> None:
     assert resp.status_code != 503
 
 
-def test_read_only_bypasses_rate_limit_writes() -> None:
-    """Read-only mode must short-circuit rate-limiting too.
-
-    `STORE.hit_rate_limit` does a windowed-counter Spanner write on
-    every allowed request. During a Stage-1 cutover (Phase B-D
-    window) we need ALL writes silent so the source snapshot we
-    exported and imported into nam6 doesn't drift before Phase D
-    flips the env var. The 2026-05-10 cutover surfaced this: ~9
-    rate_limit rows landed on source after Phase B set TR_READ_ONLY
-    because the rate-limit middleware writes regardless of method.
-
-    With read_only=True, even an aggressive rate limit (1 per window)
-    must NOT 429 — every request is just allowed through. Limits
-    resume the moment Phase E drops the flag.
-    """
+def test_read_only_keeps_storage_free_local_rate_limit() -> None:
+    """Read-only cutovers retain admission now that it performs no writes."""
     locked_app = create_app(
         Settings(
             environment="test",
@@ -451,16 +717,11 @@ def test_read_only_bypasses_rate_limit_writes() -> None:
         )
     )
     locked_client = TestClient(locked_app)
-    # Two GETs in the same window. Without the bypass, the second would
-    # be 429 (since limit=1). With the bypass, both pass — the
-    # underlying Spanner write was skipped on each.
+    # Reads keep working, but the second request is still bounded locally.
     first = locked_client.get("/v1/models")
     second = locked_client.get("/v1/models")
     assert first.status_code == 200
-    assert second.status_code == 200, (
-        f"second GET should not be 429 in read-only mode (got "
-        f"{second.status_code}); rate-limit middleware leaked a write"
-    )
+    assert second.status_code == 429
 
 
 def test_rate_limit_returns_stable_openrouter_style_error(
@@ -489,22 +750,182 @@ def test_rate_limit_returns_stable_openrouter_style_error(
     )
     limited_client = TestClient(limited_app)
     headers = {"x-forwarded-for": "203.0.113.9"}
-    assert limited_client.get("/v1/models", headers=headers).status_code == 200
-    second = limited_client.get("/v1/models", headers=headers)
+    assert limited_client.post("/v1/signup", headers=headers, json={}).status_code == 400
+    second = limited_client.post("/v1/signup", headers=headers, json={})
     assert second.status_code == 429
     assert second.json()["error"]["type"] == "rate_limited"
     assert second.headers["retry-after"]
 
 
-def test_rate_limit_fails_open_on_store_error(monkeypatch) -> None:
-    """A Spanner abort/deadlock in the rate-limit counter must NEVER 500 a
-    request. Rate limiting is a best-effort guard, so a contended/unavailable
-    store fails OPEN (allow). Regression for the 2026-06-08 production
-    "Aborted: Deadlock with higher priority transaction" that surfaced as an
-    unhandled 500 on bot scanner traffic hammering one IP's counter row."""
-    from trusted_router import middleware
+def test_unauthenticated_public_reads_do_not_write_rate_limit_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A crawler must not turn cacheable catalog reads into a Spanner hot row."""
+    calls: list[dict[str, object]] = []
+    original_hit_rate_limit = InMemoryStore.hit_rate_limit
 
-    def boom(*_args, **_kwargs):
+    def track_write(self, *_args, **kwargs):
+        calls.append(kwargs)
+        return original_hit_rate_limit(self, *_args, **kwargs)
+
+    app = create_app(Settings(environment="test", rate_limit_enabled=True))
+    client = TestClient(app)
+    monkeypatch.setattr(InMemoryStore, "hit_rate_limit", track_write)
+    headers = {"x-forwarded-for": "199.203.99.122"}
+
+    for path in (
+        "/",
+        "/models",
+        "/providers",
+        "/compare/models",
+        "/models/openai/gpt-5.2",
+        "/docs",
+    ):
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200
+    assert calls == []
+
+
+def test_unauthenticated_public_reads_remain_locally_rate_limited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import storage_rate_limits
+
+    monkeypatch.setattr(
+        storage_rate_limits,
+        "utcnow",
+        lambda: dt.datetime(2026, 7, 30, 0, 18, 30, tzinfo=dt.UTC),
+    )
+    app = create_app(
+        Settings(
+            environment="test",
+            rate_limit_enabled=True,
+            rate_limit_ip_per_window=1,
+            rate_limit_window_seconds=60,
+        )
+    )
+    client = TestClient(app)
+    headers = {"x-forwarded-for": "199.203.99.122"}
+
+    assert client.get("/models", headers=headers).status_code == 200
+    second = client.get("/providers", headers=headers)
+    assert second.status_code == 429
+    assert second.json()["error"]["type"] == "rate_limited"
+
+
+def test_internal_rate_limit_never_touches_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fleet-internal billing traffic must not write a shared counter row."""
+    internal_token = "internal-rate-limit-token"  # noqa: S105 - test fixture token.
+    app = create_app(
+        Settings(
+            environment="test",
+            internal_gateway_token=internal_token,
+            rate_limit_enabled=True,
+        )
+    )
+    client = TestClient(app)
+    user = STORE.ensure_user("internal-rate-limit@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    _raw, key = STORE.create_api_key(
+        workspace_id=workspace.id,
+        name="internal rate limit",
+        creator_user_id=user.id,
+    )
+    store_calls = 0
+
+    def reject_store_rate_limit(self, *_args, **_kwargs):
+        del self
+        nonlocal store_calls
+        store_calls += 1
+        raise AssertionError("internal rate limiting touched the backing store")
+
+    monkeypatch.setattr(InMemoryStore, "hit_rate_limit", reject_store_rate_limit)
+    response = client.post(
+        "/v1/internal/gateway/key",
+        headers={"x-trustedrouter-internal-token": internal_token},
+        json={"api_key_lookup_hash": key.lookup_hash},
+    )
+
+    assert response.status_code == 200, response.text
+    assert store_calls == 0
+
+
+def test_internal_rate_limit_is_enforced_in_memory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import storage_rate_limits
+
+    monkeypatch.setattr(
+        storage_rate_limits,
+        "utcnow",
+        lambda: dt.datetime(2026, 8, 1, 18, 20, 30, tzinfo=dt.UTC),
+    )
+    internal_token = "internal-local-limit-token"  # noqa: S105 - test fixture token.
+    settings = Settings(
+        environment="test",
+        internal_gateway_token=internal_token,
+        rate_limit_enabled=True,
+        rate_limit_internal_per_window=2,
+        rate_limit_window_seconds=60,
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+    user = STORE.ensure_user("internal-local-limit@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    _raw, key = STORE.create_api_key(
+        workspace_id=workspace.id,
+        name="internal local limit",
+        creator_user_id=user.id,
+    )
+    responses = [
+        client.post(
+            "/v1/internal/gateway/key",
+            headers={"x-trustedrouter-internal-token": internal_token},
+            json={"api_key_lookup_hash": key.lookup_hash},
+        )
+        for _ in range(settings.rate_limit_internal_per_window + 1)
+    ]
+
+    assert [response.status_code for response in responses[:-1]] == [200, 200]
+    limited = responses[-1]
+    assert limited.status_code == 429
+    assert limited.json()["error"]["type"] == "rate_limited"
+    assert limited.headers["retry-after"]
+    assert limited.headers["x-ratelimit-limit"] == "2"
+    assert limited.headers["x-ratelimit-remaining"] == "0"
+    assert limited.headers["x-ratelimit-reset"]
+
+
+def test_public_bearer_does_not_authenticate_or_use_durable_limiter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    original = InMemoryStore.hit_rate_limit
+
+    def track_store_rate_limit(self, *_args, **kwargs):
+        calls.append(kwargs)
+        return original(self, *_args, **kwargs)
+
+    monkeypatch.setattr(InMemoryStore, "hit_rate_limit", track_store_rate_limit)
+    app = create_app(Settings(environment="test", rate_limit_enabled=True))
+    client = TestClient(app)
+
+    response = client.get(
+        "/v1/models",
+        headers={"authorization": "Bearer rate-limit-routing-key"},
+    )
+
+    assert response.status_code == 200
+    assert calls == []
+
+
+def test_rate_limit_does_not_touch_store_and_remains_local_on_store_error(monkeypatch) -> None:
+    """Request admission must not depend on or amplify a storage outage."""
+
+    def boom(self, *_args, **_kwargs):
+        del self
         raise RuntimeError("Aborted: Deadlock with higher priority transaction.")
 
     app = create_app(
@@ -515,13 +936,13 @@ def test_rate_limit_fails_open_on_store_error(monkeypatch) -> None:
         )
     )
     client = TestClient(app)
-    monkeypatch.setattr(middleware.STORE, "hit_rate_limit", boom)
-    # Even an aggressive limit + a raising store: both requests pass through
-    # (fail-open) — not 429, and crucially not 500.
-    first = client.get("/v1/models")
-    second = client.get("/v1/models")
-    assert first.status_code == 200
-    assert second.status_code == 200
+    monkeypatch.setattr(InMemoryStore, "hit_rate_limit", boom)
+    # The storage method is never called. The bounded local source bucket still
+    # rejects the second request rather than failing open during an outage.
+    first = client.post("/v1/signup", json={})
+    second = client.post("/v1/signup", json={})
+    assert first.status_code == 400
+    assert second.status_code == 429
 
 
 def test_production_config_fails_closed() -> None:
@@ -556,15 +977,80 @@ def test_production_config_fails_closed() -> None:
         )
 
 
+def test_production_config_requires_ses_delivery_credentials() -> None:
+    values = {
+        "environment": "production",
+        "service_surface": "control",
+        "attribution_cookie_secret": "attribution-cookie-" + "a" * 32,
+        "stripe_webhook_secret": "whsec_" + "test",
+        "stripe_secret_key": "sk_" + "test_secret",
+        "sentry_dsn": "https://example@example.ingest.sentry.io/1",
+        "storage_backend": "spanner-bigtable",
+        "spanner_instance_id": "trusted-router",
+        "spanner_database_id": "trusted-router",
+        "bigtable_instance_id": "trusted-router",
+        "byok_kms_key_name": TEST_BYOK_KMS_KEY_NAME,
+    }
+
+    with pytest.raises(ValidationError, match="TR_AWS_ACCESS_KEY_ID"):
+        Settings(**values)
+    with pytest.raises(ValidationError, match="TR_AWS_SECRET_ACCESS_KEY"):
+        Settings(**{**values, "aws_access_key_id": "access-key"})
+    with pytest.raises(ValidationError, match="TR_SES_FROM_EMAIL"):
+        Settings(
+            **{
+                **values,
+                "aws_access_key_id": "access-key",
+                "aws_secret_access_key": "secret-key",
+                "ses_from_email": None,
+            }
+        )
+
+
+def test_production_spanner_clickhouse_config_is_explicit_and_bigtable_free() -> None:
+    values = {
+        "environment": "production",
+        "service_surface": "control",
+        "attribution_cookie_secret": "attribution-cookie-" + "a" * 32,
+        "stripe_webhook_secret": "whsec_" + "test",
+        "stripe_secret_key": "sk_" + "test_secret",
+        "sentry_dsn": "https://example@example.ingest.sentry.io/1",
+        "storage_backend": "spanner-clickhouse",
+        "spanner_instance_id": "trusted-router",
+        "spanner_database_id": "trusted-router",
+        "byok_kms_key_name": TEST_BYOK_KMS_KEY_NAME,
+        "analytics_read_mode": "clickhouse-only",
+        "generation_records_enabled": True,
+        "operational_analytics_outbox_enabled": True,
+        "analytics_outbox_enabled": True,
+        "bigtable_mirror_writes_enabled": False,
+        "request_record_write_mode": "typed",
+        "settle_outbox_enabled": True,
+        "operational_analytics_clickhouse_url": "http://10.0.0.1:8123",
+        "operational_analytics_clickhouse_password": "pass" + "word",
+        **TEST_SES_SETTINGS,
+    }
+
+    settings = Settings(**values)
+    assert settings.storage_backend == "spanner-clickhouse"
+    assert settings.bigtable_mirror_writes_enabled is False
+
+    with pytest.raises(ValidationError, match="BIGTABLE_MIRROR"):
+        Settings(**{**values, "bigtable_mirror_writes_enabled": True})
+    with pytest.raises(ValidationError, match="clickhouse-only"):
+        Settings(**{**values, "analytics_read_mode": "clickhouse"})
+
+
 def test_production_control_plane_does_not_register_inference_routes() -> None:
-    internal_token = "tok" + "en"
     webhook_secret = "whsec_" + "test"
     stripe_key = "sk_" + "test_secret"
     sentry_dsn = "https://example@example.ingest.sentry.io/1"
     prod_app = create_app(
         Settings(
+            **TEST_SES_SETTINGS,
             environment="production",
-            internal_gateway_token=internal_token,
+            service_surface="control",
+            attribution_cookie_secret="attribution-cookie-" + "a" * 32,
             stripe_webhook_secret=webhook_secret,
             stripe_secret_key=stripe_key,
             sentry_dsn=sentry_dsn,
@@ -586,15 +1072,21 @@ def test_production_control_plane_does_not_register_inference_routes() -> None:
     assert ("/v1/messages", "POST") not in registered
     assert ("/v1/responses", "POST") not in registered
     assert ("/v1/embeddings", "POST") not in registered
-    assert ("/v1/internal/gateway/authorize", "POST") in registered
+    assert ("/v1/keys", "POST") in registered
+    assert ("/v1/internal/gateway/authorize", "POST") not in registered
 
 
-def test_prompt_output_never_enter_metadata_store(client: TestClient, inference_headers: dict[str, str]) -> None:
+def test_prompt_output_never_enter_metadata_store(
+    client: TestClient, inference_headers: dict[str, str]
+) -> None:
     prompt = "super private user prompt"
     resp = client.post(
         "/v1/chat/completions",
         headers=inference_headers,
-        json={"model": "anthropic/claude-sonnet-4.6", "messages": [{"role": "user", "content": prompt}]},
+        json={
+            "model": "anthropic/claude-sonnet-4.6",
+            "messages": [{"role": "user", "content": prompt}],
+        },
     )
     assert resp.status_code == 200
     assert prompt not in str(STORE.generation_store.generations)
@@ -641,3 +1133,242 @@ def test_no_sentry_in_enclave_code() -> None:
             text = path.read_text(encoding="utf-8", errors="ignore").lower()
             assert "sentry" not in text
             assert "58539b11263132bcb70ea30f0b92e0f4" not in text
+
+
+def test_internal_rate_limit_guessed_tokens_share_the_ip_bucket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An attacker varying an INVALID internal token must not mint a fresh
+    bucket per guess (cardinality bound) nor escape the per-subject limit
+    (review finding on #400): unverified credentials collapse to the caller's
+    IP, the same bounded identity the anonymous namespace uses."""
+    import datetime as _dt
+
+    from trusted_router import storage_rate_limits
+
+    monkeypatch.setattr(
+        storage_rate_limits,
+        "utcnow",
+        lambda: _dt.datetime(2026, 8, 1, 18, 21, 30, tzinfo=_dt.UTC),
+    )
+    internal_token = "internal-real-token"  # noqa: S105 - test fixture token.
+    settings = Settings(
+        environment="test",
+        internal_gateway_token=internal_token,
+        rate_limit_enabled=True,
+        rate_limit_ip_per_window=3,
+        rate_limit_internal_per_window=3,
+        rate_limit_window_seconds=60,
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+
+    responses = [
+        client.post(
+            "/v1/internal/gateway/key",
+            headers={"x-trustedrouter-internal-token": f"guess-{n}"},
+            json={"api_key_lookup_hash": "irrelevant"},
+        )
+        for n in range(settings.rate_limit_ip_per_window + 1)
+    ]
+
+    # Unique wrong tokens still consume ONE shared (per-IP) bucket: the
+    # requests inside the limit are 401 (bad token), and the one past the
+    # limit is 429 -- the guesses could not escape the limiter by varying.
+    assert [r.status_code for r in responses[:-1]] == [401, 401, 401]
+    assert responses[-1].status_code == 429
+
+    # And the valid fleet token is NOT throttled by the attacker's bucket:
+    # it authenticates under its own subject (the token fingerprint).
+    user = STORE.ensure_user("internal-bucket-isolation@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    _raw, key = STORE.create_api_key(
+        workspace_id=workspace.id,
+        name="bucket isolation",
+        creator_user_id=user.id,
+    )
+    fleet = client.post(
+        "/v1/internal/gateway/key",
+        headers={"x-trustedrouter-internal-token": internal_token},
+        json={"api_key_lookup_hash": key.lookup_hash},
+    )
+    assert fleet.status_code == 200, fleet.text
+
+
+def test_internal_rate_limit_precedence_matches_route_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Middleware credential precedence must mirror require_internal_gateway
+    (bearer first, then header). A valid BEARER internal token plus a stale
+    x-trustedrouter-internal-token header authenticates at the route, so it
+    must land in the fleet bucket -- not the per-IP bucket an attacker can
+    exhaust (review finding on #400, round 2)."""
+    import datetime as _dt
+
+    from trusted_router import storage_rate_limits
+
+    monkeypatch.setattr(
+        storage_rate_limits,
+        "utcnow",
+        lambda: _dt.datetime(2026, 8, 1, 18, 22, 30, tzinfo=_dt.UTC),
+    )
+    internal_token = "internal-precedence-token"  # noqa: S105 - test fixture token.
+    settings = Settings(
+        environment="test",
+        internal_gateway_token=internal_token,
+        rate_limit_enabled=True,
+        rate_limit_ip_per_window=2,
+        rate_limit_internal_per_window=2,
+        rate_limit_window_seconds=60,
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+    user = STORE.ensure_user("internal-precedence@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    _raw, key = STORE.create_api_key(
+        workspace_id=workspace.id,
+        name="precedence",
+        creator_user_id=user.id,
+    )
+
+    # Exhaust the per-IP bucket with wrong-token guesses (401 inside the
+    # limit, then 429).
+    guesses = [
+        client.post(
+            "/v1/internal/gateway/key",
+            headers={"x-trustedrouter-internal-token": f"stale-{n}"},
+            json={"api_key_lookup_hash": key.lookup_hash},
+        )
+        for n in range(settings.rate_limit_ip_per_window + 1)
+    ]
+    assert [r.status_code for r in guesses] == [401, 401, 429]
+
+    # Valid bearer + stale header: route auth accepts the bearer, so the
+    # middleware must too -- fleet bucket, NOT the exhausted IP bucket.
+    mixed = client.post(
+        "/v1/internal/gateway/key",
+        headers={
+            "Authorization": f"Bearer {internal_token}",
+            "x-trustedrouter-internal-token": "stale-header",
+        },
+        json={"api_key_lookup_hash": key.lookup_hash},
+    )
+    assert mixed.status_code == 200, mixed.text
+
+
+def test_in_memory_rate_limit_window_is_tumbling_not_sliding() -> None:
+    """The window is a TUMBLING bucket keyed on `epoch // window_seconds`.
+
+    This is the documented behaviour, not a defect -- but it means a burst that
+    crosses a wall-clock boundary gets a fresh allowance, and it is why tests
+    that assert "the Nth request is refused" must pin the clock. Two of them did
+    not, and one failed on CI (2026-08-17) with 202 instead of 429 for exactly
+    this reason.
+
+    If someone later changes this to a sliding window, this test should fail and
+    the clock pins in those tests can then be removed.
+    """
+    import datetime as _dt
+    import threading as _threading
+
+    from trusted_router.storage_rate_limits import InMemoryRateLimits
+
+    limits = InMemoryRateLimits(lock=_threading.RLock())
+
+    def nth_request_allowed(start: _dt.datetime) -> bool:
+        limits.reset()
+        hit = None
+        for index in range(61):
+            hit = limits.hit(
+                namespace="ce",
+                subject="k",
+                limit=60,
+                window_seconds=60,
+                now=start + _dt.timedelta(milliseconds=20 * index),
+            )
+        assert hit is not None
+        return hit.allowed
+
+    # Entirely inside one bucket: the 61st request is over the limit of 60.
+    assert nth_request_allowed(_dt.datetime(2026, 1, 1, 0, 0, 10, tzinfo=_dt.UTC)) is False
+    # Straddling :00 starts a new bucket, so the count restarts and the same
+    # 61st request is allowed.
+    assert nth_request_allowed(_dt.datetime(2026, 1, 1, 0, 0, 59, tzinfo=_dt.UTC)) is True
+
+
+def test_in_memory_rate_limit_bucket_cardinality_is_capped() -> None:
+    """Attacker-fabricated identities (rotated tokens, spoofed XFF) must not
+    grow the process map without bound (review finding on #400, round 3).
+    At the cap, new subjects fold into one shared global overflow bucket:
+    memory stays bounded and fabricated identities throttle collectively."""
+    import datetime as _dt
+    import threading as _threading
+
+    from trusted_router.storage_rate_limits import InMemoryRateLimits
+
+    limits = InMemoryRateLimits(lock=_threading.RLock(), max_buckets=50)
+    # The bucket key includes `epoch // window_seconds`, so a run that crosses a
+    # real minute boundary starts a SECOND generation of keys and can exceed the
+    # cap+1 bound below for a reason unrelated to cardinality. Pinning `now`
+    # keeps this a test of the cap.
+    fixed_now = _dt.datetime(2026, 1, 1, 0, 0, 30, tzinfo=_dt.UTC)
+    for namespace_n in range(100):
+        for subject_n in range(2):
+            hit = limits.hit(
+                namespace=f"fabricated-namespace-{namespace_n}",
+                subject=f"fabricated-{subject_n}",
+                limit=3,
+                window_seconds=60,
+                now=fixed_now,
+            )
+    assert len(limits.buckets) <= 50
+    # Identities past the cap share the overflow bucket, so a rotation attack
+    # is throttled collectively instead of resetting per identity.
+    assert hit.allowed is False
+    # Distinct subjects below the cap keep their own buckets untouched.
+    early = limits.hit(namespace="internal", subject="fabricated-1", limit=3, window_seconds=60)
+    assert early.allowed is True
+
+
+def test_in_memory_rate_limit_cleanup_keeps_different_window_lengths_independent() -> None:
+    import datetime as _dt
+    import threading as _threading
+
+    from trusted_router.storage_rate_limits import InMemoryRateLimits
+
+    limits = InMemoryRateLimits(lock=_threading.RLock(), max_buckets=10)
+    start = _dt.datetime(2026, 1, 1, 0, 0, 10, tzinfo=_dt.UTC)
+
+    short_first = limits.hit(
+        namespace="shared",
+        subject="subject",
+        limit=1,
+        window_seconds=60,
+        now=start,
+    )
+    long_first = limits.hit(
+        namespace="shared",
+        subject="subject",
+        limit=1,
+        window_seconds=3_600,
+        now=start,
+    )
+    short_next_window = limits.hit(
+        namespace="shared",
+        subject="subject",
+        limit=1,
+        window_seconds=60,
+        now=start + _dt.timedelta(seconds=61),
+    )
+    long_same_window = limits.hit(
+        namespace="shared",
+        subject="subject",
+        limit=1,
+        window_seconds=3_600,
+        now=start + _dt.timedelta(seconds=61),
+    )
+
+    assert short_first.allowed is True
+    assert long_first.allowed is True
+    assert short_next_window.allowed is True
+    assert long_same_window.allowed is False

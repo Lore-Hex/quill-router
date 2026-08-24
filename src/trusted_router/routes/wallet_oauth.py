@@ -2,8 +2,8 @@
 
 Wallet users authenticate fully with a signed SIWE challenge. We do not
 require email before creating an active console session: crypto-native
-users expect wallet-only auth. The resulting workspace starts with $0
-credits; email/OAuth signup remains the path that gets the trial grant.
+users expect wallet-only auth. Wallet-only accounts start at $0; the starter
+credit is reserved for email and OAuth signups.
 
 The `/auth/wallet/email` page remains as a legacy/optional email attach
 flow for old pending sessions, but new wallet logins no longer enter
@@ -20,13 +20,16 @@ from fastapi import APIRouter, Form, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from trusted_router.acquisition import record_signup_attribution, request_attribution
 from trusted_router.auth import (
     SESSION_COOKIE_NAME,
     SettingsDep,
     set_session_cookie,
 )
+from trusted_router.domains import request_control_domain
 from trusted_router.errors import api_error
 from trusted_router.services.email import build_verification_email, get_email_service
+from trusted_router.signup_gate import require_new_account_creation
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 from trusted_router.views import render_template
@@ -55,12 +58,24 @@ class WalletVerifyRequest(BaseModel):
 def register_wallet_oauth_routes(router: APIRouter) -> None:
     @router.post("/auth/wallet/challenge")
     async def wallet_challenge(
+        request: Request,
         body: WalletChallengeRequest,
         settings: SettingsDep,
     ) -> JSONResponse:
         if not ADDRESS_RE.match(body.address):
             raise api_error(400, "Invalid Ethereum address", ErrorType.BAD_REQUEST)
-        domain = settings.siwe_domain or settings.trusted_domain
+        if not settings.new_signups_enabled and STORE.find_user_by_wallet(body.address) is None:
+            # The emergency signup brake must stop durable challenge growth as
+            # well as account creation. Returning wallets still receive a
+            # challenge; unknown addresses fail after one bounded read and
+            # before nonce generation or either challenge write.
+            require_new_account_creation(settings)
+        request_domain = request_control_domain(request, settings)
+        domain = (
+            settings.siwe_domain
+            if request_domain == settings.trusted_domain and settings.siwe_domain
+            else request_domain
+        )
         nonce = secrets.token_urlsafe(32)
         message, _ = build_siwe_message(
             domain=domain,
@@ -69,7 +84,7 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
             issued_at=dt.datetime.now(dt.UTC),
             expiration_seconds=CHALLENGE_TTL_SECONDS,
         )
-        _, record = STORE.create_wallet_challenge(
+        nonce, record = STORE.create_wallet_challenge(
             address=body.address,
             message=message,
             ttl_seconds=CHALLENGE_TTL_SECONDS,
@@ -78,7 +93,7 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
         return JSONResponse(
             {
                 "data": {
-                    "message": message,
+                    "message": record.message,
                     "nonce": nonce,
                     "expires_at": record.expires_at,
                 }
@@ -87,6 +102,7 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
 
     @router.post("/auth/wallet/verify")
     async def wallet_verify(
+        request: Request,
         body: WalletVerifyRequest,
         settings: SettingsDep,
     ) -> Response:
@@ -105,13 +121,25 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
         if recovered != body.address.strip().lower():
             raise api_error(400, "Signature does not match address", ErrorType.BAD_REQUEST)
 
-        user = STORE.find_user_by_wallet(body.address) or STORE.create_wallet_user(body.address)
+        existing_user = STORE.find_user_by_wallet(body.address)
+        if existing_user is None:
+            require_new_account_creation(settings)
+        user = existing_user or STORE.create_wallet_user(body.address)
         workspaces = STORE.list_workspaces_for_user(user.id)
         workspace = workspaces[0] if workspaces else STORE.create_workspace(
             user.id,
             "Personal Workspace",
+            # Only repair a missing workspace here. Existing accounts do not
+            # receive a retroactive or repeat starter grant.
             trial_credit_microdollars=0,
         )
+        if existing_user is None:
+            record_signup_attribution(
+                request,
+                workspace_id=workspace.id,
+                signup_provider="metamask",
+                starter_credit_microdollars=0,
+            )
 
         raw_token, _ = STORE.create_auth_session(
             user_id=user.id,
@@ -172,10 +200,15 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
             ttl_seconds=VERIFICATION_TTL_SECONDS,
         )
         verify_url = _verify_url(request, raw_token)
+        attribution = request_attribution(request)
+        touch = attribution.last_touch if attribution is not None else {}
         message = build_verification_email(
             to=email_normalized,
             verification_url=verify_url,
             from_name=settings.ses_from_name,
+            acquisition_source=touch.get("utm_source"),
+            acquisition_medium=touch.get("utm_medium"),
+            acquisition_campaign=touch.get("utm_campaign"),
         )
         sent = get_email_service(settings).send(message)
         return HTMLResponse(render_template(

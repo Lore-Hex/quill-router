@@ -36,13 +36,18 @@ from trusted_router.security import (
     verify_api_key,
 )
 from trusted_router.spend_windows import (
+    KeyLimitExceeded,
+    KeyWindowLimitDecision,
     KeyWindowLimitExceeded,
+    decide_key_window_limits,
     enforced_window_limits,
     utcnow,
     window_floors,
 )
+from trusted_router.storage_errors import DeferredSettlementCapReached
 from trusted_router.storage_models import (
     ApiKey,
+    ApiKeyUsageSnapshot,
     CreditAccount,
     CreditMoney,
     GatewayAuthorization,
@@ -76,6 +81,9 @@ class InMemoryApiKeys:
         self.reservation_id_by_idempotency_key: dict[str, str] = {}
         self.gateway_authorizations: dict[str, GatewayAuthorization] = {}
         self.gateway_authorization_id_by_idempotency_key: dict[str, str] = {}
+        #: Deferred settlement: unsettled spend this plane has admitted on
+        #: credit at the home plane's ledger, per workspace.
+        self.deferred_outstanding: dict[str, int] = {}
         # Per-key window usage: key_hash -> {window: [start_datetime, usage_micro]}.
         # Same lazy fixed-UTC-window semantics as the typed tr_key_limit columns
         # (spend_windows.py); lives beside the key so ApiKey stays a plain record.
@@ -108,7 +116,7 @@ class InMemoryApiKeys:
         limit_daily_microdollars: int | None = None,
         limit_weekly_microdollars: int | None = None,
         limit_monthly_microdollars: int | None = None,
-        budget_alert_only: bool = True,
+        budget_alert_only: bool = False,
         tags: dict[str, str] | None = None,
     ) -> tuple[str, ApiKey]:
         with self._lock:
@@ -168,6 +176,21 @@ class InMemoryApiKeys:
         with self._lock:
             return [key for key in self.keys.values() if key.workspace_id == workspace_id]
 
+    def list_with_usage_for_workspace(self, workspace_id: str) -> list[ApiKeyUsageSnapshot]:
+        """Atomically snapshot every key and its display counters."""
+        with self._lock:
+            keys = [key for key in self.keys.values() if key.workspace_id == workspace_id]
+            return [
+                ApiKeyUsageSnapshot(
+                    api_key=key,
+                    usage_microdollars=key.usage_microdollars,
+                    byok_usage_microdollars=key.byok_usage_microdollars,
+                    reserved_microdollars=key.reserved_microdollars,
+                    windows=self.window_usage_snapshot(key.hash),
+                )
+                for key in keys
+            ]
+
     def delete(self, key_hash: str) -> bool:
         with self._lock:
             key = self.keys.pop(key_hash, None)
@@ -208,11 +231,16 @@ class InMemoryApiKeys:
             return key
 
     # ── Per-key spend-cap lifecycle ─────────────────────────────────────
-    def window_usage_snapshot(self, key_hash: str) -> dict[str, int]:
+    def window_usage_snapshot(
+        self,
+        key_hash: str,
+        *,
+        now: Any | None = None,
+    ) -> dict[str, int]:
         """Current-window usage per window (micro), lazily zeroing stale windows.
         Mirrors what the typed tr_key_limit row reports for a Spanner store."""
         with self._lock:
-            floors = window_floors(utcnow())
+            floors = window_floors(now or utcnow())
             state = self.window_usage.get(key_hash, {})
             out: dict[str, int] = {}
             for window in ("daily", "weekly", "monthly"):
@@ -229,29 +257,36 @@ class InMemoryApiKeys:
         amount_microdollars: int,
         *,
         usage_type: str,
-    ) -> None:
+    ) -> KeyWindowLimitDecision | None:
         with self._lock:
             key = self.keys[key_hash]
             if _is_byok(usage_type) and not key.include_byok_in_limit:
-                return  # BYOK excluded from this key's caps (lifetime AND windows)
+                return None  # BYOK excluded from this key's caps (lifetime AND windows)
             # Window limits are independent of the lifetime cap: check first,
             # approximately (in-flight reserved is deliberately not counted —
             # same semantics as the typed authorize check).
             window_limits = enforced_window_limits(key)  # {} in alert mode → never blocks
+            decision = None
             if window_limits:
-                used_by_window = self.window_usage_snapshot(key_hash)
-                for window, limit in window_limits.items():
-                    if used_by_window[window] + amount_microdollars > limit:
-                        raise KeyWindowLimitExceeded(window)
+                now = utcnow()
+                decision = decide_key_window_limits(
+                    window_limits,
+                    self.window_usage_snapshot(key_hash, now=now),
+                    amount_microdollars,
+                    now=now,
+                )
+                if decision is not None and not decision.allowed:
+                    raise KeyWindowLimitExceeded(decision)
             if key.limit_microdollars is None:
-                return
+                return decision
             used = key.usage_microdollars
             if key.include_byok_in_limit:
                 used += key.byok_usage_microdollars
             available = key.limit_microdollars - used - key.reserved_microdollars
             if amount_microdollars > available:
-                raise ValueError("key limit exceeded")
+                raise KeyLimitExceeded(decision)
             key.reserved_microdollars += amount_microdollars
+            return decision
 
     def settle_limit(
         self,
@@ -384,6 +419,7 @@ class InMemoryApiKeys:
         usage_type: UsageType | str,
         estimated_microdollars: int,
         credit_reservation_id: str | None,
+        authorization_id: str | None = None,
         requested_model_id: str | None = None,
         candidate_model_ids: list[str] | None = None,
         region: str | None = None,
@@ -394,6 +430,16 @@ class InMemoryApiKeys:
         idempotency_fingerprint: str | None = None,
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
+        user_provided_model_id: str | None = None,
+        user_provided_model_revision: int | None = None,
+        user_model_prompt_price_microdollars_per_m: int | None = None,
+        user_model_completion_price_microdollars_per_m: int | None = None,
+        user_model_owner_user_id: str | None = None,
+        additional_cost_reservation_microdollars: int = 0,
+        native_batch_eligible: bool = False,
+        settlement: str = "local",
+        expires_at: str | None = None,
+        deferred_cap_microdollars: int | None = None,
     ) -> GatewayAuthorization:
         with self._lock:
             if idempotency_key is not None:
@@ -403,9 +449,20 @@ class InMemoryApiKeys:
                     )
                 )
                 if existing_id is not None:
+                    # A REPLAY writes no new authorization, so it must not
+                    # consume cap either — the same reason the Postgres store
+                    # does the counter move inside this method rather than
+                    # before it.
                     return self.gateway_authorizations[existing_id]
+            if deferred_cap_microdollars is not None:
+                held = self.deferred_outstanding.get(workspace_id, 0)
+                if held + estimated_microdollars > deferred_cap_microdollars:
+                    raise DeferredSettlementCapReached(
+                        f"deferred settlement cap reached for workspace {workspace_id}"
+                    )
+                self.deferred_outstanding[workspace_id] = held + estimated_microdollars
             authorization = GatewayAuthorization(
-                id=f"gwa-{uuid.uuid4().hex}",
+                id=authorization_id or f"gwa-{uuid.uuid4().hex}",
                 workspace_id=workspace_id,
                 key_hash=key_hash,
                 model_id=model_id,
@@ -423,6 +480,19 @@ class InMemoryApiKeys:
                 idempotency_fingerprint=idempotency_fingerprint,
                 custom_model_id=custom_model_id,
                 custom_model_revision=custom_model_revision,
+                user_provided_model_id=user_provided_model_id,
+                user_provided_model_revision=user_provided_model_revision,
+                user_model_prompt_price_microdollars_per_m=(
+                    user_model_prompt_price_microdollars_per_m
+                ),
+                user_model_completion_price_microdollars_per_m=(
+                    user_model_completion_price_microdollars_per_m
+                ),
+                user_model_owner_user_id=user_model_owner_user_id,
+                additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
+                native_batch_eligible=native_batch_eligible,
+                settlement=settlement,
+                expires_at=expires_at,
             )
             self.gateway_authorizations[authorization.id] = authorization
             if idempotency_key is not None:

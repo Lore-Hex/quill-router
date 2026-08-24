@@ -30,6 +30,13 @@ class SpannerRateLimits:
         def txn(transaction: Any) -> int:
             row = self._io.read_entity_tx(transaction, "rate_limit", entity_id, dict)
             count = int(row.get("count", 0)) + 1 if row else 1
+            # The NUMERIC expires_at is load-bearing for retention: tr_entities'
+            # ephemeral_expires_at generated column extracts it and the table's
+            # ROW DELETION POLICY deletes the row one day later (issue #334;
+            # scripts/deploy/migrate_entity_ttl.sh). The column is scoped
+            # kind='rate_limit' AND bare-JSON-number (JSON_QUERY keeps quotes,
+            # so strings never cast) — other kinds cannot opt in, by value or
+            # by accident; extending TTL to a new kind means changing that DDL.
             self._io.write_entity_tx(
                 transaction,
                 "rate_limit",

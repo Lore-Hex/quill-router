@@ -1,0 +1,21 @@
+displayName: "TR Gateway: billing path 5xx"
+combiner: OR
+enabled: true
+documentation:
+  mimeType: text/markdown
+  content: |
+    A customer-facing authorize, settle, or refund call returned an unexpected
+    5xx. Treat this as immediate router-core impact. Intentional 501
+    compatibility rejections are excluded because they happen before a billing
+    hold and do not indicate storage or settlement failure. Inspect Cloud Run
+    request logs, Spanner transaction contention, and billing invariants. Do
+    not silence the alert merely because Spanner is otherwise healthy.
+    Runbook: docs/spanner-reliability.md.
+conditions:
+  - displayName: "Any internal gateway billing 5xx"
+    conditionMatchedLog:
+      filter: 'resource.type = "cloud_run_revision" AND resource.labels.service_name = "trusted-router" AND httpRequest.status >= 500 AND httpRequest.status < 600 AND httpRequest.status != 501 AND httpRequest.requestUrl =~ "/internal/gateway/(authorize|settle|refund)([?].*)?$"'
+alertStrategy:
+  notificationRateLimit:
+    period: 1800s
+  autoClose: 1800s

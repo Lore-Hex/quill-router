@@ -231,12 +231,34 @@ def test_typed_direct_grant_rolls_back_when_active_shard_is_missing() -> None:
     _seed_sharded_credit(store, database, workspace_id, [50, 50])
     del database.typed[CREDIT_BALANCE_TABLE][(workspace_id, 1)]
 
-    with pytest.raises(RuntimeError, match="missing tr_credit_balance shard 1"):
+    with pytest.raises(RuntimeError, match="missing authoritative tr_credit_balance shard 1"):
         store.credit_workspace_typed_direct(workspace_id, 10, "evt-missing")
 
     assert database.typed[CREDIT_BALANCE_TABLE][(workspace_id, 0)]["total_credits"] == 50
     assert store.get_credit_account(workspace_id).shard_count == 2
     assert ("stripe_event", "evt-missing") not in database.rows
+
+
+def test_guarded_debit_rebalances_to_shard_zero_once_before_retry() -> None:
+    store, database, _ = make_fake_store()
+    workspace_id = "ws-debit-rebalance"
+    _seed_sharded_credit(store, database, workspace_id, [10, 90])
+
+    assert (
+        store.debit_workspace_guarded(
+            workspace_id,
+            80,
+            "evt-debit-rebalance",
+            kind="verification_fee",
+        )
+        == "accepted"
+    )
+
+    rows = database.typed[CREDIT_BALANCE_TABLE]
+    assert rows[(workspace_id, 0)]["total_credits"] == 0
+    assert rows[(workspace_id, 1)]["total_credits"] == 20
+    movement = store.list_credit_movements(workspace_id)[0]
+    assert movement.amount_microdollars == -80
 
 
 def test_typed_credit_snapshot_sums_only_configured_shards() -> None:

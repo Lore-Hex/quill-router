@@ -18,8 +18,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any, cast
 
 from trusted_router.config import Settings
+from trusted_router.services.stripe_fees import stripe_processing_fee
 from trusted_router.storage import STORE
 from trusted_router.storage_models import CreditAccount
 from trusted_router.typed_balance import live_credit_summary
@@ -94,25 +96,48 @@ def maybe_charge_after_settle(
         return AutoRefillOutcome(fired=False, reason="stripe_not_installed")
 
     stripe.api_key = settings.stripe_secret_key
-    cents = max(50, account.auto_refill_amount_microdollars // 10_000)
+    credit_amount_cents = max(50, account.auto_refill_amount_microdollars // 10_000)
+    fee = stripe_processing_fee(
+        credit_amount_cents=credit_amount_cents,
+        variable_basis_points=settings.stripe_card_fee_basis_points,
+        fixed_fee_cents=settings.stripe_card_fee_fixed_cents,
+        minimum_fee_cents=settings.checkout_card_fee_minimum_cents,
+    )
     idempotency_key = (
-        f"auto-refill:{workspace_id}:{cents}:"
+        f"auto-refill:{workspace_id}:{fee.charge_amount_cents}:"
         f"{datetime.now(UTC).strftime('%Y%m%d%H%M')}"
+    )
+    metadata = fee.metadata(
+        workspace_id=workspace_id,
+        payment_method="card",
+        initiating_user_id=(
+            workspace.owner_user_id
+            if (workspace := STORE.get_workspace(workspace_id)) is not None
+            else None
+        ),
+    )
+    metadata.update(
+        {
+            "auto_refill": "true",
+            # Preserve the configured ledger principal even if a legacy
+            # account somehow contains a sub-cent value.
+            "amount_microdollars": str(account.auto_refill_amount_microdollars),
+        }
     )
     try:
         intent = stripe.PaymentIntent.create(
-            amount=cents,
+            amount=fee.charge_amount_cents,
             currency="usd",
             customer=account.stripe_customer_id,
             payment_method=account.stripe_payment_method_id,
             off_session=True,
             confirm=True,
             description="TrustedRouter auto-refill",
-            metadata={
-                "workspace_id": workspace_id,
-                "auto_refill": "true",
-                "amount_microdollars": str(account.auto_refill_amount_microdollars),
-            },
+            amount_details=cast(
+                Any,
+                {"line_items": fee.payment_intent_line_items()},
+            ),
+            metadata=metadata,
             idempotency_key=idempotency_key,
         )
     except stripe.CardError as exc:

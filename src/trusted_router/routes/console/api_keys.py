@@ -17,7 +17,7 @@ from trusted_router.errors import assert_workspace_billing_active
 from trusted_router.money import dollars_to_microdollars, microdollars_to_decimal
 from trusted_router.routes.console._shared import ConsoleDep, money, render
 from trusted_router.spend_windows import WINDOWS, suggested_window_limits
-from trusted_router.storage import STORE, ApiKey
+from trusted_router.storage import STORE, ApiKey, ApiKeyUsageSnapshot
 
 _FLASH = {
     "saved:limit": ("success", "Budgets saved."),
@@ -38,7 +38,7 @@ def register(app: FastAPI) -> None:
         saved: str | None = None,
         error: str | None = None,
     ) -> Response:
-        keys = [_key_view(k) for k in STORE.list_keys(ctx.workspace.id)]
+        keys = [_key_view(snapshot) for snapshot in STORE.list_api_keys_with_usage(ctx.workspace.id)]
         flash = None
         if saved:
             flash = _FLASH.get(f"saved:{saved}")
@@ -54,7 +54,7 @@ def register(app: FastAPI) -> None:
         return HTMLResponse(render(
             "console/api_keys.html",
             settings=settings,
-            user=ctx.user,
+            ctx=ctx,
             active="api-keys",
             page_title="API Keys",
             page_subtitle="Long-lived keys for your applications.",
@@ -62,11 +62,10 @@ def register(app: FastAPI) -> None:
             created_key=created_key,
             flash=flash,
             suggested=suggested,
-            api_base_url=settings.api_base_url,
         ))
 
     @app.get("/console/api-keys")
-    async def console_api_keys(
+    def console_api_keys(
         ctx: ConsoleDep,
         settings: SettingsDep,
         saved: str | None = None,
@@ -75,7 +74,7 @@ def register(app: FastAPI) -> None:
         return _render_page(ctx, settings, saved=saved, error=error)
 
     @app.post("/console/api-keys")
-    async def console_create_api_key(
+    def console_create_api_key(
         ctx: ConsoleDep,
         settings: SettingsDep,
         name: str = Form("API key", min_length=1, max_length=120),
@@ -102,15 +101,14 @@ def register(app: FastAPI) -> None:
             limit_daily_microdollars=daily_micro,
             limit_weekly_microdollars=weekly_micro,
             limit_monthly_microdollars=monthly_micro,
-            # The model/API default is alert (True); here 'omitted checkbox' = False.
-            # That's safe ONLY because the create template renders the box checked —
-            # a browser always sends 'on' unless the user unchecks it (codex/reviewer note).
+            # Omitted checkbox = the shared hard-limit default. Alert-only must be
+            # selected explicitly.
             budget_alert_only=_checkbox(budget_alert_only),
         )
         return _render_page(ctx, settings, created_key=raw)
 
     @app.post("/console/api-keys/{key_hash}/limit")
-    async def console_update_api_key_limit(
+    def console_update_api_key_limit(
         ctx: ConsoleDep,
         key_hash: str,
         limit: str = Form(""),
@@ -142,19 +140,19 @@ def register(app: FastAPI) -> None:
         return RedirectResponse(url="/console/api-keys?saved=limit", status_code=303)
 
     @app.post("/console/api-keys/{key_hash}/disable")
-    async def console_disable_api_key(ctx: ConsoleDep, key_hash: str) -> Response:
+    def console_disable_api_key(ctx: ConsoleDep, key_hash: str) -> Response:
         _require_key(ctx, key_hash, manage=True)
         STORE.update_key(key_hash, {"disabled": True})
         return RedirectResponse(url="/console/api-keys?saved=disabled", status_code=303)
 
     @app.post("/console/api-keys/{key_hash}/enable")
-    async def console_enable_api_key(ctx: ConsoleDep, key_hash: str) -> Response:
+    def console_enable_api_key(ctx: ConsoleDep, key_hash: str) -> Response:
         _require_key(ctx, key_hash, manage=True)
         STORE.update_key(key_hash, {"disabled": False})
         return RedirectResponse(url="/console/api-keys?saved=enabled", status_code=303)
 
     @app.post("/console/api-keys/{key_hash}/delete")
-    async def console_delete_api_key(ctx: ConsoleDep, key_hash: str) -> Response:
+    def console_delete_api_key(ctx: ConsoleDep, key_hash: str) -> Response:
         key = _require_key(ctx, key_hash, manage=True)
         # Disable-first, then delete: an ACTIVE key may have in-flight typed
         # holds; deleting it mid-flight strands them (issue #29). Disabling
@@ -197,14 +195,9 @@ def _checkbox(value: str) -> bool:
     return value == "on"
 
 
-def _key_view(key: ApiKey) -> dict[str, Any]:
+def _key_view(snapshot: ApiKeyUsageSnapshot) -> dict[str, Any]:
+    key = snapshot.api_key
     limit_display = "none" if key.limit_microdollars is None else money(key.limit_microdollars)
-    # One typed point-read for live usage + current window spend (falls back to
-    # the JSON values when typed is off / row missing).
-    typed = getattr(STORE, "typed_key_usage", None)
-    usage = typed(key.hash) if typed is not None else None
-    windows_used = (usage or {}).get("windows", {})
-    lifetime_used = usage["usage"] if usage is not None else key.usage_microdollars
     window_views = []
     for window in WINDOWS:
         limit_value = getattr(key, f"limit_{window}_microdollars", None)
@@ -212,7 +205,9 @@ def _key_view(key: ApiKey) -> dict[str, Any]:
             "name": window,
             "input": "" if limit_value is None else microdollars_to_decimal(limit_value),
             "limit_display": None if limit_value is None else money(limit_value),
-            "used_display": money(windows_used.get(window, 0)) if limit_value is not None else None,
+            "used_display": (
+                money(snapshot.windows.get(window, 0)) if limit_value is not None else None
+            ),
         })
     return {
         "hash": key.hash,
@@ -222,7 +217,7 @@ def _key_view(key: ApiKey) -> dict[str, Any]:
         "limit_input": (
             "" if key.limit_microdollars is None else microdollars_to_decimal(key.limit_microdollars)
         ),
-        "usage_display": money(lifetime_used),
+        "usage_display": money(snapshot.usage_microdollars),
         "windows": window_views,
         "budget_alert_only": key.budget_alert_only,
         "disabled": key.disabled,

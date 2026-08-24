@@ -16,8 +16,12 @@ def _sample(
     ttft: int | None = None,
     ttfb: int | None = None,
     tps: float | None = None,
+    output_tokens: int = 0,
+    elapsed_milliseconds: int | None = None,
     error_type: str | None = None,
     error_status: int | None = None,
+    error_message: str | None = None,
+    source: str = "organic",
     created_at: str = "2026-06-04T00:00:00Z",
 ) -> ProviderBenchmarkSample:
     return ProviderBenchmarkSample(
@@ -31,8 +35,12 @@ def _sample(
         first_token_milliseconds=ttft,
         ttfb_milliseconds=ttfb,
         speed_tokens_per_second=tps,
+        output_tokens=output_tokens,
+        elapsed_milliseconds=elapsed_milliseconds,
         error_type=error_type,
         error_status=error_status,
+        error_message=error_message,
+        source=source,
         created_at=created_at,
     )
 
@@ -52,8 +60,103 @@ def test_aggregate_computes_per_model_metrics() -> None:
     assert model["error_rate"] == 0.25
     assert model["p50_ttft_ms"] == 200  # median of [100,200,300]
     assert model["p50_ttfb_ms"] == 120
-    assert model["p50_tokens_per_second"] == 300.0  # median of [280,300,320]
+    # Short request speed is not a sustained-throughput measurement.
+    assert model["p50_tokens_per_second"] is None
+    assert model["throughput_sample_count"] == 0
     assert result["total_samples"] == 4
+
+
+def test_public_metrics_separate_completion_provider_and_capacity_ownership() -> None:
+    samples = [
+        _sample(provider="p", model="p/model", ttft=100),
+        _sample(
+            provider="p",
+            model="p/model",
+            status="error",
+            error_type="rate_limit_error",
+            error_status=429,
+            created_at="2026-06-04T00:00:01Z",
+        ),
+        _sample(
+            provider="p",
+            model="p/model",
+            status="error",
+            error_type="router_error",
+            error_status=503,
+            created_at="2026-06-04T00:00:02Z",
+        ),
+    ]
+
+    model = aggregate_leaderboard(samples)["models"][0]
+
+    assert model["completion_rate"] == round(1 / 3, 4)
+    assert model["provider_availability"] == 0.5
+    assert model["capacity_acceptance_rate"] == 0.5
+    assert model["availability_within_deadline"] == 0.5
+    assert model["failure_owners"] == {"provider": 1, "trustedrouter": 1}
+    assert model["failure_classes"] == {
+        "provider_capacity": 1,
+        "router_fault": 1,
+    }
+
+
+def test_account_quota_does_not_lower_provider_availability() -> None:
+    samples = [
+        _sample(provider="p", model="p/model", ttft=100),
+        _sample(
+            provider="p",
+            model="p/model",
+            status="error",
+            error_type="rate_limit_error",
+            error_status=429,
+            error_message="account quota exceeded",
+            created_at="2026-06-04T00:00:01Z",
+        ),
+    ]
+
+    model = aggregate_leaderboard(samples)["models"][0]
+
+    assert model["completion_rate"] == 0.5
+    assert model["provider_availability"] == 1
+    assert model["failure_owners"] == {"trustedrouter": 1}
+
+
+def test_failed_partial_stream_counts_once_against_first_token_deadline() -> None:
+    samples = [
+        _sample(provider="p", model="p/model", ttft=100),
+        _sample(
+            provider="p",
+            model="p/model",
+            status="error",
+            ttft=200,
+            error_type="stream_interrupted",
+            error_status=502,
+            created_at="2026-06-04T00:00:01Z",
+        ),
+    ]
+
+    model = aggregate_leaderboard(samples)["models"][0]
+
+    assert model["deadline_sample_count"] == 2
+    assert model["availability_within_deadline"] == 0.5
+
+
+def test_success_without_ttft_is_not_counted_as_missed_deadline() -> None:
+    samples = [
+        _sample(provider="p", model="p/model", ttft=100),
+        _sample(
+            provider="p",
+            model="p/model",
+            ttft=None,
+            created_at="2026-06-04T00:00:01Z",
+        ),
+    ]
+
+    model = aggregate_leaderboard(samples)["models"][0]
+
+    assert model["provider_availability"] == 1
+    assert model["deadline_sample_count"] == 1
+    assert model["availability_within_deadline"] == 1
 
 
 def test_models_sorted_fastest_first_unmeasured_last() -> None:
@@ -68,6 +171,41 @@ def test_models_sorted_fastest_first_unmeasured_last() -> None:
     assert ordered[0] == "fast/m"
     assert ordered[1] == "slow/m"
     assert ordered[2] == "unknown/m"  # un-measured at the bottom
+
+
+def test_models_and_providers_rank_ttft_before_reliability() -> None:
+    samples = [
+        _sample(provider="reliable", model="reliable/m", ttft=500),
+        _sample(
+            provider="reliable",
+            model="reliable/m",
+            ttft=520,
+            created_at="2026-06-04T00:00:01Z",
+        ),
+        _sample(provider="flaky", model="flaky/m", ttft=50),
+        _sample(
+            provider="flaky",
+            model="flaky/m",
+            status="error",
+            error_type="ReadTimeout",
+            created_at="2026-06-04T00:00:01Z",
+        ),
+    ]
+
+    result = aggregate_leaderboard(samples)
+
+    assert [row["model"] for row in result["models"]] == [
+        "flaky/m",
+        "reliable/m",
+    ]
+    assert [row["provider"] for row in result["providers"]] == [
+        "flaky",
+        "reliable",
+    ]
+    assert result["models"][0]["p50_ttft_ms"] == 50
+    assert result["models"][0]["provider_availability"] == 0.5
+    assert result["models"][1]["p50_ttft_ms"] == 500
+    assert result["models"][1]["provider_availability"] == 1.0
 
 
 def test_min_samples_filters_thin_models() -> None:
@@ -102,6 +240,142 @@ def test_empty_samples_produce_empty_leaderboard() -> None:
     assert result["models"] == []
     assert result["providers"] == []
     assert result["total_samples"] == 0
+
+
+def test_sustained_throughput_replaces_legacy_speed_without_affecting_uptime() -> None:
+    samples = [
+        _sample(provider="p", model="p/m", ttft=100, tps=10.0),
+        _sample(
+            provider="p",
+            model="p/m",
+            status="error",
+            error_type="provider_error",
+            error_status=502,
+        ),
+        _sample(
+            provider="p",
+            model="p/m",
+            tps=400.0,
+            source="synthetic_throughput",
+        ),
+        _sample(
+            provider="p",
+            model="p/m",
+            tps=600.0,
+            source="synthetic_throughput",
+        ),
+        _sample(
+            provider="p",
+            model="p/m",
+            status="error",
+            error_type="ReadTimeout",
+            source="synthetic_throughput",
+        ),
+    ]
+
+    result = aggregate_leaderboard(samples)
+    model = result["models"][0]
+    provider = result["providers"][0]
+
+    assert model["sample_count"] == 2
+    assert model["throughput_sample_count"] == 2
+    assert model["uptime"] == 0.5
+    assert model["p50_tokens_per_second"] == 500.0
+    assert provider["sample_count"] == 2
+    assert provider["throughput_sample_count"] == 2
+    assert provider["uptime"] == 0.5
+    assert provider["p50_tokens_per_second"] == 500.0
+    assert result["total_samples"] == 2
+    assert result["total_throughput_samples"] == 2
+
+
+def test_sustained_throughput_recomputes_legacy_buffered_rows() -> None:
+    samples = [
+        _sample(provider="p", model="p/m", ttft=100),
+        _sample(
+            provider="p",
+            model="p/m",
+            tps=5000.0,
+            output_tokens=200,
+            elapsed_milliseconds=10_000,
+            source="synthetic_throughput",
+        ),
+    ]
+
+    result = aggregate_leaderboard(samples)
+
+    assert result["models"][0]["p50_tokens_per_second"] == 20.0
+    assert result["providers"][0]["p50_tokens_per_second"] == 20.0
+
+
+def test_throughput_only_route_is_visible_without_claiming_availability() -> None:
+    result = aggregate_leaderboard(
+        [
+            _sample(
+                provider="p",
+                model="p/throughput-only",
+                tps=4000.0,
+                output_tokens=240,
+                elapsed_milliseconds=6000,
+                source="synthetic_throughput",
+            )
+        ]
+    )
+
+    model = result["models"][0]
+    assert model["model"] == "p/throughput-only"
+    assert model["sample_count"] == 0
+    assert model["uptime"] is None
+    assert model["throughput_sample_count"] == 1
+    assert model["p50_tokens_per_second"] == 40.0
+    assert result["providers"][0]["sample_count"] == 0
+    assert result["providers"][0]["uptime"] is None
+
+
+def test_thin_rows_stay_visible_but_do_not_receive_ranks() -> None:
+    samples = [
+        _sample(provider="thin", model="thin/fast", ttft=10),
+        *[
+            _sample(
+                provider="qualified",
+                model="qualified/model",
+                ttft=100 + index,
+                created_at=f"2026-06-04T00:00:{index:02d}Z",
+            )
+            for index in range(10)
+        ],
+    ]
+
+    result = aggregate_leaderboard(
+        samples,
+        model_rank_min_samples=10,
+        provider_rank_min_samples=10,
+        rank_min_ttft_samples=3,
+    )
+
+    assert [row["model"] for row in result["models"]] == [
+        "qualified/model",
+        "thin/fast",
+    ]
+    assert result["models"][0]["rank"] == 1
+    assert result["models"][0]["rank_eligible"] is True
+    assert result["models"][1]["rank"] is None
+    assert result["models"][1]["rank_eligible"] is False
+    assert result["providers"][0]["provider"] == "qualified"
+    assert result["providers"][0]["rank"] == 1
+    assert result["providers"][1]["provider"] == "thin"
+    assert result["providers"][1]["rank"] is None
+
+
+def test_legacy_short_request_speed_never_creates_zero_sample_throughput() -> None:
+    result = aggregate_leaderboard([_sample(provider="p", model="p/m", ttft=50, tps=9999.0)])
+
+    model = result["models"][0]
+    provider = result["providers"][0]
+    assert model["throughput_sample_count"] == 0
+    assert model["p50_tokens_per_second"] is None
+    assert provider["throughput_sample_count"] == 0
+    assert provider["p50_tokens_per_second"] is None
 
 
 def test_public_benchmark_samples_reads_each_provider(monkeypatch) -> None:
@@ -141,6 +415,45 @@ def test_public_benchmark_samples_reads_each_provider(monkeypatch) -> None:
     }
     assert ("deepseek", 2) in calls
     assert ("openai", 2) in calls
+
+
+def test_public_benchmark_samples_uses_single_balanced_store_read(monkeypatch) -> None:
+    row = _sample(
+        provider="openai",
+        model="openai/gpt-5.4-nano",
+        ttft=120,
+        created_at="2026-06-05T19:10:00Z",
+    )
+    calls: list[dict[str, object]] = []
+
+    def balanced(**kwargs: object) -> list[ProviderBenchmarkSample]:
+        calls.append(kwargs)
+        return [row]
+
+    monkeypatch.setattr(
+        "trusted_router.benchmark_samples.providers_for_display",
+        lambda: (SimpleNamespace(slug="openai"), SimpleNamespace(slug="anthropic")),
+    )
+    monkeypatch.setattr(
+        "trusted_router.benchmark_samples.STORE",
+        SimpleNamespace(provider_balanced_benchmark_samples=balanced),
+    )
+
+    rows = public_benchmark_samples(
+        limit=5000,
+        per_provider_limit=25,
+        recent_minutes=180,
+        now=dt.datetime(2026, 6, 5, 20, 0, tzinfo=dt.UTC),
+    )
+
+    assert rows == [row]
+    assert calls == [
+        {
+            "cutoff": "2026-06-05T17:00:00Z",
+            "per_provider_limit": 25,
+            "limit": 5000,
+        }
+    ]
 
 
 def test_public_benchmark_samples_filters_to_recent_window(monkeypatch) -> None:
@@ -241,6 +554,27 @@ def test_aggregate_excludes_unsupported_routes_from_uptime() -> None:
     assert provider["top_excluded"] == "unsupported_route"
     assert result["total_samples"] == 2
     assert result["excluded_samples"] == 1
+
+
+def test_aggregate_excludes_router_failures_from_provider_uptime() -> None:
+    samples = [
+        _sample(provider="openai", model="openai/gpt-5.4-nano", ttft=100),
+        _sample(
+            provider="openai",
+            model="openai/gpt-5.4-nano",
+            status="error",
+            error_type="router_database_contention",
+            error_status=503,
+        ),
+    ]
+
+    result = aggregate_leaderboard(samples)
+    model = result["models"][0]
+
+    assert model["sample_count"] == 1
+    assert model["uptime"] == 1.0
+    assert model["excluded_count"] == 1
+    assert model["top_excluded"] == "router_database_contention"
 
 
 def test_aggregate_excluded_only_rows_do_not_surface_as_provider_errors() -> None:
@@ -346,12 +680,27 @@ def test_aggregate_still_counts_real_provider_downtime() -> None:
     # still count against uptime (not silently excluded by the config filter).
     samples = [
         _sample(provider="parasail", model="x/y", ttft=100),
-        _sample(provider="parasail", model="x/y", status="error",
-                error_type="rate_limited", error_status=429),
-        _sample(provider="parasail", model="x/y", status="error",
-                error_type="ttfb_exceeded", error_status=None),
-        _sample(provider="parasail", model="x/y", status="error",
-                error_type="provider_error", error_status=500),
+        _sample(
+            provider="parasail",
+            model="x/y",
+            status="error",
+            error_type="rate_limited",
+            error_status=429,
+        ),
+        _sample(
+            provider="parasail",
+            model="x/y",
+            status="error",
+            error_type="ttfb_exceeded",
+            error_status=None,
+        ),
+        _sample(
+            provider="parasail",
+            model="x/y",
+            status="error",
+            error_type="provider_error",
+            error_status=500,
+        ),
     ]
     result = aggregate_leaderboard(samples)
     model = result["models"][0]

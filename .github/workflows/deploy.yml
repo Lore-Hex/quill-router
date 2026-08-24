@@ -44,6 +44,14 @@ on:
         description: "Force redeploy synthetic monitor jobs"
         type: boolean
         default: false
+      regional_quota_lease_issuance:
+        description: "Regional quota issuance: preserve active state, force off, or enable after fleet compatibility preflight"
+        type: choice
+        default: preserve
+        options:
+          - preserve
+          - "false"
+          - "true"
 
 # Only one deploy at a time. Two pushes within seconds of each other
 # serialize instead of racing to be the running revision.
@@ -211,16 +219,137 @@ jobs:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@v2
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install migration runtime
+        run: uv sync --frozen --no-dev
       - name: Apply idempotent Spanner schema prerequisites
         env:
           GCP_PROJECT_ID: quill-cloud-proxy
           SPANNER_INSTANCE_ID: trusted-router-nam6
           SPANNER_DATABASE_ID: trusted-router
         run: scripts/deploy/migrate_typed_counters.sh
+      - name: Apply money primitives schema (earnings, movements, lifetime top-ups)
+        # tr_user_lifetime_topup is written INSIDE the credit-grant transaction
+        # by every purchase webhook, so a missing table would abort the grant
+        # and stop payments crediting. This job runs before `deploy`, so the
+        # table exists before any revision that needs it can serve.
+        env:
+          GCP_PROJECT_ID: quill-cloud-proxy
+          SPANNER_INSTANCE_ID: trusted-router-nam6
+          SPANNER_DATABASE_ID: trusted-router
+        run: scripts/deploy/migrate_money_primitives.sh
+      - name: Apply bounded request-retention schema
+        env:
+          TR_GCP_PROJECT_ID: quill-cloud-proxy
+          TR_SPANNER_INSTANCE_ID: trusted-router-nam6
+          TR_SPANNER_DATABASE_ID: trusted-router
+          TR_BIGTABLE_INSTANCE_ID: trusted-router-logs
+          TR_BIGTABLE_GENERATION_TABLE: trustedrouter-generations
+        run: scripts/deploy/migrate_request_retention.sh --apply
+      - name: Apply bounded generation-record schema
+        run: scripts/deploy/migrate_generation_records.sh --apply
+      - name: Apply provider analytics outbox schema
+        env:
+          GCP_PROJECT_ID: quill-cloud-proxy
+          SPANNER_INSTANCE_ID: trusted-router-nam6
+          SPANNER_DATABASE_ID: trusted-router
+        run: scripts/deploy/migrate_analytics_outbox.sh
+      - name: Apply operational analytics outbox schema
+        env:
+          GCP_PROJECT_ID: quill-cloud-proxy
+          SPANNER_INSTANCE_ID: trusted-router-nam6
+          SPANNER_DATABASE_ID: trusted-router
+        run: scripts/deploy/migrate_operational_analytics_outbox.sh
+      - name: Sync shared public analytics snapshots
+        run: scripts/deploy/sync_public_analytics_snapshots.sh --apply
+
+      - name: Provision bounded regional quota ledger
+        # Idempotent. The table and fixed single-cluster app profiles must
+        # exist before any serving revision can enable the workspace canary.
+        run: bash scripts/deploy/regional_quota_ledger.sh
+
+  sync-runtime-secrets:
+    # Validate the small set of runtime credentials while the image build and
+    # schema verification run. SES credentials are rotated directly in GCP
+    # Secret Manager; deploys must never copy a stale long-lived key back from
+    # GitHub Actions and silently undo an incident-response rotation.
+    needs: [gate-on-ci]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Verify deploy isolation from runtime-only provider keys
+        run: bash scripts/deploy/revoke_runtime_only_secret_access.sh
+      - name: Validate required SES credentials
+        run: |
+          set -euo pipefail
+          for secret in \
+            trustedrouter-aws-access-key-id \
+            trustedrouter-aws-secret-access-key; do
+            gcloud secrets versions access latest \
+              --project=quill-cloud-proxy \
+              --secret="${secret}" >/dev/null
+          done
+      - name: Push provider analytics reader credential
+        env:
+          TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD: ${{ secrets.TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD }}
+        run: |
+          if [ -z "${TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD:-}" ]; then
+            echo "TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD is required" >&2
+            exit 1
+          fi
+          source scripts/deploy/_lib.sh
+          ensure_secret_value \
+            "trustedrouter-clickhouse-provider-read-password" \
+            "$TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD"
+
+  confirm-current-main:
+    # A newer push can arrive while this run is building. Concurrency keeps
+    # mutations serialized, but without this gate the obsolete image would
+    # still spend ~30 minutes rolling through production before the newer run.
+    # Exit cleanly before the first production mutation and let the queued
+    # current-main run deploy instead.
+    needs: [build-image, migrate-schema, sync-runtime-secrets]
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.current.outputs.proceed }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Confirm this push is still current main
+        id: current
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "manual dispatch: deploying requested revision ${GITHUB_SHA}"
+            exit 0
+          fi
+          latest_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [ "${latest_sha}" = "${GITHUB_SHA}" ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "${GITHUB_SHA} is still current main"
+          else
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping superseded deploy ${GITHUB_SHA}; current main is ${latest_sha}."
+          fi
 
   deploy:
-    needs: [gate-on-ci, build-image, migrate-schema]
+    needs: [build-image, migrate-schema, sync-runtime-secrets, confirm-current-main]
+    if: ${{ needs.confirm-current-main.outputs.proceed == 'true' }}
     runs-on: ubuntu-latest
+    # Must stay UNDER the deployment mutex TTL (deploy_mutex.sh, 5400s): a job
+    # that outlives the lease invites a legal expired-lock takeover while this
+    # run is still shifting traffic — the exact overlap the mutex exists to
+    # prevent. GitHub's default 360-minute bound is four TTLs too generous.
+    timeout-minutes: 85
     env:
       PROJECT_ID: quill-cloud-proxy
       REGION: us-central1
@@ -228,6 +357,12 @@ jobs:
       SERVICE: trusted-router
       SHA: ${{ needs.build-image.outputs.sha }}
       IMAGE: ${{ needs.build-image.outputs.image }}
+      # Keep the workflow value raw. rollout.sh normalizes preserve/false/true
+      # only after reading the actual 100%-traffic primary revision.
+      TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED: ${{ inputs.regional_quota_lease_issuance }}
+      # Temporary explicit opt-in for the pre-split all-routes service. Remove
+      # with the six-service production cutover in #712.
+      TR_ALLOW_DEPLOYED_COMBINED_SURFACE: "true"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -242,20 +377,18 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Push secrets to Secret Manager
-        # secrets.sh is idempotent — only uploads when the local key file
-        # has a value the GHA runner doesn't (it doesn't), so this is a
-        # no-op for the runner. Left in for symmetry with local deploys.
-        run: bash scripts/deploy/secrets.sh
-        continue-on-error: true   # secrets are managed locally; runner has none
+      - name: Acquire production deployment mutex
+        env:
+          TR_DEPLOY_MUTEX_OWNER: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TR_DEPLOY_MUTEX_TOOL: workflow
+        run: bash scripts/deploy/deploy_mutex.sh acquire >> "$GITHUB_ENV"
 
       # Staged regional deploy. Deploy us-central1 first, gate on a
       # 3-min single-region synthetic watch; only proceed to the
-      # secondary warm regions if us-central1 stays up. A bad change
-      # reaches at most one region before the secondaries start. Once
-      # the primary canary is green, europe-west4 and us-east4 roll in
-      # parallel with independent rollback. Final 10-min watch catches
-      # issues that surface after warm regions are converged.
+      # secondary warm regions if us-central1 stays up. Once the image has
+      # passed that primary-region gate, every secondary rolls sequentially.
+      # All regions share Spanner, so overlapping revision warmups and traffic
+      # ramps can amplify billing transaction contention.
       #
       # Hotfix mode (workflow_dispatch input `hotfix: true`): the
       # watchdogs skip baseline + use --skip-baseline so a sick prod
@@ -276,14 +409,19 @@ jobs:
       - name: Capture pre-deploy revisions (for rollback)
         id: prev
         run: |
-          for region in us-central1 europe-west4 us-east4; do
-            rev=$(gcloud run services describe "${SERVICE}" \
+          set -euo pipefail
+          for region in us-central1 europe-west4 us-east4 southamerica-east1; do
+            service_json=$(gcloud run services describe "${SERVICE}" \
               --region="$region" --project="${PROJECT_ID}" \
-              --format='value(status.traffic[0].revisionName)' \
-              2>/dev/null || true)
+              --format=json)
+            if ! rev=$(python3 scripts/deploy/resolve_active_revision.py \
+                <<<"${service_json}"); then
+              echo "::error::${region} has no unambiguous 100%-traffic rollback revision"
+              exit 1
+            fi
             key="${region//-/_}_revision"
             echo "${key}=${rev}" >> "$GITHUB_OUTPUT"
-            echo "  pre-deploy ${region}: ${rev:-<none>}"
+            echo "  pre-deploy ${region}: ${rev}"
           done
 
       - name: Detect optional deploy surfaces
@@ -291,11 +429,13 @@ jobs:
         run: |
           set -euo pipefail
           deploy_synthetic_monitor="false"
+          deploy_google_data_manager="false"
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             if [ "${{ inputs.deploy_synthetic_monitor }}" = "true" ]; then
               deploy_synthetic_monitor="true"
             fi
+            deploy_google_data_manager="true"
           fi
 
           changed=""
@@ -313,17 +453,28 @@ jobs:
             if printf '%s\n' "$changed" | grep -Eq '^(src/trusted_router/|scripts/deploy/synthetic\.sh$|\.github/workflows/deploy\.yml$)'; then
               deploy_synthetic_monitor="true"
             fi
+            if printf '%s\n' "$changed" | grep -Eq '^(src/trusted_router/|scripts/deploy/google_data_manager\.sh$|scripts/deploy/infra\.sh$|scripts/deploy/_lib\.sh$|\.github/workflows/deploy\.yml$)'; then
+              deploy_google_data_manager="true"
+            fi
           fi
 
           echo "deploy_synthetic_monitor=${deploy_synthetic_monitor}" >> "$GITHUB_OUTPUT"
           echo "deploy_synthetic_monitor=${deploy_synthetic_monitor}"
+          echo "deploy_google_data_manager=${deploy_google_data_manager}" >> "$GITHUB_OUTPUT"
+          echo "deploy_google_data_manager=${deploy_google_data_manager}"
 
       - name: Deploy us-central1 (no-traffic)
+        id: deploy_us
         env:
           IMAGE_TAG: ${{ needs.build-image.outputs.sha }}
           TR_DEPLOY_TARGET_REGIONS: us-central1
           TR_DEPLOY_NO_TRAFFIC: "1"
-        run: bash scripts/deploy/rollout.sh
+          # Global LB topology is shared by every region. Reconcile it exactly
+          # once here; concurrent secondary rollouts must not race on it.
+          TR_DEPLOY_RECONCILE_LB: "1"
+        run: |
+          echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          bash scripts/deploy/rollout.sh
 
       - name: Resolve us-central1 new revision
         id: new_us
@@ -340,7 +491,7 @@ jobs:
         # is reverted to 100% on the old revision and the workflow
         # fails before ever shipping anything to europe-west4.
         env:
-          TR_WATCHDOG_SLO_CLASS: control_plane
+          TR_WATCHDOG_SLO_CLASS: router_core
         run: bash scripts/deploy/staged_traffic.sh us-central1 "${{ steps.new_us.outputs.revision }}" "${{ steps.prev.outputs.us_central1_revision }}"
 
       - name: Canary gate — watch us-central1 only (3 min)
@@ -349,7 +500,7 @@ jobs:
         # received the new image yet, so the bad change is contained.
         id: canary_us
         continue-on-error: true
-        run: python3 scripts/deploy/watchdog.py --regions us-central1 --duration-min 3 --rollback-after 2 --slo-class control_plane ${{ steps.wd_args.outputs.extra }}
+        run: python3 scripts/deploy/watchdog.py --regions us-central1 --duration-min 3 --rollback-after 2 --slo-class router_core ${{ steps.wd_args.outputs.extra }}
 
       - name: Rollback us-central1 + abort (canary tripped)
         if: ${{ steps.canary_us.outcome == 'failure' && steps.canary_us.outputs.rollback_regions != '' }}
@@ -368,23 +519,46 @@ jobs:
           echo "europe-west4 NEVER received the bad image; safe."
           exit 1
 
-      - name: Roll secondary warm regions in parallel (europe-west4 + us-east4)
+      - name: Billing-path gate + rollback (us-central1)
+        env:
+          PREV_US: ${{ steps.prev.outputs.us_central1_revision }}
+          TR_BILLING_5XX_GATE_SKIP: ${{ inputs.hotfix == true && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          if ! bash scripts/deploy/assert_no_billing_5xx.sh \
+              us-central1 \
+              "${{ steps.deploy_us.outputs.started_at }}" \
+              "${{ steps.new_us.outputs.revision }}"; then
+            echo "us-central1 emitted billing-path 5xx; rolling back to ${PREV_US}"
+            gcloud run services update-traffic "${SERVICE}" \
+              --region=us-central1 --project="${PROJECT_ID}" \
+              --to-revisions="${PREV_US}=100" --quiet
+            exit 1
+          fi
+
+      - name: Roll secondary warm regions sequentially
         env:
           IMAGE_TAG: ${{ needs.build-image.outputs.sha }}
           PREV_EU: ${{ steps.prev.outputs.europe_west4_revision }}
           PREV_US_EAST4: ${{ steps.prev.outputs.us_east4_revision }}
+          PREV_SOUTHAMERICA_EAST1: ${{ steps.prev.outputs.southamerica_east1_revision }}
           WD_EXTRA: ${{ steps.wd_args.outputs.extra }}
-          TR_WATCHDOG_SLO_CLASS: control_plane
+          TR_WATCHDOG_SLO_CLASS: router_core
+          TR_DEPLOY_RECONCILE_LB: "0"
+          TR_BILLING_5XX_GATE_SKIP: ${{ inputs.hotfix == true && 'true' || 'false' }}
         run: |
           set -euo pipefail
 
-          log_dir="$(mktemp -d)"
-          echo "secondary rollout logs: ${log_dir}"
+          watchdog_extra=()
+          if [ -n "${WD_EXTRA}" ]; then
+            read -ra watchdog_extra <<<"${WD_EXTRA}"
+          fi
 
           previous_revision() {
             case "$1" in
               europe-west4) printf '%s\n' "${PREV_EU}" ;;
               us-east4) printf '%s\n' "${PREV_US_EAST4}" ;;
+              southamerica-east1) printf '%s\n' "${PREV_SOUTHAMERICA_EAST1}" ;;
               *) return 1 ;;
             esac
           }
@@ -406,72 +580,79 @@ jobs:
           deploy_secondary() {
             local region="$1"
             local previous
+            local rollout_started_at
             previous="$(previous_revision "${region}")"
+            rollout_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "deploying ${region} no-traffic"
-            TR_DEPLOY_TARGET_REGIONS="${region}" \
-              TR_DEPLOY_NO_TRAFFIC="1" \
-              IMAGE_TAG="${IMAGE_TAG}" \
-              bash scripts/deploy/rollout.sh
+            if ! TR_DEPLOY_TARGET_REGIONS="${region}" \
+                TR_DEPLOY_NO_TRAFFIC="1" \
+                IMAGE_TAG="${IMAGE_TAG}" \
+                bash scripts/deploy/rollout.sh; then
+              echo "${region} no-traffic deploy failed"
+              return 1
+            fi
 
             local revision
             revision="$(gcloud run services describe "${SERVICE}" \
               --region="${region}" --project="${PROJECT_ID}" \
               --format='value(status.latestCreatedRevisionName)')"
+            if [ -z "${revision}" ]; then
+              echo "${region} deploy did not create a revision"
+              return 1
+            fi
             echo "new ${region} revision: ${revision}"
 
-            bash scripts/deploy/staged_traffic.sh "${region}" "${revision}" "${previous}"
+            if ! bash scripts/deploy/staged_traffic.sh \
+                "${region}" "${revision}" "${previous}"; then
+              rollback_region "${region}" || true
+              return 1
+            fi
+
+            local active_traffic
+            active_traffic="$(gcloud run services describe "${SERVICE}" \
+              --region="${region}" --project="${PROJECT_ID}" \
+              --format=json | jq -r --arg revision "${revision}" '
+                [
+                  .status.traffic[]?
+                  | select(.percent == 100 and .revisionName == $revision)
+                ]
+                | length
+              ')"
+            if [ "${active_traffic}" != "1" ]; then
+              echo "${region} staged rollout did not put 100% on ${revision}"
+              rollback_region "${region}" || true
+              return 1
+            fi
 
             if ! python3 scripts/deploy/watchdog.py \
               --regions "${region}" \
               --duration-min 3 \
               --rollback-after 2 \
-              --slo-class control_plane \
-              ${WD_EXTRA}; then
+              --slo-class router_core \
+              "${watchdog_extra[@]}"; then
+              rollback_region "${region}"
+              return 1
+            fi
+
+            if ! bash scripts/deploy/assert_no_billing_5xx.sh \
+                "${region}" "${rollout_started_at}" "${revision}"; then
               rollback_region "${region}"
               return 1
             fi
           }
 
-          regions=(europe-west4 us-east4)
-          pids=()
+          # The image has already passed the full us-central1 ramp and canary.
+          # Roll one region at a time because every control-plane region shares
+          # Spanner and its billing indexes. Each region retains its own traffic
+          # ramp, router-core watchdog, billing-path gate, and local rollback.
+          regions=(europe-west4 us-east4 southamerica-east1)
           for region in "${regions[@]}"; do
-            (
-              set -euo pipefail
-              deploy_secondary "${region}"
-            ) >"${log_dir}/${region}.log" 2>&1 &
-            pids+=("$!")
-          done
-
-          failed=0
-          for i in "${!regions[@]}"; do
-            region="${regions[$i]}"
-            pid="${pids[$i]}"
-            if ! wait "${pid}"; then
-              echo "::error::${region} rollout failed"
-              failed=1
+            echo "starting sequential rollout for ${region}"
+            if ! deploy_secondary "${region}"; then
+              echo "::error::${region} rollout failed and was rolled back. Later regions were not touched."
+              exit 1
             fi
-            echo "::group::${region} rollout log"
-            cat "${log_dir}/${region}.log"
-            echo "::endgroup::"
           done
-
-          if [ "${failed}" -ne 0 ]; then
-            echo "one or more secondary warm regions failed; us-central1 keeps the new release; cold regions have NOT received it."
-            exit 1
-          fi
-
-      - name: Deploy cold regions (no canary, scale-to-zero)
-        # Stage 3.5 cold region: southamerica-east1. min-instances=0
-        # means ~$0/mo idle plus a ~5-10s cold-start tax on the first
-        # request from that geography. Every region attached to the public
-        # load balancer must run the same reader schema before a newer
-        # synthetic monitor can write shared Bigtable rows. No canary is
-        # needed because the warm regions already validated the image.
-        # rollout.sh handles min-instances=0 automatically when a region is
-        # in TR_CONTROL_PLANE_REGIONS but not TR_WARM_REGIONS.
-        env:
-          TR_DEPLOY_TARGET_REGIONS: southamerica-east1
-        run: bash scripts/deploy/rollout.sh
 
       - name: Deploy synthetic monitor Cloud Run Job
         if: ${{ steps.optional.outputs.deploy_synthetic_monitor == 'true' }}
@@ -491,9 +672,22 @@ jobs:
         continue-on-error: true
         run: bash scripts/deploy/synthetic.sh
 
+      - name: Deploy Google Ads conversion uploader
+        if: ${{ steps.optional.outputs.deploy_google_data_manager == 'true' }}
+        # Measurement is a release gate for paid acquisition. A failed worker
+        # deploy leaves conversions durably queued, but this workflow stays red
+        # so ad spend is never scaled under silently broken attribution.
+        run: bash scripts/deploy/google_data_manager.sh
+
+      - name: Deploy regional quota reconciler
+        # The worker cannot authorize traffic. It continues draining already
+        # issued bounded escrow even when serving issuance is disabled, and is
+        # mandatory once a workspace canary has ever been enabled.
+        run: bash scripts/deploy/regional_quota_reconciler.sh
+
       # No cross-region "final watchdog" step. Each region's health is
-      # gated by its own per-region canary above (us-central1, then
-      # europe-west4 + us-east4 in parallel, each with its own 3-min
+      # gated by its own per-region canary above (us-central1 first,
+      # then each secondary sequentially, each with its own 3-min
       # watchdog AFTER the staged_traffic 10/50/100 ramp). The prior cross-
       # region watchdog at this point caused recurring spurious
       # rollbacks: by the time it ran, earlier regions had finished
@@ -503,10 +697,8 @@ jobs:
       # was functionally clean. Same anti-pattern fixed in
       # quill-cloud-proxy commit 7b735e8.
       #
-      # Cold region southamerica-east1 deploys after all warm-region
-      # canaries pass. It has no per-region canary by design — warm
-      # regions already validated the image, and the cold region is
-      # lowest-volume by construction.
+      # Every advertised regional control plane is warm and passes its own
+      # staged traffic shift plus region-local canary before this point.
 
       - name: Smoke test prod
         run: |
@@ -528,19 +720,77 @@ jobs:
           }
 
           check_url homepage https://trustedrouter.com/
+          check_url support https://trustedrouter.com/support
           check_url health https://trustedrouter.com/health
+          check_url ready https://trustedrouter.com/ready
           check_url regions https://trustedrouter.com/v1/regions
           check_url status_json https://trustedrouter.com/status.json
           check_url status_host https://status.trustedrouter.com/status.json
+          check_url ally_homepage https://allyrouter.com/
+          check_url ally_health https://allyrouter.com/health
+          check_url ally_status https://status.allyrouter.com/status.json
+          check_url ally_trust https://trust.allyrouter.com/
+          check_url ally_trust_release https://trust.allyrouter.com/trust/gcp-release.json
+          check_url uptime_homepage https://uptimerouter.com/
+          check_url uptime_health https://uptimerouter.com/health
+          check_url uptime_status https://status.uptimerouter.com/status.json
+          check_url uptime_trust https://trust.uptimerouter.com/
+          check_url uptime_trust_release https://trust.uptimerouter.com/trust/gcp-release.json
+          check_url canonical_trust_release \
+            "https://trust.trustedrouter.com/trust/gcp-release.json?nocache=${GITHUB_RUN_ID}"
 
           # A global request can repeatedly land on a healthy warm region and
           # miss a stale cold revision. Exercise the shared-storage reader in
           # every load-balanced control-plane region directly.
           for region in us-central1 us-east4 europe-west4 southamerica-east1; do
-            service_url=$(gcloud run services describe "${SERVICE}" \
+            service_json=$(gcloud run services describe "${SERVICE}" \
               --project="${PROJECT_ID}" --region="${region}" \
-              --format='value(status.url)')
+              --format=json)
+            service_url=$(jq -r '.status.url' <<<"${service_json}")
+            check_url "ready_${region}" "${service_url}/ready"
             check_url "status_${region}" "${service_url}/status.json"
+            check_url "status_page_${region}" "${service_url}/status"
+            check_url "leaderboard_${region}" "${service_url}/leaderboard"
+            check_url "video_leaderboard_${region}" "${service_url}/leaderboard/video"
+
+            latest_ready=$(jq -r '.status.latestReadyRevisionName // ""' \
+              <<<"${service_json}")
+            latest_created=$(jq -r '.status.latestCreatedRevisionName // ""' \
+              <<<"${service_json}")
+            active_revision=$(jq -r '
+              [.status.traffic[]? | select(.percent == 100) | .revisionName][0] // ""
+            ' <<<"${service_json}")
+            active_count=$(jq -r '
+              [.status.traffic[]? | select(.percent > 0)] | length
+            ' <<<"${service_json}")
+            if [ "${active_count}" != "1" ] || \
+               [ -z "${active_revision}" ] || \
+               [ "${active_revision}" != "${latest_ready}" ] || \
+               [ "${latest_ready}" != "${latest_created}" ]; then
+              echo "${region} is not fully converged on its latest ready revision" >&2
+              echo "created=${latest_created} ready=${latest_ready} active=${active_revision} count=${active_count}" >&2
+              exit 1
+            fi
+
+            revision_json=$(gcloud run revisions describe "${active_revision}" \
+              --project="${PROJECT_ID}" --region="${region}" \
+              --format=json)
+            active_release=$(jq -r '
+              [.spec.containers[0].env[]? | select(.name == "TR_RELEASE") | .value][0] // ""
+            ' <<<"${revision_json}")
+            retired_secret_count=$(jq -r '
+              [
+                .spec.containers[0].env[]?
+                | select(.name == "TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")
+              ]
+              | length
+            ' <<<"${revision_json}")
+            if [ "${active_release}" != "${SHA}" ] || \
+               [ "${retired_secret_count}" != "0" ]; then
+              echo "${region} active revision failed release/config verification" >&2
+              echo "release=${active_release} expected=${SHA} retired_secret_count=${retired_secret_count}" >&2
+              exit 1
+            fi
           done
 
           python3 - <<'PY'
@@ -550,14 +800,199 @@ jobs:
           regions = json.loads(Path("/tmp/regions.body").read_text())["data"]
           status = json.loads(Path("/tmp/status_json.body").read_text())["data"]
           status_host = json.loads(Path("/tmp/status_host.body").read_text())["data"]
+          ally_homepage = Path("/tmp/ally_homepage.body").read_text()
+          ally_trust = Path("/tmp/ally_trust.body").read_text()
+          ally_release = json.loads(Path("/tmp/ally_trust_release.body").read_text())
+          uptime_homepage = Path("/tmp/uptime_homepage.body").read_text()
+          uptime_trust = Path("/tmp/uptime_trust.body").read_text()
+          uptime_release = json.loads(Path("/tmp/uptime_trust_release.body").read_text())
+          canonical_release = json.loads(Path("/tmp/canonical_trust_release.body").read_text())
+          support_page = Path("/tmp/support.body").read_text()
 
+          assert "help@trustedrouter.com" in support_page
+          assert 'id="support-inquiry"' in support_page
           assert any(item["id"] == "us-central1" for item in regions), regions
           assert any(item["id"] == "europe-west4" for item in regions), regions
           assert "components" in status, status.keys()
           assert status_host.get("current", {}).get("overall_status") or status_host.get("overall_status"), status_host.keys()
+          assert "https://api.allyrouter.com/v1" in ally_homepage
+          assert "https://api.allyrouter.com/attestation" in ally_trust
+          assert ally_release["release_metadata_status"] == "live", ally_release
+          assert "https://api.uptimerouter.com/v1" in uptime_homepage
+          assert "https://api.uptimerouter.com/attestation" in uptime_trust
+          assert uptime_release["release_metadata_status"] == "live", uptime_release
+          for field in ("source_commit", "image_reference", "image_digest"):
+              assert ally_release[field] == canonical_release[field], (
+                  field,
+                  ally_release[field],
+                  canonical_release[field],
+              )
+              assert uptime_release[field] == canonical_release[field], (
+                  field,
+                  uptime_release[field],
+                  canonical_release[field],
+              )
           PY
 
           count=$(curl -fsS --max-time 15 https://trustedrouter.com/v1/models \
             | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('data',[])))")
           [[ "$count" -gt 100 ]] || { echo "/v1/models has only $count models, expected >100"; exit 1; }
-          echo "smoke ok: homepage, health, regions, status, and $count catalog models"
+          image_models=$(curl -fsS --max-time 15 https://trustedrouter.com/v1/images/models)
+          python3 -c 'import json,sys; rows=json.load(sys.stdin)["data"]; assert any(row["id"] == "google/gemini-3.1-flash-image" and row["architecture"]["output_modalities"] == ["image"] for row in rows)' <<<"${image_models}"
+          echo "smoke ok: homepage, liveness, readiness, regions, status, $count catalog models, and image discovery"
+
+      - name: Retire legacy settle-outbox hotspot index
+        env:
+          GCP_PROJECT_ID: quill-cloud-proxy
+          SPANNER_INSTANCE_ID: trusted-router-nam6
+          SPANNER_DATABASE_ID: trusted-router
+        run: scripts/deploy/retire_settle_outbox_hot_index.sh
+
+      - name: Release production deployment mutex
+        if: always()
+        run: bash scripts/deploy/deploy_mutex.sh release
+
+  public-surface-companion:
+    # This job creates/updates the isolated T1 service only after the legacy
+    # rollout is healthy. It never prepares or imports a URL map. Before the
+    # owner cutover it deploys the smokeable run.app companion; after cutover
+    # it detects the public backend in the live map and preserves routed-mode
+    # ingress/header trust on every later automatic deploy.
+    needs: [deploy]
+    continue-on-error: false
+    runs-on: ubuntu-latest
+    # Four sequential regional Cloud Run deploys normally finish in 12-20
+    # minutes. Thirty allows cold image pulls and bounded smoke retries.
+    # NOTE: this job runs AFTER the deploy job has released the production
+    # deployment mutex, and does not hold it. That is deliberate scope: the
+    # mutex fences trusted-router revisions/traffic, which manual rollout
+    # scripts also mutate; the T1 companion touches only its own service and
+    # is serialized against other workflow runs by the concurrency group. If
+    # manual T1 tooling ever appears, give it the same mutex first.
+    timeout-minutes: 30
+    env:
+      PROJECT_ID: quill-cloud-proxy
+      REGION: us-central1
+      SERVICE: trusted-router
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve fail-closed public deployment stage
+        id: public_stage
+        run: |
+          set -euo pipefail
+          public_self_link="$(gcloud compute backend-services describe \
+            trusted-router-public-backend --project="${PROJECT_ID}" --global \
+            --format='value(selfLink)' 2>/dev/null || true)"
+          live_map="$(gcloud compute url-maps describe trusted-router-control-map \
+            --project="${PROJECT_ID}" --global --format=json)"
+          if [ -n "${public_self_link}" ] && \
+             jq -e --arg backend "${public_self_link}" \
+               '.. | strings | select(. == $backend)' <<<"${live_map}" >/dev/null; then
+            echo "stage=routed" >> "$GITHUB_OUTPUT"
+            echo "public backend is live; preserving routed-only ingress"
+          else
+            echo "stage=companion" >> "$GITHUB_OUTPUT"
+            echo "public backend is not live; deploying smokeable companion only"
+          fi
+
+      - name: Deploy isolated T1 public service
+        run: bash scripts/deploy/public_surface.sh "${{ steps.public_stage.outputs.stage }}"
+
+      - name: Smoke isolated T1 public service
+        env:
+          PUBLIC_STAGE: ${{ steps.public_stage.outputs.stage }}
+        run: |
+          set -euo pipefail
+          if [ "${PUBLIC_STAGE}" = "routed" ]; then
+            base_url="https://trustedrouter.com"
+            for path in / /health /ready /status.json /v1/models /static/charter.css; do
+              curl -fsS --max-time 20 -o /dev/null "${base_url}${path}"
+            done
+            exit 0
+          fi
+          for region in us-central1 us-east4 europe-west4 southamerica-east1; do
+            base_url="$(gcloud run services describe trusted-router-public \
+              --project="${PROJECT_ID}" --region="${region}" \
+              --format='value(status.url)')"
+            for path in /health /ready /status.json /v1/models /static/charter.css; do
+              curl -fsS --max-time 20 -o /dev/null "${base_url}${path}"
+            done
+          done
+
+  # ---------------------------------------------------------------------------
+  # Did the CLOUD end up working, or did only the deploy finish?
+  #
+  # scripts/deploy/rollout.sh is GCP's control-plane deploy and it is the one
+  # bring-up script in this repo deliberately NOT ending in the completeness
+  # gate: it is a STEP of the job above, and a public HTTPS fetch of
+  # trustedrouter.com/status.json in the middle of deploying the cloud that
+  # SERVES trustedrouter.com would abort the deploy that repairs an outage,
+  # partway, because of the outage it repairs.
+  #
+  # That exemption is recorded in code, in ROLLOUT_REGISTRY
+  # (src/trusted_router/cloud_rollout_completeness.py), and it used to cite "the
+  # scheduled analytics freshness workflow" as the thing that checks GCP
+  # instead. That workflow ships with no `schedule:` trigger, on purpose and in
+  # its own header, so the citation was to a control that does not run: the
+  # primary cloud had no automated completeness check at all, behind a sentence
+  # saying it did. THIS JOB is that control.
+  #
+  # THE BODY OF THIS JOB IS ONE LINE, AND THAT IS THE POINT.
+  # For one revision the retry loop lived here in YAML, and all that bound it to
+  # anything was a substring search over this job's `run:` blocks for
+  # "verify_cloud_complete.sh gcp". Replacing this entire body with
+  # `echo "Next: bash scripts/deploy/verify_cloud_complete.sh gcp"; exit 0` kept
+  # the suite green -- the primary cloud's only binding was satisfied by the
+  # three saboteur shapes this whole change exists to kill. So the body is
+  # scripts/deploy/verify_gcp_complete.sh, which is in GCP's deploy_scripts and
+  # is RUN by tests/test_deploy_script_execution.py like every other bound
+  # script. What remains a text read is this YAML, and CI requires the step
+  # below to be an exact invocation of a script the registry proves by
+  # execution -- not a mention of one.
+  #
+  # Out of band by construction: it runs after the deploy job, so it can make
+  # the run red and can never leave GCP half-deployed. Read-only -- one public
+  # GET, no credentials, no cloud SDK.
+  #
+  # `if: always()` is load-bearing and was missing. With a bare `needs:
+  # [deploy]`, GitHub SKIPS this job when deploy fails -- and a deploy that
+  # failed PARTWAY has already mutated production, which is exactly the state
+  # somebody needs to know the completeness of. The check would have been absent
+  # from every run where it mattered most.
+  #
+  # What it still does NOT cover, stated because a comment here once claimed it
+  # ran "after every production mutation" and that is false: `migrate-schema`
+  # and `sync-runtime-secrets` mutate production BEFORE `deploy`, and this job
+  # is skipped when `deploy` is skipped -- which is exactly what happens when
+  # `confirm-current-main` says do not proceed. A run can therefore migrate the
+  # schema, rotate runtime secrets, skip the deploy, and never reach this check.
+  # The coverage is: every run in which the deploy job ran, whatever its result.
+  # ---------------------------------------------------------------------------
+  verify-cloud-complete:
+    needs: [deploy]
+    if: ${{ always() && needs.deploy.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - name: Install runtime
+        run: uv sync --frozen
+
+      # Exactly this, on one line. tests/test_cloud_rollout_completeness.py
+      # requires a step whose `run` IS an invocation of a script GCP's registry
+      # entry proves by execution; an echo, a comment or a `|| true` is not one.
+      - name: Is the GCP cloud complete, or only deployed?
+        run: bash scripts/deploy/verify_gcp_complete.sh

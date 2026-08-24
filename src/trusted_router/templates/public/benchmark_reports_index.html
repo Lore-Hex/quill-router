@@ -1,0 +1,31 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="public-proof-strip">
+  <div><strong>First-party evidence</strong><span>Observed through the TrustedRouter production route.</span></div>
+  <div><strong>Calendar months</strong><span>Stable UTC windows instead of a changing live slice.</span></div>
+  <div><strong>Exact percentiles</strong><span>Nearest-rank p50 and p95 from metadata-only samples.</span></div>
+  <div><strong>Reproducible</strong><span>Methodology and machine-readable evidence ship with every report.</span></div>
+</section>
+
+<section class="model-catalog">
+  <div class="model-catalog-head">
+    <div><span class="eyebrow">Monthly evidence</span><h2>Provider and model benchmark reports.</h2></div>
+    <p>Each report freezes one month of route measurements so teams can cite, compare, and audit the result after the live leaderboard moves on.</p>
+  </div>
+  <div class="marketing-grid two">
+    {% for report in reports %}
+    <a class="marketing-card card-as-link" href="/benchmarks/reports/{{ report.period }}">
+      <span class="card-label">{{ report.period_label }}</span>
+      <h3>{{ report.row_count_label }} benchmark rows</h3>
+      <p>{{ report.provider_count_label }} providers and {{ report.model_count_label }} models. {{ report.overall.availability_label }} measured provider availability.</p>
+      <span class="card-link">Read report →</span>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="cta-band">
+  <div><h2>Need the current route?</h2><p>The live leaderboard uses the newest balanced sample window. Monthly reports preserve history.</p></div>
+  <div class="sdk-links"><a class="pill" href="/leaderboard">Live leaderboard</a><a class="pill" href="/compare/models">Compare models</a><a class="pill" href="/providers">Provider policies</a></div>
+</section>
+{% endblock %}

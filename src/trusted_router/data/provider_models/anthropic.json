@@ -1,53 +1,300 @@
 {
-  "_about": "Provider-native supplement for Anthropic-direct models released after the OpenRouter snapshot. The attested gateway maps the dotted catalog id -> Anthropic's dashed id algorithmically (internal/llm/anthropic.go mapModelID: strip 'anthropic/' prefix, then ReplaceAll('.', '-')), so adding a Claude model here usually needs no enclave change. Pricing fields are PROVIDER COST in microdollars/M; the loader applies x1.10 to get the customer price. Claude Sonnet 5 is listed at Anthropic's introductory price through 2026-08-31. Claude Fable 5 is listed but has a catalog-level privacy override because it is not tracked as ZDR.",
+  "_about": "Hourly provider-native Anthropic catalog. Availability, exact upstream IDs, context limits, output limits, and capabilities come from Anthropic's authenticated Models API. Token and cache-read prices come from Anthropic's public pricing page. Pricing fields are provider cost in microdollars/M; the runtime applies the standard customer markup. Anthropic remains non-ZDR in TrustedRouter until its contracted ZDR start date is separately activated.",
   "models": [
     {
       "id": "anthropic/claude-sonnet-5",
       "display_name": "Claude Sonnet 5",
-      "title": "anthropic/claude-sonnet-5",
-      "context_length": 1048576,
-      "max_output_tokens": 64000,
+      "title": "claude-sonnet-5",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
       "model_type": "chat",
-      "features": ["function-calling"],
-      "input_modalities": ["text", "image"],
-      "output_modalities": ["text"],
-      "endpoints": ["chat/completions"],
-      "upstream_id": "anthropic/claude-sonnet-5",
-      "status": 1
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "upstream_id": "claude-sonnet-5",
+      "status": 1,
+      "created_at": "2026-06-29T00:00:00Z",
+      "cached_input_token_price_per_m": 200000
     },
     {
       "id": "anthropic/claude-opus-4.8",
       "display_name": "Claude Opus 4.8",
-      "title": "anthropic/claude-opus-4.8",
-      "context_length": 200000,
-      "max_output_tokens": 64000,
-      "input_token_price_per_m": 4500000,
-      "output_token_price_per_m": 22500000,
+      "title": "claude-opus-4-8",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
       "model_type": "chat",
-      "features": ["function-calling"],
-      "input_modalities": ["text", "image"],
-      "output_modalities": ["text"],
-      "endpoints": ["chat/completions"],
-      "upstream_id": "anthropic/claude-opus-4.8",
-      "status": 1
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "upstream_id": "claude-opus-4-8",
+      "status": 1,
+      "created_at": "2026-05-28T00:00:00Z",
+      "cached_input_token_price_per_m": 500000
     },
     {
       "id": "anthropic/claude-fable-5",
       "display_name": "Claude Fable 5",
-      "title": "anthropic/claude-fable-5",
+      "title": "claude-fable-5",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 10000000,
+      "output_token_price_per_m": 50000000,
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "upstream_id": "claude-fable-5",
+      "status": 1,
+      "created_at": "2026-06-07T00:00:00Z",
+      "cached_input_token_price_per_m": 1000000
+    },
+    {
+      "display_name": "Claude Haiku 4.5",
+      "title": "claude-haiku-4-5-20251001",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-haiku-4.5",
       "context_length": 200000,
       "max_output_tokens": 64000,
-      "input_token_price_per_m": 9000000,
-      "output_token_price_per_m": 45000000,
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "upstream_id": "claude-haiku-4-5-20251001",
+      "created_at": "2025-10-15T00:00:00Z",
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 5000000,
+      "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "Claude Opus 4.5",
+      "title": "claude-opus-4-5-20251101",
       "model_type": "chat",
-      "features": ["function-calling"],
-      "input_modalities": ["text", "image"],
-      "output_modalities": ["text"],
-      "endpoints": ["chat/completions"],
-      "upstream_id": "anthropic/claude-fable-5",
-      "status": 1
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.5",
+      "context_length": 200000,
+      "max_output_tokens": 64000,
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "upstream_id": "claude-opus-4-5-20251101",
+      "created_at": "2025-11-24T00:00:00Z",
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Opus 4.6",
+      "title": "claude-opus-4-6",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.6",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "upstream_id": "claude-opus-4-6",
+      "created_at": "2026-02-04T00:00:00Z",
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Opus 4.7",
+      "title": "claude-opus-4-7",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.7",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "upstream_id": "claude-opus-4-7",
+      "created_at": "2026-04-14T00:00:00Z",
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Opus 5",
+      "title": "claude-opus-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-5",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "upstream_id": "claude-opus-5",
+      "created_at": "2026-07-24T00:00:00Z",
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Sonnet 4.5",
+      "title": "claude-sonnet-4-5-20250929",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-sonnet-4.5",
+      "context_length": 1000000,
+      "max_output_tokens": 64000,
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "upstream_id": "claude-sonnet-4-5-20250929",
+      "created_at": "2025-09-29T00:00:00Z",
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 300000
+    },
+    {
+      "display_name": "Claude Sonnet 4.6",
+      "title": "claude-sonnet-4-6",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-sonnet-4.6",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "upstream_id": "claude-sonnet-4-6",
+      "created_at": "2026-02-17T00:00:00Z",
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 300000
     }
-  ]
+  ],
+  "provider": "anthropic",
+  "source": "https://www.anthropic.com/pricing",
+  "generated_at": "2026-08-24T16:40:13Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 10
 }

@@ -407,6 +407,19 @@ async def test_openai_compatible_adapter_forwards_provider_specific_controls(
         ),
         (
             Model(
+                id="moonshotai/kimi-k3",
+                name="Kimi K3 on Telnyx",
+                provider="telnyx",
+                context_length=1_000_000,
+                upstream_id="moonshotai/Kimi-K3",
+            ),
+            "TELNYX_API_KEY",
+            "telnyx-value",
+            "https://api.telnyx.com/v2/ai/openai/chat/completions",
+            "moonshotai/Kimi-K3",
+        ),
+        (
+            Model(
                 id="thinkingmachines/inkling",
                 name="Inkling 256K on Tinker",
                 provider="thinkingmachines",
@@ -639,8 +652,28 @@ def test_fireworks_catalog_exposes_provider_specific_endpoints() -> None:
         "accounts/fireworks/models/gpt-oss-120b"
     }
     assert {endpoint.prompt_price_microdollars_per_million_tokens for endpoint in fireworks} == {
-        165_000
+        158_250
     }
+
+
+def test_fireworks_catalog_exposes_kimi_k3_with_cached_pricing() -> None:
+    endpoints = endpoints_for_model("moonshotai/kimi-k3")
+    fireworks = [endpoint for endpoint in endpoints if endpoint.provider == "fireworks"]
+
+    assert {endpoint.usage_type for endpoint in fireworks} == {"Credits", "BYOK"}
+    assert {endpoint.upstream_id for endpoint in fireworks} == {
+        "accounts/fireworks/models/kimi-k3"
+    }
+    assert {endpoint.prompt_price_microdollars_per_million_tokens for endpoint in fireworks} == {
+        3_165_000
+    }
+    assert {endpoint.completion_price_microdollars_per_million_tokens for endpoint in fireworks} == {
+        15_825_000
+    }
+    assert {
+        endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
+        for endpoint in fireworks
+    } == {316_500}
 
 
 def test_fireworks_catalog_exposes_glm_52_fast_router() -> None:
@@ -652,26 +685,53 @@ def test_fireworks_catalog_exposes_glm_52_fast_router() -> None:
         "accounts/fireworks/routers/glm-5p2-fast"
     }
     assert {endpoint.prompt_price_microdollars_per_million_tokens for endpoint in fireworks} == {
-        3_080_000
+        2_954_000
     }
 
 
-def test_alibaba_catalog_is_staged_but_not_routable_until_entitled() -> None:
+def test_baseten_catalog_exposes_glm_52_fast_router() -> None:
+    endpoints = endpoints_for_model("z-ai/glm-5.2-fast")
+    baseten = [endpoint for endpoint in endpoints if endpoint.provider == "baseten"]
+
+    assert {endpoint.usage_type for endpoint in baseten} == {"Credits", "BYOK"}
+    assert {endpoint.upstream_id for endpoint in baseten} == {
+        "zai-org/GLM-5.2-Fast"
+    }
+    assert {endpoint.prompt_price_microdollars_per_million_tokens for endpoint in baseten} == {
+        2_215_500
+    }
+    assert {endpoint.completion_price_microdollars_per_million_tokens for endpoint in baseten} == {
+        6_963_000
+    }
+    assert {
+        endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
+        for endpoint in baseten
+    } == {221_550}
+
+
+def test_alibaba_catalog_is_routable_after_workspace_entitlement() -> None:
     from trusted_router.catalog import GATEWAY_PREPAID_PROVIDER_SLUGS, PROVIDERS
 
-    # Alibaba /models works, but the current workspace key returns
-    # AccessDenied.Unpurchased for sampled chat calls. Keep the provider and
-    # manifest staged, but do not publish user-routable endpoints until the
-    # Model Studio workspace is entitled to the selected models.
     assert "alibaba" in PROVIDERS
-    assert PROVIDERS["alibaba"].supports_prepaid is False
+    assert PROVIDERS["alibaba"].supports_prepaid is True
     assert PROVIDERS["alibaba"].supports_byok is False
-    assert "alibaba" not in GATEWAY_PREPAID_PROVIDER_SLUGS
-    assert not [
+    assert "alibaba" in GATEWAY_PREPAID_PROVIDER_SLUGS
+    endpoints = [
         endpoint
-        for endpoint in endpoints_for_model("qwen/qwen3.5-397b-a17b")
+        for endpoint in endpoints_for_model("qwen/qwen3.7-flash")
         if endpoint.provider == "alibaba"
     ]
+    assert {endpoint.usage_type for endpoint in endpoints} == {"Credits"}
+    assert {endpoint.upstream_id for endpoint in endpoints} == {"qwen3.7-flash"}
+    snapshot_endpoints = [
+        endpoint
+        for endpoint in endpoints_for_model("qwen/qwen3.7-flash-2026-07-15")
+        if endpoint.provider == "alibaba"
+    ]
+    assert {endpoint.usage_type for endpoint in snapshot_endpoints} == {"Credits"}
+    assert {endpoint.upstream_id for endpoint in snapshot_endpoints} == {
+        "qwen3.7-flash-2026-07-15"
+    }
 
 
 @pytest.mark.asyncio

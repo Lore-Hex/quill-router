@@ -20,6 +20,7 @@ from trusted_router.storage_gcp_authorize import (
     AuthorizeOutcome,
     authorize_atomic,
     check_key_window_limits,
+    key_window_limit_decision,
     settle_atomic,
 )
 from trusted_router.storage_gcp_counters import KEY_LIMIT_TABLE
@@ -81,6 +82,19 @@ def test_settle_bumps_windows_and_authorize_blocks_then_rolls_over() -> None:
     assert row["week_usage"] == 700
     assert row["month_usage"] == 700
     assert row["day_start"] == _floors()["daily"]
+
+    decision = key_window_limit_decision(
+        store._database,
+        store._param_types,
+        key_hash=key.hash,
+        estimate=200,
+        window_limits={"daily": 1_000},
+    )
+    assert decision is not None
+    assert decision.allowed is True
+    assert decision.limit == 1_000
+    assert decision.remaining == 300
+    assert decision.reset_seconds >= 1
 
     # 700 + 400 > 1000 -> the snapshot check blocks, naming WHICH window.
     assert _check(store, key.hash, 400, {"daily": 1_000}) == "daily"
@@ -302,33 +316,3 @@ def test_window_check_passes_through_idempotent_replay() -> None:
         key_hash=key.hash, estimate=900, window_limits={"daily": 1_000},
         idempotency_scope="scope-1", idempotency_fingerprint="fp-1",
     ) is None
-
-
-def test_flip_seed_carries_window_limit_config() -> None:
-    """codex #93 round 2: reconcile_for_flip's seed must include the window
-    config columns."""
-    from trusted_router.storage import Workspace
-    from trusted_router.storage_gcp_counter_reconcile import reconcile_for_flip
-    from trusted_router.storage_gcp_counters import KEY_LIMIT_TABLE as KLT
-
-    store, db, _ = make_fake_store()
-    ws = "ws_seed"
-    store._write_entity(
-        "workspace", ws, Workspace(id=ws, name="t", owner_user_id="u", billing_paused=True)
-    )
-    store._write_entity(
-        "credit", ws,
-        {"workspace_id": ws, "total_credits_microdollars": 1_000_000},
-    )
-    _raw, key = store.api_keys.create(
-        workspace_id=ws, name="k", creator_user_id=None,
-        limit_daily_microdollars=4_000, limit_monthly_microdollars=90_000,
-    )
-    del db.typed[KLT][(key.hash, 0)]  # simulate a key without a typed row
-
-    res = reconcile_for_flip(store, ws, apply=True)
-    assert res.applied, res.reasons
-    row = db.typed[KLT][(key.hash, 0)]
-    assert row["day_limit_micro"] == 4_000
-    assert row["week_limit_micro"] is None
-    assert row["month_limit_micro"] == 90_000

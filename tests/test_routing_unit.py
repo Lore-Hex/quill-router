@@ -235,7 +235,20 @@ def test_provider_route_preferences_normalizes_provider_aliases() -> None:
             }
         }
     )
-    assert prefs.only == frozenset({"gemini", "mistral", "kimi"})
+    assert prefs.only == frozenset(
+        {"google-ai-studio", "google-vertex", "mistral", "kimi"}
+    )
+
+
+@pytest.mark.parametrize("legacy", ["gemini", "google"])
+def test_provider_route_preferences_expands_legacy_google_group(legacy: str) -> None:
+    prefs = provider_route_preferences(
+        {"provider": {"order": [legacy], "only": [legacy], "ignore": [legacy]}}
+    )
+    expected = ("google-vertex", "google-ai-studio")
+    assert prefs.order == expected
+    assert prefs.only == frozenset(expected)
+    assert prefs.ignore == frozenset(expected)
 
 
 def test_provider_route_preferences_accepts_comma_separated_order() -> None:
@@ -307,8 +320,45 @@ def test_min_privacy_parses_friendly_aliases() -> None:
     assert p.min_privacy_rank == PRIVACY_TIER_ZERO_RETENTION
     p2 = provider_route_preferences({"model": "x", "provider": {"min_privacy": "maximum"}})
     assert p2.min_privacy_rank == PRIVACY_TIER_CONFIDENTIAL
+    for alias in ("e2e", "e2ee"):
+        preferences = provider_route_preferences(
+            {"model": "x", "provider": {"min_privacy": alias}}
+        )
+        assert preferences.min_privacy_rank == PRIVACY_TIER_CONFIDENTIAL
     # Default: no filter.
     assert provider_route_preferences({"model": "x"}).min_privacy_rank == 0
+
+
+def test_confidential_privacy_tier_requires_compute_and_e2ee() -> None:
+    from trusted_router.catalog import (
+        PRIVACY_TIER_CONFIDENTIAL,
+        PRIVACY_TIER_STANDARD,
+        Provider,
+        provider_privacy_tier,
+    )
+
+    confidential_compute_only = Provider(
+        slug="compute-only",
+        name="Compute only",
+        provider_confidential_compute=True,
+        provider_e2ee=False,
+    )
+    e2ee_only = Provider(
+        slug="e2ee-only",
+        name="E2EE only",
+        provider_confidential_compute=False,
+        provider_e2ee=True,
+    )
+    both = Provider(
+        slug="both",
+        name="Both",
+        provider_confidential_compute=True,
+        provider_e2ee=True,
+    )
+
+    assert provider_privacy_tier(confidential_compute_only) == PRIVACY_TIER_STANDARD
+    assert provider_privacy_tier(e2ee_only) == PRIVACY_TIER_STANDARD
+    assert provider_privacy_tier(both) == PRIVACY_TIER_CONFIDENTIAL
 
 
 def test_min_privacy_rejects_unknown_value() -> None:
@@ -338,9 +388,9 @@ def test_min_privacy_confidential_keeps_confidential_reachable_model() -> None:
         model_max_privacy_tier,
     )
 
-    # no-store via deepseek, confidential via phala — must still route.
+    # GLM 5.2 has a current confidential Phala route and must still route.
     candidates = chat_route_candidates(
-        {"model": "deepseek/deepseek-v3.2", "provider": {"min_privacy": "confidential"}},
+        {"model": "z-ai/glm-5.2", "provider": {"min_privacy": "confidential"}},
         _settings(),
     )
     assert candidates
@@ -438,7 +488,7 @@ def test_embeddings_data_collection_deny_soft_fallback_keeps_standard_model_endp
         endpoints_for_model,
     )
 
-    model_id = "openai/text-embedding-3-large"
+    model_id = "google/gemini-embedding-001"
     catalog_endpoints = endpoints_for_model(model_id)
     assert catalog_endpoints
     assert all(endpoint_privacy_tier(endpoint) < PRIVACY_TIER_NO_STORE for endpoint in catalog_endpoints)
@@ -475,7 +525,7 @@ def test_catalog_data_collection_deny_soft_fallback_and_satisfiable_filtering() 
         endpoints_for_model,
     )
 
-    standard_model_id = "openai/text-embedding-3-large"
+    standard_model_id = "google/gemini-embedding-001"
     standard_endpoints = endpoints_for_model(standard_model_id)
     assert standard_endpoints
     assert all(

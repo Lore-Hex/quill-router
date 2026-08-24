@@ -1,11 +1,12 @@
-"""Phala (Confidential AI) — human-only provider config.
+"""Phala model discovery with route-specific confidentiality boundaries.
 
 Phala runs inference inside Intel TDX + NVIDIA Confidential Compute
-TEEs. We route exclusively to their GPU-TEE-attested tier (the
-`phala/<bare>` model id form), NOT the upstream pass-through tier
-(`openai/gpt-oss-120b`, `anthropic/claude-haiku-4.5`, etc.) which
-requires a different — separately-issued — redpill key our TR
-account isn't entitled to. See
+TEEs. Most TrustedRouter routes use their GPU-TEE tier (the
+`phala/<bare>` model id form). A small explicit allowlist may use an
+upstream-author pass-through ID after a direct account canary succeeds.
+Those exact routes receive a model/provider privacy override in
+catalog_data.py and must never inherit the confidential posture of
+`phala/*`. See
 docs.phala.com/phala-cloud/confidential-ai/confidential-model/confidential-ai-api
 for the official model-id convention.
 
@@ -21,14 +22,18 @@ the fetch may still succeed (Phala's /v1/models tolerates anon GET)
 but is treated as one failure under MAX_TOLERATED_FAILURES if it
 401s for any reason.
 
-To add a new Phala-served model: probe /v1/models, find the
-`phala/<bare>` row, and add the `phala/<bare>` → OR-canonical pair
-to `_NATIVE_TO_OR_ID`. Refresh.py overlays the price automatically.
+To add a confidential model, probe /v1/models, find the `phala/<bare>`
+row, and add its canonical mapping. A non-phala pass-through route
+requires an explicit standard-privacy override and a visible-content
+chat canary before it can enter `_STANDARD_PASSTHROUGH_TO_OR_ID`.
 """
+
 from __future__ import annotations
 
 import os
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -40,7 +45,8 @@ from scripts.pricing.base import (
     ProviderPricingResult,
     validate,
 )
-from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_upstream_id
+from scripts.pricing.manifest import write_discovered_chat_manifest
+from scripts.pricing.openai_catalog import discover_openai_chat_catalog
 from trusted_router.provider_lifecycle import (
     provider_model_retired,
     provider_price_microdollars,
@@ -48,6 +54,14 @@ from trusted_router.provider_lifecycle import (
 
 SLUG = "phala"
 URL = "https://api.redpill.ai/v1/models"
+MANIFEST_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "src"
+    / "trusted_router"
+    / "data"
+    / "provider_models"
+    / "phala.json"
+)
 
 EXPECTED_MODELS = [
     "openai/gpt-oss-120b",
@@ -55,6 +69,7 @@ EXPECTED_MODELS = [
     "z-ai/glm-5",
     "z-ai/glm-5.2",
     "moonshotai/kimi-k2.6",
+    "moonshotai/kimi-k3",
     "google/gemma-3-27b-it",
 ]
 
@@ -86,7 +101,17 @@ _NATIVE_TO_OR_ID = {
     "phala/mimo-v2-flash": "xiaomi/mimo-v2-flash",
     "phala/minimax-m2.5": "minimax/minimax-m2.5",
 }
-UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.items()}
+_STANDARD_PASSTHROUGH_TO_OR_ID = {
+    # Direct visible-content canary passed on 2026-07-29. This is not a
+    # phala/* Confidential AI ID, so catalog_data.py forces Standard privacy.
+    "moonshotai/kimi-k3": "moonshotai/kimi-k3",
+}
+_DISCOVERED_ID_MAP = {
+    **_NATIVE_TO_OR_ID,
+    **_STANDARD_PASSTHROUGH_TO_OR_ID,
+}
+UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _DISCOVERED_ID_MAP.items()}
+_DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 
 
 def _apply_lifecycle_policy(
@@ -116,33 +141,10 @@ def _apply_lifecycle_policy(
     return effective
 
 
-def _extract_rates(pricing: object) -> tuple[float, float, float | None] | None:
-    """Phala /v1/models pricing block is a flat dict of strings in
-    USD/token:
-        {"prompt": "0.00000032", "completion": "0.00000048",
-         "image": "0", "request": "0",
-         "input_cache_reads": "0", "input_cache_writes": "0"}
-    Return (prompt_per_token, completion_per_token,
-    cached_per_token) or None if structurally broken or zero rate.
-    Cached returns None when the published rate is 0 (no discount)
-    so downstream pricing doesn't store a literal free cache."""
-    if not isinstance(pricing, dict):
-        return None
-    try:
-        prompt = float(pricing.get("prompt") or 0)
-        completion = float(pricing.get("completion") or 0)
-        cached = float(pricing.get("input_cache_reads") or 0)
-    except (TypeError, ValueError):
-        return None
-    if prompt <= 0 or completion <= 0:
-        return None
-    return prompt, completion, (cached if cached > 0 else None)
-
-
 def fetch() -> ProviderPricingResult:
-    api_key = os.environ.get("PHALA_CONFIDENTIAL_API_KEY") or os.environ.get(
-        "PHALA_API_KEY"
-    )
+    global _DISCOVERED_MANIFEST_ROWS  # noqa: PLW0603
+
+    api_key = os.environ.get("PHALA_CONFIDENTIAL_API_KEY") or os.environ.get("PHALA_API_KEY")
     headers = {"User-Agent": PROVIDER_FETCH_UA, "Accept": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -156,32 +158,19 @@ def fetch() -> ProviderPricingResult:
         response.raise_for_status()
         payload = response.json()
     rows = payload.get("data") or []
-    prices: dict[str, ModelPrice] = {}
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        native_id = row.get("id")
-        if not isinstance(native_id, str):
-            continue
-        or_id = mapped_or_canonical_model_id(native_id, _NATIVE_TO_OR_ID)
-        if or_id is None:
-            continue
-        remember_upstream_id(UPSTREAM_ID_MAP, or_id, native_id)
-        rates = _extract_rates(row.get("pricing"))
-        if rates is None:
-            continue
-        prompt_per_token, completion_per_token, cached_per_token = rates
-        prices[or_id] = ModelPrice(
-            prompt_micro_per_m=int(round(prompt_per_token * 1_000_000_000_000)),
-            completion_micro_per_m=int(round(completion_per_token * 1_000_000_000_000)),
-            prompt_cached_micro_per_m=(
-                int(round(cached_per_token * 1_000_000_000_000))
-                if cached_per_token is not None
-                else None
-            ),
-        )
+    if not isinstance(rows, list):
+        raise RuntimeError("phala: /v1/models response has no data list")
+    prices, discovered = discover_openai_chat_catalog(
+        [row for row in rows if isinstance(row, dict)],
+        explicit_map=_DISCOVERED_ID_MAP,
+        upstream_id_map=UPSTREAM_ID_MAP,
+        include=lambda row: row.get("id") in _DISCOVERED_ID_MAP,
+    )
 
     prices = _apply_lifecycle_policy(prices)
+    _DISCOVERED_MANIFEST_ROWS = {
+        model_id: row for model_id, row in discovered.items() if model_id in prices
+    }
     notes: list[str] = []
     errors = validate(prices, EXPECTED_MODELS)
     if errors:
@@ -193,4 +182,13 @@ def fetch() -> ProviderPricingResult:
         source="api",
         fetched_url=URL,
         notes=notes,
+    )
+
+
+def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
+    return write_discovered_chat_manifest(
+        result,
+        manifest_path=MANIFEST_PATH,
+        discovered_rows=_DISCOVERED_MANIFEST_ROWS,
+        source_url=URL,
     )

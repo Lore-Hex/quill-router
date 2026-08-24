@@ -17,14 +17,6 @@
 {% endblock %}
 
 {% block body %}
-{# Inter is OpenRouter's body font and the most-recognizable element of
-   their visual identity. Loaded from Google Fonts CDN with display=swap
-   so the page renders immediately with system fallback and re-paints
-   when Inter arrives (avoids FOIT). Chunk 5 may vendor + preload for
-   first-paint perf. #}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="/static/chat.css?v={{ static_version|default('local') }}">
 
 <section class="chat-shell" data-chat-shell>
@@ -51,7 +43,7 @@
     <header class="chat-header">
       <button class="chat-hamburger" type="button" aria-label="Toggle sidebar" data-action="toggle-sidebar">&#9776;</button>
       <div class="chat-header-title">
-        <span class="chat-header-chat-title" data-chat-header-title></span>
+        <h1 class="chat-header-chat-title" data-chat-header-title>TrustedRouter Chat</h1>
         <span class="chat-header-chat-cost" data-chat-header-cost></span>
       </div>
       <div class="chat-models-bar" data-chat-models-bar>
@@ -124,7 +116,7 @@
           data-action="attach-file"
           title="Attach image"
           aria-label="Attach image"
-        >📎</button>
+        >Add</button>
         <button
           type="button"
           class="chat-input-btn"
@@ -132,7 +124,7 @@
           data-action="voice-input"
           title="Voice input"
           aria-label="Voice input"
-        >🎙</button>
+        >Voice</button>
         <input
           type="file"
           accept="image/*"
@@ -160,7 +152,7 @@
 
 {# Inline config so chat.js doesn't need a second roundtrip just to
    know which API base URL to call. Mirrors the dashboard.js pattern. #}
-<script>
+<script nonce="{{ csp_nonce() }}">
   window.__TR_CHAT__ = {
     apiBaseUrl: {{ api_base_url|tojson }},
     issueKeyPath: "/internal/chat/issue-browser-key",
@@ -173,7 +165,7 @@
 </script>
 {# Markdown + code highlighting + XSS sanitization loaded from CDN.
    marked turns the assistant's content into HTML; highlight.js paints
-   code blocks; DOMPurify strips any <script> a model might emit
+   code blocks; DOMPurify strips any <script nonce="{{ csp_nonce() }}"> a model might emit
    before insertion. chunk 4 may vendor these locally for offline +
    subresource-integrity guarantees. #}
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark.min.css">

@@ -16,6 +16,7 @@ def _sample(
     ttft: int | None = 100,
     error_type: str | None = None,
     error_status: int | None = None,
+    source: str = "synthetic",
 ) -> ProviderBenchmarkSample:
     return ProviderBenchmarkSample(
         id="b",
@@ -28,7 +29,7 @@ def _sample(
         first_token_milliseconds=ttft,
         error_type=error_type,
         error_status=error_status,
-        source="synthetic",
+        source=source,
     )
 
 
@@ -47,9 +48,26 @@ def test_aggregate_counts_errors_and_median_ttft() -> None:
     assert stats.error_types == ["http_500"]
 
 
+def test_aggregate_ignores_sustained_throughput_samples() -> None:
+    assert (
+        aggregate(
+            [
+                _sample(
+                    status="error",
+                    error_status=504,
+                    source="synthetic_throughput",
+                )
+            ]
+        )
+        == {}
+    )
+
+
 def test_detect_drift_flags_error_spike() -> None:
     current = aggregate([_sample(status="error", error_status=503) for _ in range(10)])
-    baseline = {"openai/openai/gpt-5.4-nano": {"error_rate": 0.0, "error_types": [], "p50_ttft_ms": 100}}
+    baseline = {
+        "openai/openai/gpt-5.4-nano": {"error_rate": 0.0, "error_types": [], "p50_ttft_ms": 100}
+    }
     findings = detect_drift(current, baseline)
     kinds = {f.kind for f in findings}
     assert "error_spike" in kinds
@@ -74,7 +92,9 @@ def test_detect_drift_flags_new_model_appearance() -> None:
 def test_detect_drift_respects_min_samples() -> None:
     # Only 3 samples — below the default min_samples=5 — so no judgment.
     current = aggregate([_sample(status="error", error_status=500) for _ in range(3)])
-    baseline = {"openai/openai/gpt-5.4-nano": {"error_rate": 0.0, "error_types": [], "p50_ttft_ms": 100}}
+    baseline = {
+        "openai/openai/gpt-5.4-nano": {"error_rate": 0.0, "error_types": [], "p50_ttft_ms": 100}
+    }
     assert detect_drift(current, baseline) == []
 
 

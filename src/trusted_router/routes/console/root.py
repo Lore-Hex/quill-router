@@ -17,11 +17,11 @@ from trusted_router.storage import STORE
 
 def register(app: FastAPI) -> None:
     @app.get("/console")
-    async def console_root() -> Response:
+    def console_root() -> Response:
         return RedirectResponse(url="/console/api-keys", status_code=302)
 
     @app.post("/console/workspaces/select")
-    async def console_select_workspace(
+    def console_select_workspace(
         request: Request,
         ctx: ConsoleDep,
         workspace_id: str = Form(..., min_length=1, max_length=128),

@@ -23,9 +23,11 @@ Logic:
     other regions.
   - Exit 1 if at least one region is in the rollback set, else 0.
 
-Why "down" only (not "degraded"): synthetics naturally flap during a
-rolling update — only sustained-down means the deploy actually broke
-something for that region. degraded alone is normal churn.
+Why "down" and "trust_degraded" (not "degraded"): synthetics naturally
+flap during a rolling update, so plain degraded is normal churn. But
+trust_degraded means the attestation no longer verifies — for an
+attested gateway that is the product being broken, not churn, so it
+counts toward rollback exactly like down.
 
 Why per-region: a deploy can break us-central1 but leave
 europe-west4 healthy (e.g., bad regional secret rotation). Rolling
@@ -45,8 +47,15 @@ from collections.abc import Iterable
 # Worst-of: the per-region effective_status is the worst over its checks.
 # `unknown` is treated as severity 0 for ranking but reported separately
 # so the operator can tell "no signal" apart from "all healthy."
-SEVERITY = {"up": 0, "degraded": 1, "down": 2}
-INVERSE_SEVERITY = {0: "up", 1: "degraded", 2: "down"}
+# trust_degraded ranks with down, not with degraded. For an ATTESTED
+# gateway, "cannot prove what code is running" is the product failing —
+# a deploy that ships an enclave whose attestation no longer verifies
+# must roll back. Previously it folded into "degraded", and rollback
+# fires only on "down", so an attestation regression could never
+# trigger one.
+SEVERITY = {"up": 0, "degraded": 1, "trust_degraded": 2, "down": 2}
+# Statuses that count toward the consecutive-failure rollback counter.
+ROLLBACK_STATUSES = frozenset({"down", "trust_degraded"})
 
 
 def normalize_watchdog_status(status: object) -> str:
@@ -55,7 +64,9 @@ def normalize_watchdog_status(status: object) -> str:
         return "up"
     if text == "down":
         return "down"
-    if text in {"degraded", "routing_degraded", "trust_degraded"}:
+    if text == "trust_degraded":
+        return "trust_degraded"
+    if text in {"degraded", "routing_degraded"}:
         return "degraded"
     return "unknown"
 
@@ -95,7 +106,12 @@ def fetch_per_region(
             out[region] = normalize_watchdog_status(status)
         return out
 
-    worst: dict[str, int] = {}
+    # Keep the worst STATUS, not the worst severity int. down and
+    # trust_degraded share severity 2, so ranking by int and mapping back
+    # collapses trust_degraded into down — and the caller needs the
+    # distinction to report WHY it rolled back (an attestation regression
+    # reads very differently from an unreachable region).
+    worst: dict[str, str] = {}
     for check in checks:
         target = (check or {}).get("target_region")
         status = normalize_watchdog_status(
@@ -105,18 +121,12 @@ def fetch_per_region(
             continue
         if target not in regions:
             continue
-        sev = SEVERITY.get(str(status).lower())
+        sev = SEVERITY.get(status)
         if sev is None:
             continue
-        if sev > worst.get(target, -1):
-            worst[target] = sev
-    fallback_out: dict[str, str] = {}
-    for region in regions:
-        if region in worst:
-            fallback_out[region] = INVERSE_SEVERITY[worst[region]]
-        else:
-            fallback_out[region] = "unknown"
-    return fallback_out
+        if sev > SEVERITY.get(worst.get(target, ""), -1):
+            worst[target] = status
+    return {region: worst.get(region, "unknown") for region in regions}
 
 
 def write_output(key: str, value: str) -> None:
@@ -148,10 +158,8 @@ def main() -> int:
     parser.add_argument(
         "--slo-class",
         default="router_core",
-        help=(
-            "SLO class to evaluate for rollback. Default router_core; "
-            "use provider_effective only when intentionally gating on upstream responses."
-        ),
+        choices=("router_core", "control_plane"),
+        help="SLO class to evaluate for rollback. Default: router_core.",
     )
     parser.add_argument(
         "--baseline-grace-sec",
@@ -229,7 +237,7 @@ def main() -> int:
             # healthy in the baseline. If it was already down, the
             # deploy isn't the suspect; leave the counter at 0 so
             # we don't roll back over a pre-existing condition.
-            if status == "down" and region not in baseline_down:
+            if status in ROLLBACK_STATUSES and region not in baseline_down:
                 consecutive_down[region] += 1
             else:
                 consecutive_down[region] = 0

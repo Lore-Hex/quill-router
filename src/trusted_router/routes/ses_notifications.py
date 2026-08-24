@@ -22,22 +22,33 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import threading
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
+from trusted_router.config import Settings
 from trusted_router.errors import api_error
+from trusted_router.services.ses_suppression import (
+    SesSuppressionService,
+    SesSuppressionSyncError,
+)
 from trusted_router.sns_verify import SnsVerificationError, verify_sns_message
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
 log = logging.getLogger(__name__)
+_SNS_CONFIRM_MAX_CONCURRENT = 2
+_SNS_CONFIRM_SLOTS = threading.BoundedSemaphore(_SNS_CONFIRM_MAX_CONCURRENT)
 
 
-def register_ses_notification_routes(router: APIRouter) -> None:
+def register_ses_notification_routes(router: APIRouter, settings: Settings) -> None:
+    account_suppression = SesSuppressionService(settings)
+
     @router.post("/internal/ses/notifications")
     async def ses_notification(request: Request) -> JSONResponse:
         raw = await request.body()
@@ -47,7 +58,10 @@ def register_ses_notification_routes(router: APIRouter) -> None:
             raise api_error(400, "invalid JSON", ErrorType.BAD_REQUEST) from exc
 
         try:
-            verify_sns_message(envelope)
+            # Verification may fetch/cache an AWS signing certificate. It is
+            # synchronous cryptographic/network work and must not block the
+            # shared control-plane event loop.
+            await run_in_threadpool(verify_sns_message, envelope)
         except SnsVerificationError as exc:
             log.warning("ses_notification.signature_invalid reason=%s", exc)
             # TEMP(2026-07-05): mirror the failure to stderr so it reaches
@@ -67,24 +81,35 @@ def register_ses_notification_routes(router: APIRouter) -> None:
             raise api_error(403, "SNS signature verification failed", ErrorType.FORBIDDEN) from exc
 
         message_id = str(envelope.get("MessageId") or "")
-        if message_id and not STORE.record_sns_message_once(message_id):
-            return JSONResponse({"data": {"replayed": True, "message_id": message_id}})
 
         msg_type = envelope.get("Type")
         if msg_type == "SubscriptionConfirmation":
             subscribe_url = envelope.get("SubscribeURL")
             if not isinstance(subscribe_url, str):
                 raise api_error(400, "missing SubscribeURL", ErrorType.BAD_REQUEST)
+            if not _SNS_CONFIRM_SLOTS.acquire(blocking=False):
+                raise api_error(
+                    429,
+                    "SNS subscription confirmation is busy; retry",
+                    ErrorType.RATE_LIMITED,
+                    headers={"Retry-After": "1"},
+                )
             try:
-                response = httpx.get(subscribe_url, timeout=10.0)
-                response.raise_for_status()
+                try:
+                    await run_in_threadpool(_confirm_subscription, subscribe_url)
+                finally:
+                    _SNS_CONFIRM_SLOTS.release()
             except httpx.HTTPError as exc:
                 log.exception("ses_notification.subscribe_failed url=%s", subscribe_url)
                 raise api_error(502, "failed to confirm SNS subscription", ErrorType.INTERNAL_ERROR) from exc
             log.info("ses_notification.subscribed topic=%s", envelope.get("TopicArn"))
+            if message_id:
+                await run_in_threadpool(STORE.record_sns_message_once, message_id)
             return JSONResponse({"data": {"confirmed": True, "topic_arn": envelope.get("TopicArn")}})
 
         if msg_type == "UnsubscribeConfirmation":
+            if message_id:
+                await run_in_threadpool(STORE.record_sns_message_once, message_id)
             return JSONResponse({"data": {"unsubscribed": True}})
 
         # Notification path: parse the SES feedback envelope.
@@ -97,46 +122,185 @@ def register_ses_notification_routes(router: APIRouter) -> None:
             return JSONResponse({"data": {"ignored": True, "reason": "Message is not JSON"}})
 
         kind = str(feedback.get("notificationType") or feedback.get("eventType") or "")
-        blocked = _apply_feedback(kind, feedback)
-        return JSONResponse({"data": {"kind": kind, "blocked_emails": blocked}})
+        # Apply the suppression first so a transient storage failure leaves the
+        # SNS message retryable. The message-id claim only controls reporting:
+        # suppression writes are idempotent, while duplicate SNS deliveries
+        # must not inflate bounce/complaint counts.
+        try:
+            # Suppression sync and the replay check both talk to the Store;
+            # keep them off the event loop (the bounded-verification contract)
+            # while preserving the account-suppression failure mapping.
+            blocked_count = await run_in_threadpool(
+                _apply_feedback,
+                kind,
+                feedback,
+                account_suppression,
+                emit_log=False,
+            )
+        except SesSuppressionSyncError as exc:
+            log.error("ses_notification.account_suppression_sync_failed")
+            raise api_error(
+                503,
+                "SES suppression synchronization failed",
+                ErrorType.INTERNAL_ERROR,
+            ) from exc
+        replayed = bool(
+            message_id
+            and not await run_in_threadpool(STORE.record_sns_message_once, message_id)
+        )
+        if replayed:
+            blocked_count = 0
+        else:
+            _log_feedback(kind, feedback, blocked_count)
+        return JSONResponse(
+            {
+                "data": {
+                    "kind": kind,
+                    "blocked_count": blocked_count,
+                    "replayed": replayed,
+                }
+            }
+        )
 
 
-def _apply_feedback(kind: str, feedback: dict[str, Any]) -> list[str]:
+def _confirm_subscription(url: str) -> None:
+    response = httpx.get(url, timeout=10.0)
+    response.raise_for_status()
+
+
+def _apply_feedback(
+    kind: str,
+    feedback: dict[str, Any],
+    account_suppression: SesSuppressionService,
+    *,
+    emit_log: bool = True,
+) -> int:
     """Inspect a parsed SES feedback envelope and add email blocks.
 
-    Returns the list of blocked email addresses for telemetry. Both the
-    legacy `notificationType` and new EventBridge-style `eventType` field
-    names are supported.
+    Returns a count, never recipient identities. Both the legacy
+    `notificationType` and new EventBridge-style `eventType` field names are
+    supported. Processing is idempotent because suppression writes use the
+    normalized recipient as their key.
     """
-    blocked: list[str] = []
+    blocked_count = 0
+    tags = _mail_tags(feedback)
     if kind in {"Bounce", "bounce"}:
-        bounce = feedback.get("bounce", {}) or {}
-        bounce_type = bounce.get("bounceType")
+        raw_bounce = feedback.get("bounce")
+        bounce = raw_bounce if isinstance(raw_bounce, dict) else {}
+        raw_bounce_type = bounce.get("bounceType")
+        bounce_type = str(raw_bounce_type) if raw_bounce_type else None
+        raw_recipients = bounce.get("bouncedRecipients")
+        recipients = raw_recipients if isinstance(raw_recipients, list) else []
         # Only PERMANENT bounces stop sends. Transient bounces (mailbox full,
         # greylisting) self-resolve and shouldn't suppress permanently.
         if bounce_type and bounce_type.lower() != "permanent":
-            return blocked
-        feedback_id = bounce.get("feedbackId") or feedback.get("mail", {}).get("messageId")
-        for recipient in bounce.get("bouncedRecipients", []) or []:
-            email = recipient.get("emailAddress") if isinstance(recipient, dict) else None
-            if isinstance(email, str) and email:
-                STORE.block_email_sending(
-                    email=email,
-                    reason="bounce",
-                    bounce_type=bounce_type,
-                    feedback_id=str(feedback_id) if feedback_id else None,
-                )
-                blocked.append(email.lower())
+            recipients = []
+        else:
+            feedback_id = bounce.get("feedbackId") or _mail_message_id(feedback)
+            for recipient in recipients:
+                email = recipient.get("emailAddress") if isinstance(recipient, dict) else None
+                if isinstance(email, str) and email:
+                    STORE.block_email_sending(
+                        email=email,
+                        reason="bounce",
+                        bounce_type=bounce_type,
+                        feedback_id=str(feedback_id) if feedback_id else None,
+                        **tags,
+                    )
+                    account_suppression.suppress(email, "BOUNCE")
+                    blocked_count += 1
     elif kind in {"Complaint", "complaint"}:
-        complaint = feedback.get("complaint", {}) or {}
-        feedback_id = complaint.get("feedbackId") or feedback.get("mail", {}).get("messageId")
-        for recipient in complaint.get("complainedRecipients", []) or []:
+        raw_complaint = feedback.get("complaint")
+        complaint = raw_complaint if isinstance(raw_complaint, dict) else {}
+        raw_recipients = complaint.get("complainedRecipients")
+        recipients = raw_recipients if isinstance(raw_recipients, list) else []
+        feedback_id = complaint.get("feedbackId") or _mail_message_id(feedback)
+        for recipient in recipients:
             email = recipient.get("emailAddress") if isinstance(recipient, dict) else None
             if isinstance(email, str) and email:
                 STORE.block_email_sending(
                     email=email,
                     reason="complaint",
                     feedback_id=str(feedback_id) if feedback_id else None,
+                    **tags,
                 )
-                blocked.append(email.lower())
-    return blocked
+                account_suppression.suppress(email, "COMPLAINT")
+                blocked_count += 1
+    if emit_log:
+        _log_feedback(kind, feedback, blocked_count)
+    return blocked_count
+
+
+def _log_feedback(kind: str, feedback: dict[str, Any], blocked_count: int) -> None:
+    if kind not in {"Bounce", "bounce", "Complaint", "complaint"}:
+        return
+    tags = _mail_tags(feedback)
+    raw_bounce = feedback.get("bounce")
+    bounce = raw_bounce if isinstance(raw_bounce, dict) else {}
+    raw_complaint = feedback.get("complaint")
+    complaint = raw_complaint if isinstance(raw_complaint, dict) else {}
+    bounce_type = str(bounce.get("bounceType") or "none")
+    raw_recipients = (
+        bounce.get("bouncedRecipients")
+        if kind in {"Bounce", "bounce"}
+        else complaint.get("complainedRecipients")
+    )
+    recipient_count = len(raw_recipients) if isinstance(raw_recipients, list) else 0
+    feedback_id = bounce.get("feedbackId") or complaint.get("feedbackId")
+    ses_message_id = _mail_message_id(feedback)
+    log.warning(
+        "ses_feedback.received kind=%s bounce_type=%s recipients=%d blocked=%d "
+        "class=%s profile=%s source=%s medium=%s campaign=%s message_id=%s feedback_id=%s",
+        kind.lower(),
+        bounce_type,
+        recipient_count,
+        blocked_count,
+        tags["mail_class"] or "unknown",
+        tags["sender_profile"] or "unknown",
+        tags["acquisition_source"] or "unknown",
+        tags["acquisition_medium"] or "unknown",
+        tags["acquisition_campaign"] or "unknown",
+        ses_message_id or "unknown",
+        feedback_id or "unknown",
+        extra={
+            "event": "ses_feedback.received",
+            "feedback_kind": kind.lower(),
+            "bounce_type": bounce_type,
+            "recipient_count": recipient_count,
+            "blocked_count": blocked_count,
+            "ses_message_id": ses_message_id or "unknown",
+            "feedback_id": str(feedback_id or "unknown"),
+            **{name: value or "unknown" for name, value in tags.items()},
+        },
+    )
+
+
+def _mail_tags(feedback: dict[str, Any]) -> dict[str, str | None]:
+    mail = feedback.get("mail")
+    raw_tags = mail.get("tags") if isinstance(mail, dict) else None
+    if not isinstance(raw_tags, dict):
+        raw_tags = {}
+
+    def first(name: str) -> str | None:
+        value = raw_tags.get(name)
+        if isinstance(value, list) and value and isinstance(value[0], str):
+            return value[0][:256]
+        if isinstance(value, str):
+            return value[:256]
+        return None
+
+    return {
+        "mail_class": first("mail_class"),
+        "sender_profile": first("sender_profile"),
+        "acquisition_source": first("acquisition_source"),
+        "acquisition_medium": first("acquisition_medium"),
+        "acquisition_campaign": first("acquisition_campaign"),
+    }
+
+
+def _mail_message_id(feedback: dict[str, Any]) -> str | None:
+    mail = feedback.get("mail")
+    if not isinstance(mail, dict):
+        return None
+    message_id = mail.get("messageId")
+    return str(message_id) if message_id else None

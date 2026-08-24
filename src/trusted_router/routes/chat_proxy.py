@@ -1,4 +1,4 @@
-"""POST /chat-proxy/v1/* — same-origin streaming proxy for the chat playground.
+"""Authenticated same-origin streaming proxy for the chat playground.
 
 Background
 ==========
@@ -13,9 +13,11 @@ fetch from trustedrouter.com → api.trustedrouter.com is hard-blocked by
 CORS (the attested gateway returns 401 to OPTIONS preflight with no
 ACAO headers).
 
-This module adds a minimal same-origin streaming pipe at
-``/chat-proxy/v1/{path:path}`` that forwards the request body bytes-
-for-bytes to api.trustedrouter.com and streams the response bytes back.
+This module adds a minimal same-origin streaming pipe at the one browser-used
+endpoint, ``POST /chat-proxy/v1/chat/completions``. A valid inference key is
+resolved locally before any body read or outbound allocation; the handler then
+forwards the request bytes-for-bytes to api.trustedrouter.com and streams the
+response bytes back.
 The proxy:
 
   * NEVER deserializes / inspects / logs the request or response body.
@@ -27,9 +29,8 @@ The proxy:
   * Surfaces the upstream's ``x-trustedrouter-provider`` and
     ``x-trustedrouter-served-model`` headers back to the browser so
     the "via {provider}" meta line in the playground works.
-  * Limits exposure to a single path prefix
-    (``/chat-proxy/v1/``) so this is unambiguously the chat playground's
-    proxy, not a general-purpose hop.
+  * Limits exposure to one exact method and path so this cannot become a
+    general-purpose authenticated hop.
 """
 from __future__ import annotations
 
@@ -39,7 +40,7 @@ import httpx
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import StreamingResponse
 
-from trusted_router.auth import SettingsDep
+from trusted_router.auth import InferencePrincipal, SettingsDep
 from trusted_router.config import Settings
 
 # Headers we strip from the incoming browser request before forwarding
@@ -81,16 +82,16 @@ _RESPONSE_HEADERS_TO_STRIP = frozenset(
 
 
 def register_chat_proxy_routes(router: APIRouter | FastAPI) -> None:
-    @router.api_route(
-        "/chat-proxy/v1/{path:path}",
-        methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    )
+    @router.post("/chat-proxy/v1/chat/completions")
     async def chat_proxy(
         request: Request,
-        path: str,
+        _principal: InferencePrincipal,
         settings: SettingsDep,
     ) -> StreamingResponse:
-        return await _forward(request, path, settings)
+        # The auth dependency runs before this function, so invalid traffic
+        # cannot read a body, allocate an outbound client, or hold a 300-second
+        # upstream stream. Browser code currently uses this one exact path.
+        return await _forward(request, "chat/completions", settings)
 
 
 async def _forward(

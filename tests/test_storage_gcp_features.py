@@ -21,32 +21,127 @@ import datetime as dt
 import json
 
 from tests.fakes.spanner import make_fake_store
-from trusted_router.storage_models import EmailSendBlock
+from trusted_router.storage_models import EmailSendBlock, VideoJob
 
 
 def _seed_workspace_and_key(store) -> tuple[str, str]:
-    user = store.ensure_user("workspace-owner@example.com")
-    workspace = store.list_workspaces_for_user(user.id)[0]
-    # Production policy creates new workspaces at $0 — trial credit is
-    # granted by the Stripe setup_intent.succeeded webhook on first
-    # card attach. Tests further down exercise gateway authorize +
-    # settle flows that need real credit on file, so simulate the
-    # post-card-attach state here. Helper is shared by every test in
-    # this file that needs a credited workspace; tests of the policy
-    # itself don't go through this helper.
-    from trusted_router.money import DEFAULT_TRIAL_CREDIT_MICRODOLLARS
+    from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 
-    store.credit_workspace_once(
-        workspace.id,
-        DEFAULT_TRIAL_CREDIT_MICRODOLLARS,
-        f"trial:{workspace.id}",
+    user = store.ensure_user(
+        "workspace-owner@example.com",
+        trial_credit_microdollars=DEFAULT_SIGNUP_CREDIT_MICRODOLLARS,
     )
+    workspace = store.list_workspaces_for_user(user.id)[0]
     _, api_key = store.create_api_key(
         workspace_id=workspace.id,
         name="primary",
         creator_user_id=user.id,
     )
     return workspace.id, api_key.hash
+
+
+def test_gcp_video_jobs_are_idempotent_leased_and_cleaned_without_content() -> None:
+    store, db, _ = make_fake_store()
+    job = VideoJob(
+        id="job-gcp-video",
+        workspace_id="ws-video",
+        key_hash="key-video",
+        authorization_id="auth-video",
+        model="minimax/hailuo-3",
+        provider="venice",
+        endpoint_id="minimax/hailuo-3@venice/prepaid",
+        provider_model="minimax-h3-text-to-video",
+        quoted_microdollars=850_500,
+    )
+
+    first, created = store.prepare_video_job(job)
+    replay, replay_created = store.prepare_video_job(job)
+    assert created is True
+    assert replay_created is False
+    assert replay.id == first.id
+
+    queued = store.mark_video_job_queued(
+        job.id,
+        provider_job_id="provider-video-1",
+        provider="venice",
+        endpoint_id="minimax/hailuo-3@venice/prepaid",
+        provider_model="minimax-h3-text-to-video",
+        quoted_microdollars=850_500,
+        poll_after_seconds=0,
+    )
+    assert queued is not None
+    original_due_id = f"{queued.next_poll_at}#{queued.id}"
+    queued.next_poll_at = "2000-01-01T00:00:00Z"
+    store._write_entity("video_job", queued.id, queued)
+    db.rows.pop(("video_job_due", original_due_id), None)
+    due_pointer = {
+        "job_id": queued.id,
+        "next_poll_at": queued.next_poll_at,
+    }
+    store._write_entity(
+        "video_job_due",
+        f"{queued.next_poll_at}#{queued.id}",
+        due_pointer,
+    )
+
+    claimed = store.claim_video_jobs(
+        lease_owner="gcp-worker",
+        limit=1,
+        lease_seconds=60,
+    )
+    assert [candidate.id for candidate in claimed] == [job.id]
+
+    completed = store.update_video_job(
+        job.id,
+        status="completed",
+        lease_owner="gcp-worker",
+        provider_status="COMPLETED",
+    )
+    assert completed is not None
+    assert completed.generation_id is None
+    assert completed.content_expires_at
+    assert completed.next_poll_at == completed.content_expires_at
+
+    repaired = store.update_video_job(
+        job.id,
+        status="completed",
+        generation_id="gen-video",
+    )
+    assert repaired is not None
+    assert repaired.generation_id == "gen-video"
+    assert store.get_video_job(job.id).generation_id == "gen-video"
+    serialized = db.rows[("video_job", job.id)].body
+    assert "prompt" not in serialized
+    assert "download_url" not in serialized
+    assert "provider-video-1" in serialized
+
+    cleaned = store.mark_video_job_cleaned(job.id)
+    assert cleaned is not None
+    assert cleaned.cleaned_at
+    assert not any(kind == "video_job_due" and job.id in entity_id for kind, entity_id in db.rows)
+
+
+def test_gcp_keys_default_to_hard_budgets_and_allow_alert_opt_in() -> None:
+    store, _db, _ = make_fake_store()
+    user = store.ensure_user("gcp-budget-default@example.com")
+    workspace = store.list_workspaces_for_user(user.id)[0]
+
+    _, hard = store.create_api_key(
+        workspace_id=workspace.id,
+        name="hard",
+        creator_user_id=user.id,
+        limit_daily_microdollars=1_000,
+    )
+    _, alert = store.create_api_key(
+        workspace_id=workspace.id,
+        name="alert",
+        creator_user_id=user.id,
+        limit_daily_microdollars=1_000,
+        budget_alert_only=True,
+    )
+
+    assert hard.budget_alert_only is False
+    assert alert.budget_alert_only is True
 
 
 # ── Auth sessions ───────────────────────────────────────────────────────
@@ -100,7 +195,9 @@ def test_gcp_auth_session_expired_token_returns_none_and_purges() -> None:
     )
     # Force-expire by stomping the row through the same JSON encoding
     # the production store uses.
-    expired_at = (dt.datetime.now(dt.UTC) - dt.timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+    expired_at = (
+        (dt.datetime.now(dt.UTC) - dt.timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+    )
     row = db.rows[("auth_session", session.hash)]
     body = json.loads(row.body)
     body["expires_at"] = expired_at
@@ -262,7 +359,9 @@ def test_gcp_oauth_code_expiry_sweeps_lookup_and_returns_none() -> None:
         ttl_seconds=60,
         app_id=7,
     )
-    expired_at = (dt.datetime.now(dt.UTC) - dt.timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+    expired_at = (
+        (dt.datetime.now(dt.UTC) - dt.timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+    )
     row = db.rows[("oauth_code", code.hash)]
     body = json.loads(row.body)
     body["code_expires_at"] = expired_at
@@ -399,9 +498,15 @@ def test_gcp_rate_limit_increments_in_same_window_and_rolls_over() -> None:
     store, _db, _ = make_fake_store()
     now = dt.datetime(2026, 5, 3, 12, 0, 1, tzinfo=dt.UTC)
 
-    first = store.hit_rate_limit(namespace="ip", subject="9.9.9.9", limit=2, window_seconds=60, now=now)
-    second = store.hit_rate_limit(namespace="ip", subject="9.9.9.9", limit=2, window_seconds=60, now=now)
-    third = store.hit_rate_limit(namespace="ip", subject="9.9.9.9", limit=2, window_seconds=60, now=now)
+    first = store.hit_rate_limit(
+        namespace="ip", subject="9.9.9.9", limit=2, window_seconds=60, now=now
+    )
+    second = store.hit_rate_limit(
+        namespace="ip", subject="9.9.9.9", limit=2, window_seconds=60, now=now
+    )
+    third = store.hit_rate_limit(
+        namespace="ip", subject="9.9.9.9", limit=2, window_seconds=60, now=now
+    )
     next_window = store.hit_rate_limit(
         namespace="ip",
         subject="9.9.9.9",

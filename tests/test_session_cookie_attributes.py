@@ -63,10 +63,14 @@ def _looks_like_date(piece: str) -> bool:
 def production_settings() -> Settings:
     return Settings(
         environment="production",
-        internal_gateway_token="prod-token",  # noqa: S106 - test fixture.
+        service_surface="control",
+        attribution_cookie_secret="attribution-cookie-secret-for-control-test",  # noqa: S106
         stripe_webhook_secret="whsec_test",  # noqa: S106 - test fixture.
         stripe_secret_key="sk_test",  # noqa: S106 - test fixture.
         sentry_dsn="https://example@example.ingest.sentry.io/1",
+        aws_access_key_id="test-access-key",
+        aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
+        ses_from_email="noreply@example.com",
         storage_backend="spanner-bigtable",
         spanner_instance_id="trusted-router",
         spanner_database_id="trusted-router",
@@ -74,6 +78,7 @@ def production_settings() -> Settings:
         google_client_id="g-prod",
         google_client_secret="g-prod-secret",  # noqa: S106 - test fixture.
         google_oauth_redirect_url="https://trustedrouter.com/google_oauth_callback",
+        trusted_domain_aliases="",
         byok_kms_key_name=TEST_BYOK_KMS_KEY_NAME,
     )
 
@@ -91,7 +96,11 @@ def test_oauth_state_cookie_is_httponly_secure_lax_in_production(
     """The OAuth state cookie protects against CSRF — if it loses HttpOnly,
     JS can read it; if it loses Secure, downgrade attacks read it; if
     SameSite weakens, third-party iframes can replay it."""
-    resp = production_client.get("/auth/google/login", follow_redirects=False)
+    resp = production_client.get(
+        "/auth/google/login",
+        headers={"host": "trustedrouter.com"},
+        follow_redirects=False,
+    )
     assert resp.status_code == 302
     cookies = _parse_cookies(resp.headers.get("set-cookie", ""))
     state = cookies.get("tr_oauth_state")
@@ -118,10 +127,14 @@ def test_session_cookie_is_httponly_secure_lax_in_production() -> None:
 
     settings = Settings(
         environment="production",
-        internal_gateway_token="t",  # noqa: S106 - test fixture.
+        service_surface="control",
+        attribution_cookie_secret="attribution-cookie-secret-for-control-test",  # noqa: S106
         stripe_webhook_secret="w",  # noqa: S106 - test fixture.
         stripe_secret_key="s",  # noqa: S106 - test fixture.
         sentry_dsn="https://example@example.ingest.sentry.io/1",
+        aws_access_key_id="test-access-key",
+        aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
+        ses_from_email="noreply@example.com",
         storage_backend="spanner-bigtable",
         spanner_instance_id="i",
         spanner_database_id="d",
@@ -165,6 +178,24 @@ def test_session_cookie_drops_secure_in_local() -> None:
     assert cookie.get("secure") is False or cookie.get("secure") is None
 
 
+@pytest.mark.parametrize("environment", ["canary", "staging", "worker"])
+def test_session_cookie_is_secure_in_every_deployed_environment(environment: str) -> None:
+    from fastapi.responses import Response
+
+    from trusted_router.auth import set_session_cookie
+
+    # Bypass surface startup requirements so this unit test isolates the
+    # cookie helper's deployed-vs-development boundary.
+    settings = Settings(environment="test")
+    settings.environment = environment
+    response = Response()
+
+    set_session_cookie(response, "trsess-v1-deployed", settings)
+
+    cookie = _parse_cookies(response.headers.get("set-cookie", ""))["tr_session"]
+    assert cookie.get("secure") is True
+
+
 def test_set_session_cookie_also_sets_signed_in_hint_for_marketing_js() -> None:
     """When a session is established, the marketing chrome (which renders
     on cacheable public pages and can't branch on server-side auth) needs
@@ -183,10 +214,14 @@ def test_set_session_cookie_also_sets_signed_in_hint_for_marketing_js() -> None:
 
     settings = Settings(
         environment="production",
-        internal_gateway_token="t",  # noqa: S106 - test fixture.
+        service_surface="control",
+        attribution_cookie_secret="attribution-cookie-secret-for-control-test",  # noqa: S106
         stripe_webhook_secret="w",  # noqa: S106 - test fixture.
         stripe_secret_key="s",  # noqa: S106 - test fixture.
         sentry_dsn="https://example@example.ingest.sentry.io/1",
+        aws_access_key_id="test-access-key",
+        aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
+        ses_from_email="noreply@example.com",
         storage_backend="spanner-bigtable",
         spanner_instance_id="i",
         spanner_database_id="d",

@@ -17,7 +17,7 @@ Important status:
 - PHI workloads require route restrictions and subprocessor approval.
 - Default sensitive-workload routing is `trustedrouter/zdr`.
 - Content export for PHI requires explicit written approval.
-- Prompt/output content is not stored by TrustedRouter by default, but downstream providers may receive PHI when selected.
+- TrustedRouter never logs or stores prompt/output content, but downstream providers may receive PHI when selected.
 
 ## Binder Contents
 

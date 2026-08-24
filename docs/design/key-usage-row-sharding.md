@@ -1,4 +1,4 @@
-# Uncapped API-key usage-row sharding
+# API-key usage-row sharding
 
 Date: 2026-07-11
 
@@ -11,23 +11,29 @@ shape: sharded authorization completed, then unsharded settlement exhausted the
 fake Spanner retry budget on the one API-key row.
 
 The table and reservation schema already support `(key_hash, shard)` and
-`key_shard`. We use those fields to spread usage writes for high-throughput,
-fully uncapped keys.
+`key_shard`. We use those fields to spread both usage writes and exact-cap
+reservations for high-throughput keys.
 
 ## Scope and hard safety boundary
 
-`ApiKey.usage_shard_count` defaults to 1. A value above 1 is valid only when all
-of these are unset:
+`ApiKey.usage_shard_count` defaults to 1. An exact lifetime limit is partitioned
+into escrow sub-budgets: each row receives its consumed amount plus a share of
+the remaining allowance, and all row limits sum to the configured global cap.
+Authorize reserves from one sub-budget in its existing atomic transaction. No
+distribution of requests can spend more than the global limit.
 
-- lifetime spend limit
-- daily spend limit
-- weekly spend limit
-- monthly spend limit
+An unusually large request can exceed every individual sub-budget while still
+fitting within the global remaining allowance. Only after all shards reject,
+the cold path atomically reads every shard and moves enough escrow to the first
+randomized candidate, then retries authorize once. Genuine exhaustion does not
+write or retry. Normal requests never pay this global coordination cost.
 
-Capped keys remain byte-identical on shard zero. Code, management routes, the
-mirror, and the operator all fail closed if a sharded key acquires a limit.
-This deliberately avoids claiming that an unimplemented partitioned key budget
-is exact.
+Daily, weekly, and monthly limits are already approximate, lock-free snapshot
+checks. For sharded keys, the check reads the configured shard set and sums the
+current window usage before applying the same approximate decision. A missing
+configured shard fails closed. Settle records usage on the reservation's
+randomly selected shard. This removes the hot row without claiming an exact
+partitioned lifetime budget.
 
 ## Request lifecycle
 
@@ -35,8 +41,9 @@ is exact.
    typed authorize path. There is no extra hot-path database read.
 2. TrustedRouter randomizes all key usage shards outside the Spanner retry
    callback.
-3. An uncapped row returns `KEY_NO_HOLD`; authorize records the selected
-   `key_shard` on `tr_reservation`.
+3. An uncapped row returns `KEY_NO_HOLD`; a capped row conditionally reserves
+   from its escrow sub-budget. Authorize records the selected `key_shard` on
+   `tr_reservation` in both cases.
 4. Settle/refund books against exactly that recorded row.
 5. Idempotent replay returns the originally committed key shard.
 
@@ -56,8 +63,16 @@ python scripts/shard_workspace.py finish --workspace WS --shards 16 --apply
 Prepare pauses the workspace, refuses open typed or legacy requests, atomically
 partitions each ledger, verifies it, runs the invariant audit, and leaves the
 workspace paused. Finish re-verifies credit and key row sets before unpausing.
-Capped keys stay at one row. Reverse with `--shards 1` before any typed-to-JSON
-rollback or shard-zero repair; those older tools now refuse sharded state.
+Exact lifetime limits are repartitioned in the same transaction as the usage
+rows, including when open typed holds are preserved during an online split.
+Reverse with `--shards 1` before any typed-to-JSON rollback or shard-zero
+repair; those older tools refuse sharded state.
+
+The operator retains legacy reservation rows for audit but does not let
+pre-cutover debris block typed-ledger maintenance forever. Unsettled legacy
+rows newer than 24 hours, or with malformed timestamps, block the operation.
+Older rows are counted and reported as stale while the authoritative typed
+hold set must still be completely drained.
 
 Lifetime usage, BYOK usage, and current daily/weekly/monthly usage are preserved
 as exact global sums. Stale window epochs are discarded because they already

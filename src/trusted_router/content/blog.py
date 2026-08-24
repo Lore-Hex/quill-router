@@ -30,6 +30,723 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="you-are-a-model-provider",
+        title="You are a model provider now",
+        description=(
+            "TrustedRouter now takes user-provided models: register an HTTPS endpoint that speaks the OpenAI chat API, set a price per million tokens, and keep 70% of what callers pay. One npx command puts your local model, your agent, or you personally in front of everyone holding TrustedRouter credits."
+        ),
+        published_date="2026-08-17",
+        source_label=None,
+        source_url=None,
+        body_html="""
+<figure class="blog-hero-image"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="Sell tokens from your laptop: one command, your price, 70% yours">
+  <rect width="1200" height="630" fill="#ffffff"/>
+  <rect x="0" y="0" width="1200" height="8" fill="#0f6e56"/>
+  <text x="72" y="118" font-size="26" font-weight="600" fill="#6b7280" letter-spacing="2">USER-PROVIDED MODELS</text>
+  <text x="72" y="216" font-size="66" font-weight="700" fill="#111827">Sell tokens from your laptop.</text>
+  <text x="72" y="286" font-size="40" font-weight="500" fill="#374151">One command, your price, 70% yours.</text>
+  <rect x="72" y="330" width="1056" height="1" fill="#eef0f2"/>
+  <g>
+    <text x="72" y="410" font-size="52" font-weight="700" fill="#0f6e56">70%</text>
+    <text x="72" y="448" font-size="24" fill="#6b7280">of the price, to you, in credits</text>
+  </g>
+  <g>
+    <text x="492" y="410" font-size="52" font-weight="700" fill="#0f6e56">3 modes</text>
+    <text x="492" y="448" font-size="24" fill="#6b7280">your model, your agent, or you</text>
+  </g>
+  <g>
+    <text x="912" y="410" font-size="52" font-weight="700" fill="#111827">$0</text>
+    <text x="912" y="448" font-size="24" fill="#6b7280">to turn a request down</text>
+  </g>
+  <rect x="72" y="512" width="1056" height="62" rx="8" fill="#111827"/>
+  <text x="600" y="552" font-size="30" fill="#f8fafc" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,monospace">npx reverse-harness --mode proxy</text>
+</svg></figure>
+<p>You can sell tokens on TrustedRouter now, and the seller can be anyone who has an endpoint and a price. You register an HTTPS endpoint that speaks the OpenAI chat API, you set a price per million tokens, and your model appears in the user-provided section with an id that any TrustedRouter customer can call. The model running on your laptop right now qualifies. So does the agent script you wrote last month, the fine-tune sitting on a rented A100, and you personally, answering questions with your hands.</p>
+
+<p>Getting there is one command. Run <code>npx reverse-harness --mode proxy --upstream http://localhost:11434/v1</code> and the ollama instance you already have starts taking paid requests from everybody holding TrustedRouter credits. Point the same flag at llama.cpp, vLLM, or LM Studio and it works the same way. Swap to <code>npx reverse-harness --mode exec --command "python my_agent.py"</code> and the thing you are selling is your program, running on your machine, with your data on the same disk. The third mode is you: <code>npx reverse-harness --mode human</code> drops incoming prompts into a browser queue and waits for you to type. The client verifies every TrustedRouter signature before it hands you a request, opens a tunnel so we can reach you behind your router, keeps your clock, and answers the health canary itself so nobody has to get out of bed for it. It is Apache 2.0, it is on npm, and it lives at <a href="https://github.com/Lore-Hex/reverse-harness">github.com/Lore-Hex/reverse-harness</a>, so you can read all of it before you run any of it.</p>
+
+<p>You set the price the caller pays, and 70% of that price lands in your earnings wallet as TrustedRouter credits, which you can move into any of your workspaces and spend on anything in the catalog. Our 30% comes out of the same number, so the price you publish is the price the buyer sees. Route your own traffic to yourself and you lose 30% on the round trip, which is the correct incentive and stops the obvious game before anyone bothers to play it.</p>
+
+<p>There are three kinds of model you can register, and they differ mostly in patience. A machine model can charge up to $1,000 per million tokens and has thirty seconds to produce a first byte, sixty seconds of idle between bytes, and five minutes on the wall clock. An agent model gets the same ceiling with a minute for the first byte and ten minutes to finish, because agents think and call tools before they talk. Those two are where the volume is: a GPU box in a closet serving a fine-tune, or a retrieval loop sitting next to a corpus nobody is ever going to upload. A human model gets five minutes for the first byte, two minutes of idle, fifteen minutes total, and a ceiling of one dollar per token, which is a million dollars per million tokens. The ceiling is that high because when the model is a person, one sentence can be worth what an hour of that person is worth, and the buyer is a pipeline that would otherwise stop and file a ticket somebody reads on Tuesday.</p>
+
+<p>I went first, with the least serious infrastructure I own, because I wanted to know whether the money would move. My id is <code>trustedrouter/user-joseph-live</code>, the handle on it is jperla, I priced it at ten cents a token, and the endpoint behind it was a cloudflared quick tunnel pointed at the laptop on my desk. Two real requests came in through the production enclave and landed in my terminal. I typed both answers by hand while the gateway held the connection open and streamed my typing back as a completion, and I earned $2.73 in credits, which is 70% of what the caller paid.</p>
+
+<p>Who buys from an endpoint they have never heard of? Nobody, by accident. There is no browsing your way to a user-provided model. You get called by id, so every request that reaches you came from somebody who went looking for you. Two requests and $2.73 is a small pile of money and a large fact: somebody paid a dime a token for sentences a person typed into a text box. The catalog cannot quote that price, because the catalog has no people in it, and it has none of your data in it either. A fine-tune that knows a schema living in four heads, an agent wired into your company's file share, a person who knows why the pipeline broke: those are worth more per token than any commodity model gets paid, and until this week there was no way to charge anybody for one of them.</p>
+
+<p>Serving those calls is bounded work. You POST clock-in, we probe you before we believe you and hand back a 409 if the probe fails, you heartbeat on an interval, and you clock out when you are done. Turning work down is an HTTP error: any 4xx means you looked at the request and judged it, and it costs you nothing at all. Only a 5xx counts against you, because that means you took the job and dropped it, and it takes three consecutive failures of yours to clock you out. A caller who hangs up mid-stream never counts.</p>
+
+<p>The traffic reaching your hardware is fenced on our side. Requests come from an attested enclave over HTTPS with the resolved IP pinned for the life of the connection, redirects refused, and only allowlisted chat fields forwarded, and your credentials are decrypted inside that enclave and nowhere else. Every request carries <code>TR-Signature: t=&lt;unix&gt;,v1=&lt;hex hmac-sha256 of "t." + raw body&gt;</code> with a 300 second skew window, and the harness checks it before your model sees a token. You can tell whether a request is really from us by doing arithmetic.</p>
+
+<p>Buyers get told what they are buying: a user-provided model is not attested and is not covered by zero-data-retention, and we print that on the model page, in the API shape our clients read, and on the public trust page. Getting listed costs you an email on file, one funded top-up of any amount above zero, which is what unlocks phone verification, a phone verified by call or SMS, and then a government ID check through Veriff that wants $25 of lifetime top-ups to attempt and charges $5 against your credits each try. That is enough friction to make a fake seller a losing business and nowhere near enough to stop a motivated one. The morning after my model went live, somebody I have never met signed up, walked every step of that gate alone without asking me a single question, and registered a real hosted Qwen endpoint at forty cents per million tokens, working from nothing but the docs. They were in business before I finished my coffee. Go get paid for the GPU that is idling in your apartment tonight.</p>""",
+    ),
+    BlogPost(
+        slug="proofs-in-production",
+        title="Proofs that find real production bugs",
+        description=(
+            "We wrote property tests and a TLA+ model against the running "
+            "TrustedRouter code and put them in CI. They found fifteen real "
+            "defects, including one that crashed the Swift SDK's process from a "
+            "single response header."
+        ),
+        published_date="2026-08-14",
+        source_label=None,
+        source_url=None,
+        og_image="/static/og/blog/proofs-in-production.png",
+        body_html="""
+<figure class="blog-hero-image"><img src="/static/og/blog/proofs-in-production.png" alt="Proofs that find real production bugs" width="1200" height="630"></figure>
+<p>I spent a week pointing proof tools at TrustedRouter's own source and they found fifteen real defects. Not style problems. A single response header that crashed the Swift SDK's process. An attestation check that could pass without checking anything. An API key that survived our log scrubber because it was a dictionary key instead of a value. All of it in code that was reviewed, tested, and running.</p>
+<p>I want to describe what actually worked, because "formal methods" usually gets discussed as something you do instead of shipping, on a system small enough to fit in a paper. That is not what this was. The control plane is fifty thousand lines of Python with three thousand five hundred tests already passing. The proofs went in on top of that, they run in CI on every push, and the interesting part is not that they passed. It is what they caught on the way.</p>
+<h2>Write the law, not the example</h2>
+<p>A normal test picks an input and asserts an output. A property picks the <em>claim</em> and lets a generator hunt for a counterexample. The difference sounds academic until you see which bugs each one can and cannot see.</p>
+<p>Our attestation verifier checks that the gateway you are talking to is the exact build we published. It had tests. Good ones, with real RSA signatures and crafted JWTs. Every one of them passed. Here is the property instead:</p>
+<p><strong>for every claims set K and policy P, if verification succeeds then K's image digest was in P's accepted set.</strong></p>
+<p>That is false, and it was false for a year. Both image checks were written as <code>if accepted_digests and workload not in accepted_digests: raise</code>. An <em>empty</em> accepted set skips the check rather than failing it. And the policy builder mapped a trust release with no image fields — a truncated response, a CDN error page that happens to parse as JSON — to exactly that empty set. Verification then succeeded against any genuinely-attested workload and reported success. The caller believed it had pinned a build. It had pinned nothing.</p>
+<p>The example tests all passed <em>while the implication was vacuous</em>. That is the whole lesson. They asserted "a matching digest verifies" and "a mismatched digest raises", and both remained true in a world where the check never ran. Only a statement quantified over all policies can notice that the premise had become unreachable.</p>
+<h2>The generator only searches where you let it</h2>
+<p>Properties are not magic, and the way they fail is instructive. We wrote one for the log scrubber that reads well: no declared secret survives, for any Python value shape. It generated dicts, lists, tuples, sets, bytes, nested combinations, planting canary secrets at random leaf positions. It ran fifteen hundred examples per commit and passed.</p>
+<p>It was searching half the space. Every canary went into a <em>value</em>, because the generator drew mapping keys from plain text. And <code>_scrub</code> checked whether a key <em>name</em> looked sensitive but never scrubbed the key's own text, so this shipped a live credential to our log sink:</p>
+<p><code>_scrub({"sk-tr-v1-SECRET": 1}) -&gt; {'sk-tr-v1-SECRET': 1}</code></p>
+<p>A dict keyed by an API key is not exotic. It is what a per-key request counter looks like. An outside reviewer found it by reading; the property that existed to prevent exactly this had never looked. A property test is only as good as the positions its generator can reach, and "I generated containers" is not the same as "I generated every position a string can occupy in a container."</p>
+<h2>Some bugs need a model, not a test</h2>
+<p>Property tests drive code. When the thing you are worried about is a <em>composition</em> that does not exist yet, there is nothing to drive.</p>
+<p>We have a module for regional prepaid quota leases — several regional planes each holding a bounded slice of one workspace's escrow. It is deliberately dark: no migration, no data, no callers. The failure mode that matters is oversubscription, planes collectively spending more than the workspace escrowed, and it lives in the interaction between a granter, several leaseholders, and a reclaimer sweeping expired leases. None of that is code yet.</p>
+<p>So we wrote it in TLA+ and ran a model checker over every interleaving. Eight million states. It found a design gap in six.</p>
+<p>If the reclaimer only sweeps <em>active</em> leases, a lease that gets quarantined and then expires can never be closed, and its escrow is stranded permanently. Quarantine is meant to stop a suspicious lease spending, not to make the customer forfeit the money. The counterexample was six states long and no amount of unit testing would have produced it, because the reclaimer it describes has not been written. We changed the design and left a note in the spec for whoever builds it.</p>
+<p>The property that caught it was a liveness property — eventually this lease is closed — not a safety one. A safety-only spec is perfectly happy with a system that quietly keeps your money forever. Nothing bad happens; nothing happens at all.</p>
+<h2>What the model does not prove</h2>
+<p>I had also written a "stale write" action into the spec to show that our fencing token blocks writes from a superseded leaseholder. A reviewer pointed out that the action was <code>UNCHANGED vars</code> — it did nothing. An action that does nothing is trivially safe, so it proved nothing.</p>
+<p>I made it perform a real write and the check still passed. Then I deleted the fencing guard entirely, and it <em>still</em> passed: four and a half million states, no violation. The accounting bound already prevents overspend regardless of who writes. The hazard fencing actually addresses is lease succession, which this model does not have.</p>
+<p>So the spec now says, in its header, that it does not establish that fencing works and nobody should cite it as if it did. That is the least satisfying paragraph in this post and the most important one. A proof that proves less than its title suggests is worse than no proof, because it reads as evidence. Model checkers do not stop you claiming too much; they only stop you being wrong about the thing you actually wrote down.</p>
+<h2>Put it in CI or it decays</h2>
+<p>The property tests are pytest files, so they run in the existing suite with no new infrastructure. The TLA+ specs needed a job: a JVM, a cached tools jar, one model-checking run per spec, and it blocks the deploy gate like every other check.</p>
+<p>Two details in that runner are doing real work. A spec without a config file is a hard error rather than a skip, and a config that names no invariant or property is also a hard error — otherwise the checker explores the whole state space and reports success having verified nothing at all. Passing vacuously while looking checked is the exact failure this is supposed to prevent, so the build refuses.</p>
+<p>The single highest-value test we wrote is not a proof of anything. It partitions every field on our generation record into "goes to analytics" or "deliberately excluded", and fails the build when a new field belongs to neither. The real risk to a no-content-logging promise was never that somebody writes a leaky projection. It is that somebody adds a field and an existing projection picks it up, while every value-asserting test stays green. That test converts "remember not to leak" into "the build stops until you decide."</p>
+<h2>Was it worth it</h2>
+<p>Fifteen defects across twenty-three merged pull requests. The ones I would have least liked to find in the wild: a <code>Retry-After</code> header of <code>inf</code> crashed the Swift SDK's process outright — an uncatchable runtime trap, which on iOS is an app termination triggered by a response header. The same header hung the Python client forever and parked the Go client for two hundred and ninety-two years. Six SDKs, six different failure modes, one missing bound.</p>
+<p>The obvious objection is that this is expensive and only pays off on aerospace software. I think that gets it backwards. The cheap properties found most of the bugs. Bounds on untrusted numbers, round-trip laws on anything durable, and one classification test that fails when a struct grows a field — none of that requires a background in verification, and together they caught more than the model did.</p>
+<p>The model earned its place for a different reason: it let us check a design before writing it, while changing our minds still cost nothing. That is the cheapest that decision will ever be, and it is the one place where "prove it first" is straightforwardly less work than shipping and finding out.</p>
+<p>Every property, every spec, and all twenty-three pull requests are in <a href="https://github.com/Lore-Hex/quill-router">the open source repo</a>, along with the code they check. If you want to know what our gateway does with your prompts, that is the same answer as always: <a href="/blog/attestation-is-all-you-need">read it, and verify the build that is running</a>.</p>
+""",
+    ),
+    BlogPost(
+        slug="native-swift-harness-no-electron",
+        title="Open Source all native Swift harness (NO Electron!)",
+        description=(
+            "QuillCode is a coding agent written in Swift with a real AppKit UI. "
+            "No Electron, no bundled browser engine, no 400MB app to open a "
+            "text box. 60k lines, 1600 tests, and it is on GitHub."
+        ),
+        published_date="2026-08-10",
+        source_label="Joseph Perla original",
+        source_url="https://www.jperla.com/blog/native-swift-harness-no-electron",
+        og_image="/static/og/blog/native-swift-harness-no-electron.png",
+        body_html="""
+<figure class="blog-hero-image"><img src="/static/og/blog/native-swift-harness-no-electron.png" alt="Quill Cowork running as a native macOS application" width="1200" height="630"></figure>
+<p>The coding agent I use every day is <a href="https://github.com/Lore-Hex/QuillCode">open source</a> now. It is called QuillCode, it is a native Mac app written in Swift, and it runs on my laptop instead of in somebody else's datacenter.</p>
+
+<p>That last part is the whole point. Almost every useful thing I want an agent to do involves my machine. Run the test suite. Open a worktree and try the risky refactor there. Drive a browser and check that the page actually renders. Read the log file that never leaves my disk. An agent living in a web app can do none of that, so it does the one thing it can do — write code into a text box — and hands the hard half back to you. The hard half is the part I wanted help with.</p>
+
+<p>It is also not an Electron app, which I say with some feeling. The current default for shipping a desktop tool is to bundle an entire browser engine so the team can write the interface in the language they already know, and the result is a text box that eats four hundred megabytes of disk and a couple hundred of RAM before it has done anything. Every one of these apps feels the same: a beachball on a window resize, a scroll that is almost but not quite native, a menu bar that is a drawing of a menu bar. QuillCode's interface is Swift and AppKit. It launches immediately, it scrolls the way every other Mac window scrolls, and the file picker is the file picker. That is not nostalgia, it is the difference between a tool you keep open all day and one you quit because it is heavy.</p>
+
+<p>So QuillCode has local tools, real worktrees, computer use, automations, and a plugin system, and it updates itself with verified builds. It is about sixty thousand lines of Swift with sixteen hundred tests behind it and something north of six hundred and eighty merged pull requests. I mention the test count because a coding agent that edits your repo is exactly the kind of software where you want to know somebody was paranoid.</p>
+
+<p>It is backed by <a href="/">TrustedRouter</a>, which means you choose the model instead of inheriting one. That matters more for coding than for chat, because coding is where the gap between models shows up as wasted hours. Sometimes you want the cheap fast one for a rename and the expensive one for the design; I wrote about <a href="/blog/how-to-choose-a-model">how to choose</a> and about the fact that <a href="/blog/the-best-open-models-arent-on-your-leaderboard">the best open models are not on your leaderboard</a>. QuillCode ships with <a href="/blog/socrates-1.1-terminal-bench-hard-72">Socrates 1.1</a> in the recommended list because it scored 72 on Terminal-Bench Hard, and a coding harness should default to something that can actually finish a terminal task.</p>
+
+<p>The obvious objection is that a local agent is a worse agent — no fleet of GPUs behind it, no magic. That gets it backwards. The model still runs remotely; what runs locally is the part that touches your files, and that part should be a program you can read. The frontier is available to me either way. I get <a href="/blog/frontier-smart-cheap-fast-pick-3-open-source">frontier-quality output at open-source prices</a> through the router, and I get to keep the file system access on my side of the wire.</p>
+
+<p>The other objection is privacy, and it is the serious one, because a coding agent reads everything. That is why the prompt path is <a href="/blog/one-api-all-llms-provably-private">verifiable rather than promised</a> and why the gateway <a href="/blog/attestation-is-all-you-need">attests what code is receiving your prompts</a>. If you are going to point an agent at a private repo you should be able to check where the words went.</p>
+
+<p>Everything else I build is open too — the <a href="/blog/open-source-open-source-open-source">router, the evals, the proxy</a>. Take the repo, read the parts you do not trust, and run it against your own key.</p>
+""",
+    ),
+    BlogPost(
+        slug="an-agent-that-hides-the-bill",
+        title="Quill Cowork has confidential mode and trusts you with the bill",
+        description=(
+            "Quill Cowork puts a live token meter in the top bar and a /confidential "
+            "mode that forgets the conversation but keeps the receipt. Private "
+            "should mean private words, not invisible spending."
+        ),
+        published_date="2026-08-10",
+        source_label="Joseph Perla original",
+        source_url="https://www.jperla.com/blog/an-agent-that-hides-the-bill",
+        og_image="/static/og/blog/an-agent-that-hides-the-bill.png",
+        body_html="""
+<figure class="blog-hero-image"><img src="/static/og/blog/an-agent-that-hides-the-bill.png" alt="Quill Cowork with the expanded TrustedRouter cost limits panel" width="1200" height="630"></figure>
+<p>If you hire someone and they will not tell you what they spent, you fire them. Agents get a pass on this for no reason I can defend, so QuillCode has a meter in the top bar: tokens used against the limit, what is left, and where the number came from. It updates while the agent works. You can watch a bad prompt get expensive in real time, which is the only feedback loop that ever made me write better prompts.</p>
+
+<p>The interesting bug showed up when I added the private mode. QuillCode has <code>/confidential</code>, which opens a chat that is never written to disk, never appears in the sidebar, carries no workspace memories, and is pinned to an end-to-end encrypted route. When you leave, the thread is destroyed. Clean.</p>
+
+<p>Except the spend went with it. Destroying the thread destroyed its receipt, so the money spent inside a confidential chat quietly vanished from the period ledger. You could run up a bill in private mode and the books would never know. Nobody designed that; it fell out of "destroy everything about this thread" meeting "the ledger lives on the thread." A private chat should forget your words and keep your receipt. Now it does.</p>
+
+<p>That bug was one of about a dozen. Five rounds of adversarial review on the confidential mode found side doors in places I would not have guessed: subagent stores, attached image bytes, the memory tool, automations, run hooks, computer-use artifacts, OS notification bodies, a settings save that overwrote the pinned model, context refills, fork and compact and duplicate, and an auto-safety-reviewer that shipped the transcript to a different model to summarize it. Every one of those is a path where "not saved" or "always encrypted" quietly stopped being true. The lesson generalizes: every typed slash command bypasses whatever you gated in the menu, so the guard has to live on the model, not the UI.</p>
+
+<p>The mode pins to an end-to-end route because a promise about deletion is worth very little if the words were readable on the way out. I have written about <a href="/blog/how-confidential-computing-protects-ai-prompts">what confidential computing actually gets you</a> and why <a href="/blog/attestation-is-all-you-need">attestation is the part that makes it checkable</a>. You can also constrain a confidential chat to US-only or EU-only models, which sounds like compliance theater until you remember that <a href="/blog/censored-at-the-host-not-the-model">where a model is hosted changes what it will say</a> and that <a href="/blog/the-ai-models-that-go-silent-on-china">some of them go silent on entire topics</a>.</p>
+
+<p>The counterargument is that this is over-engineering for a solo tool. It would be, if the failure were visible. A leaked prompt does not throw an exception and an unbilled thread does not page you; both look exactly like everything working. That is precisely the class of thing you have to go looking for on purpose, which is why it took five rounds and why <a href="/blog/the-models-that-say-no">I keep testing the claims instead of reading the policy page</a>.</p>
+
+<p>Watch the meter, and know when you are off the record.</p>
+""",
+    ),
+    BlogPost(
+        slug="sre-agent-on-three-clouds",
+        title="An SRE Agent on 3 clouds that keeps your site reliably up",
+        description=(
+            "Three AI agents on three clouds, each on a different model, watching "
+            "each other and the product. This did not work a year ago because the "
+            "model underneath was never reliable enough to trust with on-call."
+        ),
+        published_date="2026-08-10",
+        source_label="Joseph Perla original",
+        source_url="https://www.jperla.com/blog/sre-agent-on-three-clouds",
+        og_image="/static/og/blog/sre-agent-on-three-clouds.png",
+        body_html="""
+<figure class="blog-hero-image"><img src="/static/og/blog/sre-agent-on-three-clouds.png" alt="SREChat agents reporting from GCP, AWS, and Azure" width="1200" height="630"></figure>
+<p>My on-call rotation is three AI agents, one on each cloud, and they watch each other. Kimi K3 runs on the GCP box, GLM 5.2-Fast on AWS, DeepSeek 0731 on Azure — three <a href="/blog/the-best-open-models-arent-on-your-leaderboard">open models</a>, none of them the expensive one. I text them from my phone and ask whether anything is broken. It works, and the reason it works now and would not have worked last year is that the model underneath finally stopped being the least reliable component.</p>
+
+<p>Start with the part that is just engineering. The chat backend they live in is <a href="https://github.com/Lore-Hex/SREChat">SREChat</a>, a multi-master chat server where every region takes writes during a partition and the regions converge when it heals. Three equal masters, one per cloud, meshed over WireGuard. I built it so that losing an entire cloud degrades nothing, and then I put an agent on each master, which is where it gets useful.</p>
+
+<p>A monitoring agent that lives on the machine it monitors is a joke. It goes quiet at exactly the moment its silence means something, and you find out from a customer. With one agent per cloud, whoever is still alive reports the one that died. That is not theoretical: while I was deploying, the GCP agent went down, and the AWS and Azure agents both independently noticed and paged me. The watchdog cannot be killed by the thing it is watching, because it is not on it.</p>
+
+<p>They also page me for the product itself. The GCP agent can read TrustedRouter's error logs, its Cloud Run revisions, and its Sentry issues, and it will tell me which revision was serving when the errors started. If I turn on the write flag it can roll traffic back to the previous revision. Asking "any TR errors in the last two hours" from a phone at dinner is a genuinely different experience from opening a laptop and remembering which console tab has the logs.</p>
+
+<p>Now the part that is actually new. The reason nobody sensibly did this before is that a monitoring agent has two failure modes and both were unacceptable. It can be wrong, and it can be unavailable. Wrong got fixed by models getting good enough to read a log and say something true about it. Unavailable is the one people underrate: if your agent talks to a single provider, your alerting inherits that provider's worst day. Your pager goes down during the incident that made you want a pager. Every agent here pins its own model and falls back to <code>trustedrouter/auto</code>, so a provider having weather means the answer comes from somewhere else instead of not coming. The router is doing for the agent's brain what the three clouds do for its body, over <a href="/blog/one-api-all-llms-provably-private">one API whose prompt path you can verify</a>.</p>
+
+<p>That is why I am comfortable pointing this at TrustedRouter itself. It is circular in a way that would bother me if the fallback were not real, and it is the strongest statement I can make about the routing layer: I use it for the thing that has to work when everything else does not. It is the same argument as <a href="/blog/ten-cheap-runs-beat-the-frontier">running several cheap models instead of one expensive one</a> — redundancy at the model layer buys you more than picking a better single model, and <a href="/blog/combo-models-are-model-containers">a combo model is a container you can swap</a>. If you are choosing, <a href="/blog/how-to-choose-a-model">pick two of smart, fast, cheap</a>; for on-call I want fast and cheap and I want three of them, which is exactly the <a href="/blog/frontier-smart-cheap-fast-pick-3-open-source">smart-cheap-fast tradeoff open source finally lets you stop making</a>.</p>
+
+<p>Alerting you never test is decoration, so there is a chaos drill on a timer. Every day one region gets its container restarted; every week the mesh gets partitioned for a minute to prove the other two keep serving. The drill reports pass or fail into the same chat as the real alerts, which is the only place I would notice it. The chat server, the agents, and the drills are <a href="/blog/open-source-open-source-open-source">all open source</a>, like everything else here.</p>
+
+<p>The models are good enough now. The routing is reliable enough now. That combination is what turns an agent from a demo into the thing you let wake you up.</p>
+""",
+    ),
+    BlogPost(
+        slug="achieving-99999-uptime-as-a-startup",
+        title="Achieving 99.999% Uptime as a Startup",
+        description=(
+            "A router that is down is worse than no router at all. So we built TrustedRouter on three "
+            "separate clouds, each one independently engineered for three to four nines, each with its own "
+            "database, control plane and deploy. Here is the architecture."
+        ),
+        published_date="2026-08-07",
+        source_label="Live status",
+        source_url="https://trustedrouter.com/status",
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="Three independent clouds combining to five nines of availability">
+<rect width="1200" height="630" fill="#0b1118"/>
+<text x="64" y="68" font-size="21" font-weight="700" fill="#7be0b1">TrustedRouter</text>
+<text x="64" y="152" font-size="54" font-weight="750" fill="#f8fafc">99.999% uptime,</text>
+<text x="64" y="214" font-size="54" font-weight="750" fill="#f8fafc">as a startup.</text>
+<text x="64" y="258" font-size="20" fill="#a9bfd5">Three clouds. Three databases. Three control planes. One API.</text>
+
+<g>
+<rect x="64" y="330" width="330" height="176" rx="10" fill="#101c28" stroke="#35506b" stroke-width="2"/>
+<text x="96" y="374" font-size="19" font-weight="700" fill="#7be0b1">GCP</text>
+<text x="96" y="410" font-size="16" fill="#a9bfd5">Confidential Space</text>
+<text x="96" y="438" font-size="16" fill="#a9bfd5">Spanner, multi-region</text>
+<text x="96" y="480" font-size="30" font-weight="750" fill="#f8fafc">99.99%+</text>
+
+<rect x="435" y="330" width="330" height="176" rx="10" fill="#101c28" stroke="#35506b" stroke-width="2"/>
+<text x="467" y="374" font-size="19" font-weight="700" fill="#7be0b1">AWS</text>
+<text x="467" y="410" font-size="16" fill="#a9bfd5">Nitro Enclaves</text>
+<text x="467" y="438" font-size="16" fill="#a9bfd5">Postgres</text>
+<text x="467" y="480" font-size="30" font-weight="750" fill="#f8fafc">99.99%+</text>
+
+<rect x="806" y="330" width="330" height="176" rx="10" fill="#101c28" stroke="#35506b" stroke-width="2"/>
+<text x="838" y="374" font-size="19" font-weight="700" fill="#7be0b1">Azure</text>
+<text x="838" y="410" font-size="16" fill="#a9bfd5">SEV-SNP + MAA</text>
+<text x="838" y="438" font-size="16" fill="#a9bfd5">Postgres</text>
+<text x="838" y="480" font-size="30" font-weight="750" fill="#f8fafc">99.99%+</text>
+</g>
+<text x="64" y="566" font-size="19" fill="#7be0b1">Independent failure domains multiply.</text>
+</svg>
+</figure>
+
+<p>A router that is down is worse than no router at all. If you wrote your code against us and we
+disappear for an afternoon, we are the outage you were trying to route around. So the
+availability target for TrustedRouter was set before almost anything else: we want to be up more
+than any single cloud we run on, more than any individual model provider, and more than the coding
+agents and gateways that people are already routing through. Five nines is 26 minutes of downtime
+in a year. You cannot get there by being careful. You get there by never having one of anything.</p>
+
+<p>The arithmetic is what makes it possible for a small team. Take three clouds, engineer each one
+to somewhere between three and four nines on its own, and put them behind one API. Three nines is
+about eight hours of downtime a year, which is an ordinary, achievable number for a well-run
+deployment on managed infrastructure. Four nines is 52 minutes. If those three deployments fail
+independently, the chance that all three are down at the same moment is the product of three small
+numbers, and the product is very small. Two independent deployments at four nines each already
+clears five nines with room to spare. That is why we run on three clouds instead of
+picking the best one and buying bigger machines.</p>
+
+<p>GCP is our primary. The database there is Cloud Spanner in a multi-region configuration, which
+carries a
+<a href="https://cloud.google.com/spanner/sla" target="_blank" rel="noopener">99.999% availability SLA</a>
+— five minutes a year — because every node is backed by replicas spread across at least three
+regions, and losing a region is a normal event that Spanner is designed to absorb rather than an
+incident. We over-provision it. A database is the one component you cannot shard your way out of
+during an outage, so it is the one component where we buy the strongest guarantee on the market and
+then leave headroom on top of it.</p>
+
+<p>The routers themselves are stateless. Every request can be served by any instance, so an instance
+is disposable and the health of one has nothing to do with the health of the next. They run in
+managed instance groups that autoscale with load, in several locations on three continents, so a
+regional failure removes capacity rather than removing the service. Analytics runs on ClickHouse,
+and each cloud has its own — the analytics backend in one cloud has no ability to take down, slow
+down, or block a request in another. When we say the clouds are independent we mean the boring
+version of independence: separate databases, separate control planes, separate credentials,
+separate deploys.</p>
+
+<p>Every one of those routers runs inside a trusted execution environment. This is the part that
+makes our infrastructure unusual, and it is worth being concrete about what it costs us. We ship a
+machine image whose measurement we publish, the hardware attests to that measurement, and you can
+<a href="/blog/attestation-is-all-you-need">check the measurement yourself</a> before you send us a
+single token. We wrote about how that works in
+<a href="/blog/how-confidential-computing-protects-ai-prompts">confidential computing for AI prompts</a>
+and about why
+<a href="/blog/no-log-is-a-promise-attestation-is-proof">a no-log policy is a promise and attestation is proof</a>.
+The consequence for operations is that nobody can SSH into a production machine. There is no shell to log into, for the
+on-call engineer at 3am or for an attacker who steals my laptop. The image is what
+it is, and if you want to change it you build a new one, publish its measurement, and roll it.</p>
+
+<p>That constraint deletes entire categories of failure. A stolen SSH key is not a threat model we
+have. Neither is a debugging session that accidentally writes to production, or an operator reading
+prompts out of a log, or a compromised bastion host, or an insider with root. Those are among the
+most common ways that companies actually get breached, and they are unavailable to us and to anyone
+attacking us. The price is that every operational fix has to be a code change that survives review
+and ships as a measured artifact. That is slower on any given Tuesday. It is also why our failure
+modes are narrow enough to enumerate.</p>
+
+<p>AWS and Azure run the same service against the same interface. Both use Postgres rather than
+Spanner, behind one storage abstraction that is exercised by the same conformance suite regardless
+of which backend is underneath, so there is one implementation of the money path rather than three.
+On AWS the enclaves are Nitro Enclaves, measured by PCR0. On Azure they are SEV-SNP confidential
+containers, measured by a CCE policy hash that the hardware reports as HOST_DATA and that Microsoft
+Azure Attestation signs. Different vendors, different attestation formats, different root of trust,
+same
+<a href="/blog/one-api-all-llms-provably-private">API and same guarantee</a>.
+Each cloud has its own control plane, so a cloud can answer questions about its own health when the
+other two are unreachable.</p>
+
+<p>The obvious objection is the serious one: multiplying probabilities only works when failures are
+independent, and in practice they usually are not. Two clouds go down together because they share a
+DNS provider, or a TLS certificate authority, or a config change that a single engineer pushed to
+all three on a Friday. Correlated failure is what actually kills multi-cloud architectures, and
+believing your own arithmetic is how you end up surprised. So the work is removing the things they share. Each cloud has its own database, its own credentials, its
+own control plane, and its own deploy. We stagger rollouts so that a bad image reaches one cloud and
+is caught by the other two still serving the old one. We are steadily removing shared dependencies
+as we find them, and we find them by looking for them rather than by waiting for an incident.</p>
+
+<p>We are a router. Being neutral about which model you use is worth very little if we are not there
+when you call. The point of building it this way is that when your favorite provider has a bad day,
+or your gateway has a bad day, or an entire cloud has a bad day, the thing in front of them is still
+answering.</p>
+
+<p>The failure everybody forgets is the domain name. You can run three clouds perfectly and still
+go dark because one DNS zone stopped answering, or a registrar locked a name, or a resolver
+somewhere is handing out a stale record. It sits above the entire architecture, it is a single point
+of failure, and buying more servers does nothing about it. So we run three domains that are exact
+aliases of each other: <span class="mono">trustedrouter.com</span>,
+<span class="mono">allyrouter.com</span> and <span class="mono">uptimerouter.com</span>. Same API,
+same keys, same attestation, same enclaves behind them. They are served by different DNS providers —
+trustedrouter.com out of Google Cloud DNS, the other two out of Route 53 — so a provider-level DNS
+failure takes one name offline and leaves the other two answering.</p>
+
+<p>Three names only help if the thing calling us knows to try the second one, so our SDKs do it for
+you. We ship them in six languages — Python, TypeScript, Go, Rust, Java and Swift — and they fall
+back from one router domain to the next on their own. Your code keeps calling the same method. The
+SDK moves to <span class="mono">allyrouter.com</span> when <span class="mono">trustedrouter.com</span>
+stops answering, and the request lands on the same attested enclaves it would have hit anyway,
+because the names are aliases rather than separate deployments.</p>
+
+<p>It is a router in front of the router. We already route your request across model providers so
+that one provider having a bad day is somebody else's problem; the SDK routes across our own entry
+points so that we having a bad day is also somebody else's problem. The AI infrastructure layer has
+been held to a pretty low bar on this. Gateways go down, and everything behind them goes down with
+them, and the answer has usually been a status page and an apology. We would rather you never find
+out.</p>
+
+<h2>The caveat</h2>
+
+<p>Five nines is a measurement, and we have not measured it yet. Nobody can claim five nines from an
+architecture diagram. It takes months and probably years of continuous, instrumented operation
+to demonstrate that kind of consistency, because 26 minutes a year is a number you can only earn by
+not spending it. What this post describes is the design: the decisions we made so that no single
+failure — one machine, one region, one database, one cloud — takes the service down, and so that the
+independent pieces multiply instead of add.</p>
+
+<p>Things will still leak in. There are always shared dependencies you have not found yet, and a bug
+in code that runs everywhere does not care how many clouds you bought. Our bet is that isolating the
+clouds from each other and staggering what we ship to them keeps those failures from landing on all
+three at once. We publish
+<a href="/status">live status</a> for each cloud separately, so you can watch us earn the number
+instead of taking our word for it.</p>
+""",
+    ),
+    BlogPost(
+        slug="they-are-still-training-on-your-data",
+        title="They Are Still Training on Your Data",
+        description=(
+            "The AI industry is running out of public text. Synthetic data conditioned on "
+            "real customer traffic gives it a way to keep the useful parts after deleting the original."
+        ),
+        published_date="2026-08-05",
+        source_label="Generative Data Refinement paper",
+        source_url="https://arxiv.org/abs/2509.08653",
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="A real customer prompt is refined into synthetic data and added to a model training set">
+<rect width="1200" height="630" fill="#0b1118"/>
+<text x="64" y="68" font-size="21" font-weight="700" fill="#7be0b1">TrustedRouter</text>
+<text x="64" y="144" font-size="50" font-weight="750" fill="#f8fafc">They are still training</text>
+<text x="64" y="201" font-size="50" font-weight="750" fill="#f8fafc">on your data.</text>
+<text x="64" y="246" font-size="20" fill="#a9bfd5">Delete the original. Keep a synthetic derivative with the useful parts.</text>
+
+<rect x="64" y="316" width="250" height="150" rx="8" fill="#101c28" stroke="#35506b" stroke-width="2"/>
+<text x="189" y="356" text-anchor="middle" font-size="14" font-weight="700" fill="#a9bfd5">REAL CUSTOMER DATA</text>
+<text x="189" y="404" text-anchor="middle" font-size="25" font-weight="700" fill="#f8fafc">Prompt + response</text>
+<text x="189" y="437" text-anchor="middle" font-size="16" fill="#a9bfd5">Private and diverse</text>
+
+<line x1="314" y1="391" x2="405" y2="391" stroke="#7be0b1" stroke-width="4"/>
+<path d="M405 391 L385 379 L385 403 Z" fill="#7be0b1"/>
+
+<rect x="420" y="296" width="330" height="190" rx="8" fill="#12271f" stroke="#39b983" stroke-width="3"/>
+<text x="585" y="338" text-anchor="middle" font-size="14" font-weight="700" fill="#7be0b1">GENERATIVE REFINEMENT</text>
+<text x="585" y="382" text-anchor="middle" font-size="25" font-weight="700" fill="#f8fafc">Remove identity and risk</text>
+<text x="585" y="418" text-anchor="middle" font-size="17" fill="#b9d9ca">Preserve meaning and diversity</text>
+<text x="585" y="449" text-anchor="middle" font-size="17" fill="#b9d9ca">Call the output synthetic</text>
+
+<line x1="750" y1="391" x2="841" y2="391" stroke="#d2a85a" stroke-width="4"/>
+<path d="M841 391 L821 379 L821 403 Z" fill="#d2a85a"/>
+
+<rect x="856" y="316" width="280" height="150" rx="8" fill="#201d17" stroke="#6e5c39" stroke-width="2"/>
+<text x="996" y="356" text-anchor="middle" font-size="14" font-weight="700" fill="#e7c983">TRAINING DATA</text>
+<text x="996" y="404" text-anchor="middle" font-size="25" font-weight="700" fill="#f8fafc">Synthetic derivative</text>
+<text x="996" y="437" text-anchor="middle" font-size="16" fill="#cfc2a5">Reusable across training runs</text>
+
+<rect x="64" y="526" width="1072" height="58" rx="8" fill="#111d28" stroke="#26394b"/>
+<text x="92" y="562" font-size="18" fill="#d9e5ef">The raw row is gone. The information it contributed remains.</text>
+<text x="1136" y="612" text-anchor="end" font-size="18" font-weight="700" fill="#7be0b1">TrustedRouter.com</text>
+</svg>
+</figure>
+
+<p>The AI industry's dirty little secret is that it is still training on your data. Your prompts are better than another scrape of Reddit. They contain current code, private documents, expert corrections, tool traces, purchase decisions, failed attempts, and the answer you finally accepted. A closed router sees all of it across every model. That may be the most valuable dataset in AI.</p>
+
+<p>A <a href="https://arxiv.org/abs/2509.08653">Google DeepMind paper</a> explains how to turn private or otherwise unusable data into training data. The paper starts with the data shortage. Training datasets are growing faster than new text appears on the public web. Far more text exists in messages, private code, company documents, and other user-generated content. Companies have avoided much of it because it contains personal information, copyrighted material, and toxic content.</p>
+
+<p>The method is called Generative Data Refinement. Give a model one real example and ask it to rewrite the dangerous parts while preserving the useful information. The result is called grounded synthetic data. It keeps the diversity of the real dataset because every synthetic example begins with a real one.</p>
+
+<p>This works. The researchers tested more than 20,000 sentences across 108 kinds of personal information. Their approach reached mean recall of 0.99 and precision of 0.80 on that benchmark. They ran it across 1.2 million lines of code from 479 repositories. They also cleaned 100,000 toxic messages and trained a model on the result. The trained model learned facts from the original messages after the toxic wording was gone.</p>
+
+<p>Now read the usual promise again: <em>we do not train on your data.</em> Which data? The exact row you sent may disappear. A synthetic rewrite conditioned on that row can live forever. The training job consumes the rewrite, so the company says the model trained on synthetic data. Your real prompt supplied the facts, structure, vocabulary, and diversity that made the synthetic example valuable.</p>
+
+<p>Zero data retention can have the same hole. A server receives the raw prompt, runs the refinement step, writes the derivative somewhere else, and deletes the raw bytes. A strong contract can ban that. It needs to cover derivatives, de-identified content, model improvement, product improvement, research, and disclosures to partners. The three letters ZDR do not tell you whether it does.</p>
+
+<p>Some router terms make the data business visible. <a href="https://openrouter.ai/terms">OpenRouter's terms</a> say that users who opt into prompt logging grant a license that includes selling anonymized user content. A separate section grants a perpetual license to prepare derivative works of anonymized inputs for rankings. OpenRouter also <a href="https://openrouter.ai/data">says it does not sell prompt data</a>. All of those sentences can be true at once. <a href="https://vercel.com/legal/privacy-notice">Vercel's privacy notice</a> says de-identified AI product information from Hobby and Pro users may be disclosed to AI partners for product development and model training, subject to user preferences. The contract calls the information anonymized or de-identified before it changes hands.</p>
+
+<p>I cannot tell you that every closed router runs this exact pipeline. You cannot tell either. The source is closed, the production binary is hidden, and the prompt arrives in plaintext. A privacy page describes the company's current rules for itself. It gives your computer nothing to verify.</p>
+
+<p>TrustedRouter removed this business model from the router. Public TLS terminates inside an attested open source workload. The control plane never receives prompt or output bodies. The published gateway code does not build or persist a synthetic training corpus, and the <a href="https://trust.trustedrouter.com">live attestation</a> lets a client check which gateway image is handling the request. A different binary produces a different measurement.</p>
+
+<p>The upstream model provider is a separate boundary. <a href="/models/trustedrouter/zdr"><span class="mono">trustedrouter/zdr</span></a> selects providers with a tracked zero-retention posture. <a href="/models/trustedrouter/e2e"><span class="mono">trustedrouter/e2e</span></a> requires eligible confidential provider compute and provider-side encryption. The <a href="/providers">provider directory</a> publishes each claim and leaves unknown providers marked unknown. A normal provider route can still expose the prompt to that provider, so choose the privacy floor your data requires.</p>
+
+<p>Deleting your row is easy. Giving up the information inside it is expensive. The AI industry found a way to keep the second while promising the first.</p>
+""",
+    ),
+    BlogPost(
+        slug="no-log-is-a-promise-attestation-is-proof",
+        title="ZDR is a vague promise. Attestation is precise proof",
+        description=(
+            "Most AI routers ask you to trust a data policy. TrustedRouter puts public TLS "
+            "and prompt handling inside a measured open source workload you can verify."
+        ),
+        published_date="2026-08-05",
+        source_label="Google Confidential Space documentation",
+        source_url=(
+            "https://docs.cloud.google.com/confidential-computing/confidential-space/"
+            "docs/confidential-space-overview"
+        ),
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="An encrypted request reaches an attested TrustedRouter gateway before a route-specific model provider">
+<rect width="1200" height="630" fill="#0b1118"/>
+<text x="64" y="68" font-size="21" font-weight="700" fill="#7be0b1">TrustedRouter</text>
+<text x="64" y="145" font-size="46" font-weight="750" fill="#f8fafc">ZDR is a vague promise.</text>
+<text x="64" y="202" font-size="46" font-weight="750" fill="#f8fafc">Attestation is precise proof.</text>
+<text x="64" y="248" font-size="20" fill="#a9bfd5">Verify the workload before your prompt crosses the trust boundary.</text>
+
+<rect x="64" y="315" width="240" height="150" rx="8" fill="#101c28" stroke="#35506b" stroke-width="2"/>
+<text x="184" y="355" text-anchor="middle" font-size="14" font-weight="700" fill="#a9bfd5">YOUR APP</text>
+<text x="184" y="402" text-anchor="middle" font-size="25" font-weight="700" fill="#f8fafc">Encrypted request</text>
+<text x="184" y="434" text-anchor="middle" font-size="16" fill="#a9bfd5">Normal public TLS</text>
+
+<line x1="304" y1="390" x2="406" y2="390" stroke="#7be0b1" stroke-width="4"/>
+<path d="M406 390 L386 378 L386 402 Z" fill="#7be0b1"/>
+
+<rect x="420" y="295" width="350" height="190" rx="8" fill="#12271f" stroke="#39b983" stroke-width="3"/>
+<text x="595" y="337" text-anchor="middle" font-size="14" font-weight="700" fill="#7be0b1">ATTESTED GATEWAY</text>
+<text x="595" y="382" text-anchor="middle" font-size="27" font-weight="700" fill="#f8fafc">TLS ends inside the TEE</text>
+<text x="595" y="418" text-anchor="middle" font-size="17" fill="#b9d9ca">Measured open source workload</text>
+<text x="595" y="448" text-anchor="middle" font-size="17" fill="#b9d9ca">No prompt or output storage</text>
+
+<line x1="770" y1="390" x2="872" y2="390" stroke="#d2a85a" stroke-width="4"/>
+<path d="M872 390 L852 378 L852 402 Z" fill="#d2a85a"/>
+
+<rect x="886" y="315" width="250" height="150" rx="8" fill="#201d17" stroke="#6e5c39" stroke-width="2"/>
+<text x="1011" y="355" text-anchor="middle" font-size="14" font-weight="700" fill="#e7c983">MODEL PROVIDER</text>
+<text x="1011" y="402" text-anchor="middle" font-size="24" font-weight="700" fill="#f8fafc">Route-specific trust</text>
+<text x="1011" y="434" text-anchor="middle" font-size="16" fill="#cfc2a5">Open, ZDR, or E2E</text>
+
+<rect x="64" y="525" width="1072" height="58" rx="8" fill="#111d28" stroke="#26394b"/>
+<text x="92" y="561" font-size="18" fill="#d9e5ef">Router proof and provider posture are separate. TrustedRouter publishes both.</text>
+<text x="1136" y="611" text-anchor="end" font-size="18" font-weight="700" fill="#7be0b1">TrustedRouter.com</text>
+</svg>
+</figure>
+
+<p>Every AI router says it protects your data. Of course it does. Nobody puts "our employees can read your prompts" on the homepage. The useful question is what the running machine can do with your prompt right now, and a privacy policy cannot answer it.</p>
+
+<p>A normal gateway terminates TLS in an ordinary application process. That process reads your prompt, chooses a provider, and sends it along. The company may keep logging turned off. You still have to trust every administrator, every configuration change, every analytics library, and every deploy. Zero retention limits what the company promises to keep. It gives the machine full access first.</p>
+
+<p>Open source helps, but there is an obvious hole. You can read a repository while the hosted service runs a different binary. How do you prove that the code on GitHub is the code holding the TLS key? Usually, you cannot.</p>
+
+<p>I built TrustedRouter to close that hole. Public TLS for <span class="mono">api.trustedrouter.com</span> terminates inside a measured GCP Confidential Space workload. The private key stays inside that workload. The separate control plane handles accounts, credits, and request metadata. It never receives prompt or output bodies, and the gateway has no prompt storage path.</p>
+
+<p><a href="https://docs.cloud.google.com/confidential-computing/confidential-space/docs/confidential-space-overview">Google describes Confidential Space</a> as a trusted execution environment that keeps data from the workload operator and produces attestation evidence identifying the workload. The product name is boring. The evidence is useful. It lets your computer check the issuer, audience, image digest, and certificate binding before it sends a prompt.</p>
+
+<p>The live <a href="https://trust.trustedrouter.com">TrustedRouter trust page</a> publishes the gateway repository, source commit, image reference, image digest, attestation issuer, and audience. A client can request fresh evidence, bind it to the TLS certificate with a nonce, and compare the measured image with the published release. If any of those values fail, the client should stop. There is no ordinary server waiting behind it as a convenient privacy downgrade.</p>
+
+<p>But the model provider still gets the prompt, right? Yes. The router and the model provider are two separate trust boundaries, and pretending otherwise would make the attestation worthless. The <a href="/providers">provider directory</a> publishes the upstream posture for every route and leaves unknown providers marked unknown. <a href="/models/trustedrouter/zdr"><span class="mono">trustedrouter/zdr</span></a> requires a tracked zero-retention provider. <a href="/models/trustedrouter/e2e"><span class="mono">trustedrouter/e2e</span></a> requires eligible confidential provider compute and provider-side encryption. Both fail closed when a qualifying route is unavailable.</p>
+
+<p>Could another router add this? Yes, after moving certificate custody and plaintext request handling into a trusted execution environment, separating billing from the prompt path, removing content from telemetry, publishing source-to-image evidence, verifying fresh attestation, and giving up the ordinary fallback server. That is a rebuild, which is why a checkbox saying "ZDR" proves so little.</p>
+
+<p>A privacy policy tells you what a company says. Attestation tells your computer which code has your prompt.</p>
+""",
+    ),
+    BlogPost(
+        slug="sign-in-with-trustedrouter",
+        title="Sign in with TrustedRouter",
+        description=(
+            "Let users sign in, fund their own AI balance, choose an app spending cap, "
+            "and grant an inference-only key without copying provider credentials."
+        ),
+        published_date="2026-08-03",
+        source_label=None,
+        source_url=None,
+        og_image="/static/og/sign-in-with-trustedrouter.png",
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="Sign in with TrustedRouter user funded AI authorization flow">
+<rect width="1200" height="630" fill="#ffffff"/>
+<text x="60" y="58" font-size="22" font-weight="700" fill="#0f6e56">TrustedRouter</text>
+<text x="60" y="126" font-size="48" font-weight="700" fill="#111827">Sign in with TrustedRouter</text>
+<text x="60" y="166" font-size="22" fill="#6b7280">Your users bring their own AI, credits, and spending limit.</text>
+<defs>
+  <marker id="oauth-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0 0 L8 3 L0 6 z" fill="#6b7280"/>
+  </marker>
+</defs>
+
+<rect x="60" y="235" width="235" height="190" rx="8" fill="#f3f4f6" stroke="#d1d5db" stroke-width="2"/>
+<text x="177" y="275" text-anchor="middle" font-size="15" font-weight="700" fill="#6b7280">APP</text>
+<text x="177" y="320" text-anchor="middle" font-size="25" font-weight="700" fill="#111827">Your app</text>
+<text x="177" y="354" text-anchor="middle" font-size="16" fill="#4b5563">Ship an AI feature</text>
+<text x="177" y="384" text-anchor="middle" font-size="16" fill="#4b5563">Suggest a spending cap</text>
+
+<line x1="295" y1="330" x2="350" y2="330" stroke="#6b7280" stroke-width="2.5" marker-end="url(#oauth-arrow)"/>
+
+<rect x="365" y="235" width="235" height="190" rx="8" fill="#ecfdf5" stroke="#6ee7b7" stroke-width="2"/>
+<text x="482" y="275" text-anchor="middle" font-size="15" font-weight="700" fill="#047857">USER</text>
+<text x="482" y="320" text-anchor="middle" font-size="25" font-weight="700" fill="#111827">Sign in</text>
+<text x="482" y="354" text-anchor="middle" font-size="16" fill="#4b5563">New account starts at $0</text>
+<text x="482" y="384" text-anchor="middle" font-size="16" fill="#4b5563">No provider key to copy</text>
+
+<line x1="600" y1="330" x2="655" y2="330" stroke="#6b7280" stroke-width="2.5" marker-end="url(#oauth-arrow)"/>
+
+<rect x="670" y="235" width="235" height="190" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="2"/>
+<text x="787" y="275" text-anchor="middle" font-size="15" font-weight="700" fill="#1d4ed8">CONTROL</text>
+<text x="787" y="320" text-anchor="middle" font-size="25" font-weight="700" fill="#111827">Fund and cap</text>
+<text x="787" y="354" text-anchor="middle" font-size="16" fill="#4b5563">$5  |  $20  |  $100</text>
+<text x="787" y="384" text-anchor="middle" font-size="16" fill="#4b5563">User chooses the maximum</text>
+
+<line x1="905" y1="330" x2="960" y2="330" stroke="#6b7280" stroke-width="2.5" marker-end="url(#oauth-arrow)"/>
+
+<rect x="975" y="235" width="165" height="190" rx="8" fill="#e1f5ee" stroke="#1d9e75" stroke-width="2.5"/>
+<text x="1057" y="275" text-anchor="middle" font-size="15" font-weight="700" fill="#0f6e56">KEY</text>
+<text x="1057" y="320" text-anchor="middle" font-size="23" font-weight="700" fill="#111827">Inference only</text>
+<text x="1057" y="354" text-anchor="middle" font-size="15" fill="#4b5563">Revocable</text>
+<text x="1057" y="384" text-anchor="middle" font-size="15" fill="#4b5563">PKCE protected</text>
+
+<rect x="60" y="475" width="1080" height="82" rx="8" fill="#111827"/>
+<text x="90" y="511" font-size="18" font-weight="700" fill="#ffffff">One account. One capped key. Any supported model.</text>
+<text x="90" y="540" font-size="16" fill="#d1d5db">The app gets a capped key. The user keeps billing control. TrustedRouter keeps no prompt or output logs.</text>
+<text x="1140" y="612" text-anchor="end" font-size="18" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
+</svg>
+</figure>
+<p>Your users should be able to pay for their own AI without finding, copying, and trusting you with a provider API key.</p>
+<p>We shipped <a href="/sign-in-with-trustedrouter">Sign in with TrustedRouter</a>. An app sends its user to TrustedRouter. The user signs in, adds credits if needed, chooses exactly how much the app may spend, and approves one inference-only key. The app never receives a management key. It cannot change billing, inspect other keys, or take over the workspace.</p>
+<p>A writing tool, coding agent, research app, or internal product can use the same flow. The app suggests a conservative limit. The user sees that number before approval, can change it, and can revoke the resulting key later. Model calls draw from the user's TrustedRouter balance, so the developer does not need to build a second inference billing system.</p>
+<p>A person who creates a TrustedRouter account inside this flow starts at exactly <strong>$0</strong> and receives only the inference key they explicitly approve. That closes an obvious credit-farming hole and makes the economic relationship honest from the first request.</p>
+<p>The funding step lives inside consent. The user can add $5, $20, or $100, with $20 selected by default. Stripe processes the payment and saves the card to the user's TrustedRouter account. The card can be removed later from the Credits page. Existing users see their current balance and can skip funding when they already have enough.</p>
+<p>The authorization itself uses PKCE. The app creates a verifier, sends only its SHA-256 challenge to TrustedRouter, and keeps the verifier for the code exchange. A stolen callback code is useless without it. The final key can carry a fixed, daily, weekly, or monthly maximum and an expiry. The user can revoke it at any time.</p>
+<p>The obvious objection is that the writing app sees the writing. Of course it does. The user gave text to that application to improve it, and the application needs its own honest privacy policy. Once the app calls a model, TrustedRouter sends that request through the <a href="https://trust.trustedrouter.com">attested API gateway</a>. TrustedRouter keeps no prompt or output logs, always. The delegated auth control plane handles identity, billing, and key metadata. It does not receive the model request body.</p>
+<p>The official SDKs already support Sign in with TrustedRouter. The <a href="https://github.com/Lore-Hex/trusted-router-py">Python SDK</a> ships <span class="mono">create_oauth_authorization</span> and <span class="mono">exchange_oauth_key</span>. The <a href="https://github.com/Lore-Hex/trusted-router-js">TypeScript SDK</a> ships <span class="mono">BrowserOAuthFlow</span>. The <a href="https://github.com/jperla/trusted-router-swift">Swift SDK</a> ships <span class="mono">TrustedRouterOAuth</span>. They generate PKCE state, build the authorization URL, validate the callback, and exchange the code.</p>
+<p>The complete flow is in the <a href="https://github.com/Lore-Hex/quill-router/blob/main/docs/sign-in-with-trustedrouter.md">developer documentation</a>, with SPA, backend, native, and loopback examples.</p>
+<p>Add one button. Let the user choose the bill and the boundary.</p>
+""",
+    ),
+    BlogPost(
+        slug="how-confidential-computing-protects-ai-prompts",
+        title="The cloud should not be able to read your prompts",
+        description=(
+            "A plain-English guide to confidential computing, trusted execution "
+            "environments, remote attestation, and how an agent can verify the "
+            "TrustedRouter prompt path before sending data."
+        ),
+        published_date="2026-07-23",
+        source_label=None,
+        source_url=None,
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="TrustedRouter confidential computing and attestation request path">
+<rect width="1200" height="630" fill="#ffffff"/>
+<text x="60" y="58" font-size="38" font-weight="700" fill="#111827">The cloud should not be able to read your prompts</text>
+<text x="60" y="92" font-size="19" fill="#6b7280">Disk encryption and HTTPS still leave plaintext inside a normal server.</text>
+<defs>
+  <marker id="cc-arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
+    <path d="M0 0 L7 3 L0 6 z" fill="#6b7280"/>
+  </marker>
+</defs>
+
+<rect x="55" y="155" width="220" height="190" rx="8" fill="#f3f4f6" stroke="#d1d5db" stroke-width="2"/>
+<text x="165" y="202" font-size="22" font-weight="700" text-anchor="middle" fill="#111827">Your agent</text>
+<text x="165" y="238" font-size="16" text-anchor="middle" fill="#4b5563">Creates a fresh nonce</text>
+<text x="165" y="266" font-size="16" text-anchor="middle" fill="#4b5563">Verifies the gateway</text>
+<text x="165" y="294" font-size="16" text-anchor="middle" fill="#4b5563">Then sends the prompt</text>
+
+<line x1="275" y1="250" x2="365" y2="250" stroke="#6b7280" stroke-width="2.5" marker-end="url(#cc-arrow)"/>
+<text x="320" y="228" font-size="14" text-anchor="middle" fill="#6b7280">TLS</text>
+
+<rect x="375" y="130" width="455" height="240" rx="8" fill="#e1f5ee" stroke="#1d9e75" stroke-width="2.5"/>
+<rect x="395" y="150" width="118" height="28" rx="4" fill="#1d9e75"/>
+<text x="454" y="170" font-size="13" font-weight="700" text-anchor="middle" fill="#ffffff">DATA IN USE</text>
+<text x="602" y="218" font-size="27" font-weight="700" text-anchor="middle" fill="#0f6e56">Attested gateway</text>
+<text x="602" y="252" font-size="17" text-anchor="middle" fill="#374151">GCP Confidential Space</text>
+<text x="602" y="291" font-size="16" text-anchor="middle" fill="#374151">TLS key and prompt stay in protected memory</text>
+<text x="602" y="320" font-size="16" text-anchor="middle" fill="#374151">Measured production image, debug access disabled</text>
+<text x="602" y="349" font-size="16" text-anchor="middle" fill="#374151">Public source request path</text>
+
+<line x1="830" y1="250" x2="925" y2="250" stroke="#6b7280" stroke-width="2.5" marker-end="url(#cc-arrow)"/>
+<text x="878" y="228" font-size="14" text-anchor="middle" fill="#6b7280">TLS</text>
+
+<rect x="935" y="155" width="210" height="190" rx="8" fill="#fff7ed" stroke="#fdba74" stroke-width="2"/>
+<text x="1040" y="202" font-size="21" font-weight="700" text-anchor="middle" fill="#9a3412">Model provider</text>
+<text x="1040" y="238" font-size="15" text-anchor="middle" fill="#4b5563">Usually sees the prompt</text>
+<text x="1040" y="266" font-size="15" text-anchor="middle" fill="#4b5563">Choose ZDR or require</text>
+<text x="1040" y="291" font-size="15" text-anchor="middle" fill="#4b5563">confidential + E2EE</text>
+<text x="1040" y="319" font-size="14" text-anchor="middle" fill="#9a3412">This boundary matters</text>
+
+<rect x="375" y="404" width="455" height="78" rx="8" fill="#f9fafb" stroke="#d1d5db" stroke-width="2"/>
+<text x="602" y="435" font-size="17" font-weight="700" text-anchor="middle" fill="#374151">Control plane</text>
+<text x="602" y="463" font-size="15" text-anchor="middle" fill="#6b7280">Keys, billing, route metadata. It cannot decrypt prompt traffic.</text>
+
+<rect x="55" y="515" width="1090" height="72" rx="8" fill="#ecfdf5" stroke="#6ee7b7" stroke-width="2"/>
+<text x="82" y="546" font-size="17" font-weight="700" fill="#065f46">Your agent checks before sending:</text>
+<text x="82" y="572" font-size="15" fill="#047857">Google signature  &#183;  fresh nonce  &#183;  image digest  &#183;  TLS certificate + session binding  &#183;  debug off</text>
+<text x="1140" y="618" text-anchor="end" font-size="19" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
+</svg>
+</figure>
+<p>The cloud administrator should not be able to read your prompts. Disk encryption and HTTPS do not get you there. They protect data while it is stored and while it crosses the network. A normal server decrypts the request before the application uses it, which leaves plaintext in memory where a privileged operator, debugger, compromised hypervisor, or host bug may reach it.</p>
+<p><a href="https://www.redhat.com/en/topics/security/what-is-confidential-computing">Red Hat describes confidential computing</a> as protection for data <em>in use</em>. The code runs inside a hardware-backed Trusted Execution Environment, usually shortened to TEE. The host can give that workload CPU and memory, send it network packets, restart it, or kill it. The processor blocks the host from inspecting the workload's protected memory. The prompt becomes plaintext only inside that boundary.</p>
+<p>A TEE does not make bad code good. Code running inside the protected memory can still leak a prompt. Bugs still matter. The cloud hardware and its attestation service remain part of the trust base. Confidential computing removes a very large class of operator and host access, but you still need to know which code entered the protected memory.</p>
+<p>That is what remote attestation is for. Before an agent sends a prompt, it sends fresh random data called a nonce. The confidential workload asks the platform for a signed attestation token containing that nonce and measurements of the running environment. A verifier checks the platform signature, the intended audience, the production debug state, and the container image digest. Replaying an old token fails because its nonce is wrong.</p>
+<p>Apple made this verification model unusually clear in its <a href="https://security.apple.com/blog/private-cloud-compute/">Private Cloud Compute design</a>. Traditional cloud controls are hard for a user to inspect from the outside. Apple therefore treats verifiable software transparency, stateless processing, and the absence of privileged runtime access as product requirements. TrustedRouter applies the same basic demand to a public-source AI gateway: identify the code that will receive the prompt before trusting it with the prompt.</p>
+<p>Here is what happens on a normal request to <span class="mono">api.trustedrouter.com</span>:</p>
+<ol>
+  <li>The client opens TLS directly to a regional TrustedRouter gateway. The TLS private key and HTTP request terminate inside GCP Confidential Space.</li>
+  <li>The gateway asks the control plane to authorize the API key and choose eligible routes. That exchange contains billing and routing metadata, not the prompt body.</li>
+  <li>The gateway calls the selected model provider, streams the answer back, and settles integer token costs against the authorization.</li>
+  <li>The control plane records metadata such as model, provider, token counts, latency, status, and cost. The prompt and answer stay out of that database and its logs.</li>
+</ol>
+<p><a href="https://cloud.google.com/confidential-computing/confidential-space/docs/confidential-space-overview">GCP Confidential Space</a> runs the gateway container on a Confidential VM with hardware isolation and remote attestation. TrustedRouter uses the production image. The public verifier rejects a debug image because Google's debug variant enables operator access that is unacceptable for sensitive production prompts.</p>
+<p>TrustedRouter also binds the attestation to the live TLS connection. The signed token covers the certificate presented on that connection and an RFC 9266 TLS exporter derived from that exact session. This matters because a valid token fetched through one connection should not be reusable to bless a different proxy connection. The verifier keeps the socket open and confirms that the follow-up request stays on the attested session.</p>
+<p>You can have an agent verify the live service now. This uses the public release record, checks out the source commit named by that release, and runs the strict verifier from the same commit. It does not pipe downloaded code straight into a shell, so the agent can inspect the verifier first.</p>
+<pre><code>release="$(mktemp)"
+curl -fsS https://trust.trustedrouter.com/gcp-release.json -o "$release"
+commit="$(jq -r '.source_commit' "$release")"
+digest="$(jq -r '.image_digest' "$release")"
+
+git clone https://github.com/Lore-Hex/quill-cloud-proxy.git
+cd quill-cloud-proxy
+git checkout "$commit"
+
+# Read tools/verify-attestation.py, then run it.
+uv run --script tools/verify-attestation.py \
+  --api-host api.trustedrouter.com \
+  --expect-digest "$digest" \
+  --samples 4</code></pre>
+<p>A passing run confirms a Google-signed Confidential Space token, a fresh nonce, the expected audience and image digest, production debug state, the TLS leaf certificate, the TLS session exporter, and repeated requests on the same attested socket. The <a href="https://trust.trustedrouter.com/gcp-release.json">release record</a> names the source commit and deployed image. The repository also includes <a href="https://github.com/Lore-Hex/quill-cloud-proxy/blob/main/tools/verify-build.sh">a full rebuild verifier</a> for an engineer who wants to compare the published binary with a local build.</p>
+<p>What does that prove? It proves that the gateway at the other end of the verified TLS session is running the measured production image and that the connection is bound to that workload. The source and verifier are public, so an engineer can inspect the code paths that handle prompts, logging, settlement, and provider calls. It does not prove the code has no bugs, that your own machine is clean, or that every downstream model provider uses confidential computing.</p>
+<p>The provider boundary is the part people skip. The selected model provider normally receives the prompt. <span class="mono">provider.min_privacy = "zdr"</span> requires a route with a zero-data-retention posture. The stronger <span class="mono">provider.min_privacy = "confidential"</span> requires provider-side confidential compute and end-to-end encryption, and fails closed when no eligible route exists. The model aliases <a href="/models/trustedrouter/e2e"><span class="mono">trustedrouter/e2e</span></a> and <a href="/models/trustedrouter/confidential"><span class="mono">trustedrouter/confidential</span></a> select that same stronger pool.</p>
+<p>The distinction is useful. Attestation proves the TrustedRouter gateway. A confidential provider route extends the protected path through model execution. A ZDR contract governs retention after a provider receives the data. Those are three different properties, and the <a href="/security">security page</a> and <a href="/providers">provider directory</a> expose them separately.</p>
+<p>A privacy policy asks you to believe whoever runs the server. Make the server identify itself before your agent sends the prompt.</p>
+""",
+    ),
+    BlogPost(
+        slug="prometheus-2-new-draco-state-of-the-art",
+        title="Prometheus 2.0: new DRACO state of the art",
+        description=(
+            "Prometheus 2.0 scores 77.4 on the full 100-task DRACO deep-research benchmark "
+            "— above every preset we have ever measured, including the frontier-panel Zeus."
+        ),
+        published_date="2026-07-18",
+        source_label=None,
+        source_url=None,
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
+<rect width="1200" height="630" fill="#ffffff"/>
+<text x="60" y="54" font-size="30" font-weight="700"><tspan fill="#1d9e75">TrustedRouter.com:</tspan><tspan fill="#111827" dx="10">Prometheus 2.0 &#8212; new DRACO state of the art</tspan></text>
+<text x="60" y="86" font-size="18" fill="#6b7280">Full 100-task DRACO, agentic deep research &#183; whiskers = 95% bootstrap CI over tasks (B=20k)</text>
+<line x1="332" y1="112" x2="332" y2="540" stroke="#eef0f2"/><text x="332" y="562" font-size="14" text-anchor="middle" fill="#9a9890">55</text>
+<line x1="478" y1="112" x2="478" y2="540" stroke="#eef0f2"/><text x="478" y="562" font-size="14" text-anchor="middle" fill="#9a9890">60</text>
+<line x1="624" y1="112" x2="624" y2="540" stroke="#eef0f2"/><text x="624" y="562" font-size="14" text-anchor="middle" fill="#9a9890">65</text>
+<line x1="770" y1="112" x2="770" y2="540" stroke="#eef0f2"/><text x="770" y="562" font-size="14" text-anchor="middle" fill="#9a9890">70</text>
+<line x1="916" y1="112" x2="916" y2="540" stroke="#eef0f2"/><text x="916" y="562" font-size="14" text-anchor="middle" fill="#9a9890">75</text>
+<line x1="1062" y1="112" x2="1062" y2="540" stroke="#eef0f2"/><text x="1062" y="562" font-size="14" text-anchor="middle" fill="#9a9890">80</text>
+<rect x="332" y="124" width="654" height="30" rx="4" fill="#1d9e75"/>
+<text x="322" y="145" font-size="17" font-weight="700" text-anchor="end" fill="#111827">Prometheus 2.0</text>
+<line x1="901" y1="139" x2="1068" y2="139" stroke="#1f2937" stroke-width="2.5"/>
+<line x1="901" y1="128" x2="901" y2="150" stroke="#1f2937" stroke-width="2.5"/>
+<line x1="1068" y1="128" x2="1068" y2="150" stroke="#1f2937" stroke-width="2.5"/>
+<text x="1082" y="145" font-size="19" font-weight="700" fill="#111827">77.4</text>
+<rect x="332" y="184" width="537" height="30" rx="4" fill="#c9c7bf"/>
+<text x="322" y="205" font-size="16" text-anchor="end" fill="#374151">Zeus 1.0</text>
+<text x="879" y="205" font-size="17" font-weight="600" fill="#6b7280">73.4</text>
+<rect x="332" y="244" width="415" height="30" rx="4" fill="#c9c7bf"/>
+<text x="322" y="265" font-size="16" text-anchor="end" fill="#374151">Prometheus 1.0</text>
+<text x="757" y="265" font-size="17" font-weight="600" fill="#6b7280">69.2</text>
+<rect x="332" y="304" width="409" height="30" rx="4" fill="#c9c7bf"/>
+<text x="322" y="325" font-size="16" text-anchor="end" fill="#374151">OpenRouter best fusion &#8224;</text>
+<text x="751" y="325" font-size="17" font-weight="600" fill="#6b7280">69.0</text>
+<rect x="332" y="364" width="301" height="30" rx="4" fill="#c9c7bf"/>
+<text x="322" y="385" font-size="16" text-anchor="end" fill="#374151">Fable-5 solo</text>
+<text x="643" y="385" font-size="17" font-weight="600" fill="#6b7280">65.3</text>
+<rect x="332" y="424" width="242" height="30" rx="4" fill="#c9c7bf"/>
+<text x="322" y="445" font-size="16" text-anchor="end" fill="#374151">GPT-5.5 solo</text>
+<text x="584" y="445" font-size="17" font-weight="600" fill="#6b7280">63.3</text>
+<rect x="332" y="484" width="155" height="30" rx="4" fill="#c9c7bf"/>
+<text x="322" y="505" font-size="16" text-anchor="end" fill="#374151">Opus 4.8 solo</text>
+<text x="497" y="505" font-size="17" font-weight="600" fill="#6b7280">60.3</text>
+<text x="60" y="596" font-size="15" fill="#888780">&#8224; OpenRouter paper's best published fusion (Fable-5 + GPT-5.5). Solo baselines: same harness, same grader-calibrated protocol.</text>
+<text x="1140" y="618" text-anchor="end" font-size="19" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
+</svg>
+</figure>
+<p>Prometheus 2.0 posted the best score we have measured on <a href="/blog/fusion-evals-open-source">DRACO</a>, the 100-task agentic deep-research benchmark: <strong>77.4</strong>, 95% confidence interval [74.5, 80.2]. The interval sits entirely above <a href="/blog/synth-iris-prometheus-zeus">Zeus 1.0's 73.4</a> &mdash; the frontier-panel preset that held our previous best &mdash; and eight points above Prometheus 1.0's 69.2.</p>
+<p>For context beyond our own presets: the OpenRouter paper that introduced DRACO published <strong>69.0</strong> as its best result, Fable-5 drafting with GPT-5.5 fusing. The strongest single frontier models, run through the same harness and grader-calibrated protocol, land lower still: Fable-5 solo 65.3, GPT-5.5 solo 63.3, Claude Opus 4.8 solo 60.3. Prometheus 2.0 clears every one of them, and it is built entirely from open-weights models, at a fraction of the frontier panel's cost.</p>
+<p>Each DRACO task is real research: the model searches the live web, reads primary sources, runs its own calculations, and writes a long cited report, which is then graded criterion by criterion against a ~39-item rubric it never sees. All 100 tasks ran and all 100 were graded; the whiskers are bootstrap intervals over tasks. It was strongest where careful reading pays: Law (93.3), Medicine (86.1), General Knowledge (83.4), Academic (82.8). This continues what <a href="/blog/ten-cheap-runs-beat-the-frontier">our</a> <a href="/blog/fusion-works-now-even-self-fusion">earlier</a> <a href="/blog/self-fusion-gain-lives-in-the-synthesizer">results</a> kept showing: a well-fused panel beats any single model, and the fusions keep improving.</p>
+<p>Prometheus 2.0 is live on TrustedRouter today. Same key, same base URL, model id <span class="mono">trustedrouter/prometheus-2.0</span>, running behind the same <a href="/synth">attested gateway</a> as everything else. The rolling <a href="/models/trustedrouter/prometheus"><span class="mono">trustedrouter/prometheus</span></a> alias already points at it.</p>
+""",
+    ),
+    BlogPost(
         slug="introducing-liberty",
         title="Liberty-2.0: all American open-weights model",
         description=(
@@ -40,6 +757,63 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
         source_label=None,
         source_url=None,
         body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
+<rect width="1200" height="630" fill="#ffffff"/>
+<text x="60" y="54" font-size="29" font-weight="700"><tspan fill="#1d9e75">TrustedRouter.com:</tspan><tspan fill="#111827" dx="10">Liberty 2.0 matches the frontier on DRACO</tspan></text>
+<text x="60" y="86" font-size="18" fill="#6b7280">All 100 DRACO tasks, agentic deep research &#183; whisker = 95% bootstrap CI over tasks</text>
+<line x1="332" y1="120" x2="332" y2="524" stroke="#eef0f2"/>
+<text x="332" y="546" font-size="14" text-anchor="middle" fill="#9a9890">55</text>
+<line x1="534" y1="120" x2="534" y2="524" stroke="#eef0f2"/>
+<text x="534" y="546" font-size="14" text-anchor="middle" fill="#9a9890">60</text>
+<line x1="737" y1="120" x2="737" y2="524" stroke="#eef0f2"/>
+<text x="737" y="546" font-size="14" text-anchor="middle" fill="#9a9890">65</text>
+<line x1="939" y1="120" x2="939" y2="524" stroke="#eef0f2"/>
+<text x="939" y="546" font-size="14" text-anchor="middle" fill="#9a9890">70</text>
+<rect x="332" y="158" width="425" height="34" rx="4" fill="#1d9e75"/>
+<text x="318" y="181" font-size="17" font-weight="700" text-anchor="end" fill="#111827">Liberty 2.0</text>
+<line x1="615" y1="175" x2="895" y2="175" stroke="#1f2937" stroke-width="2.5"/>
+<line x1="615" y1="164" x2="615" y2="186" stroke="#1f2937" stroke-width="2.5"/>
+<line x1="895" y1="164" x2="895" y2="186" stroke="#1f2937" stroke-width="2.5"/>
+<text x="909" y="181" font-size="19" font-weight="700" fill="#111827">65.5</text>
+<rect x="332" y="238" width="417" height="34" rx="4" fill="#c9c7bf"/>
+<text x="318" y="261" font-size="17" font-weight="400" text-anchor="end" fill="#374151">Fable 5</text>
+<text x="761" y="261" font-size="17" font-weight="600" fill="#6b7280">65.3</text>
+<rect x="332" y="318" width="336" height="34" rx="4" fill="#c9c7bf"/>
+<text x="318" y="341" font-size="17" font-weight="400" text-anchor="end" fill="#374151">GPT-5.5</text>
+<text x="680" y="341" font-size="17" font-weight="600" fill="#6b7280">63.3</text>
+<rect x="332" y="398" width="308" height="34" rx="4" fill="#c9c7bf"/>
+<text x="318" y="421" font-size="17" font-weight="400" text-anchor="end" fill="#374151">Iris 1.0</text>
+<text x="652" y="421" font-size="17" font-weight="600" fill="#6b7280">62.6</text>
+<rect x="332" y="478" width="214" height="34" rx="4" fill="#c9c7bf"/>
+<text x="318" y="501" font-size="17" font-weight="400" text-anchor="end" fill="#374151">Opus 4.8</text>
+<text x="558" y="501" font-size="17" font-weight="600" fill="#6b7280">60.3</text>
+<text x="60" y="590" font-size="15" fill="#888780">Liberty 2.0 and Fable 5 are a statistical tie; Liberty’s interval also covers GPT-5.5 and Iris 1.0. Same harness and rubric throughout.</text>
+<text x="1140" y="616" text-anchor="end" font-size="18" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+</figure>
+<p>Today we're introducing Liberty 2.0 &#8212; one AI you call like any other model, built entirely from American open-source models and run only in the United States.</p>
+<p>On <a href="/blog/fusion-evals-open-source">DRACO</a>, the 100-task agentic deep-research benchmark, Liberty 2.0 scores <strong>65.5</strong> across all 100 tasks. Fable 5, the strongest single model in the comparison, scores 65.3 &#8212; a tie. GPT-5.5 scores 63.3 and Claude Opus 4.8 60.3 on the same tasks. An all-American, all-open-weights model performing at the level of the closed frontier, at a fraction of the cost.</p>
+<h3 style="font-size:22px;margin:36px 0 8px">Where Liberty 2.0 is strong, and where it trails</h3>
+<p>Broken out by task type, against the average of the two frontier solos on exactly the same tasks, Liberty 2.0 comes out ahead on 8 of the ten. The margins are widest on research that means gathering many sources and reconciling them, and it gives the lead back on work that turns on exact recall.</p>
+<div style="overflow-x:auto;margin:16px 0"><table style="border-collapse:collapse;font-size:15px;min-width:520px">
+<thead><tr><th style="text-align:left;padding:6px 12px;border-bottom:2px solid #d1d5db;font-size:14px">Task type</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #d1d5db;font-size:14px">Tasks</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #d1d5db;font-size:14px">Liberty 2.0</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #d1d5db;font-size:14px">Frontier avg<br><span style="font-weight:400;color:#6b7280;font-size:12px">GPT-5.5 + Opus 4.8</span></th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #d1d5db;font-size:14px">&#916;</th></tr></thead><tbody>
+<tr><td style="text-align:left;padding:5px 12px;border-bottom:1px solid #eef0f2">Personalized Assistant</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;color:#9a9890;font-size:13px">6</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;background:#e1f5ee;font-weight:700">70</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2">59</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;font-weight:700;color:#0f6e56">+11</td></tr>
+<tr><td style="text-align:left;padding:5px 12px;border-bottom:1px solid #eef0f2">UX Design</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;color:#9a9890;font-size:13px">9</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;background:#e1f5ee;font-weight:700">62</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2">55</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;font-weight:700;color:#0f6e56">+7</td></tr>
+<tr><td style="text-align:left;padding:5px 12px;border-bottom:1px solid #eef0f2">Shopping / Product</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;color:#9a9890;font-size:13px">16</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;background:#e1f5ee;font-weight:700">63</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2">57</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;font-weight:700;color:#0f6e56">+6</td></tr>
+<tr><td style="text-align:left;padding:5px 12px;border-bottom:1px solid #eef0f2">Academic</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;color:#9a9890;font-size:13px">12</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;background:#e1f5ee;font-weight:700">78</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2">72</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;font-weight:700;color:#0f6e56">+6</td></tr>
+<tr><td style="text-align:left;padding:5px 12px;border-bottom:1px solid #eef0f2">Needle-in-Haystack</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;color:#9a9890;font-size:13px">6</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;background:#e1f5ee;font-weight:700">64</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2">60</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;font-weight:700;color:#0f6e56">+4</td></tr>
+<tr><td style="text-align:left;padding:5px 12px;border-bottom:1px solid #eef0f2">Technology</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;color:#9a9890;font-size:13px">10</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;background:#e1f5ee;font-weight:700">57</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2">55</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;font-weight:700;color:#0f6e56">+2</td></tr>
+<tr><td style="text-align:left;padding:5px 12px;border-bottom:1px solid #eef0f2">Finance</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;color:#9a9890;font-size:13px">19</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;background:#e1f5ee;font-weight:700">60</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2">58</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;font-weight:700;color:#0f6e56">+2</td></tr>
+<tr><td style="text-align:left;padding:5px 12px;border-bottom:1px solid #eef0f2">General Knowledge</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;color:#9a9890;font-size:13px">9</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;background:#e1f5ee;font-weight:700">62</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2">60</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;font-weight:700;color:#0f6e56">+2</td></tr>
+<tr><td style="text-align:left;padding:5px 12px;border-bottom:1px solid #eef0f2">Law</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;color:#9a9890;font-size:13px">6</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;background:#e1f5ee;font-weight:700">85</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2">85</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;font-weight:700;color:#6b7280">0</td></tr>
+<tr><td style="text-align:left;padding:5px 12px;border-bottom:1px solid #eef0f2">Medicine</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;color:#9a9890;font-size:13px">6</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;background:#e1f5ee;font-weight:700">69</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2">72</td><td style="text-align:right;padding:5px 12px;border-bottom:1px solid #eef0f2;font-weight:700;color:#b91c1c">&#8722;3</td></tr>
+</tbody></table></div>
+<p style="font-size:13px;color:#6b7280">Across all 99 tasks: Liberty 2.0 65.5, frontier average 61.8.</p>
+<p>Assistant work, UX research, shopping comparisons, and academic literature reviews are where the open panel builds its lead. Medicine is the one type where the frontier models finish ahead, and Law is a dead heat. Combining models pays most when an answer has to be assembled from many sources, and least when it hinges on one hard fact.</p>
+<h3 style="font-size:22px;margin:36px 0 8px">How we grade</h3>
+<p>Every answer is scored criterion by criterion against a rubric the model never sees, roughly forty checks per task, and the score is the weighted share of criteria met.</p>
+<p>Grading the same answer twice can produce different scores, occasionally very different ones. A few DRACO rubrics carry a single heavily weighted penalty &#8212; recommending someone wait out a medical emergency at home, say &#8212; and one borderline call on it can move a task by forty points or more. Seven of the hundred tasks are built that way, most of them in medicine, where the penalties cover unsafe advice. Averages over a hundred tasks absorb that. Individual rows, especially the ones resting on six tasks, do not, so read the table as a pattern rather than a scoreboard. The grading code and the per-task scores are public in the benchmark repo.</p>
+<p>Liberty 2.0 brings together open-weights models from four American labs &#8212; NVIDIA, Google, OpenAI, and Thinking Machines &#8212; and combines their answers into a single response. You get the strengths of all of them behind one model name.</p>
 <figure style="margin:0 0 32px">
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
 <rect width="1200" height="630" fill="#ffffff"/>
@@ -71,8 +845,6 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
 <text x="1140" y="600" text-anchor="end" font-size="20" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
 </svg>
 </figure>
-<p>Today we're introducing Liberty 2.0 &#8212; one AI you call like any other model, built entirely from American open-source models and run only in the United States.</p>
-<p>Liberty 2.0 brings together open-weights models from four American labs &#8212; NVIDIA, Google, OpenAI, and Thinking Machines &#8212; and combines their answers into a single response. You get the strengths of all of them behind one model name.</p>
 <p>Every model in Liberty 2.0 is open-weights, and every one runs on US-based providers. Your requests pass through TrustedRouter's private, encrypted gateway and never leave the country &#8212; what you send stays in the US, and stays private.</p>
 <p>Call it with the same key and base URL as everything else on TrustedRouter. The model ID is <span class="mono">trustedrouter/liberty-2.0</span>.</p>
 """,
@@ -984,9 +1756,9 @@ The model already knows the truth. Whether you hear it depends on whose server y
         title="How to choose a model, Pick 2: smart, fast, or cheap",
         description=(
             "People keep asking which model is best. There isn't one — every model "
-            "is a tradeoff of smart, cheap, and fast, and you get two. So we plotted "
-            "all 220+ on a triangle you can drag, off the live catalog, and it picks "
-            "the one your task and your privacy actually need."
+            "is a tradeoff of smart, cheap, and fast, and you get two. The picker "
+            "combines independent quality scores with exact live provider routes to find "
+            "the one your task and privacy level actually need."
         ),
         published_date="2026-06-17",
         source_label="Try it — the iron triangle picker",
@@ -994,10 +1766,10 @@ The model already knows the truth. Whether you hear it depends on whose server y
         body_html="""
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto"><rect width="1200" height="630" fill="#ffffff"/><text x="60" y="90" font-family="Inter,Arial,sans-serif" font-size="46" font-weight="700" fill="#111827" text-anchor="start">Smart, cheap, fast — pick two</text><text x="60" y="138" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="400" fill="#6b7280" text-anchor="start">Every model sits on the same three-way tradeoff</text><polygon points="600,210 235,540 965,540" fill="none" stroke="#1d9e75" stroke-width="3"/><text x="600" y="195" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="700" fill="#111827" text-anchor="middle">SMART</text><text x="215" y="575" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="700" fill="#111827" text-anchor="middle">CHEAP</text><text x="985" y="575" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="700" fill="#111827" text-anchor="middle">FAST</text><text x="405" y="360" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="600" fill="#111827" text-anchor="end">Big open</text><text x="405" y="386" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="400" fill="#6b7280" text-anchor="end">smart + cheap, slower</text><text x="795" y="360" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="600" fill="#111827" text-anchor="start">Frontier (closed)</text><text x="795" y="386" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="400" fill="#6b7280" text-anchor="start">smart + fast, ~$20/Mtok</text><text x="600" y="600" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="400" fill="#6b7280" text-anchor="middle">Small open — cheap + fast, dimmer</text><text x="600" y="420" font-family="Inter,Arial,sans-serif" font-size="40" font-weight="700" fill="#1d9e75" text-anchor="middle">PICK 2</text><text x="1188" y="621" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
 <p>People keep asking me which model is the best one, and there's no answer to give. There isn't a best model, the way there isn't a best vehicle — a motorcycle and a dump truck are both exactly right, depending on what you're moving. Every language model sits on the same three-way tradeoff: smart, cheap, fast. You get two. The frontier models are smart and quick and they cost twenty dollars a million tokens. The little open models are cheap and quick and dimmer. The big open ones are smart and cheap and slow. Nobody ships all three corners at once, because the model that did would eat the rest alive, and the rest is more than two hundred models.</p>
-<p>So we drew the picture. <a href="/choose">/choose</a> is a ternary chart — smart at one corner, cheap at another, fast at the third — with every model TrustedRouter can reach plotted where it actually lives. Two hundred and twenty of them. You drag a dot to the mix you want, say how private the data has to be and what you're actually trying to do, and it lights up the models that fit while the rest go dim, with the price sitting right next to each name. Prices, context windows, and privacy tiers come straight off the live catalog, so what you're looking at is what you can call the second you load the page.</p>
+<p>So we drew the picture. <a href="/choose">/choose</a> is a ternary chart — smart at one corner, cheap at another, fast at the third. It plots models with independent AI IQ scores against the provider routes TrustedRouter can call now. You drag a dot to the mix you want, say how private the data has to be and what you're actually trying to do, and it lights up the models that fit while the rest go dim. Prices and privacy come from each exact provider endpoint. Speed appears only when TrustedRouter has a recent measurement for that route.</p>
 <p>What surprises people is how far the right corner moves in a single week. Refactor a gnarly React component and write its tests, and you want the smart corner — pay for the frontier, because a botched refactor costs you an afternoon and the twenty-dollar model earns its keep. Summarize ten thousand support tickets, and you're in the cheap corner, where a four-cent model does the job and paying frontier prices to compress text is just lighting money on fire. Same engineer, same Tuesday, opposite corners. The real mistake is buying one model and running everything you have through it.</p>
 <p>There's a fourth thing the triangle can't draw on two axes, which is who gets to see the prompt. Every route through TrustedRouter is attested, so /choose lets you say the data can touch any provider, or that it has to land on a zero-retention route that logs nothing, or that it has to run inside a trusted execution environment where even we can't read it. Turn that dial tighter and watch the triangle shrink: models fall off the board, the price floor climbs. That is the real cost of privacy, drawn in front of you instead of buried in a procurement call.</p>
-<p>The fair complaint is that the smart and fast ratings are a judgment call, and they are — our editorial read on where each model lands, good enough to compare two of them at a glance. The price, the context window, and the privacy tier carry no opinion; they come off the live <span class="mono">/v1/models</span> feed. So read the triangle as a map. A map doesn't have to be a benchmark to keep you from driving the dump truck out for a quart of milk.</p>
+<p>The triangle is now built from named sources instead of our editorial read. Smart is the independent AI IQ score. Fast is recent measured throughput and time to first token for the exact provider route. Price and privacy come from that same endpoint in the live catalog. A model with no recent speed sample is labeled unmeasured instead of receiving a guessed number. Read it as a map with the evidence attached.</p>
 <p>We built it into the gateway on purpose. Once you can see that the right model changes with the job, marrying one vendor for a year looks reckless. Routing every call through one API means moving from the smart corner to the cheap one is a one-line change — swap the model name, ship. The triangle shows you where to go; the gateway is the road that gets you there. Drag the dot, read the price, change the string. That's the whole job.</p>
 """,
     ),
@@ -1166,7 +1938,7 @@ The model already knows the truth. Whether you hear it depends on whose server y
 <text x="28" y="504" font-size="11.5" fill="#888780">Whiskers are ±1 SE (bootstrap, 100 tasks).</text>
 <text x="788" y="525" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
 </figure>
-<p>Research is only worth as much as someone else's ability to run it again. Too much of AI has drifted the other way: the strongest results arrive as a single number in a post, produced by a model you cannot open, on a harness no one else can see, graded by a rubric that ships to nobody. You are asked to take it on faith. We are building TrustedRouter to be an AI lab that does open science the old way: open code, open results, nothing hidden. Our whole stack is radically open source — frontend and backend alike, Apache-2.0 licensed — and so is everything behind this benchmark. That is how a benchmark number earns trust: verifiability, not hype.</p>
+<p>Research is only worth as much as someone else's ability to run it again. Too much of AI has drifted the other way: the strongest results arrive as a single number in a post, produced by a model you cannot open, on a harness no one else can see, graded by a rubric that ships to nobody. You are asked to take it on faith. TrustedRouter is verifiable open source software. That is how a benchmark number earns trust: verifiability, not hype.</p>
 <p>So we held ourselves to it. We set out to test Synth directly: a panel of models, each writing its own answer with a final model synthesizing them, beats any single model on a hard research benchmark — and then to push past it. On <a href="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco">DRACO</a>, a hundred deep-research tasks graded against roughly forty weighted criteria each by <span class="mono">gemini-3.1-pro</span>, a diverse panel synthesized by Claude Opus 4.8 scores <strong>70.6</strong>. Swap the synthesizer engine — a <span class="mono">Kimi-k2.6</span> judge feeding a <span class="mono">GLM-5.2</span> synthesizer in place of Opus — and the same panel reaches <strong>73.4</strong>, the new state of the art. The top configurations sit within about a standard error of each other (the whiskers above), but the whole TrustedRouter band clears the closed baselines. Every prompt, every tool call, and every graded answer behind the number is published.</p>
 <p>The result comes from the panel, and the panel is itself <a href="/blog/the-best-open-models-arent-on-your-leaderboard">an argument for open weights</a>. The strongest older closed baselines paired two closed frontier models. Ours adds frontier open-weights models — DeepSeek V4 Pro and Kimi K2.6 — alongside GPT-5.5, Opus, and Gemini 3 Flash. Synth works on disagreement: models that fail in different places, reconciled by a strong synthesizer. Open-weights models are trained on different data and disagree in different ways than a closed pair does, and the wider panel is what reaches the top.</p>
 <p>The synthesizer carries most of that result. Hold the five-model panel fixed and change only the model that writes the final answer: Opus 4.8 scores 70.6, GPT-5.5 scores 62.2. Same reports, same judge analysis, same hundred tasks, eight points of swing from one decision. A larger panel behind a weaker synthesizer buys nothing, and which model fills that slot is <a href="/blog/the-best-synthesizers">its own ranking</a>.</p>
@@ -1210,8 +1982,8 @@ The model already knows the truth. Whether you hear it depends on whose server y
         slug="attestation-is-all-you-need",
         title="Attestation is all you need",
         description=(
-            "For AI routing, trust should be something an agent can verify, not "
-            "only a policy page a human reads after the fact."
+            "For AI routing, trust should be something an agent can verify. Learn how source code, "
+            "image digests, remote attestation, and live evidence protect the prompt path."
         ),
         published_date="2026-06-14",
         source_label="Joseph Perla original",

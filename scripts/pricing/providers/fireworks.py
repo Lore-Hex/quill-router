@@ -20,11 +20,15 @@ from scripts.pricing.base import (
     fetch_provider,
     validate,
 )
+from scripts.pricing.model_ids import (
+    canonicalize_unqualified_model_id,
+    price_aliases_for_versioned_families,
+    remember_upstream_id,
+)
 
 SLUG = "fireworks"
-URL = "https://r.jina.ai/https://docs.fireworks.ai/serverless/pricing"
+URL = "https://docs.fireworks.ai/serverless/pricing.md"
 MODELS_URL = "https://api.fireworks.ai/inference/v1/models"
-JINA_HEADERS = {"X-Return-Format": "markdown"}
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src"
@@ -35,6 +39,7 @@ MANIFEST_PATH = (
 )
 
 EXPECTED_MODELS = [
+    "moonshotai/kimi-k3",
     "moonshotai/kimi-k2.6",
     "deepseek/deepseek-v4-pro",
     "z-ai/glm-5.2",
@@ -43,6 +48,7 @@ EXPECTED_MODELS = [
 ]
 
 _NATIVE_TO_CANONICAL = {
+    "accounts/fireworks/models/kimi-k3": "moonshotai/kimi-k3",
     "accounts/fireworks/models/kimi-k2p6": "moonshotai/kimi-k2.6",
     "accounts/fireworks/models/kimi-k2p7-code": "moonshotai/kimi-k2.7-code",
     "accounts/fireworks/models/deepseek-v4-pro": "deepseek/deepseek-v4-pro",
@@ -58,7 +64,14 @@ UPSTREAM_ID_MAP = {canonical: native for native, canonical in _NATIVE_TO_CANONIC
 # Fast is an account router rather than a row in /v1/models. It remains an
 # explicit, separately smoke-tested route and is not subject to model pruning.
 UPSTREAM_ID_MAP["z-ai/glm-5.2-fast"] = "accounts/fireworks/routers/glm-5p2-fast"
+# Fireworks can publish and serve a launch model before its authenticated
+# /v1/models response catches up. Keep only explicitly verified exceptions,
+# and only while the first-party pricing page still contains the model.
+VERIFIED_PRICED_LAUNCH_MODELS = frozenset({"moonshotai/kimi-k3"})
 _DISCOVERED_LIVE_MODEL_IDS: set[str] = set()
+_VERSIONED_PRICE_FAMILIES = {
+    "deepseek/deepseek-v4-flash-": "deepseek/deepseek-v4-flash",
+}
 
 
 def _live_model_ids() -> set[str]:
@@ -79,26 +92,38 @@ def _live_model_ids() -> set[str]:
         native_id = row.get("id")
         if not isinstance(native_id, str):
             continue
-        canonical = _NATIVE_TO_CANONICAL.get(native_id)
+        canonical = _NATIVE_TO_CANONICAL.get(native_id) or canonicalize_unqualified_model_id(
+            native_id
+        )
         if canonical is not None:
             discovered.add(canonical)
+            remember_upstream_id(UPSTREAM_ID_MAP, canonical, native_id)
     return discovered
 
 
 def fetch() -> ProviderPricingResult:
     global _DISCOVERED_LIVE_MODEL_IDS
 
+    live_model_ids = _live_model_ids()
+    price_aliases = price_aliases_for_versioned_families(
+        live_model_ids,
+        _VERSIONED_PRICE_FAMILIES,
+    )
     result = fetch_provider(
         slug=SLUG,
         url=URL,
         expected_models=EXPECTED_MODELS,
-        extra_headers=JINA_HEADERS,
+        required_models=frozenset(price_aliases),
+        required_model_price_aliases=price_aliases,
     )
-    live_model_ids = _live_model_ids()
-    _DISCOVERED_LIVE_MODEL_IDS = live_model_ids
-    docs_only = sorted(set(result.prices) - live_model_ids)
+    verified_launch_ids = VERIFIED_PRICED_LAUNCH_MODELS.intersection(result.prices)
+    routable_model_ids = live_model_ids | verified_launch_ids
+    _DISCOVERED_LIVE_MODEL_IDS = routable_model_ids
+    docs_only = sorted(set(result.prices) - routable_model_ids)
     result.prices = {
-        model_id: price for model_id, price in result.prices.items() if model_id in live_model_ids
+        model_id: price
+        for model_id, price in result.prices.items()
+        if model_id in routable_model_ids
     }
     errors = validate(result.prices, EXPECTED_MODELS)
     if errors:
@@ -106,6 +131,12 @@ def fetch() -> ProviderPricingResult:
     if docs_only:
         result.notes.append(
             "official pricing rows not enabled for this Fireworks account: " + ", ".join(docs_only)
+        )
+    launch_ids_missing_from_catalog = sorted(verified_launch_ids - live_model_ids)
+    if launch_ids_missing_from_catalog:
+        result.notes.append(
+            "verified launch models served before /v1/models catalog update: "
+            + ", ".join(launch_ids_missing_from_catalog)
         )
     return result
 

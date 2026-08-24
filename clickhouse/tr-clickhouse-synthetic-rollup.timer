@@ -1,0 +1,11 @@
+[Unit]
+Description=Rebuild TrustedRouter synthetic ClickHouse rollups
+
+[Timer]
+OnBootSec=3m
+OnUnitActiveSec=5m
+RandomizedDelaySec=20s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

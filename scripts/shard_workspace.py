@@ -1,4 +1,4 @@
-"""Safely split or consolidate a workspace's credit and uncapped key rows.
+"""Safely split or consolidate workspace credit and key-usage rows.
 
 The operation is intentionally two phase so a failed verification can never
 silently resume billing:
@@ -12,8 +12,14 @@ silently resume billing:
   # Verify the committed shape + global billing invariants, then unpause.
   python scripts/shard_workspace.py finish --workspace WS --shards 16 --apply
 
-Eligible uncapped API-key usage rows are split to the same count; capped keys
-remain on one exact row. Reverse with the same commands and ``--shards 1``.
+  # Preserve active typed holds and minimize the pause to one guarded process.
+  python scripts/shard_workspace.py online-split --workspace WS --shards 16 \
+    --preserve-open-holds --apply
+
+Every API-key usage row is split to the same count. Exact lifetime caps are
+partitioned into escrow sub-budgets whose sum remains the configured cap;
+approximate daily/weekly/monthly windows sum usage across the configured rows.
+Reverse with the same commands and ``--shards 1``.
 Without ``--apply`` every command is read-only. A failed prepare/finish always
 leaves the workspace paused.
 """
@@ -73,7 +79,7 @@ def _print_status(status: CreditReshardResult) -> None:
     print(
         f"{status.workspace_id}: current_shards={status.current_shard_count} "
         f"target_shards={status.target_shard_count} ready={status.ready} "
-        f"applied={status.applied}"
+        f"at_target={status.at_target} applied={status.applied}"
     )
     print(
         "  typed totals: "
@@ -84,6 +90,11 @@ def _print_status(status: CreditReshardResult) -> None:
         "  open reservations: "
         f"typed={status.typed_open_reservations} legacy={status.legacy_open_reservations}"
     )
+    if status.stale_legacy_reservations_ignored:
+        print(
+            "  retained stale legacy reservations ignored: "
+            f"{status.stale_legacy_reservations_ignored}"
+        )
     for reason in status.reasons:
         print(f"  BLOCKED: {reason}")
 
@@ -92,48 +103,65 @@ def _print_key_status(status: KeyUsageReshardResult) -> None:
     print(
         f"  key {status.key_hash}: current_shards={status.current_shard_count} "
         f"target_shards={status.target_shard_count} ready={status.ready} "
+        f"at_target={status.at_target} "
         f"applied={status.applied} usage={status.usage_micro} "
         f"byok_usage={status.byok_usage_micro} reserved={status.reserved_micro}"
     )
+    if status.stale_legacy_reservations_ignored:
+        print(
+            "    retained stale legacy reservations ignored: "
+            f"{status.stale_legacy_reservations_ignored}"
+        )
     for reason in status.reasons:
         print(f"    BLOCKED: {reason}")
 
 
 def _key_target(key: ApiKey, requested_shards: int) -> int:
-    has_limit = any(
-        value is not None
-        for value in (
-            key.limit_microdollars,
-            key.limit_daily_microdollars,
-            key.limit_weekly_microdollars,
-            key.limit_monthly_microdollars,
-        )
-    )
-    return 1 if has_limit else requested_shards
+    _ = key
+    return requested_shards
 
 
-def _prepare_keys(store: Any, workspace_id: str, requested_shards: int) -> bool:
+def _prepare_keys(
+    store: Any,
+    workspace_id: str,
+    requested_shards: int,
+    *,
+    preserve_open_holds: bool,
+) -> bool:
     clean = True
     for key in store.api_keys.list_for_workspace(workspace_id):
         target = _key_target(key, requested_shards)
-        if target != requested_shards:
-            print(f"  key {key.hash}: capped; keeping exact usage_shards=1")
-        status = reshard_key_usage(store, key.hash, target, apply=True)
+        status = reshard_key_usage(
+            store,
+            key.hash,
+            target,
+            apply=True,
+            preserve_open_holds=preserve_open_holds,
+        )
         _print_key_status(status)
         clean = clean and status.ready
     return clean
 
 
-def _verify_keys(store: Any, workspace_id: str, requested_shards: int) -> bool:
+def _verify_keys(
+    store: Any,
+    workspace_id: str,
+    requested_shards: int,
+    *,
+    preserve_open_holds: bool,
+) -> bool:
     clean = True
     for key in store.api_keys.list_for_workspace(workspace_id):
         status = inspect_key_usage_reshard(
             store,
             key.hash,
             _key_target(key, requested_shards),
+            preserve_open_holds=preserve_open_holds,
         )
         _print_key_status(status)
-        clean = clean and status.ready
+        # Same distinction as the credit row: a key that has not been resharded
+        # yet is `ready` for its target without being AT it.
+        clean = clean and status.ready and status.at_target
     return clean
 
 
@@ -147,28 +175,77 @@ def _pause(store: Any, workspace_id: str) -> bool:
 
 
 def run_status(store: Any, args: argparse.Namespace) -> int:
-    _print_status(inspect_credit_reshard(store, args.workspace, args.shards))
-    _verify_keys(store, args.workspace, args.shards)
+    _print_status(
+        inspect_credit_reshard(
+            store,
+            args.workspace,
+            args.shards,
+            preserve_open_holds=args.preserve_open_holds,
+        )
+    )
+    _verify_keys(
+        store,
+        args.workspace,
+        args.shards,
+        preserve_open_holds=args.preserve_open_holds,
+    )
     return 0
 
 
 def run_prepare(store: Any, args: argparse.Namespace) -> int:
     if not args.apply:
-        status = inspect_credit_reshard(store, args.workspace, args.shards)
+        status = inspect_credit_reshard(
+            store,
+            args.workspace,
+            args.shards,
+            preserve_open_holds=args.preserve_open_holds,
+        )
         _print_status(status)
-        _verify_keys(store, args.workspace, args.shards)
-        print("DRY-RUN: would pause, wait for all holds, then atomically reshard")
+        _verify_keys(
+            store,
+            args.workspace,
+            args.shards,
+            preserve_open_holds=args.preserve_open_holds,
+        )
+        if args.preserve_open_holds:
+            print(
+                "DRY-RUN: would pause, preserve open typed holds on their "
+                "current shards, then atomically split"
+            )
+        else:
+            print("DRY-RUN: would pause, wait for all holds, then atomically reshard")
         return 0
     if not _pause(store, args.workspace):
         print("ERROR: could not pause workspace", file=sys.stderr)
         return 1
-    status = reshard_credit_account(store, args.workspace, args.shards, apply=True)
+    if args.preserve_open_holds:
+        audit = audit_typed_invariants(store)
+        print(f"pre-reshard {audit.summary()}")
+        if not audit.clean:
+            print(
+                "Workspace remains paused because the pre-reshard invariant "
+                "audit failed.",
+                file=sys.stderr,
+            )
+            return 1
+    status = reshard_credit_account(
+        store,
+        args.workspace,
+        args.shards,
+        apply=True,
+        preserve_open_holds=args.preserve_open_holds,
+    )
     _print_status(status)
     if not status.ready:
         print("Workspace remains paused. Re-run prepare after holds drain.")
         draining = any("drain" in reason or "open" in reason for reason in status.reasons)
         return 2 if draining else 1
-    if not _prepare_keys(store, args.workspace, args.shards):
+    if not _prepare_keys(
+        store,
+        args.workspace,
+        args.shards,
+        preserve_open_holds=args.preserve_open_holds,
+    ):
         print("Workspace remains paused because an API-key reshard failed.", file=sys.stderr)
         return 1
     audit = audit_typed_invariants(store)
@@ -184,12 +261,34 @@ def run_prepare(store: Any, args: argparse.Namespace) -> int:
 
 
 def run_finish(store: Any, args: argparse.Namespace) -> int:
-    status = inspect_credit_reshard(store, args.workspace, args.shards)
+    status = inspect_credit_reshard(
+        store,
+        args.workspace,
+        args.shards,
+        preserve_open_holds=args.preserve_open_holds,
+    )
     _print_status(status)
     if not status.ready:
         print("ERROR: refusing to unpause; reshard verification is not clean", file=sys.stderr)
         return 1
-    if not _verify_keys(store, args.workspace, args.shards):
+    # `ready` alone does not mean the transition landed: a drained, paused,
+    # healthy workspace is `ready` for a target it has not moved to yet.
+    # Unpausing on `ready` alone would resume traffic while reporting a shard
+    # count the ledger never adopted.
+    if not status.at_target:
+        print(
+            "ERROR: refusing to unpause; credit ledger is at "
+            f"{status.current_shard_count} shards, not the requested "
+            f"{status.target_shard_count}. Run prepare first.",
+            file=sys.stderr,
+        )
+        return 1
+    if not _verify_keys(
+        store,
+        args.workspace,
+        args.shards,
+        preserve_open_holds=args.preserve_open_holds,
+    ):
         print("ERROR: refusing to unpause; API-key shard verification failed", file=sys.stderr)
         return 1
     audit = audit_typed_invariants(store)
@@ -215,6 +314,48 @@ def run_finish(store: Any, args: argparse.Namespace) -> int:
     return 0
 
 
+def run_online_split(store: Any, args: argparse.Namespace) -> int:
+    """Preflight while live, then pause/split/verify/unpause in one process."""
+    if not args.preserve_open_holds:
+        print(
+            "ERROR: online-split requires --preserve-open-holds",
+            file=sys.stderr,
+        )
+        return 2
+    if not args.apply:
+        return run_prepare(store, args)
+
+    # Warm the legacy aggregate and reject a pre-existing ledger violation
+    # before pausing customer traffic. The prepare path repeats all decisive
+    # checks after the pause; this live preflight only shortens the outage.
+    inspect_credit_reshard(
+        store,
+        args.workspace,
+        args.shards,
+        preserve_open_holds=True,
+    )
+    for key in store.api_keys.list_for_workspace(args.workspace):
+        inspect_key_usage_reshard(
+            store,
+            key.hash,
+            _key_target(key, args.shards),
+            preserve_open_holds=True,
+        )
+    audit = audit_typed_invariants(store)
+    print(f"live preflight {audit.summary()}")
+    if not audit.clean:
+        print(
+            "ERROR: refusing to pause; live invariant audit failed",
+            file=sys.stderr,
+        )
+        return 1
+
+    prepared = run_prepare(store, args)
+    if prepared != 0:
+        return prepared
+    return run_finish(store, args)
+
+
 def _shard_count_arg(raw: str) -> int:
     try:
         value = int(raw)
@@ -237,12 +378,21 @@ def _parser() -> argparse.ArgumentParser:
         ("status", run_status),
         ("prepare", run_prepare),
         ("finish", run_finish),
+        ("online-split", run_online_split),
     ):
         command = sub.add_parser(name)
         target = command.add_mutually_exclusive_group(required=True)
         target.add_argument("--workspace")
         target.add_argument("--owner-email")
         command.add_argument("--shards", required=True, type=_shard_count_arg)
+        command.add_argument(
+            "--preserve-open-holds",
+            action="store_true",
+            help=(
+                "allow an increasing split while preserving typed open holds "
+                "on their current shards"
+            ),
+        )
         if name != "status":
             command.add_argument("--apply", action="store_true")
         command.set_defaults(handler=handler)

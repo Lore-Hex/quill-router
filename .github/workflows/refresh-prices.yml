@@ -35,6 +35,7 @@ permissions:
   id-token: write   # for Workload Identity Federation
   contents: write   # auto-commit + push the snapshot diff to main
   actions: write    # dispatch ci.yml + deploy.yml for a new snapshot
+  issues: write     # upsert the durable model-discovery coverage alert
                     # (GITHUB_TOKEN-pushed commits don't auto-trigger
                     # downstream workflows, so we explicitly fan out
                     # via workflow_dispatch — the one exception to
@@ -132,6 +133,13 @@ jobs:
                       GMI_API_KEY:trustedrouter-gmi-api-key \
                       DEEPINFRA_API_KEY:trustedrouter-deepinfra-api-key \
                       PHALA_CONFIDENTIAL_API_KEY:trustedrouter-phala-confidential-api-key \
+                      SILICON_FLOW_API_KEY:trustedrouter-siliconflow-api-key \
+                      VENICE_API_KEY:trustedrouter-venice-api-key \
+                      OPENAI_API_KEY:trustedrouter-openai-api-key \
+                      GROK_API_KEY:trustedrouter-grok-api-key \
+                      DEEPSEEK_API_KEY:trustedrouter-deepseek-api-key \
+                      MISTRAL_API_KEY:trustedrouter-mistral-api-key \
+                      ZAI_API_KEY:trustedrouter-zai-api-key \
                       CEREBRAS_API_KEY:trustedrouter-cerebras-api-key \
                       KIMI_API_KEY:trustedrouter-kimi-api-key \
                       FIREWORKS_API_KEY:trustedrouter-fireworks-api-key \
@@ -142,18 +150,62 @@ jobs:
                       CRUSOE_API_KEY:trustedrouter-crusoe-api-key \
                       FRIENDLI_API_KEY:trustedrouter-friendli-api-key \
                       BASETEN_API_KEY:trustedrouter-baseten-api-key \
+                      TELNYX_API_KEY:trustedrouter-telnyx-api-key \
                       WAFER_API_KEY:trustedrouter-wafer-api-key \
                       ALIBABA_API_KEY:trustedrouter-alibaba-api-key \
-                      MAKORA_API_KEY:trustedrouter-makora-api-key; do
+                      MAKORA_API_KEY:trustedrouter-makora-api-key \
+                      CHUTES_API_KEY:trustedrouter-chutes-api-key \
+                      DIGITAL_OCEAN_API_KEY:trustedrouter-digitalocean-api-key \
+                      CLOUDFLARE_WORKERS_AI_API_TOKEN:trustedrouter-cloudflare-workers-ai-api-token \
+                      INCEPTRON_API_KEY:trustedrouter-inceptron-api-key \
+                      MORPH_API_KEY:trustedrouter-morph-api-key \
+                      ATLAS_CLOUD_API_KEY:trustedrouter-atlas-cloud-api-key \
+                      STREAMLAKE_API_KEY:trustedrouter-streamlake-api-key \
+                      NEUROMETRIC_API_KEY:trustedrouter-neurometric-api-key \
+                      ENGY_API_KEY:trustedrouter-engy-api-key \
+                      PEARL_RESEARCH_API_KEY:trustedrouter-pearl-api-key \
+                      STEPFUN_API_KEY:trustedrouter-stepfun-api-key \
+                      RELACE_API_KEY:trustedrouter-relace-api-key \
+                      RECRAFT_API_KEY:trustedrouter-recraft-api-key \
+                      BFL_API_KEY:trustedrouter-bfl-api-key \
+                      DECART_API_KEY:trustedrouter-decart-api-key \
+                      NVIDIA_NIM_API_KEY:trustedrouter-nvidia-nim-api-key \
+                      IONET_API_KEY:trustedrouter-io-net-api-key \
+                      SCALEWAY_SECRET_KEY:trustedrouter-scaleway-api-key \
+                      FEATHERLESS_API_KEY:trustedrouter-featherless-api-key \
+                      JINA_API_KEY:trustedrouter-jina-api-key \
+                      SAKANA_API_KEY:trustedrouter-sakana-api-key; do
             env="${pair%%:*}"
             secret="${pair#*:}"
             KEY=$(gcloud secrets versions access latest --secret="${secret}" --project=quill-cloud-proxy)
             echo "::add-mask::${KEY}"
             echo "${env}=${KEY}" >> "$GITHUB_ENV"
           done
+          echo "CLOUDFLARE_WORKERS_AI_ACCOUNT_ID=2698c706fd4793c818af14adad4e1a39" >> "$GITHUB_ENV"
+          echo "TR_CLOUDFLARE_WORKERS_AI_ROUTABLE=1" >> "$GITHUB_ENV"
 
-      - name: Snapshot existing pricing file
-        run: cp src/trusted_router/data/openrouter_snapshot.json /tmp/before.json
+      - name: Pull optional 0G Private Computer key
+        # Onboarding is deliberately dark before this secret exists. Once the
+        # operator provisions the key, the same hourly refresh must pass a
+        # private TeeML PONG before any 0G route becomes routable.
+        run: |
+          set -euo pipefail
+          secret=trustedrouter-zero-g-api-key
+          if gcloud secrets describe "${secret}" --project=quill-cloud-proxy >/dev/null 2>&1; then
+            KEY=$(gcloud secrets versions access latest \
+              --secret="${secret}" --project=quill-cloud-proxy)
+            echo "::add-mask::${KEY}"
+            echo "ZERO_G_API_KEY=${KEY}" >> "$GITHUB_ENV"
+          else
+            echo "0G key not provisioned; private routes remain dark."
+          fi
+
+      - name: Snapshot existing pricing files
+        run: |
+          cp src/trusted_router/data/openrouter_snapshot.json /tmp/before.json
+          mkdir /tmp/before-provider-models
+          cp src/trusted_router/data/provider_models/*.json \
+            /tmp/before-provider-models/
 
       - name: Refresh provider-direct prices (with self-heal)
         # `set -o pipefail` so the script's exit code propagates through
@@ -170,6 +222,8 @@ jobs:
           set +e
           uv run python scripts/check_price_spike.py \
             /tmp/before.json src/trusted_router/data/openrouter_snapshot.json \
+            --before-provider-manifests /tmp/before-provider-models \
+            --after-provider-manifests src/trusted_router/data/provider_models \
             --summary | tee /tmp/spike-summary.txt
           rc=${PIPESTATUS[0]}
           # Surface the actual per-model deltas in the Actions run summary so
@@ -184,15 +238,42 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit $rc
 
+      - name: Refresh provider social cards
+        run: uv run python scripts/generate_provider_og.py
+
       - name: Price-source coverage audit
-        # General stale-price gaps stay visibility-only, but provider docs that
-        # announce a model we do not publish are a hard failure. That catches
-        # releases like GLM-5.2 when docs update before pricing/OpenRouter does.
+        id: coverage_audit
+        # Capture the complete report before failing. The explicit gate below
+        # prevents commit and deploy while the always-run reconciliation step
+        # still updates the durable GitHub issue.
+        continue-on-error: true
         if: always()
         run: |
+          set +e
           set -o pipefail
-          uv run python scripts/check_price_coverage.py --strict-model-discovery \
+          uv run python -m scripts.check_price_coverage --strict-model-discovery \
+            | tee /tmp/coverage-summary.txt \
             | tee -a "$GITHUB_STEP_SUMMARY"
+          rc=${PIPESTATUS[0]}
+          if grep -qE '::warning title=Price/model coverage gap::.*live scraper fallback manifest' \
+              /tmp/coverage-summary.txt; then
+            echo "manifest_attention=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "manifest_attention=false" >> "$GITHUB_OUTPUT"
+          fi
+          if grep -qE '::warning title=Price/model coverage gap::.*(model discovery fetch failed|model discovery returned no model ids|model discovery found no GLM model ids|official video price verification unavailable)' \
+              /tmp/coverage-summary.txt; then
+            echo "discovery_attention=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "discovery_attention=false" >> "$GITHUB_OUTPUT"
+          fi
+          exit "$rc"
+
+      - name: Block unsafe coverage before publication
+        if: steps.coverage_audit.outcome == 'failure'
+        run: |
+          echo "::error title=Price/model coverage gate::Catalog publication is blocked; the last known-good snapshot remains live."
+          exit 1
 
       - name: Validate generated catalog before commit
         # The refresh can change parsers, provider manifests, model ownership,
@@ -216,6 +297,7 @@ jobs:
           git add \
             src/trusted_router/data/openrouter_snapshot.json \
             src/trusted_router/data/provider_models/ \
+            src/trusted_router/static/og/providers/ \
             scripts/pricing/parsers/
 
           if git diff --cached --quiet; then
@@ -280,3 +362,75 @@ jobs:
           echo "  dispatched deploy.yml for new snapshot"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Reconcile model-discovery coverage issue
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          COVERAGE_OUTCOME: ${{ steps.coverage_audit.outcome }}
+          MANIFEST_ATTENTION: ${{ steps.coverage_audit.outputs.manifest_attention }}
+          DISCOVERY_ATTENTION: ${{ steps.coverage_audit.outputs.discovery_attention }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          title="[bot] Model discovery coverage gaps"
+          issue_number=$(gh issue list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --state open \
+            --search "${title} in:title" \
+            --json number,title \
+            --jq "map(select(.title == \"${title}\"))[0].number // empty")
+
+          if [ "${JOB_STATUS}" != "success" ] || \
+             [ "${COVERAGE_OUTCOME}" != "success" ] || \
+             [ "${MANIFEST_ATTENTION}" != "false" ] || \
+             [ "${DISCOVERY_ATTENTION}" != "false" ]; then
+            {
+              if [ "${JOB_STATUS}" != "success" ] && \
+                 [ "${COVERAGE_OUTCOME}" = "success" ]; then
+                echo "The hourly workflow did not complete successfully, so its clean working-tree audit is not evidence that the published catalog is healthy. The last known-good catalog remains live."
+              elif [ "${COVERAGE_OUTCOME}" = "failure" ]; then
+                echo "The hourly price refresh was blocked before commit and deploy because the price/model coverage audit found an unsafe gap. The last known-good catalog remains live."
+              elif [ "${MANIFEST_ATTENTION}" = "true" ]; then
+                echo "The hourly refresh completed, but one or more provider manifests are approaching or past their provider-scoped route deadline. Those routes fail closed independently; unrelated providers continue refreshing."
+              elif [ "${DISCOVERY_ATTENTION}" = "true" ]; then
+                echo "The hourly refresh completed, but one or more model or pricing discovery sources are unavailable or returned no usable data. Existing routes and prices remain isolated, but newly released models or upstream price changes may not be discovered until this is repaired."
+              else
+                echo "The price/model coverage audit did not complete, so there is no positive evidence that the prior discovery issue is resolved. The last known-good catalog remains live."
+              fi
+              echo
+              echo "Latest run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+              echo
+              cat /tmp/coverage-summary.txt 2>/dev/null || echo "(coverage summary unavailable)"
+            } > /tmp/coverage-issue.md
+
+            if [ -n "${issue_number}" ]; then
+              gh issue edit "${issue_number}" \
+                --repo "${GITHUB_REPOSITORY}" \
+                --body-file /tmp/coverage-issue.md
+            else
+              gh issue create \
+                --repo "${GITHUB_REPOSITORY}" \
+                --title "${title}" \
+                --body-file /tmp/coverage-issue.md
+            fi
+            if [ "${JOB_STATUS}" != "success" ] && \
+               [ "${COVERAGE_OUTCOME}" = "success" ]; then
+              echo "::warning title=Catalog publication incomplete::The existing discovery issue remains open because this run did not publish a validated catalog."
+            elif [ "${COVERAGE_OUTCOME}" = "failure" ]; then
+              echo "::error title=Model discovery coverage gap::Catalog publication was blocked; unresolved coverage is tracked in GitHub Issues."
+            elif [ "${MANIFEST_ATTENTION}" = "true" ]; then
+              echo "::warning title=Provider manifest expiry::Provider-scoped route expiry is tracked in GitHub Issues."
+            elif [ "${DISCOVERY_ATTENTION}" = "true" ]; then
+              echo "::warning title=Model discovery unavailable::Persistent discovery failures are tracked in GitHub Issues."
+            else
+              echo "::warning title=Coverage audit incomplete::The existing discovery issue remains open because this run produced no clean audit evidence."
+            fi
+            exit 0
+          fi
+
+          if [ -n "${issue_number}" ]; then
+            gh issue close "${issue_number}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --comment "Resolved by ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
+          fi

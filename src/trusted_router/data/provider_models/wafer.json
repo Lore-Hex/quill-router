@@ -2,10 +2,10 @@
   "_about": "Provider-native supplement for Wafer serverless API. Refreshed hourly from Wafer's OpenAI-compatible /v1/models feed.",
   "provider": "wafer",
   "source": "https://pass.wafer.ai/v1/models",
-  "generated_at": "2026-07-17T01:10:13Z",
+  "generated_at": "2026-08-24T16:40:13Z",
   "price_scale": "microdollars_per_million",
   "zdr_header": "Wafer-ZDR: required",
-  "model_count": 5,
+  "model_count": 9,
   "models": [
     {
       "id": "minimax/minimax-m3",
@@ -25,7 +25,10 @@
       "output_modalities": [
         "text"
       ],
-      "cached_input_token_price_per_m": 70000
+      "cached_input_token_price_per_m": 70000,
+      "missing_since": "2026-08-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "moonshotai/kimi-k2.6",
@@ -58,7 +61,13 @@
       "output_token_price_per_m": 3200000,
       "zdr_supported": true,
       "context_length": 202752,
-      "cached_input_token_price_per_m": 100000
+      "cached_input_token_price_per_m": 100000,
+      "deprecation_at": "2026-08-10T00:00:00Z",
+      "retirement_at": "2026-08-17T00:00:00Z",
+      "replacement_model_id": "z-ai/glm-5.2",
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "z-ai/glm-5.2",
@@ -67,11 +76,11 @@
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 1200000,
-      "output_token_price_per_m": 4100000,
+      "input_token_price_per_m": 1260000,
+      "output_token_price_per_m": 3960000,
       "zdr_supported": true,
       "context_length": 1048576,
-      "cached_input_token_price_per_m": 200000
+      "cached_input_token_price_per_m": 230000
     },
     {
       "id": "z-ai/glm-5.2-fast",
@@ -80,11 +89,95 @@
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 3000000,
-      "output_token_price_per_m": 10250000,
+      "input_token_price_per_m": 2100000,
+      "output_token_price_per_m": 6600000,
       "zdr_supported": true,
       "context_length": 1048576,
-      "cached_input_token_price_per_m": 500000
+      "cached_input_token_price_per_m": 210000,
+      "deprecation_at": "2026-08-12T00:00:00Z",
+      "retirement_at": "2026-08-17T00:00:00Z",
+      "replacement_model_id": "z-ai/glm-5.2",
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
+    },
+    {
+      "id": "qwen/qwen3.5-397b-a17b",
+      "upstream_id": "Qwen3.5-397B-A17B",
+      "display_name": "Qwen3.5-397B-A17B",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "zdr_supported": false,
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "context_length": 262144,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "deepseek/deepseek-v4-flash-0731-fast",
+      "upstream_id": "DeepSeek-V4-Flash-0731-Fast",
+      "display_name": "DeepSeek-V4-Flash-0731-Fast",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "zdr_supported": true,
+      "context_length": 1048576,
+      "input_token_price_per_m": 280000,
+      "output_token_price_per_m": 560000,
+      "cached_input_token_price_per_m": 70000
+    },
+    {
+      "id": "moonshotai/kimi-k3",
+      "upstream_id": "Kimi-K3",
+      "display_name": "Kimi-K3",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "zdr_supported": true,
+      "context_length": 1048576,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 300000
+    },
+    {
+      "id": "moonshotai/kimi-k3-fast",
+      "upstream_id": "kimi-k3-fast",
+      "display_name": "Kimi-K3-Fast",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "zdr_supported": true,
+      "context_length": 1048576,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "input_token_price_per_m": 4500000,
+      "output_token_price_per_m": 22500000,
+      "cached_input_token_price_per_m": 450000,
+      "deprecation_at": "2026-08-10T00:00:00Z",
+      "retirement_at": "2026-08-17T00:00:00Z",
+      "replacement_model_id": "moonshotai/kimi-k3",
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     }
   ]
 }

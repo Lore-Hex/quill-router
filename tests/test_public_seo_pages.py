@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+import html as html_lib
 import json
 import logging
 import re
+from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
+import pytest
 from fastapi.testclient import TestClient
 
+from trusted_router.dashboard import (
+    MODEL_COMPARE_PAGE_SIZE,
+    OPENROUTER_PAID_LANDING_PATHS,
+    OPENROUTER_PAID_LANDING_VARIANTS,
+    assigned_openrouter_landing_path,
+)
 from trusted_router.routes.public import INDEXNOW_KEY
 
 
@@ -33,6 +43,12 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert core.status_code == 200
     assert "<urlset" in core.text
     assert "<loc>https://trustedrouter.com/eu</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/about</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/contact</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/privacy</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/trust</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/api/reference</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/docs/x402</loc>" in core.text
     assert "<loc>https://trustedrouter.com/openai-compatible-llm-api</loc>" in core.text
     assert "<loc>https://trustedrouter.com/kimi-k2-api</loc>" in core.text
     assert "<loc>https://trustedrouter.com/gemini-flash-alternative</loc>" in core.text
@@ -60,8 +76,22 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
         "<loc>https://trustedrouter.com/blog/openpatcher-s1-exploitbench-cve-2024-2887</loc>"
         in core.text
     )
+    assert (
+        "<loc>https://trustedrouter.com/blog/how-confidential-computing-protects-ai-prompts</loc>"
+        in core.text
+    )
+    assert "<loc>https://trustedrouter.com/blog/sign-in-with-trustedrouter</loc>" in core.text
     assert "<loc>https://trustedrouter.com/docs/synth</loc>" in core.text
-    assert "<loc>https://trustedrouter.com/docs/fusion</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/docs/fusion</loc>" not in core.text
+    assert "<loc>https://trustedrouter.com/fusion</loc>" not in core.text
+    assert "<loc>https://trustedrouter.com/compare/models</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/compare</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/compare/cloudflare-ai-gateway</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/resources</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/badge</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/customers/robot-robot-human</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/careers</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/confidential-cowork</loc>" in core.text
 
     models = client.get("/sitemap-models.xml")
     assert models.status_code == 200
@@ -85,12 +115,311 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     comparisons = client.get("/sitemap-comparisons.xml")
     assert comparisons.status_code == 200
     assert (
-        "<loc>https://trustedrouter.com/compare/models/z-ai/glm-5.2/vs/moonshotai/kimi-k2.6</loc>"
+        "<loc>https://trustedrouter.com/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.2</loc>"
         in comparisons.text
     )
+    assert "<loc>https://trustedrouter.com/compare/models/page/2</loc>" in comparisons.text
     combined = sitemap.text + core.text + models.text + providers.text + comparisons.text
     assert "trustedrouter/monitor" not in combined
     assert "openrouter.ai" not in combined
+
+
+def test_public_pages_are_gzip_compressed(client: TestClient) -> None:
+    response = client.get("/models", headers={"accept-encoding": "gzip"})
+
+    assert response.status_code == 200
+    assert response.headers["content-encoding"] == "gzip"
+    assert "Accept-Encoding" in response.headers.get("vary", "")
+    assert "Hundreds of models" in response.text
+
+
+def test_public_host_aliases_redirect_to_the_canonical_marketing_host(
+    client: TestClient,
+) -> None:
+    www = client.get(
+        "/api/reference?group=models",
+        headers={"host": "www.trustedrouter.com"},
+        follow_redirects=False,
+    )
+    assert www.status_code == 308
+    assert www.headers["location"] == "https://trustedrouter.com/api/reference?group=models"
+
+    escaped_status_link = client.get(
+        "/providers/minimax",
+        headers={"host": "status.trustedrouter.com"},
+        follow_redirects=False,
+    )
+    assert escaped_status_link.status_code == 308
+    assert escaped_status_link.headers["location"] == (
+        "https://trustedrouter.com/providers/minimax"
+    )
+
+    status_json = client.get(
+        "/status.json",
+        headers={"host": "status.trustedrouter.com"},
+        follow_redirects=False,
+    )
+    assert status_json.status_code == 200
+
+
+def test_api_reference_declares_one_query_independent_canonical(
+    client: TestClient,
+) -> None:
+    response = client.get("/api/reference?group=models&utm_source=test")
+
+    assert response.status_code == 200
+    assert response.text.count('rel="canonical"') == 1
+    assert '<link rel="canonical" href="https://trustedrouter.com/api/reference">' in response.text
+    assert "<title>TrustedRouter API Reference: Endpoints and Schemas</title>" in response.text
+    assert '<meta name="description"' in response.text
+    assert 'property="og:title"' in response.text
+    assert '<html lang="en">' in response.text
+    assert 'aria-label="TrustedRouter API reference links"' in response.text
+    assert "<h1" in response.text
+    assert "TrustedRouter API reference</h1>" in response.text
+    for path in ["/docs", "/models", "/security", "/"]:
+        assert f'href="{path}"' in response.text
+
+
+@pytest.mark.parametrize(
+    ("path", "canonical", "expected_copy"),
+    (
+        (
+            "/openrouter-alternative/quickstart",
+            "/openrouter-alternative",
+            "Keep your SDK. Switch the base URL.",
+        ),
+        (
+            "/private-llm-api/quickstart",
+            "/private-llm-api",
+            "Make one private API call in 60 seconds.",
+        ),
+    ),
+)
+def test_paid_landing_experiments_are_noindex_and_canonical(
+    client: TestClient,
+    path: str,
+    canonical: str,
+    expected_copy: str,
+) -> None:
+    response = client.get(f"{path}?utm_source=google&utm_content=landing_test")
+
+    assert response.status_code == 200
+    assert expected_copy in response.text
+    assert '<meta name="robots" content="noindex,follow">' in response.text
+    assert response.text.count('rel="canonical"') == 1
+    assert (
+        f'<link rel="canonical" href="https://trustedrouter.com{canonical}">'
+        in response.text
+    )
+    assert 'data-action="open-signin"' in response.text
+
+    sitemap = client.get("/sitemap.xml")
+    assert sitemap.status_code == 200
+    assert f"https://trustedrouter.com{path}" not in sitemap.text
+
+
+def test_openrouter_paid_landing_variants_are_distinct_and_noindex(
+    client: TestClient,
+) -> None:
+    rendered_headlines: set[str] = set()
+    sitemap = client.get("/sitemap.xml")
+    assert sitemap.status_code == 200
+
+    for slug, variant in OPENROUTER_PAID_LANDING_VARIANTS.items():
+        path = f"/openrouter-alternative/lp/{slug}"
+        response = client.get(
+            f"{path}?utm_source=google&utm_campaign=openrouter_lp_multi_20260822"
+        )
+
+        assert response.status_code == 200
+        assert variant.headline in response.text
+        assert f'model="{variant.model_id}"' in response.text
+        assert variant.cta in response.text
+        assert '<meta name="robots" content="noindex,follow">' in response.text
+        assert response.text.count('rel="canonical"') == 1
+        assert (
+            '<link rel="canonical" '
+            'href="https://trustedrouter.com/openrouter-alternative">'
+            in response.text
+        )
+        assert f"https://trustedrouter.com{path}" not in sitemap.text
+        rendered_headlines.add(variant.headline)
+
+    assert len(rendered_headlines) == len(OPENROUTER_PAID_LANDING_VARIANTS)
+
+
+def test_openrouter_experiment_router_is_sticky_and_preserves_campaign_query(
+    client: TestClient,
+) -> None:
+    query = (
+        "utm_source=google&utm_medium=paid_search&"
+        "utm_campaign=openrouter_lp_multi_20260822&"
+        "utm_content=openrouter_exact_control&gclid=test-click-123"
+    )
+    first = client.get(
+        f"/openrouter-alternative/experiment?{query}",
+        follow_redirects=False,
+    )
+    second = client.get(
+        f"/openrouter-alternative/experiment?{query}",
+        follow_redirects=False,
+    )
+
+    assert first.status_code == 307
+    assert second.status_code == 307
+    assert first.headers["location"] == second.headers["location"]
+    assert first.headers["cache-control"] == "private, no-store"
+    assert first.headers["vary"] == "cookie"
+    destination = urlsplit(first.headers["location"])
+    assert destination.path in OPENROUTER_PAID_LANDING_PATHS
+    assert parse_qs(destination.query) == parse_qs(query)
+
+    rendered = client.get(first.headers["location"])
+    assert rendered.status_code == 200
+    assert '<meta name="robots" content="noindex,follow">' in rendered.text
+
+
+@pytest.mark.parametrize(
+    "campaign",
+    ["openrouter_alternative_exact", "openrouter_lp_multi_20260822"],
+)
+def test_openrouter_paid_campaign_enters_landing_experiment_without_ad_edit(
+    client: TestClient,
+    campaign: str,
+) -> None:
+    query = (
+        "utm_source=google&utm_medium=cpc&"
+        f"utm_campaign={campaign}&utm_term=openrouter+alternative&"
+        "utm_content=search&gclid=paid-click-123"
+    )
+
+    response = client.get(
+        f"/openrouter-alternative?{query}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["vary"] == "cookie"
+    destination = urlsplit(response.headers["location"])
+    assert destination.path in OPENROUTER_PAID_LANDING_PATHS
+    assert parse_qs(destination.query) == parse_qs(query)
+
+
+def test_openrouter_non_experiment_campaign_keeps_canonical_page(
+    client: TestClient,
+) -> None:
+    response = client.get(
+        "/openrouter-alternative?utm_source=google&utm_campaign=seo_baseline"
+    )
+
+    assert response.status_code == 200
+    assert "OpenRouter Alternatives: 10 AI Gateways Compared (2026)" in response.text
+
+
+def test_openrouter_experiment_assignment_reaches_every_arm() -> None:
+    assigned = {
+        assigned_openrouter_landing_path(f"anonymous-{index}")
+        for index in range(600)
+    }
+
+    assert assigned == set(OPENROUTER_PAID_LANDING_PATHS)
+    assert assigned_openrouter_landing_path("stable-person") == (
+        assigned_openrouter_landing_path("stable-person")
+    )
+
+
+def test_openrouter_experiment_honors_global_privacy_control(
+    client: TestClient,
+) -> None:
+    response = client.get(
+        "/openrouter-alternative/experiment?utm_source=google",
+        headers={"sec-gpc": "1"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    assert response.headers["location"].startswith(
+        "/openrouter-alternative/quickstart?"
+    )
+    assert "tr_attribution=" not in response.headers.get("set-cookie", "")
+
+
+def test_unknown_openrouter_landing_variant_is_a_real_404(
+    client: TestClient,
+) -> None:
+    response = client.get("/openrouter-alternative/lp/unknown", headers={"accept": "text/html"})
+
+    assert response.status_code == 404
+    assert "Page Not Found" in response.text
+
+    agent = client.get("/openrouter-alternative/lp/unknown", headers={"accept": "*/*"})
+
+    assert agent.status_code == 404
+    assert agent.headers["content-type"].startswith("text/markdown")
+    assert "/llms.txt" in agent.text
+
+
+def test_public_footer_links_to_canonical_trust_page(client: TestClient) -> None:
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert '<a href="/trust">Attestation</a>' in response.text
+    assert '<a href="https://trust.trustedrouter.com">Attestation</a>' not in response.text
+
+
+@pytest.mark.parametrize(
+    ("host", "brand"),
+    (
+        ("uptimerouter.com", "UptimeRouter"),
+        ("allyrouter.com", "AllyRouter"),
+    ),
+)
+def test_paid_domain_homepages_render_their_own_brand(
+    client: TestClient,
+    host: str,
+    brand: str,
+) -> None:
+    response = client.get("/", headers={"host": host})
+
+    assert response.status_code == 200
+    assert f"<title>{brand} | Every model. Privacy with proof.</title>" in response.text
+    assert f'<span class="brand-word">{brand}</span>' in response.text
+    assert f'property="og:site_name" content="{brand}"' in response.text
+    assert f'property="og:url" content="https://{host}/"' in response.text
+    assert '<link rel="canonical" href="https://trustedrouter.com/">' in response.text
+    assert "Powered by TrustedRouter" in response.text
+    assert f"Why developers choose {brand}." in response.text
+    assert f"What is {brand}?" in response.text
+
+
+def test_duplicate_api_reference_surfaces_redirect_to_canonical(
+    client: TestClient,
+) -> None:
+    for path in ["/redoc", "/docs/oauth2-redirect"]:
+        response = client.get(path, follow_redirects=False)
+        assert response.status_code == 301
+        assert response.headers["location"] == "/api/reference"
+
+
+def test_trust_page_declares_primary_trust_path_as_canonical(
+    client: TestClient,
+) -> None:
+    for path, headers in [
+        ("/trust", {}),
+        ("/", {"host": "trust.trustedrouter.com"}),
+    ]:
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200
+        assert response.text.count('rel="canonical"') == 1
+        assert '<link rel="canonical" href="https://trustedrouter.com/trust">' in response.text
+        assert "<title>Verify TrustedRouter Attestation and Running Code</title>" in response.text
+        assert '<meta name="description"' in response.text
+        assert 'property="og:title"' in response.text
+        assert 'href="https://trustedrouter.com/api/reference">API docs</a>' in response.text
+        assert 'href="https://api.trustedrouter.com/v1">API</a>' not in response.text
+        assert '"@type":"WebPage"' in response.text
 
 
 def test_indexnow_key_file_is_public(client: TestClient) -> None:
@@ -151,6 +480,25 @@ def test_llms_text_files_are_public_and_do_not_leak_secret_material(
     assert "trustedrouter/monitor" not in full_llms.text
 
 
+def test_llms_indexes_link_official_cli_distributions(client: TestClient) -> None:
+    expected = (
+        "https://pypi.org/project/trusted-router-py/",
+        "https://www.npmjs.com/package/@lore-hex/trusted-router",
+        "https://github.com/Lore-Hex/trusted-router-py",
+        "https://github.com/Lore-Hex/trusted-router-js",
+        "pipx install trusted-router-py",
+        "npm install --global @lore-hex/trusted-router",
+        "npx --yes @lore-hex/trusted-router models --json",
+        "trustedrouter models --json",
+    )
+    for path in ("/llms.txt", "/docs/llms.txt", "/docs/llms-full.txt"):
+        response = client.get(path)
+        assert response.status_code == 200
+        for value in expected:
+            assert value in response.text
+        assert "TRUSTEDROUTER_API_KEY" in response.text
+
+
 def test_homepage_has_plain_llm_seo_positioning(client: TestClient) -> None:
     response = client.get("/")
     assert response.status_code == 200
@@ -167,7 +515,10 @@ def test_public_provider_route_defaults_to_html_for_link_checkers(client: TestCl
     response = client.get("/providers")
 
     assert response.status_code == 200
-    assert "<title>Providers | TrustedRouter</title>" in response.text
+    assert (
+        "<title>AI Providers: Models, Privacy and Uptime | TrustedRouter</title>"
+        in response.text
+    )
     assert "Provider transparency" in response.text
     assert "application/json" not in response.headers["content-type"]
 
@@ -176,9 +527,47 @@ def test_public_provider_route_defaults_to_html_for_link_checkers(client: TestCl
     assert json_response.headers["content-type"].startswith("application/json")
 
 
+def test_search_console_opportunity_pages_answer_observed_queries(
+    client: TestClient,
+) -> None:
+    eu = client.get("/eu")
+    assert eu.status_code == 200
+    assert "<title>EU LLM Gateway Base URL &amp; Data Residency | TrustedRouter</title>" in eu.text
+    assert "What the EU LLM gateway controls" in eu.text
+    assert "https://api-europe-west4.quillrouter.com/v1" in eu.text
+    assert "Does the EU gateway guarantee EU data residency?" in eu.text
+    assert "FAQPage" in json.dumps(_json_ld(eu.text))
+
+    agents = client.get("/docs/agent-setup")
+    assert agents.status_code == 200
+    assert (
+        "<title>Agent Router Base URL: Claude Code &amp; Codex | TrustedRouter</title>"
+        in agents.text
+    )
+    assert "Agent router base URLs" in agents.text
+    assert "https://api.trustedrouter.com/v1" in agents.text
+    assert "What base URL should an OpenAI-compatible agent use?" in agents.text
+    assert "FAQPage" in json.dumps(_json_ld(agents.text))
+
+    deepseek = client.get("/deepseek-api-privacy")
+    assert deepseek.status_code == 200
+    assert (
+        "<title>DeepSeek API Privacy &amp; Zero Data Retention | TrustedRouter</title>"
+        in deepseek.text
+    )
+    assert "DeepSeek zero data retention" in deepseek.text
+    assert '"min_privacy": "zdr"' in deepseek.text
+    assert "How do I require DeepSeek zero data retention?" in deepseek.text
+
+
 def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClient) -> None:
     models = client.get("/models")
     assert models.status_code == 200
+    assert (
+        "<title>AI Models: Prices, Providers &amp; API Routes | TrustedRouter</title>"
+        in models.text
+    )
+    assert 'href="/china-ai-models"' in models.text
     models_payload = _json_ld(models.text)
     models_types = {item["@type"] for item in models_payload["@graph"]}
     assert {"BreadcrumbList", "ItemList"}.issubset(models_types)
@@ -330,6 +719,76 @@ def test_blog_index_shows_scannable_post_images(client: TestClient) -> None:
     assert response.text.count('class="blog-thumb"') >= 10
 
 
+def test_sign_in_with_trustedrouter_launch_post_documents_generic_flow(
+    client: TestClient,
+) -> None:
+    response = client.get("/blog/sign-in-with-trustedrouter")
+
+    assert response.status_code == 200
+    assert "Sign in with TrustedRouter" in response.text
+    assert "writing tool, coding agent, research app" in response.text
+    assert "starts at exactly <strong>$0</strong>" in response.text
+    assert "$5, $20, or $100" in response.text
+    assert "keeps no prompt or output logs, always" in response.text
+    assert "docs/sign-in-with-trustedrouter.md" in response.text
+    assert "https://github.com/Lore-Hex/trusted-router-py" in response.text
+    assert "https://github.com/Lore-Hex/trusted-router-js" in response.text
+    assert "https://github.com/jperla/trusted-router-swift" in response.text
+    payload = _json_ld(response.text)
+    assert "sign-in-with-trustedrouter" in json.dumps(payload)
+    assert "slopnazi" not in response.text.lower()
+
+
+def test_removed_integration_is_absent_from_public_surfaces(client: TestClient) -> None:
+    for path in (
+        "/sign-in-with-trustedrouter",
+        "/blog/sign-in-with-trustedrouter",
+        "/blog",
+        "/sitemap-core.xml",
+        "/llms.txt",
+    ):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert "slopnazi" not in response.text.lower()
+
+    assert client.get("/blog/sign-in-with-trustedrouter-slopnazi").status_code == 404
+    docs = Path("docs/sign-in-with-trustedrouter.md").read_text(encoding="utf-8")
+    assert "slopnazi" not in docs.lower()
+
+
+def test_confidential_computing_blog_explains_and_verifies_the_boundary(
+    client: TestClient,
+) -> None:
+    response = client.get("/blog/how-confidential-computing-protects-ai-prompts")
+    assert response.status_code == 200
+    assert "The cloud should not be able to read your prompts" in response.text
+    assert "data <em>in use</em>" in response.text
+    assert "Trusted Execution Environment" in response.text
+    assert "remote attestation" in response.text
+    assert "api.trustedrouter.com" in response.text
+    assert "tools/verify-attestation.py" in response.text
+    assert "--expect-digest" in response.text
+    assert "--samples 4" in response.text
+    assert 'provider.min_privacy = "confidential"' in response.text
+    assert "/models/trustedrouter/e2e" in response.text
+    assert "does not prove the code has no bugs" in response.text
+    assert "https://www.redhat.com/en/topics/security/what-is-confidential-computing" in (
+        response.text
+    )
+    assert "https://security.apple.com/blog/private-cloud-compute/" in response.text
+
+    card = (
+        "https://trustedrouter.com/static/og/blog/"
+        "how-confidential-computing-protects-ai-prompts.png"
+    )
+    assert f'property="og:image" content="{card}"' in response.text
+    assert "how-confidential-computing-protects-ai-prompts" in json.dumps(_json_ld(response.text))
+    assert (
+        client.get("/static/og/blog/how-confidential-computing-protects-ai-prompts.png").status_code
+        == 200
+    )
+
+
 def test_blog_page_views_emit_axiom_safe_metadata(client: TestClient, caplog) -> None:
     caplog.set_level(logging.INFO, logger="trusted_router.middleware")
     response = client.get(
@@ -362,13 +821,75 @@ def test_blog_page_views_emit_axiom_safe_metadata(client: TestClient, caplog) ->
 
 def _json_ld(html: str) -> dict[str, object]:
     match = re.search(
-        r'<script type="application/ld\+json">(?P<payload>.*?)</script>',
+        r'<script type="application/ld\+json"[^>]*>(?P<payload>.*?)</script>',
         html,
     )
     assert match is not None
     payload = json.loads(match.group("payload"))
     assert isinstance(payload, dict)
     return payload
+
+
+def _substantive_page_text(page_html: str, page_name: str) -> str:
+    match = re.search(
+        rf'<(?P<tag>article|section)[^>]*data-substantive-content="{page_name}"[^>]*>'
+        r"(?P<content>.*?)</(?P=tag)>",
+        page_html,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    without_tags = re.sub(r"<[^>]+>", " ", match.group("content"))
+    return re.sub(r"\s+", " ", html_lib.unescape(without_tags)).strip()
+
+
+def test_company_verification_pages_are_substantive_and_machine_readable(
+    client: TestClient,
+) -> None:
+    pages = {
+        "about": client.get("/about"),
+        "contact": client.get("/contact"),
+        "privacy": client.get("/privacy"),
+    }
+    for page_name, response in pages.items():
+        assert response.status_code == 200
+        assert len(_substantive_page_text(response.text, page_name)) >= 500
+        assert f'<link rel="canonical" href="https://trustedrouter.com/{page_name}">' in (
+            response.text
+        )
+
+    about = pages["about"]
+    assert "About TrustedRouter | Company, Product &amp; Trust" in about.text
+    assert "Lore Hex Corp" in about.text
+    assert "Delaware C Corporation" in about.text
+    assert "Joseph Perla" in about.text
+    assert "41-5339728" in about.text
+    assert "144992055" in about.text
+
+    contact = pages["contact"]
+    assert "Contact TrustedRouter | Support, Security &amp; Business" in contact.text
+    assert "help@trustedrouter.com" in contact.text
+    assert "security@trustedrouter.com" in contact.text
+    assert "+1-305-239-7350" in contact.text
+    assert "1111 Brickell Ave" in contact.text
+
+    for response, page_type in ((about, "AboutPage"), (contact, "ContactPage")):
+        payload = _json_ld(response.text)
+        graph = payload.get("@graph")
+        assert isinstance(graph, list)
+        organization = next(node for node in graph if node.get("@type") == "Organization")
+        assert organization["legalName"] == "Lore Hex Corp"
+        assert organization["mainEntityOfPage"] == "https://trustedrouter.com/about"
+        assert any(node.get("@type") == page_type for node in graph)
+
+    privacy_payload = _json_ld(pages["privacy"].text)
+    privacy_graph = privacy_payload.get("@graph")
+    assert isinstance(privacy_graph, list)
+    assert any(node.get("name") == "TrustedRouter Privacy Policy" for node in privacy_graph)
+
+    llms = client.get("/llms.txt")
+    assert "https://trustedrouter.com/about" in llms.text
+    assert "https://trustedrouter.com/contact" in llms.text
+    assert "https://trustedrouter.com/privacy" in llms.text
 
 
 def test_public_legal_packet_exposes_procurement_checkpoint(client: TestClient) -> None:
@@ -394,7 +915,8 @@ def test_public_privacy_terms_and_support_pages_are_distinct(client: TestClient)
     assert privacy.status_code == 200
     assert "Privacy Policy | TrustedRouter" in privacy.text
     assert "Lore Hex Corp" in privacy.text
-    assert "does not store prompt or output content by default" in privacy.text
+    assert "never logs prompt or output content" in privacy.text
+    assert "opt-in Batch API" in privacy.text
     assert "We do not use customer prompts or outputs to train our own models" in privacy.text
     assert "/legal/subprocessors" in privacy.text
     assert "security@trustedrouter.com" in privacy.text
@@ -410,7 +932,10 @@ def test_public_privacy_terms_and_support_pages_are_distinct(client: TestClient)
     support = client.get("/support")
     assert support.status_code == 200
     assert "TrustedRouter support" in support.text
-    assert "github.com/Lore-Hex/LLM-advisor/issues" in support.text
+    assert "help@trustedrouter.com" in support.text
+    assert 'id="support-inquiry"' in support.text
+    assert 'fetch("/support/inquiry"' in support.text
+    assert "github.com/Lore-Hex/quill-router/issues" in support.text
     assert "Never send an API key" in support.text
     assert "status.trustedrouter.com" in support.text
 
@@ -451,7 +976,7 @@ def test_public_legal_dpa_baa_and_subprocessors_are_honest(client: TestClient) -
     assert "Draft DPA" in dpa.text
     assert "Signature required" in dpa.text
     assert "Joseph Perla" in dpa.text
-    assert "No prompt/output storage by TrustedRouter" in dpa.text
+    assert "Real-time inference is content-stateless. Batch is opt-in." in dpa.text
     assert "trustedrouter/zdr" in dpa.text
     assert "written approval" in dpa.text
 
@@ -478,7 +1003,7 @@ def test_public_legal_dpa_baa_and_subprocessors_are_honest(client: TestClient) -
     system_names = {row["name"] for row in payload["system_subprocessors"]}
     model_names = {row["name"] for row in payload["model_provider_subprocessors"]}
     assert {"Google Cloud Platform", "Stripe", "Sentry"}.issubset(system_names)
-    assert {"Anthropic", "OpenAI", "Gemini"}.issubset(model_names)
+    assert {"Anthropic", "OpenAI", "Google AI Studio", "Google Vertex AI"}.issubset(model_names)
     anthropic = next(
         row for row in payload["model_provider_subprocessors"] if row["id"] == "anthropic"
     )
@@ -541,12 +1066,156 @@ def test_provider_detail_page_links_served_models(client: TestClient) -> None:
     response = client.get("/providers/minimax")
 
     assert response.status_code == 200
-    assert "<title>MiniMax Models | TrustedRouter</title>" in response.text
+    assert "<title>MiniMax Models, Pricing &amp; Privacy | TrustedRouter</title>" in response.text
     assert "MiniMax M3" in response.text
     assert 'href="https://aiiq.org/models/minimax-m3/"' in response.text
     assert "IQ 109" in response.text
     assert "/models/minimax/minimax-m3/benchmarks" in response.text
     assert "Policy source" in response.text
+    assert "Does MiniMax have zero data retention?" in response.text
+    provider_schema = _json_ld(response.text)
+    assert "FAQPage" in json.dumps(provider_schema)
+
+
+def test_vertex_provider_page_scopes_zdr_to_managed_prepaid_routes(
+    client: TestClient,
+) -> None:
+    response = client.get("/providers/google-vertex")
+
+    assert response.status_code == 200
+    assert "No logs (prepaid)" in response.text
+    assert "prepaid only" in response.text
+    assert "contractual Zero Data Retention" in response.text
+    assert "Google AI Studio is classified separately" in response.text
+
+
+def test_provider_detail_links_indexable_performance_page(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import dashboard
+
+    measured = {
+        "provider_row": {
+            "sample_count": 25,
+            "p50_ttft_ms": 125,
+            "p50_tokens_per_second": 80.0,
+            "uptime": 0.999,
+        },
+        "models": [],
+    }
+    monkeypatch.setattr(dashboard, "measured_for_provider", lambda *_args, **_kwargs: measured)
+
+    response = client.get("/providers/minimax")
+    assert response.status_code == 200
+    assert 'href="/providers/minimax/performance"' in response.text
+
+    sitemap = client.get("/sitemap-providers.xml")
+    assert "<loc>https://trustedrouter.com/providers/minimax/performance</loc>" in sitemap.text
+
+
+def test_model_overview_only_links_subpages_with_indexable_content(
+    client: TestClient,
+) -> None:
+    response = client.get("/models/minimax/minimax-m3")
+
+    assert response.status_code == 200
+    assert 'href="/models/minimax/minimax-m3/benchmarks"' in response.text
+    assert 'href="/models/minimax/minimax-m3/providers"' in response.text
+    assert 'href="/models/minimax/minimax-m3/pricing"' in response.text
+    assert 'href="/models/minimax/minimax-m3/uptime"' not in response.text
+    assert 'href="/models/minimax/minimax-m3/api"' not in response.text
+
+
+def test_model_overview_surfaces_cached_route_evidence(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import dashboard
+
+    measured = [
+        {
+            "model": "minimax/minimax-m3",
+            "provider": "novita",
+            "sample_count": 12,
+            "p50_ttft_ms": 140,
+            "p50_tokens_per_second": 52.0,
+            "throughput_sample_count": 8,
+            "uptime": 0.99,
+        },
+        {
+            "model": "minimax/minimax-m3",
+            "provider": "minimax",
+            "sample_count": 10,
+            "p50_ttft_ms": 220,
+            "p50_tokens_per_second": 91.0,
+            "throughput_sample_count": 7,
+            "uptime": 1.0,
+        },
+    ]
+    monkeypatch.setattr(dashboard, "measured_for_model", lambda *_args, **_kwargs: measured)
+
+    response = client.get("/models/minimax/minimax-m3")
+
+    assert response.status_code == 200
+    assert "Current route evidence" in response.text
+    assert "Lowest prepaid input price" in response.text
+    assert "140 ms" in response.text
+    assert "91 tok/s" in response.text
+    assert "99.00% to 100.00%" in response.text
+    assert 'href="/providers/novita"' in response.text
+    assert 'href="/providers/minimax"' in response.text
+    assert 'href="/models/minimax/minimax-m3/performance"' in response.text
+    assert 'href="/models/minimax/minimax-m3/uptime"' not in response.text
+    assert "n=12" not in response.text
+    assert "n=10" not in response.text
+
+
+def test_model_overview_answers_high_intent_questions(client: TestClient) -> None:
+    response = client.get("/models/minimax/minimax-m3")
+
+    assert response.status_code == 200
+    assert "What model ID should I use for MiniMax: MiniMax M3?" in response.text
+    assert "Which providers serve MiniMax: MiniMax M3?" in response.text
+    assert "How much does MiniMax: MiniMax M3 cost through TrustedRouter?" in response.text
+    assert "How do I require zero data retention for MiniMax: MiniMax M3?" in response.text
+    assert "provider.min_privacy" in response.text
+    assert "FAQPage" in json.dumps(_json_ld(response.text))
+
+
+def test_model_route_evidence_does_not_invent_a_prepaid_price(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import dashboard
+
+    monkeypatch.setattr(dashboard, "endpoints_for_model", lambda _model_id: [])
+    monkeypatch.setattr(dashboard, "measured_for_model", lambda *_args, **_kwargs: [])
+
+    evidence = dashboard._model_route_evidence(
+        dashboard.MODELS["minimax/minimax-m3"],
+        test_mode=True,
+    )
+
+    assert evidence["lowest_prompt_price"] == "BYOK only"
+    assert evidence["lowest_completion_price"] == "BYOK only"
+
+
+def test_model_overview_links_canonical_related_comparisons(client: TestClient) -> None:
+    response = client.get("/models/minimax/minimax-m3")
+
+    assert response.status_code == 200
+    assert "Compare MiniMax: MiniMax M3" in response.text
+    related_paths = re.findall(
+        r'href="(/compare/models/[^\"]+/vs/[^\"]+)"',
+        response.text,
+    )
+    assert related_paths
+    assert all("minimax/minimax-m3" in path for path in related_paths)
+    assert all(
+        left.casefold() < right.casefold()
+        for path in related_paths
+        for left, right in [path.removeprefix("/compare/models/").split("/vs/", 1)]
+    )
 
 
 def test_model_seo_cluster_pages_are_public_and_not_openrouter_links(
@@ -599,6 +1268,358 @@ def test_model_comparison_pages_are_public(client: TestClient) -> None:
     assert "/models/moonshotai/kimi-k2.6/pricing" in response.text
     assert "/models/z-ai/glm-5.1/providers" in response.text
     assert "openrouter.ai" not in response.text.lower()
+    assert "Which should I use, MoonshotAI: Kimi K2.6 or Z.ai: GLM 5.1?" in response.text
+    assert "Can I test MoonshotAI: Kimi K2.6 and Z.ai: GLM 5.1 with the same API?" in response.text
+    comparison_schema = _json_ld(response.text)
+    assert "FAQPage" in json.dumps(comparison_schema)
+
+
+def test_model_comparison_surfaces_distinct_measured_route_metrics(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import dashboard
+
+    def measured(model_id: str, **_kwargs: object) -> list[dict[str, object]]:
+        if model_id == "moonshotai/kimi-k2.6":
+            return [
+                {
+                    "provider": "together",
+                    "sample_count": 9,
+                    "p50_ttft_ms": 180,
+                    "p50_tokens_per_second": 75.0,
+                    "throughput_sample_count": 6,
+                    "uptime": 0.995,
+                }
+            ]
+        return [
+            {
+                "provider": "zai",
+                "sample_count": 11,
+                "p50_ttft_ms": 120,
+                "p50_tokens_per_second": 48.0,
+                "throughput_sample_count": 7,
+                "uptime": 1.0,
+            }
+        ]
+
+    monkeypatch.setattr(dashboard, "measured_for_model", measured)
+    response = client.get("/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.1")
+
+    assert response.status_code == 200
+    assert "Highest measured throughput" in response.text
+    assert "75 tok/s" in response.text
+    assert "48 tok/s" in response.text
+    assert "Recent route uptime range" in response.text
+    assert "99.50%" in response.text
+    assert "100.00%" in response.text
+    assert "Related comparisons" in response.text
+    assert "Browse every comparison" in response.text
+    assert "Keep comparing" in response.text
+    assert "Previous comparison" in response.text
+    assert "Next comparison" in response.text
+
+
+def test_reversed_model_comparison_redirects_to_stable_canonical(
+    client: TestClient,
+) -> None:
+    canonical_path = "/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.1"
+    canonical = client.get(canonical_path, follow_redirects=False)
+    assert canonical.status_code == 200
+    assert (
+        f'<link rel="canonical" href="https://trustedrouter.com{canonical_path}">' in canonical.text
+    )
+
+    reversed_page = client.get(
+        "/compare/models/z-ai/glm-5.1/vs/moonshotai/kimi-k2.6",
+        follow_redirects=False,
+    )
+    assert reversed_page.status_code == 301
+    assert reversed_page.headers["location"] == canonical_path
+
+
+def test_model_comparison_directory_links_every_sitemap_pair(client: TestClient) -> None:
+    sitemap = client.get("/sitemap-comparisons.xml")
+    sitemap_pairs = set(
+        re.findall(
+            r"<loc>https://trustedrouter\.com(/compare/models/[^<]+/vs/[^<]+)</loc>",
+            sitemap.text,
+        )
+    )
+    expected_page_count = (
+        len(sitemap_pairs) + MODEL_COMPARE_PAGE_SIZE - 1
+    ) // MODEL_COMPARE_PAGE_SIZE
+
+    first = client.get("/compare/models")
+    assert first.status_code == 200
+    assert "Compare AI models" in first.text
+    assert f'href="/compare/models/page/{expected_page_count}"' in first.text
+
+    linked_paths: set[str] = set()
+    for page in range(1, expected_page_count + 1):
+        path = "/compare/models" if page == 1 else f"/compare/models/page/{page}"
+        response = client.get(path)
+        assert response.status_code == 200, path
+        linked_paths.update(
+            re.findall(
+                r'href="(/compare/models/[^\"]+/vs/[^\"]+)"',
+                response.text,
+            )
+        )
+
+    assert len(sitemap_pairs) == 2_600
+    assert linked_paths == sitemap_pairs
+    assert all(
+        left.casefold() < right.casefold()
+        for pair in sitemap_pairs
+        for left, right in [pair.removeprefix("/compare/models/").split("/vs/", 1)]
+    )
+
+
+def test_model_comparison_graph_covers_every_public_model() -> None:
+    from trusted_router.dashboard import _model_comparison_pairs, _public_models_for_seo
+
+    represented = {
+        model.id.casefold() for left, right in _model_comparison_pairs() for model in (left, right)
+    }
+    assert {model.id.casefold() for model in _public_models_for_seo()} <= represented
+
+
+def test_model_comparison_graph_gives_every_page_two_inbound_neighbors() -> None:
+    from trusted_router.dashboard import (
+        _model_comparison_neighbor_index,
+        _model_comparison_pairs,
+    )
+
+    neighbor_index = _model_comparison_neighbor_index()
+    expected_paths = {
+        f"/compare/models/{left.id}/vs/{right.id}"
+        for left, right in _model_comparison_pairs()
+    }
+    inbound_counts = {path: 0 for path in expected_paths}
+
+    assert set(neighbor_index) == expected_paths
+    for source, neighbors in neighbor_index.items():
+        assert len(neighbors) == 2
+        assert {relation for _href, _label, relation in neighbors} == {"Previous", "Next"}
+        for href, _label, _relation in neighbors:
+            assert href != source
+            assert href in inbound_counts
+            inbound_counts[href] += 1
+
+    assert set(inbound_counts.values()) == {2}
+
+
+def test_resources_directory_links_previous_orphan_pages(client: TestClient) -> None:
+    response = client.get("/resources")
+    assert response.status_code == 200
+    expected_paths = {
+        "/apps",
+        "/aws-bedrock-alternative",
+        "/azure-openai-alternative",
+        "/benchmarks",
+        "/best-llm-router",
+        "/claude-api-privacy",
+        "/cline-api-provider",
+        "/compare",
+        "/compare/litellm",
+        "/compare/vercel-ai-gateway",
+        "/confidential-computing-llm",
+        "/badge",
+        "/customers/robot-robot-human",
+        "/deepseek-api-privacy",
+        "/eu-ai-act-llm-compliance",
+        "/gdpr-compliant-llm-api",
+        "/gemini-flash-alternative",
+        "/glm-5-api",
+        "/gpt-oss-120b-api",
+        "/groq-alternative",
+        "/litellm-alternative",
+        "/llm-api-for-financial-services",
+        "/llm-api-for-law-firms",
+        "/llm-data-residency",
+        "/llm-document-processing",
+        "/llm-failover",
+        "/latest-model-apis",
+        "/minimax-m3-api",
+        "/portkey-alternative",
+        "/private-llm-api",
+        "/rankings",
+        "/sillytavern-api",
+        "/tinfoil-alternative",
+        "/trustedos",
+        "/vertex-ai-alternative",
+    }
+    for path in expected_paths:
+        assert f'href="{path}"' in response.text, path
+
+    footer = client.get("/")
+    assert 'href="/about"' in footer.text
+    assert 'href="/contact"' in footer.text
+    assert 'href="/resources"' in footer.text
+    assert 'href="/customers/robot-robot-human"' in footer.text
+    assert 'href="/careers"' in footer.text
+    footer_markup = footer.text.split('<footer class="site-footer"', maxsplit=1)[1]
+    assert 'href="/china-ai-models"' not in footer_markup
+
+
+def test_high_authority_pages_link_the_primary_intent_hubs(client: TestClient) -> None:
+    primary_hubs = {
+        "/compare",
+        "/compare/models",
+        "/private-llm-api",
+        "/eu",
+        "/openrouter-alternative",
+        "/docs/agent-setup",
+    }
+    homepage = client.get("/")
+    resources = client.get("/resources")
+    assert homepage.status_code == resources.status_code == 200
+    for path in primary_hubs:
+        assert f'href="{path}"' in homepage.text, path
+        assert f'href="{path}"' in resources.text, path
+
+    for heading in [
+        "AI gateways",
+        "Private and ZDR APIs",
+        "EU AI infrastructure",
+        "OpenRouter alternatives",
+        "Agents and coding tools",
+        "Production use cases",
+    ]:
+        assert heading in resources.text
+
+    eu = client.get("/eu")
+    private = client.get("/private-llm-api")
+    migration = client.get("/openrouter-alternative")
+    agents = client.get("/docs/agent-setup")
+    comparisons = client.get("/compare/models")
+    assert 'href="/llm-data-residency"' in eu.text
+    assert 'href="/providers"' in private.text
+    assert 'href="/docs/migrate-from-openrouter"' in migration.text
+    assert 'href="/compare/models"' in agents.text
+    assert 'href="/leaderboard"' in comparisons.text
+
+
+def test_openrouter_alternatives_page_matches_comparison_intent(
+    client: TestClient,
+) -> None:
+    response = client.get("/openrouter-alternative")
+
+    assert response.status_code == 200
+    assert (
+        "<title>OpenRouter Alternatives: 10 AI Gateways Compared (2026)</title>"
+        in response.text
+    )
+    assert "TrustedRouter | TrustedRouter" not in response.text
+    assert (
+        '<link rel="canonical" href="https://trustedrouter.com/openrouter-alternative">'
+        in response.text
+    )
+    assert "<h1>OpenRouter Alternatives: 10 AI Gateways Compared (2026)</h1>" in response.text
+    assert "Reviewed August 17, 2026" in response.text
+    assert "The best OpenRouter alternative depends on why you are changing." in response.text
+    assert "10 OpenRouter alternatives compared" in response.text
+    for path in [
+        "/compare/openrouter",
+        "/compare/litellm",
+        "/compare/portkey",
+        "/compare/vercel-ai-gateway",
+        "/compare/cloudflare-ai-gateway",
+        "/compare/helicone",
+        "/compare/requesty",
+        "/compare/aws-bedrock",
+        "/compare/google-vertex-ai",
+        "/providers",
+    ]:
+        assert f'href="{path}"' in response.text
+    for official_source in [
+        "https://openrouter.ai/docs/faq",
+        "https://docs.litellm.ai/",
+        "https://portkey.ai/docs/product/ai-gateway",
+        "https://vercel.com/docs/ai-gateway",
+        "https://developers.cloudflare.com/ai-gateway/",
+        "https://docs.helicone.ai/gateway/overview",
+        "https://www.requesty.ai/pricing",
+    ]:
+        assert f'href="{official_source}"' in response.text
+
+    payload = _json_ld(response.text)
+    graph = payload["@graph"]
+    graph_types = {item["@type"] for item in graph}
+    assert {"BreadcrumbList", "WebPage", "ItemList", "FAQPage"}.issubset(graph_types)
+    alternatives = next(
+        item
+        for item in graph
+        if item["@type"] == "ItemList"
+        and item["name"] == "OpenRouter alternatives compared by TrustedRouter"
+    )
+    assert alternatives["numberOfItems"] == 10
+    assert "Which OpenRouter alternative can I self-host?" in response.text
+    assert response.text.count("Create my API key") == 2
+
+
+def test_exact_intent_search_landings_are_message_matched(client: TestClient) -> None:
+    cases = {
+        "/openrouter-alternative": (
+            "Switch from OpenRouter in one base URL.",
+            "Create my API key",
+        ),
+        "/private-llm-api": (
+            'A private LLM API where "private" means cryptographically verified.',
+            "Create key and test privately",
+        ),
+        "/llm-failover": (
+            "Your uptime should not depend on one provider's status page.",
+            "Create key and test failover",
+        ),
+        "/latest-model-apis": (
+            "Try the models developers are evaluating now.",
+            "Create key and run a model",
+        ),
+    }
+
+    for path, expected in cases.items():
+        response = client.get(
+            f"{path}?utm_source=google&utm_medium=paid_search"
+            "&utm_campaign=exact_intent_test&utm_content=rsa1"
+        )
+        assert response.status_code == 200, path
+        for text in expected:
+            assert text in response.text, (path, text)
+        assert 'data-action="open-signin"' in response.text
+        assert f'<link rel="canonical" href="https://trustedrouter.com{path}">' in response.text
+        assert "utm_campaign" not in response.text
+
+
+def test_latest_model_api_landing_links_current_catalog_routes(client: TestClient) -> None:
+    response = client.get("/latest-model-apis")
+
+    assert response.status_code == 200
+    assert 'href="/models/moonshotai/kimi-k3"' in response.text
+    assert 'href="/models/z-ai/glm-5.2"' in response.text
+    assert 'href="/models/deepseek/deepseek-v4-pro"' in response.text
+    assert 'href="/models/google/gemini-3.6-flash"' in response.text
+    assert "No card required." in response.text
+    assert "Upstream guarantees differ" in response.text
+
+    sitemap = client.get("/sitemap-core.xml")
+    assert sitemap.status_code == 200
+    assert "https://trustedrouter.com/latest-model-apis" in sitemap.text
+
+
+def test_retired_model_pages_redirect_to_current_catalog_entries(client: TestClient) -> None:
+    redirects = {
+        "/models/deepseek/deepseek-chat-v3.1/performance": ("/models/deepseek/deepseek-v3.1"),
+        "/models/google/gemini-3-pro-image/performance": (
+            "/models/google/gemini-3.1-flash-image-preview"
+        ),
+        "/models/meta/muse-spark-1.1/performance": "/models?filter=open",
+    }
+    for path, target in redirects.items():
+        response = client.get(path, follow_redirects=False)
+        assert response.status_code == 301, path
+        assert response.headers["location"] == target
 
 
 def test_benchmarks_and_rankings_pages_link_model_clusters(client: TestClient) -> None:
@@ -606,7 +1627,8 @@ def test_benchmarks_and_rankings_pages_link_model_clusters(client: TestClient) -
         response = client.get(path)
         assert response.status_code == 200
         assert "/models/minimax/minimax-m3/benchmarks" in response.text
-        assert "/models/minimax/minimax-m3/performance" in response.text
+        assert "/models/minimax/minimax-m3/api" not in response.text
+        assert "/models/minimax/minimax-m3/uptime" not in response.text
         assert "/providers/minimax" in response.text
         assert 'href="https://aiiq.org/models/minimax-m3/"' in response.text
         assert "openrouter.ai" not in response.text.lower()
@@ -623,6 +1645,30 @@ def test_first_body_image_picks_first_in_document_order() -> None:
 
 
 def test_blog_post_og_image_uses_first_image_else_default(client: TestClient) -> None:
+    training = client.get("/blog/they-are-still-training-on-your-data")
+    training_card = (
+        "https://trustedrouter.com/static/og/blog/they-are-still-training-on-your-data.png"
+    )
+    assert f'property="og:image" content="{training_card}"' in training.text
+    assert f'name="twitter:image" content="{training_card}"' in training.text
+    assert client.get("/static/og/blog/they-are-still-training-on-your-data.png").status_code == 200
+
+    privacy = client.get("/blog/no-log-is-a-promise-attestation-is-proof")
+    privacy_card = (
+        "https://trustedrouter.com/static/og/blog/no-log-is-a-promise-attestation-is-proof.png"
+    )
+    assert f'property="og:image" content="{privacy_card}"' in privacy.text
+    assert f'name="twitter:image" content="{privacy_card}"' in privacy.text
+    assert (
+        client.get("/static/og/blog/no-log-is-a-promise-attestation-is-proof.png").status_code
+        == 200
+    )
+
+    sign_in = client.get("/blog/sign-in-with-trustedrouter")
+    sign_in_card = "https://trustedrouter.com/static/og/sign-in-with-trustedrouter.png"
+    assert f'property="og:image" content="{sign_in_card}"' in sign_in.text
+    assert f'name="twitter:image" content="{sign_in_card}"' in sign_in.text
+
     socrates = client.get("/blog/socrates-1.1-terminal-bench-hard-72")
     socrates_card = (
         "https://trustedrouter.com/static/og/blog/socrates-1.1-terminal-bench-hard-72.png"
@@ -652,3 +1698,48 @@ def test_blog_post_og_image_uses_first_image_else_default(client: TestClient) ->
     plain = client.get("/blog/the-models-that-say-no")
     plain_card = "https://trustedrouter.com/static/og/blog/the-models-that-say-no.png"
     assert f'property="og:image" content="{plain_card}"' in plain.text
+
+
+@pytest.mark.parametrize(
+    ("slug", "title"),
+    (
+        ("native-swift-harness-no-electron", "Open Source all native Swift harness (NO Electron!)"),
+        (
+            "an-agent-that-hides-the-bill",
+            "Quill Cowork has confidential mode and trusts you with the bill",
+        ),
+        (
+            "sre-agent-on-three-clouds",
+            "An SRE Agent on 3 clouds that keeps your site reliably up",
+        ),
+    ),
+)
+def test_recent_blog_posts_use_real_product_images(
+    client: TestClient,
+    slug: str,
+    title: str,
+) -> None:
+    image_path = f"/static/og/blog/{slug}.png"
+    image_url = f"https://trustedrouter.com{image_path}"
+
+    post = client.get(f"/blog/{slug}")
+
+    assert post.status_code == 200
+    assert f"<h1>{title}</h1>" in post.text
+    assert f'property="og:image" content="{image_url}"' in post.text
+    assert f'name="twitter:image" content="{image_url}"' in post.text
+    assert f'<img src="{image_path}"' in post.text
+    assert client.get(image_path).status_code == 200
+
+
+def test_blog_index_uses_recent_product_images(client: TestClient) -> None:
+    response = client.get("/blog")
+
+    assert response.status_code == 200
+    for slug in (
+        "native-swift-harness-no-electron",
+        "an-agent-that-hides-the-bill",
+        "sre-agent-on-three-clouds",
+    ):
+        assert f'src="https://trustedrouter.com/static/og/blog/{slug}.png"' in response.text
+    assert "Quill Cowork has confidential mode and trusts you with the bill" in response.text

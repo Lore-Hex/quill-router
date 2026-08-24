@@ -37,8 +37,11 @@ from trusted_router.provider_types import (
     mock_text,
 )
 from trusted_router.secrets import LocalKeyFile
+from trusted_router.wafer_policy import wafer_zdr_support
 
 OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
+    "meta": (("OPENROUTER_API_KEY",), "https://openrouter.ai/api/v1"),
+    "openrouter-exclusive": (("OPENROUTER_API_KEY",), "https://openrouter.ai/api/v1"),
     "openai": (("OPENAI_API_KEY",), "https://api.openai.com/v1"),
     "cerebras": (("CEREBRAS_API_KEY",), "https://api.cerebras.ai/v1"),
     "deepseek": (("DEEPSEEK_API_KEY",), "https://api.deepseek.com"),
@@ -58,6 +61,8 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     "xiaomi": (("XIAOMI_API_KEY",), "https://api.xiaomimimo.com/v1"),
     # Baseten Model APIs — OpenAI-compatible chat completions.
     "baseten": (("BASETEN_API_KEY",), "https://inference.baseten.co/v1"),
+    # Telnyx Inference — OpenAI-compatible chat completions.
+    "telnyx": (("TELNYX_API_KEY",), "https://api.telnyx.com/v2/ai/openai"),
     # Thinking Machines Lab Tinker OpenAI-compatible sampler.
     "thinkingmachines": (
         ("THINKING_MACHINES_API_KEY", "TINKER_API_KEY"),
@@ -71,30 +76,42 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     # Makora Inference — OpenAI-compatible chat completions. Their tooling
     # documents MAKORA_OPTIMIZE_TOKEN, so accept both names locally.
     "makora": (("MAKORA_API_KEY", "MAKORA_OPTIMIZE_TOKEN"), "https://inference.makora.com/v1"),
+    "chutes": (("CHUTES_API_KEY",), "https://llm.chutes.ai/v1"),
+    "digitalocean": (("DIGITAL_OCEAN_API_KEY",), "https://inference.do-ai.run/v1"),
+    "cloudflare-workers-ai": (
+        ("CLOUDFLARE_WORKERS_AI_API_TOKEN",),
+        "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1",
+    ),
+    "inceptron": (("INCEPTRON_API_KEY",), "https://api.inceptron.io/v1"),
+    "morph": (("MORPH_API_KEY",), "https://api.morphllm.com/v1"),
+    "atlas-cloud": (("ATLAS_CLOUD_API_KEY",), "https://api.atlascloud.ai/v1"),
+    "streamlake": (
+        ("STREAMLAKE_API_KEY",),
+        "https://vanchin.streamlake.ai/api/gateway/v1/endpoints",
+    ),
+    "neurometric": (
+        ("NEUROMETRIC_API_KEY",),
+        "https://wharf.neurometric.ai/v1",
+    ),
+    "engy": (("ENGY_API_KEY",), "https://api.engy.ai/v1"),
+    "pearl": (
+        ("PEARL_RESEARCH_API_KEY",),
+        "https://inference.pearlresearch.ai/v1",
+    ),
+    "databricks": (
+        ("DATABRICKS_TOKEN",),
+        "https://invalid-unconfigured.cloud.databricks.com/serving-endpoints",
+    ),
+    # 0G Private Computer. TeeTLS only attests the router; forcing private
+    # ensures inference itself uses a TeeML confidential-compute route.
+    "zero-g": (("ZERO_G_API_KEY",), "https://router-api.0g.ai/v1"),
     # Alibaba Cloud Model Studio / DashScope — workspace-scoped OpenAI-compatible endpoint.
     "alibaba": (
         ("ALIBABA_API_KEY", "DASHSCOPE_API_KEY", "ALIYUN_API_KEY"),
         "https://ws-el6e4bpnggpx7g88.eu-central-1.maas.aliyuncs.com/compatible-mode/v1",
     ),
+    "sakana": (("SAKANA_API_KEY",), "https://api.sakana.ai/v1"),
 }
-
-WAFER_ZDR_NATIVE_MODELS = frozenset(
-    {
-        "GLM-5.1",
-        "GLM-5.2",
-        # Wafer withdrew ZDR support for Kimi-K2.6 on 2026-06-26
-        # (capabilities.zdr.supported=false in their /v1/models). Keep it out
-        # of the static live-provider ZDR-header allowlist.
-        "Qwen3.6-35B-A3B",
-        "deepseek-v4-flash",
-        "deepseek-v4-pro",
-    }
-)
-
-
-def _wafer_model_supports_zdr(model_id: str) -> bool:
-    return model_id in WAFER_ZDR_NATIVE_MODELS
-
 
 __all__ = [
     "OPENAI_COMPATIBLE_PROVIDERS",
@@ -128,9 +145,9 @@ class ProviderClient:
                 )
             if model.provider == "anthropic":
                 return await self._anthropic_chat(model, request)
-            if model.provider == "gemini":
+            if model.provider == "google-ai-studio":
                 return await self._gemini_chat(model, request)
-            if model.provider == "vertex" and is_vertex_openai_model(model):
+            if model.provider == "google-vertex" and is_vertex_openai_model(model):
                 return await self._vertex_openai_compatible_chat(model, request)
 
         started = time.monotonic()
@@ -175,9 +192,9 @@ class ProviderClient:
                 return self._anthropic_messages_stream(
                     model, request, state, output_format="openai"
                 )
-            if model.provider == "gemini":
+            if model.provider == "google-ai-studio":
                 return self._gemini_chat_stream(model, request, state)
-            if model.provider == "vertex" and is_vertex_openai_model(model):
+            if model.provider == "google-vertex" and is_vertex_openai_model(model):
                 return self._vertex_openai_compatible_chat_stream(model, request, state)
         return self._synthetic_chat_stream(model, request, state)
 
@@ -198,7 +215,7 @@ class ProviderClient:
                 if not api_key:
                     raise RuntimeError("COHERE_API_KEY is not configured")
                 return await cohere_embeddings(model, request, api_key=api_key)
-            if model.provider == "gemini":
+            if model.provider == "google-ai-studio":
                 api_key = self._secret("GEMINI_API_KEY")
                 if not api_key:
                     raise RuntimeError("GEMINI_API_KEY is not configured")
@@ -432,7 +449,12 @@ class ProviderClient:
 
     @staticmethod
     def _provider_extra_headers(model: Model) -> dict[str, str]:
-        if model.provider == "wafer" and _wafer_model_supports_zdr(model.upstream_id or model.id):
+        if model.provider == "zero-g":
+            return {"X-0G-Provider-Trust-Mode": "private"}
+        if (
+            model.provider == "wafer"
+            and wafer_zdr_support(model.upstream_id or model.id) is True
+        ):
             return {"Wafer-ZDR": "required"}
         return {}
 
@@ -459,6 +481,16 @@ class ProviderClient:
     def _provider_base_url(self, provider: str, default: str) -> str:
         if provider == "kimi":
             return self._secret("KIMI_BASE_URL") or self._secret("MOONSHOT_BASE_URL") or default
+        if provider == "cloudflare-workers-ai":
+            account_id = self._secret("CLOUDFLARE_WORKERS_AI_ACCOUNT_ID")
+            if not account_id:
+                raise RuntimeError("CLOUDFLARE_WORKERS_AI_ACCOUNT_ID is required")
+            return default.format(account_id=account_id)
+        if provider == "databricks":
+            host = (self._secret("DATABRICKS_HOST") or "").strip().rstrip("/")
+            if not host:
+                raise RuntimeError("DATABRICKS_HOST is required")
+            return f"{host}/serving-endpoints"
         return self._secret(f"{provider.upper()}_BASE_URL") or default
 
     def _vertex_auth_and_base_url(self) -> tuple[str, str]:

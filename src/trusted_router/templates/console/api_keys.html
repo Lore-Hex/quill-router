@@ -1,4 +1,5 @@
 {% extends "console/_layout.html" %}
+{% from "console/_api_key_reveal.html" import api_key_reveal %}
 {% block body %}
 {% macro create_key_form() %}
 <form class="form" method="post" action="/console/api-keys">
@@ -11,8 +12,8 @@
     <label>Weekly limit (USD, optional)<input name="limit_weekly" type="text" inputmode="decimal" placeholder="e.g. {{ suggested.weekly }}"></label>
     <label>Monthly limit (USD, optional)<input name="limit_monthly" type="text" inputmode="decimal" placeholder="e.g. {{ suggested.monthly }}"></label>
   </div>
-  <label class="budget-action-check"><input type="checkbox" name="budget_alert_only" checked> <span>Alert only — email me when a budget is crossed, don’t block the app</span></label>
-  <p class="key-window-note">Optional — left blank, a key has no window limit. A balanced starting point is <strong>${{ suggested.daily }} / day</strong>, <strong>${{ suggested.weekly }} / week</strong>, <strong>${{ suggested.monthly }} / month</strong> (weekly ≈ half the monthly, daily ≈ a fifth of the weekly). Uncheck “Alert only” to hard-stop (429) at the budget instead. Windows reset at UTC midnight / Monday / the 1st; enforcement is approximate. Agents can read their remaining budget from <code>GET /v1/key</code>.</p>
+  <label class="budget-action-check"><input type="checkbox" name="budget_alert_only"> <span>Email alert only — notify me when a budget is crossed, but don’t block requests</span></label>
+  <p class="key-window-note">Optional — left blank, a key has no window limit. A balanced starting point is <strong>${{ suggested.daily }} / day</strong>, <strong>${{ suggested.weekly }} / week</strong>, <strong>${{ suggested.monthly }} / month</strong> (weekly ≈ half the monthly, daily ≈ a fifth of the weekly). Budgets hard-stop requests with 429 by default. Select “Email alert only” to notify without blocking. Windows reset at UTC midnight / Monday / the 1st; enforcement is approximate. Agents can read their remaining budget from <code>GET /v1/key</code>.</p>
   <button class="btn primary" type="submit">Create key</button>
 </form>
 {% endmacro %}
@@ -23,13 +24,7 @@
 <section class="panel">
   <div class="panel-head"><h2>Save this key. It will not be shown again</h2><span class="pill warn">one time reveal</span></div>
   <div class="panel-body">
-    <div class="signup-reveal" data-copy-secret-scope>
-      <div class="secret-row">
-        <code id="created-api-key">{{ created_key }}</code>
-        <button class="btn secret-copy-btn" type="button" data-copy-secret="created-api-key" aria-describedby="created-api-key-copy-status">Copy</button>
-      </div>
-      <p class="copy-status" id="created-api-key-copy-status" role="status" aria-live="polite"></p>
-    </div>
+    {{ api_key_reveal(created_key, "created") }}
   </div>
 </section>
 {% endif %}
@@ -71,7 +66,7 @@
                 <label>{{ w.name|capitalize }}<input name="limit_{{ w.name }}" type="text" inputmode="decimal" placeholder="off" value="{{ w.input }}" aria-label="{{ w.name|capitalize }} limit for {{ k.name }}"></label>
                 {% endfor %}
               </div>
-              <label class="budget-action-check"><input type="checkbox" name="budget_alert_only" {% if k.budget_alert_only %}checked{% endif %} aria-label="Alert only for {{ k.name }}"> <span>Alert only (email, don’t block)</span></label>
+              <label class="budget-action-check"><input type="checkbox" name="budget_alert_only" {% if k.budget_alert_only %}checked{% endif %} aria-label="Email alert only for {{ k.name }}"> <span>Email alert only (don’t block)</span></label>
               <button class="btn" type="submit">Save</button>
             </form>
             <div class="key-budget-current">

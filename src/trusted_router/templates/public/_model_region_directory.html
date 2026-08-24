@@ -1,0 +1,118 @@
+{% from "public/_provider_identity.html" import provider_identity %}
+{# Shared directory body for the three jurisdiction pages. Every number and row
+   comes from trusted_router.model_regions.model_region_evidence, computed from
+   the live catalog on each render. The two axes stay in separate sections:
+   operators first (where prompts go), then labs (where the weights came from). #}
+<section class="seo-evidence" aria-labelledby="region-directory-heading">
+  <div class="seo-evidence-head">
+    <div>
+      <span class="eyebrow">Live catalog, as of {{ region.as_of_label }}</span>
+      <h2 id="region-directory-heading">Two separate facts: who operates the endpoint, and who built the model.</h2>
+    </div>
+    <p>Counts below are read from the routes configured in TrustedRouter right now. Operator country is the legal home of the company running the endpoint a request reaches, taken from that company's own terms, privacy policy, or regulatory filing. It is not a claim about which datacentre serves the request.</p>
+  </div>
+
+  <div class="seo-evidence-stats" aria-label="Catalog facts for this jurisdiction">
+    <div><strong>{{ region.provider_count }}</strong><span>providers operated from {{ region.country_label }}</span></div>
+    <div><strong>{{ region.lab_count }}</strong><span>lab{{ "" if region.lab_count == 1 else "s" }} with models here</span></div>
+    <div><strong>{{ region.origin_model_count }}</strong><span>models from those labs</span></div>
+    <div><strong>{{ region.catalog_provider_count }}</strong><span>providers in the catalog</span></div>
+    <div><strong>{{ region.directory_model_count }}</strong><span>callable catalog models</span></div>
+    <div><strong>{{ region.unestablished_operator_count }}</strong><span>providers whose operator we could not establish</span></div>
+  </div>
+
+  <div class="panel" aria-label="{{ region.provider_heading }}">
+    <div class="panel-head"><h2>{{ region.provider_heading }}</h2><span class="pill">{{ region.provider_count }} of {{ region.catalog_provider_count }}</span></div>
+    <div class="panel-body">
+      <p>Send a request to one of these and the operator is a company headquartered in {{ region.country_label }} &mdash; head office, not place of registration. Privacy tier is a separate column: it is the highest bar we have recorded from that provider's published policy.</p>
+      <div class="model-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Operator country</th>
+              <th>Privacy tier</th>
+              <th>Recorded claims</th>
+              <th>Models served</th>
+              <th>Policy source</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for provider in region.provider_rows %}
+            <tr>
+              <td>{{ provider_identity(provider.slug, provider.name, provider.detail_href, subtitle=provider.slug) }}</td>
+              <td>{{ provider.country_label }}</td>
+              <td><span class="pill{% if provider.privacy_tier_label != 'Standard' %} good{% endif %}">{{ provider.privacy_tier_label }}</span></td>
+              <td>
+                {% if provider.provider_e2ee is sameas true %}<span class="pill good">provider E2EE</span>{% endif %}
+                {% if provider.provider_confidential_compute is sameas true %}<span class="pill good">confidential</span>{% endif %}
+                {% if provider.provider_zero_data_retention is sameas true %}<span class="pill good">ZDR</span>{% elif provider.prepaid_zero_data_retention %}<span class="pill good">ZDR on prepaid</span>{% endif %}
+                {% if provider.provider_e2ee is not sameas true and provider.provider_confidential_compute is not sameas true and provider.provider_zero_data_retention is not sameas true and not provider.prepaid_zero_data_retention %}<span class="pill warn">no verified privacy claim</span>{% endif %}
+              </td>
+              <td>{{ provider.model_count }}</td>
+              <td>{% if provider.policy_url %}<a href="{{ provider.policy_url }}" rel="nofollow noopener">policy</a>{% else %}<span class="muted-copy">none tracked</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">Every provider's full policy note and route list is on its own page. {{ region.unestablished_operator_count }} provider{{ '' if region.unestablished_operator_count == 1 else 's' }} in the catalog publish no operator TrustedRouter could pin down, so they appear in no jurisdiction list on this site and no request preference treats them as matching one. <a href="/providers">Review every provider</a>.</p>
+    </div>
+  </div>
+
+  <div class="panel" aria-label="{{ region.origin_heading }}">
+    <div class="panel-head"><h2>{{ region.origin_heading }}</h2><span class="pill">{{ region.origin_model_count }} models</span></div>
+    <div class="panel-body">
+      <p>Grouped by the lab that built the weights, with the source TrustedRouter read that from. The operator columns show who runs the endpoints for each route, which is a different question from the lab's country and frequently a different answer.</p>
+      {% for lab in region.labs %}
+      <h3>{{ lab.lab_name }} <span class="pill">{{ lab.model_count }} model{{ '' if lab.model_count == 1 else 's' }}</span></h3>
+      <p class="muted">{{ lab.note }}{% if lab.source_url %} <a href="{{ lab.source_url }}" rel="nofollow noopener">Source</a>.{% endif %}</p>
+      <div class="model-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th>Context</th>
+              <th>Routes</th>
+              <th>Operator jurisdictions</th>
+              <th>{{ region.highlight_label }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for model in lab.models %}
+            <tr>
+              <td><a href="{{ model.detail_href }}"><code>{{ model.id }}</code></a><br>{{ model.name }}</td>
+              <td>{{ model.context_length }}</td>
+              <td>{{ model.route_count }}</td>
+              <td>
+                <div class="mini-links">
+                  {% for chip in model.jurisdiction_chips %}
+                  <span class="pill{% if chip.country_code is none %} warn{% endif %}">{{ chip.country_label }} &times;{{ chip.operator_count }}</span>
+                  {% endfor %}
+                </div>
+              </td>
+              <td>
+                {% if model.highlight_operators %}
+                <div class="provider-chip-list" aria-label="{{ model.highlight_operator_count }} {{ region.highlight_label }}">
+                  {% for operator in model.highlight_operators %}
+                  <a class="pill provider-chip" href="{{ operator.detail_href }}" title="{{ operator.slug }}"><img class="provider-logo" src="{{ provider_logo_url(operator.slug) }}" alt="{{ operator.name }} logo" aria-hidden="true" width="22" height="22" loading="lazy" decoding="async"><span>{{ operator.name }}</span></a>
+                  {% endfor %}
+                </div>
+                {% if model.highlight_operator_count > model.highlight_operators|length %}<span class="table-note">+{{ model.highlight_operator_count - model.highlight_operators|length }} more on the <a href="{{ model.detail_href }}">model page</a></span>{% endif %}
+                {% else %}
+                <span class="muted-copy">none configured</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if lab.hidden_model_count %}<p class="table-note">{{ lab.hidden_model_count }} further {{ lab.lab_name }} model{{ '' if lab.hidden_model_count == 1 else 's' }} {{ 'is' if lab.hidden_model_count == 1 else 'are' }} in the catalog, ranked below these by route count. <a href="/models">Browse every model</a>.</p>{% endif %}
+      {% endfor %}
+      <p class="muted">Model origin is keyed by the vendor prefix of a model id, and a prefix earns a row once at least three of its models are in the catalog. {{ region.models_without_recorded_origin }} callable catalog models sit under a prefix below that line and carry no recorded origin, so they are on no page here rather than assigned a country by guesswork.</p>
+    </div>
+  </div>
+
+  <p class="seo-evidence-foot"><a href="/models">Browse every model</a><a href="/providers">Review provider policies</a>{% for other in region.other_regions %}<a href="{{ other.href }}">AI models from {{ other.country_label }}</a>{% endfor %}</p>
+</section>

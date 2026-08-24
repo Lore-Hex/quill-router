@@ -1,0 +1,106 @@
+{
+  "provider": "stepfun",
+  "models": [
+    {
+      "display_name": "Step 3.5 Flash",
+      "title": "step-3.5-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "stepfun/step-3.5-flash",
+      "upstream_id": "step-3.5-flash",
+      "created": 1769580058,
+      "context_length": 262144,
+      "supported_features": [
+        "chat",
+        "completion",
+        "reasoning",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 300000,
+      "cached_input_token_price_per_m": 20000
+    },
+    {
+      "display_name": "Step 3.5 Flash 2603",
+      "title": "step-3.5-flash-2603",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "stepfun/step-3.5-flash-2603",
+      "upstream_id": "step-3.5-flash-2603",
+      "created": 1774709640,
+      "context_length": 262144,
+      "supported_features": [
+        "chat",
+        "completion",
+        "reasoning",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 300000,
+      "cached_input_token_price_per_m": 20000
+    },
+    {
+      "display_name": "Step 3.7 Flash",
+      "title": "step-3.7-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "stepfun/step-3.7-flash",
+      "upstream_id": "step-3.7-flash",
+      "created": 1778486328,
+      "context_length": 262144,
+      "supported_features": [
+        "chat",
+        "completion",
+        "reasoning",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 1150000,
+      "cached_input_token_price_per_m": 40000
+    }
+  ],
+  "source": "https://api.stepfun.ai/v1/models",
+  "pricing_source": "https://platform.stepfun.ai/docs/en/guides/pricing/details",
+  "generated_at": "2026-08-24T16:40:13Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 3
+}

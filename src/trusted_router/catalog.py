@@ -14,12 +14,17 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     ADVISOR_MODEL_ID,
     ARISTOTLE_1_0_MODEL_ID,
     ARISTOTLE_1_1_MODEL_ID,
+    ARISTOTLE_2_0_MODEL_ID,
     ARISTOTLE_MODEL_ID,
+    ATHENA_1_0_MODEL_ID,
+    ATHENA_2_0_MODEL_ID,
     ATHENA_MODEL_ID,
     AUTO_MODEL_ID,
     CANONICAL_ORCHESTRATION_MODEL_ID,
     CHEAP_MODEL_ID,
     CONFIDENTIAL_MODEL_ID,
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
     DEFAULT_AUTO_MODEL_ORDER,
     E2E_MODEL_ID,
     EU_FOCUSED_PROVIDER_ORDER,
@@ -31,6 +36,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     IRIS_1_0_MODEL_ID,
     IRIS_2_0_MODEL_ID,
+    IRIS_3_0_MODEL_ID,
     IRIS_CODE_1_0_MODEL_ID,
     IRIS_CODE_MODEL_ID,
     IRIS_MODEL_ID,
@@ -48,14 +54,18 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     OPEN_PATCHER_FAST1_MODEL_ID,
     OPEN_PATCHER_G1_MODEL_ID,
     OPEN_PATCHER_G2_MODEL_ID,
+    OPEN_PATCHER_G3_MODEL_ID,
     OPEN_PATCHER_S1_MODEL_ID,
     OPEN_PATCHER_S2_MODEL_ID,
+    OPEN_PATCHER_S3_MODEL_ID,
     ORCHESTRATION_LEGACY_ALIAS_MODEL_IDS,
     ORCHESTRATION_PRIMITIVE_BY_MODEL_ID,
     ORCHESTRATION_PRIMITIVE_MODEL_IDS,
     ORCHESTRATION_PRIMITIVE_NAMES,
     ORCHESTRATION_ROLLING_ALIAS_MODEL_IDS,
+    PARASAIL_LIBERTY_2_0_MODEL_ID,
     PLATO_1_0_MODEL_ID,
+    PLATO_3_0_MODEL_ID,
     PLATO_MODEL_ID,
     PLATO_PRO_1_0_MODEL_ID,
     PLATO_PRO_2_0_MODEL_ID,
@@ -69,16 +79,19 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     PROMETHEUS_1_0_1M_MODEL_ID,
     PROMETHEUS_1_0_MODEL_ID,
     PROMETHEUS_2_0_MODEL_ID,
+    PROMETHEUS_3_0_MODEL_ID,
     PROMETHEUS_CODE_1_0_MODEL_ID,
     PROMETHEUS_CODE_MODEL_ID,
     PROMETHEUS_MODEL_ID,
     PROVIDER_JURISDICTION_US,
     PROVIDERS,
     ROUTING_MODEL_ALIAS_TARGETS,
+    ROUTING_MODEL_MIN_PRIVACY_TIERS,
     SELECTOR_CATALOG_MODEL_ORDER,
     SELECTOR_MODEL_ID,
     SOCRATES_1_0_MODEL_ID,
     SOCRATES_1_1_MODEL_ID,
+    SOCRATES_2_0_MODEL_ID,
     SOCRATES_ADVISOR_MODEL_ORDER,
     SOCRATES_CATALOG_MODEL_ORDER,
     SOCRATES_MODEL_ID,
@@ -89,21 +102,29 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     SOCRATES_WORKER_MODEL_ORDER,
     SUBAGENT_MODEL_ID,
     SYNTH_BUDGET_MODEL_ORDER,
+    SYNTH_CODE_BUDGET_1_MODEL_ORDER,
     SYNTH_CODE_BUDGET_MODEL_ORDER,
     SYNTH_CODE_FRONTIER_MODEL_ORDER,
     SYNTH_CODE_MODEL_ID,
+    SYNTH_CODE_QUALITY_1_MODEL_ORDER,
     SYNTH_CODE_QUALITY_MODEL_ORDER,
+    SYNTH_FRONTIER_1_MODEL_ORDER,
     SYNTH_FRONTIER_MINI_MODEL_ORDER,
     SYNTH_FRONTIER_MODEL_ORDER,
+    SYNTH_IRIS_1_MODEL_ORDER,
     SYNTH_IRIS_2_MODEL_ORDER,
+    SYNTH_IRIS_3_MODEL_ORDER,
     SYNTH_MODEL_ID,
+    SYNTH_PROMETHEUS_1_MODEL_ORDER,
     SYNTH_PROMETHEUS_2_MODEL_ORDER,
+    SYNTH_PROMETHEUS_3_MODEL_ORDER,
     SYNTH_QUALITY_1M_MODEL_ORDER,
     SYNTH_QUALITY_MODEL_ORDER,
     US_PROVIDER_ONLY_MODEL_IDS,
     ZDR_MODEL_ID,
     ZEUS_1_0_MINI_MODEL_ID,
     ZEUS_1_0_MODEL_ID,
+    ZEUS_2_0_MODEL_ID,
     ZEUS_CODE_1_0_MODEL_ID,
     ZEUS_CODE_MODEL_ID,
     ZEUS_MODEL_ID,
@@ -132,7 +153,12 @@ from trusted_router.catalog_ingest import (  # noqa: F401 - used by import-time 
 # modules (#38); re-exported here so `from trusted_router.catalog import ...`
 # keeps working for every existing caller.
 from trusted_router.catalog_privacy import (  # noqa: F401 - re-exported for back-compat
+    endpoint_confidential_compute,
+    endpoint_e2ee,
     endpoint_privacy_tier,
+    endpoint_stores_content,
+    endpoint_zero_data_retention,
+    endpoint_zero_data_retention_scope,
     model_provider_policy,
     model_provider_policy_url,
     model_provider_privacy_tier,
@@ -143,8 +169,10 @@ from trusted_router.catalog_registry import (  # noqa: F401 - built there, re-ex
     MODEL_ENDPOINTS,
     MODELS,
 )
+from trusted_router.image_generation import FIXED_IMAGE_PRICES_MICRODOLLARS
 from trusted_router.money import (
     microdollars_per_million_tokens_to_token_decimal,
+    microdollars_to_decimal,
 )
 from trusted_router.pricing import (  # noqa: F401 - re-exported for back-compat
     _CACHE_READ_PRICE_MULTIPLIER,
@@ -172,6 +200,7 @@ from trusted_router.provider_lifecycle import (
     provider_price_microdollars,
 )
 from trusted_router.routing_candidates import (  # noqa: F401 - re-exported for back-compat
+    FAST_MODEL_ORDER,
     InvalidAutoModelOrder,
     _is_regular_chat_model,
     _meta_route_kind,
@@ -191,7 +220,7 @@ from trusted_router.routing_candidates import (  # noqa: F401 - re-exported for 
     zdr_candidate_models,
 )
 
-# Uniform pricing: customer pays cost + 10%, floor $0.01/M tokens. Same
+# Uniform pricing: customer pays cost + 5.5%, floor $0.01/M tokens. Same
 # value goes into both `prompt_price_*` and `published_*` — TR no longer
 # runs the 1¢/M "discount theater". The floor catches free upstream tiers
 # so the catalog never advertises $0/M to end users; $0.01/M is ~10×
@@ -205,7 +234,7 @@ from trusted_router.routing_candidates import (  # noqa: F401 - re-exported for 
 # The attested gateway reports cache_read_input_tokens /
 # cache_creation_input_tokens at settle. Cached tokens are billed as a
 # multiple of the endpoint's (already marked-up) prompt price, so the
-# uniform x1.10 margin structure is preserved: provider charges
+# uniform x1.055 margin structure is preserved: provider charges
 # cost x multiplier, we bill customer_price x multiplier.
 #
 # Multipliers mirror published provider pricing as of 2026-06:
@@ -267,9 +296,9 @@ def orchestration_role(model_id: str) -> str | None:
 # provider allowlist in their agreement and request body.
 # IDs follow snapshot naming exactly. The picks span the 8 keyed
 # providers so `trustedrouter/auto` rolls over across providers if any
-# one is down. Each entry must have a provider-direct price in the
-# snapshot — OR-only models can no longer reach the catalog (see
-# scripts/pricing/refresh.py:_merge_snapshot).
+# one is down. Each entry must have an authoritative price for the API that the
+# gateway actually calls. Unconfigured OR-only models cannot reach the catalog;
+# explicitly labelled proxy-backed routes are never auto candidates.
 #
 # 2026-06 update: OpenAI's GPT-5.4 line (incl. gpt-5.4-nano) and the "-pro"
 # tiers 502 on our key — verified via the gateway probe; see
@@ -291,13 +320,18 @@ def effective_endpoint(
     )
     if provider_price is None:
         return endpoint
-    prompt_price = _customer_price(
-        provider_price.prompt_microdollars_per_million_tokens
+    prompt_price = _customer_price(provider_price.prompt_microdollars_per_million_tokens)
+    completion_price = _customer_price(provider_price.completion_microdollars_per_million_tokens)
+    cached_prompt_price = (
+        _customer_price(provider_price.prompt_cached_microdollars_per_million_tokens)
+        if provider_price.prompt_cached_microdollars_per_million_tokens is not None
+        else None
     )
-    completion_price = _customer_price(
-        provider_price.completion_microdollars_per_million_tokens
+    tiers = _flat_tier(
+        prompt_price,
+        completion_price,
+        prompt_cached=cached_prompt_price,
     )
-    tiers = _flat_tier(prompt_price, completion_price)
     return replace(
         endpoint,
         prompt_price_microdollars_per_million_tokens=prompt_price,
@@ -311,10 +345,13 @@ def effective_endpoint(
 
 def endpoints_for_model(model_id: str) -> list[ModelEndpoint]:
     endpoints: list[ModelEndpoint] = []
+    model = MODELS.get(model_id)
     for endpoint in MODEL_ENDPOINTS.values():
         if endpoint.model_id != model_id:
             continue
-        if provider_model_retired(
+        if not endpoint.catalog_is_current():
+            continue
+        if (model is None or not model.supports_video) and provider_model_retired(
             endpoint.provider,
             endpoint.model_id,
             endpoint.upstream_id,
@@ -384,6 +421,7 @@ _OPEN_WEIGHT_PREFIXES = (
     "amd/",
     "deepseek/",
     "google/gemma",
+    "ibm-granite/",
     "meta-llama/",
     "minimax/minimax-m3",
     "moonshotai/kimi",
@@ -483,9 +521,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         else any(endpoint.usage_type == "Credits" for endpoint in endpoints)
     )
     byok_available = (
-        False
-        if is_meta
-        else any(endpoint.usage_type == "BYOK" for endpoint in endpoints)
+        False if is_meta else any(endpoint.usage_type == "BYOK" for endpoint in endpoints)
     )
 
     # For meta routers, derive prompt/completion price from the candidate range
@@ -506,12 +542,10 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     pub_completion_max = pub_completion_min
     if not is_meta and endpoints:
         prompt_min = min(
-            endpoint.prompt_price_microdollars_per_million_tokens
-            for endpoint in endpoints
+            endpoint.prompt_price_microdollars_per_million_tokens for endpoint in endpoints
         )
         completion_min = min(
-            endpoint.completion_price_microdollars_per_million_tokens
-            for endpoint in endpoints
+            endpoint.completion_price_microdollars_per_million_tokens for endpoint in endpoints
         )
         prompt_max = prompt_min
         completion_max = completion_min
@@ -525,7 +559,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         )
         pub_prompt_max = pub_prompt_min
         pub_completion_max = pub_completion_min
-    elif is_meta:
+    elif is_meta and prompt_min == 0 and completion_min == 0:
         prompt_min, prompt_max = _meta_price_range(
             model.id, "prompt_price_microdollars_per_million_tokens"
         )
@@ -543,6 +577,16 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "prompt": microdollars_per_million_tokens_to_token_decimal(prompt_min),
         "completion": microdollars_per_million_tokens_to_token_decimal(completion_min),
     }
+    fixed_image_prices = FIXED_IMAGE_PRICES_MICRODOLLARS.get(model.id)
+    if fixed_image_prices:
+        customer_prices = [
+            (microdollars * 211 + 199) // 200 for microdollars in fixed_image_prices.values()
+        ]
+        pricing["image"] = microdollars_to_decimal(min(customer_prices))
+        if max(customer_prices) != min(customer_prices):
+            pricing["image_max"] = microdollars_to_decimal(max(customer_prices))
+    if model.minimum_charge_microdollars:
+        pricing["minimum"] = microdollars_to_decimal(model.minimum_charge_microdollars)
     if is_meta and (prompt_max != prompt_min or completion_max != completion_min):
         pricing["prompt_max"] = microdollars_per_million_tokens_to_token_decimal(prompt_max)
         pricing["completion_max"] = microdollars_per_million_tokens_to_token_decimal(completion_max)
@@ -566,6 +610,9 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "provider_zero_data_retention": model_provider_zero_data_retention(
             model.id, model.provider
         ),
+        "zero_data_retention_available": any(
+            endpoint_zero_data_retention(endpoint) is True for endpoint in endpoints
+        ),
         "provider_confidential_compute": provider.provider_confidential_compute,
         "provider_e2ee": provider.provider_e2ee,
         "provider_policy": model_provider_policy(model.id, model.provider),
@@ -588,6 +635,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "completion_price_microdollars_per_million_tokens": completion_min,
         "published_prompt_price_microdollars_per_million_tokens": pub_prompt_min,
         "published_completion_price_microdollars_per_million_tokens": pub_completion_min,
+        "minimum_charge_microdollars": model.minimum_charge_microdollars,
         # Uniform pricing means the customer pays the headline rate — no
         # secret 1¢/M discount layered on top. Field kept for OpenRouter
         # consumer compat, but always zero.
@@ -605,6 +653,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         # parsing `architecture.modality`.
         "supports_chat": model.supports_chat,
         "supports_embeddings": model.supports_embeddings,
+        "supports_video": model.supports_video,
         "endpoints": [
             {
                 "id": endpoint.id,
@@ -613,14 +662,13 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
                 "usage_type": endpoint.usage_type,
                 "upstream_id": endpoint.upstream_id,
                 "attested_gateway": PROVIDERS[endpoint.provider].attested_gateway,
-                "stores_content": PROVIDERS[endpoint.provider].stores_content,
-                "provider_zero_data_retention": model_provider_zero_data_retention(
-                    endpoint.model_id, endpoint.provider
-                ),
-                "provider_confidential_compute": PROVIDERS[
-                    endpoint.provider
-                ].provider_confidential_compute,
-                "provider_e2ee": PROVIDERS[endpoint.provider].provider_e2ee,
+                "stores_content": endpoint_stores_content(endpoint),
+                "provider_zero_data_retention": endpoint_zero_data_retention(endpoint),
+                "zero_data_retention_scope": endpoint_zero_data_retention_scope(endpoint),
+                "privacy_tier": endpoint_privacy_tier(endpoint),
+                "privacy_tier_label": PRIVACY_TIER_LABELS[endpoint_privacy_tier(endpoint)],
+                "provider_confidential_compute": endpoint_confidential_compute(endpoint),
+                "provider_e2ee": endpoint_e2ee(endpoint),
                 "provider_policy": model_provider_policy(endpoint.model_id, endpoint.provider),
                 "provider_policy_url": model_provider_policy_url(
                     endpoint.model_id, endpoint.provider
@@ -653,8 +701,10 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
             "modality": (
                 "text->embedding"
                 if model.supports_embeddings and not model.supports_chat
-                else "text->text"
+                else (f"{'+'.join(model.input_modalities)}->{'+'.join(model.output_modalities)}")
             ),
+            "input_modalities": list(model.input_modalities),
+            "output_modalities": list(model.output_modalities),
             "tokenizer": "unknown",
             "instruct_type": None,
         },
@@ -670,14 +720,28 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
 
 
 def provider_to_openrouter_shape(provider: Provider) -> dict[str, object]:
+    routing_status = "active" if provider.supports_prepaid or provider.supports_byok else "blocked"
     return {
         "id": provider.slug,
         "name": provider.name,
         "supports_prepaid": provider.supports_prepaid,
         "supports_byok": provider.supports_byok,
+        "routing_status": routing_status,
+        "routing_status_reason": provider.provider_policy if routing_status == "blocked" else None,
         "attested_gateway": provider.attested_gateway,
         "stores_content": provider.stores_content,
         "provider_zero_data_retention": provider.provider_zero_data_retention,
+        "prepaid_zero_data_retention": provider.prepaid_zero_data_retention,
+        "prepaid_zero_data_retention_effective_on": (
+            provider.prepaid_zero_data_retention_effective_on
+        ),
+        "zero_data_retention_scope": (
+            "trustedrouter_prepaid"
+            if provider.prepaid_zero_data_retention
+            else "provider"
+            if provider.provider_zero_data_retention is True
+            else None
+        ),
         "provider_confidential_compute": provider.provider_confidential_compute,
         "provider_e2ee": provider.provider_e2ee,
         "provider_policy": provider.provider_policy,
@@ -688,9 +752,26 @@ def provider_to_openrouter_shape(provider: Provider) -> dict[str, object]:
 
 
 def providers_for_display() -> tuple[Provider, ...]:
-    """Provider transparency should lead with privacy-forward upstreams."""
-    pinned = [PROVIDERS[slug] for slug in _PROVIDER_DISPLAY_ORDER if slug in PROVIDERS]
-    pinned_slugs = {provider.slug for provider in pinned}
-    return tuple(
-        pinned + [provider for provider in PROVIDERS.values() if provider.slug not in pinned_slugs]
-    )
+    """Order transparency surfaces by the strongest tracked privacy posture."""
+    pinned_rank = {slug: index for index, slug in enumerate(_PROVIDER_DISPLAY_ORDER)}
+
+    def display_key(provider: Provider) -> tuple[int, int, str, str]:
+        if provider.slug == "trustedrouter":
+            posture_rank = 0
+        elif provider.provider_confidential_compute is True and provider.provider_e2ee is True:
+            posture_rank = 1
+        elif (
+            provider.provider_zero_data_retention is True
+            or provider.prepaid_zero_data_retention is True
+        ):
+            posture_rank = 2
+        else:
+            posture_rank = 3
+        return (
+            posture_rank,
+            pinned_rank.get(provider.slug, len(pinned_rank)),
+            provider.name.casefold(),
+            provider.slug,
+        )
+
+    return tuple(sorted(PROVIDERS.values(), key=display_key))

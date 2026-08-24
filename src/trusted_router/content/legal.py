@@ -16,7 +16,7 @@ SYSTEM_SUBPROCESSORS: tuple[dict[str, str], ...] = (
     {
         "name": "Google Cloud Platform",
         "purpose": "Cloud hosting, Confidential Space, Cloud Run, Spanner, Bigtable, KMS, Secret Manager, and operational infrastructure.",
-        "data_access": "Prompt traffic on the production API terminates inside the attested gateway. GCP services store metadata, billing records, secrets, and operational logs as configured; prompt/output content is not stored by default.",
+        "data_access": "Prompt traffic on the production API terminates inside the attested gateway. GCP services store metadata, billing records, secrets, and operational logs as configured. TrustedRouter never logs prompt/output content; ordinary synchronous and streaming inference does not retain it. The opt-in Batch API temporarily retains enclave-encrypted artifacts for up to 30 days.",
         "policy_url": "https://cloud.google.com/security/compliance",
     },
     {
@@ -54,6 +54,12 @@ SYSTEM_SUBPROCESSORS: tuple[dict[str, str], ...] = (
         "purpose": "Operational log search and alerting.",
         "data_access": "Structured operational metadata. Prompt/output content must not be logged.",
         "policy_url": "https://axiom.co/privacy",
+    },
+    {
+        "name": "Exa",
+        "purpose": "Optional hosted web search for Responses API requests that explicitly enable the web_search tool.",
+        "data_access": "A model-generated search query, requested domain and country filters, and search metadata. Search runs only inside the attested gateway. Exa does not receive the original prompt or model output directly, but a generated query can reflect prompt content. Web search is blocked on ZDR, E2E/confidential, and EU privacy routes until a compatible contractual posture is approved.",
+        "policy_url": "https://exa.ai/privacy",
     },
     {
         "name": "GitHub",
@@ -272,8 +278,22 @@ def _provider_subprocessor_row(provider: Provider) -> dict[str, Any]:
         "id": provider.slug,
         "name": provider.name,
         "purpose": "Downstream model inference provider when a workspace selects this provider, this model, or an alias that routes to this provider.",
-        "data_access": "Prompt/output content in transit only for requests routed to this provider; request metadata needed for billing, routing, abuse controls, and support.",
+        "data_access": "For ordinary inference, prompt/output content is processed in transit for requests routed to this provider. Opt-in provider-native Batch may temporarily retain plaintext input for up to 26 hours and provider results for up to 6 hours after availability; request metadata needed for billing, routing, abuse controls, and support may also be processed.",
         "zdr": provider.provider_zero_data_retention,
+        "prepaid_zdr": provider.prepaid_zero_data_retention,
+        "prepaid_zdr_effective_on": provider.prepaid_zero_data_retention_effective_on,
+        "zdr_label": (
+            "prepaid only"
+            if provider.prepaid_zero_data_retention
+            and provider.provider_zero_data_retention is not True
+            else f"scheduled {provider.prepaid_zero_data_retention_effective_on}"
+            if provider.prepaid_zero_data_retention_effective_on
+            else "yes"
+            if provider.provider_zero_data_retention is True
+            else "no"
+            if provider.provider_zero_data_retention is False
+            else "unknown"
+        ),
         "confidential_compute": provider.provider_confidential_compute,
         "provider_e2ee": provider.provider_e2ee,
         "privacy_tier": tier,
@@ -289,7 +309,8 @@ def subprocessor_packet() -> dict[str, Any]:
         "routing_note": (
             "Model providers are subprocessors only for traffic routed to them. "
             "Use trustedrouter/zdr, trustedrouter/e2e, or explicit provider allowlists "
-            "for sensitive legal workloads."
+            "for sensitive legal workloads. Provider-native Batch is excluded from "
+            "ZDR, E2E/confidential, regional, and BYOK routes and requires separate approval."
         ),
     }
 
@@ -482,7 +503,7 @@ def hipaa_readiness_packet(settings: Settings) -> dict[str, Any]:
                 "Encrypted transport",
                 "Encrypted metadata and BYOK storage",
                 "API key hashing and scoped access",
-                "Metadata-only logging by default",
+                "Metadata-only operational logging",
                 "Route allowlists for PHI workloads",
             ],
         },

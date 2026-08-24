@@ -1,0 +1,27 @@
+displayName: "TR Spanner: DR backup workflow failure"
+combiner: OR
+enabled: true
+documentation:
+  mimeType: text/markdown
+  content: |
+    The daily cross-project Spanner backup workflow failed. Inspect workflow
+    `tr-spanner-cross-project-backup` and verify the newest READY copy in
+    project `trustedrouter-dr`. Runbook: docs/spanner-reliability.md.
+conditions:
+  - displayName: "Cross-project backup workflow execution failed"
+    conditionThreshold:
+      filter: 'resource.type = "workflows.googleapis.com/Workflow" AND resource.labels.workflow_id = "tr-spanner-cross-project-backup" AND metric.type = "workflows.googleapis.com/finished_execution_count" AND metric.labels.status != "SUCCEEDED"'
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_SUM
+          crossSeriesReducer: REDUCE_SUM
+      comparison: COMPARISON_GT
+      thresholdValue: 0
+      duration: 0s
+      trigger:
+        count: 1
+alertStrategy:
+  autoClose: 86400s
+  notificationPrompts:
+    - OPENED
+    - CLOSED

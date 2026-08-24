@@ -10,6 +10,7 @@ catalog.py re-exports these names for backward compatibility.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TypedDict
 
 from trusted_router.pricing import PriceTier
@@ -33,6 +34,11 @@ class Provider:
     # higher tier only with an explicit, cited flag below.
     stores_content: bool = True
     provider_zero_data_retention: bool | None = None
+    # Some upstream privacy agreements apply only to TrustedRouter's managed
+    # provider account. Keep that distinct from provider-wide ZDR so customer
+    # BYOK credentials never inherit contractual controls they may not have.
+    prepaid_zero_data_retention: bool = False
+    prepaid_zero_data_retention_effective_on: str | None = None
     provider_confidential_compute: bool | None = None
     provider_e2ee: bool | None = None
     provider_policy: str = (
@@ -61,6 +67,7 @@ PRIVACY_TIER_ALIASES: dict[str, int] = {
     "zero_retention": PRIVACY_TIER_ZERO_RETENTION,
     "zero-retention": PRIVACY_TIER_ZERO_RETENTION,
     "confidential": PRIVACY_TIER_CONFIDENTIAL,
+    "e2e": PRIVACY_TIER_CONFIDENTIAL,
     "e2ee": PRIVACY_TIER_CONFIDENTIAL,
     "max": PRIVACY_TIER_CONFIDENTIAL,
     "maximum": PRIVACY_TIER_CONFIDENTIAL,
@@ -73,18 +80,184 @@ PRIVACY_TIER_LABELS: dict[int, str] = {
     PRIVACY_TIER_CONFIDENTIAL: "Confidential + E2EE",
 }
 
+# provider_headquarters_country records the legal home of the entity that
+# OPERATES the API endpoint TrustedRouter routes to, as an ISO 3166-1 alpha-2
+# code, taken from that entity's own published terms, privacy policy, or
+# regulatory filing. Each provider below carries a comment with the entity name
+# and the source URL the code was read from.
+#
+# Three rules keep this field honest:
+#   1. It is a jurisdiction signal about the operator, NOT a data-residency or
+#      processing-location claim. A US operator may still serve a request from
+#      hardware outside the US, and an EU-registered operator may not.
+#   2. It is separate from where the MODEL was built. Model-creator countries
+#      live in MODEL_ORIGINS below, and the two disagree often (Chinese-origin
+#      open weights served by a Singapore or US operator, for example).
+#   3. None means "checked and not established", never "unknown, assume the
+#      convenient answer". provider.jurisdiction filtering treats a missing
+#      country as a non-match, so leaving it None is the conservative outcome;
+#      every None is recorded in PROVIDER_JURISDICTION_UNVERIFIED with what was
+#      checked, and tests fail on a provider that is in neither state.
 PROVIDER_JURISDICTION_US = "US"
+
+PROVIDER_JURISDICTION_CA = "CA"
+
+PROVIDER_JURISDICTION_CN = "CN"
+
+PROVIDER_JURISDICTION_DE = "DE"
+
+PROVIDER_JURISDICTION_FR = "FR"
+
+PROVIDER_JURISDICTION_IL = "IL"
+
+PROVIDER_JURISDICTION_KR = "KR"
+
+PROVIDER_JURISDICTION_NL = "NL"
+
+PROVIDER_JURISDICTION_SE = "SE"
+
+PROVIDER_JURISDICTION_SG = "SG"
+
+# Providers whose operating entity TrustedRouter checked and could not pin down.
+# The value records what was read and why it was not enough, so the next audit
+# starts where this one stopped instead of repeating it. Keys must be provider
+# slugs whose provider_headquarters_country is None.
+PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
+    **{
+        slug: (
+            "Checked the provider API and product documentation, but the "
+            "contracting API operator's incorporation country has not yet been "
+            "established from first-party legal terms. Jurisdiction filters "
+            "therefore exclude this route."
+        )
+        for slug in (
+            "aion-labs",
+            "akashml",
+            "arcee",
+            "byteplus",
+            "inception",
+            "io-net",
+            "krea",
+            "liquid",
+            "mancer",
+            "modal",
+            "nextbit",
+            "perceptron",
+            "perplexity",
+            "reka",
+            "riverflow",
+            "sail-research",
+            "sakana",
+            "sambanova",
+        )
+    },
+    "openrouter-exclusive": (
+        "Checked the Ox Alpha model page, endpoint metadata, and Stealth terms "
+        "published by OpenRouter. The anonymous downstream operator's legal entity "
+        "and country are not published, so jurisdiction filters conservatively "
+        "exclude this route."
+    ),
+    "phala": (
+        "Checked phala.com/terms (names Hashforest Technology LLC, California "
+        "law) and redpill.ai/terms for api.redpill.ai, the endpoint TrustedRouter "
+        "routes to: its body names Hashforest Technology Pte. Ltd while its "
+        "footer reads Hashforest Technology LLC. A US-suffix and a "
+        "Singapore-suffix entity name for the same service cannot both be the "
+        "operator, so no country is recorded until Phala publishes one name."
+    ),
+    "engy": (
+        "Checked engy.ai, engy.ai/terms, and engy.ai/privacy: no legal entity, "
+        "registered address, or governing-law clause appears on any of them. "
+        "Third-party coverage ties Engy to a Bittensor subnet operated by a team "
+        "called Hanlin AI, with no incorporation record located."
+    ),
+    "relace": (
+        "Checked relace.ai, docs.relace.ai, and the linked legal pages. The "
+        "public material does not identify the API operator's incorporation "
+        "country, so jurisdiction filters conservatively exclude this route."
+    ),
+    "recraft": (
+        "Checked recraft.ai legal terms and privacy pages. They publish a US "
+        "mailing address and New York governing law, but do not identify the "
+        "API operator's legal entity or incorporation country."
+    ),
+}
+
+
+# Jurisdiction and privacy controls that already exist. Reuse these; a second
+# mechanism for the same rule is a second thing to keep true:
+#   * US_PROVIDER_ONLY_MODEL_IDS (below) is the request-time rule that pins
+#     OpenPatcher and Athena ids to US-operated providers. routing.py turns a
+#     match into provider_jurisdiction=US on the request.
+#   * The provider.jurisdiction request preference in routing.py filters
+#     candidate endpoints against provider_headquarters_country. It accepts only
+#     'us' today; new codes here do not widen the API on their own.
+#   * EU_MODEL_ID ("trustedrouter/eu") and EU_FOCUSED_PROVIDER_ORDER carry the
+#     EU-focused provider preference. That order is a routing preference, not a
+#     claim that every provider in it is EU-based.
+#   * PRIVACY_TIER_* plus Provider.stores_content and the ZDR, confidential-
+#     compute, and E2EE flags carry retention and confidentiality posture.
+#     Jurisdiction is orthogonal: a US operator can be Standard tier and a
+#     non-US operator can be ZDR.
+#   * MODEL_ORIGINS (end of file) carries model-creator countries. Do not read a
+#     provider's country as its models' origin, or the reverse.
 
 
 @dataclass(frozen=True)
 class ModelProviderPrivacyOverride:
     privacy_tier: int
     provider_zero_data_retention: bool | None = None
+    provider_confidential_compute: bool | None = None
+    provider_e2ee: bool | None = None
     provider_policy: str | None = None
     provider_policy_url: str | None = None
 
 
+# Audited 2026-07-27 against Venice's live catalog and attestation evidence.
+# Venice's labels are not accepted as hardware proof: no current route exposes
+# a client-verifiable chain from the live TLS key through immutable source and
+# hardware measurements to committed model weights. Any new Venice route
+# therefore defaults to Standard. The model-level list below records only
+# Venice's separate, policy-backed "Private" retention claim.
+_VENICE_PRIVATE_MODEL_IDS = frozenset(
+    {
+        "qwen/qwen3-235b-a22b-thinking-2507",
+        "qwen/qwen3.5-9b",
+        "qwen/qwen3.6-27b",
+        "z-ai/glm-4.6",
+        "z-ai/glm-4.7",
+        "z-ai/glm-4.7-flash",
+        "z-ai/glm-5",
+        "z-ai/glm-5.1",
+        "z-ai/glm-5.2",
+    }
+)
+_VENICE_PRIVATE_POLICY = (
+    "Venice's live model catalog marks this exact route private. Venice describes "
+    "Private as contract-enforced zero data retention. This is policy-backed, not "
+    "hardware-verified. TrustedRouter cannot verify a complete chain from the live "
+    "endpoint to immutable source and model weights, so the route is not tracked as "
+    "TEE or E2EE and is excluded from trustedrouter/e2e."
+)
+
+
 _MODEL_PROVIDER_PRIVACY_OVERRIDES: dict[tuple[str, str], ModelProviderPrivacyOverride] = {
+    **{
+        (model_id, "openai"): ModelProviderPrivacyOverride(
+            privacy_tier=PRIVACY_TIER_STANDARD,
+            provider_zero_data_retention=False,
+            provider_confidential_compute=False,
+            provider_e2ee=False,
+            provider_policy=(
+                "OpenAI's video generation route is tracked separately from the "
+                "managed text account's ZDR posture. TrustedRouter deletes the "
+                "generated provider asset after relaying it, but does not claim "
+                "provider-side zero retention for Sora video jobs."
+            ),
+            provider_policy_url="https://developers.openai.com/api/docs/guides/video-generation",
+        )
+        for model_id in ("openai/sora-2", "openai/sora-2-pro")
+    },
     (
         "anthropic/claude-fable-5",
         "*",
@@ -111,6 +284,34 @@ _MODEL_PROVIDER_PRIVACY_OVERRIDES: dict[tuple[str, str], ModelProviderPrivacyOve
             "trustedrouter/zdr and provider.min_privacy=zdr routing."
         ),
     ),
+    (
+        "moonshotai/kimi-k3",
+        "phala",
+    ): ModelProviderPrivacyOverride(
+        privacy_tier=PRIVACY_TIER_STANDARD,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Phala currently serves this model through the upstream-author "
+            "pass-through route, not a phala/* Confidential AI endpoint. "
+            "TrustedRouter therefore makes no ZDR, confidential-compute, or "
+            "E2EE claim for this exact route."
+        ),
+        provider_policy_url=(
+            "https://docs.phala.com/phala-cloud/confidential-ai/"
+            "confidential-model/confidential-ai-api"
+        ),
+    ),
+    **{
+        (model_id, "venice"): ModelProviderPrivacyOverride(
+            privacy_tier=PRIVACY_TIER_ZERO_RETENTION,
+            provider_zero_data_retention=True,
+            provider_policy=_VENICE_PRIVATE_POLICY,
+            provider_policy_url="https://venice.ai/privacy",
+        )
+        for model_id in _VENICE_PRIVATE_MODEL_IDS
+    },
 }
 
 
@@ -124,6 +325,9 @@ class Model:
     supports_chat: bool = True
     supports_messages: bool = False
     supports_embeddings: bool = False
+    supports_video: bool = False
+    input_modalities: tuple[str, ...] = ("text",)
+    output_modalities: tuple[str, ...] = ("text",)
     prepaid_available: bool = False
     byok_available: bool = True
     # Headline (low-tier) rates: what /v1/models displays. For
@@ -133,6 +337,7 @@ class Model:
     completion_price_microdollars_per_million_tokens: int = 0
     published_prompt_price_microdollars_per_million_tokens: int = 0
     published_completion_price_microdollars_per_million_tokens: int = 0
+    minimum_charge_microdollars: int = 0
     # Full tier list for context-conditional pricing. Defaults to a
     # single tier matching the headline rates above; the ingest path
     # populates multi-tier values when the snapshot carries them.
@@ -154,10 +359,22 @@ class ModelEndpoint:
     published_completion_price_microdollars_per_million_tokens: int = 0
     price_tiers: tuple[PriceTier, ...] = ()
     published_price_tiers: tuple[PriceTier, ...] = ()
+    first_token_timeout_seconds: float | None = None
+    completion_timeout_seconds: float | None = None
+    stream_idle_timeout_seconds: float | None = None
+    catalog_valid_until: datetime | None = None
 
     @property
     def is_byok(self) -> bool:
         return self.usage_type.lower() == "byok"
+
+    def catalog_is_current(self, *, at: datetime | None = None) -> bool:
+        if self.catalog_valid_until is None:
+            return True
+        current = at or datetime.now(UTC)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=UTC)
+        return current.astimezone(UTC) < self.catalog_valid_until
 
 
 PROVIDERS: dict[str, Provider] = {
@@ -182,6 +399,41 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://trust.trustedrouter.com",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    "meta": Provider(
+        slug="meta",
+        name="Meta via OpenRouter",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=True,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "TrustedRouter sends requests through its attested gateway to "
+            "OpenRouter, which routes them to Meta. This downstream route is "
+            "not marked zero-retention, confidential-compute, or end-to-end "
+            "encrypted."
+        ),
+        provider_policy_url="https://openrouter.ai/docs/features/privacy-and-logging",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "openrouter-exclusive": Provider(
+        slug="openrouter-exclusive",
+        name="Stealth via OpenRouter",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=True,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "OpenRouter routes Ox Alpha to an anonymous Stealth provider. "
+            "OpenRouter states that the provider retains prompts and completions "
+            "but does not use them for training. This route is Standard privacy "
+            "and is excluded from ZDR, confidential-compute, and E2EE routing."
+        ),
+        provider_policy_url="https://openrouter.ai/terms/stealth",
+    ),
     "anthropic": Provider(
         slug="anthropic",
         name="Anthropic",
@@ -202,37 +454,68 @@ PROVIDERS: dict[str, Provider] = {
         supports_embeddings=True,
         supports_prepaid=True,
         provider_zero_data_retention=False,
+        # Verified 2026-07-29 against the managed production project:
+        # a Responses request with store=true succeeded, then retrieval
+        # returned 404. BYOK remains outside this account-scoped flag.
+        prepaid_zero_data_retention=True,
+        prepaid_zero_data_retention_effective_on="2026-07-28",
         provider_policy=(
-            "Not currently marked ZDR in TrustedRouter. OpenAI may offer endpoint- "
-            "or account-specific data-retention controls, but this provider is "
-            "excluded from trustedrouter/zdr until that posture is reverified."
+            "Contracted Zero Data Retention is active for TrustedRouter's managed "
+            "OpenAI account, effective July 28, 2026, and live enforcement was "
+            "verified on July 29, 2026. This guarantee applies only to "
+            "TrustedRouter-funded prepaid routes; customer BYOK credentials use the "
+            "data controls on the customer's own OpenAI organization or project."
         ),
-        provider_policy_url="https://platform.openai.com/docs/models/default-usage-policies-by-endpoint",
+        provider_policy_url=(
+            "https://developers.openai.com/api/docs/guides/your-data"
+            "#data-retention-controls-for-abuse-monitoring"
+        ),
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
-    "gemini": Provider(
-        slug="gemini",
-        name="Gemini",
+    "google-ai-studio": Provider(
+        slug="google-ai-studio",
+        name="Google AI Studio",
         supports_embeddings=True,
         supports_prepaid=True,
         provider_zero_data_retention=False,
         provider_policy=(
-            "Not currently marked ZDR in TrustedRouter. Google Gemini / Vertex "
-            "routes may have account- or product-specific data-governance terms, "
-            "but this provider is excluded from trustedrouter/zdr until that "
-            "posture is reverified."
+            "Not currently marked ZDR in TrustedRouter. Google AI Studio and the "
+            "Gemini Developer API have product- and billing-specific data-use terms, "
+            "so this route stays outside trustedrouter/zdr."
         ),
-        provider_policy_url="https://docs.cloud.google.com/vertex-ai/generative-ai/docs/data-governance",
+        provider_policy_url="https://ai.google.dev/gemini-api/terms",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "google-vertex": Provider(
+        slug="google-vertex",
+        name="Google Vertex AI",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_zero_data_retention=False,
+        prepaid_zero_data_retention=True,
+        prepaid_zero_data_retention_effective_on="2026-07-28",
+        provider_policy=(
+            "TrustedRouter's managed Vertex AI account is covered by contractual "
+            "Zero Data Retention. This guarantee applies only to TrustedRouter-funded "
+            "prepaid routes. TrustedRouter does not invoke Google Search or Maps "
+            "grounding or Gemini Live session resumption on these routes. Google AI "
+            "Studio is classified separately."
+        ),
+        provider_policy_url=(
+            "https://docs.cloud.google.com/vertex-ai/generative-ai/docs/"
+            "vertex-ai-zero-data-retention"
+        ),
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     "cerebras": Provider(
         slug="cerebras",
         name="Cerebras",
         supports_prepaid=True,
+        stores_content=False,
         provider_zero_data_retention=True,
         provider_policy=(
-            "Tracked as provider-ZDR. Cerebras documents ZDR-compliant ephemeral "
-            "prompt caching and no persisted prompt cache data."
+            "Tracked as provider-ZDR. Cerebras documents zero-retention inference "
+            "and ZDR-compliant ephemeral prompt caching that is never persisted."
         ),
         provider_policy_url="https://inference-docs.cerebras.ai/capabilities/prompt-caching",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
@@ -250,6 +533,11 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url=(
             "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html?locale=en_US"
         ),
+        # DeepSeek's own privacy policy names Hangzhou DeepSeek Artificial
+        # Intelligence Co., Ltd., registered in China, as data controller. The
+        # endpoint routed to here is api.deepseek.com.
+        # https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html
+        provider_headquarters_country=PROVIDER_JURISDICTION_CN,
     ),
     "mistral": Provider(
         slug="mistral",
@@ -260,6 +548,10 @@ PROVIDERS: dict[str, Provider] = {
             "no-training or enterprise retention commitments Mistral may offer."
         ),
         provider_policy_url="https://docs.mistral.ai/admin/security-access/privacy",
+        # Mistral AI, a French SAS registered at 15 rue des Halles, 75001 Paris,
+        # RCS Paris 952 418 325, per its own legal notice.
+        # https://legal.mistral.ai/legal-notice
+        provider_headquarters_country=PROVIDER_JURISDICTION_FR,
     ),
     "kimi": Provider(
         slug="kimi",
@@ -270,6 +562,17 @@ PROVIDERS: dict[str, Provider] = {
             "for users who need to review API retention and processing terms."
         ),
         provider_policy_url="https://platform.kimi.ai/docs/agreement/userprivacy",
+        # MOONSHOT AI PTE. LTD., Singapore. The privacy policy linked above --
+        # the one governing the routed endpoint api.moonshot.ai -- opens:
+        # "Our services are provided and controlled by MOONSHOT AI PTE. LTD.
+        # ... in Singapore", and states storage on "secure servers located in
+        # Singapore". Verified 2026-08-17 by rendering the page; a plain fetch
+        # returns an empty JS shell, which is how an earlier revision of this
+        # entry came to record CN from the LAB's about page (Moonshot AI,
+        # Beijing) instead of the operator's own policy. The lab is Chinese and
+        # is recorded as such in the model-origin map; the operator is not.
+        # https://platform.kimi.ai/docs/agreement/userprivacy
+        provider_headquarters_country=PROVIDER_JURISDICTION_SG,
     ),
     "zai": Provider(
         slug="zai",
@@ -280,6 +583,17 @@ PROVIDERS: dict[str, Provider] = {
             "for users who need to review API retention and processing terms."
         ),
         provider_policy_url="https://open.bigmodel.cn/usercenter/agreement/privacy",
+        # Z.AI's terms of use, published in its developer documentation and
+        # covering the api.z.ai service routed to here, name JINGSHENG HENGXING
+        # TECHNOLOGY PTE. LTD as the operator of Z.ai; those terms are governed
+        # by Singapore law with SIAC arbitration seated in Singapore.
+        # https://docs.z.ai/legal-agreement/terms-of-use
+        # Jurisdiction nuance: the GLM weights served through it come from the
+        # Beijing-headquartered lab behind the Z.ai brand (see MODEL_ORIGINS,
+        # where z-ai and zai-org are recorded as CN), and Z.AI's China platform
+        # runs under a separate Chinese entity. A user avoiding Chinese
+        # jurisdiction should read this SG code as the API operator only.
+        provider_headquarters_country=PROVIDER_JURISDICTION_SG,
     ),
     # Together AI hosts a broad open-weight catalog (Llama, DeepSeek
     # incl. DeepSeek-OCR, Qwen, Mixtral) plus image gen (FLUX) and
@@ -293,10 +607,9 @@ PROVIDERS: dict[str, Provider] = {
         stores_content=False,
         provider_zero_data_retention=True,
         provider_policy=(
-            "Marked ZDR via TrustedRouter's arrangement — Together's ZDR is an "
-            "opt-in account/privacy setting, NOT the public default, and the "
-            "deployed Together account has it enabled. Together does not train "
-            "on content without opt-in."
+            "Tracked as provider ZDR. Together documents that inference inputs "
+            "and outputs are not stored by default; temporary prompt caching may "
+            "be used for performance, and sharing content for training is opt-in."
         ),
         provider_policy_url="https://docs.together.ai/docs/privacy-and-security",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
@@ -330,7 +643,7 @@ PROVIDERS: dict[str, Provider] = {
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Novita — multi-model serverless inference. OpenAI-compatible
-    # at api.novita.ai/v3/openai. Hosts DeepSeek, Qwen, Llama,
+    # at api.novita.ai/openai/v1. Hosts DeepSeek, Qwen, Llama,
     # GLM, Kimi (and many more) at competitive rates.
     "novita": Provider(
         slug="novita",
@@ -342,11 +655,18 @@ PROVIDERS: dict[str, Provider] = {
             "processing is governed by customer agreements."
         ),
         provider_policy_url="https://novita.ai/legal/privacy-policy",
+        # United States. Novita's terms select Delaware law with exclusive
+        # jurisdiction in Wilmington and publish no operating entity, so this is
+        # not read from a public document: it is recorded from TrustedRouter's
+        # own account relationship with the provider (operator knowledge,
+        # 2026-08-17). Kept distinct in the comment from the entries that cite a
+        # published policy, so the basis is never overstated.
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
-    # Phala (RedPill) — confidential AI inference inside Intel TDX
-    # / NVIDIA Confidential Compute enclaves. Verified attestation,
-    # end-to-end encrypted prompts. **On-brand for TR's trust story.**
-    # OpenAI-compatible at api.red-pill.ai/v1.
+    # Phala publishes Intel TDX / NVIDIA Confidential Compute evidence and
+    # signed request receipts. TrustedRouter does not yet verify that evidence
+    # on every request, so Phala must not satisfy the provider-E2EE routing
+    # floor until the gateway enforces the complete receipt chain.
     "phala": Provider(
         slug="phala",
         name="Phala",
@@ -354,12 +674,15 @@ PROVIDERS: dict[str, Provider] = {
         stores_content=False,
         provider_zero_data_retention=True,
         provider_confidential_compute=True,
-        provider_e2ee=True,
+        provider_e2ee=False,
         provider_policy=(
-            "Tracked as a confidential AI provider with provider-side "
-            "attestation and encrypted prompt transport."
+            "Phala publishes TDX/GPU attestation and signed request receipts, "
+            "but TrustedRouter does not yet verify the complete receipt chain "
+            "on every routed request. The route is therefore not classified as "
+            "provider E2EE and is excluded from trustedrouter/e2e."
         ),
-        provider_policy_url="https://docs.phala.com/confidential-ai-inference/host-llm-in-tee",
+        provider_policy_url=("https://docs.phala.com/phala-cloud/confidential-ai/verify/overview"),
+        # No country recorded: see PROVIDER_JURISDICTION_UNVERIFIED["phala"].
     ),
     # SiliconFlow — Chinese serverless inference with 200+ open-weight
     # models. OpenAI-compatible at api.siliconflow.com/v1.
@@ -372,6 +695,15 @@ PROVIDERS: dict[str, Provider] = {
             "is linked for retention and interaction-data terms."
         ),
         provider_policy_url="https://docs.siliconflow.com/en/legals/privacy-policy",
+        # SiliconFlow's international terms of service, covering the
+        # siliconflow.com platform whose api.siliconflow.com endpoint is routed
+        # to here, name SILICONFLOW TECHNOLOGY PTE. LTD., registered in
+        # Singapore; clause 14.1 applies the laws of the Republic of Singapore.
+        # https://docs.siliconflow.com/en/legals/terms-of-service
+        # Jurisdiction nuance: SiliconFlow's separate China platform on the .cn
+        # domain is not this route, and many of the weights served here come from
+        # Chinese labs (see MODEL_ORIGINS).
+        provider_headquarters_country=PROVIDER_JURISDICTION_SG,
     ),
     # Tinfoil — TEE-attested confidential inference. Verified-no-logs
     # via remote attestation. **Also on-brand for TR's trust story.**
@@ -391,23 +723,28 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://tinfoil.sh/security-and-privacy-faq",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
-    # Venice.AI — privacy-focused LLM gateway. No-logs, no-censoring
-    # positioning. OpenAI-compatible at api.venice.ai/api/v1.
+    # Venice's privacy posture is model-specific. Its Private routes carry a
+    # policy-backed ZDR claim, while Anonymized routes may be retained by the
+    # downstream model provider. Venice does not currently provide the complete
+    # independently verifiable source/hardware/model-weight chain required for
+    # TrustedRouter to classify any Venice route as TEE or E2EE.
     "venice": Provider(
         slug="venice",
         name="Venice",
         supports_prepaid=True,
-        stores_content=False,
-        provider_zero_data_retention=True,
-        provider_confidential_compute=True,
-        provider_e2ee=True,
+        stores_content=True,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
         provider_policy=(
-            "Tracked as confidential — Venice documents no logging or storage of "
-            "prompts/responses plus TEE-isolated, end-to-end-encrypted inference. "
-            "(Caveat: requests Venice proxies to external frontier models inherit "
-            "those providers' policies; TR routes Venice-native open models here.)"
+            "Mixed model-specific posture. TrustedRouter cannot independently verify "
+            "a complete chain from a live Venice endpoint through immutable source and "
+            "hardware measurements to committed model weights. Venice is therefore "
+            "not tracked as confidential or E2EE. Exact routes marked Private in "
+            "Venice's live catalog qualify only as policy-backed ZDR through "
+            "endpoint-specific records; Anonymized routes do not."
         ),
-        provider_policy_url="https://docs.venice.ai/overview/privacy",
+        provider_policy_url="https://venice.ai/privacy",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Parasail — serverless inference platform. Hosts Llama, Qwen,
@@ -419,9 +756,14 @@ PROVIDERS: dict[str, Provider] = {
         slug="parasail",
         name="Parasail",
         supports_prepaid=True,
+        stores_content=False,
+        provider_zero_data_retention=True,
         provider_policy=(
-            "Parasail documents no input logging/storage for serverless and dedicated "
-            "service paths, with different handling for batch service."
+            "Tracked as ZDR for serverless and dedicated inference. Parasail documents "
+            "no storage or logging of submitted input on those service paths, retention "
+            "only while generating and delivering output, and no training on input or "
+            "output. Batch service is excluded from this claim; TrustedRouter does not "
+            "route Parasail traffic through batch."
         ),
         provider_policy_url=(
             "https://docs.parasail.io/parasail-docs/security-and-account-management/"
@@ -474,6 +816,11 @@ PROVIDERS: dict[str, Provider] = {
             "terms are linked for users who need to review API data handling."
         ),
         provider_policy_url="https://friendli.ai/terms",
+        # FriendliAI's own terms name FriendliAI Corp. with a San Francisco, CA
+        # address, apply the laws of the State of California, and place
+        # non-arbitrated disputes in San Francisco County courts.
+        # https://friendli.ai/terms
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Baseten — OpenAI-compatible Model APIs at inference.baseten.co/v1.
     # Public catalog + pricing is exposed from /v1/models; prompt/output
@@ -483,12 +830,30 @@ PROVIDERS: dict[str, Provider] = {
         slug="baseten",
         name="Baseten",
         supports_prepaid=True,
+        stores_content=False,
+        provider_zero_data_retention=True,
         provider_policy=(
-            "No provider-ZDR claim is tracked here. Baseten's inference and "
-            "security documentation are linked for users who need to review API "
-            "data handling."
+            "Baseten states that it does not store synchronous Model API inputs "
+            "or outputs by default. TrustedRouter uses the synchronous Model API "
+            "path; Baseten documents separate temporary input storage for async "
+            "inference."
         ),
-        provider_policy_url="https://docs.baseten.co/inference/overview",
+        provider_policy_url="https://docs.baseten.co/observability/security",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    # Telnyx Inference — OpenAI-compatible chat completions at
+    # api.telnyx.com/v2/ai/openai. The authenticated model feed is joined
+    # hourly with Telnyx's current pricing page and public x402 catalog.
+    "telnyx": Provider(
+        slug="telnyx",
+        name="Telnyx",
+        supports_prepaid=True,
+        provider_policy=(
+            "No provider-ZDR or confidential-compute claim is tracked here. "
+            "Telnyx's privacy policy is linked for users who need to review "
+            "inference data handling."
+        ),
+        provider_policy_url="https://telnyx.com/privacy-policy",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Wafer — OpenAI-compatible serverless API at pass.wafer.ai/v1. Wafer
@@ -525,9 +890,8 @@ PROVIDERS: dict[str, Provider] = {
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Makora Inference — OpenAI-compatible API at inference.makora.com/v1.
-    # The public /v1/models feed exposes model IDs and context windows, but not
-    # prices. TR carries provider-native IDs in data/provider_models/makora.json
-    # and sources prices from Makora's public homepage lineup where published.
+    # Its authenticated /v1/models feed supplies model IDs, context windows,
+    # capabilities, and account-billable prices to the generated manifest.
     "makora": Provider(
         slug="makora",
         name="Makora",
@@ -540,6 +904,308 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://www.makora.com/privacy-policy",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    "chutes": Provider(
+        slug="chutes",
+        name="Chutes",
+        supports_prepaid=True,
+        stores_content=False,
+        provider_zero_data_retention=True,
+        provider_confidential_compute=True,
+        provider_e2ee=True,
+        provider_policy=(
+            "TrustedRouter encrypts each request to an attested Chutes workload "
+            "and verifies Intel TDX plus NVIDIA GPU attestation inside the "
+            "TrustedRouter enclave before sending content. Verification fails "
+            "closed. Chutes also documents no prompt/output storage or training."
+        ),
+        provider_policy_url="https://chutes.ai/docs/core-concepts/security-architecture",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "digitalocean": Provider(
+        slug="digitalocean",
+        name="DigitalOcean Gradient AI",
+        supports_prepaid=True,
+        provider_policy=(
+            "No provider-ZDR claim is tracked here. DigitalOcean's Gradient AI "
+            "model and pricing documentation is linked for data-handling review."
+        ),
+        provider_policy_url="https://docs.digitalocean.com/products/inference/",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "cloudflare-workers-ai": Provider(
+        slug="cloudflare-workers-ai",
+        name="Cloudflare Workers AI",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No provider-ZDR claim is tracked here. Cloudflare's Workers AI "
+            "documentation is linked for model and data-handling review."
+        ),
+        provider_policy_url="https://developers.cloudflare.com/workers-ai/",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "inceptron": Provider(
+        slug="inceptron",
+        name="Inceptron",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=True,
+        provider_policy=(
+            "Inceptron documents zero retention by default: API prompts and "
+            "outputs are processed transiently and discarded after processing."
+        ),
+        provider_policy_url="https://www.inceptron.io/privacy",
+        provider_headquarters_country=PROVIDER_JURISDICTION_SE,
+    ),
+    "morph": Provider(
+        slug="morph",
+        name="Morph",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Morph's public paid tier documents up to 30 days of content "
+            "retention. Zero retention is reserved for enterprise contracts."
+        ),
+        provider_policy_url="https://www.morphllm.com/privacy",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "atlas-cloud": Provider(
+        slug="atlas-cloud",
+        name="Atlas Cloud",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Atlas Cloud publishes a platform zero-retention policy, while its "
+            "aggregated model routes can involve downstream providers. "
+            "TrustedRouter keeps the public route tier conservative pending "
+            "downstream-path contractual verification."
+        ),
+        provider_policy_url="https://www.atlascloud.ai/zero-data-retention",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "streamlake": Provider(
+        slug="streamlake",
+        name="StreamLake",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No provider-ZDR claim is tracked. StreamLake's public privacy "
+            "policy is linked for API data-handling review."
+        ),
+        provider_policy_url=("https://www.streamlake.ai/document/DOC/mgkci47q13qr66h9i54"),
+        provider_headquarters_country=PROVIDER_JURISDICTION_SG,
+    ),
+    "neurometric": Provider(
+        slug="neurometric",
+        name="Neurometric AI",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Neurometric states that TrustedRouter requests run with upstream "
+            "trace logging disabled: prompts and completions are not written "
+            "to observability or object storage, and only aggregate request "
+            "counts and token totals are retained. This is classified as "
+            "no-store, not contractual ZDR or confidential compute."
+        ),
+        provider_policy_url="https://www.neurometric.ai/privacy",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "engy": Provider(
+        slug="engy",
+        name="Engy",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=True,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Engy states that prompts, outputs, tool arguments, images, and "
+            "embeddings are not stored or used for training. It retains "
+            "request metadata such as model, token counts, cost, and latency. "
+            "Engy's verified-inference sampling is not a user-verifiable TEE "
+            "attestation, so this route is ZDR but not confidential or E2EE."
+        ),
+        provider_policy_url="https://engy.ai/privacy",
+        # No country recorded: see PROVIDER_JURISDICTION_UNVERIFIED["engy"].
+    ),
+    "pearl": Provider(
+        slug="pearl",
+        name="Pearl Research Labs",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Pearl Research states that it retains operational metadata for "
+            "security and does not train on customer data. No public "
+            "contractual zero-data-retention terms are linked, so "
+            "TrustedRouter classifies these routes as Standard and excludes "
+            "them from ZDR, confidential-compute, and E2EE routing."
+        ),
+        provider_policy_url="https://pearlresearch.ai/legal/privacy",
+        provider_headquarters_country=PROVIDER_JURISDICTION_IL,
+    ),
+    "stepfun": Provider(
+        slug="stepfun",
+        name="StepFun",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "StepFun's public privacy policy does not provide contractual "
+            "zero retention or confidential-compute guarantees for API "
+            "requests. TrustedRouter therefore classifies this route as "
+            "Standard."
+        ),
+        provider_policy_url="https://platform.stepfun.com/legal/privacy-policy.html",
+        provider_headquarters_country=PROVIDER_JURISDICTION_CN,
+    ),
+    "relace": Provider(
+        slug="relace",
+        name="Relace",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Relace's public API documentation does not publish contractual "
+            "zero retention, confidential compute, or end-to-end encryption "
+            "for hosted open-model requests. This route is Standard."
+        ),
+        provider_policy_url="https://docs.relace.ai/api-reference/introduction",
+    ),
+    "recraft": Provider(
+        slug="recraft",
+        name="Recraft",
+        supports_chat=False,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Recraft's developer terms say API inputs and outputs are not "
+            "used to train its models, but do not promise zero retention or "
+            "confidential compute. This route is Standard."
+        ),
+        provider_policy_url="https://www.recraft.ai/legal/terms",
+    ),
+    "bfl": Provider(
+        slug="bfl",
+        name="Black Forest Labs",
+        supports_chat=False,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Black Forest Labs does not publish contractual zero retention, "
+            "confidential compute, or end-to-end encryption for the hosted "
+            "FLUX API. This route is Standard."
+        ),
+        provider_policy_url="https://bfl.ai/legal/developer-terms-of-service",
+        # Black Forest Labs GmbH identifies Freiburg, Germany as its legal
+        # address. https://bfl.ai/imprint
+        provider_headquarters_country=PROVIDER_JURISDICTION_DE,
+    ),
+    "decart": Provider(
+        slug="decart",
+        name="Decart",
+        supports_chat=False,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Decart's public terms permit service-related use of submitted "
+            "content and do not promise zero retention or confidential "
+            "compute. This route is Standard."
+        ),
+        provider_policy_url="https://decart.ai/terms",
+        # Decart.AI, Inc. publishes a Wilmington, Delaware address in its
+        # terms. https://decart.ai/terms
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "nvidia-nim": Provider(
+        slug="nvidia-nim",
+        name="NVIDIA NIM",
+        supports_chat=False,
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "NVIDIA's hosted NIM API Catalog endpoints are preview services for "
+            "development and prototyping. NVIDIA requires an NVIDIA AI Enterprise "
+            "entitlement for production use, so TrustedRouter discovers the live "
+            "catalog but does not route customer traffic to this key."
+        ),
+        provider_policy_url="https://docs.api.nvidia.com/nim/docs/run-anywhere",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "databricks": Provider(
+        slug="databricks",
+        name="Databricks",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=True,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Databricks Foundation Model APIs are a Designated Service and "
+            "pay-per-token workloads are HIPAA compliant. Databricks may "
+            "temporarily process or store inputs and outputs for abuse "
+            "prevention, and may process data outside the originating cloud "
+            "or region. This route is therefore standard privacy, not ZDR, "
+            "confidential compute, or end-to-end encrypted."
+        ),
+        provider_policy_url=(
+            "https://docs.databricks.com/aws/en/machine-learning/foundation-model-apis/compliance"
+        ),
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "zero-g": Provider(
+        slug="zero-g",
+        name="0G Private Computer",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=None,
+        provider_confidential_compute=True,
+        provider_e2ee=False,
+        provider_policy=(
+            "0G labels these routes private, TeeML, TEE-attested, and healthy. "
+            "TrustedRouter requests that mode with X-0G-Provider-Trust-Mode: "
+            "private and excludes standard and TeeTLS routes. The current live "
+            "0G router path does not expose the route quote, audited code "
+            "measurement, or response authentication needed for TrustedRouter "
+            "to verify and encrypt each request end to end, so 0G is not in the "
+            "trustedrouter/e2e pool."
+        ),
+        provider_policy_url="https://pc.0g.ai/models",
+        # Zero Gravity Labs, Inc., a Delaware corporation, is named as data
+        # controller in the privacy policy for the 0g.ai domain that hosts the
+        # routed endpoint (router-api.0g.ai), and that policy applies Delaware
+        # law. https://0g.ai/privacy-policy
+        # Jurisdiction nuance: the separate 0G Foundation is a Cayman Islands
+        # foundation company whose own policy covers 0gfoundation.ai, not this
+        # endpoint. https://www.0gfoundation.ai/privacy-policy
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
     # DeepInfra — large open-weight catalog (Llama, Gemma 4, Qwen,
     # DeepSeek, etc.). OpenAI-compatible at api.deepinfra.com/v1/openai.
     # Pricing in the /v1/openai/models response under
@@ -549,14 +1215,18 @@ PROVIDERS: dict[str, Provider] = {
         name="DeepInfra",
         supports_prepaid=True,
         stores_content=False,
-        provider_zero_data_retention=True,
+        provider_zero_data_retention=False,
         provider_policy=(
-            "Tracked as provider ZDR — DeepInfra documents memory-only handling "
-            "with no storage of API content and no training on submitted API data. "
-            "(Exception: requests to Google/Anthropic-backed models inherit those "
-            "vendors' policies.)"
+            "Tracked as no-store, not strict ZDR. DeepInfra documents memory-only "
+            "handling and no training for ordinary inference, but reserves the "
+            "right to log a small portion of requests for debugging or security. "
+            "Google- and Anthropic-backed routes also inherit those vendors' terms."
         ),
         provider_policy_url="https://docs.deepinfra.com/account/data-privacy",
+        # DEEP INFRA, INC., a Delaware corporation at 2625 Middlefield Road
+        # #460, Palo Alto, CA 94306, per its own terms, which apply Delaware law.
+        # https://deepinfra.com/terms
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Nebius Token Factory — OpenAI-compatible shared inference for
     # open-weight models. The /v1/models feed publishes exact upstream
@@ -575,6 +1245,12 @@ PROVIDERS: dict[str, Provider] = {
             "does not train on customer data."
         ),
         provider_policy_url="https://docs.studio.nebius.com/legal/legal-quick-guide",
+        # Nebius's own legal guide for Token Factory, the service whose
+        # api.tokenfactory.nebius.com endpoint is routed to here, says the
+        # service is supplied by Nebius B.V., a company incorporated in the
+        # Netherlands and a subsidiary of Nebius Group N.V. (NASDAQ: NBIS).
+        # https://docs.tokenfactory.nebius.com/legal/legal-quick-guide
+        provider_headquarters_country=PROVIDER_JURISDICTION_NL,
     ),
     # MiniMax first-party API. OpenAI-compatible at api.minimax.io/v1;
     # public TR IDs use the OpenRouter-style minimax/<slug> form while
@@ -588,6 +1264,18 @@ PROVIDERS: dict[str, Provider] = {
             "is linked for users who need to review API/open-platform terms."
         ),
         provider_policy_url="https://www.minimax.io/privacy-policy-v2.html",
+        # MiniMax Group Inc. (稀宇科技) is based in Shanghai, China and listed in
+        # Hong Kong (SEHK: 100). https://en.wikipedia.org/wiki/MiniMax_Group
+        # Nanonoble Pte. Ltd., 152 Beach Road, #14-02 Gateway East, Singapore
+        # 189721 -- the Service Provider named by the MiniMax Open Platform
+        # terms governing the routed endpoint api.minimax.io, under Singapore
+        # law with SIAC arbitration. Verified 2026-08-17. An earlier revision
+        # recorded CN and claimed the reachable legal pages named no non-China
+        # operator; they do -- the terms render only under JavaScript, so a
+        # plain fetch missed them. Same fact pattern as Z.AI, recorded the same
+        # way. The lab is Chinese and is recorded as such in the origin map.
+        # https://platform.minimax.io/protocol/terms-of-service
+        provider_headquarters_country=PROVIDER_JURISDICTION_SG,
     ),
     # Thinking Machines Lab Tinker sampler. The 256K Inkling endpoint is
     # provider-native and OpenAI-compatible. Keep its privacy posture
@@ -615,6 +1303,15 @@ PROVIDERS: dict[str, Provider] = {
             "terms are linked for users who need to review API data handling."
         ),
         provider_policy_url="https://platform.xiaomimimo.com/",
+        # Xiaomi Corporation's 2025 annual report gives its head office and
+        # principal place of business as Xiaomi Campus, Anningzhuang Road,
+        # Haidian District, Beijing, PRC, with a registered office in the Cayman
+        # Islands and a Hong Kong place of business; it is listed on HKEX (1810).
+        # https://ir.mi.com/system/files-encrypted/nasdaq_kms/assets/2026/04/28/5-29-08/Xiaomi%202025%20AR_EN.pdf
+        # Jurisdiction nuance: the MiMo platform terms and privacy pages under
+        # mimo.mi.com render only under JavaScript and name Xiaomi without a
+        # contracting entity, so the group's operating home is what is recorded.
+        provider_headquarters_country=PROVIDER_JURISDICTION_CN,
     ),
     # Alibaba Cloud Model Studio / DashScope — workspace-scoped OpenAI-compatible
     # endpoint. The configured key is for an EU Central / Frankfurt MAAS
@@ -623,7 +1320,7 @@ PROVIDERS: dict[str, Provider] = {
     "alibaba": Provider(
         slug="alibaba",
         name="Alibaba Cloud Model Studio",
-        supports_prepaid=False,
+        supports_prepaid=True,
         supports_byok=False,
         provider_policy=(
             "No provider-ZDR claim is tracked here. Alibaba Cloud Model Studio "
@@ -631,6 +1328,409 @@ PROVIDERS: dict[str, Provider] = {
             "review API data handling and regional deployment scope."
         ),
         provider_policy_url="https://www.alibabacloud.com/help/en/model-studio/model-pricing",
+        # Alibaba Group Holding Limited gives its principal executive offices as
+        # 969 West Wen Yi Road, Yuhang District, Hangzhou, China.
+        # https://www.alibabagroup.com/en-US/faqs-corporate-information
+        # Jurisdiction nuance: Alibaba Cloud's membership agreement picks the
+        # contracting entity from the customer's billing address — Alibaba Cloud
+        # (Singapore) Private Limited, Alibaba (Netherlands) B.V. for the EEA,
+        # Alibaba Cloud US LLC, and others — so the entity billing TrustedRouter
+        # may not be the Chinese parent, and the configured workspace runs in the
+        # eu-central-1 Frankfurt region. The membership agreement alone cannot
+        # settle it -- it selects the contracting entity by billing address and
+        # names only non-China entities -- so this is recorded from
+        # TrustedRouter's own account relationship with the provider (operator
+        # knowledge, 2026-08-17), which is the invoice-level fact the agreement
+        # points at. The lab (Qwen) is Chinese and is recorded separately in the
+        # origin map.
+        # https://www.alibabacloud.com/help/en/legal/latest/alibaba-cloud-international-website-membership-agreement
+        provider_headquarters_country=PROVIDER_JURISDICTION_CN,
+    ),
+    # Microsoft Foundry direct deployments in eastus2. Availability and exact
+    # regional list prices are synchronized from Azure's account-scoped model,
+    # quota, deployment, and Retail Prices APIs. Do not infer ZDR from Azure's
+    # enterprise positioning: this route stays Standard until Lore Hex has an
+    # applicable written retention agreement and verifies account enforcement.
+    "azure": Provider(
+        slug="azure",
+        name="Microsoft Azure AI Foundry",
+        supports_messages=True,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "No provider-ZDR, confidential-compute, or E2EE claim is currently "
+            "tracked for TrustedRouter's Microsoft Foundry account. Azure model "
+            "availability and pricing are synchronized directly from the account."
+        ),
+        provider_policy_url=(
+            "https://learn.microsoft.com/en-us/azure/ai-foundry/responsible-ai/openai/data-privacy"
+        ),
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "ltx": Provider(
+        slug="ltx",
+        name="Lightricks LTX",
+        supports_chat=False,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No provider-ZDR, confidential-compute, or E2EE claim is tracked for "
+            "the LTX video API. TrustedRouter relays and does not durably store "
+            "prompt or generated video content."
+        ),
+        provider_policy_url="https://ltx.io/terms-of-use",
+        # Lightricks Ltd., Yesha'yahu Leibowitz 30, Jerusalem, Israel, is the
+        # named data controller in the LTX Platform privacy policy, whose data
+        # protection officer answers at dpo@ltx.io — the ltx.io service routed to
+        # here. https://static.lightricks.com/legal/Privacy%20Policy%20-%20LTX%20Platform.pdf
+        # Jurisdiction nuance: the LTX Studio terms contract through Lightricks
+        # US Inc. (Chicago, IL) when the customer is incorporated in a US state,
+        # so the billing counterparty can be American while the operator and
+        # controller stay Israeli.
+        # https://static.lightricks.com/legal/LTXS-Terms%20of%20Service%20Online.pdf
+        provider_headquarters_country=PROVIDER_JURISDICTION_IL,
+    ),
+    "runway": Provider(
+        slug="runway",
+        name="Runway",
+        supports_chat=False,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No provider-ZDR, confidential-compute, or E2EE claim is tracked for "
+            "the Runway video API. TrustedRouter relays and does not durably store "
+            "prompt or generated video content."
+        ),
+        provider_policy_url="https://runwayml.com/privacy-policy",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "kling": Provider(
+        slug="kling",
+        name="Kling AI",
+        supports_chat=False,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No provider-ZDR, confidential-compute, or E2EE claim is tracked for "
+            "the Kling video API. TrustedRouter relays and does not durably store "
+            "prompt or generated video content."
+        ),
+        provider_policy_url="https://kling.ai/privacy-policy",
+        # China. Kling AI is Kuaishou Technology's product (Kuaishou head
+        # office: Haidian District, Beijing). Its policy pages answer HTTP 446
+        # to our fetches, so this is recorded from TrustedRouter's own account
+        # relationship with the provider (operator knowledge, 2026-08-17)
+        # rather than from a published document.
+        provider_headquarters_country=PROVIDER_JURISDICTION_CN,
+    ),
+    "upstage": Provider(
+        slug="upstage",
+        name="Upstage",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's Upstage account. This route is Standard."
+        ),
+        provider_policy_url="https://console.upstage.ai/docs/getting-started/models",
+        provider_headquarters_country=PROVIDER_JURISDICTION_KR,
+    ),
+    "sail-research": Provider(
+        slug="sail-research",
+        name="Sail Research",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's Sail Research account. This route is "
+            "Standard."
+        ),
+        provider_policy_url="https://docs.sailresearch.com/",
+    ),
+    "perplexity": Provider(
+        slug="perplexity",
+        name="Perplexity",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's Perplexity account. The current model "
+            "catalog belongs to its Agent API and can add request/search charges, "
+            "so it remains non-routable until those costs settle exactly."
+        ),
+        provider_policy_url="https://docs.perplexity.ai/",
+    ),
+    "reka": Provider(
+        slug="reka",
+        name="Reka AI",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's Reka account. This route is Standard."
+        ),
+        provider_policy_url="https://docs.reka.ai/",
+    ),
+    "nextbit": Provider(
+        slug="nextbit",
+        name="NextBit",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's NextBit account. This route is Standard."
+        ),
+        provider_policy_url="https://nextbit256.com/",
+    ),
+    "akashml": Provider(
+        slug="akashml",
+        name="AkashML",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's AkashML account. This route is Standard."
+        ),
+        provider_policy_url="https://akashml.com/",
+    ),
+    "mancer": Provider(
+        slug="mancer",
+        name="Mancer",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's Mancer account. This route is Standard."
+        ),
+        provider_policy_url="https://mancer.tech/docs-api/",
+    ),
+    "aion-labs": Provider(
+        slug="aion-labs",
+        name="Aion Labs",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's Aion Labs account. This route is Standard."
+        ),
+        provider_policy_url="https://aionlabs.ai/",
+    ),
+    "sambanova": Provider(
+        slug="sambanova",
+        name="SambaNova",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's SambaNova account. This route is Standard."
+        ),
+        provider_policy_url="https://docs.sambanova.ai/",
+    ),
+    "arcee": Provider(
+        slug="arcee",
+        name="Arcee AI",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's Arcee account. This route is Standard."
+        ),
+        provider_policy_url="https://docs.arcee.ai/",
+    ),
+    "perceptron": Provider(
+        slug="perceptron",
+        name="Perceptron",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's Perceptron account. Its public catalog "
+            "is priced, but the configured inference credential did not authenticate "
+            "during the live canary, so routes remain dark."
+        ),
+        provider_policy_url="https://perceptron.cloud/docs/inference",
+    ),
+    "inception": Provider(
+        slug="inception",
+        name="Inception Labs",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's Inception account. This route is Standard."
+        ),
+        provider_policy_url="https://docs.inceptionlabs.ai/",
+    ),
+    "sakana": Provider(
+        slug="sakana",
+        name="Sakana AI",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No contractual zero-retention, confidential-compute, or E2EE claim "
+            "is tracked for TrustedRouter's Sakana account. Version-pinned routes "
+            "use Sakana's first-party token prices and authenticated availability."
+        ),
+        provider_policy_url="https://console.sakana.ai/privacy-policy",
+    ),
+    # These providers are recorded so their public provider pages and compliance
+    # posture are explicit, but they are not admitted to the chat gateway. Their
+    # credentials either address an asynchronous media/deployment API or their
+    # account does not expose exact billable token prices yet.
+    "krea": Provider(
+        slug="krea",
+        name="Krea",
+        supports_chat=False,
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "Krea exposes an asynchronous media API, not a shared OpenAI-compatible "
+            "chat catalog. It remains non-routable until a media adapter and exact "
+            "billing contract are implemented."
+        ),
+        provider_policy_url="https://docs.krea.ai/",
+    ),
+    "modal": Provider(
+        slug="modal",
+        name="Modal",
+        supports_chat=False,
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "The configured Modal credentials deploy workloads; they do not identify "
+            "a shared model catalog. Modal remains non-routable until explicit "
+            "deployment endpoints and prices are configured."
+        ),
+        provider_policy_url="https://modal.com/docs",
+    ),
+    "byteplus": Provider(
+        slug="byteplus",
+        name="BytePlus ModelArk",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "BytePlus ModelArk requires region-specific activated model endpoint IDs. "
+            "The API key alone is insufficient to create safe routes, so this "
+            "provider remains non-routable pending endpoint configuration."
+        ),
+        provider_policy_url="https://docs.byteplus.com/en/docs/ModelArk",
+    ),
+    "riverflow": Provider(
+        slug="riverflow",
+        name="Riverflow",
+        supports_chat=False,
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "Riverflow is a media workflow API with partner and enterprise access, "
+            "not a shared token-priced chat endpoint. It remains non-routable until "
+            "a dedicated media adapter and billing contract are implemented."
+        ),
+        provider_policy_url=(
+            "https://www.riverflow.ai/research/introducing-sourceful-riverflow-1"
+        ),
+    ),
+    "io-net": Provider(
+        slug="io-net",
+        name="IO Intelligence",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "IO Intelligence publishes exact per-token prices in its authenticated "
+            "catalog. TrustedRouter admits only priced routes that pass a live chat "
+            "canary. No contractual ZDR, confidential-compute, or E2EE claim is "
+            "tracked for this account, so these routes are Standard."
+        ),
+        provider_policy_url="https://docs.io.net/docs/io-intelligence",
+    ),
+    "scaleway": Provider(
+        slug="scaleway",
+        name="Scaleway",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Scaleway routes are discovered from its authenticated Model as a "
+            "Service catalog and priced from Scaleway's first-party EUR price "
+            "feed with a bounded FX reserve. No contractual ZDR, confidential-"
+            "compute, or E2EE claim is tracked for this account, so these routes "
+            "are Standard."
+        ),
+        provider_policy_url="https://www.scaleway.com/en/pricing/model-as-a-service/",
+        provider_headquarters_country=PROVIDER_JURISDICTION_FR,
+    ),
+    "featherless": Provider(
+        slug="featherless",
+        name="Featherless AI",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Featherless routes are limited to chat models explicitly available "
+            "on TrustedRouter's current plan with exact prices in Featherless's "
+            "authenticated catalog. No contractual ZDR, confidential-compute, or "
+            "E2EE claim is tracked for this account, so these routes are Standard."
+        ),
+        provider_policy_url="https://docs.featherless.ai/",
+        # Featherless's terms identify the API operator as a Delaware LLC.
+        # https://featherless.ai/legal/terms-of-service
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "jina": Provider(
+        slug="jina",
+        name="Jina AI",
+        supports_chat=False,
+        supports_embeddings=True,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Jina routes are embedding-only and use exact prices from Jina's "
+            "authenticated model catalog. No contractual ZDR, confidential-compute, "
+            "or E2EE claim is tracked for this account, so these routes are Standard."
+        ),
+        provider_policy_url="https://jina.ai/embeddings/",
+        provider_headquarters_country=PROVIDER_JURISDICTION_DE,
+    ),
+    "ovhcloud": Provider(
+        slug="ovhcloud",
+        name="OVHcloud",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "Not routable: the configured OVH credential is not an AI Endpoints "
+            "access token and the live model catalog rejects it. The provider stays "
+            "listed while a valid inference token is obtained."
+        ),
+        provider_policy_url="https://help.ovhcloud.com/csm/en-public-cloud-ai-endpoints-getting-started?id=kb_article_view&sysparm_article=KB0065407",
+        provider_headquarters_country=PROVIDER_JURISDICTION_FR,
+    ),
+    "vultr": Provider(
+        slug="vultr",
+        name="Vultr",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "Not routable: the configured credential is rejected by both Vultr's "
+            "account API and Serverless Inference API. Vultr issues a distinct "
+            "inference key per subscription; the provider stays listed until that "
+            "key is available."
+        ),
+        provider_policy_url="https://docs.vultr.com/products/serverless-inference/",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "liquid": Provider(
+        slug="liquid",
+        name="Liquid AI",
+        supports_chat=False,
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "Liquid's configured developer credentials target model deployment and "
+            "bundling rather than a shared token-priced inference API. The provider "
+            "remains non-routable until a concrete hosted endpoint is configured."
+        ),
+        provider_policy_url="https://docs.liquid.ai/",
     ),
     # Cohere — first-party embeddings (embed-v4.0, embed-*-v3.0) plus
     # Command chat models. Embeddings are Cohere's flagship retrieval
@@ -651,6 +1751,11 @@ PROVIDERS: dict[str, Provider] = {
             "API data. (Not a confidential-compute/TEE provider.)"
         ),
         provider_policy_url="https://cohere.com/security",
+        # Cohere Inc., 171 John Street, Suite 200, Toronto, ON Canada M5T 1X3,
+        # described in its own privacy policy as a Canadian company subject to
+        # Canadian federal privacy laws; its terms of use apply Ontario law and
+        # place disputes in Toronto courts. https://cohere.com/privacy
+        provider_headquarters_country=PROVIDER_JURISDICTION_CA,
     ),
     # Voyage AI — first-party retrieval embeddings (voyage-3-large etc.).
     # OpenAI-shaped: the enclave talks to api.voyageai.com/v1/embeddings with
@@ -677,7 +1782,8 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
     {
         "anthropic",
         "openai",
-        "gemini",
+        "google-ai-studio",
+        "google-vertex",
         "cerebras",
         "deepseek",
         "mistral",
@@ -719,18 +1825,69 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "deepinfra",
         "friendli",
         "baseten",
+        "telnyx",
         "thinkingmachines",
         "wafer",
         "crusoe",
         "makora",
+        "chutes",
+        "digitalocean",
+        "cloudflare-workers-ai",
+        "inceptron",
+        "morph",
+        "atlas-cloud",
+        "streamlake",
+        "neurometric",
+        "engy",
+        "pearl",
+        "stepfun",
+        "relace",
+        "recraft",
+        "bfl",
+        "decart",
+        "databricks",
+        "zero-g",
+        "upstage",
+        "sail-research",
+        "reka",
+        "nextbit",
+        "akashml",
+        "mancer",
+        "aion-labs",
+        "sambanova",
+        "arcee",
+        "inception",
+        "io-net",
+        "scaleway",
+        "featherless",
+        "sakana",
+        "jina",
         "nebius",
         "minimax",
+        # Alibaba Cloud Model Studio — Frankfurt workspace. The production
+        # key is entitled to inference and its provider-native catalog is
+        # refreshed from the workspace-scoped /models endpoint.
+        "alibaba",
+        "azure",
+        # Direct asynchronous video APIs. These are handled by provider-native
+        # adapters inside the attested gateway, not by the chat adapter.
+        "ltx",
+        "runway",
+        "kling",
         # Cohere — embeddings only for now (native /v2/embed in the enclave).
         "cohere",
         # Voyage — embeddings only (OpenAI-shaped /v1/embeddings in the enclave).
         "voyage",
         # Xiaomi MiMo — OpenAI-compatible chat (api.xiaomimimo.com/v1).
         "xiaomi",
+        # Meta-hosted Muse is currently exposed through OpenRouter's standard
+        # inference API. The public provider label says "Meta via OpenRouter"
+        # and the privacy posture remains standard/non-ZDR.
+        "meta",
+        # Ox Alpha has no provider-direct API during its anonymous preview.
+        # This credits-only identity is pinned to stealth/ox-alpha by both the
+        # control-plane manifest and the enclave's independent allowlist.
+        "openrouter-exclusive",
     }
 )
 
@@ -750,11 +1907,26 @@ E2E_MODEL_ID = "trustedrouter/e2e"
 
 CONFIDENTIAL_MODEL_ID = "trustedrouter/confidential"
 
+# Upstream privacy floors enforced by routing aliases. Keep this as the single
+# source of truth for authorization, public catalog copy, and recommendation
+# surfaces. General-purpose aliases such as auto and cheap intentionally have
+# no implicit privacy floor; callers can add provider.min_privacy explicitly.
+ROUTING_MODEL_MIN_PRIVACY_TIERS: dict[str, int] = {
+    ZDR_MODEL_ID: PRIVACY_TIER_ZERO_RETENTION,
+    E2E_MODEL_ID: PRIVACY_TIER_CONFIDENTIAL,
+}
+
 MONITOR_MODEL_ID = "trustedrouter/monitor"
+
+DEEPSEEK_V4_PRO_0423_MODEL_ID = "deepseek/deepseek-v4-pro-0423"
+
+DEEPSEEK_V4_PRO_0813_MODEL_ID = "deepseek/deepseek-v4-pro-0813"
 
 SOCRATES_1_0_MODEL_ID = "trustedrouter/socrates-1.0"
 
 SOCRATES_1_1_MODEL_ID = "trustedrouter/socrates-1.1"
+
+SOCRATES_2_0_MODEL_ID = "trustedrouter/socrates-2.0"
 
 SOCRATES_MODEL_ID = "trustedrouter/socrates"
 
@@ -766,9 +1938,13 @@ ARISTOTLE_1_0_MODEL_ID = "trustedrouter/aristotle-1.0"
 
 ARISTOTLE_1_1_MODEL_ID = "trustedrouter/aristotle-1.1"
 
+ARISTOTLE_2_0_MODEL_ID = "trustedrouter/aristotle-2.0"
+
 ARISTOTLE_MODEL_ID = "trustedrouter/aristotle"
 
 PLATO_1_0_MODEL_ID = "trustedrouter/plato-1.0"
+
+PLATO_3_0_MODEL_ID = "trustedrouter/plato-3.0"
 
 PLATO_MODEL_ID = "trustedrouter/plato"
 
@@ -790,6 +1966,8 @@ OPEN_PATCHER_S1_MODEL_ID = "trustedrouter/openpatcher-s1"
 
 OPEN_PATCHER_S2_MODEL_ID = "trustedrouter/openpatcher-s2"
 
+OPEN_PATCHER_S3_MODEL_ID = "trustedrouter/openpatcher-s3"
+
 OPEN_PATCHER_A1_MODEL_ID = "trustedrouter/openpatcher-a1"
 
 OPEN_PATCHER_FAST1_MODEL_ID = "trustedrouter/openpatcher-fast1"
@@ -798,13 +1976,21 @@ OPEN_PATCHER_G1_MODEL_ID = "trustedrouter/openpatcher-g1"
 
 OPEN_PATCHER_G2_MODEL_ID = "trustedrouter/openpatcher-g2"
 
+OPEN_PATCHER_G3_MODEL_ID = "trustedrouter/openpatcher-g3"
+
 ATHENA_MODEL_ID = "trustedrouter/athena"
+
+ATHENA_1_0_MODEL_ID = "trustedrouter/athena-1.0"
+
+ATHENA_2_0_MODEL_ID = "trustedrouter/athena-2.0"
 
 LIBERTY_1_0_MODEL_ID = "trustedrouter/liberty-1.0"
 
 LIBERTY_1_0_1M_MODEL_ID = "trustedrouter/liberty-1.0-1m"
 
 LIBERTY_2_0_MODEL_ID = "trustedrouter/liberty-2.0"
+
+PARASAIL_LIBERTY_2_0_MODEL_ID = "parasail/liberty-2.0"
 
 LIBERTY_3_0_MODEL_ID = "trustedrouter/liberty-3.0"
 
@@ -814,6 +2000,8 @@ US_PROVIDER_ONLY_MODEL_IDS = frozenset(
         OPEN_PATCHER_A1_MODEL_ID,
         OPEN_PATCHER_FAST1_MODEL_ID,
         OPEN_PATCHER_G1_MODEL_ID,
+        ATHENA_1_0_MODEL_ID,
+        ATHENA_2_0_MODEL_ID,
         ATHENA_MODEL_ID,
     }
 )
@@ -830,15 +2018,21 @@ IRIS_1_0_MODEL_ID = "trustedrouter/iris-1.0"
 
 IRIS_2_0_MODEL_ID = "trustedrouter/iris-2.0"
 
+IRIS_3_0_MODEL_ID = "trustedrouter/iris-3.0"
+
 PROMETHEUS_1_0_MODEL_ID = "trustedrouter/prometheus-1.0"
 
 PROMETHEUS_1_0_1M_MODEL_ID = "trustedrouter/prometheus-1.0-1m"
 
 PROMETHEUS_2_0_MODEL_ID = "trustedrouter/prometheus-2.0"
 
+PROMETHEUS_3_0_MODEL_ID = "trustedrouter/prometheus-3.0"
+
 ZEUS_1_0_MODEL_ID = "trustedrouter/zeus-1.0"
 
 ZEUS_1_0_MINI_MODEL_ID = "trustedrouter/zeus-1.0-mini"
+
+ZEUS_2_0_MODEL_ID = "trustedrouter/zeus-2.0"
 
 SYNTH_CODE_MODEL_ID = "trustedrouter/synth-code"
 
@@ -875,13 +2069,16 @@ META_MODEL_IDS = frozenset(
         MONITOR_MODEL_ID,
         SOCRATES_1_0_MODEL_ID,
         SOCRATES_1_1_MODEL_ID,
+        SOCRATES_2_0_MODEL_ID,
         SOCRATES_MODEL_ID,
         ADVISOR_MODEL_ID,
         SUBAGENT_MODEL_ID,
         ARISTOTLE_1_0_MODEL_ID,
         ARISTOTLE_1_1_MODEL_ID,
+        ARISTOTLE_2_0_MODEL_ID,
         ARISTOTLE_MODEL_ID,
         PLATO_1_0_MODEL_ID,
+        PLATO_3_0_MODEL_ID,
         PLATO_MODEL_ID,
         PLATO_PRO_1_0_MODEL_ID,
         PLATO_PRO_2_0_MODEL_ID,
@@ -892,14 +2089,19 @@ META_MODEL_IDS = frozenset(
         SOCRATES_PRO_PLUS_MODEL_ID,
         OPEN_PATCHER_S1_MODEL_ID,
         OPEN_PATCHER_S2_MODEL_ID,
+        OPEN_PATCHER_S3_MODEL_ID,
         OPEN_PATCHER_A1_MODEL_ID,
         OPEN_PATCHER_FAST1_MODEL_ID,
         OPEN_PATCHER_G1_MODEL_ID,
         OPEN_PATCHER_G2_MODEL_ID,
+        OPEN_PATCHER_G3_MODEL_ID,
+        ATHENA_1_0_MODEL_ID,
+        ATHENA_2_0_MODEL_ID,
         ATHENA_MODEL_ID,
         LIBERTY_1_0_MODEL_ID,
         LIBERTY_1_0_1M_MODEL_ID,
         LIBERTY_2_0_MODEL_ID,
+        PARASAIL_LIBERTY_2_0_MODEL_ID,
         LIBERTY_3_0_MODEL_ID,
         SYNTH_MODEL_ID,
         IRIS_MODEL_ID,
@@ -907,11 +2109,14 @@ META_MODEL_IDS = frozenset(
         ZEUS_MODEL_ID,
         IRIS_1_0_MODEL_ID,
         IRIS_2_0_MODEL_ID,
+        IRIS_3_0_MODEL_ID,
         PROMETHEUS_1_0_MODEL_ID,
         PROMETHEUS_1_0_1M_MODEL_ID,
         PROMETHEUS_2_0_MODEL_ID,
+        PROMETHEUS_3_0_MODEL_ID,
         ZEUS_1_0_MODEL_ID,
         ZEUS_1_0_MINI_MODEL_ID,
+        ZEUS_2_0_MODEL_ID,
         SYNTH_CODE_MODEL_ID,
         IRIS_CODE_MODEL_ID,
         PROMETHEUS_CODE_MODEL_ID,
@@ -948,15 +2153,16 @@ ORCHESTRATION_PRIMITIVE_BY_MODEL_ID: dict[str, str] = {
 }
 
 CANONICAL_ORCHESTRATION_MODEL_ID: dict[str, str] = {
-    SOCRATES_MODEL_ID: SOCRATES_1_1_MODEL_ID,
-    ARISTOTLE_MODEL_ID: ARISTOTLE_1_1_MODEL_ID,
-    PLATO_MODEL_ID: PLATO_PRO_1_0_MODEL_ID,
+    SOCRATES_MODEL_ID: SOCRATES_2_0_MODEL_ID,
+    ARISTOTLE_MODEL_ID: ARISTOTLE_2_0_MODEL_ID,
+    PLATO_MODEL_ID: PLATO_3_0_MODEL_ID,
     PLATO_PRO_MODEL_ID: PLATO_PRO_2_0_MODEL_ID,
     SOCRATES_PRO_MODEL_ID: SOCRATES_PRO_1_0_MODEL_ID,
     SOCRATES_PRO_PLUS_MODEL_ID: SOCRATES_PRO_PLUS_1_0_MODEL_ID,
-    IRIS_MODEL_ID: IRIS_2_0_MODEL_ID,
-    PROMETHEUS_MODEL_ID: PROMETHEUS_2_0_MODEL_ID,
-    ZEUS_MODEL_ID: ZEUS_1_0_MODEL_ID,
+    IRIS_MODEL_ID: IRIS_3_0_MODEL_ID,
+    PROMETHEUS_MODEL_ID: PROMETHEUS_3_0_MODEL_ID,
+    ZEUS_MODEL_ID: ZEUS_2_0_MODEL_ID,
+    ATHENA_MODEL_ID: ATHENA_2_0_MODEL_ID,
     IRIS_CODE_MODEL_ID: IRIS_CODE_1_0_MODEL_ID,
     PROMETHEUS_CODE_MODEL_ID: PROMETHEUS_CODE_1_0_MODEL_ID,
     ZEUS_CODE_MODEL_ID: ZEUS_CODE_1_0_MODEL_ID,
@@ -984,6 +2190,7 @@ ORCHESTRATION_ROLLING_ALIAS_MODEL_IDS = frozenset(
         IRIS_MODEL_ID,
         PROMETHEUS_MODEL_ID,
         ZEUS_MODEL_ID,
+        ATHENA_MODEL_ID,
         IRIS_CODE_MODEL_ID,
         PROMETHEUS_CODE_MODEL_ID,
         ZEUS_CODE_MODEL_ID,
@@ -1003,7 +2210,7 @@ ORCHESTRATION_PRIMITIVE_MODEL_IDS = frozenset(
 
 EU_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
     "mistral",
-    "gemini",
+    "google-vertex",
     "openai",
     "anthropic",
     "tinfoil",
@@ -1015,28 +2222,95 @@ EU_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
     "cerebras",
 )
 
+US_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
+    "openai",
+    "google-vertex",
+    "google-ai-studio",
+    "anthropic",
+    "together",
+    "fireworks",
+    "baseten",
+    "groq",
+    "cerebras",
+    "tinfoil",
+    "deepinfra",
+    "amazon-bedrock",
+    "azure",
+    "xai",
+)
+
+# The default `trustedrouter/auto` ladder — a PREFERENCE order, not a
+# guarantee. The guarantee lives in routing: a request carrying
+# provider.min_privacy or provider.jurisdiction filters this list BEFORE any
+# provider is contacted, and 400s if nothing qualifies. So an entry that
+# cannot satisfy a given request is never called for that request; it simply
+# is not a candidate.
+#
+# Properties pinned by tests rather than trusted to review:
+#
+#   1. Privacy and jurisdiction requirements are applied before authorization;
+#      an incompatible leading model is skipped rather than silently weakening
+#      a caller's requested policy.
+#   2. The ladder spans MORE THAN ONE provider. The 0813 leader itself has
+#      release-pinned first-party and Baseten routes, and it is followed by
+#      independent model/provider families.
+#
+# Order: strongest current DeepSeek release first, then cheap qualifying
+# fallbacks. Privacy and jurisdiction requirements are still applied before
+# any candidate is authorized.
+#
+# Anthropic sits at the BOTTOM deliberately. Its endpoints are currently
+# PRIVACY_TIER_STANDARD (not yet zero-retention), so it is filtered out of any
+# request that demands ZDR — but it remains a capable last-resort fallback for
+# requests with no privacy floor, and it moves up on its own merits the moment
+# its endpoint tier is raised.
 DEFAULT_AUTO_MODEL_ORDER = [
-    "anthropic/claude-opus-4.7",
-    "anthropic/claude-sonnet-4.6",
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
+    "deepseek/deepseek-v4-flash-0731",
+    "moonshotai/kimi-k3",
+    "z-ai/glm-5.2",
     "openai/gpt-4.1-mini",
     "google/gemini-2.5-flash",
-    "deepseek/deepseek-v4-flash",
+    "moonshotai/kimi-k2.6",
+    "minimax/minimax-m3",
+    "openai/gpt-5.4-mini",
+    "anthropic/claude-sonnet-4.6",
+]
+
+# Released orchestration presets are immutable. Never change the component
+# graph behind a versioned model ID; introduce a new preset version and move
+# only its rolling alias. This is especially important for G1/G2 and the
+# historical 0423 DeepSeek graphs used below.
+SYNTH_IRIS_1_MODEL_ORDER = (
     "minimax/minimax-m3",
     "moonshotai/kimi-k2.6",
-    "mistralai/mistral-small-2603",
-    "z-ai/glm-4.6",
-]
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
+)
 
 SYNTH_BUDGET_MODEL_ORDER = (
     "minimax/minimax-m3",
     "moonshotai/kimi-k2.6",
-    "deepseek/deepseek-v4-pro",
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
 )
 
 SYNTH_IRIS_2_MODEL_ORDER = (
     "minimax/minimax-m3",
     "moonshotai/kimi-k3",
-    "deepseek/deepseek-v4-pro",
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
+)
+
+SYNTH_IRIS_3_MODEL_ORDER = (
+    "minimax/minimax-m3",
+    "moonshotai/kimi-k3",
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
+)
+
+SYNTH_PROMETHEUS_1_MODEL_ORDER = (
+    "minimax/minimax-m3",
+    "moonshotai/kimi-k2.6",
+    "z-ai/glm-5.2",
+    "google/gemma-4-31b-it",
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
 )
 
 SYNTH_QUALITY_MODEL_ORDER = (
@@ -1044,21 +2318,29 @@ SYNTH_QUALITY_MODEL_ORDER = (
     "moonshotai/kimi-k2.6",
     "z-ai/glm-5.2",
     "google/gemma-4-31b-it",
-    "deepseek/deepseek-v4-pro",
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
 )
 
 SYNTH_QUALITY_1M_MODEL_ORDER = (
     "minimax/minimax-m3",
     "xiaomi/mimo-v2.5-pro",
     "z-ai/glm-5.2",
-    "deepseek/deepseek-v4-pro",
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
 )
 
 SYNTH_PROMETHEUS_2_MODEL_ORDER = (
     "minimax/minimax-m3",
     "moonshotai/kimi-k3",
     "z-ai/glm-5.2",
-    "deepseek/deepseek-v4-pro",
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
+    "xiaomi/mimo-v2.5-pro",
+)
+
+SYNTH_PROMETHEUS_3_MODEL_ORDER = (
+    "minimax/minimax-m3",
+    "moonshotai/kimi-k3",
+    "z-ai/glm-5.2",
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
     "xiaomi/mimo-v2.5-pro",
 )
 
@@ -1073,7 +2355,7 @@ LIBERTY_1_0_1M_MODEL_ORDER = (
     "nvidia/nemotron-3-ultra-550b-a55b",
 )
 
-SYNTH_FRONTIER_MODEL_ORDER = (
+SYNTH_FRONTIER_1_MODEL_ORDER = (
     "anthropic/claude-opus-4.8",
     "openai/gpt-5.5",
     "google/gemini-3.1-pro-preview",
@@ -1081,7 +2363,7 @@ SYNTH_FRONTIER_MODEL_ORDER = (
     "minimax/minimax-m3",
     "z-ai/glm-5.2",
     "xiaomi/mimo-v2.5-pro",
-    "deepseek/deepseek-v4-pro",
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
 )
 
 SYNTH_FRONTIER_MINI_MODEL_ORDER = (
@@ -1090,13 +2372,38 @@ SYNTH_FRONTIER_MINI_MODEL_ORDER = (
     "minimax/minimax-m3",
     "z-ai/glm-5.2",
     "xiaomi/mimo-v2.5-pro",
-    "deepseek/deepseek-v4-pro",
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
+)
+
+SYNTH_FRONTIER_MODEL_ORDER = (
+    "anthropic/claude-opus-4.8",
+    "openai/gpt-5.5",
+    "google/gemini-3.1-pro-preview",
+    "google/gemini-3.5-flash",
+    "minimax/minimax-m3",
+    "z-ai/glm-5.2",
+    "xiaomi/mimo-v2.5-pro",
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
+)
+
+SYNTH_CODE_BUDGET_1_MODEL_ORDER = (
+    "minimax/minimax-m3",
+    "moonshotai/kimi-k2.7-code",
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
 )
 
 SYNTH_CODE_BUDGET_MODEL_ORDER = (
     "minimax/minimax-m3",
     "moonshotai/kimi-k2.7-code",
-    "deepseek/deepseek-v4-pro",
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
+)
+
+SYNTH_CODE_QUALITY_1_MODEL_ORDER = (
+    "minimax/minimax-m3",
+    "moonshotai/kimi-k2.7-code",
+    "z-ai/glm-5.2",
+    "google/gemma-4-31b-it",
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
 )
 
 SYNTH_CODE_QUALITY_MODEL_ORDER = (
@@ -1104,7 +2411,7 @@ SYNTH_CODE_QUALITY_MODEL_ORDER = (
     "moonshotai/kimi-k2.7-code",
     "z-ai/glm-5.2",
     "google/gemma-4-31b-it",
-    "deepseek/deepseek-v4-pro",
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
 )
 
 SYNTH_CODE_FRONTIER_MODEL_ORDER = (
@@ -1139,6 +2446,18 @@ SOCRATES_1_1_CATALOG_MODEL_ORDER = (
     ZEUS_1_0_MODEL_ID,
 )
 
+SOCRATES_2_0_WORKER_MODEL_ORDER = (
+    "xiaomi/mimo-v2.5-pro-ultraspeed",
+    "minimax/minimax-m3",
+    "z-ai/glm-5.2-fast",
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
+)
+
+SOCRATES_2_0_CATALOG_MODEL_ORDER = (
+    *SOCRATES_2_0_WORKER_MODEL_ORDER,
+    ZEUS_2_0_MODEL_ID,
+)
+
 SELECTOR_CATALOG_MODEL_ORDER = (
     *SYNTH_QUALITY_MODEL_ORDER,
     "moonshotai/kimi-k2.7-code",
@@ -1155,7 +2474,8 @@ MAPREDUCE_CATALOG_MODEL_ORDER = (
 ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
     SOCRATES_1_0_MODEL_ID: SOCRATES_CATALOG_MODEL_ORDER,
     SOCRATES_1_1_MODEL_ID: SOCRATES_1_1_CATALOG_MODEL_ORDER,
-    SOCRATES_MODEL_ID: SOCRATES_1_1_CATALOG_MODEL_ORDER,
+    SOCRATES_2_0_MODEL_ID: SOCRATES_2_0_CATALOG_MODEL_ORDER,
+    SOCRATES_MODEL_ID: SOCRATES_2_0_CATALOG_MODEL_ORDER,
     ADVISOR_MODEL_ID: SOCRATES_CATALOG_MODEL_ORDER,
     SUBAGENT_MODEL_ID: (
         "deepseek/deepseek-v4-flash",
@@ -1164,7 +2484,7 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
     ),
     ARISTOTLE_1_0_MODEL_ID: (
         "deepseek/deepseek-v4-flash",
-        *SYNTH_FRONTIER_MODEL_ORDER,
+        *SYNTH_FRONTIER_1_MODEL_ORDER,
     ),
     ARISTOTLE_1_1_MODEL_ID: (
         "z-ai/glm-5.2-fast",
@@ -1174,16 +2494,25 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
     ARISTOTLE_MODEL_ID: (
         "z-ai/glm-5.2-fast",
         "z-ai/glm-5.2",
-        ZEUS_1_0_MODEL_ID,
+        ZEUS_2_0_MODEL_ID,
+    ),
+    ARISTOTLE_2_0_MODEL_ID: (
+        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.2",
+        ZEUS_2_0_MODEL_ID,
     ),
     PLATO_1_0_MODEL_ID: (
         "deepseek/deepseek-v4-flash",
         "z-ai/glm-5.2",
-        *SYNTH_QUALITY_MODEL_ORDER,
+        *SYNTH_PROMETHEUS_1_MODEL_ORDER,
     ),
     PLATO_MODEL_ID: (
-        "z-ai/glm-5.2",
-        PROMETHEUS_1_0_1M_MODEL_ID,
+        DEEPSEEK_V4_PRO_0813_MODEL_ID,
+        PROMETHEUS_3_0_MODEL_ID,
+    ),
+    PLATO_3_0_MODEL_ID: (
+        DEEPSEEK_V4_PRO_0813_MODEL_ID,
+        PROMETHEUS_3_0_MODEL_ID,
     ),
     PLATO_PRO_1_0_MODEL_ID: (
         "z-ai/glm-5.2",
@@ -1228,14 +2557,38 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         "google/gemma-4-31b-it",
         PROMETHEUS_2_0_MODEL_ID,
     ),
-    ATHENA_MODEL_ID: (
+    OPEN_PATCHER_G3_MODEL_ID: (
+        "moonshotai/kimi-k3",
+        "google/gemma-4-31b-it",
+        PROMETHEUS_3_0_MODEL_ID,
+    ),
+    ATHENA_1_0_MODEL_ID: (
         "z-ai/glm-5.2-fast",
         "z-ai/glm-5.2",
         ZEUS_1_0_MINI_MODEL_ID,
         "moonshotai/kimi-k2.7-code",
         "moonshotai/kimi-k2.6",
     ),
+    ATHENA_2_0_MODEL_ID: (
+        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.2",
+        ZEUS_2_0_MODEL_ID,
+        "moonshotai/kimi-k2.7-code",
+        "moonshotai/kimi-k2.6",
+    ),
+    ATHENA_MODEL_ID: (
+        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.2",
+        ZEUS_2_0_MODEL_ID,
+        "moonshotai/kimi-k2.7-code",
+        "moonshotai/kimi-k2.6",
+    ),
     LIBERTY_2_0_MODEL_ID: (
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        LIBERTY_1_0_1M_MODEL_ID,
+        LIBERTY_1_0_MODEL_ID,
+    ),
+    PARASAIL_LIBERTY_2_0_MODEL_ID: (
         "nvidia/nemotron-3-ultra-550b-a55b",
         LIBERTY_1_0_1M_MODEL_ID,
         LIBERTY_1_0_MODEL_ID,
@@ -1289,7 +2642,7 @@ _EMBEDDING_SPECS: tuple[_EmbeddingSpec, ...] = (
     {
         "id": "google/gemini-embedding-001",
         "name": "Gemini Embedding 001",
-        "provider": "gemini",
+        "provider": "google-ai-studio",
         "upstream_id": "gemini-embedding-001",
         "context_length": 2048,
         "cost_dollars_per_million": "0.15",
@@ -1359,12 +2712,19 @@ _EMBEDDING_SPECS: tuple[_EmbeddingSpec, ...] = (
 )
 
 _PROVIDER_SERVED_MODEL_ALLOWLIST: dict[str, frozenset[str]] = {
-    "cerebras": frozenset(
+    # 2026-07-18: GMI's /models listing is aspirational — 7d synthetic probes
+    # show exactly four models served on our account (590-670 successes each)
+    # while the other ~45 listed models have ZERO successes ever (uniform
+    # upstream 404 "No matching target server found"). Route Credits traffic
+    # only to the verified set; BYOK stays visible (customer accounts may
+    # differ). A new GMI model earns its way in via probe successes.
+    "gmi": frozenset(
         {
-            "openai/gpt-oss-120b",
-            "cerebras/gpt-oss-120b",
-            "z-ai/glm-4.7",
-            "cerebras/zai-glm-4.7",
+            "deepseek/deepseek-v4-pro",
+            "moonshotai/kimi-k3",
+            "z-ai/glm-5",
+            "z-ai/glm-5.1",
+            "z-ai/glm-5.2",
         }
     ),
 }
@@ -1407,16 +2767,6 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
     "deepseek": frozenset({"deepseek/deepseek-chat-v3.1", "deepseek/deepseek-v3.2"}),
     "nebius": frozenset({"google/gemma-2-2b-it", "meta-llama/Meta-Llama-3.1-8B-Instruct"}),
     "zai": frozenset({"z-ai/glm-4-32b", "z-ai/glm-4.7-flash"}),
-    "together": frozenset(
-        {
-            "meta-llama/llama-3.1-8b-instruct",
-            "meta-llama/llama-3.1-70b-instruct",
-            # 2026-07-15: the snapshot route returns 404 when pinned to
-            # Together. Keep the directly verified Baseten route.
-            "nvidia/nemotron-3-ultra-550b-a55b",
-            "qwen/qwen-2.5-72b-instruct",
-        }
-    ),
     "grok": frozenset({"x-ai/grok-4.20-multi-agent"}),
     # parasail — listed in the upstream snapshot, but Parasail's own chat API
     # returns 403 "deployment ... doesn't exist or isn't accessible" for these
@@ -1480,7 +2830,16 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
     # Credits routes. BYOK remains available because customer accounts can
     # have different model behavior/entitlements.
     "minimax": frozenset({"minimax/minimax-m2.1", "minimax/minimax-m2.5"}),
-    "gemini": frozenset(
+    "google-ai-studio": frozenset(
+        {
+            "google/gemma-3-4b-it",
+            "google/gemma-3-12b-it",
+            "google/gemma-3-27b-it",
+            "google/gemma-4-26b-a4b-it",
+            "google/gemma-4-31b-it",
+        }
+    ),
+    "google-vertex": frozenset(
         {
             "google/gemma-3-4b-it",
             "google/gemma-3-12b-it",
@@ -1491,7 +2850,7 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
     ),
 }
 
-_PROVIDER_DISPLAY_ORDER = ("tinfoil", "venice")
+_PROVIDER_DISPLAY_ORDER = ("tinfoil",)
 
 
 # Legacy compatibility aliases (advisor/synth primitives) — completes
@@ -1500,11 +2859,14 @@ _PROVIDER_DISPLAY_ORDER = ("tinfoil", "venice")
 for _advisor_model_id in (
     SOCRATES_1_0_MODEL_ID,
     SOCRATES_1_1_MODEL_ID,
+    SOCRATES_2_0_MODEL_ID,
     SOCRATES_MODEL_ID,
     ARISTOTLE_1_0_MODEL_ID,
     ARISTOTLE_1_1_MODEL_ID,
+    ARISTOTLE_2_0_MODEL_ID,
     ARISTOTLE_MODEL_ID,
     PLATO_1_0_MODEL_ID,
+    PLATO_3_0_MODEL_ID,
     PLATO_MODEL_ID,
     PLATO_PRO_1_0_MODEL_ID,
     PLATO_PRO_2_0_MODEL_ID,
@@ -1517,8 +2879,12 @@ for _advisor_model_id in (
     OPEN_PATCHER_FAST1_MODEL_ID,
     OPEN_PATCHER_G1_MODEL_ID,
     OPEN_PATCHER_G2_MODEL_ID,
+    OPEN_PATCHER_G3_MODEL_ID,
+    ATHENA_1_0_MODEL_ID,
+    ATHENA_2_0_MODEL_ID,
     ATHENA_MODEL_ID,
     LIBERTY_2_0_MODEL_ID,
+    PARASAIL_LIBERTY_2_0_MODEL_ID,
     LIBERTY_3_0_MODEL_ID,
 ):
     ORCHESTRATION_PRIMITIVE_BY_MODEL_ID[_advisor_model_id] = "advisor"
@@ -1529,11 +2895,14 @@ for _synth_model_id in (
     ZEUS_MODEL_ID,
     IRIS_1_0_MODEL_ID,
     IRIS_2_0_MODEL_ID,
+    IRIS_3_0_MODEL_ID,
     PROMETHEUS_1_0_MODEL_ID,
     PROMETHEUS_1_0_1M_MODEL_ID,
     PROMETHEUS_2_0_MODEL_ID,
+    PROMETHEUS_3_0_MODEL_ID,
     ZEUS_1_0_MODEL_ID,
     ZEUS_1_0_MINI_MODEL_ID,
+    ZEUS_2_0_MODEL_ID,
     IRIS_CODE_MODEL_ID,
     PROMETHEUS_CODE_MODEL_ID,
     ZEUS_CODE_MODEL_ID,
@@ -1542,7 +2911,421 @@ for _synth_model_id in (
     ZEUS_CODE_1_0_MODEL_ID,
     OPEN_PATCHER_S1_MODEL_ID,
     OPEN_PATCHER_S2_MODEL_ID,
+    OPEN_PATCHER_S3_MODEL_ID,
     LIBERTY_1_0_MODEL_ID,
     LIBERTY_1_0_1M_MODEL_ID,
 ):
     ORCHESTRATION_PRIMITIVE_BY_MODEL_ID[_synth_model_id] = "synth"
+
+
+# ---------------------------------------------------------------------------
+# MODEL ORIGIN (creator lab) METADATA
+# ---------------------------------------------------------------------------
+# Where a model was BUILT, keyed by the vendor prefix of its TrustedRouter model
+# id (the part before the slash). This answers a different question from
+# Provider.provider_headquarters_country above, which records where the operator
+# of the routed API endpoint is legally based. A request for GLM through
+# api.z.ai reaches a Singapore operator running weights from a Beijing lab, and
+# both rows are needed to describe that honestly.
+#
+# Rules this table follows:
+#   * One row per vendor prefix that actually appears in the catalog. Each cites
+#     the lab's own page, its licence, or a regulatory filing where one states a
+#     location, and a named reference work where the lab publishes none.
+#   * country is an ISO 3166-1 alpha-2 code for the creator's home, or None when
+#     the prefix has no single creator country. A None row must carry a note
+#     saying why, and no row may claim a country without a source_url.
+#   * Case variants are separate keys, because provider feeds publish upstream
+#     ids verbatim (Qwen and qwen, MiniMaxAI and minimax) and the catalog keeps
+#     them that way.
+#   * Some prefixes are a serving namespace rather than a lab: lightning-ai and
+#     cerebras publish other labs' weights under their own name. Those rows are
+#     recorded with country None so nobody reads a hosting brand as an origin.
+#   * A model's origin country is not a claim about that model's licence, export
+#     status, or the jurisdiction any given request runs in.
+
+
+@dataclass(frozen=True)
+class ModelOrigin:
+    country: str | None
+    lab_name: str
+    source_url: str | None = None
+    note: str = ""
+
+
+_MODEL_ORIGIN_US_TRUSTEDROUTER = ModelOrigin(
+    country=PROVIDER_JURISDICTION_US,
+    lab_name="TrustedRouter",
+    source_url="https://trustedrouter.com/",
+    note=(
+        "First-party record: the Liberty, Athena, OpenPatcher, and orchestration "
+        "families are built by TrustedRouter, a US company. The OpenPatcher and "
+        "Athena ids in US_PROVIDER_ONLY_MODEL_IDS additionally force US-operated "
+        "provider routes at request time."
+    ),
+)
+
+_MODEL_ORIGIN_CN_ALIBABA = ModelOrigin(
+    country=PROVIDER_JURISDICTION_CN,
+    lab_name="Alibaba (Qwen)",
+    source_url="https://www.alibabacloud.com/en/solutions/generative-ai/qwen",
+    note=(
+        "Alibaba Cloud states it provides the Qwen model series to the "
+        "open-source community; Alibaba Group Holding Limited gives its "
+        "principal executive offices as Hangzhou, China "
+        "(https://www.alibabagroup.com/en-US/faqs-corporate-information)."
+    ),
+)
+
+_MODEL_ORIGIN_CN_DEEPSEEK = ModelOrigin(
+    country=PROVIDER_JURISDICTION_CN,
+    lab_name="DeepSeek",
+    source_url="https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html",
+    note=(
+        "DeepSeek's privacy policy names Hangzhou DeepSeek Artificial "
+        "Intelligence Co., Ltd., registered in China, as data controller."
+    ),
+)
+
+_MODEL_ORIGIN_CN_ZHIPU = ModelOrigin(
+    country=PROVIDER_JURISDICTION_CN,
+    lab_name="Z.ai (GLM)",
+    source_url="https://en.wikipedia.org/wiki/Zhipu_AI",
+    note=(
+        "The GLM family comes from the Beijing-headquartered lab that renamed "
+        "itself Z.ai in 2025, formerly Beijing Zhipu Huazhang Technology Co., "
+        "Ltd. The API TrustedRouter routes to is operated by a Singapore entity "
+        "(see the zai provider row), which is a separate fact."
+    ),
+)
+
+_MODEL_ORIGIN_CN_MINIMAX = ModelOrigin(
+    country=PROVIDER_JURISDICTION_CN,
+    lab_name="MiniMax",
+    source_url="https://en.wikipedia.org/wiki/MiniMax_Group",
+    note="MiniMax Group Inc. is based in Shanghai, China and listed in Hong Kong (SEHK: 100).",
+)
+
+_MODEL_ORIGIN_CN_XIAOMI = ModelOrigin(
+    country=PROVIDER_JURISDICTION_CN,
+    lab_name="Xiaomi (MiMo)",
+    source_url=(
+        "https://ir.mi.com/system/files-encrypted/nasdaq_kms/assets/2026/04/28/"
+        "5-29-08/Xiaomi%202025%20AR_EN.pdf"
+    ),
+    note=(
+        "Xiaomi Corporation's 2025 annual report gives its head office and "
+        "principal place of business as Xiaomi Campus, Haidian District, "
+        "Beijing, PRC, with a Cayman Islands registered office."
+    ),
+)
+
+_MODEL_ORIGIN_INDEPENDENT_SAO10K = ModelOrigin(
+    country=None,
+    lab_name="Sao10K (independent model author)",
+    source_url="https://huggingface.co/Sao10K",
+    note=(
+        "These are community fine-tunes published by a pseudonymous individual. "
+        "The author's profile discloses no company, legal entity, or country, so "
+        "no origin country is recorded rather than inferred from a handle."
+    ),
+)
+
+MODEL_ORIGINS: dict[str, ModelOrigin] = {
+    # --- United States ---
+    "trustedrouter": _MODEL_ORIGIN_US_TRUSTEDROUTER,
+    "openai": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="OpenAI",
+        source_url="https://openai.com/policies/row-terms-of-use/",
+        note=(
+            "OpenAI's terms of use name OpenAI OpCo, LLC, a Delaware company at "
+            "1455 3rd Street, San Francisco, CA 94158."
+        ),
+    ),
+    "anthropic": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="Anthropic",
+        source_url="https://www.anthropic.com/legal/commercial-terms",
+        note=(
+            "Anthropic's commercial terms contract through Anthropic, PBC under "
+            "California law outside the EEA, Switzerland, and the UK, where "
+            "Anthropic Ireland, Limited applies instead."
+        ),
+    ),
+    "google": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="Google DeepMind",
+        source_url="https://s206.q4cdn.com/479360582/files/doc_financials/2025/q4/GOOG-10-K-2025.pdf",
+        note=(
+            "Gemini and Gemma come from Google DeepMind, part of Alphabet Inc., "
+            "whose 10-K gives principal executive offices at 1600 Amphitheatre "
+            "Parkway, Mountain View, California. The code records that parent's "
+            "home, not the location of every team that worked on a model."
+        ),
+    ),
+    "meta-llama": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="Meta",
+        source_url="https://developer.meta.com/ai/llama4/license/",
+        note=(
+            "The Llama licence names Meta Platforms, Inc. for licensees outside "
+            "the EEA and Switzerland, and Meta Platforms Ireland Limited within "
+            "them."
+        ),
+    ),
+    "nvidia": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="NVIDIA",
+        source_url="https://investor.nvidia.com/governance/contact-the-board/default.aspx",
+        note=(
+            "The Nemotron family comes from NVIDIA Corporation, whose corporate "
+            "address for stockholder communications is 2788 San Tomas "
+            "Expressway, Santa Clara, California 95051."
+        ),
+    ),
+    "x-ai": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="xAI",
+        source_url="https://x.ai/legal/terms-of-service",
+        note=(
+            "xAI's consumer terms take legal notices at 1450 Page Mill Rd., Palo "
+            "Alto, CA 94304 and are governed by the laws of the State of Texas."
+        ),
+    ),
+    "thinkingmachines": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="Thinking Machines Lab",
+        source_url="https://en.wikipedia.org/wiki/Thinking_Machines_Lab",
+        note=(
+            "Thinking Machines Lab Inc. is a public benefit corporation based in "
+            "San Francisco, California. Its own site names the company without "
+            "stating a location."
+        ),
+    ),
+    "microsoft": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="Microsoft Research",
+        source_url="https://www.microsoft.com/en-us/privacy/privacystatement",
+        note=(
+            "The Phi family is built by Microsoft Research. Microsoft's privacy "
+            "statement identifies Microsoft Corporation at One Microsoft Way, "
+            "Redmond, Washington 98052, United States."
+        ),
+    ),
+    "recraft": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="Recraft",
+        source_url="https://www.recraft.ai/legal/terms",
+        note=(
+            "Recraft's terms name Recraft Inc. and give its notices address as "
+            "450 Townsend Street, San Francisco, California 94107."
+        ),
+    ),
+    # --- Canada ---
+    "cohere": ModelOrigin(
+        country=PROVIDER_JURISDICTION_CA,
+        lab_name="Cohere",
+        source_url="https://cohere.com/privacy",
+        note=(
+            "Cohere Inc., 171 John Street, Suite 200, Toronto, ON Canada, "
+            "described in its own privacy policy as a Canadian company subject "
+            "to Canadian federal privacy laws."
+        ),
+    ),
+    # --- France ---
+    "mistralai": ModelOrigin(
+        country=PROVIDER_JURISDICTION_FR,
+        lab_name="Mistral AI",
+        source_url="https://legal.mistral.ai/legal-notice",
+        note=(
+            "Mistral AI is a French SAS registered at 15 rue des Halles, 75001 "
+            "Paris, RCS Paris 952 418 325."
+        ),
+    ),
+    # --- Germany ---
+    "jina-ai": ModelOrigin(
+        country=PROVIDER_JURISDICTION_DE,
+        lab_name="Jina AI",
+        source_url="https://jina.ai/en-US/contact-sales/",
+        note=(
+            "Jina's first-party company page identifies Jina AI GmbH as the "
+            "company headquarters in Germany and the issuer of API invoices."
+        ),
+    ),
+    "black-forest-labs": ModelOrigin(
+        country=PROVIDER_JURISDICTION_DE,
+        lab_name="Black Forest Labs",
+        source_url="https://bfl.ai/legal/imprint",
+        note=(
+            "Black Forest Labs' imprint names BFL GmbH and gives its registered "
+            "address in Freiburg im Breisgau, Germany."
+        ),
+    ),
+    # --- Israel ---
+    "decart": ModelOrigin(
+        country=PROVIDER_JURISDICTION_IL,
+        lab_name="Decart",
+        source_url="https://www.decart.ai/articles/sequoia-backed-decart-raises-21m-in-seed-funding",
+        note=(
+            "Decart's own company article identifies the lab that built its "
+            "Lucy and Oasis models as an Israeli startup."
+        ),
+    ),
+    # --- South Korea ---
+    "upstage": ModelOrigin(
+        country=PROVIDER_JURISDICTION_KR,
+        lab_name="Upstage",
+        source_url="https://www.upstage.ai/privacy-policy/updated-jun-01-2026",
+        note=(
+            "Upstage's privacy policy gives its company address in Gangnam-gu, "
+            "Seoul, Republic of Korea."
+        ),
+    ),
+    # --- China ---
+    "qwen": _MODEL_ORIGIN_CN_ALIBABA,
+    "Qwen": _MODEL_ORIGIN_CN_ALIBABA,
+    "deepseek": _MODEL_ORIGIN_CN_DEEPSEEK,
+    "deepseek-ai": _MODEL_ORIGIN_CN_DEEPSEEK,
+    "z-ai": _MODEL_ORIGIN_CN_ZHIPU,
+    "zai-org": _MODEL_ORIGIN_CN_ZHIPU,
+    "minimax": _MODEL_ORIGIN_CN_MINIMAX,
+    "minimaxai": _MODEL_ORIGIN_CN_MINIMAX,
+    "MiniMaxAI": _MODEL_ORIGIN_CN_MINIMAX,
+    "xiaomi": _MODEL_ORIGIN_CN_XIAOMI,
+    "xiaomimimo": _MODEL_ORIGIN_CN_XIAOMI,
+    "stepfun": ModelOrigin(
+        country=PROVIDER_JURISDICTION_CN,
+        lab_name="StepFun",
+        source_url="https://www.stepfun.com/legal/terms",
+        note=(
+            "StepFun's terms name Shanghai StepFun Intelligent Technology Co., "
+            "Ltd. as the company providing its models and services."
+        ),
+    ),
+    "moonshotai": ModelOrigin(
+        country=PROVIDER_JURISDICTION_CN,
+        lab_name="Moonshot AI (Kimi)",
+        source_url="https://www.moonshot.ai/about",
+        note=(
+            "Beijing Moonshot AI Technology Co., Ltd. gives its address as "
+            "Haidian District, Beijing, China."
+        ),
+    ),
+    "bytedance": ModelOrigin(
+        country=PROVIDER_JURISDICTION_CN,
+        lab_name="ByteDance (Seed, Doubao)",
+        source_url="https://en.wikipedia.org/wiki/ByteDance",
+        note=(
+            "ByteDance is headquartered in Haidian, Beijing, China, while its "
+            "associated entity ByteDance Ltd is incorporated in the Cayman "
+            "Islands. ByteDance's own site lists offices in roughly 120 cities "
+            "without naming a headquarters."
+        ),
+    ),
+    "baidu": ModelOrigin(
+        country=PROVIDER_JURISDICTION_CN,
+        lab_name="Baidu (ERNIE)",
+        source_url="https://www.sec.gov/Archives/edgar/data/1329099/000119312524068527/d584913d20f.htm",
+        note=(
+            "Baidu, Inc.'s Form 20-F gives principal executive offices at Baidu "
+            "Campus, No. 10 Shangdi 10th Street, Haidian District, Beijing, PRC."
+        ),
+    ),
+    "tencent": ModelOrigin(
+        country=PROVIDER_JURISDICTION_CN,
+        lab_name="Tencent (Hunyuan)",
+        source_url=(
+            "https://static.www.tencent.com/storage/uploads/2019/11/09/"
+            "da62661e976ea6cf64551dc5cdf079ea.pdf"
+        ),
+        note=(
+            "Tencent Holdings Limited's 2018 annual report gives its group head "
+            "office as Tencent Binhai Towers, Nanshan District, Shenzhen, PRC, "
+            "with a principal place of business in Hong Kong."
+        ),
+    ),
+    "inclusionai": ModelOrigin(
+        country=PROVIDER_JURISDICTION_CN,
+        lab_name="Ant Group (inclusionAI: Ling, Ring)",
+        source_url="https://huggingface.co/inclusionAI",
+        note=(
+            "The inclusionAI organisation describes itself as the home of Ant "
+            "Group's AGI initiative, and Ant Group's own offices page gives its "
+            "principal business office as Z Space, No. 556 Xixi Road, Hangzhou, "
+            "China (https://www.antgroup.com/en/about/our-offices)."
+        ),
+    ),
+    "kwaipilot": ModelOrigin(
+        country=PROVIDER_JURISDICTION_CN,
+        lab_name="Kuaishou (Kwaipilot KAT)",
+        source_url="https://huggingface.co/Kwaipilot",
+        note=(
+            "The Kwaipilot organisation describes itself as the AI team from "
+            "Kuaishou, whose head office is in Haidian District, Beijing, PRC "
+            "per its HKEX annual report "
+            "(https://www1.hkexnews.hk/listedco/listconews/sehk/2022/0419/2022041900053.pdf)."
+        ),
+    ),
+    # --- No single creator country ---
+    "sao10k": _MODEL_ORIGIN_INDEPENDENT_SAO10K,
+    "Sao10K": _MODEL_ORIGIN_INDEPENDENT_SAO10K,
+    "aion-labs": ModelOrigin(
+        country=None,
+        lab_name="Aion Labs",
+        source_url="https://www.aionlabs.ai/docs/quickstart/",
+        note=(
+            "The official API documentation identifies Aion Labs as the model "
+            "publisher but does not name a legal entity or country. It is not "
+            "treated as the unrelated pharma venture studio at aionlabs.com."
+        ),
+    ),
+    "thedrummer": ModelOrigin(
+        country=None,
+        lab_name="TheDrummer",
+        source_url="https://huggingface.co/TheDrummer/models",
+        note=(
+            "The models are published by a pseudonymous Hugging Face account "
+            "that does not disclose a legal entity or country."
+        ),
+    ),
+    "lightning-ai": ModelOrigin(
+        country=None,
+        lab_name="Lightning AI (serving namespace)",
+        source_url=None,
+        note=(
+            "Not a creator prefix: these ids are Lightning AI's hosted routes "
+            "for weights built elsewhere — DeepSeek's V4 Pro, OpenAI's gpt-oss, "
+            "NVIDIA's Nemotron — so origin varies per model and is read from "
+            "those labs' rows instead."
+        ),
+    ),
+    "cerebras": ModelOrigin(
+        country=None,
+        lab_name="Cerebras (serving namespace)",
+        source_url=None,
+        note=(
+            "Not a creator prefix: these ids are Cerebras-served routes for "
+            "weights built elsewhere — OpenAI's gpt-oss, Z.ai's GLM, Google's "
+            "Gemma. Cerebras Systems Inc. is itself a US company with principal "
+            "executive offices in Sunnyvale, California, which is recorded as "
+            "the cerebras PROVIDER jurisdiction, not as a model origin."
+        ),
+    ),
+}
+
+# Vendor prefixes at or above this many catalog models must have a MODEL_ORIGINS
+# row. Three is the smallest count that is a family rather than a one-off route:
+# it keeps every lab whose weights appear as a series in the catalog under
+# citation, without forcing a country onto single mirrored uploads whose
+# publisher TrustedRouter has no primary source for. Prefixes below the
+# threshold are welcome in the table and several are already there.
+MODEL_ORIGIN_REQUIRED_MODEL_COUNT = 3
+
+
+def model_origin_for_model_id(model_id: str) -> ModelOrigin | None:
+    """Return the recorded origin of a model id's vendor prefix, if any."""
+    prefix, _, rest = model_id.partition("/")
+    if not rest:
+        return None
+    return MODEL_ORIGINS.get(prefix)

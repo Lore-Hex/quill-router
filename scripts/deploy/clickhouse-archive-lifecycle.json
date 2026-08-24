@@ -1,0 +1,12 @@
+{
+  "rule": [
+    {
+      "action": {"type": "Delete"},
+      "condition": {"age": 2555, "isLive": true}
+    },
+    {
+      "action": {"type": "Delete"},
+      "condition": {"age": 30, "isLive": false}
+    }
+  ]
+}
