@@ -2,7 +2,7 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-08-24T14:44:29Z",
+  "generated_at": "2026-08-24T15:41:25Z",
   "model_count": 102,
   "models": [
     {
