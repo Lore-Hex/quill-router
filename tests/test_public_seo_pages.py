@@ -480,6 +480,25 @@ def test_llms_text_files_are_public_and_do_not_leak_secret_material(
     assert "trustedrouter/monitor" not in full_llms.text
 
 
+def test_llms_indexes_link_official_cli_distributions(client: TestClient) -> None:
+    expected = (
+        "https://pypi.org/project/trusted-router-py/",
+        "https://www.npmjs.com/package/@lore-hex/trusted-router",
+        "https://github.com/Lore-Hex/trusted-router-py",
+        "https://github.com/Lore-Hex/trusted-router-js",
+        "pipx install trusted-router-py",
+        "npm install --global @lore-hex/trusted-router",
+        "npx --yes @lore-hex/trusted-router models --json",
+        "trustedrouter models --json",
+    )
+    for path in ("/llms.txt", "/docs/llms.txt", "/docs/llms-full.txt"):
+        response = client.get(path)
+        assert response.status_code == 200
+        for value in expected:
+            assert value in response.text
+        assert "TRUSTEDROUTER_API_KEY" in response.text
+
+
 def test_homepage_has_plain_llm_seo_positioning(client: TestClient) -> None:
     response = client.get("/")
     assert response.status_code == 200
