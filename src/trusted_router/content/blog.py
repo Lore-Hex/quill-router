@@ -28,6 +28,23 @@ class BlogPost:
         return f"/blog/{self.slug}"
 
 
+#: Posts surfaced above the archive on /blog.
+#:
+#: The index is chronological, which answers "what is newest" and not "what
+#: should I read first". A reader landing on a 38-post archive has no way to
+#: tell the two posts that explain what this company is from the twenty-six
+#: that report a benchmark result.
+#:
+#: Slugs rather than a flag on BlogPost, so the running order lives in one
+#: place and is read in one glance. `test_featured_slugs_all_resolve` fails if
+#: one stops matching a post -- a typo or a rename would otherwise empty this
+#: section in silence, and an empty featured section looks exactly like a
+#: design choice.
+FEATURED_SLUGS: tuple[str, ...] = (
+    "synth-iris-prometheus-zeus",
+    "they-are-still-training-on-your-data",
+)
+
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
         slug="you-are-a-model-provider",

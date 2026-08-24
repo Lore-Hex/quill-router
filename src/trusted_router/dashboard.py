@@ -63,7 +63,12 @@ from trusted_router.competitor_comparisons import (
     VERIFIED_ON as COMPETITOR_COMPARISONS_VERIFIED_ON,
 )
 from trusted_router.config import Settings
-from trusted_router.content.blog import BLOG_POSTS, BLOG_POSTS_BY_SLUG, BlogPost
+from trusted_router.content.blog import (
+    BLOG_POSTS,
+    BLOG_POSTS_BY_SLUG,
+    FEATURED_SLUGS,
+    BlogPost,
+)
 from trusted_router.content.legal import (
     hipaa_readiness_packet,
     legal_entity,
@@ -2232,6 +2237,27 @@ def _blog_index_posts(settings: Settings) -> tuple[BlogIndexPost, ...]:
     )
 
 
+def _featured_blog_posts(settings: Settings) -> tuple[BlogIndexPost, ...]:
+    """The featured posts, in FEATURED_SLUGS order.
+
+    Ordered by the tuple rather than by date: the point of the section is an
+    editorial running order, and sorting it chronologically would hand that
+    decision back to the calendar.
+
+    A slug that matches no post is skipped here and fails a test instead. The
+    blog index should not 500 because somebody renamed a post, but it also
+    should not silently show one card where two were intended.
+    """
+    return tuple(
+        BlogIndexPost(
+            post=BLOG_POSTS_BY_SLUG[slug],
+            image=_blog_og_image(settings, BLOG_POSTS_BY_SLUG[slug]),
+        )
+        for slug in FEATURED_SLUGS
+        if slug in BLOG_POSTS_BY_SLUG
+    )
+
+
 def _json_ld_graph(settings: Settings, *nodes: dict[str, object] | None) -> str:
     """Every page's graph, with the operating company always in it.
 
@@ -2856,6 +2882,7 @@ def public_blog_index_html(settings: Settings) -> str:
                 "Read TrustedRouter engineering notes on attested AI routing, model evaluations, "
                 "provider privacy, confidential compute, reliability, and open source infrastructure."
             ),
+            featured=_featured_blog_posts(settings),
             posts=_blog_index_posts(settings),
             json_ld_blob=_blog_index_json_ld(settings),
             google_enabled=settings.google_oauth_enabled,
